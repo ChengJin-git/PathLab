@@ -18,12 +18,12 @@ export no_proxy="${no_proxy:+$no_proxy,}127.0.0.1,localhost"
 # 本地开发模式：使用 VLLM_URL/LLM_BASE_URL 等本地 LLM
 export PATHLAB_ENV="${PATHLAB_ENV:-development}"
 
-# 调试模式：固定端口（5100 开头）
-# Gateway: 5100, Preprocessing: 5101, AI: 5102
+# 调试模式：固定端口（6100 开头）
+# Gateway: 6100, Preprocessing: 6101, AI: 6102
 export PATHLAB_DEBUG=1
-export GATEWAY_PORT=5100
-export PREPROCESSING_PORT=5101
-export AI_PORT=5102
+export GATEWAY_PORT=6100
+export PREPROCESSING_PORT=6101
+export AI_PORT=6102
 
 # 测试模式：禁用登录验证
 export PATHLAB_TEST_MODE=1
@@ -32,7 +32,7 @@ export PATHLAB_TEST_MODE=1
 echo "=== Starting PathLab Client (Dev Mode - Yihui) ==="
 echo "Working Directory: $(pwd)"
 echo "运行模式: 网页端调试模式 (xvfb-run npm run dev)"
-echo "端口配置: Gateway=5100, Preprocessing=5101, AI=5102"
+echo "端口配置: Gateway=6100, Preprocessing=6101, AI=6102"
 echo ""
 
 # ============================================
@@ -161,7 +161,7 @@ echo ""
 # ============================================
 echo "[5/5] 环境配置摘要:"
 echo "  - PATHLAB_ENV: development"
-echo "  - 端口配置: Gateway=5100, Preprocessing=5101, AI=5102 (固定端口)"
+echo "  - 端口配置: Gateway=6100, Preprocessing=6101, AI=6102 (固定端口)"
 if [ -n "$VLLM_URL" ]; then
     echo "  - VLLM_URL: $VLLM_URL"
     echo "  - VLLM_KEY: ${VLLM_KEY:+已设置}"

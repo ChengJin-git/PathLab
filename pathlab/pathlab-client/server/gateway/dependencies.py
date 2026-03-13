@@ -33,6 +33,6 @@ storage_manager = StorageManager(str(UPLOADS_DIR))
 from backend.storage.migration import migration_manager
 
 # Service URLs (internal communication)
-AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:5102")
-PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:5101")
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:6102")
+PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", "http://127.0.0.1:6101")
 

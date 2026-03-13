@@ -85,8 +85,9 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
-  // Exa Search API key for web search
+  // Web Search
   const [exaApiKey, setExaApiKey] = useState('')
+  const [tavilyApiKey, setTavilyApiKey] = useState('')
   const [aiSaved, setAiSaved] = useState(false)
   const [aiSaving, setAiSaving] = useState(false)
 
@@ -151,6 +152,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
       setExaApiKey(s.exa_api_key || '')
+      setTavilyApiKey(s.tavily_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
@@ -180,7 +182,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       await updateGlobalSettings({
         openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
         huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
-        exa_api_key: exaApiKey,
+        exa_api_key: exaApiKey, tavily_api_key: tavilyApiKey,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
@@ -274,7 +276,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                   </div>
                 </div>
 
-                {/* Web Search (Exa) - Moved to Left Column */}
+                {/* Web Search */}
                 <div className="p-5 space-y-4">
                   <div className="flex items-center gap-2 mb-2">
                     <div className="p-1.5 bg-indigo-100 rounded-md">
@@ -282,24 +284,46 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                     </div>
                     <div className="flex flex-col">
                       <h3 className="font-semibold text-slate-900">{t('settings.general.webSearchCard')}</h3>
-                      <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Exa AI Search</span>
+                      <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Deep Research</span>
                     </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.exaApiKey')}</Label>
-                    <div className="relative">
-                      <Input
-                        type="password"
-                        value={exaApiKey}
-                        onChange={(e) => setExaApiKey(e.target.value)}
-                        placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                        className="h-9 text-sm border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 pr-20"
-                      />
-                      <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                        <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium hover:underline">
-                          {t('common.getKey')}
-                        </a>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Exa API Key */}
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.exaApiKey')}</Label>
+                      <div className="relative">
+                        <Input
+                          type="password"
+                          value={exaApiKey}
+                          onChange={(e) => setExaApiKey(e.target.value)}
+                          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                          className="h-9 text-sm border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 pr-16"
+                        />
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                          <a href="https://exa.ai" target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium hover:underline">
+                            {t('common.getKey')}
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tavily API Key */}
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.tavilyApiKey')}</Label>
+                      <div className="relative">
+                        <Input
+                          type="password"
+                          value={tavilyApiKey}
+                          onChange={(e) => setTavilyApiKey(e.target.value)}
+                          placeholder="tvly-..."
+                          className="h-9 text-sm border-slate-300 focus:border-indigo-500 focus:ring-indigo-500 pr-16"
+                        />
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                          <a href="https://tavily.com" target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium hover:underline">
+                            {t('common.getKey')}
+                          </a>
+                        </div>
                       </div>
                     </div>
                   </div>

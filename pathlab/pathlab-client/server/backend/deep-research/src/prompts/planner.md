@@ -216,7 +216,7 @@ interface Plan {
     {
       "need_search": true,
       "title": "Research MIL Methods for Lung Cancer",
-      "description": "Search for recent papers (2022-2024) comparing ABMIL, TransMIL, CLAM, and DSMIL on lung cancer WSI classification. Focus on TCGA-LUNG, CPTAC-LUAD datasets. Collect AUC scores, training details, and computational requirements.",
+      "description": "Search for recent papers (2022-{{ CURRENT_YEAR }}) comparing ABMIL, TransMIL, CLAM, and DSMIL on lung cancer WSI classification. Focus on TCGA-LUNG, CPTAC-LUAD datasets. Collect AUC scores, training details, and computational requirements.",
       "step_type": "research"
     },
     {
@@ -238,7 +238,7 @@ interface Plan {
 # Notes
 
 - Focus on computational pathology and digital pathology AI topics
-- Prioritize recent publications (2022-2024) for up-to-date information
+- Prioritize recent publications (2022-{{ CURRENT_YEAR }}) for up-to-date information
 - Include specific dataset names (TCGA, CAMELYON, etc.) when relevant
 - Consider both academic benchmarks and practical deployment factors
 - Always use locale = **{{ locale }}**

@@ -212,7 +212,7 @@ interface Plan {
     {
       "need_search": true,
       "title": "研究肺癌 MIL 方法",
-      "description": "搜索 2022-2024 年比较 ABMIL、TransMIL、CLAM 和 DSMIL 在肺癌 WSI 分类上的近期论文。重点关注 TCGA-LUNG、CPTAC-LUAD 数据集。收集 AUC 分数、训练细节和计算需求。",
+      "description": "搜索 2022-{{ CURRENT_YEAR }} 年比较 ABMIL、TransMIL、CLAM 和 DSMIL 在肺癌 WSI 分类上的近期论文。重点关注 TCGA-LUNG、CPTAC-LUAD 数据集。收集 AUC 分数、训练细节和计算需求。",
       "step_type": "research"
     },
     {
@@ -234,7 +234,7 @@ interface Plan {
 # 注意
 
 - 聚焦于计算病理学和数字病理学 AI 主题
-- 优先使用近期出版物（2022-2024）获取最新信息
+- 优先使用近期出版物（2022-{{ CURRENT_YEAR }}）获取最新信息
 - 相关时包含具体数据集名称（TCGA、CAMELYON 等）
 - 同时考虑学术基准和实际部署因素
 - 始终使用 locale = **{{ locale }}**

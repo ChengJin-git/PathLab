@@ -209,31 +209,6 @@ export default function AIChatPage() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
   const currentConversationIdRef = useRef<string | null>(null)
   currentConversationIdRef.current = currentConversationId
-  // Initialize from localStorage, defaulting to true on desktop, false on mobile
-  const [showHistory, setShowHistory] = useState(() => {
-    // Mobile always defaults to hidden (false) regardless of previous state
-    if (window.innerWidth < 1024) {
-      return false
-    }
-
-    const saved = localStorage.getItem('ai-chat-sidebar-open')
-    if (saved !== null) {
-      return saved === 'true'
-    }
-    return true
-  })
-
-  // Persist sidebar state
-  useEffect(() => {
-    localStorage.setItem('ai-chat-sidebar-open', String(showHistory))
-  }, [showHistory])
-
-  // Listen for mobile sidebar toggle from Layout header hamburger button
-  useEffect(() => {
-    const handleToggle = () => setShowHistory((prev) => !prev)
-    window.addEventListener('toggle-ai-sidebar', handleToggle)
-    return () => window.removeEventListener('toggle-ai-sidebar', handleToggle)
-  }, [])
 
   const [isLoadingConversations, setIsLoadingConversations] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
@@ -259,6 +234,7 @@ export default function AIChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const initialMessageSent = useRef(false)
+  const pendingInitialMessageRef = useRef<string | null>(null)
   const scrollRestoredRef = useRef(false)
   // Ref for aborting AI generation
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -672,7 +648,12 @@ export default function AIChatPage() {
 
     if (state?.initialMessage && !initialMessageSent.current) {
       initialMessageSent.current = true
-      submitFormProgrammatically(state.initialMessage)
+      if (urlConversationId) {
+        // Conversation needs to load first — defer until currentConversationId is set
+        pendingInitialMessageRef.current = state.initialMessage
+      } else {
+        submitFormProgrammatically(state.initialMessage)
+      }
     }
 
     if (state?.autoStartRecording) {
@@ -688,6 +669,15 @@ export default function AIChatPage() {
       }, 100)
     }
   }, [location, toggleVoiceSession, navigate])
+
+  // Fire deferred initial message once the target conversation has loaded
+  useEffect(() => {
+    if (!pendingInitialMessageRef.current) return
+    if (urlConversationId && currentConversationId !== urlConversationId) return
+    const msg = pendingInitialMessageRef.current
+    pendingInitialMessageRef.current = null
+    submitFormProgrammatically(msg)
+  }, [currentConversationId, urlConversationId, submitFormProgrammatically])
 
   const setConversationsAndCache = useCallback((nextConversations: Conversation[]) => {
     const normalizedConversations = sortConversationsByUpdatedAt(nextConversations)
@@ -758,7 +748,6 @@ export default function AIChatPage() {
     setInput('')
     setImageAttachments([])
     setFileAttachments([])
-    setShowHistory(false)
     setShowWelcomeHero(true)
     setFeedbacks(new Map())
     setPendingFeedbackIds(new Set())
@@ -768,6 +757,15 @@ export default function AIChatPage() {
       navigate('/dashboard', { replace: true })
     }
   }, [navigate, urlConversationId])
+
+  // Handle forceNewChat navigation state (e.g., from sidebar "New Chat" button)
+  useEffect(() => {
+    const state = location.state as { forceNewChat?: boolean } | null
+    if (state?.forceNewChat) {
+      navigate(location.pathname, { replace: true, state: { ...state, forceNewChat: false } })
+      handleNewChat()
+    }
+  }, [location, handleNewChat, navigate])
 
   const handleLoadConversation = async (conversationId: string) => {
     try {
@@ -816,9 +814,14 @@ export default function AIChatPage() {
         }
       }
 
+      // If this is a deep research conversation, redirect to the correct page
+      if (conv.conversation_type === 'deep_research') {
+        navigate(`/deep-research/${conversationId}`, { replace: true })
+        return
+      }
+
       setMessages(messagesToShow)
       setCurrentConversationId(conversationId)
-      setShowHistory(false)
       setShowWelcomeHero(false)
       setPendingFeedbackIds(new Set())
 
@@ -1172,20 +1175,27 @@ export default function AIChatPage() {
 
   /** Build sanitized ChatMessage array from Message[] for the AI API. */
   const buildChatMessages = useCallback((sourceMessages: Message[]): ChatMessage[] => {
-    return sourceMessages.map(m => {
-      const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
-      if (m.images && m.images.length > 0) {
-        const content: ChatMessageContent = [
-          { type: 'text' as const, text: sanitizedContent },
-          ...m.images.map(imgBase64 => ({
-            type: 'image_url' as const,
-            image_url: { url: imgBase64 }
-          }))
-        ]
-        return { role: m.role, content }
-      }
-      return { role: m.role, content: sanitizedContent }
-    })
+    return sourceMessages
+      .map(m => {
+        const sanitizedContent = sanitizeConfigBlocksForAI(m.content)
+        if (m.images && m.images.length > 0) {
+          const content: ChatMessageContent = [
+            { type: 'text' as const, text: sanitizedContent },
+            ...m.images.map(imgBase64 => ({
+              type: 'image_url' as const,
+              image_url: { url: imgBase64 }
+            }))
+          ]
+          return { role: m.role, content }
+        }
+        return { role: m.role, content: sanitizedContent }
+      })
+      // Drop assistant messages that become empty after sanitization (e.g. DEEP_RESEARCH_LINK-only messages)
+      .filter(m => {
+        if (m.role !== 'assistant') return true
+        const c = m.content
+        return typeof c === 'string' ? c.trim().length > 0 : true
+      })
   }, [])
 
   /** Execute a chat generation cycle: create AI placeholder → stream → error handling → cleanup. */
@@ -2298,167 +2308,6 @@ export default function AIChatPage() {
         </div>
       )}
 
-      {/* Mobile sidebar overlay backdrop */}
-      {showHistory && (
-        <div
-          className="fixed top-16 inset-x-0 bottom-0 bg-black/20 z-30 lg:hidden backdrop-blur-sm transition-opacity"
-          onClick={() => setShowHistory(false)}
-        />
-      )}
-
-      {/* Gemini-style Sidebar - always rendered, inline on desktop, overlay on mobile */}
-      {/* Mobile: always fixed + translate-x slide (never participates in flex layout) */}
-      {/* Desktop: inline flex child with width animation */}
-      <div
-        className={`bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden
-          fixed top-16 bottom-0 left-0 z-40 w-72 transition-transform duration-300 ease-in-out
-          ${showHistory ? 'translate-x-0' : '-translate-x-full'}
-          lg:relative lg:top-auto lg:bottom-auto lg:z-auto lg:flex-shrink-0 lg:translate-x-0 lg:transition-all
-          ${showHistory ? 'lg:w-72' : 'lg:w-14'}
-        `}
-        role="navigation"
-        aria-label={t('aiChat.history')}
-      >
-        {/* Sidebar Top Icons - hidden on mobile (header hamburger handles it) */}
-        <div className={`hidden lg:flex items-center gap-1 p-2 pt-3 ${showHistory ? 'px-3' : 'flex-col'}`}>
-          <button
-            onClick={() => setShowHistory(!showHistory)}
-            className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
-            title={showHistory ? t('aiChat.closeChatHistory') : t('aiChat.openChatHistory')}
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Expanded sidebar content - always rendered, fade in/out with opacity */}
-        <div className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out pt-6 lg:pt-0 ${showHistory ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-            {/* New Research Task Button */}
-            <div className="px-3 pb-3 pt-0">
-              <button
-                onClick={handleNewChat}
-                className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
-              >
-                <Plus className="w-4 h-4" />
-                {t('aiChat.newResearchTask')}
-              </button>
-            </div>
-
-            {/* Tools Section */}
-            <div className="px-3 pb-2 border-b border-gray-100">
-              <div className="flex items-center gap-2 px-2 mb-2">
-                <Wrench className="w-4 h-4 text-gray-400" />
-                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.sidebar.tools')}</h3>
-              </div>
-              <div className="space-y-0.5">
-                <button
-                  onClick={() => { navigate('/register'); setShowHistory(false) }}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-orange-50 hover:text-orange-700 transition-colors group"
-                >
-                  <Plus className="w-4 h-4 text-orange-500 group-hover:text-orange-600" />
-                  <span className="flex-1 text-left">{t('aiChat.sidebar.registerData')}</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-orange-400 opacity-0 group-hover:opacity-100 transition-all" />
-                </button>
-                <button
-                  onClick={() => { navigate('/wsi-list'); setShowHistory(false) }}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors group"
-                >
-                  <Database className="w-4 h-4 text-blue-500 group-hover:text-blue-600" />
-                  <span className="flex-1 text-left">{t('aiChat.sidebar.dataRepository')}</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-blue-400 opacity-0 group-hover:opacity-100 transition-all" />
-                </button>
-                <button
-                  onClick={() => { navigate('/task-list'); setShowHistory(false) }}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors group"
-                >
-                  <Brain className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
-                  <span className="flex-1 text-left">{t('aiChat.sidebar.analysisLab')}</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all" />
-                </button>
-                <button
-                  onClick={() => { navigate('/tools'); setShowHistory(false) }}
-                  className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors group"
-                >
-                  <LineChart className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
-                  <span className="flex-1 text-left">{t('aiChat.sidebar.insightsReports')}</span>
-                  <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-emerald-400 opacity-0 group-hover:opacity-100 transition-all" />
-                </button>
-              </div>
-            </div>
-
-            {/* History Section */}
-            <div className="flex items-center justify-between px-5 pt-3 pb-1">
-              <div className="flex items-center gap-2">
-                <History className="w-4 h-4 text-gray-400" />
-                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-widest">{t('aiChat.history')}</h3>
-              </div>
-              {conversations.length > 0 && (
-                <button
-                  onClick={handleDeleteAllHistory}
-                  className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                  title={t('aiChat.deleteAllHistory')}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-3">
-              {isLoadingConversations ? (
-                <div className="flex flex-col items-center justify-center py-12">
-                  <Loader2 className="w-8 h-8 text-primary-500 animate-spin mb-3" />
-                  <p className="text-sm text-gray-500">{t('aiChat.loadingConversations')}</p>
-                </div>
-              ) : conversations.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <div className="w-16 h-16 rounded-full bg-gray-50 flex items-center justify-center mb-3">
-                    <MessageSquare className="w-8 h-8 text-gray-300" />
-                  </div>
-                  <p className="text-sm font-medium text-gray-900 mb-1">{t('aiChat.noConversationsYet')}</p>
-                  <p className="text-xs text-gray-500">{t('aiChat.startNewChat')}</p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {conversations.map((conv) => (
-                    <div
-                      key={conv.conversation_id}
-                      onClick={() => handleLoadConversation(conv.conversation_id)}
-                      className={`group relative p-3 rounded-xl cursor-pointer transition-all border ${currentConversationId === conv.conversation_id
-                        ? 'bg-primary-50 border-primary-200 shadow-sm'
-                        : 'hover:bg-gray-50 border-transparent hover:border-gray-100'
-                        }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex-1 min-w-0">
-                          <h3 className={`text-sm font-medium truncate mb-1 ${currentConversationId === conv.conversation_id ? 'text-primary-900' : 'text-gray-900'
-                            }`}>
-                            {conv.title}
-                          </h3>
-                          <div className="flex items-center gap-1 text-xs text-gray-500">
-                            <Clock className="w-3 h-3" />
-                            {new Date(conv.updated_at).toLocaleDateString([], {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </div>
-                        </div>
-                        <button
-                          onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
-                          className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title={t('aiChat.deleteConversation')}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-        </div>
-      </div>
-
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col min-w-0 h-full relative z-10 overflow-hidden">
 
@@ -2506,6 +2355,26 @@ export default function AIChatPage() {
                     )
                   })}
                 </div>
+
+                {/* Deep Research Card - Full Width */}
+                <button
+                  onClick={() => navigate('/deep-research?new=1')}
+                  className="w-full max-w-2xl bg-indigo-50 hover:bg-indigo-100 p-3 sm:p-4 rounded-2xl text-left transition-all duration-200 hover:shadow-md hover:scale-[1.02] group border border-transparent hover:border-gray-200 mt-1 sm:mt-0"
+                >
+                  <div className="flex items-start gap-2.5 sm:gap-3">
+                    <div className="shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-white shadow-sm flex items-center justify-center group-hover:shadow-md transition-shadow">
+                      <Sparkles className="w-4 h-4 text-indigo-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <h3 className="text-xs sm:text-sm font-semibold text-gray-900">{t('aiChat.scenarioCards.deepResearch.title')}</h3>
+                        <span className="text-[10px] font-semibold text-indigo-600 bg-indigo-100 px-1.5 py-0.5 rounded-full">Beta</span>
+                      </div>
+                      <p className="text-xs text-gray-600 leading-snug">{t('aiChat.scenarioCards.deepResearch.description')}</p>
+                    </div>
+                  </div>
+                </button>
+
               </div>
             )}
             {/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
@@ -2808,7 +2677,7 @@ export default function AIChatPage() {
 
 
         {/* Input Area - Floating Island - Fixed to viewport bottom */}
-        <div className={`fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? 'lg:left-72' : 'lg:left-14'}`}>
+        <div className="fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out lg:left-[var(--sidebar-width,288px)]">
           <div className="max-w-4xl mx-auto pointer-events-auto">
             <form ref={formRef} id="chat-form" onSubmit={handleSubmit} className="relative group">
               <div className={`

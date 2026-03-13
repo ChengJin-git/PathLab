@@ -36,6 +36,14 @@ class ChatRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
+    async def get_conversation_meta(db: AsyncSession, conversation_id: str) -> Optional[ChatConversation]:
+        """Get conversation by ID without loading messages (lightweight)."""
+        result = await db.execute(
+            select(ChatConversation).where(ChatConversation.conversation_id == conversation_id)
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
     async def get_message(db: AsyncSession, message_id: int) -> Optional[ChatMessage]:
         """Get a chat message by ID with its parent conversation loaded."""
         result = await db.execute(

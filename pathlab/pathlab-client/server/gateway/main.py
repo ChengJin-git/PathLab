@@ -8,8 +8,9 @@ import asyncio
 import httpx
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from backend.database import init_db, close_db, get_db
@@ -44,6 +45,7 @@ from .routes import (
     settings_router,
     gpu_router,
     annotation_router,
+    research_chat_router,
 )
 from backend.common.config import Config
 
@@ -179,6 +181,10 @@ async def lifespan(app: FastAPI):
         await close_redis()
         logger.info("✓ Redis connections closed")
 
+        # Shutdown in-process deep research app (if started)
+        from .routes.research_chat import _shutdown_inproc_deep_research_app
+        await _shutdown_inproc_deep_research_app()
+
 
 # Create FastAPI app with lifespan
 app = FastAPI(title="PathLab Gateway", lifespan=lifespan)
@@ -191,6 +197,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Global handler for unhandled exceptions.
+
+    Starlette's ServerErrorMiddleware (outermost) catches unhandled exceptions and sends the 500
+    response via the raw ASGI send — bypassing CORSMiddleware entirely. This means the browser
+    gets a 500 with no CORS headers and treats it as a network failure ("Failed to fetch")
+    instead of an HTTP 500.
+
+    By registering this handler, Starlette calls it from ServerErrorMiddleware and uses the
+    returned JSONResponse directly. We manually include the CORS headers in the response so
+    the browser receives them and can properly display the actual error.
+    """
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    origin = request.headers.get("origin")
+    headers: dict[str, str] = {}
+    if origin:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return JSONResponse(
+        {"detail": "Internal Server Error"},
+        status_code=500,
+        headers=headers,
+    )
+
 
 # Serve user avatars as static files
 # These are stored in uploads/avatars/
@@ -446,6 +480,7 @@ app.include_router(heatmap_router)
 app.include_router(settings_router)
 app.include_router(gpu_router)
 app.include_router(annotation_router)
+app.include_router(research_chat_router)
 
 logger.info("Gateway service initialized with all route modules")
 

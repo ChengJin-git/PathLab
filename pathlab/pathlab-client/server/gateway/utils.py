@@ -10,7 +10,12 @@ from pathlib import Path
 import httpx
 from typing import Any, Callable, Iterable, Mapping, Optional
 
-from Aslide import Slide
+try:
+    from Aslide import Slide as _AslideSlide
+    _ASLIDE_AVAILABLE = True
+except Exception:
+    _AslideSlide = None
+    _ASLIDE_AVAILABLE = False
 from fastapi import HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -668,8 +673,12 @@ def extract_wsi_properties(wsi_path: str) -> dict:
     except Exception:
         file_size = 0
 
+    if not _ASLIDE_AVAILABLE:
+        logger.warning("Aslide not available (KFB library not supported on this platform), returning default WSI properties")
+        return {**default_props, "file_size": file_size}
+
     try:
-        with Slide(wsi_path) as slide:
+        with _AslideSlide(wsi_path) as slide:
             # Extract properties - start with file_size which is already retrieved
             props = {
                 "file_size": file_size,

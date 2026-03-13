@@ -122,7 +122,7 @@ export function startPythonSidecar(): Promise<number> {
 
     // In development mode, check if backend is already started externally
     if (isDev && process.env.PATHLAB_BACKEND_STARTED === '1') {
-      const expectedPort = parseInt(process.env.GATEWAY_PORT || '5100', 10)
+      const expectedPort = parseInt(process.env.GATEWAY_PORT || '6100', 10)
       console.log(`[Sidecar] Backend started externally, checking port ${expectedPort}...`)
       
       // Check if backend is running
@@ -175,9 +175,9 @@ export function startPythonSidecar(): Promise<number> {
       const env = {
         ...process.env,
         PATHLAB_DEBUG: process.env.PATHLAB_DEBUG || '1',
-        GATEWAY_PORT: process.env.GATEWAY_PORT || '5100',
-        PREPROCESSING_PORT: process.env.PREPROCESSING_PORT || '5101',
-        AI_PORT: process.env.AI_PORT || '5102',
+        GATEWAY_PORT: process.env.GATEWAY_PORT || '6100',
+        PREPROCESSING_PORT: process.env.PREPROCESSING_PORT || '6101',
+        AI_PORT: process.env.AI_PORT || '6102',
       }
       pythonProcess = spawn(pythonPath, [scriptPath], {
         env,

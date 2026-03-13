@@ -34,6 +34,7 @@ import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBloc
 import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
 import PatchInferenceCard, { parsePatchInferenceConfig, removePatchInferenceBlock } from './PatchInferenceCard'
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
+import { DeepResearchLinkCard, parseDeepResearchLinkBlock, removeDeepResearchLinkBlock } from './DeepResearchLinkCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
   parseAllSearchStatus,
@@ -127,7 +128,8 @@ const SPECIAL_BLOCK_TAGS = [
   'WEB_SEARCH_RESULT',
   'WEB_SEARCH',
   'READ_ARTICLE',
-  'CITATION_CONTEXTS'
+  'CITATION_CONTEXTS',
+  'DEEP_RESEARCH_LINK',
 ]
 
 /**
@@ -483,6 +485,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const metadataUploadConfig = parseMetadataUploadConfig(content)
   const modelListConfig = parseModelListConfig(content)
   const patchInferenceConfig = parsePatchInferenceConfig(content)
+  const deepResearchLink = parseDeepResearchLinkBlock(content)
   const referenceCards = parseAllReferenceCards(content)
   const pdfParseStatusItems = parseAllPdfParseStatus(content)
   const citationContexts = parseCitationContexts(content)
@@ -759,6 +762,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (metadataUploadConfig) displayContent = removeMetadataUploadBlock(displayContent)
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
   if (patchInferenceConfig) displayContent = removePatchInferenceBlock(displayContent)
+  if (deepResearchLink) displayContent = removeDeepResearchLinkBlock(displayContent)
   // Remove SEARCH_STATUS block - it handled separately
   if (searchStatus) displayContent = removeSearchStatusBlock(displayContent)
   // Remove WEB_SEARCH_RESULT block - it handled separately
@@ -1108,6 +1112,13 @@ const AssistantMessage = React.memo(function AssistantMessage({
         ) : incompleteTag === 'CSV_ACTION' && (
           <motion.div key="csv-action-skeleton" {...cardTransition}>
             <CSVActionSkeleton />
+          </motion.div>
+        )}
+
+        {/* Deep research link card */}
+        {deepResearchLink && (
+          <motion.div key="deep-research-link" {...cardTransition}>
+            <DeepResearchLinkCard config={deepResearchLink} />
           </motion.div>
         )}
 

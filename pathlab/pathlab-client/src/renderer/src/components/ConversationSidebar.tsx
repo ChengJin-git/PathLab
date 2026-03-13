@@ -156,15 +156,9 @@ export default function ConversationSidebar() {
   }, [location.pathname, urlConversationId])
 
   const openConversation = (targetConversationId: string) => {
-    const conv = conversations.find(c => c.conversation_id === targetConversationId)
-    const route = conv?.conversation_type === 'ai_chat' ? 'dashboard' : 'deep-research'
-    const returnToAIChatConversationId = route === 'deep-research'
-      ? preserveAIChatReturnContext()
-      : null
-
-    navigate(`/${route}/${targetConversationId}`, {
-      state: returnToAIChatConversationId ? { returnToAIChatConversationId } : undefined
-    })
+    // Always navigate to /dashboard/:id — AIChatPage will redirect to
+    // /deep-research/:id automatically if the conversation is deep_research type.
+    navigate(`/dashboard/${targetConversationId}`)
     if (window.innerWidth < 1024) {
       setShowHistory(false)
     }

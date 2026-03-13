@@ -159,6 +159,7 @@ def get_system_prompt_template(
     # Convert state to dict for template rendering
     state_vars = {
         "CURRENT_TIME": datetime.now().strftime("%a %b %d %Y %H:%M:%S %z"),
+        "CURRENT_YEAR": datetime.now().year,
         **state,
     }
 

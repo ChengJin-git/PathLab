@@ -35,6 +35,7 @@ from .heatmap import router as heatmap_router
 from .settings import router as settings_router
 from .gpu import router as gpu_router
 from .annotation import router as annotation_router
+from .research_chat import router as research_chat_router
 
 __all__ = [
     "auth_router",
@@ -53,5 +54,6 @@ __all__ = [
     "settings_router",
     "gpu_router",
     "annotation_router",
+    "research_chat_router",
 ]
 

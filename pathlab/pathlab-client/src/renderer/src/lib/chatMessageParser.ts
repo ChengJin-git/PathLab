@@ -27,6 +27,8 @@ export function sanitizeConfigBlocksForAI(content: string): string {
   sanitized = sanitized.replace(/\[OPTIONS\][\s\S]*?\[\/OPTIONS\]/g, '')
   sanitized = sanitized.replace(/\[MODEL_LIST\][\s\S]*?\[\/MODEL_LIST\]/g, '')
   sanitized = sanitized.replace(/\[PATCH_INFERENCE\][\s\S]*?\[\/PATCH_INFERENCE\]/g, '')
+  sanitized = sanitized.replace(/\[DEEP_RESEARCH_LINK\][\s\S]*?\[\/DEEP_RESEARCH_LINK\]/g, '')
+  sanitized = sanitized.replace(/\[TRAINING_CHAT_LINK\][\s\S]*?\[\/TRAINING_CHAT_LINK\]/g, '')
 
   // Fields to strip per config block type
   const PERSISTENCE_FIELDS: Record<string, string[]> = {

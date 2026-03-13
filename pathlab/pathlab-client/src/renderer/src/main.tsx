@@ -17,7 +17,7 @@ const isElectron = !!(window as any).electron || window.location.protocol === 'f
 
 // Register Service Worker for PWA support
 // Only register in browser environment (not in Electron)
-if ('serviceWorker' in navigator && !isElectron) {
+if ('serviceWorker' in navigator && !isElectron && !import.meta.env.DEV) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
       .then((registration) => {

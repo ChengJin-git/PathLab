@@ -38,9 +38,6 @@ export function ConversationStarter({
         <p className="mx-auto mt-2 max-w-2xl text-base text-gray-500">
           {t("aiChat.scenarioCards.deepResearch.welcomeDescription")}
         </p>
-        <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-gray-400">
-          {t("aiChat.scenarioCards.deepResearch.description")}
-        </p>
       </div>
     </div>
   );

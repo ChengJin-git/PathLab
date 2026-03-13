@@ -243,8 +243,13 @@ class Config:
             "openrouter_model": data.get("openrouter_model", "qwen/qwen3.5-plus-02-15"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
+            "search_provider": data.get("search_provider", "tavily"),
             # Exa Search API key for web search functionality
             "exa_api_key": data.get("exa_api_key", ""),
+            # Tavily API key for deep research web search
+            "tavily_api_key": data.get("tavily_api_key", ""),
+            # Jina Reader API key for deep research web reading/crawling
+            "jina_api_key": data.get("jina_api_key", ""),
             # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
             "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
@@ -262,6 +267,12 @@ class Config:
         }
 
     @classmethod
+    def resolve_search_provider(cls, settings: dict) -> str:
+        """Resolve the active search provider from settings dict. Returns 'exa' or 'tavily'."""
+        provider = settings.get("search_provider", "exa")
+        return provider if provider in ("exa", "tavily") else "exa"
+
+    @classmethod
     def update_global_settings(cls, settings: dict) -> dict:
         """Update global settings. Only updates provided keys."""
         allowed_keys = {
@@ -270,8 +281,13 @@ class Config:
             "openrouter_model",
             "huggingface_token",
             "dashscope_api_key",
+            "search_provider",
             # Exa Search API key
             "exa_api_key",
+            # Tavily API key
+            "tavily_api_key",
+            # Jina Reader API key
+            "jina_api_key",
             # Local vLLM settings
             "local_vllm_enabled",
             "local_vllm_base_url",
