@@ -72,6 +72,10 @@ const toRun = (task: ChatPatchInferenceTask): PatchInferenceRun => ({
   error: task.error,
 })
 
+const segmentationPanelClassName = 'overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]'
+
+const segmentationImageClassName = 'aspect-[4/3] w-full rounded-xl object-cover bg-white'
+
 export function PatchInferenceCard({ config, conversationId, messageId, referenceImages = [], onPersistConfig, onToast }: PatchInferenceCardProps) {
   const { t } = useTranslation()
   const [submittingType, setSubmittingType] = useState<ChatPatchInferenceType | null>(null)
@@ -179,31 +183,39 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
               </div>
             )}
             {effectiveRun.status === 'completed' && type === 'segmentation' && (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1">
-                    <div className="text-xs text-gray-500">{t('chatComponents.patchInference.originalImage')}</div>
-                    <img src={selectedImage ?? ''} alt="original" className="w-full rounded-lg object-cover" />
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-xs text-gray-500">{t('chatComponents.patchInference.segmentationOverlay')}</div>
+              <div className="space-y-3">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.85fr)]">
+                  <div className={`${segmentationPanelClassName} p-2.5`}>
+                    <div className="mb-2 flex items-center justify-between gap-3 px-0.5">
+                      <div className="text-xs font-medium tracking-[0.02em] text-slate-600">{t('chatComponents.patchInference.segmentationOverlay')}</div>
+                      <span className="rounded-full bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">{effectiveRun.model_name}</span>
+                    </div>
                     {effectiveRun.result?.overlay_image_data_url
-                      ? <img src={effectiveRun.result.overlay_image_data_url} alt="segmentation overlay" className="w-full rounded-lg object-cover" />
-                      : <div className="text-xs text-gray-400">{t('chatComponents.patchInference.noSegmentationMask')}</div>
+                      ? <img src={effectiveRun.result.overlay_image_data_url} alt="segmentation overlay" className={segmentationImageClassName} />
+                      : <div className="flex aspect-[4/3] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-4 text-center text-xs text-slate-400">{t('chatComponents.patchInference.noSegmentationMask')}</div>
                     }
                   </div>
-                </div>
-                {!!effectiveRun.result?.coverage_by_class?.length && (
-                  <div className="flex flex-wrap gap-x-3 gap-y-1">
-                    {effectiveRun.result.coverage_by_class.map((item, idx) => (
-                      <div key={item.label} className="flex items-center gap-1 text-xs text-gray-600">
-                        <span className="inline-block w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: SEG_PALETTE[idx % SEG_PALETTE.length] }} />
-                        <span>{item.label}</span>
-                        <span className="text-gray-400">{(item.coverage_ratio * 100).toFixed(1)}%</span>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    <div className={`${segmentationPanelClassName} p-2.5`}>
+                      <div className="mb-2 px-0.5 text-xs font-medium tracking-[0.02em] text-slate-600">{t('chatComponents.patchInference.originalImage')}</div>
+                      <img src={selectedImage ?? ''} alt="original" className={segmentationImageClassName} />
+                    </div>
+
+                    {!!effectiveRun.result?.coverage_by_class?.length && (
+                      <div className={`${segmentationPanelClassName} p-3`}>
+                        <div className="flex flex-wrap gap-2">
+                          {effectiveRun.result.coverage_by_class.map((item, idx) => (
+                            <div key={item.label} className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: SEG_PALETTE[idx % SEG_PALETTE.length] }} />
+                              <span>{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
+                </div>
               </div>
             )}
             {(effectiveRun.status === 'failed' || effectiveRun.status === 'cancelled') && (
