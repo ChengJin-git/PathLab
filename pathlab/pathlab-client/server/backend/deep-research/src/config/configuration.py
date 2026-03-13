@@ -72,7 +72,6 @@ class Configuration:
     llm_override: dict = field(
         default_factory=dict
     )  # Per-request LLM override: {base_url, model, api_key}
-
     @classmethod
     def from_runnable_config(
         cls, config: Optional[RunnableConfig] = None
