@@ -1276,6 +1276,7 @@
     "aiErrorFallback": "抱歉，我遇到了錯誤。請重試。",
     "generationCancelled": "用戶取消了回答。",
     "generationTimeout": "回答超時，請重試。",
+    "pdfLargeDocumentSlowNotice": "正在處理大型文檔，解析可能需要幾分鐘，請耐心等待。",
     "imageAnalysis": "圖像分析",
     "excelMultipleSheets": "Excel 檔案有 {{count}} 個工作表：",
     "excelMoreSheets": "  ... 以及另外 {{count}} 個",

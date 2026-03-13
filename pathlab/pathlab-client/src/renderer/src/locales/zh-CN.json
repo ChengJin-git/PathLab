@@ -1280,6 +1280,7 @@
     "aiErrorFallback": "抱歉，我遇到了错误。请重试。",
     "generationCancelled": "用户取消了回答。",
     "generationTimeout": "回答超时，请重试。",
+    "pdfLargeDocumentSlowNotice": "正在处理大型文档，解析可能需要几分钟，请耐心等待。",
     "imageAnalysis": "图像分析",
     "excelMultipleSheets": "Excel 文件有 {{count}} 个工作表：",
     "excelMoreSheets": "  ... 以及另外 {{count}} 个",

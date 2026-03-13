@@ -1224,6 +1224,9 @@ export default function AIChatPage() {
     const SILENCE_TIMEOUT_MS = 60_000
     let isTimeoutAbort = false
     let silenceTimer: ReturnType<typeof setTimeout> | null = null
+    // Slow-document warning: shown after 60 s of continuous PDF downloading/parsing
+    let pdfSlowWarningTimer: ReturnType<typeof setTimeout> | null = null
+    let pdfSlowWarningSent = false
 
     const startSilenceTimer = () => {
       if (silenceTimer !== null) clearTimeout(silenceTimer)
@@ -1395,6 +1398,18 @@ export default function AIChatPage() {
           }
         }))
       }, (event) => {
+        // PDF heartbeat events keep the connection alive — reset the silence timer
+        // so large-document parsing doesn't trigger a false timeout abort.
+        startSilenceTimer()
+        // Start the slow-document notice timer on the first downloading/parsing event.
+        if (!pdfSlowWarningSent && pdfSlowWarningTimer === null &&
+            (event.status === 'downloading' || event.status === 'parsing')) {
+          pdfSlowWarningTimer = setTimeout(() => {
+            pdfSlowWarningTimer = null
+            pdfSlowWarningSent = true
+            showToastRef.current('info', t('aiChat.pdfLargeDocumentSlowNotice'))
+          }, 60_000)
+        }
         const currentId = trackingId
         setMessages(prev => prev.map(m => {
           if (m.id !== currentId) return m
@@ -1533,6 +1548,11 @@ export default function AIChatPage() {
       if (silenceTimer !== null) {
         clearTimeout(silenceTimer)
         silenceTimer = null
+      }
+      // Clear slow-document warning timer
+      if (pdfSlowWarningTimer !== null) {
+        clearTimeout(pdfSlowWarningTimer)
+        pdfSlowWarningTimer = null
       }
       // Flush any remaining buffered chunks before finishing
       if (rafId !== null) {

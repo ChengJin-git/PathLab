@@ -4442,7 +4442,7 @@ async def process_pdf_url(
                 logger.info(f"Using cached PDF for {url}" + (" (with cached markdown)" if cached_markdown else ""))
 
         if not pdf_bytes:
-            pdf_bytes = await download_pdf(url)
+            pdf_bytes = await download_pdf(url, timeout=180.0)
             if pdf_bytes and use_cache:
                 _save_pdf_to_cache(url, pdf_bytes, title)
 
