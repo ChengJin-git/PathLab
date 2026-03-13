@@ -21,6 +21,7 @@ export interface PreprocessingStepProps {
   setPyramidLevel: (level: number) => void
   featureBatchSize: number
   setFeatureBatchSize: (size: number) => void
+  canUseGpu?: boolean
 
   // Segmentation parameters
   segSthresh: number
@@ -59,6 +60,7 @@ export function PreprocessingStep({
   extractorSearch,
   setExtractorSearch,
   filteredExtractors,
+  canUseGpu = false,
   canProceed,
   onBack,
   onNext,
@@ -105,7 +107,9 @@ export function PreprocessingStep({
                   onChange={(e) => setFeatureBatchSize(Number(e.target.value))}
                   min={1}
                 />
-                <span className="text-[9px] sm:text-xs text-gray-400 font-medium whitespace-nowrap">{t('training.preprocessing.gpuPatches')}</span>
+                {canUseGpu && (
+                  <span className="text-[9px] sm:text-xs text-gray-400 font-medium whitespace-nowrap">{t('training.preprocessing.gpuPatches')}</span>
+                )}
               </div>
             </div>
 

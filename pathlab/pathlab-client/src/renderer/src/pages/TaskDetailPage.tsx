@@ -24,7 +24,7 @@ export default function TaskDetailPage() {
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canUseGpu } = useAuth()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const [task, setTask] = useState<TaskDetail | null>(null)
   const [logs, setLogs] = useState<LogEntry[]>([])
@@ -304,7 +304,7 @@ export default function TaskDetailPage() {
           // Note: tile_size and stride are now auto-determined by PrePATH-style tiling
           feature_extractor: task.preprocessing_config.feature_extractor ?? 'resnet50',
           feature_batch_size: task.preprocessing_config.feature_batch_size ?? 256,
-          use_gpu: task.preprocessing_config.use_gpu ?? true,
+          use_gpu: (task.preprocessing_config.use_gpu ?? false) && canUseGpu,
           // Preserve tissue segmentation parameters
           level: task.preprocessing_config.level,
           sthresh: task.preprocessing_config.sthresh,

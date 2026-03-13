@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
+import { useAuth } from '../../contexts/AuthContext'
 import {
   markTrainingSubmissionCreated,
   markTrainingSubmissionFailed,
@@ -196,6 +197,7 @@ export function removeTaskConfigBlock(content: string): string {
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
   const { t } = useTranslation()
   const { hasUploadingTasks } = useBackgroundTask()
+  const { canUseGpuForDataset } = useAuth()
   const [config, setConfig] = useState<AgentTaskConfig>(normalizeAgentTaskConfig(initialConfig))
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -496,7 +498,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             ? resolvedSegBackbone
             : (config.encoder ?? DEFAULT_EXTRACTOR),
           feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
-          use_gpu: true,
+          use_gpu: canUseGpuForDataset(selectedDatasetId ?? ''),
           // Tissue segmentation parameters (WSI only)
           sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,
           mthresh: config.mthresh ?? SEGMENTATION_DEFAULTS.mthresh,

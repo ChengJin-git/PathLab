@@ -4384,9 +4384,7 @@ async def chat_with_ai(
                     for did in heatmap_dataset_ids
                     if did in dataset_id_to_name
                 )
-                info_parts.append(
-                    f"heatmap_result_datasets=[{heatmap_datasets_str}]"
-                )
+                info_parts.append(f"heatmap_result_datasets=[{heatmap_datasets_str}]")
             else:
                 info_parts.append("heatmap_result_datasets=[]")
 
@@ -4451,9 +4449,7 @@ async def chat_with_ai(
                 if summary["id"] not in matching_model_ids
             ]
             if other_recent_models:
-                models_sections.append(
-                    "  ADDITIONAL CANDIDATE MODELS:"
-                )
+                models_sections.append("  ADDITIONAL CANDIDATE MODELS:")
                 models_sections.extend(
                     summary["line"] for summary in other_recent_models
                 )
@@ -4503,7 +4499,11 @@ async def chat_with_ai(
         temp_perms_list = "  None"
 
     # Get GPU status for system prompt
-    gpu_summary = get_gpu_summary_for_prompt()
+    gpu_summary = (
+        get_gpu_summary_for_prompt()
+        if can_use_gpu_base
+        else "GPU details hidden for guest role"
+    )
 
     # Format training tasks info (recent 10 tasks with summary)
     training_tasks_total = training_tasks_stats.get("total", 0)

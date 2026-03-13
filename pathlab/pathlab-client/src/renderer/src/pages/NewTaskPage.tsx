@@ -8,6 +8,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
+import { useAuth } from '../contexts/AuthContext'
 import {
   fetchExtractors,
   createTrainingTask,
@@ -63,6 +64,7 @@ export default function NewTaskPage() {
   const navigate = useNavigate()
   const { t } = useTranslation()
   const { addDeleteWSITask, hasUploadingTasks } = useBackgroundTask()
+  const { canUseGpuForDataset } = useAuth()
 
   // ========== Custom Hooks ==========
   const wizard = useTaskWizard()
@@ -556,7 +558,7 @@ export default function NewTaskPage() {
           level: trainingConfig.pyramidLevel,
           feature_extractor: trainingConfig.featureExtractor,
           feature_batch_size: trainingConfig.featureBatchSize,
-          use_gpu: true,
+          use_gpu: canUseGpuForDataset(dataSelection.selectedDatasetId ?? ''),
           sthresh: trainingConfig.segSthresh,
           mthresh: trainingConfig.segMthresh,
           close: trainingConfig.segClose,
@@ -820,6 +822,7 @@ export default function NewTaskPage() {
               setSegMthresh={trainingConfig.setSegMthresh}
               segUseOtsu={trainingConfig.segUseOtsu}
               setSegUseOtsu={trainingConfig.setSegUseOtsu}
+              canUseGpu={canUseGpuForDataset(dataSelection.selectedDatasetId ?? '')}
               canProceed={canProceedStep3}
               onBack={() => wizard.setCurrentStep(2)}
               onNext={() => wizard.setCurrentStep(4)}
