@@ -48,7 +48,7 @@ export function hasToolExecutionEvidence(toolCall: ToolCallRuntime): boolean {
     return toolCall.started === true || toolCall.result !== undefined || toolCall.status !== undefined;
 }
 
-export function isToolCallRunning(toolCall: ToolCallRuntime): boolean {
+function isToolCallRunning(toolCall: ToolCallRuntime): boolean {
     return toolCall.started === true && toolCall.result === undefined && toolCall.status === undefined;
 }
 
@@ -719,7 +719,7 @@ export function PythonToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     );
 }
 
-export function PythonToolCallResult({ result }: { result: string }) {
+function PythonToolCallResult({ result }: { result: string }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
     const { resolvedTheme } = useTheme();
@@ -769,7 +769,7 @@ export function PythonToolCallResult({ result }: { result: string }) {
 }
 
 // Friendly display names and icons for known tool functions
-export const TOOL_DISPLAY_MAP: Record<
+const TOOL_DISPLAY_MAP: Record<
     string,
     { labelKey: string; icon: React.ReactNode; descriptionKey: string }
 > = {
@@ -795,7 +795,7 @@ export const TOOL_DISPLAY_MAP: Record<
     },
 };
 
-export function getToolDisplay(
+function getToolDisplay(
     toolName: string,
     t: (key: string, params?: Record<string, unknown>) => string,
 ) {
@@ -819,7 +819,7 @@ export function getToolDisplay(
 }
 
 /** Try to render a user-friendly summary from tool call result JSON */
-export function MCPToolResultSummary({ result }: { result: string }) {
+function MCPToolResultSummary({ result }: { result: string }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
     const parsed = useMemo(() => safeParseToolResult(result), [result]);

@@ -99,15 +99,13 @@ export function MessageListView({
         const isEmptyContent =
           !trimmedContent &&
           !isResearchRoot &&
-          message.agent !== "planner" &&
-          message.agent !== "podcast";
+          message.agent !== "planner";
         const passesMessageListItem =
           !isLocaleOnly &&
           !isEmptyContent &&
           (message.role === "user" ||
             message.role === "assistant" ||
             message.agent === "coordinator" ||
-            message.agent === "podcast" ||
             isResearchRoot);
 
         const reason: string[] = [];
