@@ -31,7 +31,13 @@ from backend.database.repositories import (
     TrainingLogRepository,
     AITaskRepository,
 )
-from backend.database.models import TrainingTask, DataGroup, WSISlide, TrainingTaskWSI
+from backend.database.models import (
+    TrainingTask,
+    DataGroup,
+    WSISlide,
+    TrainingTaskWSI,
+    AIResult,
+)
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import (
     check_data_ownership,
@@ -4160,6 +4166,9 @@ async def chat_with_ai(
         training_dataset_ids_map: Dict[str, set] = {}
         training_wsi_ids_map: Dict[str, Set[str]] = {}
         source_dataset_ids_map: Dict[str, Optional[str]] = {}
+        # task_id -> dataset_ids with persisted AI results/heatmap artifacts
+        result_dataset_ids_map: Dict[str, Set[str]] = {}
+        heatmap_dataset_ids_map: Dict[str, Set[str]] = {}
         if task_ids:
             from sqlalchemy import select
 
@@ -4201,6 +4210,30 @@ async def chat_with_ai(
                 if tid not in training_dataset_ids_map:
                     training_dataset_ids_map[tid] = set()
                 training_dataset_ids_map[tid].add(did)
+
+            # Batch-query persisted AI results to provide dataset-specific evidence
+            # for image/heatmap browsing prompts.
+            result_rows = await db.execute(
+                select(AIResult.task_id, WSISlide.dataset_id, AIResult.extra_metadata)
+                .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
+                .where(AIResult.task_id.in_(task_ids), WSISlide.dataset_id.isnot(None))
+            )
+            for task_id, dataset_id, extra_metadata in result_rows.all():
+                if task_id not in result_dataset_ids_map:
+                    result_dataset_ids_map[task_id] = set()
+                result_dataset_ids_map[task_id].add(dataset_id)
+
+                meta = extra_metadata if isinstance(extra_metadata, dict) else {}
+                has_heatmap_artifact = bool(
+                    meta.get("attention_path")
+                    or meta.get("cam_file")
+                    or meta.get("heatmap_path")
+                    or meta.get("attention_scores_path")
+                )
+                if has_heatmap_artifact:
+                    if task_id not in heatmap_dataset_ids_map:
+                        heatmap_dataset_ids_map[task_id] = set()
+                    heatmap_dataset_ids_map[task_id].add(dataset_id)
 
         for m in trained_models:
             model_name = m.model_name
@@ -4249,6 +4282,20 @@ async def chat_with_ai(
                 if ds_source and ds_source not in seen_sources:
                     training_dataset_sources.append(ds_source)
                     seen_sources.add(ds_source)
+
+            # Dataset-level evidence from persisted AI results (and heatmap artifacts)
+            result_dataset_ids = result_dataset_ids_map.get(model_task_id, set())
+            heatmap_dataset_ids = heatmap_dataset_ids_map.get(model_task_id, set())
+            result_dataset_names = [
+                dataset_id_to_name[did]
+                for did in result_dataset_ids
+                if did in dataset_id_to_name
+            ]
+            heatmap_dataset_names = [
+                dataset_id_to_name[did]
+                for did in heatmap_dataset_ids
+                if did in dataset_id_to_name
+            ]
 
             # Get embedding dimension for WSI models
             embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
@@ -4321,6 +4368,28 @@ async def chat_with_ai(
                     f"trained_on_dataset={', '.join(training_dataset_names)}"
                 )
 
+            if result_dataset_names:
+                result_datasets_str = ", ".join(
+                    f"{dataset_id_to_name[did]} (dataset_id={did})"
+                    for did in result_dataset_ids
+                    if did in dataset_id_to_name
+                )
+                info_parts.append(f"result_evidence_datasets=[{result_datasets_str}]")
+            else:
+                info_parts.append("result_evidence_datasets=[]")
+
+            if heatmap_dataset_names:
+                heatmap_datasets_str = ", ".join(
+                    f"{dataset_id_to_name[did]} (dataset_id={did})"
+                    for did in heatmap_dataset_ids
+                    if did in dataset_id_to_name
+                )
+                info_parts.append(
+                    f"heatmap_result_datasets=[{heatmap_datasets_str}]"
+                )
+            else:
+                info_parts.append("heatmap_result_datasets=[]")
+
             info_parts.append(f"trained_on_task={model_task_id}")
 
             # Add pre-computed compatible datasets list (API-level filtering)
@@ -4343,7 +4412,10 @@ async def chat_with_ai(
                     # label/dataset/task_name even when they fall outside the
                     # MAX_MODELS_IN_CHAT_CONTEXT recent-model window).
                     "classes": [c.lower() for c in model_classes],
-                    "dataset_names": [n.lower() for n in training_dataset_names],
+                    "dataset_names": [
+                        n.lower()
+                        for n in (training_dataset_names + result_dataset_names)
+                    ],
                     "dataset_sources": [s.lower() for s in training_dataset_sources],
                     "task_name": (training_task.task_name or "").lower()
                     if training_task

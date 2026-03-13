@@ -1070,6 +1070,7 @@ When user wants to browse/analyze images (WSI or patches):
      - matching entries in **USER'S TRAINED MODELS** (including segmentation models), and/or
      - clearly relevant completed items in **USER'S TRAINING TASKS** / **USER'S INFERENCE TASKS**.
    - A trained model on a DIFFERENT dataset is not enough by itself. For a selected dataset, heatmaps / prediction masks require dataset-specific evidence.
+  - Prioritize `heatmap_result_datasets` and `result_evidence_datasets` in model context when checking dataset-specific evidence. If either list contains the current dataset_id, do not incorrectly claim that heatmaps/results are unavailable.
    - `compatible_validation_datasets` must NEVER be used as proof that browseable heatmaps/prediction masks already exist on that dataset. It only means the dataset is structurally compatible for external validation.
    - If a dataset has no evidence of available model outputs in the current context, do NOT recommend it in [OPTIONS].
    - Do NOT rely on the frontend fallback (“if unavailable, only original image is shown”) when choosing which datasets to recommend. The filtering must happen before you present dataset choices.

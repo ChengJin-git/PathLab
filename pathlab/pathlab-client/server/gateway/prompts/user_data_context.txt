@@ -52,6 +52,8 @@ The following model entries are available for this turn's reasoning about infere
 - source_dataset_id: May appear for segmentation models to indicate the source dataset used by that task
 - trained_on_dataset: Name of the dataset used for training
 - trained_on_task: Source training task ID
+- result_evidence_datasets: Datasets (with dataset_id) where persisted results for this model/task already exist
+- heatmap_result_datasets: Datasets (with dataset_id) where persisted heatmap/attention artifacts for this model/task already exist
 - compatible_validation_datasets: PRE-FILTERED list of datasets (with dataset_id) that are compatible for external validation with this model. Already excludes the training dataset and enforces data_type/task_type/extractor/label compatibility. Use ONLY these datasets when the user asks for external validation.
 - CRITICAL: `compatible_validation_datasets` is ONLY about external-validation compatibility. It is NOT evidence that those datasets already have stored heatmaps, predictions, or segmentation masks.
 

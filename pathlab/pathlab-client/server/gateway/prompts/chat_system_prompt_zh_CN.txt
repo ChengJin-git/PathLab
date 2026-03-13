@@ -1071,6 +1071,7 @@ AI 回复：
      - **用户已训练模型** 中能对上该数据集的模型（包括 segmentation 模型），和/或
      - **用户的训练任务 / 推理任务** 中能明确支持该请求的已完成结果。
    - 仅仅在**另一个数据集**上有已训练模型还不够。对当前选中的数据集，heatmap / prediction mask 必须有**该数据集自己的结果证据**。
+  - 优先使用模型上下文中的 `heatmap_result_datasets` 与 `result_evidence_datasets` 判断是否存在该数据集的证据；如果其中包含当前 dataset_id，不要误判为“没有热力图/没有结果”。
    - `compatible_validation_datasets` **只能**用于 external validation 兼容性，**绝不能**当成“这个数据集已经有 heatmap / prediction mask”的证据。
    - 如果当前上下文里看不出某个数据集有对应模型输出，就**不要**把它放进 [OPTIONS] 推荐列表。
    - 不要把“前端拿不到结果时只显示原图”当成推荐依据；**过滤必须发生在给用户展示数据集选项之前**。
