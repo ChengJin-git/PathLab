@@ -37,8 +37,7 @@ CRITICAL: When user asks "what data do I have" or similar questions, you MUST li
 
 ## USER'S TRAINED MODELS
 
-The user has **{models_count}** trained model(s) available for inference and external validation.
-For chat performance, the detailed list below is intentionally truncated: it shows at most the newest 5 models, and may also include up to 5 models matching the current request filters.
+The following model entries are available for this turn's reasoning about inference and external validation.
 {models_list}
 
 **Model Information Format**: Each model shows:

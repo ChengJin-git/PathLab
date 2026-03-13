@@ -101,6 +101,9 @@ ACTIVE_TRAINING_STATUSES = {
 }
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 MAX_MODELS_IN_CHAT_CONTEXT = 5
+DEFAULT_MODEL_SCAN_LIMIT = 100
+FILTERED_MODEL_SCAN_LIMIT = 5000
+MODEL_SCAN_BATCH_SIZE = 200
 _PATCH_INFERENCE_BLOCK_RE = re.compile(
     r"\[PATCH_INFERENCE\]([\s\S]*?)\[/PATCH_INFERENCE\]"
 )
@@ -1854,6 +1857,34 @@ def _matches_model_request_filters(
                 if not in_list and kw_lower not in task_name_str:
                     return False
     return True
+
+
+def _matches_quick_model_request_filters(model: Any, filters: Dict[str, Any]) -> bool:
+    """Fast keyword-only model match used for chunked scan early-stop.
+
+    This intentionally performs a conservative subset of full matching logic
+    without DB joins. Full filtering still happens later via
+    _matches_model_request_filters on enriched model summaries.
+    """
+    text_keywords = filters.get("text_keywords") or []
+    if not text_keywords:
+        return False
+
+    classes = model.classes or []
+    if not isinstance(classes, list):
+        classes = []
+
+    search_space: List[str] = [
+        (model.model_name or "").lower(),
+        (model.feature_extractor or "").lower(),
+        (model.aggregator or "").lower(),
+        (model.task_id or "").lower(),
+    ] + [str(cls).lower() for cls in classes]
+
+    return all(
+        any(keyword.lower() in field for field in search_space)
+        for keyword in text_keywords
+    )
 
 
 def _format_model_filter_summary(filters: Dict[str, Any]) -> str:
@@ -3857,12 +3888,60 @@ async def chat_with_ai(
         db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
     )
 
-    # Fetch user's trained models. Keep a larger internal scan window so we can
-    # deterministically filter for the current request, but only expose a small
-    # recent subset to the LLM/UI context for performance.
-    trained_models = await TrainedModelRepository.get_all(
-        db, limit=100, offset=0, user_id=user_id_filter
-    )
+    latest_user_text = ""
+    for msg in reversed(req.messages):
+        if msg.get("role") == "user":
+            latest_user_text = extract_text_from_content(msg.get("content", ""))
+            if latest_user_text.strip():
+                break
+    inferred_model_filters = _infer_model_request_filters(latest_user_text)
+
+    # Fetch user's trained models. For filtered requests, scan in chunks and
+    # stop early once enough quick keyword matches are found, reducing overhead
+    # while still improving recall for older models.
+    if inferred_model_filters:
+        trained_models = []
+        scanned_count = 0
+        quick_match_count = 0
+
+        while scanned_count < FILTERED_MODEL_SCAN_LIMIT:
+            batch_limit = min(
+                MODEL_SCAN_BATCH_SIZE,
+                FILTERED_MODEL_SCAN_LIMIT - scanned_count,
+            )
+            batch = await TrainedModelRepository.get_all(
+                db,
+                limit=batch_limit,
+                offset=scanned_count,
+                user_id=user_id_filter,
+            )
+            if not batch:
+                break
+
+            trained_models.extend(batch)
+            scanned_count += len(batch)
+
+            if inferred_model_filters.get("text_keywords"):
+                quick_match_count += sum(
+                    1
+                    for item in batch
+                    if _matches_quick_model_request_filters(
+                        item, inferred_model_filters
+                    )
+                )
+
+                if (
+                    quick_match_count >= MAX_MODELS_IN_CHAT_CONTEXT
+                    and scanned_count >= DEFAULT_MODEL_SCAN_LIMIT
+                ):
+                    break
+
+            if len(batch) < batch_limit:
+                break
+    else:
+        trained_models = await TrainedModelRepository.get_all(
+            db, limit=DEFAULT_MODEL_SCAN_LIMIT, offset=0, user_id=user_id_filter
+        )
     trained_models_total = await TrainedModelRepository.count(
         db, user_id=user_id_filter
     )
@@ -4072,14 +4151,6 @@ async def chat_with_ai(
         "GPFM": 1024,
     }
 
-    latest_user_text = ""
-    for msg in reversed(req.messages):
-        if msg.get("role") == "user":
-            latest_user_text = extract_text_from_content(msg.get("content", ""))
-            if latest_user_text.strip():
-                break
-    inferred_model_filters = _infer_model_request_filters(latest_user_text)
-
     if trained_models:
         model_summaries = []
         # Batch query all training tasks to get detailed info with eager loading
@@ -4282,12 +4353,7 @@ async def chat_with_ai(
             )
 
         recent_model_summaries = model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
-        models_sections = [
-            (
-                f"  NOTE: To keep chat responsive, only up to the {MAX_MODELS_IN_CHAT_CONTEXT} most recent "
-                f"models are expanded below. The user has {trained_models_total} total trained model(s)."
-            )
-        ]
+        models_sections = []
 
         if inferred_model_filters:
             matching_model_summaries = [
@@ -4297,7 +4363,7 @@ async def chat_with_ai(
             ][:MAX_MODELS_IN_CHAT_CONTEXT]
             filter_summary = _format_model_filter_summary(inferred_model_filters)
             models_sections.append(
-                f"  MATCHING CURRENT REQUEST (preferred for this turn; newest first; filters={filter_summary}):"
+                f"  MATCHING CURRENT REQUEST (preferred for this turn; filters={filter_summary}):"
             )
             if matching_model_summaries:
                 models_sections.extend(
@@ -4314,15 +4380,13 @@ async def chat_with_ai(
             ]
             if other_recent_models:
                 models_sections.append(
-                    f"  OTHER RECENT MODELS (newest first; max {MAX_MODELS_IN_CHAT_CONTEXT}):"
+                    "  ADDITIONAL CANDIDATE MODELS:"
                 )
                 models_sections.extend(
                     summary["line"] for summary in other_recent_models
                 )
         else:
-            models_sections.append(
-                f"  RECENT MODELS (newest first; max {MAX_MODELS_IN_CHAT_CONTEXT}):"
-            )
+            models_sections.append("  CANDIDATE MODELS:")
             models_sections.extend(
                 summary["line"] for summary in recent_model_summaries
             )

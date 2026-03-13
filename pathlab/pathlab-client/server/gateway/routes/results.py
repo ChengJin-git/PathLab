@@ -1446,6 +1446,10 @@ async def _run_inference_patch_classification(
     import numpy as np
     from PIL import Image
     from backend.ai.extractors import get_extractor
+    from backend.ai.utils.patch_resize import (
+        build_patch_classification_transform,
+        resolve_patch_resize_size,
+    )
     from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size, is_cnn_extractor
     from backend.database.repositories import AIResultRepository
 
@@ -1515,8 +1519,11 @@ async def _run_inference_patch_classification(
     linear_probe.load_state_dict(checkpoint["state_dict"])
     linear_probe.eval()
 
-    # Get transforms
-    fm_transform = extractor.get_transforms()
+    # Match patch-classification training preprocessing.
+    target_size = resolve_patch_resize_size(extractor_name)
+    fm_transform = build_patch_classification_transform(
+        extractor, target_size, mode="eval"
+    )
 
     # Get CAM extractor
     cam_extractor = get_cam_extractor(extractor_name)
@@ -1724,6 +1731,7 @@ async def _run_inference_patch_segmentation(
     import numpy as np
     import segmentation_models_pytorch as smp
     from backend.ai.segmentors import Segmentor
+    from backend.ai.utils.patch_resize import resolve_patch_resize_size
     from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
     from backend.database.repositories import AIResultRepository, TrainedModelRepository
     from PIL import Image
@@ -1769,9 +1777,12 @@ async def _run_inference_patch_segmentation(
         model.eval()
 
         norm_mean, norm_std = segmentor.get_normalization_params()
-        return model, config, norm_mean, norm_std, num_classes
+        resize_size = resolve_patch_resize_size(
+            backbone, is_segmentation_backbone=True
+        )
+        return model, config, norm_mean, norm_std, num_classes, resize_size
 
-    model, model_config, norm_mean, norm_std, num_classes = await asyncio.to_thread(_load_model)
+    model, model_config, norm_mean, norm_std, num_classes, resize_size = await asyncio.to_thread(_load_model)
     if not class_names:
         class_names = _normalize_label_names(
             (model_config.get("dataset") or {}).get("class_names", [])
@@ -1825,7 +1836,12 @@ async def _run_inference_patch_segmentation(
         logger.info("No COCO annotations found — running inference only (no per-image metrics)")
 
     # Run inference
-    val_transform = get_transforms("val", normalization_mean=norm_mean, normalization_std=norm_std)
+    val_transform = get_transforms(
+        "val",
+        size=(resize_size, resize_size),
+        normalization_mean=norm_mean,
+        normalization_std=norm_std,
+    )
     ai_results_root = uploads_dir / "ai_results"
     results_saved = 0
     total_items = len(image_paths)
@@ -1862,12 +1878,7 @@ async def _run_inference_patch_segmentation(
 
                     # Prepare image tensor
                     img_tensor = v2.ToImage()(img)
-                    img_tensor = v2.ToDtype(torch.float32, scale=True)(img_tensor)
-                    img_tensor = v2.Resize((1024, 1024), antialias=True)(img_tensor)
-                    img_tensor = v2.Normalize(
-                        mean=norm_mean or [0.485, 0.456, 0.406],
-                        std=norm_std or [0.229, 0.224, 0.225]
-                    )(img_tensor)
+                    img_tensor = val_transform(img_tensor)
                     img_tensor = img_tensor.unsqueeze(0).to(device)
 
                     # Run inference
@@ -3097,6 +3108,7 @@ async def _run_external_validation_patch_segmentation(
     import numpy as np
     import segmentation_models_pytorch as smp
     from backend.ai.segmentors import Segmentor
+    from backend.ai.utils.patch_resize import resolve_patch_resize_size
     from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
     from backend.database.repositories import WSIRepository, TrainedModelRepository
     from backend.database.database import safe_session
@@ -3144,9 +3156,12 @@ async def _run_external_validation_patch_segmentation(
             model.eval()
 
             norm_mean, norm_std = segmentor.get_normalization_params()
-            return model, config, norm_mean, norm_std, num_classes
+            resize_size = resolve_patch_resize_size(
+                backbone, is_segmentation_backbone=True
+            )
+            return model, config, norm_mean, norm_std, num_classes, resize_size
 
-        model, model_config, norm_mean, norm_std, num_classes = await asyncio.to_thread(_load_model)
+        model, model_config, norm_mean, norm_std, num_classes, resize_size = await asyncio.to_thread(_load_model)
         class_names = _normalize_label_names(
             (source_task.classes if source_task else None)
             or trained_model.classes
@@ -3210,7 +3225,12 @@ async def _run_external_validation_patch_segmentation(
         await update_task_progress(TaskStatus.PATCHING, 20)
 
         # 3. Build dataset and run inference
-        val_transform = get_transforms("val", normalization_mean=norm_mean, normalization_std=norm_std)
+        val_transform = get_transforms(
+            "val",
+            size=(resize_size, resize_size),
+            normalization_mean=norm_mean,
+            normalization_std=norm_std,
+        )
         ai_results_root = uploads_dir / "ai_results"
         results_saved = 0
         total_items = len(image_paths)
@@ -3252,12 +3272,7 @@ async def _run_external_validation_patch_segmentation(
 
                         # Prepare image tensor
                         img_tensor = v2.ToImage()(img)
-                        img_tensor = v2.ToDtype(torch.float32, scale=True)(img_tensor)
-                        img_tensor = v2.Resize((1024, 1024), antialias=True)(img_tensor)
-                        img_tensor = v2.Normalize(
-                            mean=norm_mean or [0.485, 0.456, 0.406],
-                            std=norm_std or [0.229, 0.224, 0.225]
-                        )(img_tensor)
+                        img_tensor = val_transform(img_tensor)
                         img_tensor = img_tensor.unsqueeze(0).to(device)
 
                         # Run inference
@@ -3466,6 +3481,10 @@ async def _run_external_validation_patch_classification(
     import numpy as np
     from PIL import Image
     from backend.ai.extractors import get_extractor
+    from backend.ai.utils.patch_resize import (
+        build_patch_classification_transform,
+        resolve_patch_resize_size,
+    )
     from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size, is_cnn_extractor
     from backend.database.repositories import AIResultRepository, WSIRepository
     from backend.database.database import safe_session
@@ -3548,8 +3567,11 @@ async def _run_external_validation_patch_classification(
 
         extractor, linear_probes, extractor_name = await asyncio.to_thread(_load_models)
 
-        # Get transforms and CAM extractor
-        fm_transform = extractor.get_transforms()
+        # Match patch-classification training preprocessing.
+        target_size = resolve_patch_resize_size(extractor_name)
+        fm_transform = build_patch_classification_transform(
+            extractor, target_size, mode="eval"
+        )
         cam_extractor = get_cam_extractor(extractor_name)
         cam_size = get_cam_spatial_size(extractor_name)
         use_gradients = is_cnn_extractor(extractor_name)
