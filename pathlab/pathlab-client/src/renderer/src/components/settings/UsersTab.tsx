@@ -44,9 +44,11 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const [usersError, setUsersError] = useState<string | null>(null)
   const [editingUser, setEditingUser] = useState<UserListItem | null>(null)
   const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string }>({ nickname: '', role: '', password: '' })
+  const [editError, setEditError] = useState<string | null>(null)
   const [showCreateUser, setShowCreateUser] = useState(false)
   const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
   const [creatingUser, setCreatingUser] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
   const [maintenanceMode, setMaintenanceMode] = useState(false)
   const [noticeMessage, setNoticeMessage] = useState('')
   const [currentNotice, setCurrentNotice] = useState<string | null>(null)
@@ -119,7 +121,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const handleSaveUser = async () => {
     if (!editingUser) return
     if (editForm.password && editForm.password.length < 6) {
-      setUsersError(t('settings.usersTab.passwordMinLength'))
+      setEditError(t('settings.usersTab.passwordMinLength'))
       return
     }
     try {
@@ -129,19 +131,19 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
       if (editForm.password) updateData.password = editForm.password
       await updateUser(editingUser.id, updateData)
       setEditingUser(null)
-      setUsersError(null)
+      setEditError(null)
       loadUsers()
     } catch (err) {
-      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToUpdateUser'))
+      setEditError(err instanceof Error ? err.message : t('settings.usersTab.failedToUpdateUser'))
     }
   }
 
   const handleCreateUser = async () => {
-    if (!createForm.username || !createForm.password) { setUsersError(t('settings.usersTab.usernamePasswordRequired')); return }
-    if (createForm.password.length < 6) { setUsersError(t('settings.usersTab.passwordMinLength')); return }
+    if (!createForm.username || !createForm.password) { setCreateError(t('settings.usersTab.usernamePasswordRequired')); return }
+    if (createForm.password.length < 6) { setCreateError(t('settings.usersTab.passwordMinLength')); return }
     try {
       setCreatingUser(true)
-      setUsersError(null)
+      setCreateError(null)
       const requestedRole = createForm.role as 'admin' | 'pathologist' | 'guest'
       const data: RegisterRequest = {
         email: createForm.username,
@@ -154,10 +156,11 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
         await updateUser(createdUser.id, { role: 'admin' })
       }
       setShowCreateUser(false)
+      setCreateError(null)
       setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
       loadUsers()
     } catch (err) {
-      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser'))
+      setCreateError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser'))
     } finally {
       setCreatingUser(false)
     }
@@ -672,7 +675,8 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           editForm={editForm}
           onEditFormChange={setEditForm}
           onSave={handleSaveUser}
-          onClose={() => setEditingUser(null)}
+          onClose={() => { setEditingUser(null); setEditError(null) }}
+          error={editError}
         />
       )}
 
@@ -685,9 +689,10 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           onClose={() => {
             setShowCreateUser(false)
             setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
-            setUsersError(null)
+            setCreateError(null)
           }}
           isCreating={creatingUser}
+          error={createError}
         />
       )}
 

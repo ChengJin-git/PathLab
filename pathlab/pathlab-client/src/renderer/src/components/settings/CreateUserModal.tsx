@@ -10,9 +10,10 @@ export interface CreateUserModalProps {
   onSubmit: () => void
   onClose: () => void
   isCreating: boolean
+  error?: string | null
 }
 
-export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onClose, isCreating }: CreateUserModalProps) {
+export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onClose, isCreating, error }: CreateUserModalProps) {
   const { t } = useTranslation()
 
   return (
@@ -22,6 +23,11 @@ export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onCl
           <UserPlus className="w-5 h-5 mr-2 text-primary-600" />
           {t('settings.createUserModal.title')}
         </h3>
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            {error}
+          </div>
+        )}
         <div className="space-y-4">
           <div>
             <Label className="text-sm text-gray-600">{t('settings.createUserModal.usernameRequired')}</Label>

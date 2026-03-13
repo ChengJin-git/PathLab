@@ -3023,6 +3023,8 @@ async def create_conversation(
         "conversation_id": conversation_id,
         "user_id": str(user.id),  # Use authenticated user's ID
         "title": req.title or "New Conversation",
+        "conversation_type": req.conversation_type or "ai_chat",
+        "report_context": req.report_context,
     }
     conversation = await ChatRepository.create_conversation(db, conversation_data)
     await db.commit()
@@ -3299,8 +3301,12 @@ async def chat_with_ai(
     ui_lang_header = request.headers.get("X-Language", "")
     ui_lang = _LANG_HEADER_MAP.get(ui_lang_header) if ui_lang_header else None
 
+    report_context: Optional[str] = None
     if req.conversation_id:
         await _require_conversation_write_access(db, req.conversation_id, user)
+        conv_meta = await ChatRepository.get_conversation_meta(db, req.conversation_id)
+        if conv_meta:
+            report_context = conv_meta.report_context or None
 
     # Resolve current datetime in the user's browser timezone (falls back to UTC).
     tz_header = request.headers.get("X-Timezone", "").strip()
@@ -3874,6 +3880,35 @@ async def chat_with_ai(
             "content": base_system_prompt + user_data_context
         }
         messages.insert(0, system_prompt)
+
+    # Inject report context as a virtual user→assistant exchange placed right after the
+    # system message but BEFORE any real conversation turns.  This is far more reliable
+    # than appending to the system prompt because:
+    #   1. Local models pay much stronger attention to early conversation turns.
+    #   2. The report won't be silently truncated by a context-length limit that cuts the
+    #      tail of a massive system prompt.
+    #   3. The synthetic exchange persists across every request (re-injected each time),
+    #      so the model always has the report in view regardless of conversation length.
+    if report_context:
+        report_user_msg = {
+            "role": "user",
+            "content": (
+                "Here is the full research report for our discussion. "
+                "Please read it carefully — I will ask you questions based on it.\n\n"
+                f"{report_context}"
+            ),
+        }
+        report_ack_msg = {
+            "role": "assistant",
+            "content": (
+                "I have read the research report in full. "
+                "I'm ready to summarize its findings, discuss its methodology, "
+                "and guide you through a deep learning discussion based on its content."
+            ),
+        }
+        # Insert after system message (index 0), before any real messages
+        messages.insert(1, report_user_msg)
+        messages.insert(2, report_ack_msg)
 
     # If conversation_id is provided, save user message to database
     # For multimodal messages, save text content and persist images in extra_metadata

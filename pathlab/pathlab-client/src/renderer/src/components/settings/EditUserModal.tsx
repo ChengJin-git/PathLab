@@ -10,15 +10,21 @@ export interface EditUserModalProps {
   onEditFormChange: (form: { nickname: string; role: string; password: string }) => void
   onSave: () => void
   onClose: () => void
+  error?: string | null
 }
 
-export function EditUserModal({ user, editForm, onEditFormChange, onSave, onClose }: EditUserModalProps) {
+export function EditUserModal({ user, editForm, onEditFormChange, onSave, onClose, error }: EditUserModalProps) {
   const { t } = useTranslation()
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('settings.editUserModal.title')}</h3>
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+            {error}
+          </div>
+        )}
         <div className="space-y-4">
           <div>
             <Label className="text-sm text-gray-600">{t('settings.editUserModal.username')}</Label>

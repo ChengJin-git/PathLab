@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
 // SPDX-License-Identifier: MIT
 
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { nanoid } from "nanoid";
 import i18n from "../../../../i18n";
 import { createConversation as apiCreateChatConversation, addMessage as apiAddChatMessage, getConversation as apiGetConversation } from "../../../../api";
@@ -10,69 +10,31 @@ import { stripResearchMeta } from "../../../../lib/deep-research/utils";
 import { useNavigate } from "react-router-dom";
 import { BookOpenText, Sparkles } from "lucide-react";
 
-const CHAT_TRAINING_BASE_PROMPT_ZH =
-    "我有一组病理图像数据集，想训练一个深度学习模型。我需要配置什么？";
-const CHAT_TRAINING_PROMPT_KEY = "app.aiChat.scenarios.trainModel.prompt";
-const REPORT_CONTEXT_MAX_CHARS = 4000;
-const DEFAULT_CHAT_TITLE = "New Conversation";
-
-function getChatTrainingBasePrompt(): string {
-    const translated = i18n.t(CHAT_TRAINING_PROMPT_KEY, {
-        defaultValue: CHAT_TRAINING_BASE_PROMPT_ZH,
-    });
-    return typeof translated === "string" && translated.trim().length > 0
-        ? translated
-        : CHAT_TRAINING_BASE_PROMPT_ZH;
-}
-
-/** Clean and clip the report content for use as system-prompt context. */
-function extractReportContext(reportContent: string | undefined): string {
-    const cleaned = stripResearchMeta(reportContent);
-    if (!cleaned) return "";
-    return cleaned.length > REPORT_CONTEXT_MAX_CHARS
-        ? `${cleaned.slice(0, REPORT_CONTEXT_MAX_CHARS)}\n...(report truncated)`
-        : cleaned;
-}
-
-/** Build the visible user message (no report context — that goes in system prompt now). */
-function buildTrainingPrompt(
-    basePrompt: string,
-    handoffInstruction: string,
-    jumpMetadata?: {
-        conversationId?: string | null;
-        researchId?: string;
-        title?: string;
-    },
-): string {
-    const chunks: string[] = [basePrompt];
-    chunks.push(
-        "[TRAINING_HANDOFF_CONTEXT]",
-        handoffInstruction,
-        "[/TRAINING_HANDOFF_CONTEXT]",
-    );
-    if (jumpMetadata?.conversationId && jumpMetadata?.researchId) {
-        chunks.push(
-            "[RESEARCH_JUMP]",
-            JSON.stringify(
-                {
-                    conversation_id: jumpMetadata.conversationId,
-                    research_id: jumpMetadata.researchId,
-                    title: jumpMetadata.title ?? null,
-                },
-                null,
-                2,
-            ),
-            "[/RESEARCH_JUMP]",
-        );
-    }
-    return chunks.join("\n\n");
-}
 import { Badge } from "../../../../components/ui/badge";
 import { Button } from "../../../../components/ui/button";
 import { Card, CardFooter, CardHeader, CardTitle } from "../../../../components/ui/card";
 import { closeResearch, flushDeepResearchPersistNow, openResearch, useResearchMessage, useStore } from "../../../../lib/deep-research/store";
 import { cn } from "../../../../lib/utils";
 import { parsePlannerPayload } from "../utils";
+
+const REPORT_CONTEXT_MAX_CHARS = 8000;
+
+/** Extract the first markdown H1/H2 heading from report content as a title fallback. */
+function extractTitleFromReport(reportContent: string | undefined): string | undefined {
+    if (!reportContent) return undefined;
+    const match = reportContent.match(/^#{1,2}\s+(.+)/m);
+    return match?.[1]?.trim() || undefined;
+}
+
+/** Clean and clip the report content for use as system-prompt context. */
+function extractReportContext(reportContent: string | undefined): string {
+    if (!reportContent) return "";
+    const cleaned = stripResearchMeta(reportContent);
+    if (!cleaned) return "";
+    return cleaned.length > REPORT_CONTEXT_MAX_CHARS
+        ? `${cleaned.slice(0, REPORT_CONTEXT_MAX_CHARS)}\n...(report truncated)`
+        : cleaned;
+}
 
 function TrainingCard({
     existingTrainingLink,
@@ -84,23 +46,32 @@ function TrainingCard({
     t: (key: string) => string;
 }) {
     const navigate = useNavigate();
-    const [deleted, setDeleted] = useState(false);
+    // "checking" while we probe the backend on mount; "deleted" if 404
+    const [linkStatus, setLinkStatus] = useState<"checking" | "ok" | "deleted">("checking");
+
+    // Proactively verify the linked conversation exists as soon as the card appears
+    useEffect(() => {
+        if (!existingTrainingLink) return;
+        let cancelled = false;
+        setLinkStatus("checking");
+        apiGetConversation(existingTrainingLink.conversation_id)
+            .then(() => { if (!cancelled) setLinkStatus("ok"); })
+            .catch(() => { if (!cancelled) setLinkStatus("deleted"); });
+        return () => { cancelled = true; };
+    }, [existingTrainingLink?.conversation_id]);
 
     const handleGo = useCallback(
-        async (e: React.MouseEvent) => {
+        (e: React.MouseEvent) => {
             e.stopPropagation();
-            if (!existingTrainingLink) return;
-            try {
-                await apiGetConversation(existingTrainingLink.conversation_id);
-                navigate(`/dashboard/${existingTrainingLink.conversation_id}`);
-            } catch {
-                setDeleted(true);
-            }
+            if (!existingTrainingLink || linkStatus !== "ok") return;
+            navigate(`/dashboard/${existingTrainingLink.conversation_id}`);
         },
-        [existingTrainingLink, navigate],
+        [existingTrainingLink, linkStatus, navigate],
     );
 
     if (existingTrainingLink) {
+        const isDeleted = linkStatus === "deleted";
+        const isChecking = linkStatus === "checking";
         return (
             <Card className="w-full overflow-hidden border-gray-200/70 bg-white/90 shadow-sm">
                 <CardHeader className="border-b border-gray-100 bg-gradient-to-r from-primary-50/70 via-white to-white">
@@ -110,8 +81,11 @@ function TrainingCard({
                         </div>
                         <div className="min-w-0">
                             <div className="mb-2">
-                                <Badge className="border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100">
-                                    {t("continueTraining")}
+                                <Badge className={isDeleted
+                                    ? "border-red-100 bg-red-50 text-red-600 hover:bg-red-100"
+                                    : "border-emerald-100 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                }>
+                                    {isDeleted ? t("trainingDeleted") : t("continueTraining")}
                                 </Badge>
                             </div>
                             <CardTitle className="text-lg font-semibold text-gray-900">
@@ -123,11 +97,17 @@ function TrainingCard({
                 <CardFooter className="flex flex-col items-stretch gap-3 bg-gray-50/60 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex w-full items-center gap-2">
                         <span className="flex-grow text-sm text-gray-500">
-                            {deleted ? t("trainingDeleted") : t("trainingStarted")}
+                            {isDeleted ? t("trainingDeletedDesc") : t("trainingStarted")}
                         </span>
-                        <Button variant={deleted ? "secondary" : "default"} disabled={deleted} onClick={handleGo} className="rounded-full">
-                            Go
-                        </Button>
+                        {isDeleted ? (
+                            <Button variant="default" onClick={onStartTraining} className="rounded-full">
+                                {t("createNewTraining")}
+                            </Button>
+                        ) : (
+                            <Button variant="default" disabled={isChecking} onClick={handleGo} className="rounded-full">
+                                Go
+                            </Button>
+                        )}
                     </div>
                 </CardFooter>
             </Card>
@@ -245,20 +225,22 @@ export function ResearchCard({
         onToggleResearch?.();
     }, [openResearchId, researchId, onToggleResearch]);
 
-    // Scan all messages for an existing [TRAINING_CHAT_LINK] to prevent duplicate creation
+    // Scan all messages for [TRAINING_CHAT_LINK] — use the LAST occurrence so that a newly
+    // created link (after deletion recovery) takes precedence over the stale one.
     const allMessages = useStore((state) => state.messages);
     const existingTrainingLink = useMemo(() => {
+        let last: { conversation_id: string; title?: string } | null = null;
         for (const msg of allMessages.values()) {
             const content = msg.content ?? "";
             const match = content.match(/\[TRAINING_CHAT_LINK\]\s*([\s\S]*?)\s*\[\/TRAINING_CHAT_LINK\]/);
             if (match?.[1]) {
                 try {
                     const parsed = JSON.parse(match[1]);
-                    if (parsed.conversation_id) return parsed as { conversation_id: string; title?: string };
+                    if (parsed.conversation_id) last = parsed as { conversation_id: string; title?: string };
                 } catch { /* ignore parse errors */ }
             }
         }
-        return null;
+        return last;
     }, [allMessages]);
 
     const handleStartTraining = useCallback(async () => {
@@ -274,44 +256,48 @@ export function ResearchCard({
             }
         }
 
-        const basePrompt = getChatTrainingBasePrompt();
-        const handoffInstruction = [
-            "Please continue in normal AI chat mode.",
-            t("uploadDataFirst"),
-            "First guide the user to upload/select dataset, then help complete training setup.",
-            "When needed, provide structured [DATASET_REGISTRATION] and [TASK_CONFIG] blocks.",
-            "In your first reply only, include one hidden [CONVERSATION_TITLE]...[/CONVERSATION_TITLE] block with a concise conversation title based on the actual training goal.",
-            "The title should be natural and specific, and must not use generic prefixes like 'Training:' or 'Chat'.",
-        ].join("\n");
-        // Report context is now passed separately and injected into the system prompt
-        // by the backend, instead of being embedded in the user message on every turn.
+            // Extract report content for system prompt context
         const reportContext = extractReportContext(reportMessage?.content);
-        const prompt = buildTrainingPrompt(
-            basePrompt,
-            handoffInstruction,
-            {
-                conversationId,
-                researchId,
-                title,
-            },
-        );
+
+        // Chat title: "Training: [research title]"
+        // Fall back to extracting from the report content's first heading if the store title is unavailable
+        const resolvedTitle = title || extractTitleFromReport(reportMessage?.content);
+        const chatTitle = resolvedTitle
+            ? `Training: ${resolvedTitle}`
+            : i18n.t("aiChat.newTrainingConversation", { defaultValue: "Training Chat" });
 
         // Pre-create AI Chat conversation so we can link back to it
         let preCreatedConversationId: string | undefined;
         try {
-            const chatTitle = i18n.t("aiChat.untitledConversation", {
-                defaultValue: DEFAULT_CHAT_TITLE,
-            });
-            const newConv = await apiCreateChatConversation(chatTitle, undefined, reportContext || undefined);
+            const newConv = await apiCreateChatConversation(chatTitle, 'ai_chat', reportContext || undefined);
             preCreatedConversationId = newConv.conversation_id;
             if (typeof window !== "undefined") {
                 window.dispatchEvent(new CustomEvent("conversations-changed"));
             }
 
-            // Append a link message in the Deep Research conversation
             const storeState = useStore.getState();
             const drConversationId = storeState.conversationId;
             const threadId = storeState.threadId;
+
+            // Add a [DEEP_RESEARCH_LINK] card as the first assistant message in the new AI chat
+            if (preCreatedConversationId && drConversationId) {
+                const deepResearchLinkContent = [
+                    "[DEEP_RESEARCH_LINK]",
+                    JSON.stringify({
+                        conversation_id: drConversationId,
+                        research_id: researchId,
+                        title: resolvedTitle ?? undefined,
+                    }, null, 2),
+                    "[/DEEP_RESEARCH_LINK]",
+                ].join("\n");
+                try {
+                    await apiAddChatMessage(preCreatedConversationId, "assistant", deepResearchLinkContent);
+                } catch (e) {
+                    console.warn("[DeepResearch] Failed to persist deep research link card:", e);
+                }
+            }
+
+            // Append a [TRAINING_CHAT_LINK] message in the Deep Research conversation so user can return
             if (drConversationId && threadId) {
                 const linkContent = [
                     "[TRAINING_CHAT_LINK]",
@@ -329,7 +315,6 @@ export function ResearchCard({
                     contentChunks: [linkContent],
                 };
                 storeState.appendMessage(linkMessage);
-                // Persist to backend
                 try {
                     const saved = await apiAddChatMessage(drConversationId, "assistant", linkContent);
                     useStore.getState().setMessageBackendId(linkMessage.id, saved.id);
@@ -341,20 +326,20 @@ export function ResearchCard({
             console.warn("[DeepResearch] Failed to pre-create chat conversation:", e);
         }
 
-        // Flush local cache before navigating away so the link message survives
-        // the SPA route change (beforeunload doesn't fire for React Router nav).
+        // Flush local cache before navigating away
         flushDeepResearchPersistNow();
 
-        navigate(preCreatedConversationId ? `/dashboard/${preCreatedConversationId}` : "/dashboard", {
-            state: {
-                initialMessage: prompt,
-                forceNewChat: true,
-                fromDeepResearchStartTraining: true,
-                preCreatedConversationId,
-                reportContext: reportContext || undefined,
-            },
+        // Navigate directly to the new conversation — the [DEEP_RESEARCH_LINK] card is already
+        // persisted as the first assistant message and will load automatically.
+        // Pass an initial message so the AI automatically opens the training discussion.
+        const welcomeMsg = i18n.t("aiChat.trainingWelcomeMessage", {
+            defaultValue: "你好！请根据研究报告内容，帮我梳理一下核心发现和关键结论，然后引导我开始深入学习讨论。",
         });
-    }, [t, reportMessage?.content, conversationId, researchId, title, navigate, existingTrainingLink]);
+        navigate(
+            preCreatedConversationId ? `/dashboard/${preCreatedConversationId}` : "/dashboard",
+            preCreatedConversationId ? { state: { initialMessage: welcomeMsg } } : undefined,
+        );
+    }, [reportMessage?.content, researchId, title, navigate, existingTrainingLink]);
 
     return (
         <div className={cn("w-full flex flex-col gap-4", className)}>
