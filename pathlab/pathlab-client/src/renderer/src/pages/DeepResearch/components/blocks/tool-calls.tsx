@@ -3,9 +3,13 @@ import { motion } from "framer-motion";
 import { LRUCache } from "lru-cache";
 import {
     BookOpenText,
+    BrainCircuit,
     CheckCircle2,
+    Database,
     FileText,
     Globe,
+    Layers2,
+    Network,
     PencilRuler,
     Search,
     ShieldCheck,
@@ -301,7 +305,6 @@ export function WebSearchToolCall({
 }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
-    void messageIsStreaming;
     void messageFinishReason;
     const query = useMemo(() => {
         const maybeQuery = (toolCall.args as { query?: unknown } | undefined)?.query;
@@ -350,7 +353,9 @@ export function WebSearchToolCall({
     );
     const visibleResultCount = pageResults.length + imageResults.length;
     const hasResultPayload = toolCall.result !== undefined;
-    const awaitingToolResult = isToolCallRunning(toolCall);
+    // Only treat as "still running" while the parent message is actively streaming.
+    // Once the stream ends, a missing result means the call was dropped — show as completed.
+    const awaitingToolResult = isToolCallRunning(toolCall) && messageIsStreaming;
     const searchState = useMemo<WebSearchState>(() => {
         if (!canRender) {
             return "completed";
@@ -506,7 +511,7 @@ export function WebSearchToolCall({
     );
 }
 
-export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
+export function CrawlToolCall({ toolCall, messageIsStreaming = false }: { toolCall: ToolCallRuntime; messageIsStreaming?: boolean }) {
     // @ts-ignore - i18n shim
     const t = useTranslations("chat.research");
     const url = useMemo(
@@ -523,7 +528,7 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
         [toolCall.result, toolCall.status],
     );
     const crawlSummary = useMemo(() => getToolResultSummary(toolCall.result), [toolCall.result]);
-    const running = useMemo(() => isToolCallRunning(toolCall), [toolCall]);
+    const running = useMemo(() => isToolCallRunning(toolCall) && messageIsStreaming, [toolCall, messageIsStreaming]);
     const canRender = useMemo(() => hasToolExecutionEvidence(toolCall), [toolCall]);
     const displayUrl = crawlData?.url || url;
 
@@ -534,16 +539,16 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
     return (
         <ToolCallSection
             header={(
-                <RainbowText
-                    className="flex items-center text-sm font-semibold text-gray-900"
-                    animated={running}
-                >
-                    <BookOpenText size={16} className="mr-2 text-emerald-500" />
-                    <span>{t("reading")}</span>
-                </RainbowText>
+                <div className="flex items-center text-sm font-semibold text-gray-900">
+                    <BookOpenText size={16} className="mr-2 shrink-0 text-emerald-500" />
+                    <RainbowText animated={running}>
+                        <span>{t("reading")}</span>
+                    </RainbowText>
+                </div>
             )}
         >
             <div className="space-y-3">
+            {displayUrl ? (
             <motion.a
                 className="group flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-3 py-3 transition-all hover:border-gray-300 hover:bg-gray-50"
                 href={displayUrl}
@@ -564,6 +569,9 @@ export function CrawlToolCall({ toolCall }: { toolCall: ToolCallRuntime }) {
                     <div className="mt-1 truncate text-xs text-gray-500">{getHostname(displayUrl)}</div>
                 </div>
             </motion.a>
+            ) : running ? (
+                <Skeleton className="h-12 w-full rounded-xl bg-gray-100" />
+            ) : null}
             {crawlStatus === "no_useful_information" && (
                 <ToolResultNotice
                     status="no_useful_information"
@@ -921,6 +929,295 @@ function MCPToolResultSummary({ result }: { result: string }) {
             {t("returnedFields", { count: keys.length, fields: keys.slice(0, 5).join(", ") })}
             {keys.length > 5 ? "…" : ""}
         </p>
+    );
+}
+
+// ─── PathLab Tool Calls ────────────────────────────────────────────────────
+
+type DatasetItem = { name: string; file_count: number; task_type: string };
+type ModelItem   = { name: string; extractor: string; aggregator: string; task_type: string; is_default?: boolean };
+type ExtractorItem = { name: string; source: string; description: string };
+type AggregatorItem = { name: string; description: string };
+
+const TASK_TYPE_COLORS: Record<string, string> = {
+    classification: "bg-blue-50 text-blue-700 border-blue-100",
+    survival:       "bg-purple-50 text-purple-700 border-purple-100",
+    regression:     "bg-orange-50 text-orange-700 border-orange-100",
+};
+
+function taskTypeBadge(taskType: string) {
+    const cls = TASK_TYPE_COLORS[taskType?.toLowerCase()] ?? "bg-gray-100 text-gray-600 border-gray-200";
+    return (
+        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${cls}`}>
+            {taskType}
+        </span>
+    );
+}
+
+export function PathLabDatasetsToolCall({ toolCall, messageIsStreaming = false }: { toolCall: ToolCallRuntime; messageIsStreaming?: boolean }) {
+    // @ts-ignore - i18n shim
+    const t = useTranslations("chat.research");
+    const running = isToolCallRunning(toolCall) && messageIsStreaming;
+    const canRender = hasToolExecutionEvidence(toolCall);
+    const status = useMemo(() => getToolResultStatus(toolCall.result, toolCall.status), [toolCall.result, toolCall.status]);
+    const summary = useMemo(() => getToolResultSummary(toolCall.result), [toolCall.result]);
+    const datasets = useMemo(
+        () => extractToolResultItems<DatasetItem>(toolCall.result),
+        [toolCall.result],
+    );
+
+    if (!canRender) return null;
+
+    return (
+        <ToolCallSection
+            header={(
+                <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center text-sm font-semibold text-gray-900">
+                        <Database size={16} className="mr-2 shrink-0 text-indigo-500" />
+                        <RainbowText animated={running}>
+                            <span>{t("pathlabCheckingDatasets")}</span>
+                        </RainbowText>
+                    </div>
+                    {!running && datasets.length > 0 && (
+                        <span className="shrink-0 text-xs text-gray-500">
+                            {t("pathlabDatasetsFound", { count: datasets.length })}
+                        </span>
+                    )}
+                </div>
+            )}
+            bodyClassName="space-y-2"
+        >
+            {running && (
+                <div className="space-y-2">
+                    {[...Array(2)].map((_, i) => (
+                        <Skeleton key={i} className="h-12 w-full rounded-xl bg-gray-100" style={{ animationDelay: `${i * 0.1}s` }} />
+                    ))}
+                </div>
+            )}
+            {!running && datasets.length === 0 && (
+                <SearchEmptyState
+                    title={t("pathlabNoDatasets")}
+                    description={status === "error" ? (summary ?? "") : t("pathlabNoDatasetsDescription")}
+                />
+            )}
+            {!running && datasets.length > 0 && (
+                <ul className="grid gap-2 sm:grid-cols-2">
+                    {datasets.map((ds, i) => (
+                        <motion.li
+                            key={i}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.12, delay: Math.min(i * 0.04, 0.2), ease: "easeOut" }}
+                        >
+                            <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-3.5 py-3 shadow-sm">
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-indigo-50">
+                                    <Database size={15} className="text-indigo-500" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="truncate text-sm font-medium text-gray-900">{ds.name}</div>
+                                    <div className="mt-1 flex items-center gap-2">
+                                        {taskTypeBadge(ds.task_type)}
+                                        <span className="text-[11px] text-gray-400">
+                                            {t("pathlabFilesCount", { count: ds.file_count })}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+                        </motion.li>
+                    ))}
+                </ul>
+            )}
+        </ToolCallSection>
+    );
+}
+
+export function PathLabModelsToolCall({ toolCall, messageIsStreaming = false }: { toolCall: ToolCallRuntime; messageIsStreaming?: boolean }) {
+    // @ts-ignore - i18n shim
+    const t = useTranslations("chat.research");
+    const running = isToolCallRunning(toolCall) && messageIsStreaming;
+    const canRender = hasToolExecutionEvidence(toolCall);
+    const status = useMemo(() => getToolResultStatus(toolCall.result, toolCall.status), [toolCall.result, toolCall.status]);
+    const summary = useMemo(() => getToolResultSummary(toolCall.result), [toolCall.result]);
+    const models = useMemo(
+        () => extractToolResultItems<ModelItem>(toolCall.result),
+        [toolCall.result],
+    );
+
+    if (!canRender) return null;
+
+    return (
+        <ToolCallSection
+            header={(
+                <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center text-sm font-semibold text-gray-900">
+                        <BrainCircuit size={16} className="mr-2 shrink-0 text-violet-500" />
+                        <RainbowText animated={running}>
+                            <span>{t("pathlabCheckingModels")}</span>
+                        </RainbowText>
+                    </div>
+                    {!running && models.length > 0 && (
+                        <span className="shrink-0 text-xs text-gray-500">
+                            {t("pathlabModelsFound", { count: models.length })}
+                        </span>
+                    )}
+                </div>
+            )}
+            bodyClassName="space-y-2"
+        >
+            {running && (
+                <div className="space-y-2">
+                    {[...Array(2)].map((_, i) => (
+                        <Skeleton key={i} className="h-12 w-full rounded-xl bg-gray-100" style={{ animationDelay: `${i * 0.1}s` }} />
+                    ))}
+                </div>
+            )}
+            {!running && models.length === 0 && (
+                <SearchEmptyState
+                    title={t("pathlabNoModels")}
+                    description={status === "error" ? (summary ?? "") : t("pathlabNoModelsDescription")}
+                />
+            )}
+            {!running && models.length > 0 && (
+                <ul className="grid gap-2 sm:grid-cols-2">
+                    {models.map((m, i) => (
+                        <motion.li
+                            key={i}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.12, delay: Math.min(i * 0.04, 0.2), ease: "easeOut" }}
+                        >
+                            <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-white px-3.5 py-3 shadow-sm">
+                                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-violet-50">
+                                    <BrainCircuit size={15} className="text-violet-500" />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="truncate text-sm font-medium text-gray-900">{m.name}</span>
+                                        {m.is_default && (
+                                            <span className="shrink-0 rounded-full border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                                                {t("pathlabDefaultModel")}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                        {taskTypeBadge(m.task_type)}
+                                        <span className="text-[11px] text-gray-400">{m.extractor} + {m.aggregator}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </motion.li>
+                    ))}
+                </ul>
+            )}
+        </ToolCallSection>
+    );
+}
+
+export function PathLabExtractorsToolCall({ toolCall, messageIsStreaming = false }: { toolCall: ToolCallRuntime; messageIsStreaming?: boolean }) {
+    // @ts-ignore - i18n shim
+    const t = useTranslations("chat.research");
+    const running = isToolCallRunning(toolCall) && messageIsStreaming;
+    const canRender = hasToolExecutionEvidence(toolCall);
+    const extractors = useMemo(
+        () => extractToolResultItems<ExtractorItem>(toolCall.result),
+        [toolCall.result],
+    );
+
+    if (!canRender) return null;
+
+    return (
+        <ToolCallSection
+            header={(
+                <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center text-sm font-semibold text-gray-900">
+                        <Layers2 size={16} className="mr-2 shrink-0 text-teal-500" />
+                        <RainbowText animated={running}>
+                            <span>{t("pathlabLoadingExtractors")}</span>
+                        </RainbowText>
+                    </div>
+                    {!running && extractors.length > 0 && (
+                        <span className="shrink-0 text-xs text-gray-500">
+                            {t("pathlabExtractorsFound", { count: extractors.length })}
+                        </span>
+                    )}
+                </div>
+            )}
+            bodyClassName="space-y-1.5"
+        >
+            {running && <Skeleton className="h-20 w-full rounded-xl bg-gray-100" />}
+            {!running && extractors.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                    {extractors.map((e, i) => (
+                        <motion.div
+                            key={i}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ duration: 0.1, delay: Math.min(i * 0.02, 0.3) }}
+                        >
+                            <Tooltip title={`${e.source} — ${e.description}`}>
+                                <span className="inline-flex cursor-default items-center rounded-full border border-teal-100 bg-teal-50 px-2.5 py-1 text-xs font-medium text-teal-700 hover:bg-teal-100 transition-colors">
+                                    {e.name}
+                                </span>
+                            </Tooltip>
+                        </motion.div>
+                    ))}
+                </div>
+            )}
+        </ToolCallSection>
+    );
+}
+
+export function PathLabAggregatorsToolCall({ toolCall, messageIsStreaming = false }: { toolCall: ToolCallRuntime; messageIsStreaming?: boolean }) {
+    // @ts-ignore - i18n shim
+    const t = useTranslations("chat.research");
+    const running = isToolCallRunning(toolCall) && messageIsStreaming;
+    const canRender = hasToolExecutionEvidence(toolCall);
+    const aggregators = useMemo(
+        () => extractToolResultItems<AggregatorItem>(toolCall.result),
+        [toolCall.result],
+    );
+
+    if (!canRender) return null;
+
+    return (
+        <ToolCallSection
+            header={(
+                <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center text-sm font-semibold text-gray-900">
+                        <Network size={16} className="mr-2 shrink-0 text-amber-500" />
+                        <RainbowText animated={running}>
+                            <span>{t("pathlabLoadingAggregators")}</span>
+                        </RainbowText>
+                    </div>
+                    {!running && aggregators.length > 0 && (
+                        <span className="shrink-0 text-xs text-gray-500">
+                            {t("pathlabAggregatorsFound", { count: aggregators.length })}
+                        </span>
+                    )}
+                </div>
+            )}
+            bodyClassName="space-y-1.5"
+        >
+            {running && <Skeleton className="h-16 w-full rounded-xl bg-gray-100" />}
+            {!running && aggregators.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                    {aggregators.map((a, i) => (
+                        <motion.div
+                            key={i}
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            transition={{ duration: 0.1, delay: Math.min(i * 0.02, 0.2) }}
+                        >
+                            <Tooltip title={a.description}>
+                                <span className="inline-flex cursor-default items-center rounded-full border border-amber-100 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors">
+                                    {a.name}
+                                </span>
+                            </Tooltip>
+                        </motion.div>
+                    ))}
+                </div>
+            )}
+        </ToolCallSection>
     );
 }
 

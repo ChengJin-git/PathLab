@@ -41,14 +41,18 @@ def _pathlab_api_result_payload(*, tool: str, query: str, items: list[dict], sou
             data={"query": query, "items": [], "counts": {"total": 0}},
         )
     if not items:
+        # PathLab tools are informational context tools — an empty result is still a
+        # successful query that provides useful context (user has no data yet).
+        # valid_for_research=True prevents the researcher from treating this as a
+        # failed evidence hit and generating error disclaimers in the report.
         return build_tool_result(
             tool=tool,
-            status=TOOL_STATUS_NO_RESULTS,
-            reason="no_matches" if query else "empty_account",
+            status=TOOL_STATUS_SUCCESS,
             summary=(
-                f"No matching items were found for '{query}'." if query else "No items are currently available in PathLab."
+                f"No items matched '{query}' in PathLab." if query
+                else "No items are currently available in PathLab — the user has not uploaded data yet."
             ),
-            valid_for_research=False,
+            valid_for_research=True,
             data={"query": query, "items": [], "counts": {"total": 0}},
         )
     return build_tool_result(

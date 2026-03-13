@@ -17,6 +17,10 @@ import {
   CrawlToolCall,
   hasToolExecutionEvidence,
   MCPToolCall,
+  PathLabAggregatorsToolCall,
+  PathLabDatasetsToolCall,
+  PathLabExtractorsToolCall,
+  PathLabModelsToolCall,
   PythonToolCall,
   RetrieverToolCall,
   WebSearchToolCall,
@@ -351,11 +355,19 @@ const ActivityListItem = React.memo(({ messageId }: { messageId: string }) => {
               />
             );
           } else if (toolCall.name === "crawl_tool") {
-            return <CrawlToolCall key={toolCall.id} toolCall={toolCall} />;
+            return <CrawlToolCall key={toolCall.id} toolCall={toolCall} messageIsStreaming={Boolean(message.isStreaming)} />;
           } else if (toolCall.name === "python_repl_tool") {
             return <PythonToolCall key={toolCall.id} toolCall={toolCall} />;
           } else if (toolCall.name === "local_search_tool") {
             return <RetrieverToolCall key={toolCall.id} toolCall={toolCall} />;
+          } else if (toolCall.name === "search_pathlab_datasets") {
+            return <PathLabDatasetsToolCall key={toolCall.id} toolCall={toolCall} messageIsStreaming={Boolean(message.isStreaming)} />;
+          } else if (toolCall.name === "search_pathlab_models") {
+            return <PathLabModelsToolCall key={toolCall.id} toolCall={toolCall} messageIsStreaming={Boolean(message.isStreaming)} />;
+          } else if (toolCall.name === "get_pathlab_extractors") {
+            return <PathLabExtractorsToolCall key={toolCall.id} toolCall={toolCall} messageIsStreaming={Boolean(message.isStreaming)} />;
+          } else if (toolCall.name === "get_pathlab_aggregators") {
+            return <PathLabAggregatorsToolCall key={toolCall.id} toolCall={toolCall} messageIsStreaming={Boolean(message.isStreaming)} />;
           } else {
             return <MCPToolCall key={toolCall.id} toolCall={toolCall} />;
           }

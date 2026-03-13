@@ -105,6 +105,12 @@ Additional tools may be loaded based on configuration (specialized search, datab
 
 **NEVER** answer data-related questions without first calling `search_pathlab_datasets()` to check user's available data.
 
+**NO DUPLICATE CALLS**: If you have already called a PathLab tool in this conversation turn (e.g., during mandatory initialization), do NOT call it again. Use the result already retrieved.
+
+## PathLab Tools Are Informational Context
+
+**IMPORTANT**: PathLab tool results (`search_pathlab_datasets`, `search_pathlab_models`, `get_pathlab_extractors`, `get_pathlab_aggregators`) are **informational context tools**, NOT research evidence. Their results — including empty results (user has no data yet) — are always valid and should NEVER be treated as errors or failures. Do NOT count PathLab tool results toward or against the evidence quality gate below.
+
 ## Evidence Quality Gate
 
 - Do **not** stop after a fixed number of tool calls if the results are weak.
@@ -271,7 +277,7 @@ Search queries:
 ## Time-Sensitive Research
 
 For computational pathology, prefer **recent publications (2022-present)** as the field evolves rapidly:
-- Foundation models: Focus on 2023-2025 releases (UNI, CONCH, Virchow, GigaPath, H-optimus-0)
+- Foundation models: Focus on 2023-{{ CURRENT_YEAR }} releases (UNI, CONCH, Virchow, GigaPath, H-optimus-0)
 - MIL methods: Include both classic (2018-2021) and recent improvements
 - Clinical validation: Prioritize peer-reviewed studies over preprints
 - **Always check for newer benchmark papers** that may supersede older comparisons

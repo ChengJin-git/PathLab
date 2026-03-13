@@ -165,7 +165,7 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 ## 時效性研究
 
 計算病理學領域發展迅速，優先選擇**近期出版物（2022年至今）**：
-- 基礎模型：聚焦 2023-2025 年發布嘅模型（UNI、CONCH、Virchow、GigaPath、H-optimus-0）
+- 基礎模型：聚焦 2023-{{ CURRENT_YEAR }} 年發布嘅模型（UNI、CONCH、Virchow、GigaPath、H-optimus-0）
 - MIL 方法：包括經典方法（2018-2021）同最新改進
 - 臨床驗證：優先選擇同行評審研究而唔係預印本
 - **始終檢查係咪有更新嘅基準測試論文**取代咗舊嘅比較結果

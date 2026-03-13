@@ -1385,6 +1385,27 @@ async def _execute_agent_step(
 
     # Add citation reminder for researcher agent
     if agent_name == "researcher":
+        # On the first research step, force PathLab context loading so results
+        # appear in activities (identical UX to web search tool calls).
+        if current_step_index == 0:
+            agent_input["messages"].append(
+                HumanMessage(
+                    content=(
+                        "MANDATORY FIRST ACTIONS — call ALL four PathLab tools NOW "
+                        "before any web search or other research:\n"
+                        "1. search_pathlab_datasets('') — list all user datasets\n"
+                        "2. search_pathlab_models('') — list all trained models\n"
+                        "3. get_pathlab_extractors() — list supported feature extractors\n"
+                        "4. get_pathlab_aggregators() — list supported MIL aggregators\n\n"
+                        "These four calls are required to provide the user's PathLab context "
+                        "for the report. Execute them immediately as your first tool calls.\n"
+                        "IMPORTANT: Call each of these four tools exactly ONCE. "
+                        "Do NOT call them again later in this research step, even if the "
+                        "research topic is directly about extractors or aggregators."
+                    )
+                )
+            )
+
         if state.get("resources"):
             resources_info = "**The user mentioned the following resource files:**\n\n"
             for resource in state.get("resources"):
