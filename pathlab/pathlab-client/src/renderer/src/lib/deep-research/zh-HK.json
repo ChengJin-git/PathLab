@@ -148,7 +148,6 @@
       "downloadWord": "Word (.docx)",
       "downloadImage": "圖片 (.png)",
       "exportFailed": "匯出失敗，請重試",
-      "evaluateReport": "評估報告品質",
       "searchingFor": "搜尋",
       "searchStatusSearching": "搜尋中",
       "searchStatusCompleted": "已完成",
@@ -290,31 +289,6 @@
       "elapsed": "耗時",
       "seconds": "秒",
       "byAgent": "按代理"
-    },
-    "evaluation": {
-      "title": "報告品質評估",
-      "description": "使用自動化指標和 AI 分析來評估你的報告。",
-      "evaluating": "正在評估報告...",
-      "analyzing": "正在進行深度分析...",
-      "overallScore": "總體評分",
-      "metrics": "報告指標",
-      "wordCount": "字數",
-      "citations": "引用數",
-      "sources": "獨立來源",
-      "images": "圖片數",
-      "sectionCoverage": "章節覆蓋率",
-      "detailedAnalysis": "詳細分析",
-      "deepEvaluation": "深度評估 (AI)",
-      "strengths": "優勢",
-      "weaknesses": "改進建議",
-      "scores": {
-        "factual_accuracy": "事實準確性",
-        "completeness": "完整性",
-        "coherence": "連貫性",
-        "relevance": "相關性",
-        "citation_quality": "引用品質",
-        "writing_quality": "寫作品質"
-      }
     },
     "messages": {
       "replaying": "回放中",

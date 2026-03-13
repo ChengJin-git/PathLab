@@ -5,7 +5,6 @@ from .crawl import crawl_tool
 from .python_repl import python_repl_tool
 from .retriever import get_retriever_tool
 from .search import get_web_search_tool
-from .tts import VolcengineTTS
 from .pathlab import (
     get_pathlab_dataset_tool,
     get_pathlab_model_tool,
@@ -22,7 +21,6 @@ __all__ = [
     "python_repl_tool",
     "get_web_search_tool",
     "get_retriever_tool",
-    "VolcengineTTS",
     # PathLab tools
     "get_pathlab_dataset_tool",
     "get_pathlab_model_tool",

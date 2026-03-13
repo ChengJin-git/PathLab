@@ -67,7 +67,6 @@ from src.graph.utils import (
 from src.llms.llm import get_configured_llm_models
 from src.prompt_enhancer.graph.builder import build_graph as build_prompt_enhancer_graph
 from src.prose.graph.builder import build_graph as build_prose_graph
-from src.eval import ReportEvaluator
 from src.rag.builder import build_retriever
 from src.rag.milvus import load_examples as load_milvus_examples
 from src.rag.qdrant import load_examples as load_qdrant_examples
@@ -77,9 +76,7 @@ from src.server.chat_request import (
     EnhancePromptRequest,
     GenerateProseRequest,
     StopRequest,
-    TTSRequest,
 )
-from src.server.eval_request import EvaluateReportRequest, EvaluateReportResponse
 from src.server.config_request import ConfigResponse
 from src.server.mcp_request import MCPServerMetadataRequest, MCPServerMetadataResponse
 from src.server.tool_events import (
@@ -94,7 +91,6 @@ from src.server.rag_request import (
     RAGResourceRequest,
     RAGResourcesResponse,
 )
-from src.tools import VolcengineTTS
 from src.utils.json_utils import sanitize_args
 from src.utils.log_sanitizer import (
     sanitize_agent_name,
@@ -1194,63 +1190,6 @@ def _make_event(event_type: str, data: dict[str, any]):
         return f"event: error\ndata: {error_data}\n\n"
 
 
-@app.post("/api/tts")
-async def text_to_speech(request: TTSRequest):
-    """Convert text to speech using volcengine TTS API."""
-    app_id = get_str_env("VOLCENGINE_TTS_APPID", "")
-    if not app_id:
-        raise HTTPException(status_code=400, detail="VOLCENGINE_TTS_APPID is not set")
-    access_token = get_str_env("VOLCENGINE_TTS_ACCESS_TOKEN", "")
-    if not access_token:
-        raise HTTPException(
-            status_code=400, detail="VOLCENGINE_TTS_ACCESS_TOKEN is not set"
-        )
-
-    try:
-        cluster = get_str_env("VOLCENGINE_TTS_CLUSTER", "volcano_tts")
-        voice_type = get_str_env("VOLCENGINE_TTS_VOICE_TYPE", "BV700_V2_streaming")
-
-        tts_client = VolcengineTTS(
-            appid=app_id,
-            access_token=access_token,
-            cluster=cluster,
-            voice_type=voice_type,
-        )
-        # Call the TTS API
-        result = tts_client.text_to_speech(
-            text=request.text[:1024],
-            encoding=request.encoding,
-            speed_ratio=request.speed_ratio,
-            volume_ratio=request.volume_ratio,
-            pitch_ratio=request.pitch_ratio,
-            text_type=request.text_type,
-            with_frontend=request.with_frontend,
-            frontend_type=request.frontend_type,
-        )
-
-        if not result["success"]:
-            raise HTTPException(status_code=500, detail=str(result["error"]))
-
-        # Decode the base64 audio data
-        audio_data = base64.b64decode(result["audio_data"])
-
-        # Return the audio file
-        return Response(
-            content=audio_data,
-            media_type=f"audio/{request.encoding}",
-            headers={
-                "Content-Disposition": (
-                    f"attachment; filename=tts_output.{request.encoding}"
-                )
-            },
-        )
-
-    except Exception as e:
-        logger.exception(f"Error in TTS endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_DETAIL)
-
-
-
 @app.post("/api/prose/generate")
 async def generate_prose(request: GenerateProseRequest):
     try:
@@ -1273,39 +1212,6 @@ async def generate_prose(request: GenerateProseRequest):
         )
     except Exception as e:
         logger.exception(f"Error occurred during prose generation: {str(e)}")
-        raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_DETAIL)
-
-
-@app.post("/api/report/evaluate", response_model=EvaluateReportResponse)
-async def evaluate_report(request: EvaluateReportRequest):
-    """Evaluate report quality using automated metrics and optionally LLM-as-Judge."""
-    try:
-        evaluator = ReportEvaluator(use_llm=request.use_llm)
-
-        if request.use_llm:
-            result = await evaluator.evaluate(
-                request.content, request.query, request.report_style or "default"
-            )
-            return EvaluateReportResponse(
-                metrics=result.metrics.to_dict(),
-                score=result.final_score,
-                grade=result.grade,
-                llm_evaluation=result.llm_evaluation.to_dict()
-                if result.llm_evaluation
-                else None,
-                summary=result.summary,
-            )
-        else:
-            result = evaluator.evaluate_metrics_only(
-                request.content, request.report_style or "default"
-            )
-            return EvaluateReportResponse(
-                metrics=result["metrics"],
-                score=result["score"],
-                grade=result["grade"],
-            )
-    except Exception as e:
-        logger.exception(f"Error occurred during report evaluation: {str(e)}")
         raise HTTPException(status_code=500, detail=INTERNAL_SERVER_ERROR_DETAIL)
 
 

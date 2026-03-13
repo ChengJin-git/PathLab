@@ -284,27 +284,6 @@ export async function* resumeBackgroundJobStream(
 }
 
 
-// Report evaluation
-export async function evaluateReport(params: {
-  content: string;
-  query: string;
-  report_style?: string;
-  use_llm?: boolean;
-}) {
-  const res = await fetch(resolveServiceURL("report/evaluate"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify(params),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to evaluate report: ${res.statusText}`);
-  }
-  return res.json();
-}
-
 /**
  * Send a server-side stop request to gracefully terminate an in-progress
  * deep-research LangGraph run. This complements AbortController (client-side)
