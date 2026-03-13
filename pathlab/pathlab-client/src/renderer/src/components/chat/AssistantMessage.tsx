@@ -982,8 +982,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           prose-table:text-sm
           prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[
+            remarkPlugins={isStreaming ? [remarkGfm] : [remarkGfm, remarkMath]}
+            rehypePlugins={isStreaming ? [] : [
               rehypeKatex,
               [rehypeHighlight, { ignoreMissing: true, detect: true }],
             ]}

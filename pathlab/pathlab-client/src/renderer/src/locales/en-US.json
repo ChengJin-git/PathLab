@@ -2616,7 +2616,9 @@
     "time": "Time",
     "survivalProbability": "Survival Probability",
     "survivalCurve": "Survival Curve",
-    "metricCurve": "Curve"
+    "metricCurve": "Curve",
+    "showPercent": "Show % (row)",
+    "showCount": "Show count"
   },
   "listComponents": {
     "editModals": {

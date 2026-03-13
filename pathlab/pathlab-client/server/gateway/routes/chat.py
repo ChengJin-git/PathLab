@@ -9,9 +9,11 @@ import math
 import mimetypes
 import os
 import re
+import time
 import uuid
 from contextlib import suppress
 from datetime import datetime
+from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 from typing import List, Dict, AsyncIterator, Optional, Any, Set
@@ -20,7 +22,7 @@ from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.database import get_db
+from backend.database import get_db, async_session
 from backend.database.repositories import (
     ChatRepository,
     WSIRepository,
@@ -116,6 +118,72 @@ _PATCH_INFERENCE_BLOCK_RE = re.compile(
 _TOOL_BLOCK_RE = re.compile(
     r"\[(?:READ_ARTICLE|WEB_SEARCH)\].*?\[/(?:READ_ARTICLE|WEB_SEARCH)\]", re.DOTALL
 )
+
+# ── Persistent httpx client (reuse TCP connections across requests) ──────────
+# Creating a new AsyncClient per request pays ~10-50 ms in TLS handshake /
+# connection setup every time.  A single module-level client with keepalive
+# reuses existing connections so the first streaming token arrives faster.
+_llm_http_client: httpx.AsyncClient | None = None
+
+
+def _get_llm_http_client() -> httpx.AsyncClient:
+    global _llm_http_client
+    if _llm_http_client is None or _llm_http_client.is_closed:
+        _llm_http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(60.0, connect=10.0),
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5),
+        )
+    return _llm_http_client
+
+
+# ── vLLM availability cache ─────────────────────────────────────────────────
+# _check_local_vllm_available() does an HTTP round-trip (3 s timeout) on every
+# chat request.  Cache the result for 30 s on success, use exponential backoff
+# on repeated failures so a down server doesn't add 3 s latency per request.
+_vllm_cache: dict = {
+    "available": None,
+    "model": None,
+    "base_url": None,
+    "checked_at": 0.0,
+    "fail_count": 0,
+}
+_VLLM_CACHE_TTL_OK = 30.0
+_VLLM_CACHE_TTL_FAIL_BASE = 5.0
+
+_feature_extractor_scan_cache: dict = {}
+_FEATURE_SCAN_CACHE_TTL = 60.0
+
+_compat_check_cache: dict = {}
+_COMPAT_CACHE_TTL = 120.0
+
+
+async def _get_available_extractors(features_root: Path, wsi_id: str) -> list:
+    cache_key = (str(features_root), wsi_id)
+    now = time.monotonic()
+    cached_entry = _feature_extractor_scan_cache.get(cache_key)
+    if cached_entry is not None:
+        cached_result, cached_at = cached_entry
+        if now - cached_at < _FEATURE_SCAN_CACHE_TTL:
+            return cached_result
+
+    def _scan() -> list:
+        result = []
+        if not features_root.exists():
+            return result
+        for extractor_dir in features_root.iterdir():
+            if extractor_dir.is_dir():
+                for params_hash_dir in extractor_dir.iterdir():
+                    if (
+                        params_hash_dir.is_dir()
+                        and (params_hash_dir / f"{wsi_id}.pt").exists()
+                    ):
+                        result.append(extractor_dir.name)
+                        break
+        return result
+
+    extractors = await asyncio.to_thread(_scan)
+    _feature_extractor_scan_cache[cache_key] = (extractors, now)
+    return extractors
 
 
 def _get_generation_cancelled_text(detected_lang: str) -> str:
@@ -2202,74 +2270,107 @@ async def _stream_from_openai_compatible(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        async with client.stream(
-            "POST",
-            f"{base_url}/chat/completions",
-            headers=headers,
-            json={
-                "model": model,
-                "messages": messages,
-                "stream": True,
-                "temperature": 0.7,
-                "max_tokens": 2048,
-            },
-        ) as response:
-            await _raise_for_status_with_detail(response)
+    client = _get_llm_http_client()
+    async with client.stream(
+        "POST",
+        f"{base_url}/chat/completions",
+        headers=headers,
+        json={
+            "model": model,
+            "messages": messages,
+            "stream": True,
+            "temperature": 0.7,
+            "max_tokens": 2048,
+        },
+    ) as response:
+        await _raise_for_status_with_detail(response)
 
-            last_finish_reason = None
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data = line[6:]
-                    if data == "[DONE]":
-                        # Emit response_truncated before [DONE] when generation hit
-                        # the output-length limit (finish_reason="length").
-                        if last_finish_reason == "length":
-                            yield f"data: {json.dumps({'response_truncated': True})}\n\n"
-                        yield "data: [DONE]\n\n"
-                        break
-                    try:
-                        parsed = json.loads(data)
-                        if "choices" in parsed and len(parsed["choices"]) > 0:
-                            choice = parsed["choices"][0]
-                            delta = choice.get("delta", {})
-                            if "content" in delta and delta["content"] is not None:
-                                yield f"data: {json.dumps({'content': delta['content']})}\n\n"
-                            # Track finish_reason from the last chunk
-                            fr = choice.get("finish_reason")
-                            if fr:
-                                last_finish_reason = fr
-                    except json.JSONDecodeError:
-                        continue
-            # If stream ended without [DONE] but finish_reason was "length"
-            if last_finish_reason == "length":
-                yield f"data: {json.dumps({'response_truncated': True})}\n\n"
+        last_finish_reason = None
+        async for line in response.aiter_lines():
+            if line.startswith("data: "):
+                data = line[6:]
+                if data == "[DONE]":
+                    if last_finish_reason == "length":
+                        yield f"data: {json.dumps({'response_truncated': True})}\n\n"
+                    yield "data: [DONE]\n\n"
+                    break
+                try:
+                    parsed = json.loads(data)
+                    if "choices" in parsed and len(parsed["choices"]) > 0:
+                        choice = parsed["choices"][0]
+                        delta = choice.get("delta", {})
+                        if "content" in delta and delta["content"] is not None:
+                            yield f"data: {json.dumps({'content': delta['content']})}\n\n"
+                        fr = choice.get("finish_reason")
+                        if fr:
+                            last_finish_reason = fr
+                except json.JSONDecodeError:
+                    continue
+        if last_finish_reason == "length":
+            yield f"data: {json.dumps({'response_truncated': True})}\n\n"
 
 
 async def _check_local_vllm_available(
     base_url: str, api_key: str = None
 ) -> tuple[bool, str | None]:
-    """
-    Check if local vLLM server is available and get the first available model.
+    now = time.monotonic()
+    cached = _vllm_cache
 
-    Returns:
-        Tuple of (is_available, first_model_name)
-    """
+    if cached["base_url"] != base_url:
+        cached.update(
+            {
+                "available": None,
+                "model": None,
+                "base_url": base_url,
+                "checked_at": 0.0,
+                "fail_count": 0,
+            }
+        )
+
+    if cached["available"] is True and now - cached["checked_at"] < _VLLM_CACHE_TTL_OK:
+        return True, cached["model"]
+
+    if cached["available"] is False:
+        fail_ttl = min(_VLLM_CACHE_TTL_FAIL_BASE * (2 ** cached["fail_count"]), 60.0)
+        if now - cached["checked_at"] < fail_ttl:
+            return False, None
+
     try:
         headers = {}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        async with httpx.AsyncClient(timeout=3.0) as client:
-            response = await client.get(f"{base_url}/models", headers=headers)
-            if response.status_code == 200:
-                data = response.json()
-                # Extract first model name for auto-detect
-                model_name = None
-                if "data" in data and len(data["data"]) > 0:
-                    model_name = data["data"][0].get("id")
-                return True, model_name
-            return False, None
+        client = _get_llm_http_client()
+        response = await client.get(f"{base_url}/models", headers=headers, timeout=3.0)
+        if response.status_code == 200:
+            data = response.json()
+            model_name = None
+            if "data" in data and len(data["data"]) > 0:
+                model_name = data["data"][0].get("id")
+            cached.update(
+                {
+                    "available": True,
+                    "model": model_name,
+                    "checked_at": now,
+                    "fail_count": 0,
+                }
+            )
+            return True, model_name
+        cached.update(
+            {
+                "available": False,
+                "checked_at": now,
+                "fail_count": cached["fail_count"] + 1,
+            }
+        )
+        return False, None
     except Exception:
+        cached.update(
+            {
+                "available": False,
+                "checked_at": now,
+                "fail_count": cached["fail_count"] + 1,
+            }
+        )
         return False, None
 
 
@@ -2292,24 +2393,24 @@ async def _call_ai_complete(
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(
-            f"{base_url}/chat/completions",
-            headers=headers,
-            json={
-                "model": model,
-                "messages": messages,
-                "stream": False,
-                "temperature": 0.7,
-                "max_tokens": 2048,
-            },
-        )
-        await _raise_for_status_with_detail(response)
-        data = response.json()
+    client = _get_llm_http_client()
+    response = await client.post(
+        f"{base_url}/chat/completions",
+        headers=headers,
+        json={
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "temperature": 0.7,
+            "max_tokens": 2048,
+        },
+    )
+    await _raise_for_status_with_detail(response)
+    data = response.json()
 
-        if "choices" in data and len(data["choices"]) > 0:
-            return data["choices"][0]["message"]["content"]
-        return ""
+    if "choices" in data and len(data["choices"]) > 0:
+        return data["choices"][0]["message"]["content"]
+    return ""
 
 
 async def _execute_exa_search(
@@ -2813,7 +2914,7 @@ After saving, return here and start chatting!"""
         # Normal responses are yielded to the client in real-time;
         # tool-call responses are buffered for processing.
         _TOOL_PREFIXES = ("[WEB_SEARCH]", "[READ_ARTICLE]")
-        _SNIFF_CHARS = 20  # content chars to accumulate before deciding
+        _SNIFF_CHARS = 14
 
         content_so_far = ""
         pending_sse_chunks: list[str] = []
@@ -3874,8 +3975,6 @@ async def chat_with_ai(
         user_tz = ZoneInfo("UTC")
     current_datetime = datetime.now(user_tz).strftime("%Y-%m-%d %H:%M:%S %Z")
 
-    # Fetch user's temporary dataset permissions (for non-admin users)
-    # Need this first to pass elevated_dataset_ids to get_chat_context_stats
     temp_permissions = []
     elevated_dataset_ids = None
     if not user.is_admin():
@@ -3885,15 +3984,6 @@ async def chat_with_ai(
         if temp_permissions:
             elevated_dataset_ids = [perm.dataset_id for perm in temp_permissions]
 
-    # Fetch user's data overview for context (single optimized query)
-    # Pass elevated_dataset_ids so that temporarily authorized datasets are included
-    stats = await WSIRepository.get_chat_context_stats(
-        db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
-    )
-    rich_datasets = await WSIRepository.get_datasets(
-        db, user_id=user_id_filter, elevated_dataset_ids=elevated_dataset_ids
-    )
-
     latest_user_text = ""
     for msg in reversed(req.messages):
         if msg.get("role") == "user":
@@ -3902,14 +3992,53 @@ async def chat_with_ai(
                 break
     inferred_model_filters = _infer_model_request_filters(latest_user_text)
 
-    # Fetch user's trained models. For filtered requests, scan in chunks and
-    # stop early once enough quick keyword matches are found, reducing overhead
-    # while still improving recall for older models.
+    async def _with_new_session(coro_factory):
+        async with async_session() as s:
+            return await coro_factory(s)
+
+    _uid = user_id_filter
+    _eids = elevated_dataset_ids
+
     if inferred_model_filters:
+        (
+            stats,
+            rich_datasets,
+            trained_models_total,
+            training_tasks,
+            training_tasks_stats,
+            inference_tasks,
+            inference_tasks_stats,
+        ) = await asyncio.gather(
+            _with_new_session(
+                lambda s: WSIRepository.get_chat_context_stats(
+                    s, user_id=_uid, elevated_dataset_ids=_eids
+                )
+            ),
+            _with_new_session(
+                lambda s: WSIRepository.get_datasets(
+                    s, user_id=_uid, elevated_dataset_ids=_eids
+                )
+            ),
+            _with_new_session(lambda s: TrainedModelRepository.count(s, user_id=_uid)),
+            _with_new_session(
+                lambda s: TrainingTaskRepository.get_all(
+                    s, limit=10, offset=0, user_id=_uid
+                )
+            ),
+            _with_new_session(
+                lambda s: TrainingTaskRepository.get_status_counts(s, user_id=_uid)
+            ),
+            _with_new_session(
+                lambda s: AITaskRepository.get_recent(s, limit=10, user_id=_uid)
+            ),
+            _with_new_session(
+                lambda s: AITaskRepository.get_status_counts(s, user_id=_uid)
+            ),
+        )
+
         trained_models = []
         scanned_count = 0
         quick_match_count = 0
-
         while scanned_count < FILTERED_MODEL_SCAN_LIMIT:
             batch_limit = min(
                 MODEL_SCAN_BATCH_SIZE,
@@ -3923,10 +4052,8 @@ async def chat_with_ai(
             )
             if not batch:
                 break
-
             trained_models.extend(batch)
             scanned_count += len(batch)
-
             if inferred_model_filters.get("text_keywords"):
                 quick_match_count += sum(
                     1
@@ -3935,38 +4062,55 @@ async def chat_with_ai(
                         item, inferred_model_filters
                     )
                 )
-
                 if (
                     quick_match_count >= MAX_MODELS_IN_CHAT_CONTEXT
                     and scanned_count >= DEFAULT_MODEL_SCAN_LIMIT
                 ):
                     break
-
             if len(batch) < batch_limit:
                 break
     else:
-        trained_models = await TrainedModelRepository.get_all(
-            db, limit=DEFAULT_MODEL_SCAN_LIMIT, offset=0, user_id=user_id_filter
+        (
+            stats,
+            rich_datasets,
+            trained_models,
+            trained_models_total,
+            training_tasks,
+            training_tasks_stats,
+            inference_tasks,
+            inference_tasks_stats,
+        ) = await asyncio.gather(
+            _with_new_session(
+                lambda s: WSIRepository.get_chat_context_stats(
+                    s, user_id=_uid, elevated_dataset_ids=_eids
+                )
+            ),
+            _with_new_session(
+                lambda s: WSIRepository.get_datasets(
+                    s, user_id=_uid, elevated_dataset_ids=_eids
+                )
+            ),
+            _with_new_session(
+                lambda s: TrainedModelRepository.get_all(
+                    s, limit=DEFAULT_MODEL_SCAN_LIMIT, offset=0, user_id=_uid
+                )
+            ),
+            _with_new_session(lambda s: TrainedModelRepository.count(s, user_id=_uid)),
+            _with_new_session(
+                lambda s: TrainingTaskRepository.get_all(
+                    s, limit=10, offset=0, user_id=_uid
+                )
+            ),
+            _with_new_session(
+                lambda s: TrainingTaskRepository.get_status_counts(s, user_id=_uid)
+            ),
+            _with_new_session(
+                lambda s: AITaskRepository.get_recent(s, limit=10, user_id=_uid)
+            ),
+            _with_new_session(
+                lambda s: AITaskRepository.get_status_counts(s, user_id=_uid)
+            ),
         )
-    trained_models_total = await TrainedModelRepository.count(
-        db, user_id=user_id_filter
-    )
-
-    # Fetch user's training tasks (recent 10 for context, with counts)
-    training_tasks = await TrainingTaskRepository.get_all(
-        db, limit=10, offset=0, user_id=user_id_filter
-    )
-    training_tasks_stats = await TrainingTaskRepository.get_status_counts(
-        db, user_id=user_id_filter
-    )
-
-    # Fetch user's inference tasks (recent 10 for context, with counts)
-    inference_tasks = await AITaskRepository.get_recent(
-        db, limit=10, user_id=user_id_filter
-    )
-    inference_tasks_stats = await AITaskRepository.get_status_counts(
-        db, user_id=user_id_filter
-    )
 
     # Format user data context for System Prompt
     wsi_count = stats["total_count"]
@@ -3985,6 +4129,15 @@ async def chat_with_ai(
     # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
     # Datasets are now marked with access_type: "own" (user's own) or "elevated" (temporary permission)
     if datasets:
+        _batch_dataset_ids = [
+            d["dataset_id"]
+            for d in datasets
+            if d.get("dataset_id") and d.get("dataset_id") != "unknown"
+        ]
+        _wsi_ids_batch = await DatasetRepository.get_wsi_ids_batch(
+            db, _batch_dataset_ids
+        )
+
         datasets_details = []
         for d in datasets:
             ds_name = d["dataset_name"]
@@ -4074,35 +4227,23 @@ async def chat_with_ai(
             if isinstance(ds_source, str):
                 ds_source = ds_source.strip()
 
-            if ds_id != "unknown":
-                dataset_wsi_ids = await DatasetRepository.get_wsi_ids(db, ds_id)
-            else:
-                dataset_wsi_ids = []
+            dataset_wsi_ids = (
+                _wsi_ids_batch.get(ds_id, []) if ds_id != "unknown" else []
+            )
             dataset_wsi_ids_per_dataset[ds_id] = dataset_wsi_ids
             d["wsi_ids"] = dataset_wsi_ids
 
-            # For WSI datasets, scan feature cache to find available extractors (for external validation compatibility)
             available_extractors = []
             available_extractors_str = ""
-            if ds_type == "wsi":
-                if dataset_wsi_ids:
-                    first_wsi_id = dataset_wsi_ids[0]
-                    features_root = Config.get_uploads_dir() / "features"
-                    if features_root.exists():
-                        for extractor_dir in features_root.iterdir():
-                            if extractor_dir.is_dir():
-                                for params_hash_dir in extractor_dir.iterdir():
-                                    if params_hash_dir.is_dir():
-                                        feat_file = (
-                                            params_hash_dir / f"{first_wsi_id}.pt"
-                                        )
-                                        if feat_file.exists():
-                                            available_extractors.append(
-                                                extractor_dir.name
-                                            )
-                                            break  # Found for this extractor, move to next
-                    if available_extractors:
-                        available_extractors_str = f", available_extractors=[{', '.join(available_extractors)}]"
+            if ds_type == "wsi" and dataset_wsi_ids:
+                features_root = Config.get_uploads_dir() / "features"
+                available_extractors = await _get_available_extractors(
+                    features_root, dataset_wsi_ids[0]
+                )
+                if available_extractors:
+                    available_extractors_str = (
+                        f", available_extractors=[{', '.join(available_extractors)}]"
+                    )
             # Store for model compatibility lookup
             available_extractors_per_dataset[ds_id] = available_extractors
             d["available_feature_extractors"] = available_extractors
@@ -4306,9 +4447,34 @@ async def chat_with_ai(
             # -----------------------------------------------------------------------
             compatible_datasets = []
             if data_type != "unknown" and task_type != "unknown":
+                _now_compat = time.monotonic()
                 for ds in stats_datasets:
                     cand_id = ds["dataset_id"]
                     cand_name = ds["dataset_name"]
+                    cand_extractors = tuple(
+                        sorted(available_extractors_per_dataset.get(cand_id, []))
+                    )
+                    cand_wsi_count = len(dataset_wsi_ids_per_dataset.get(cand_id, []))
+                    _ck = (
+                        model_id,
+                        cand_id,
+                        data_type,
+                        task_type,
+                        source_dataset_id,
+                        cand_extractors,
+                        cand_wsi_count,
+                    )
+                    _cached_compat = _compat_check_cache.get(_ck)
+                    if (
+                        _cached_compat is not None
+                        and _now_compat - _cached_compat[1] < _COMPAT_CACHE_TTL
+                    ):
+                        if _cached_compat[0]:
+                            compatible_datasets.append(
+                                f"{cand_name} (dataset_id={cand_id})"
+                            )
+                        continue
+
                     ds["available_feature_extractors"] = (
                         available_extractors_per_dataset.get(cand_id, [])
                     )
@@ -4325,6 +4491,10 @@ async def chat_with_ai(
                         model_wsi_ids=model_wsi_ids,
                         dataset_meta=ds,
                         extractor_embed_dim=EXTRACTOR_EMBED_DIM,
+                    )
+                    _compat_check_cache[_ck] = (
+                        compatibility_error is None,
+                        _now_compat,
                     )
                     if compatibility_error is not None:
                         continue
@@ -4696,8 +4866,8 @@ async def chat_with_ai(
                     break
 
     if user_query_for_bm25 and all_pdf_urls:
-        merged_ctx = _build_merged_pdf_context(
-            all_pdf_urls, user_query_for_bm25, detected_lang
+        merged_ctx = await asyncio.to_thread(
+            _build_merged_pdf_context, all_pdf_urls, user_query_for_bm25, detected_lang
         )
         merged_content = f"[PDF_CONTEXT]\n{merged_ctx}\n[/PDF_CONTEXT]"
 

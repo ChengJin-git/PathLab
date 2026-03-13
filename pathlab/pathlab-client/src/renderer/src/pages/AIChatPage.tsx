@@ -1244,13 +1244,17 @@ export default function AIChatPage() {
       if (!chunkBuffer) return
       const buffered = chunkBuffer
       chunkBuffer = ''
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === trackingId
-            ? { ...m, content: m.content + buffered }
-            : m
-        )
-      )
+      const currentId = trackingId
+      setMessages(prev => {
+        const lastIdx = prev.length - 1
+        if (lastIdx >= 0 && prev[lastIdx].id === currentId) {
+          const updated = { ...prev[lastIdx], content: prev[lastIdx].content + buffered }
+          const next = [...prev]
+          next[lastIdx] = updated
+          return next
+        }
+        return prev.map(m => m.id === currentId ? { ...m, content: m.content + buffered } : m)
+      })
     }
 
     try {

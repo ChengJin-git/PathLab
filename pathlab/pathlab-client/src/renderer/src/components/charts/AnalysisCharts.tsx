@@ -1,4 +1,4 @@
-import { useRef, useCallback, useMemo, memo } from 'react'
+import { useRef, useCallback, useMemo, memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
@@ -72,51 +72,93 @@ export function exportChartAsPng(chartRef: React.RefObject<ReactECharts | null>,
 export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, title, compact }: { data: ConfusionMatrixData } & ChartProps) {
   const { t } = useTranslation()
   const chartRef = useRef<ReactECharts | null>(null)
+  const [showPercent, setShowPercent] = useState(false)
   const handleExport = useCallback(() => exportChartAsPng(chartRef, 'confusion_matrix.png', 600), [])
 
+  const n = data.classes.length
+  const isLarge = n > 10
+
+  // Row totals for percentage calculation
+  const rowTotals = useMemo(() => {
+    const totals: number[] = new Array(n).fill(0)
+    for (const [, actual, value] of data.data) totals[actual] += value
+    return totals
+  }, [data.data, n])
+
+  // Switch between raw counts and row-normalised percentages
+  const displayData = useMemo<[number, number, number][]>(() => {
+    if (!showPercent) return data.data
+    return data.data.map(([pred, actual, value]) => {
+      const pct = rowTotals[actual] > 0 ? Math.round((value / rowTotals[actual]) * 100) : 0
+      return [pred, actual, pct]
+    })
+  }, [data.data, showPercent, rowTotals])
+
+  // Dynamic chart height: give each class ~28 px of row height when there are many classes
+  const chartHeight = compact ? 300 : isLarge ? Math.max(500, n * 28 + 160) : 420
+
   const option: EChartsOption = useMemo(() => {
-    const maxValue = Math.max(...data.data.map(d => d[2]))
+    const maxValue = Math.max(...displayData.map(d => d[2]))
+    const maxLabelLen = Math.max(...data.classes.map(c => c.length))
+
+    // Adaptive font / label visibility
+    const axisLabelFontSize = compact ? 10 : n > 20 ? 9 : n > 15 ? 10 : n > 10 ? 11 : 12
+    const cellLabelFontSize = compact ? 10 : n > 20 ? 0 : n > 15 ? 9 : n > 10 ? 10 : 14
+    const showCellLabel = !compact && n <= 20
+
+    // X-axis rotation: 45° when there are many classes so labels don't overlap
+    const xRotate = compact ? 30 : isLarge ? 45 : 0
+
+    // Grid margins computed from longest class name length
+    const leftMargin = compact ? 60 : isLarge ? Math.min(maxLabelLen * 7 + 10, 180) : '25%'
+    const bottomMargin = compact ? 125 : isLarge ? Math.max(80, Math.min(maxLabelLen * 5 + 20, 150)) : 100
+    const nameGapY = compact ? 35 : isLarge ? Math.min(maxLabelLen * 7 + 5, 175) : 85
+    const nameGapX = compact ? 80 : isLarge ? Math.max(60, Math.min(maxLabelLen * 4 + 50, 150)) : 60
+
+    // Shared label formatter: word-wrap for Y axis, truncate for rotated X axis
+    const makeFormatter = (rotated: boolean) => (value: string) => {
+      const maxLen = compact ? 10 : 14
+      if (value.length <= maxLen) return value
+      if (rotated) return value.slice(0, maxLen) + '…'
+      const words = value.split(/[\s-]+/)
+      const lines: string[] = []
+      let line = ''
+      for (const word of words) {
+        if ((line + ' ' + word).trim().length <= maxLen) {
+          line = (line + ' ' + word).trim()
+        } else {
+          if (line) lines.push(line)
+          line = word
+        }
+      }
+      if (line) lines.push(line)
+      return lines.join('\n')
+    }
+
     return {
       title: { text: title || t('analysisCharts.confusionMatrix'), left: 'center', textStyle: { fontSize: compact ? 14 : 16 }, top: compact ? 5 : 10 },
       tooltip: {
         position: 'top',
         formatter: (params: any) => {
-          const [pred, actual, value] = params.data
-          return `${t('analysisCharts.trueLabel')}: ${data.classes[actual]}<br/>${t('analysisCharts.predictedLabel')}: ${data.classes[pred]}<br/>${t('analysisCharts.count')}: ${value}`
+          const [pred, actual] = params.data
+          // Always show both count and percentage in tooltip regardless of display mode
+          const entry = data.data.find(d => d[0] === pred && d[1] === actual)
+          const count = entry ? entry[2] : 0
+          const pct = rowTotals[actual] > 0 ? Math.round((count / rowTotals[actual]) * 100) : 0
+          return `${t('analysisCharts.trueLabel')}: ${data.classes[actual]}<br/>${t('analysisCharts.predictedLabel')}: ${data.classes[pred]}<br/>${t('analysisCharts.count')}: ${count} (${pct}%)`
         }
       },
       grid: compact
         ? { left: 60, right: 35, top: 40, bottom: 125, containLabel: false }
-        : { left: '25%', right: 110, top: 60, bottom: 100, containLabel: false },
+        : { left: leftMargin, right: 110, top: 60, bottom: bottomMargin, containLabel: false },
       xAxis: {
         type: 'category',
         data: data.classes,
         name: t('analysisCharts.predictedLabel'),
         nameLocation: 'middle',
-        nameGap: compact ? 80 : 60,
+        nameGap: nameGapX,
         nameTextStyle: { fontSize: compact ? 11 : 12 },
-        axisLabel: {
-          fontSize: compact ? 10 : 12,
-          rotate: compact ? 30 : 0,
-          interval: 0,
-          formatter: (value: string) => {
-            const maxLen = compact ? 10 : 12
-            if (value.length <= maxLen) return value
-            const words = value.split(/[\s-]+/)
-            const lines: string[] = []
-            let line = ''
-            for (const word of words) {
-              if ((line + ' ' + word).trim().length <= maxLen) {
-                line = (line + ' ' + word).trim()
-              } else {
-                if (line) lines.push(line)
-                line = word
-              }
-            }
-            if (line) lines.push(line)
-            return lines.join('\n')
-          }
-        },
+        axisLabel: { fontSize: axisLabelFontSize, rotate: xRotate, interval: 0, formatter: makeFormatter(xRotate > 0) },
         splitArea: { show: true }
       },
       yAxis: {
@@ -124,29 +166,9 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
         data: data.classes,
         name: t('analysisCharts.trueLabel'),
         nameLocation: 'middle',
-        nameGap: compact ? 35 : 85,
+        nameGap: nameGapY,
         nameTextStyle: { fontSize: compact ? 11 : 12 },
-        axisLabel: {
-          fontSize: compact ? 10 : 12,
-          interval: 0,
-          formatter: (value: string) => {
-            const maxLen = compact ? 10 : 12
-            if (value.length <= maxLen) return value
-            const words = value.split(/[\s-]+/)
-            const lines: string[] = []
-            let line = ''
-            for (const word of words) {
-              if ((line + ' ' + word).trim().length <= maxLen) {
-                line = (line + ' ' + word).trim()
-              } else {
-                if (line) lines.push(line)
-                line = word
-              }
-            }
-            if (line) lines.push(line)
-            return lines.join('\n')
-          }
-        },
+        axisLabel: { fontSize: axisLabelFontSize, interval: 0, formatter: makeFormatter(false) },
         splitArea: { show: true },
         inverse: true
       },
@@ -162,21 +184,45 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
         inRange: { color: ['#e0e7ff', '#3730a3'] },
         itemWidth: 15,
         itemHeight: compact ? 100 : 120,
-        text: [t('analysisCharts.high'), t('analysisCharts.low')],
+        text: showPercent ? ['100%', '0%'] : [t('analysisCharts.high'), t('analysisCharts.low')],
         textGap: 5,
         textStyle: { fontSize: 10 }
       },
-      series: [{ type: 'heatmap', data: data.data, label: { show: true, fontSize: compact ? 10 : 14, fontWeight: 'bold' }, emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } } }]
+      series: [{
+        type: 'heatmap',
+        data: displayData,
+        label: {
+          show: showCellLabel,
+          fontSize: cellLabelFontSize,
+          fontWeight: 'bold',
+          formatter: showPercent ? (params: any) => `${params.value[2]}%` : undefined
+        },
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
+      }]
     }
-  }, [data, title, compact, t])
+  }, [displayData, data.classes, data.data, rowTotals, title, compact, n, isLarge, showPercent, t])
 
   return (
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700">{title || t('analysisCharts.confusionMatrix')}</span>
-        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+        <div className="flex items-center gap-2">
+          {!compact && (
+            <button
+              onClick={() => setShowPercent(v => !v)}
+              className={`text-xs px-2 py-0.5 rounded border transition-colors ${
+                showPercent
+                  ? 'bg-indigo-600 text-white border-indigo-600'
+                  : 'text-gray-500 border-gray-300 hover:border-indigo-400 hover:text-indigo-600'
+              }`}
+            >
+              {showPercent ? t('analysisCharts.showCount') : t('analysisCharts.showPercent')}
+            </button>
+          )}
+          <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+        </div>
       </div>
-      <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
+      <ReactECharts ref={chartRef} option={option} style={{ height: `${chartHeight}px`, width: '100%' }} notMerge={true} />
     </div>
   )
 })
