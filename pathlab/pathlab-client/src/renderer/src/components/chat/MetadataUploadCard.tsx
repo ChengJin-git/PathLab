@@ -6,7 +6,7 @@ import {
 import { useTranslation } from 'react-i18next'
 import { downloadCSVTemplate, UploadSplitsResponse } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
-import * as XLSX from 'xlsx'
+import { xlsxToCSV } from '../../lib/csvImporter'
 
 // --- Parsing Logic ---
 export interface MetadataUploadConfig {
@@ -118,12 +118,11 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
       let csvContent: string
 
       if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-        const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-        if (workbook.SheetNames.length > 1) {
+        const { sheetNames, csv } = await xlsxToCSV(arrayBuffer)
+        if (sheetNames.length > 1) {
           return t('chatComponents.metadataUpload.multipleSheets')
         }
-        const worksheet = workbook.Sheets[workbook.SheetNames[0]]
-        csvContent = XLSX.utils.sheet_to_csv(worksheet)
+        csvContent = csv
       } else {
         csvContent = new TextDecoder().decode(arrayBuffer)
       }
@@ -152,12 +151,8 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
     const fileName = file.name.toLowerCase()
     if (fileName.endsWith('.csv')) return file
 
-    const arrayBuffer = await file.arrayBuffer()
-    const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-    const worksheet = workbook.Sheets[workbook.SheetNames[0]]
-    const csvContent = XLSX.utils.sheet_to_csv(worksheet)
-    const blob = new Blob([csvContent], { type: 'text/csv' })
-    return new File([blob], file.name.replace(/\.(xlsx|xls)$/i, '.csv'), { type: 'text/csv' })
+    const { csv } = await xlsxToCSV(await file.arrayBuffer())
+    return new File([new Blob([csv], { type: 'text/csv' })], file.name.replace(/\.(xlsx|xls)$/i, '.csv'), { type: 'text/csv' })
   }
 
   // Handle file selection → validate → convert → start background task

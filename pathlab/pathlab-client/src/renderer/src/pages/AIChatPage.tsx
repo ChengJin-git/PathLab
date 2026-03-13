@@ -24,7 +24,7 @@ import {
 } from '../api'
 import { useVoiceSession } from '../lib/useVoiceSession'
 import { formatFileSize } from '../lib/utils'
-import * as XLSX from 'xlsx'
+import { xlsxToCSV } from '../lib/csvImporter'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Sparkles, FileSpreadsheet, History,
@@ -1016,13 +1016,9 @@ export default function AIChatPage() {
         file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
         file.type === 'application/vnd.ms-excel') {
         try {
-          const arrayBuffer = await file.arrayBuffer()
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+          const { sheetNames, csv: csvContent } = await xlsxToCSV(await file.arrayBuffer())
 
-          // Check for multiple sheets - if so, we'll note it for the agent to reject
-          const sheetNames = workbook.SheetNames
           if (sheetNames.length > 1) {
-            // Multiple sheets - let agent know to reject
             newFileAttachments.push({
               id: `${Date.now()}-${i}`,
               file,
@@ -1036,20 +1032,14 @@ export default function AIChatPage() {
               ].filter(Boolean)
             })
           } else {
-            // Single sheet - convert to CSV
-            const worksheet = workbook.Sheets[sheetNames[0]]
-            const csvContent = XLSX.utils.sheet_to_csv(worksheet)
-
-            // Parse CSV to get preview (first 5 rows)
             const lines = csvContent.split('\n').filter(line => line.trim())
-            const preview = lines.slice(0, 6) // Header + 5 data rows
-
+            const preview = lines.slice(0, 6)
             newFileAttachments.push({
               id: `${Date.now()}-${i}`,
               file,
               name: file.name,
-              type: 'xlsx', // Keep as xlsx to indicate original format
-              content: csvContent, // Store as CSV content
+              type: 'xlsx',
+              content: csvContent,
               preview
             })
           }

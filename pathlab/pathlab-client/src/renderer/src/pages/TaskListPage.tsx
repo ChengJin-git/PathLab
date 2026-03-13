@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
@@ -41,16 +42,14 @@ export default function TaskListPage() {
   const navigate = useNavigate()
   const { isAdmin, user } = useAuth()
   const { t } = useTranslation()
+  const qc = useQueryClient()
 
-  const [tasks, setTasks] = useState<Task[]>([])
-  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'running' | 'completed' | 'failed' | 'cancelled'>('all')
   const [sortBy, setSortBy] = useState<'created' | 'updated' | 'name'>('updated')
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const [itemsPerPage, setItemsPerPage] = useState(5)
-  const [totalCount, setTotalCount] = useState(0)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
@@ -62,15 +61,47 @@ export default function TaskListPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
-  const [stats, setStats] = useState<TrainingTaskListStats>({ total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
+  const trainingTasksQuery = useQuery({
+    queryKey: ['training-tasks', { page: currentPage, pageSize: itemsPerPage, search: debouncedSearchQuery, filter, sort: sortBy }],
+    queryFn: async () => {
+      const query = {
+        page: currentPage,
+        page_size: itemsPerPage,
+        search: debouncedSearchQuery || undefined,
+        status_filter: filter,
+        sort_by: sortBy,
+      } as const
+      const response = await getTrainingTasks(query)
+      const totalPages = Math.max(1, Math.ceil((response.total || 0) / itemsPerPage))
+      if (currentPage > 1) {
+        void prefetchTrainingTasks({ ...query, page: currentPage - 1, forceRefresh: false })
+      }
+      if (currentPage < totalPages) {
+        void prefetchTrainingTasks({ ...query, page: currentPage + 1, forceRefresh: false })
+      }
+      return response
+    },
+    staleTime: 30 * 1000,
+    placeholderData: (prev) => prev,
+  })
 
-  // Edit task name modal states
+  const tasks: Task[] = trainingTasksQuery.data?.items ?? []
+  const totalCount: number = trainingTasksQuery.data?.total ?? 0
+  const stats: TrainingTaskListStats = trainingTasksQuery.data?.stats ?? { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+  const loading = trainingTasksQuery.isLoading
+  const isFetchingInBackground = trainingTasksQuery.isFetching && !trainingTasksQuery.isLoading
+
+  const refreshTasks = React.useCallback(async ({ showLoadingSpinner: _show = true, forceRefresh = false }: { showLoadingSpinner?: boolean; forceRefresh?: boolean } = {}) => {
+    if (forceRefresh) {
+      await qc.invalidateQueries({ queryKey: ['training-tasks'] })
+    }
+  }, [qc])
+
   const [showEditModal, setShowEditModal] = useState(false)
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null)
   const [editedTaskName, setEditedTaskName] = useState('')
   const [isEditingSaving, setIsEditingSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
-  const refreshRequestIdRef = React.useRef(0)
 
   const { rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
 
@@ -101,62 +132,10 @@ export default function TaskListPage() {
     }
   }
 
-  const refreshTasks = React.useCallback(async ({
-    showLoadingSpinner = true,
-    forceRefresh = false,
-  }: {
-    showLoadingSpinner?: boolean
-    forceRefresh?: boolean
-  } = {}) => {
-    const requestId = ++refreshRequestIdRef.current
-
-    if (showLoadingSpinner) {
-      setLoading(true)
-    }
-
-    try {
-      const query = {
-        page: currentPage,
-        page_size: itemsPerPage,
-        search: debouncedSearchQuery || undefined,
-        status_filter: filter,
-        sort_by: sortBy,
-        forceRefresh,
-      } as const
-
-      const response = await getTrainingTasks(query)
-      if (requestId !== refreshRequestIdRef.current) return
-
-      setTasks(response.items || [])
-      setTotalCount(response.total || 0)
-      setStats(response.stats || { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 })
-
-      const totalPages = Math.max(1, Math.ceil((response.total || 0) / itemsPerPage))
-      if (currentPage > 1) {
-        void prefetchTrainingTasks({ ...query, page: currentPage - 1, forceRefresh: false })
-      }
-      if (currentPage < totalPages) {
-        void prefetchTrainingTasks({ ...query, page: currentPage + 1, forceRefresh: false })
-      }
-    } catch (error) {
-      if (requestId !== refreshRequestIdRef.current) return
-      console.error('Failed to load training tasks:', error)
-    } finally {
-      if (requestId !== refreshRequestIdRef.current) return
-      if (showLoadingSpinner) {
-        setLoading(false)
-      }
-    }
-  }, [currentPage, itemsPerPage, debouncedSearchQuery, filter, sortBy])
-
-  useEffect(() => {
-    void refreshTasks({ showLoadingSpinner: true })
-  }, [refreshTasks])
-
   useEffect(() => {
     if (rawTrainingTasks === null) return
-    void refreshTasks({ showLoadingSpinner: false, forceRefresh: true })
-  }, [rawTrainingTasks, refreshTasks])
+    void qc.invalidateQueries({ queryKey: ['training-tasks'] })
+  }, [rawTrainingTasks, qc])
 
   useEffect(() => {
     setSelectedTasks([])
@@ -202,18 +181,8 @@ export default function TaskListPage() {
     setEditError(null)
 
     try {
-      const updatedTask = await updateTrainingTaskName(taskToEdit.task_id, editedTaskName.trim())
-
-      // Update local state immediately
-      setTasks(prevTasks =>
-        prevTasks.map(t =>
-          t.task_id === taskToEdit.task_id
-            ? { ...t, task_name: updatedTask.task_name, updated_at: updatedTask.updated_at }
-            : t
-        )
-      )
-
-      // Close modal
+      await updateTrainingTaskName(taskToEdit.task_id, editedTaskName.trim())
+      await qc.invalidateQueries({ queryKey: ['training-tasks'] })
       setShowEditModal(false)
       setTaskToEdit(null)
     } catch (err: any) {
@@ -779,7 +748,7 @@ export default function TaskListPage() {
                   end: paginationEnd,
                   total: totalCount,
                 })}</span>
-                {loading && totalCount > 0 && (
+                {isFetchingInBackground && totalCount > 0 && (
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
                 )}
               </div>

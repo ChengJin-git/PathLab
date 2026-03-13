@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } from 'lucide-react'
@@ -48,28 +49,15 @@ export default function ReportGeneratorPage() {
     filterLabel: 'all',
     format: 'csv'
   })
-  const [results, setResults] = useState<WSIResult[]>([])
-  const [stats, setStats] = useState<Stats | null>(null)
-  const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
 
-  useEffect(() => {
-    loadData()
-  }, [])
-
-  const loadData = async () => {
-    setLoading(true)
-    try {
-      // Use batch API to fetch all results with WSI info in one request
+  const { data: fetchedResults, isLoading: loading } = useQuery({
+    queryKey: ['all-results'],
+    queryFn: async () => {
       const response = await fetchAllResults()
       const items = response.items || []
-
-      // Transform to WSIResult format
-      const allResults: WSIResult[] = items.map((item) => {
-        const confidence = item.probs && item.pred
-          ? item.probs[item.pred]
-          : undefined
-
+      return items.map((item): WSIResult => {
+        const confidence = item.probs && item.pred ? item.probs[item.pred] : undefined
         return {
           wsi_id: item.wsi_id,
           case_id: item.case_id || '',
@@ -80,17 +68,13 @@ export default function ReportGeneratorPage() {
           is_correct: item.pred && item.label ? item.pred === item.label : undefined
         }
       })
+    },
+    staleTime: 60 * 1000,
+  })
 
-      setResults(allResults)
-      calculateStats(allResults)
-    } catch (error) {
-      console.error('Failed to load data:', error)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const results: WSIResult[] = fetchedResults ?? []
 
-  const calculateStats = (data: WSIResult[]) => {
+  const calculateStats = (data: WSIResult[]): Stats => {
     const analyzed = data.filter(r => r.pred !== null)
     const correct = analyzed.filter(r => r.is_correct === true)
     
@@ -111,15 +95,17 @@ export default function ReportGeneratorPage() {
       }
     })
 
-    setStats({
+    return {
       total: data.length,
       analyzed: analyzed.length,
       accuracy: analyzed.length > 0 ? (correct.length / analyzed.length) * 100 : 0,
       label_distribution: labelDist,
       pred_distribution: predDist,
       confusion_matrix: confusionMatrix
-    })
+    }
   }
+
+  const stats: Stats | null = results.length > 0 ? calculateStats(results) : null
 
   const generateCSV = () => {
     const filteredData = config.filterLabel === 'all' 

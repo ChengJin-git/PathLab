@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import * as XLSX from 'xlsx'
+import { xlsxToCSV } from '../lib/csvImporter'
 import {
   Download,
   X,
@@ -67,18 +68,43 @@ export default function RegisterPage() {
 
   // Steps: 1 - Dataset Name, 2 - File Upload
   const [step, setStep] = useState(1)
-  // Store list of existing dataset names
-  const [existingDatasets, setExistingDatasets] = useState<string[]>([])
-  // Map from dataset_name to task_type (classification/survival) for quick lookup
-  const [existingDatasetTypes, setExistingDatasetTypes] = useState<Map<string, UploadMode>>(new Map())
-  // Map from dataset_name to aggregation_level (case/file) for quick lookup
-  const [existingDatasetLevels, setExistingDatasetLevels] = useState<Map<string, DataLevel>>(new Map())
-  // Map from dataset_name to data_type (wsi/patch) for quick lookup
-  const [existingDatasetDataTypes, setExistingDatasetDataTypes] = useState<Map<string, DataType>>(new Map())
-  // Map from dataset_name to dataset_id for quick lookup
-  const [datasetNameToId, setDatasetNameToId] = useState<Map<string, string | null>>(new Map())
-  // Map from dataset_name to source_organ for quick lookup
-  const [datasetNameToSourceOrgan, setDatasetNameToSourceOrgan] = useState<Map<string, string | null>>(new Map())
+  const { data: datasetsData } = useQuery({
+    queryKey: ['datasets'],
+    queryFn: async () => {
+      const data = await fetchDatasets()
+      const sortedDatasetNames = data.items
+        .map((dataset, index) => ({ dataset, index }))
+        .sort((a, b) => {
+          const aMissing = !a.dataset.source_organ?.trim()
+          const bMissing = !b.dataset.source_organ?.trim()
+          if (aMissing !== bMissing) return aMissing ? -1 : 1
+          return a.index - b.index
+        })
+        .map(({ dataset }) => dataset.dataset_name)
+
+      const typeMap = new Map<string, UploadMode>()
+      const levelMap = new Map<string, DataLevel>()
+      const dataTypeMap = new Map<string, DataType>()
+      const idMap = new Map<string, string | null>()
+      const sourceOrganMap = new Map<string, string | null>()
+      data.items.forEach(d => {
+        typeMap.set(d.dataset_name, d.task_type as UploadMode)
+        levelMap.set(d.dataset_name, d.aggregation_level as DataLevel)
+        dataTypeMap.set(d.dataset_name, d.data_type as DataType)
+        idMap.set(d.dataset_name, d.dataset_id)
+        sourceOrganMap.set(d.dataset_name, d.source_organ ?? null)
+      })
+      return { sortedDatasetNames, typeMap, levelMap, dataTypeMap, idMap, sourceOrganMap }
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const existingDatasets = datasetsData?.sortedDatasetNames ?? []
+  const existingDatasetTypes = datasetsData?.typeMap ?? new Map<string, UploadMode>()
+  const existingDatasetLevels = datasetsData?.levelMap ?? new Map<string, DataLevel>()
+  const existingDatasetDataTypes = datasetsData?.dataTypeMap ?? new Map<string, DataType>()
+  const datasetNameToId = datasetsData?.idMap ?? new Map<string, string | null>()
+  const datasetNameToSourceOrgan = datasetsData?.sourceOrganMap ?? new Map<string, string | null>()
   // Toggle for Dataset Splits Configuration visibility
   const [showSplitConfig, setShowSplitConfig] = useState(false)
 
@@ -116,52 +142,7 @@ export default function RegisterPage() {
     }
   }, [location])
 
-  useEffect(() => {
-    const loadDatasets = async () => {
-      try {
-        const data = await fetchDatasets()
-        // Prioritize datasets without source organ for quick registration,
-        // while preserving backend default order within each group.
-        const sortedDatasetNames = data.items
-          .map((dataset, index) => ({ dataset, index }))
-          .sort((a, b) => {
-            const aMissingSourceOrgan = !a.dataset.source_organ?.trim()
-            const bMissingSourceOrgan = !b.dataset.source_organ?.trim()
 
-            if (aMissingSourceOrgan !== bMissingSourceOrgan) {
-              return aMissingSourceOrgan ? -1 : 1
-            }
-
-            return a.index - b.index
-          })
-          .map(({ dataset }) => dataset.dataset_name)
-
-        // Store list of existing dataset names
-        setExistingDatasets(sortedDatasetNames)
-        // Build lookup maps
-        const typeMap = new Map<string, UploadMode>()
-        const levelMap = new Map<string, DataLevel>()
-        const dataTypeMap = new Map<string, DataType>()
-        const idMap = new Map<string, string | null>()
-        const sourceOrganMap = new Map<string, string | null>()
-        data.items.forEach(d => {
-          typeMap.set(d.dataset_name, d.task_type as UploadMode)
-          levelMap.set(d.dataset_name, d.aggregation_level as DataLevel)
-          dataTypeMap.set(d.dataset_name, d.data_type as DataType)
-          idMap.set(d.dataset_name, d.dataset_id)
-          sourceOrganMap.set(d.dataset_name, d.source_organ ?? null)
-        })
-        setExistingDatasetTypes(typeMap)
-        setExistingDatasetLevels(levelMap)
-        setExistingDatasetDataTypes(dataTypeMap)
-        setDatasetNameToId(idMap)
-        setDatasetNameToSourceOrgan(sourceOrganMap)
-      } catch (err) {
-        console.error('Failed to load datasets', err)
-      }
-    }
-    loadDatasets()
-  }, [])
 
   const isExistingDataset = useMemo(() => {
     return existingDatasets.includes(datasetName.trim())
@@ -793,24 +774,15 @@ export default function RegisterPage() {
         let csvContent: string
         let finalFile: File = file
 
-        // Handle XLSX files - convert to CSV
         if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-          const arrayBuffer = await file.arrayBuffer()
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' })
-
-          if (workbook.SheetNames.length > 1) {
+          const { sheetNames, csv } = await xlsxToCSV(await file.arrayBuffer())
+          if (sheetNames.length > 1) {
             setSplitFileError(t('uploadPage.excelMultipleSheets'))
             return
           }
-
-          const worksheet = workbook.Sheets[workbook.SheetNames[0]]
-          csvContent = XLSX.utils.sheet_to_csv(worksheet)
-
-          // Create a new File object with CSV content but keep original name for display
-          const blob = new Blob([csvContent], { type: 'text/csv' })
-          finalFile = new File([blob], file.name, { type: 'text/csv' })
+          csvContent = csv
+          finalFile = new File([new Blob([csv], { type: 'text/csv' })], file.name, { type: 'text/csv' })
         } else {
-          // CSV file - read directly
           csvContent = await file.text()
         }
 

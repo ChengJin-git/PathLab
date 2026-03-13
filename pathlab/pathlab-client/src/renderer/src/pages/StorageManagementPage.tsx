@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { HardDrive, RefreshCw, Trash2, Search, CheckCircle, AlertCircle, ChevronDown, ChevronUp } from 'lucide-react'
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, startCleanupEmptyDatasetsTask, OrphanedFilesInfo, CleanupResult, OrphanedFile } from '../api'
@@ -9,9 +10,15 @@ import { formatBytes } from '../lib/utils'
 export default function StorageManagementPage() {
   const { t } = useTranslation()
   const { success: toastSuccess, error: toastError } = useToast()
-  const [stats, setStats] = useState<StorageStats | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const qc = useQueryClient()
+
+  const { data: stats, isLoading: loading, error: statsError, refetch: refetchStats } = useQuery({
+    queryKey: ['storage-stats'],
+    queryFn: () => getStorageStats(false),
+    staleTime: 30 * 1000,
+  })
+
+  const error = statsError ? (statsError instanceof Error ? statsError.message : t('storagePage.errors.loadStatsFailed')) : null
 
   // Orphaned files state
   const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
@@ -42,26 +49,9 @@ export default function StorageManagementPage() {
     { key: 'logs', label: t('storagePage.orphanedCategories.logs'), data: orphanedFiles?.orphaned_logs }
   ]
 
-  useEffect(() => {
-    loadStats(false)
-  }, [])
-
-  const loadStats = async (forceRefresh: boolean = false) => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await getStorageStats(forceRefresh)
-      setStats(data)
-    } catch (err) {
-      console.error('Failed to load storage stats:', err)
-      setError(err instanceof Error ? err.message : t('storagePage.errors.loadStatsFailed'))
-    } finally {
-      setLoading(false)
-    }
-  }
-
   const handleRefresh = () => {
-    loadStats(true)  // Force refresh to bypass cache
+    void qc.invalidateQueries({ queryKey: ['storage-stats'] })
+    void refetchStats()
   }
 
   const detectOrphaned = async () => {
@@ -91,8 +81,8 @@ export default function StorageManagementPage() {
     try {
       const result = await cleanupOrphanedFiles(categories)
       setCleanupResult(result)
-      // Refresh both stats and orphaned files (force refresh since we just modified storage)
-      await loadStats(true)
+      void qc.invalidateQueries({ queryKey: ['storage-stats'] })
+      void refetchStats()
       await detectOrphaned()
     } catch (err) {
       console.error('Failed to cleanup orphaned files:', err)
