@@ -1387,7 +1387,22 @@ async def _execute_agent_step(
     if agent_name == "researcher":
         # On the first research step, force PathLab context loading so results
         # appear in activities (identical UX to web search tool calls).
-        if current_step_index == 0:
+        # Guard: skip if PathLab tools were already called in prior messages
+        # (can happen when the step is retried due to insufficient evidence).
+        _pathlab_tool_names = {
+            "search_pathlab_datasets", "search_pathlab_models",
+            "get_pathlab_extractors", "get_pathlab_aggregators",
+        }
+        _pathlab_already_called = any(
+            (
+                hasattr(m, "tool_calls") and any(
+                    tc.get("name") in _pathlab_tool_names
+                    for tc in (m.tool_calls or [])
+                )
+            )
+            for m in state.get("messages", [])
+        )
+        if current_step_index == 0 and not _pathlab_already_called:
             agent_input["messages"].append(
                 HumanMessage(
                     content=(

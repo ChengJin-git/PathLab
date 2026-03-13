@@ -62,26 +62,14 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 **關鍵**：你必須正確使用工具。呢個係強制性嘅：
 
-- **用戶數據查詢**：優先使用 `search_pathlab_datasets()` 或 `search_pathlab_models()`
-  - 當用戶問訓練、數據集或自己嘅數據時
-  - 當用戶提到某種癌症類型並想用自己嘅數據時
-  - 喺推薦公開數據集之前，始終先檢查用戶嘅 PathLab 數據
-
-- **PathLab 功能查詢**：使用 `get_pathlab_extractors()` 或 `get_pathlab_aggregators()`
-  - 當用戶問有邊啲可用嘅模型/方法時
-  - 當比較或推薦特徵提取器或 MIL 方法時
-
 - **外部研究**：使用 `web_search` 同 `crawl_tool`
   - 用於文獻綜述、論文搜索、基準測試
   - 用於公開數據集信息
-  - 只喺檢查用戶 PathLab 數據之後使用（如相關）
 
-**數據相關問題嘅工具調用順序：**
-1. 首先：`search_pathlab_datasets()` - 檢查用戶現有數據
-2. 然後：根據結果，用用戶數據或建議公開替代方案
-3. 最後：如需要，`web_search` 進行額外研究
+- **PathLab 功能查詢（只喺未有結果時）**：使用 `get_pathlab_extractors()` 或 `get_pathlab_aggregators()`
+  - 只喺對話歷史中尚無呢啲工具結果時先調用
 
-**絕對唔好**喺未先調用 `search_pathlab_datasets()` 檢查用戶可用數據嘅情況下回答數據相關問題。
+**禁止重複調用**：PathLab 上下文（`search_pathlab_datasets`、`search_pathlab_models`、`get_pathlab_extractors`、`get_pathlab_aggregators`）喺每次研究會話開始時會自動加載。**唔好再次調用呢啲工具** — 請用對話歷史中已有嘅結果。
 
 # 病理學研究搜索策略
 

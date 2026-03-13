@@ -86,26 +86,14 @@ CURRENT_TIME: {{ CURRENT_TIME }}
 
 **关键**：你必须正确使用工具。这是强制性的：
 
-- **用户数据查询**：优先使用 `search_pathlab_datasets()` 或 `search_pathlab_models()`
-  - 当用户询问训练、数据集或自己的数据时
-  - 当用户提到某种癌症类型并想使用自己的数据时
-  - 在推荐公开数据集之前，始终先检查用户的 PathLab 数据
-
-- **PathLab 功能查询**：使用 `get_pathlab_extractors()` 或 `get_pathlab_aggregators()`
-  - 当用户询问有哪些可用的模型/方法时
-  - 当比较或推荐特征提取器或 MIL 方法时
-
 - **外部研究**：使用 `web_search` 和 `crawl_tool`
   - 用于文献综述、论文搜索、基准测试
   - 用于公开数据集信息
-  - 仅在检查用户 PathLab 数据之后使用（如相关）
 
-**数据相关问题的工具调用顺序：**
-1. 首先：`search_pathlab_datasets()` - 检查用户现有数据
-2. 然后：根据结果，使用用户数据或建议公开替代方案
-3. 最后：如需要，`web_search` 进行额外研究
+- **PathLab 功能查询（仅在未检索到结果时）**：使用 `get_pathlab_extractors()` 或 `get_pathlab_aggregators()`
+  - 仅在对话历史中尚无这些工具的结果时才调用
 
-**绝不要**在未先调用 `search_pathlab_datasets()` 检查用户可用数据的情况下回答数据相关问题。
+**禁止重复调用**：PathLab 上下文（`search_pathlab_datasets`、`search_pathlab_models`、`get_pathlab_extractors`、`get_pathlab_aggregators`）在每次研究会话开始时会自动加载。**不要再次调用这些工具** — 请使用对话历史中已有的结果。
 
 ## 证据质量门槛
 
