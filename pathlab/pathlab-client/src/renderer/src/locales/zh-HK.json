@@ -3266,7 +3266,9 @@
     "time": "時間",
     "survivalProbability": "生存機率",
     "survivalCurve": "生存曲線",
-    "metricCurve": "曲線"
+    "metricCurve": "曲線",
+    "showPercent": "按行百分比",
+    "showCount": "按計數"
   },
   "annotation": {
     "annotate": "標註",
