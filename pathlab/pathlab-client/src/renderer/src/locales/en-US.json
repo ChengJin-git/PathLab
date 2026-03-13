@@ -2568,7 +2568,7 @@
     "metrics": "Metrics",
     "perClassPerformance": "Per-Class Performance",
     "class": "Class",
-    "support": "Support",
+    "support": "Sample Size",
     "analysisCharts": "Analysis Charts",
     "confusionMatrix": "Confusion Matrix",
     "rocCurve": "ROC Curve",

@@ -3217,7 +3217,7 @@
     "metrics": "指標",
     "perClassPerformance": "各類別效能",
     "class": "類別",
-    "support": "支持數",
+    "support": "樣本量",
     "analysisCharts": "分析圖表",
     "confusionMatrix": "混淆矩陣",
     "rocCurve": "ROC 曲線",
