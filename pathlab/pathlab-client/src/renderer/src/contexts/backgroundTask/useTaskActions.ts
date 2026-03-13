@@ -14,6 +14,7 @@ import {
 } from '../../api'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
 import { generateId } from './helpers'
+import { markTrainingSubmissionCancelled } from '../../lib/trainingSubmissionTracker'
 import type {
   BackgroundTask, TaskItem, TaskStatus,
   UploadTaskFile, UploadTaskOptions,
@@ -524,6 +525,9 @@ export function useTaskActions(params: TaskActionsParams) {
         return result.cancelled
       } else {
         const result = await cancelQueueTask(actualTaskId)
+        if (result.cancelled) {
+          markTrainingSubmissionCancelled(actualTaskId)
+        }
         return result.cancelled
       }
     } catch (error) {

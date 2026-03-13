@@ -2185,13 +2185,14 @@ export default function AIChatPage() {
       timestamp: new Date()
     }
     setMessages(prev => [...prev, successMessage])
+    showToast('success', t('chatComponents.taskConfig.taskCreatedSuccess'))
 
     // Don't navigate — stay on the chat page (fire-and-forget).
     // The success message already contains a NAVIGATE card for the user to click if they want.
 
     // Persist success message in background
     persistNewAssistantMessage(successMessage.id, successContent).catch(console.error)
-  }, [persistMessageUpdate, persistNewAssistantMessage, t])
+  }, [persistMessageUpdate, persistNewAssistantMessage, showToast, t])
 
   // Handle registration success (persist to message history)
   const handleRegistrationSuccess = useCallback(async (
@@ -3233,5 +3234,4 @@ export default function AIChatPage() {
     </div>
   )
 }
-
 

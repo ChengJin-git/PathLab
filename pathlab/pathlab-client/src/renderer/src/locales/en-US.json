@@ -1004,6 +1004,7 @@
       "liveLogs": "Live Logs",
       "liveStream": "Live Stream",
       "connecting": "Connecting to task stream...",
+      "creatingTaskFirstLine": "Task request submitted. Waiting for backend to create task record...",
       "error": "Error: "
     },
     "progressSection": {
@@ -1228,6 +1229,7 @@
       "decoder": "Decoder"
     },
     "progress": {
+      "creatingTask": "Creating Task",
       "extracting": "Extracting Features",
       "testing": "Testing Model",
       "patching": "Patching Images",
@@ -2898,6 +2900,7 @@
     },
     "serverStatus": {
       "training": {
+        "creating": "Creating Task",
         "queued": "Queued",
         "pending": "Pending",
         "patching": "Patching Images",

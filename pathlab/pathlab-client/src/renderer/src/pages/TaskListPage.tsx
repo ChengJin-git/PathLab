@@ -10,9 +10,16 @@ import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { formatBytes } from '../lib/utils'
+import {
+  clearTrainingSubmissionRecord,
+  isTrainingSubmissionPendingTimedOut,
+  listTrainingSubmissionRecords,
+  markTrainingSubmissionCancelled,
+} from '../lib/trainingSubmissionTracker'
 
 interface Task {
   task_id: string
@@ -61,6 +68,7 @@ export default function TaskListPage() {
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
+  const [submissionTaskRecords, setSubmissionTaskRecords] = useState(() => listTrainingSubmissionRecords(['pending', 'failed', 'cancelled']))
   const trainingTasksQuery = useQuery({
     queryKey: ['training-tasks', { page: currentPage, pageSize: itemsPerPage, search: debouncedSearchQuery, filter, sort: sortBy }],
     queryFn: async () => {
@@ -136,6 +144,65 @@ export default function TaskListPage() {
     if (rawTrainingTasks === null) return
     void qc.invalidateQueries({ queryKey: ['training-tasks'] })
   }, [rawTrainingTasks, qc])
+
+  useEffect(() => {
+    const refresh = () => {
+      setSubmissionTaskRecords(listTrainingSubmissionRecords(['pending', 'failed', 'cancelled']))
+    }
+
+    refresh()
+    window.addEventListener('focus', refresh)
+    const intervalId = window.setInterval(refresh, 2000)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      window.clearInterval(intervalId)
+    }
+  }, [])
+
+  const syntheticSubmissionTasks: Task[] = submissionTaskRecords
+    .filter(record => {
+      if (record.state !== 'pending') return true
+      const timedOut = isTrainingSubmissionPendingTimedOut(record)
+      if (timedOut) {
+        clearTrainingSubmissionRecord(record.taskId)
+      }
+      return !timedOut
+    })
+    .map(record => ({
+      task_id: record.taskId,
+      task_name: record.taskName || record.taskId,
+      task_type: 'classification',
+      data_type: 'wsi',
+      status: record.state === 'failed' ? 'failed' : record.state === 'cancelled' ? 'cancelled' : 'creating',
+      progress: 0,
+      created_at: new Date(record.createdAt).toISOString(),
+      updated_at: new Date(record.updatedAt).toISOString(),
+      wsi_count: 0,
+    }))
+    .filter(pendingTask => !tasks.some(task => task.task_id === pendingTask.task_id))
+
+  const syntheticTaskIdSet = new Set(syntheticSubmissionTasks.map(task => task.task_id))
+  const displayTasks = [...syntheticSubmissionTasks, ...tasks]
+
+  const syntheticStats = syntheticSubmissionTasks.reduce(
+    (acc, task) => {
+      acc.total += 1
+      if (task.status === 'failed') acc.failed += 1
+      else if (task.status === 'cancelled') acc.cancelled += 1
+      else acc.running += 1
+      return acc
+    },
+    { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
+  )
+
+  const uiStats: TrainingTaskListStats = {
+    total: stats.total + syntheticStats.total,
+    running: stats.running + syntheticStats.running,
+    completed: stats.completed + syntheticStats.completed,
+    failed: stats.failed + syntheticStats.failed,
+    cancelled: stats.cancelled + syntheticStats.cancelled,
+  }
+  const uiTotalCount = totalCount + syntheticStats.total
 
   useEffect(() => {
     setSelectedTasks([])
@@ -264,13 +331,15 @@ export default function TaskListPage() {
     }
   }
 
-  const getStatusBadge = (status: Task['status'], taskType?: string) => {
+  const getStatusBadge = (status: Task['status'], taskType?: string, isSyntheticTask?: boolean) => {
     const badge = TASK_LIST_STATUS_BADGES[status] ?? TASK_LIST_STATUS_BADGES.pending
 
     // Use the same taskList.progress keys that the progress section uses for active statuses,
     // so the badge label stays consistent with the progress label beneath it.
     let label: string
-    if (taskType === 'external_validation') {
+    if (isSyntheticTask && status === 'creating') {
+      label = t('taskList.progress.creatingTask')
+    } else if (taskType === 'external_validation') {
       // For validation tasks, 'training' status means "Running Inference"
       if (status === 'patching') label = t('taskList.progress.patching') 
       else if (status === 'extracting') label = t('taskList.progress.extracting')
@@ -285,7 +354,7 @@ export default function TaskListPage() {
 
     // Determine icon based on status
     const getIcon = () => {
-      if (status === 'pending' || status === 'queued') return <Clock className="w-3.5 h-3.5 mr-1" />
+      if (status === 'pending' || status === 'queued' || status === 'creating') return <Clock className="w-3.5 h-3.5 mr-1" />
       if (isActiveStatus(status)) return <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
       if (status === 'completed') return <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
       return <XCircle className="w-3.5 h-3.5 mr-1" />
@@ -328,9 +397,9 @@ export default function TaskListPage() {
     return `${minutes}m ${Math.floor((duration % (1000 * 60)) / 1000)}s`
   }
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / itemsPerPage))
-  const paginationStart = totalCount === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
-  const paginationEnd = Math.min(currentPage * itemsPerPage, totalCount)
+  const totalPages = Math.max(1, Math.ceil(uiTotalCount / itemsPerPage))
+  const paginationStart = uiTotalCount === 0 ? 0 : (currentPage - 1) * itemsPerPage + 1
+  const paginationEnd = Math.min(currentPage * itemsPerPage, uiTotalCount)
   const allFilteredSelected = tasks.length > 0 && tasks.every(task => selectedTasks.includes(task.task_id))
 
   useEffect(() => {
@@ -365,23 +434,23 @@ export default function TaskListPage() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-6 mb-4 sm:mb-8">
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
           <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.totalTasks')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-gray-900">{stats.total}</div>
+          <div className="text-xl sm:text-3xl font-semibold text-gray-900">{uiStats.total}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
           <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.running')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-purple-600">{stats.running}</div>
+          <div className="text-xl sm:text-3xl font-semibold text-purple-600">{uiStats.running}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
           <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.completed')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-green-600">{stats.completed}</div>
+          <div className="text-xl sm:text-3xl font-semibold text-green-600">{uiStats.completed}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
           <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.failed')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-red-600">{stats.failed}</div>
+          <div className="text-xl sm:text-3xl font-semibold text-red-600">{uiStats.failed}</div>
         </Card>
         <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100 col-span-2 md:col-span-1">
           <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 text-center md:text-left uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.cancelled')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-gray-500 text-center md:text-left">{stats.cancelled}</div>
+          <div className="text-xl sm:text-3xl font-semibold text-gray-500 text-center md:text-left">{uiStats.cancelled}</div>
         </Card>
       </div>
 
@@ -451,38 +520,41 @@ export default function TaskListPage() {
 
           <div className="flex items-center space-x-1 sm:space-x-2">
             <span className="text-[11px] sm:text-sm font-medium text-gray-400">{t('taskList.pagination.itemsPerPage')}:</span>
-            <select
-              value={itemsPerPage}
-              onChange={(e) => {
-                setItemsPerPage(Number(e.target.value))
+            <Select
+              value={String(itemsPerPage)}
+              onChange={(value) => {
+                setItemsPerPage(Number(value))
                 setCurrentPage(1)
               }}
-              className="pl-1 pr-6 py-1 text-[11px] sm:text-sm font-bold border-none bg-transparent focus:ring-0 text-gray-700 cursor-pointer hover:bg-gray-100 rounded-md transition-colors"
-              style={{ backgroundImage: 'none' }}
-            >
-              <option value={5}>5</option>
-              <option value={10}>10</option>
-              <option value={20}>20</option>
-            </select>
+              options={[
+                { value: '5', label: '5' },
+                { value: '10', label: '10' },
+                { value: '20', label: '20' },
+              ]}
+              className="w-[76px]"
+              triggerClassName="h-7 sm:h-8 text-[11px] sm:text-sm font-bold border-gray-200"
+              dropdownClassName="min-w-[76px]"
+            />
           </div>
 
           <div className="h-4 w-px bg-gray-200"></div>
 
           <div className="flex items-center space-x-1 sm:space-x-2">
             <span className="text-[11px] sm:text-sm font-medium text-gray-400">{t('taskList.sort')}:</span>
-            <select
+            <Select
               value={sortBy}
-              onChange={(e) => {
-                setSortBy(e.target.value as typeof sortBy)
+              onChange={(value) => {
+                setSortBy(value as typeof sortBy)
                 setCurrentPage(1)
               }}
-              className="pl-1 pr-6 py-1 text-[11px] sm:text-sm font-bold border-none bg-transparent focus:ring-0 text-gray-700 cursor-pointer hover:bg-gray-100 rounded-md transition-colors"
-              style={{ backgroundImage: 'none' }}
-            >
-              <option value="updated">{t('taskList.sortOptions.updated')}</option>
-              <option value="created">{t('taskList.sortOptions.created')}</option>
-              <option value="name">{t('taskList.sortOptions.name')}</option>
-            </select>
+              options={[
+                { value: 'updated', label: t('taskList.sortOptions.updated') },
+                { value: 'created', label: t('taskList.sortOptions.created') },
+                { value: 'name', label: t('taskList.sortOptions.name') },
+              ]}
+              className="w-[128px] sm:w-[156px]"
+              triggerClassName="h-7 sm:h-8 text-[11px] sm:text-sm font-bold border-gray-200"
+            />
           </div>
 
           {selectedTasks.length > 0 && (
@@ -503,12 +575,12 @@ export default function TaskListPage() {
       </div>
 
       {/* Task List */}
-      {loading && tasks.length === 0 && totalCount === 0 ? (
+      {loading && displayTasks.length === 0 && uiTotalCount === 0 ? (
         <Card className="p-12 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
           <p className="text-gray-600">{t('taskList.loadingTasks')}</p>
         </Card>
-      ) : tasks.length === 0 ? (
+      ) : displayTasks.length === 0 ? (
         <Card className="p-12 text-center">
           <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
           <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('taskList.noTasksFound')}</h3>
@@ -526,7 +598,9 @@ export default function TaskListPage() {
         </Card>
       ) : (
         <div className="space-y-3 pb-8">
-          {tasks.map(task => (
+          {displayTasks.map(task => {
+            const isSyntheticTask = syntheticTaskIdSet.has(task.task_id)
+            return (
             <Card
               key={task.task_id}
               className={`group p-4 sm:p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
@@ -540,6 +614,7 @@ export default function TaskListPage() {
                     <Checkbox
                       checked={selectedTasks.includes(task.task_id)}
                       onCheckedChange={(checked) => toggleSelectTask(task.task_id, checked as boolean)}
+                      disabled={isSyntheticTask}
                       className="h-4 w-4 sm:h-5 sm:w-5 data-[state=checked]:bg-gray-900 data-[state=checked]:border-gray-900"
                     />
                   </div>
@@ -548,7 +623,7 @@ export default function TaskListPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-sm sm:text-base font-bold text-gray-900 truncate max-w-[200px] sm:max-w-none" title={task.task_name}>{task.task_name}</h3>
                       <div className="sm:scale-90 origin-left">
-                        {getStatusBadge(task.status, task.task_type)}
+                        {getStatusBadge(task.status, task.task_type, isSyntheticTask)}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">
@@ -665,7 +740,9 @@ export default function TaskListPage() {
                     ) : (
                       <div className="flex flex-col gap-0.5 w-full col-span-2 md:col-span-1">
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
-                          {task.task_type === 'external_validation'
+                          {isSyntheticTask && task.status === 'creating'
+                            ? t('taskList.progress.creatingTask')
+                            : task.task_type === 'external_validation'
                             ? (task.status === 'patching' ? t('taskList.progress.patching') :
                               task.status === 'extracting' ? t('taskList.progress.extracting') :
                               task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))
@@ -701,7 +778,7 @@ export default function TaskListPage() {
 
                   <div className="flex items-center gap-1">
                     {/* Edit button - only for task creator or admin */}
-                    {user && (isAdmin || task.user_id === user.id) && (
+                    {!isSyntheticTask && user && (isAdmin || task.user_id === user.id) && (
                       <button
                         onClick={(e) => handleEditTask(task, e)}
                         className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
@@ -712,7 +789,21 @@ export default function TaskListPage() {
                     )}
 
                     {/* Cancel button - only for running/pending tasks */}
-                    {isTaskCancellable(task) && (
+                    {(isSyntheticTask && task.status === 'creating') && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          markTrainingSubmissionCancelled(task.task_id)
+                          setSubmissionTaskRecords(listTrainingSubmissionRecords(['pending', 'failed', 'cancelled']))
+                        }}
+                        className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors"
+                        title={t('taskList.cancelTask')}
+                      >
+                        <X className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      </button>
+                    )}
+
+                    {!isSyntheticTask && isTaskCancellable(task) && (
                       <button
                         onClick={(e) => handleCancelTask(task.task_id, e)}
                         disabled={cancellingTaskId === task.task_id}
@@ -727,18 +818,35 @@ export default function TaskListPage() {
                       </button>
                     )}
 
-                    <button
-                      onClick={(e) => handleDeleteTask(task.task_id, e)}
-                      className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
-                      title={t('taskList.deleteTask')}
-                    >
-                      <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                    </button>
+                    {!isSyntheticTask && (
+                      <button
+                        onClick={(e) => handleDeleteTask(task.task_id, e)}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
+                        title={t('taskList.deleteTask')}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      </button>
+                    )}
+
+                    {isSyntheticTask && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          clearTrainingSubmissionRecord(task.task_id)
+                          setSubmissionTaskRecords(listTrainingSubmissionRecords(['pending', 'failed', 'cancelled']))
+                        }}
+                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
+                        title={t('taskList.deleteTask')}
+                      >
+                        <Trash2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
             </Card>
-          ))}
+            )
+          })}
 
           <Card className="border-gray-100 bg-white/80 shadow-sm">
             <div className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
@@ -746,9 +854,9 @@ export default function TaskListPage() {
                 <span>{t('taskList.pagination.summary', {
                   start: paginationStart,
                   end: paginationEnd,
-                  total: totalCount,
+                  total: uiTotalCount,
                 })}</span>
-                {isFetchingInBackground && totalCount > 0 && (
+                {isFetchingInBackground && uiTotalCount > 0 && (
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />
                 )}
               </div>

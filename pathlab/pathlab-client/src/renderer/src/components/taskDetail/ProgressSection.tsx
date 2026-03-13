@@ -115,7 +115,7 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
                   (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
                   (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
-              <span className={task.status !== 'pending' ? 'text-gray-900' : 'text-gray-500'}>
+              <span className={(task.status !== 'pending' && task.status !== 'creating') ? 'text-gray-900' : 'text-gray-500'}>
                 {t('taskDetail.progressSection.patchExtraction')}
               </span>
             </div>
@@ -183,4 +183,3 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
   </Card>
   )
 }
-
