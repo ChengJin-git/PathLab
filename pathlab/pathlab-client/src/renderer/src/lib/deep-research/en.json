@@ -22,7 +22,7 @@
   "hero": {
     "title": "Deep Research",
     "subtitle": "at Your Fingertips",
-    "description": "Meet PathLab Research, your personal Deep Research assistant. With powerful tools like search engines, web crawlers, Python and MCP services, it delivers instant insights, comprehensive reports, and even captivating podcasts.",
+    "description": "Meet PathLab Research, your personal Deep Research assistant. With powerful tools like search engines, web crawlers, Python and MCP services, it delivers instant insights and comprehensive reports.",
     "footnote": ""
   },
   "settings": {
@@ -139,7 +139,6 @@
       "deepThinking": "Deep Thinking",
       "report": "Report",
       "activities": "Activities",
-      "generatePodcast": "Generate podcast",
       "edit": "Edit",
       "copy": "Copy",
       "downloadReport": "Download report",
@@ -186,11 +185,6 @@
       "retrievalStatusError": "Retrieval failed",
       "retrievalErrorDescription": "The local retrieval tool returned an error.",
       "running": "Running",
-      "generatingPodcast": "Generating podcast...",
-      "nowPlayingPodcast": "Now playing podcast...",
-      "podcast": "Podcast",
-      "errorGeneratingPodcast": "Error when generating podcast. Please try again.",
-      "downloadPodcast": "Download podcast",
       "startResearch": "Start Research",
       "startResearchNotice": "Deep Research may take a while. After it starts, you can switch to other pages and come back anytime to check the progress.",
       "restartResearch": "Restart Research",

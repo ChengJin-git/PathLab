@@ -15,7 +15,6 @@ import { cn } from "../../../lib/utils";
 
 import { MessageBubble, AssistantStructuredContent } from "./blocks/message-content";
 import { PlanCard } from "./cards/plan-card";
-import { PodcastCard } from "./cards/podcast-card";
 import { ResearchCard } from "./cards/research-card";
 import { parsePlannerPayload } from "./utils";
 
@@ -123,7 +122,7 @@ export function MessageListItem({
         !trimmedContent &&
         !startOfResearch &&
         message?.agent !== "planner" &&
-        message?.agent !== "podcast";
+        true;
     const canRenderCurrentMessage =
         !!message &&
         !isLocaleOnly &&
@@ -131,7 +130,6 @@ export function MessageListItem({
         (message.role === "user" ||
             message.role === "assistant" ||
             message.agent === "coordinator" ||
-            message.agent === "podcast" ||
             startOfResearch);
 
     useEffect(() => {
@@ -199,7 +197,6 @@ export function MessageListItem({
                 message.role === "assistant" ||
                 message.agent === "coordinator" ||
                 isPlannerLikeMessage ||
-                message.agent === "podcast" ||
                 startOfResearch
             )) {
             let content: React.ReactNode;
@@ -228,12 +225,6 @@ export function MessageListItem({
                             onFeedback={onFeedback}
                             onSendMessage={onSendMessage}
                         />
-                    </div>
-                );
-            } else if (message.agent === "podcast") {
-                content = (
-                    <div className="w-full">
-                        <PodcastCard message={message} />
                     </div>
                 );
             } else {

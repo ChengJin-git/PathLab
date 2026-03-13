@@ -283,22 +283,6 @@ export async function* resumeBackgroundJobStream(
   yield* pollJobEvents(jobId, startCursor, options);
 }
 
-// Podcast generation
-export async function generatePodcast(content: string): Promise<string> {
-  const res = await fetch(resolveServiceURL("podcast/generate"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...getAuthHeaders(),
-    },
-    body: JSON.stringify({ content, locale: getDeepResearchLocale() }),
-  });
-  if (!res.ok) {
-    throw new Error(`Failed to generate podcast: ${res.statusText}`);
-  }
-  const blob = await res.blob();
-  return URL.createObjectURL(blob);
-}
 
 // Report evaluation
 export async function evaluateReport(params: {

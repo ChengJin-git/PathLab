@@ -21,7 +21,6 @@ import {
   analyzeResearchStartIntentWithLLM,
   chatStream,
   generateFixedReplyWithLLM,
-  generatePodcast,
   getBackgroundJobStatus,
   resumeBackgroundJobStream,
   stopResearch,
@@ -278,7 +277,6 @@ function normalizeDeepResearchAgent(agent?: string): Message["agent"] | undefine
     case "researcher":
     case "coder":
     case "reporter":
-    case "podcast":
     case "analyst":
       return agent;
     default:
@@ -2857,6 +2855,10 @@ function createErrorChatMessage(errorContent: string): Message {
   };
 }
 
+// Module-level mutex: prevents concurrent sendMessage calls that could race
+// before setResponding(true) is reached (e.g. rapid double-submit, route remount).
+let _sendMessageInFlight = false;
+
 export async function sendMessage(
   content?: string,
   {
@@ -2870,6 +2872,11 @@ export async function sendMessage(
   } = {},
   options: { abortSignal?: AbortSignal } = {},
 ) {
+  // Guard against concurrent calls — e.g. racing effects or rapid double-submit
+  // before setResponding(true) is reached later in this function.
+  if (_sendMessageInFlight || useStore.getState().responding) return;
+  _sendMessageInFlight = true;
+
   const conversationId = await ensureConversationId(content);
   const isStaleConversation = () => useStore.getState().conversationId !== conversationId;
   const stateBefore = useStore.getState();
@@ -2920,6 +2927,7 @@ export async function sendMessage(
       abortSignal: options.abortSignal,
       voiceSessionActive,
     });
+    _sendMessageInFlight = false;
     return;
   }
 
@@ -3006,6 +3014,7 @@ export async function sendMessage(
       fixedReplyRaw: fixedReplyResult.raw,
       contentPreview: (content ?? "").slice(0, 120),
     });
+    _sendMessageInFlight = false;
     return;
   }
 
@@ -3399,6 +3408,7 @@ export async function sendMessage(
       useStore.getState().setOngoingResearch(null);
     }
   } finally {
+    _sendMessageInFlight = false;
     const stale = isStaleConversation();
     if (!stale) {
       setGenerationPhase("idle");
@@ -3511,7 +3521,6 @@ export async function sendMessage(
             lastMsg.role === "assistant" &&
             !(lastMsg.content ?? "").trim() &&
             lastMsg.agent !== "planner" &&
-            lastMsg.agent !== "podcast" &&
             !finalState.researchIds.includes(lastMsgId)
           ) {
             const emptyResponseError = tr(
@@ -4341,73 +4350,6 @@ export function resetDeepResearchSession() {
   });
 }
 
-export async function listenToPodcast(researchId: string) {
-  const threadId = getThreadId();
-  const planMessageId = useStore.getState().researchPlanIds.get(researchId);
-  const reportMessageId = useStore.getState().researchReportIds.get(researchId);
-  if (planMessageId && reportMessageId) {
-    const planMessage = getMessage(planMessageId)!;
-    const title = parseJSON(planMessage.content, { title: "Untitled" }).title;
-    const reportMessage = getMessage(reportMessageId);
-    if (reportMessage?.content) {
-      appendMessage({
-        id: nanoid(),
-        threadId,
-        role: "user",
-        content: "Please generate a podcast for the above research.",
-        contentChunks: [],
-      });
-      const podCastMessageId = nanoid();
-      const podcastObject = { title, researchId };
-      const podcastMessage: Message = {
-        id: podCastMessageId,
-        threadId,
-        role: "assistant",
-        agent: "podcast",
-        content: JSON.stringify(podcastObject),
-        contentChunks: [],
-        reasoningContent: "",
-        reasoningContentChunks: [],
-        isStreaming: true,
-      };
-      appendMessage(podcastMessage);
-      // Generating podcast...
-      let audioUrl: string | undefined;
-      try {
-        audioUrl = await generatePodcast(reportMessage.content);
-      } catch (e) {
-        console.error(e);
-        useStore.setState((state) => ({
-          messages: new Map(useStore.getState().messages).set(
-            podCastMessageId,
-            {
-              ...state.messages.get(podCastMessageId)!,
-              content: JSON.stringify({
-                ...podcastObject,
-                error: e instanceof Error ? e.message : "Unknown error",
-              }),
-              isStreaming: false,
-            },
-          ),
-        }));
-        toast(
-          tr(
-            "errorGeneratingPodcast",
-            "Error when generating podcast. Please try again.",
-          ),
-        );
-        return;
-      }
-      useStore.setState((state) => ({
-        messages: new Map(useStore.getState().messages).set(podCastMessageId, {
-          ...state.messages.get(podCastMessageId)!,
-          content: JSON.stringify({ ...podcastObject, audioUrl }),
-          isStreaming: false,
-        }),
-      }));
-    }
-  }
-}
 
 export function getDeepResearchDebugSnapshot() {
   const state = useStore.getState();
@@ -4600,11 +4542,10 @@ export function useRenderableMessageIds() {
         }
 
         const isPlanner = message.agent === "planner";
-        const isPodcast = message.agent === "podcast";
         const isStartOfResearch = researchRootSet.has(messageId);
         const isPlanBound = !isPlanner && planBoundSet.has(messageId);
 
-        if (isPlanner || isPodcast || isStartOfResearch || isPlanBound) {
+        if (isPlanner || isStartOfResearch || isPlanBound) {
           return true;
         }
 

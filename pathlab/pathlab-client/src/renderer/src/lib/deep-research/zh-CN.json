@@ -22,7 +22,7 @@
   "hero": {
     "title": "深度研究",
     "subtitle": "触手可及",
-    "description": "认识 PathLab Research，您的个人深度研究助手。凭借搜索引擎、网络爬虫、Python 和 MCP 服务等强大工具，它能提供即时洞察、全面报告，甚至制作引人入胜的播客。",
+    "description": "认识 PathLab Research，您的个人深度研究助手。凭借搜索引擎、网络爬虫、Python 和 MCP 服务等强大工具，它能提供即时洞察和全面报告。",
     "footnote": ""
   },
   "settings": {
@@ -139,7 +139,6 @@
       "deepThinking": "深度思考",
       "report": "报告",
       "activities": "活动",
-      "generatePodcast": "生成播客",
       "edit": "编辑",
       "copy": "复制",
       "downloadReport": "下载报告",
@@ -186,11 +185,6 @@
       "retrievalStatusError": "检索失败",
       "retrievalErrorDescription": "本地检索工具返回了错误。",
       "running": "运行",
-      "generatingPodcast": "生成播客中...",
-      "nowPlayingPodcast": "正在播放播客...",
-      "podcast": "播客",
-      "errorGeneratingPodcast": "生成播客时出错。请重试。",
-      "downloadPodcast": "下载播客",
       "startResearch": "开始研究",
       "startResearchNotice": "深度研究耗时可能较长。开始后您可以切换到其他页面，并随时回来查看进度。",
       "restartResearch": "重新研究",
