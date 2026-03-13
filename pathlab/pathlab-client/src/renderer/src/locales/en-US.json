@@ -826,6 +826,8 @@
     "heroTitle2": "Reimagined",
     "heroTitle3": "",
     "heroSubtitle": "Train, analyze, and gain insights while keeping your data private. Experience the future of medical research today.",
+    "inviteOnlyNotice": "Registration is currently invite-only. Contact your administrator for an invitation.",
+    "inviteOnlyNoticeWithContact": "Registration is currently invite-only. <contactLink>Contact administrator</contactLink> for an invitation.",
     "agenticAI": "Agentic AI Powered",
     "coreCapabilities": "Core Capabilities",
     "coreCapabilitiesTitle": "Everything you need for digital pathology",

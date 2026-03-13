@@ -826,6 +826,8 @@
     "heroTitle2": "重新定义",
     "heroTitle3": "数字病理学",
     "heroSubtitle": "在保护数据隐私的同时进行训练、分析和获取洞察。体验医学研究的未来。",
+    "inviteOnlyNotice": "当前仅支持受邀注册。如需开通账号，请联系管理员。",
+    "inviteOnlyNoticeWithContact": "当前仅支持受邀注册。如需开通账号，请<contactLink>联系管理员</contactLink>。",
     "agenticAI": "由 AI 智能体驱动",
     "coreCapabilities": "核心能力",
     "coreCapabilitiesTitle": "数字病理学所需的一切",
