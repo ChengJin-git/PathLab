@@ -336,6 +336,7 @@ async def chat_stream(request: ChatRequest):
             request.voice_session_active,
             request.interrupt_before_tools,
             request.llm_override.model_dump() if request.llm_override else None,
+            request.pathlab_auth_token,
         ),
         media_type="text/event-stream",
     )
@@ -967,8 +968,16 @@ async def _astream_workflow_generator(
     voice_session_active: bool = False,
     interrupt_before_tools: Optional[List[str]] = None,
     llm_override: Optional[dict] = None,
+    pathlab_auth_token: Optional[str] = None,
 ):
     safe_thread_id = sanitize_thread_id(thread_id)
+    # Refresh PathLab data cache with the user's auth token so tools have
+    # up-to-date dataset/model info for this request.
+    if pathlab_auth_token:
+        try:
+            await refresh_pathlab_cache(token=pathlab_auth_token)
+        except Exception as _cache_err:
+            logger.warning(f"[{safe_thread_id}] PathLab cache refresh failed: {_cache_err}")
     # New run should clear stale stop signals from previous cancelled attempts.
     clear_stop(thread_id)
     safe_feedback = sanitize_log_input(interrupt_feedback) if interrupt_feedback else ""

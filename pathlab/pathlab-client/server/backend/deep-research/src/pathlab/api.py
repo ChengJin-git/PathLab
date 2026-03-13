@@ -18,12 +18,13 @@ _cache = {
     "models_meta": None,
     "feature_extractors": None,
     "aggregators": None,
+    "auth_token": None,
 }
 
 
 def get_pathlab_api_url() -> str:
     """Get PathLab API base URL from environment or config."""
-    return os.getenv("PATHLAB_API_URL", PATHLAB_API_URL or "http://localhost:8765")
+    return os.getenv("PATHLAB_API_URL", PATHLAB_API_URL or "http://localhost:6100")
 
 
 def _build_result(status: str, items: list[dict], summary: str, **extra: Any) -> dict[str, Any]:
@@ -286,8 +287,11 @@ def get_aggregator_count() -> int:
 
 async def refresh_pathlab_cache(token: Optional[str] = None):
     """Refresh the PathLab data cache."""
-    datasets_result = await fetch_datasets_result(token)
-    models_result = await fetch_trained_models_result(token)
+    if token:
+        _cache["auth_token"] = token
+    effective_token = token or _cache.get("auth_token")
+    datasets_result = await fetch_datasets_result(effective_token)
+    models_result = await fetch_trained_models_result(effective_token)
     _cache["datasets"] = datasets_result["items"]
     _cache["models"] = models_result["items"]
     _cache["datasets_meta"] = datasets_result

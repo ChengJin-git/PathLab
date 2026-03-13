@@ -99,6 +99,9 @@ class ChatRequest(BaseModel):
         default_factory=list,
         description="List of tool names to interrupt before execution (e.g., ['db_tool', 'api_tool'])",
     )
+    pathlab_auth_token: Optional[str] = Field(
+        None, description="Bearer token injected by gateway for PathLab API calls"
+    )
 
 
 class GenerateProseRequest(BaseModel):

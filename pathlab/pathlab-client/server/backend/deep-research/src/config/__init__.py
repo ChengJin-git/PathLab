@@ -13,7 +13,7 @@ load_dotenv()
 
 # PathLab API configuration
 # Default to local development URL, can be overridden by environment variable
-PATHLAB_API_URL = os.getenv("PATHLAB_API_URL", "http://localhost:8765")
+PATHLAB_API_URL = os.getenv("PATHLAB_API_URL", "http://localhost:6100")
 
 # Team configuration
 TEAM_MEMBER_CONFIGURATIONS = {

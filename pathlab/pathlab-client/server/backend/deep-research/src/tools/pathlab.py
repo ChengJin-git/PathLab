@@ -142,7 +142,9 @@ class SearchDatasetsTool(BaseTool):
         run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
     ) -> str:
         """Asynchronous run - fetches fresh data."""
-        datasets_result = await fetch_datasets_result()
+        from src.pathlab.api import _cache
+        token = _cache.get("auth_token")
+        datasets_result = await fetch_datasets_result(token)
         filtered = self._filter_datasets(datasets_result.get("items", []), query)
         return _pathlab_api_result_payload(
             tool=self.name,
@@ -217,7 +219,9 @@ class SearchModelsTool(BaseTool):
         run_manager: Optional[AsyncCallbackManagerForToolRun] = None,
     ) -> str:
         """Asynchronous run - fetches fresh data."""
-        models_result = await fetch_trained_models_result()
+        from src.pathlab.api import _cache
+        token = _cache.get("auth_token")
+        models_result = await fetch_trained_models_result(token)
         filtered = self._filter_models(models_result.get("items", []), query)
         return _pathlab_api_result_payload(
             tool=self.name,

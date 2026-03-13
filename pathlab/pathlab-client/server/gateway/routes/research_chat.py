@@ -647,6 +647,11 @@ async def research_chat_stream_raw(
         body["llm_override"] = llm_override
     body["search_provider"] = search_provider
 
+    # Inject the user's auth token so deep-research can call PathLab API on behalf of the user.
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        body["pathlab_auth_token"] = auth_header[len("Bearer "):]
+
     # Early check: ensure an LLM is configured (like the normal AI chat page does).
     if not llm_override and not _has_deep_research_llm_config() and not _has_llm_settings_configured():
         async def _no_llm_configured():
@@ -740,14 +745,38 @@ async def create_research_job(
         body["llm_override"] = llm_override
     body["search_provider"] = search_provider
 
+    # Inject the user's auth token so deep-research can call PathLab API on behalf of the user.
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        body["pathlab_auth_token"] = auth_header[len("Bearer "):]
+
     job_id = str(uuid4())
 
     # Persist job to DB
     async with async_session() as db:
+        # Ensure a chat_conversations record exists for this conversation so it
+        # shows up in the sidebar with the correct type.
+        conversation_id = body.get("conversation_id")
+        if conversation_id:
+            from backend.database.repositories.chat import ChatRepository
+            existing = await ChatRepository.get_conversation_meta(db, conversation_id)
+            if not existing:
+                first_msg = next(
+                    (m.get("content", "") for m in body.get("messages", []) if m.get("role") == "user"),
+                    ""
+                )
+                title = first_msg.strip()[:60] or "Deep Research"
+                await ChatRepository.create_conversation(db, {
+                    "conversation_id": conversation_id,
+                    "user_id": str(user.id),
+                    "title": title,
+                    "conversation_type": "deep_research",
+                })
+
         await ResearchJobRepository.create_job(db, {
             "job_id": job_id,
             "user_email": user.email,
-            "conversation_id": body.get("conversation_id"),
+            "conversation_id": conversation_id,
             "thread_id": body.get("thread_id"),
             "status": "pending",
             "request_body": body,
