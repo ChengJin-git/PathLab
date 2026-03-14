@@ -768,6 +768,7 @@ export default function AIChatPage() {
 
 	// Restore conversation from URL (supports page refresh)
 	// Also supports legacy sessionStorage restore for backward compatibility
+	// biome-ignore lint/correctness/useExhaustiveDependencies: handleLoadConversation is declared after this hook as a non-memoized const; adding it to deps causes a TDZ crash at render time and infinite re-runs — urlConversationId is the only correct trigger
 	useEffect(() => {
 		// Priority 1: Load from URL if conversationId is present
 		if (urlConversationId) {
@@ -788,9 +789,7 @@ export default function AIChatPage() {
 			handleLoadConversation(savedConversationId);
 			sessionStorage.removeItem("ai-chat-conversation-id");
 		}
-		// biome-ignore lint/correctness/useExhaustiveDependencies: handleLoadConversation declared after this hook; stable identity not needed here
-		// biome-ignore lint/correctness/noInvalidUseBeforeDeclaration: runs after render, TDZ is not a runtime issue
-	}, [urlConversationId, handleLoadConversation]);
+	}, [urlConversationId]);
 
 	// Restore scroll position after messages are loaded (when returning from another page).
 	// Depends on messages.length instead of messages to avoid re-running on every streaming chunk.
