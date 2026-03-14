@@ -2885,8 +2885,9 @@ async def get_datasets_for_validation(
     Returns dataset metadata including aggregation_level, task_type, data_type,
     slide/case counts, distinct label count, and WSI IDs (for overlap detection).
 
-    WSI datasets are only included if ALL their WSIs have feature_extracted=True
-    in the database. Patch datasets are exempt from this check.
+    available_feature_extractors lists extractors with cached features for the
+    dataset's first WSI. Datasets are not filtered on feature availability —
+    missing features are extracted automatically when validation starts.
     """
     datasets = await DatasetRepository.get_all(db)
     elevated_dataset_ids = set()
@@ -2920,10 +2921,6 @@ async def get_datasets_for_validation(
         distinct_labels = await DatasetRepository.get_distinct_labels(db, dataset_id)
         distinct_label_count = len(distinct_labels)
 
-        # For WSI datasets, scan feature cache to find which extractors have features.
-        # This replaces the old feature_extracted DB column check which was inconsistent
-        # with how the chat context detects features (disk-based).
-        # Datasets without any features on disk for WSI are skipped.
         available_feature_extractors: list[Any] = []
         if dg.data_type != "patch" and wsi_ids:
             first_wsi_id = wsi_ids[0]
@@ -2939,9 +2936,6 @@ async def get_datasets_for_validation(
                                         extractor_dir.name
                                     )
                                     break  # Found for this extractor, move to next
-            # WSI datasets must have at least one feature extractor available
-            if not available_feature_extractors:
-                continue
 
         # Get case count for case-level datasets
         total_wsi_count = len(wsi_ids)
