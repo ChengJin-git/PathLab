@@ -47,15 +47,7 @@ export const useSettingsStore = create<SettingsState>(() => ({
   ...DEFAULT_SETTINGS,
 }));
 
-export const useSettings = (key: keyof SettingsState) => {
-  return useSettingsStore((state) => state[key]);
-};
-
-export const changeSettings = (settings: SettingsState) => {
-  useSettingsStore.setState(settings);
-};
-
-export const loadSettings = () => {
+const loadSettings = () => {
   if (typeof window === "undefined") {
     return;
   }
@@ -77,7 +69,7 @@ export const loadSettings = () => {
   }
 };
 
-export const saveSettings = () => {
+const saveSettings = () => {
   const latestSettings = useSettingsStore.getState();
   const json = JSON.stringify(latestSettings);
   localStorage.setItem(SETTINGS_KEY, json);
@@ -135,13 +127,4 @@ export const getChatStreamSettings = () => {
   };
 };
 
-export function setGeneralSetting<K extends keyof SettingsState["general"]>(
-  key: K,
-  value: SettingsState["general"][K],
-) {
-  useSettingsStore.setState((state) => ({
-    general: { ...state.general, [key]: value },
-  }));
-  saveSettings();
-}
 loadSettings();
