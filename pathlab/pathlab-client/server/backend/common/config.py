@@ -1,6 +1,7 @@
 """
 Centralized configuration for PathLab backend services
 """
+
 import json
 import os
 import sys
@@ -28,15 +29,21 @@ class Config:
     # Service URLs (internal communication)
     # These will be dynamically set when services start with auto-discovered ports
     AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_AI_PORT}")
-    PREPROCESSING_SERVICE_URL = os.getenv("PREPROCESSING_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_PREPROCESSING_PORT}")
-    GATEWAY_SERVICE_URL = os.getenv("GATEWAY_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}")
+    PREPROCESSING_SERVICE_URL = os.getenv(
+        "PREPROCESSING_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_PREPROCESSING_PORT}"
+    )
+    GATEWAY_SERVICE_URL = os.getenv(
+        "GATEWAY_SERVICE_URL", f"http://127.0.0.1:{DEFAULT_GATEWAY_PORT}"
+    )
 
     # Cache settings
     SLIDE_CACHE_SIZE = int(os.getenv("SLIDE_CACHE_SIZE", "8"))
     DZG_CACHE_SIZE = int(os.getenv("DZG_CACHE_SIZE", "16"))
 
     # File upload limits (in bytes)
-    MAX_UPLOAD_SIZE = int(os.getenv("MAX_UPLOAD_SIZE", str(10 * 1024 * 1024 * 1024)))  # 10GB default
+    MAX_UPLOAD_SIZE = int(
+        os.getenv("MAX_UPLOAD_SIZE", str(10 * 1024 * 1024 * 1024))
+    )  # 10GB default
 
     # Task timeout settings (in seconds)
     # Default: 3 days (259200 seconds), configurable via settings
@@ -61,8 +68,12 @@ class Config:
     )
 
     # Feature cache
-    FEATURE_LOCK_TIMEOUT = 1800  # 30 minutes - large WSI feature extraction can take a while
-    COORDS_LOCK_TIMEOUT = int(os.getenv("COORDS_LOCK_TIMEOUT", str(FEATURE_LOCK_TIMEOUT)))
+    FEATURE_LOCK_TIMEOUT = (
+        1800  # 30 minutes - large WSI feature extraction can take a while
+    )
+    COORDS_LOCK_TIMEOUT = int(
+        os.getenv("COORDS_LOCK_TIMEOUT", str(FEATURE_LOCK_TIMEOUT))
+    )
     PREPROCESSING_MAX_CONCURRENT_COMPUTE_PATCHES = int(
         os.getenv("PREPROCESSING_MAX_CONCURRENT_COMPUTE_PATCHES", "2")
     )
@@ -77,20 +88,31 @@ class Config:
     CLEANUP_OLD_TASKS_DAYS = 7  # Days to keep old finished tasks
 
     # Aslide color correction supported formats (case-insensitive check)
-    COLOR_CORRECTION_FORMATS: frozenset = frozenset({
-        '.sdpc', '.dyqx', '.dyj', '.kfb',
-        '.mds', '.mdsx', '.tmap',
-    })
+    COLOR_CORRECTION_FORMATS: frozenset = frozenset(
+        {
+            ".sdpc",
+            ".dyqx",
+            ".dyj",
+            ".kfb",
+            ".mds",
+            ".mdsx",
+            ".tmap",
+        }
+    )
 
     @classmethod
     def _get_app_data_dir(cls) -> Path:
         """Get application data directory based on OS."""
         if sys.platform == "win32":
-            base_dir = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+            base_dir = Path(
+                os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")
+            )
         elif sys.platform == "darwin":
             base_dir = Path.home() / "Library" / "Application Support"
         else:
-            base_dir = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+            base_dir = Path(
+                os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")
+            )
 
         data_dir = base_dir / "PathLab"
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -212,58 +234,67 @@ class Config:
         cls._write_config({"max_concurrent": max_concurrent})
         return max_concurrent
 
-    # ========== Global Settings (AI Configuration) ==========
-    # These settings are shared across all users
+    _global_settings_cache: dict = None
+    _global_settings_dirty: bool = True
 
     @classmethod
-    def get_global_settings(cls) -> dict:
-        """Get all global settings."""
-        data = cls._read_config()
-
-        # Helper function to convert string "true"/"false" to boolean
+    def _build_global_settings(cls, data: dict) -> dict:
         def str_to_bool(value: str) -> bool:
             if isinstance(value, bool):
                 return value
             return value.lower() in ("true", "1", "yes")
 
-        # Cloudflare Turnstile settings: prioritize environment variables over config file
-        # This allows deployment-time configuration via .env file
         turnstile_enabled_env = os.getenv("TURNSTILE_ENABLED")
         turnstile_enabled = (
-            str_to_bool(turnstile_enabled_env) if turnstile_enabled_env is not None
+            str_to_bool(turnstile_enabled_env)
+            if turnstile_enabled_env is not None
             else data.get("turnstile_enabled", False)
         )
-
-        turnstile_site_key = os.getenv("TURNSTILE_SITE_KEY") or data.get("turnstile_site_key", "")
-        turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY") or data.get("turnstile_secret_key", "")
+        turnstile_site_key = os.getenv("TURNSTILE_SITE_KEY") or data.get(
+            "turnstile_site_key", ""
+        )
+        turnstile_secret_key = os.getenv("TURNSTILE_SECRET_KEY") or data.get(
+            "turnstile_secret_key", ""
+        )
 
         return {
             "openrouter_api_key": data.get("openrouter_api_key", ""),
-            "openrouter_base_url": data.get("openrouter_base_url", "https://openrouter.ai/api/v1"),
+            "openrouter_base_url": data.get(
+                "openrouter_base_url", "https://openrouter.ai/api/v1"
+            ),
             "openrouter_model": data.get("openrouter_model", "qwen/qwen3.5-plus-02-15"),
             "huggingface_token": data.get("huggingface_token", ""),
             "dashscope_api_key": data.get("dashscope_api_key", ""),
-            # Exa Search API key for web search functionality
             "exa_api_key": data.get("exa_api_key", ""),
-            # Local vLLM settings (OpenAI-compatible server for LLM)
             "local_vllm_enabled": data.get("local_vllm_enabled", False),
-            "local_vllm_base_url": data.get("local_vllm_base_url", "http://127.0.0.1:8000/v1"),
+            "local_vllm_base_url": data.get(
+                "local_vllm_base_url", "http://127.0.0.1:8000/v1"
+            ),
             "local_vllm_model": data.get("local_vllm_model", ""),
             "local_vllm_api_key": data.get("local_vllm_api_key", ""),
-            # Local ASR settings (WebSocket server for ASR, e.g., ws://host:port/api-ws/v1/realtime)
             "local_asr_enabled": data.get("local_asr_enabled", False),
-            "local_asr_base_url": data.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"),
+            "local_asr_base_url": data.get(
+                "local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"
+            ),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
-            # Cloudflare Turnstile settings (from environment variables or config file)
             "turnstile_enabled": turnstile_enabled,
             "turnstile_site_key": turnstile_site_key,
             "turnstile_secret_key": turnstile_secret_key,
         }
 
     @classmethod
+    def get_global_settings(cls) -> dict:
+        if not cls._global_settings_dirty and cls._global_settings_cache is not None:
+            return dict(cls._global_settings_cache)
+        data = cls._read_config()
+        result = cls._build_global_settings(data)
+        cls._global_settings_cache = result
+        cls._global_settings_dirty = False
+        return dict(result)
+
+    @classmethod
     def update_global_settings(cls, settings: dict) -> dict:
-        """Update global settings. Only updates provided keys."""
         allowed_keys = {
             "openrouter_api_key",
             "openrouter_base_url",
@@ -287,10 +318,10 @@ class Config:
             "turnstile_site_key",
             "turnstile_secret_key",
         }
-        # Filter to only allowed keys
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}
         if filtered:
             cls._write_config(filtered)
+        cls._global_settings_dirty = True
         return cls.get_global_settings()
 
     @classmethod
@@ -308,7 +339,9 @@ class Config:
         (uploads_dir / "logs").mkdir(exist_ok=True)
         (uploads_dir / "wsi_files").mkdir(exist_ok=True)
         (uploads_dir / "metadata").mkdir(exist_ok=True)
-        (uploads_dir / "progress").mkdir(exist_ok=True)  # Shared progress files (AI ↔ Gateway)
+        (uploads_dir / "progress").mkdir(
+            exist_ok=True
+        )  # Shared progress files (AI ↔ Gateway)
 
     # ========== Maintenance Mode ==========
     @classmethod
@@ -323,11 +356,15 @@ class Config:
         cls._write_config({"maintenance_mode": enabled})
 
     @classmethod
-    def set_maintenance_mode_state(cls, enabled: bool, restore_user_ids: list[str] | None = None) -> None:
+    def set_maintenance_mode_state(
+        cls, enabled: bool, restore_user_ids: list[str] | None = None
+    ) -> None:
         """Persist maintenance mode status together with its restoration snapshot."""
         data = {"maintenance_mode": enabled}
         if restore_user_ids is not None:
-            data["maintenance_mode_restore_user_ids"] = [str(user_id) for user_id in restore_user_ids]
+            data["maintenance_mode_restore_user_ids"] = [
+                str(user_id) for user_id in restore_user_ids
+            ]
         cls._write_config(data)
 
     @classmethod
@@ -342,7 +379,13 @@ class Config:
     @classmethod
     def set_maintenance_mode_restore_user_ids(cls, user_ids: list[str]) -> None:
         """Persist non-admin user IDs that were active before maintenance mode."""
-        cls._write_config({"maintenance_mode_restore_user_ids": [str(user_id) for user_id in user_ids]})
+        cls._write_config(
+            {
+                "maintenance_mode_restore_user_ids": [
+                    str(user_id) for user_id in user_ids
+                ]
+            }
+        )
 
     @classmethod
     def clear_maintenance_mode_restore_user_ids(cls) -> None:
@@ -360,10 +403,11 @@ class Config:
     def set_maintenance_notice(cls, message: str | None) -> dict | None:
         """Set or clear maintenance notice. Returns the saved notice or None."""
         from datetime import datetime, timezone
+
         if message and message.strip():
             notice = {
                 "message": message.strip(),
-                "updated_at": datetime.now(timezone.utc).isoformat()
+                "updated_at": datetime.now(timezone.utc).isoformat(),
             }
             cls._write_config({"maintenance_notice": notice})
             return notice
@@ -374,4 +418,3 @@ class Config:
 
 # Create singleton instance
 config = Config()
-

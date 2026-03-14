@@ -42,6 +42,7 @@ from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMod
 from ..pipeline import run_training_pipeline
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training, require_no_active_batch_imports
+from backend.common.chat_context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
@@ -469,6 +470,7 @@ async def create_training_task(
                 pipeline_kwargs=pipeline_kwargs,
             )
         )
+        await invalidate_chat_context(effective_task_owner_user_id)
 
         result = task.to_dict()
         result["status"] = TaskStatus.PENDING
@@ -789,6 +791,7 @@ async def update_training_task(
     if not updated_task:
         raise HTTPException(status_code=500, detail="Failed to update task")
 
+    await invalidate_chat_context(str(task.user_id or user.id))
     logger.info(
         f"Training task {task_id} renamed to '{req.task_name}' by user {user.id}"
     )
@@ -858,11 +861,12 @@ async def delete_training_task(
         # Delete task-scoped AI result records before removing the task record itself.
         await AIResultRepository.delete_by_task_id(db, task_id)
 
-        # Delete task from database (cascades to associations, models, logs)
+        task_owner_id = str(task.user_id or user.id)
         await TrainingTaskRepository.delete(db, task_id)
         await db.commit()
 
-        # Delete files using StorageManager based on mode
+        await invalidate_chat_context(task_owner_id)
+
         storage_cleanup = storage_manager.delete_training_task_files(
             task_id, model_ids, mode
         )

@@ -2,6 +2,7 @@
 AI inference task management routes
 Handles WSI classification and other AI inference tasks
 """
+
 import asyncio
 import os
 import uuid
@@ -18,19 +19,23 @@ from backend.database.repositories import (
     TrainedModelRepository,
 )
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import check_data_ownership, require_dataset_gpu_permission, check_wsi_access_permission, get_permitted_dataset_ids
+from backend.auth.dependencies import (
+    check_data_ownership,
+    require_dataset_gpu_permission,
+    check_wsi_access_permission,
+    get_permitted_dataset_ids,
+)
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
 from ..utils import require_no_active_batch_imports
+from backend.common.chat_context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/tasks", tags=["AI Inference"])
 
 
 @router.get("/extractors")
-async def list_available_extractors(
-    user: User = Depends(current_active_user)
-):
+async def list_available_extractors(user: User = Depends(current_active_user)):
     """List all available feature extractors from AI Service. Requires authentication."""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -44,30 +49,107 @@ async def list_available_extractors(
     except Exception as e:
         logger.error(f"Failed to fetch extractors from AI Service: {e}")
         # Comprehensive fallback if AI Service is down or hasn't reloaded
-        return {"items": [
-            {"id": "resnet50", "name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline", "supports_spatial": False},
-            {"id": "vit_l_16", "name": "ViT-Large", "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline", "supports_spatial": False},
-            {"id": "uni", "name": "UNI", "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)", "supports_spatial": True},
-            {"id": "uni2", "name": "UNI2", "description": "ViT-G/14, 1536-dim (Mahmood Lab)", "supports_spatial": True},
-            {"id": "conch", "name": "CONCH", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)", "supports_spatial": True},
-            {"id": "conch15", "name": "CONCH 1.5", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)", "supports_spatial": True},
-            {"id": "virchow", "name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)", "supports_spatial": True},
-            {"id": "virchow2", "name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)", "supports_spatial": True},
-            {"id": "H-Optimus-1", "name": "H-Optimus-1", "description": "ViT 1.1B, 1536-dim (Bioptimus)", "supports_spatial": True},
-            {"id": "plip", "name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Lab)", "supports_spatial": True},
-            {"id": "phikon2", "name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin)", "supports_spatial": True},
-            {"id": "mSTAR", "name": "mSTAR", "description": "ViT-L/16, 1024-dim (Smartlab)", "supports_spatial": True},
-            {"id": "GPFM", "name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)", "supports_spatial": True},
-            {"id": "SmartCCS", "name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)", "supports_spatial": True},
-            {"id": "SmartCyto", "name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)", "supports_spatial": True},
-        ]}
+        return {
+            "items": [
+                {
+                    "id": "resnet50",
+                    "name": "ResNet50",
+                    "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline",
+                    "supports_spatial": False,
+                },
+                {
+                    "id": "vit_l_16",
+                    "name": "ViT-Large",
+                    "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline",
+                    "supports_spatial": False,
+                },
+                {
+                    "id": "uni",
+                    "name": "UNI",
+                    "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "uni2",
+                    "name": "UNI2",
+                    "description": "ViT-G/14, 1536-dim (Mahmood Lab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "conch",
+                    "name": "CONCH",
+                    "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "conch15",
+                    "name": "CONCH 1.5",
+                    "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "virchow",
+                    "name": "Virchow",
+                    "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "virchow2",
+                    "name": "Virchow2",
+                    "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "H-Optimus-1",
+                    "name": "H-Optimus-1",
+                    "description": "ViT 1.1B, 1536-dim (Bioptimus)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "plip",
+                    "name": "PLIP",
+                    "description": "CLIP ViT-B/16, 512-dim (James Zou Lab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "phikon2",
+                    "name": "Phikon2",
+                    "description": "DINOv2 ViT-L/16, 1024-dim (Owkin)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "mSTAR",
+                    "name": "mSTAR",
+                    "description": "ViT-L/16, 1024-dim (Smartlab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "GPFM",
+                    "name": "GPFM",
+                    "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "SmartCCS",
+                    "name": "Smart-CCS",
+                    "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)",
+                    "supports_spatial": True,
+                },
+                {
+                    "id": "SmartCyto",
+                    "name": "SmartCyto",
+                    "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)",
+                    "supports_spatial": True,
+                },
+            ]
+        }
 
 
 @router.post("/wsi_classification")
 async def create_wsi_classification(
     req: WSIClassifyRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Create a WSI classification task.
@@ -85,9 +167,13 @@ async def create_wsi_classification(
         raise HTTPException(status_code=404, detail="wsi_id not found")
 
     # Check access permission (ownership or elevated dataset permission)
-    has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+    has_access = await check_wsi_access_permission(
+        user, wsi.dataset_id, wsi.user_id, db
+    )
     if not has_access:
-        raise HTTPException(status_code=403, detail="You don't have permission to analyze this WSI")
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to analyze this WSI"
+        )
 
     # Check if file is accessible (with timeout for external storage)
     if wsi.wsi_path:
@@ -95,19 +181,19 @@ async def create_wsi_classification(
         try:
             exists = await asyncio.wait_for(
                 asyncio.to_thread(os.path.exists, wsi.wsi_path),
-                timeout=FILE_CHECK_TIMEOUT
+                timeout=FILE_CHECK_TIMEOUT,
             )
             if not exists:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"File is not accessible: {wsi.original_filename or req.wsi_id}"
+                    detail=f"File is not accessible: {wsi.original_filename or req.wsi_id}",
                 )
         except asyncio.TimeoutError:
             raise HTTPException(
                 status_code=408,
                 detail=f"External storage not responding (timed out after {FILE_CHECK_TIMEOUT}s). "
-                       f"Cannot verify accessibility of {wsi.original_filename or req.wsi_id}. "
-                       f"Please check your network storage connection and try again."
+                f"Cannot verify accessibility of {wsi.original_filename or req.wsi_id}. "
+                f"Please check your network storage connection and try again.",
             )
 
     await require_no_active_batch_imports(
@@ -129,12 +215,14 @@ async def create_wsi_classification(
             user_id=None if user.is_admin() else str(user.id),
             elevated_dataset_ids=elevated_dataset_ids,
         )
-        unique_labels = {candidate.label for candidate in visible_wsi if candidate.label}
+        unique_labels = {
+            candidate.label for candidate in visible_wsi if candidate.label
+        }
 
         if not unique_labels:
             raise HTTPException(
                 status_code=400,
-                detail="No classes provided and no labeled WSI found in the accessible dataset scope. Please provide classes parameter."
+                detail="No classes provided and no labeled WSI found in the accessible dataset scope. Please provide classes parameter.",
             )
 
         classes = sorted(list(unique_labels))
@@ -156,7 +244,10 @@ async def create_wsi_classification(
         models = await TrainedModelRepository.get_all(db)
         active_model = next((m for m in models if m.is_active), None)
         if not active_model:
-            raise HTTPException(status_code=400, detail="No trained model available. Please train a model first.")
+            raise HTTPException(
+                status_code=400,
+                detail="No trained model available. Please train a model first.",
+            )
         model_id = active_model.model_id
 
     # Create task ID and store in database
@@ -168,11 +259,7 @@ async def create_wsi_classification(
         "task_type": "wsi_classification",
         "status": TaskStatus.PENDING,
         "progress": 0,
-        "params": {
-            "classes": classes,
-            "model_id": model_id,
-            **(req.params or {})
-        },
+        "params": {"classes": classes, "model_id": model_id, **(req.params or {})},
         "user_id": str(user.id),  # Associate with current user
     }
     await AITaskRepository.create(db, task_data)
@@ -189,15 +276,16 @@ async def create_wsi_classification(
         task_id=task_id,
         task_type=TaskType.INFERENCE,
         coro_func=run_inference_via_ai_service,
-        **inference_kwargs
+        **inference_kwargs,
     )
 
+    await invalidate_chat_context(str(user.id))
     logger.info(f"Inference task {task_id} submitted to queue")
 
     return {
         "task_id": task_id,
         "status": TaskStatus.PENDING,
-        "message": "Inference task queued successfully"
+        "message": "Inference task queued successfully",
     }
 
 
@@ -212,14 +300,16 @@ async def run_inference_via_ai_service(
     This function is called by the task queue when it's the task's turn to run.
     """
     try:
-        async with httpx.AsyncClient(timeout=600.0) as client:  # 10 min timeout for inference
+        async with httpx.AsyncClient(
+            timeout=600.0
+        ) as client:  # 10 min timeout for inference
             response = await client.post(
                 f"{AI_SERVICE_URL}/api/ai/analyze/sync",
                 json={
                     "task_id": task_id,
                     "wsi_id": wsi_id,
                     "model_id": model_id,
-                }
+                },
             )
             response.raise_for_status()
             result = response.json()
@@ -230,8 +320,10 @@ async def run_inference_via_ai_service(
         # Update task status to failed - use safe_session for proper cleanup on cancel
         async with safe_session() as db:
             await AITaskRepository.update_status(
-                db, task_id, TaskStatus.FAILED,
-                error_message=f"AI Service error: {e.response.text}"
+                db,
+                task_id,
+                TaskStatus.FAILED,
+                error_message=f"AI Service error: {e.response.text}",
             )
             await db.commit()
         raise
@@ -239,8 +331,10 @@ async def run_inference_via_ai_service(
         logger.error(f"AI Service unavailable for task {task_id}: {e}")
         async with safe_session() as db:
             await AITaskRepository.update_status(
-                db, task_id, TaskStatus.FAILED,
-                error_message=f"AI Service unavailable: {str(e)}"
+                db,
+                task_id,
+                TaskStatus.FAILED,
+                error_message=f"AI Service unavailable: {str(e)}",
             )
             await db.commit()
         raise
@@ -248,8 +342,7 @@ async def run_inference_via_ai_service(
         logger.error(f"Inference task {task_id} failed: {e}")
         async with safe_session() as db:
             await AITaskRepository.update_status(
-                db, task_id, TaskStatus.FAILED,
-                error_message=str(e)
+                db, task_id, TaskStatus.FAILED, error_message=str(e)
             )
             await db.commit()
         raise
@@ -259,7 +352,7 @@ async def run_inference_via_ai_service(
 async def get_task(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get task status from database.
@@ -271,7 +364,9 @@ async def get_task(
     if task:
         # Check ownership
         if not check_data_ownership(task.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to view this task")
+            raise HTTPException(
+                status_code=403, detail="You don't have permission to view this task"
+            )
         return task.to_dict()
 
     # Try training task
@@ -279,7 +374,9 @@ async def get_task(
     if training_task:
         # Check ownership
         if not check_data_ownership(training_task.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to view this task")
+            raise HTTPException(
+                status_code=403, detail="You don't have permission to view this task"
+            )
         return training_task.to_dict()
 
     return {"task_id": task_id, "status": "not_found"}

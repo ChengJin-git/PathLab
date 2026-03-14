@@ -9,6 +9,7 @@ Supports:
 - Unified management for both TrainingTask and AITask (inference)
 - VRAM pre-check before task execution (prevents OOM from queued tasks)
 """
+
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -23,6 +24,7 @@ logger = logging.getLogger("task_queue")
 
 class TaskType(str, Enum):
     """Task types managed by the queue"""
+
     TRAINING = "training"
     INFERENCE = "inference"
     EXTERNAL_VALIDATION = "external_validation"
@@ -32,6 +34,7 @@ class TaskType(str, Enum):
 @dataclass
 class QueuedTask:
     """Represents a task in the queue"""
+
     task_id: str
     task_type: TaskType
     coro_func: Callable[..., Awaitable[Any]]
@@ -57,6 +60,7 @@ class TaskQueueManager:
     - VRAM pre-check before task execution
     - Automatic waiting for GPU memory to be released
     """
+
     _instance: Optional["TaskQueueManager"] = None
     _initialized: bool = False
 
@@ -86,15 +90,23 @@ class TaskQueueManager:
             return
 
         self.max_concurrent = max_concurrent
-        self.min_vram_mb = min_vram_mb if min_vram_mb is not None else Config.DEFAULT_MIN_VRAM_MB
+        self.min_vram_mb = (
+            min_vram_mb if min_vram_mb is not None else Config.DEFAULT_MIN_VRAM_MB
+        )
         self.vram_check_interval = vram_check_interval
         self.gpu_count = gpu_count
         self._queue: asyncio.Queue[QueuedTask] = asyncio.Queue()
         self._running_tasks: Dict[str, asyncio.Task] = {}
         self._pending_tasks: Dict[str, QueuedTask] = {}  # task_id -> QueuedTask
-        self._gpu_assignments: Dict[str, int] = {}  # task_id -> GPU index for running tasks
-        self._condition: Optional[asyncio.Condition] = None  # For dynamic concurrency control
-        self._vram_condition: Optional[asyncio.Condition] = None  # For VRAM availability notification
+        self._gpu_assignments: Dict[
+            str, int
+        ] = {}  # task_id -> GPU index for running tasks
+        self._condition: Optional[asyncio.Condition] = (
+            None  # For dynamic concurrency control
+        )
+        self._vram_condition: Optional[asyncio.Condition] = (
+            None  # For VRAM availability notification
+        )
         self._worker_task: Optional[asyncio.Task] = None
         self._shutdown: bool = False
 
@@ -115,7 +127,7 @@ class TaskQueueManager:
         self._shutdown = False
         self._worker_task = asyncio.create_task(self._worker_loop())
         logger.info("TaskQueueManager worker started")
-    
+
     async def stop(self):
         """Stop the queue worker gracefully"""
         self._shutdown = True
@@ -127,18 +139,18 @@ class TaskQueueManager:
                 pass
             self._worker_task = None
         logger.info("TaskQueueManager worker stopped")
-    
+
     async def submit(
         self,
         task_id: str,
         task_type: TaskType,
         coro_func: Callable[..., Awaitable[Any]],
         *args,
-        **kwargs
+        **kwargs,
     ) -> None:
         """
         Submit a task to the queue.
-        
+
         Args:
             task_id: Unique task identifier
             task_type: Type of task (training or inference)
@@ -156,15 +168,15 @@ class TaskQueueManager:
             args=args,
             kwargs=kwargs_with_task_id,
         )
-        
+
         self._pending_tasks[task_id] = queued_task
         await self._queue.put(queued_task)
-        
+
         logger.info(
             f"Task {task_id} ({task_type.value}) submitted to queue. "
             f"Queue size: {self._queue.qsize()}, Running: {len(self._running_tasks)}"
         )
-    
+
     def _select_optimal_gpu(self) -> int:
         """
         Select the optimal GPU for a new task.
@@ -238,7 +250,10 @@ class TaskQueueManager:
             True if VRAM is available, False if task was cancelled during wait
         """
         try:
-            from backend.common.gpu_utils import check_gpu_vram_available, get_total_vram_mb
+            from backend.common.gpu_utils import (
+                check_gpu_vram_available,
+                get_total_vram_mb,
+            )
         except ImportError:
             logger.warning("Could not import gpu_utils, skipping VRAM check")
             return True
@@ -258,7 +273,9 @@ class TaskQueueManager:
                 logger.info(f"Task {task_id} was cancelled while waiting for VRAM")
                 return False
 
-            is_available, current_free_mb, message = check_gpu_vram_available(gpu_index, self.min_vram_mb)
+            is_available, current_free_mb, message = check_gpu_vram_available(
+                gpu_index, self.min_vram_mb
+            )
 
             if is_available:
                 if wait_count > 0:
@@ -278,8 +295,7 @@ class TaskQueueManager:
             async with self._vram_condition:
                 try:
                     await asyncio.wait_for(
-                        self._vram_condition.wait(),
-                        timeout=self.vram_check_interval
+                        self._vram_condition.wait(), timeout=self.vram_check_interval
                     )
                 except asyncio.TimeoutError:
                     pass
@@ -315,7 +331,9 @@ class TaskQueueManager:
             gpu_idx = self._select_optimal_gpu()
             if gpu_idx >= 0:
                 if wait_count > 0:
-                    logger.info(f"GPU {gpu_idx} now available for task {task_id} after {wait_count} waits")
+                    logger.info(
+                        f"GPU {gpu_idx} now available for task {task_id} after {wait_count} waits"
+                    )
                 return gpu_idx
 
             wait_count += 1
@@ -328,8 +346,7 @@ class TaskQueueManager:
             async with self._vram_condition:
                 try:
                     await asyncio.wait_for(
-                        self._vram_condition.wait(),
-                        timeout=self.vram_check_interval
+                        self._vram_condition.wait(), timeout=self.vram_check_interval
                     )
                 except asyncio.TimeoutError:
                     pass
@@ -370,10 +387,7 @@ class TaskQueueManager:
         while not self._shutdown:
             try:
                 # Get task from queue (blocks until available)
-                queued_task = await asyncio.wait_for(
-                    self._queue.get(),
-                    timeout=1.0
-                )
+                queued_task = await asyncio.wait_for(self._queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
             except asyncio.CancelledError:
@@ -401,7 +415,9 @@ class TaskQueueManager:
 
             # Double-check task wasn't cancelled during GPU wait
             if queued_task.task_id not in self._pending_tasks:
-                logger.info(f"Task {queued_task.task_id} was cancelled during GPU wait, skipping")
+                logger.info(
+                    f"Task {queued_task.task_id} was cancelled during GPU wait, skipping"
+                )
                 self._queue.task_done()
                 continue
 
@@ -414,9 +430,7 @@ class TaskQueueManager:
             self._gpu_assignments[queued_task.task_id] = assigned_gpu
 
             # Create task and track it
-            task = asyncio.create_task(
-                self._run_task(queued_task)
-            )
+            task = asyncio.create_task(self._run_task(queued_task))
             self._running_tasks[queued_task.task_id] = task
 
             logger.info(
@@ -425,27 +439,66 @@ class TaskQueueManager:
             )
 
     async def _run_task(self, queued_task: QueuedTask):
-        """Execute a single task and handle cleanup"""
         try:
             await queued_task.coro_func(*queued_task.args, **queued_task.kwargs)
-            logger.info(f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}")
+            logger.info(
+                f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}"
+            )
         except Exception as e:
-            logger.error(f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}")
-            # Safety net: ensure task is marked as failed in DB if the pipeline's own
-            # error handler also failed (e.g., DB lock timeout). Without this, the task
-            # would stay in 'resuming' or 'pending' state permanently.
-            await self._ensure_task_failed(queued_task.task_id, queued_task.task_type, str(e))
+            logger.error(
+                f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}"
+            )
+            await self._ensure_task_failed(
+                queued_task.task_id, queued_task.task_type, str(e)
+            )
         finally:
-            # Cleanup and notify waiting tasks
+            await self._invalidate_context_for_task(queued_task)
             self._running_tasks.pop(queued_task.task_id, None)
             self._gpu_assignments.pop(queued_task.task_id, None)
-
-            # Notify waiters - a slot may have opened and GPU memory may be freeing up
             await self._notify_queue_state_changed()
-
             self._queue.task_done()
 
-    async def _ensure_task_failed(self, task_id: str, task_type: TaskType, error_msg: str):
+    async def _invalidate_context_for_task(self, queued_task: QueuedTask) -> None:
+        if queued_task.task_type not in (TaskType.TRAINING, TaskType.INFERENCE):
+            return
+        user_id: str | None = queued_task.kwargs.get("user_id")
+        if not user_id:
+            try:
+                from backend.database import async_session
+
+                async with async_session() as db:
+                    if queued_task.task_type == TaskType.TRAINING:
+                        from backend.database.repositories import TrainingTaskRepository
+
+                        task = await TrainingTaskRepository.get_by_id(
+                            db, queued_task.task_id
+                        )
+                    else:
+                        from backend.database.repositories import AITaskRepository
+
+                        task = await AITaskRepository.get_by_id(db, queued_task.task_id)
+                    user_id = task.user_id if task else None
+            except Exception as exc:
+                logger.warning(
+                    f"[ChatCtxCache] could not resolve user_id for task {queued_task.task_id}: {exc}"
+                )
+        if user_id:
+            try:
+                from backend.common.chat_context_cache import (
+                    invalidate_chat_context,
+                    clear_training_snapshot,
+                )
+
+                await invalidate_chat_context(user_id)
+                await clear_training_snapshot(queued_task.task_id)
+            except Exception as exc:
+                logger.warning(
+                    f"[ChatCtxCache] invalidation failed for task {queued_task.task_id}: {exc}"
+                )
+
+    async def _ensure_task_failed(
+        self, task_id: str, task_type: TaskType, error_msg: str
+    ):
         """
         Safety net: check if the task is still in a non-terminal state after an exception,
         and force-update it to 'failed' if so.
@@ -453,7 +506,14 @@ class TaskQueueManager:
         This handles the case where the pipeline's own error handler also failed
         (e.g., DB connection issue), leaving the task stuck in 'resuming'/'pending'/'patching'.
         """
-        NON_TERMINAL = {'pending', 'queued', 'patching', 'resuming', 'extracting', 'training'}
+        NON_TERMINAL = {
+            "pending",
+            "queued",
+            "patching",
+            "resuming",
+            "extracting",
+            "training",
+        }
         try:
             from backend.database import async_session
             from backend.ai.schemas.base import TaskStatus
@@ -461,6 +521,7 @@ class TaskQueueManager:
             async with async_session() as db:
                 if task_type == TaskType.TRAINING:
                     from backend.database.repositories import TrainingTaskRepository
+
                     task = await TrainingTaskRepository.get_by_id(db, task_id)
                     if task and task.status in NON_TERMINAL:
                         logger.warning(
@@ -468,11 +529,14 @@ class TaskQueueManager:
                             f"forcing to 'failed'"
                         )
                         await TrainingTaskRepository.update_status(
-                            db, task_id, TaskStatus.FAILED,
-                            error_message=f"Task failed (safety net): {error_msg}"
+                            db,
+                            task_id,
+                            TaskStatus.FAILED,
+                            error_message=f"Task failed (safety net): {error_msg}",
                         )
                 elif task_type == TaskType.INFERENCE:
                     from backend.database.repositories import AITaskRepository
+
                     task = await AITaskRepository.get_by_id(db, task_id)
                     if task and task.status in NON_TERMINAL:
                         logger.warning(
@@ -480,8 +544,10 @@ class TaskQueueManager:
                             f"forcing to 'failed'"
                         )
                         await AITaskRepository.update_status(
-                            db, task_id, TaskStatus.FAILED,
-                            error_message=f"Task failed (safety net): {error_msg}"
+                            db,
+                            task_id,
+                            TaskStatus.FAILED,
+                            error_message=f"Task failed (safety net): {error_msg}",
                         )
                 await db.commit()
         except Exception as fallback_err:
@@ -503,10 +569,12 @@ class TaskQueueManager:
         running_tasks_info = []
         for task_id in self._running_tasks.keys():
             gpu_idx = self._gpu_assignments.get(task_id)
-            running_tasks_info.append({
-                "task_id": task_id,
-                "gpu": gpu_idx,
-            })
+            running_tasks_info.append(
+                {
+                    "task_id": task_id,
+                    "gpu": gpu_idx,
+                }
+            )
 
         status = {
             "max_concurrent": self.max_concurrent,
@@ -524,8 +592,11 @@ class TaskQueueManager:
         # Add GPU info if available
         try:
             from backend.common.gpu_utils import get_all_gpu_info, check_vram_available
+
             status["gpus"] = get_all_gpu_info()
-            is_available, current_free_mb, message = check_vram_available(self.min_vram_mb)
+            is_available, current_free_mb, message = check_vram_available(
+                self.min_vram_mb
+            )
             status["vram_available"] = is_available
             status["vram_free_mb"] = current_free_mb
             status["vram_status"] = message
@@ -645,4 +716,3 @@ async def shutdown_task_queue():
     queue = get_task_queue()
     if queue:
         await queue.stop()
-

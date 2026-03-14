@@ -30,7 +30,6 @@ from backend.database.repositories import (
     DatasetPermissionRepository,
     DatasetRepository,
     TrainingTaskRepository,
-    TrainingLogRepository,
     AITaskRepository,
 )
 from backend.database.models import (
@@ -45,6 +44,11 @@ from backend.auth.dependencies import (
     check_data_ownership,
     get_user_id_filter,
     get_user_from_header_or_param,
+)
+from backend.common.chat_context_cache import (
+    get_cached_context_kwargs,
+    get_training_snapshot,
+    set_cached_context_kwargs,
 )
 from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
@@ -3992,6 +3996,53 @@ async def chat_with_ai(
                 break
     inferred_model_filters = _infer_model_request_filters(latest_user_text)
 
+    _ctx_cache_uid = str(user.id)
+    _ctx_cached = None
+    if elevated_dataset_ids is None:
+        _ctx_cached = await get_cached_context_kwargs(_ctx_cache_uid)
+
+    if _ctx_cached is not None:
+        stats = {"total_count": 0, "datasets": [], "data_types": {}}
+        rich_datasets = []
+        trained_models = []
+        trained_models_total = 0
+        training_tasks = []
+        training_tasks_stats = {}
+        inference_tasks = []
+        inference_tasks_stats = {}
+        _cached_model_summaries = _ctx_cached.get("model_summaries", [])
+        _cached_trained_models_total = _ctx_cached.get("trained_models_total", 0)
+        if _cached_model_summaries:
+            _recent = _cached_model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
+            _sections = []
+            if inferred_model_filters:
+                _matching = [
+                    s
+                    for s in _cached_model_summaries
+                    if _matches_model_request_filters(s, inferred_model_filters)
+                ][:MAX_MODELS_IN_CHAT_CONTEXT]
+                _filter_summary = _format_model_filter_summary(inferred_model_filters)
+                _sections.append(
+                    f"  MATCHING CURRENT REQUEST (preferred for this turn; filters={_filter_summary}):"
+                )
+                if _matching:
+                    _sections.extend(s["line"] for s in _matching)
+                else:
+                    _sections.append("  - None")
+                _matching_ids = {s["id"] for s in _matching}
+                _others = [s for s in _recent if s["id"] not in _matching_ids]
+                if _others:
+                    _sections.append("  ADDITIONAL CANDIDATE MODELS:")
+                    _sections.extend(s["line"] for s in _others)
+            else:
+                _sections.append("  CANDIDATE MODELS:")
+                _sections.extend(s["line"] for s in _recent)
+            _cached_models_list = "\n".join(_sections)
+            _cached_models_count = _cached_trained_models_total
+        else:
+            _cached_models_list = "  None - user needs to train a model first"
+            _cached_models_count = 0
+
     async def _with_new_session(coro_factory):
         async with async_session() as s:
             return await coro_factory(s)
@@ -3999,7 +4050,7 @@ async def chat_with_ai(
     _uid = user_id_filter
     _eids = elevated_dataset_ids
 
-    if inferred_model_filters:
+    if _ctx_cached is None and inferred_model_filters:
         (
             stats,
             rich_datasets,
@@ -4069,7 +4120,7 @@ async def chat_with_ai(
                     break
             if len(batch) < batch_limit:
                 break
-    else:
+    elif _ctx_cached is None:
         (
             stats,
             rich_datasets,
@@ -4693,13 +4744,10 @@ async def chat_with_ai(
         recent_logs_by_task_id: Dict[str, List[Any]] = {}
         if active_task_ids:
             recent_logs_batches = await asyncio.gather(
-                *(
-                    TrainingLogRepository.get_recent(db, task_id, count=20)
-                    for task_id in active_task_ids
-                )
+                *(get_training_snapshot(task_id) for task_id in active_task_ids)
             )
             recent_logs_by_task_id = {
-                task_id: logs
+                task_id: (logs or [])
                 for task_id, logs in zip(active_task_ids, recent_logs_batches)
             }
 
@@ -4801,6 +4849,57 @@ async def chat_with_ai(
         temp_perms_list=temp_perms_list,
         current_datetime=current_datetime,
     )
+
+    if _ctx_cached is None and elevated_dataset_ids is None:
+        await set_cached_context_kwargs(
+            _ctx_cache_uid,
+            {
+                "wsi_count": wsi_count,
+                "data_types_info": data_types_info,
+                "datasets_list": datasets_list,
+                "trained_models_total": trained_models_total,
+                "model_summaries": locals().get("model_summaries", []),
+                "training_tasks_total": training_tasks_total,
+                "training_tasks_completed": training_tasks_completed,
+                "training_tasks_running": training_tasks_running,
+                "training_tasks_failed": training_tasks_failed,
+                "training_tasks_list": training_tasks_list,
+                "inference_tasks_total": inference_tasks_total,
+                "inference_tasks_completed": inference_tasks_completed,
+                "inference_tasks_running": inference_tasks_running,
+                "inference_tasks_list": inference_tasks_list,
+            },
+        )
+
+    if _ctx_cached is not None:
+        user_data_context = format_user_data_context(
+            wsi_count=_ctx_cached.get("wsi_count", 0),
+            data_types_info=_ctx_cached.get("data_types_info", "None"),
+            datasets_list=_ctx_cached.get("datasets_list", "  None"),
+            models_count=_cached_models_count,
+            models_list=_cached_models_list,
+            training_tasks_total=_ctx_cached.get("training_tasks_total", 0),
+            training_tasks_completed=_ctx_cached.get("training_tasks_completed", 0),
+            training_tasks_running=_ctx_cached.get("training_tasks_running", 0),
+            training_tasks_failed=_ctx_cached.get("training_tasks_failed", 0),
+            training_tasks_list=_ctx_cached.get(
+                "training_tasks_list",
+                "  None - user has not created any training tasks yet",
+            ),
+            inference_tasks_total=_ctx_cached.get("inference_tasks_total", 0),
+            inference_tasks_completed=_ctx_cached.get("inference_tasks_completed", 0),
+            inference_tasks_running=_ctx_cached.get("inference_tasks_running", 0),
+            inference_tasks_list=_ctx_cached.get(
+                "inference_tasks_list",
+                "  None - user has not run any inference tasks yet",
+            ),
+            gpu_summary=gpu_summary,
+            user_role=user_role,
+            is_admin=user.is_admin(),
+            can_use_gpu_base=can_use_gpu_base,
+            temp_perms_list=temp_perms_list,
+            current_datetime=current_datetime,
+        )
 
     # Log the user_data_context for debugging
     # logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
