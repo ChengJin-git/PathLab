@@ -3,11 +3,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
-import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
-import { Card, CardContent } from '../components/ui/card'
+import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Input } from '../components/ui/input'
@@ -43,7 +43,7 @@ function isTaskCancellable(task: Task): boolean {
     ? VALIDATION_CANCELLABLE_STATUSES
     : TRAINING_CANCELLABLE_STATUSES
 
-  return cancellableStatuses.includes(task.status as CancellableStatus)
+  return (cancellableStatuses as readonly string[]).includes(task.status)
 }
 
 export default function TaskListPage() {
@@ -66,7 +66,7 @@ export default function TaskListPage() {
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
   const [selectedTasks, setSelectedTasks] = useState<string[]>([])
   const [isBatchDelete, setIsBatchDelete] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
@@ -370,25 +370,6 @@ export default function TaskListPage() {
     )
   }
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return '-'
-    // Fix case where both +00:00 and Z might be present from backend
-    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
-    // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+'))
-      ? `${sanitizedDate}Z`
-      : sanitizedDate
-    const date = new Date(normalizedDate)
-    if (isNaN(date.getTime())) return dateStr
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-
   const calculateDuration = (start: string | null, end: string | null, status: Task['status']) => {
     if (!start || !end) return t('taskList.na')
     if (isActiveStatus(status) || status === 'pending') return t('taskList.inProgress')
@@ -650,19 +631,7 @@ export default function TaskListPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            if (navigator.clipboard && navigator.clipboard.writeText) {
-                              navigator.clipboard.writeText(task.task_id)
-                            } else {
-                              // Fallback for Electron or non-secure contexts
-                              const textArea = document.createElement('textarea')
-                              textArea.value = task.task_id
-                              textArea.style.position = 'fixed'
-                              textArea.style.opacity = '0'
-                              document.body.appendChild(textArea)
-                              textArea.select()
-                              document.execCommand('copy')
-                              document.body.removeChild(textArea)
-                            }
+                            navigator.clipboard.writeText(task.task_id).catch(() => {})
                             setCopiedId(task.task_id)
                             setTimeout(() => setCopiedId(null), 2000)
                           }}
