@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 CHAT_CTX_TTL = 3600
 VER_TTL = 7200
 SNAPSHOT_TTL = 86400
+ADMIN_SCOPE = "__admin_all__"
 
 
 async def get_cached_context_kwargs(user_id: str) -> Optional[Dict[str, Any]]:
@@ -60,6 +61,41 @@ async def set_cached_context_kwargs(user_id: str, kwargs: Dict[str, Any]) -> Non
         logger.warning("[ChatCtxCache] write error uid=%s: %s", user_id, exc)
 
 
+async def get_cached_context_kwargs_admin() -> Optional[Dict[str, Any]]:
+    try:
+        r = get_redis()
+        ver = await r.get(make_key("chat_ctx_ver", ADMIN_SCOPE))
+        if not ver:
+            return None
+        raw = await r.get(make_key("chat_ctx", ADMIN_SCOPE, ver))
+        if not raw:
+            return None
+        decoded = json.loads(raw)
+        if not isinstance(decoded, dict):
+            return None
+        return decoded
+    except Exception as exc:
+        logger.warning("[ChatCtxCache] admin read error: %s", exc)
+        return None
+
+
+async def set_cached_context_kwargs_admin(kwargs: Dict[str, Any]) -> None:
+    try:
+        r = get_redis()
+        ver_key = make_key("chat_ctx_ver", ADMIN_SCOPE)
+        ver = await r.get(ver_key)
+        if not ver:
+            ver = "1"
+            await r.set(ver_key, ver, ex=VER_TTL)
+        await r.set(
+            make_key("chat_ctx", ADMIN_SCOPE, ver),
+            json.dumps(kwargs, ensure_ascii=False),
+            ex=CHAT_CTX_TTL,
+        )
+    except Exception as exc:
+        logger.warning("[ChatCtxCache] admin write error: %s", exc)
+
+
 async def invalidate_chat_context(user_id: str) -> None:
     if not user_id:
         return
@@ -68,6 +104,9 @@ async def invalidate_chat_context(user_id: str) -> None:
         ver_key = make_key("chat_ctx_ver", user_id)
         await r.incr(ver_key)
         await r.expire(ver_key, VER_TTL)
+        admin_ver_key = make_key("chat_ctx_ver", ADMIN_SCOPE)
+        await r.incr(admin_ver_key)
+        await r.expire(admin_ver_key, VER_TTL)
     except Exception as exc:
         logger.warning("[ChatCtxCache] invalidate error uid=%s: %s", user_id, exc)
 

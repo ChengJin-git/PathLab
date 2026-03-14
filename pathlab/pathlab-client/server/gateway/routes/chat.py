@@ -46,8 +46,10 @@ from backend.auth.dependencies import (
     get_user_from_header_or_param,
 )
 from backend.common.chat_context_cache import (
+    get_cached_context_kwargs_admin,
     get_cached_context_kwargs,
     get_training_snapshot,
+    set_cached_context_kwargs_admin,
     set_cached_context_kwargs,
 )
 from backend.common.config import Config
@@ -3998,7 +4000,9 @@ async def chat_with_ai(
 
     _ctx_cache_uid = str(user.id)
     _ctx_cached = None
-    if elevated_dataset_ids is None:
+    if user.is_admin():
+        _ctx_cached = await get_cached_context_kwargs_admin()
+    elif elevated_dataset_ids is None:
         _ctx_cached = await get_cached_context_kwargs(_ctx_cache_uid)
 
     if _ctx_cached is not None:
@@ -4697,8 +4701,8 @@ async def chat_with_ai(
         models_count = 0
 
     # Format user permissions info
-    user_role = user.role  # "admin", "pathologist", or "guest"
-    can_use_gpu_base = user.can_use_gpu()  # True for admin/pathologist, False for guest
+    user_role = user.role
+    can_use_gpu_base = user.can_use_gpu()
 
     # Format temporary permissions if any (for non-admin users)
     # These are datasets owned by OTHER users that this user has been granted access to
@@ -4732,8 +4736,8 @@ async def chat_with_ai(
     # Get GPU status for system prompt
     gpu_summary = (
         get_gpu_summary_for_prompt()
-        if can_use_gpu_base
-        else "GPU details hidden for guest role"
+        if user.is_admin()
+        else "GPU details hidden for non-admin users"
     )
 
     # Format training tasks info (recent 10 tasks with summary)
@@ -4860,7 +4864,26 @@ async def chat_with_ai(
         current_datetime=current_datetime,
     )
 
-    if _ctx_cached is None and elevated_dataset_ids is None:
+    if _ctx_cached is None and user.is_admin():
+        await set_cached_context_kwargs_admin(
+            {
+                "wsi_count": wsi_count,
+                "data_types_info": data_types_info,
+                "datasets_list": datasets_list,
+                "trained_models_total": trained_models_total,
+                "model_summaries": model_summaries,
+                "training_tasks_total": training_tasks_total,
+                "training_tasks_completed": training_tasks_completed,
+                "training_tasks_running": training_tasks_running,
+                "training_tasks_failed": training_tasks_failed,
+                "training_tasks_list": training_tasks_list,
+                "inference_tasks_total": inference_tasks_total,
+                "inference_tasks_completed": inference_tasks_completed,
+                "inference_tasks_running": inference_tasks_running,
+                "inference_tasks_list": inference_tasks_list,
+            }
+        )
+    elif _ctx_cached is None and elevated_dataset_ids is None:
         await set_cached_context_kwargs(
             _ctx_cache_uid,
             {

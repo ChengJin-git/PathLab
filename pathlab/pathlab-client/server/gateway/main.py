@@ -17,7 +17,10 @@ from fastapi.staticfiles import StaticFiles
 from backend.database import init_db, close_db, get_db, async_session
 from backend.auth.models import User
 from backend.ai.schemas.base import TaskStatus
-from backend.common.chat_context_cache import set_cached_context_kwargs
+from backend.common.chat_context_cache import (
+    set_cached_context_kwargs,
+    set_cached_context_kwargs_admin,
+)
 from backend.database.repositories import (
     AITaskRepository,
     TrainingTaskRepository,
@@ -55,7 +58,7 @@ from .routes import (
 from backend.common.config import Config
 
 
-async def _build_chat_context_cache_for_user(user_id: str) -> dict:
+async def _build_chat_context_cache_for_user(user_id: str | None) -> dict:
     async with async_session() as db:
         stats = await WSIRepository.get_chat_context_stats(
             db, user_id=user_id, elevated_dataset_ids=None
@@ -165,7 +168,7 @@ async def _build_chat_context_cache_for_user(user_id: str) -> dict:
 async def _startup_prewarm_chat_context_cache() -> None:
     try:
         async with async_session() as db:
-            result = await db.execute(select(User.id))
+            result = await db.execute(select(User.id).where(User.role != "admin"))
             user_ids = [str(row[0]) for row in result.all()]
 
         total = len(user_ids)
@@ -180,6 +183,13 @@ async def _startup_prewarm_chat_context_cache() -> None:
             except Exception as exc:
                 failed += 1
                 logger.warning(f"Chat context prewarm failed user={uid}: {exc}")
+
+        try:
+            admin_kwargs = await _build_chat_context_cache_for_user(user_id=None)
+            await set_cached_context_kwargs_admin(admin_kwargs)
+            logger.info("Chat context startup prewarm finished for admin global scope")
+        except Exception as exc:
+            logger.warning(f"Chat context prewarm failed for admin global scope: {exc}")
 
         logger.info(
             f"Chat context startup prewarm finished: total={total}, warmed={warmed}, failed={failed}"

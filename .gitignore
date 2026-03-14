@@ -65,6 +65,7 @@ uploads/
 *.csv
 *.json.bak
 *.tmp
+.ruff_cache
 
 # Test coverage
 .coverage

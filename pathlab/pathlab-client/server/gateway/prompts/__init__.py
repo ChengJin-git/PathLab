@@ -55,9 +55,7 @@ def load_prompt(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 # CJK Unified Ideographs & Extension-A (covers both Simplified & Traditional)
-_CJK_RE = re.compile(
-    r"[\u4e00-\u9fff\u3400-\u4dbf]"
-)
+_CJK_RE = re.compile(r"[\u4e00-\u9fff\u3400-\u4dbf]")
 
 # Characters that appear predominantly in Traditional Chinese but rarely in
 # Simplified Chinese.  This is a pragmatic subset – not exhaustive, but
@@ -173,7 +171,9 @@ def _build_feature_extractor_reference(lang: str) -> str:
             "支持的特征提取器参考（按 id 排序）：\n"
         )
         desc_key = "desc_zh_CN"
-        line_template = "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
+        line_template = (
+            "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
+        )
     elif lang == "zh_HK":
         header = (
             "\n\n## 特徵提取器參考（必須遵守）\n\n"
@@ -185,7 +185,9 @@ def _build_feature_extractor_reference(lang: str) -> str:
             "支援的特徵提取器參考（按 id 排序）：\n"
         )
         desc_key = "desc_zh_HK"
-        line_template = "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
+        line_template = (
+            "- {display_name}（id: {id}，backbone: {backbone}，dim: {dim}）：{desc}\n"
+        )
     else:  # "en"
         header = (
             "\n\n## Feature Extractor Reference (authoritative)\n\n"
@@ -193,12 +195,14 @@ def _build_feature_extractor_reference(lang: str) -> str:
             "- **Only use the names and descriptions listed here**; never invent new extractors;\n"
             "- **Do not tell the user the total number of feature extractors** and do not count them yourself for the reply; if scope matters, just say there are multiple supported options and narrow to task-relevant candidates;\n"
             "- **Do not change or guess meanings** – in particular, GPFM **must** be understood as Generalizable Pathology Foundation Model,\n"
-            "  not \"General Purpose Foundation Model\";\n"
+            '  not "General Purpose Foundation Model";\n'
             "- **Request web search ([WEB_SEARCH]) when the user explicitly asks** for papers, external benchmarks, or latest research beyond PathLab, **or when an evidence-based training recommendation clearly depends on current external benchmark/literature evidence.**\n\n"
             "Supported feature extractor reference (sorted by id):\n"
         )
         desc_key = "desc_en"
-        line_template = "- {display_name} (id: {id}, backbone: {backbone}, dim: {dim}): {desc}\n"
+        line_template = (
+            "- {display_name} (id: {id}, backbone: {backbone}, dim: {dim}): {desc}\n"
+        )
 
     lines: List[str] = [header]
     for extractor_id in sorted(extractors.keys()):
@@ -310,8 +314,17 @@ def format_user_data_context(
     """
     template = get_user_data_context_template()
 
-    data_visibility = "Can see ALL users' data" if is_admin else "Can only see OWN data (plus datasets with temporary access below)"
-    can_use_gpu = "Yes" if can_use_gpu_base else "No (Guest role - requires admin-granted permission)"
+    data_visibility = (
+        "Can see ALL users' data"
+        if is_admin
+        else "Can only see OWN data (plus datasets with temporary access below)"
+    )
+    if is_admin:
+        can_use_gpu = "Yes"
+    elif can_use_gpu_base:
+        can_use_gpu = "Yes (GPU operations allowed by role, but GPU usage details are hidden for non-admin users)"
+    else:
+        can_use_gpu = "No (GPU operations not allowed by role; GPU usage details are hidden for non-admin users)"
 
     return template.format(
         wsi_count=wsi_count,
@@ -335,4 +348,3 @@ def format_user_data_context(
         temp_perms_list=temp_perms_list,
         current_datetime=current_datetime,
     )
-
