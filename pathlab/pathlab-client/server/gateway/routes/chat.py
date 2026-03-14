@@ -100,6 +100,12 @@ from .chat_intent_policy import (
     detect_conversation_mode,
     resolve_search_policy,
 )
+from .external_validation_analysis import (
+    check_extval_compatibility,
+    ExtvalModelInfo,
+    ExtvalDatasetInfo,
+    EXTRACTOR_EMBED_DIM,
+)
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -1067,118 +1073,6 @@ def _get_segmentation_model_spec(
         "is_complete": is_complete,
         "is_consistent": is_consistent,
     }
-
-
-def _get_external_validation_compatibility_error(
-    *,
-    model: Any,
-    training_task: TrainingTask | None,
-    model_data_type: str,
-    model_task_type: str,
-    source_dataset_id: str | None,
-    training_dataset_ids: set[str],
-    model_wsi_ids: set[str],
-    dataset_meta: dict[str, Any],
-    extractor_embed_dim: dict[str, int],
-) -> str | None:
-    model_is_survival = model_task_type == "survival"
-    model_is_segmentation = _is_segmentation_task(model_task_type)
-    model_classes = set(
-        _normalize_label_names(
-            list(
-                (
-                    training_task.classes
-                    if isinstance(training_task, TrainingTask)
-                    else None
-                )
-                or model.classes
-                or []
-            )
-        )
-    )
-    model_extractor = str(getattr(model, "feature_extractor", "") or "").strip()
-    model_embed_dim = extractor_embed_dim.get(model_extractor, 0)
-
-    dataset_data_type = dataset_meta.get("data_type", "unknown")
-    dataset_task_type = dataset_meta.get("task_type", "unknown")
-    dataset_is_survival = dataset_task_type == "survival"
-    dataset_is_segmentation = _is_segmentation_task(dataset_task_type)
-
-    if dataset_data_type != model_data_type:
-        return "data_type mismatch"
-
-    if model_is_survival != dataset_is_survival:
-        return "task_type mismatch"
-
-    if model_is_segmentation != dataset_is_segmentation:
-        return "task_type mismatch"
-
-    if model_is_segmentation:
-        if dataset_data_type != "patch":
-            return "segmentation requires patch dataset"
-        if dataset_meta.get("aggregation_level") != "file":
-            return "segmentation requires file-level dataset"
-
-        segmentation_spec = _get_segmentation_model_spec(model, training_task)
-        if not segmentation_spec["is_complete"]:
-            return "segmentation model metadata incomplete"
-        if not segmentation_spec["is_consistent"]:
-            return "segmentation architecture/backbone mismatch"
-
-        if not source_dataset_id:
-            return "source training dataset cannot be determined"
-        if dataset_meta.get("dataset_id") == source_dataset_id:
-            return "target dataset is the source training dataset"
-
-        model_segmentation_labels = _normalize_label_names(
-            list(
-                (
-                    training_task.classes
-                    if isinstance(training_task, TrainingTask)
-                    else None
-                )
-                or model.classes
-                or []
-            )
-        )
-        dataset_segmentation_labels = _normalize_label_names(
-            dataset_meta.get("segmentation_labels", [])
-        )
-        if not model_segmentation_labels or not dataset_segmentation_labels:
-            return "segmentation labels missing"
-        if model_segmentation_labels != dataset_segmentation_labels:
-            return "segmentation labels mismatch"
-
-        dataset_wsi_ids = set(dataset_meta.get("wsi_ids", []))
-        if model_wsi_ids and dataset_wsi_ids and (model_wsi_ids & dataset_wsi_ids):
-            return "training data overlap"
-        return None
-
-    if not model_is_survival:
-        dataset_labels = set(
-            _normalize_label_names(list((dataset_meta.get("labels") or {}).keys()))
-        )
-        if model_classes != dataset_labels:
-            return "classification labels mismatch"
-
-    if model_data_type == "wsi" and model_extractor and model_embed_dim > 0:
-        dataset_extractors = dataset_meta.get("available_feature_extractors", []) or []
-        if dataset_extractors:
-            has_same_dim = any(
-                (extractor_embed_dim.get(extractor, 0) == model_embed_dim)
-                for extractor in dataset_extractors
-            )
-            if not has_same_dim:
-                return "feature extractor embedding dimension mismatch"
-
-    dataset_wsi_ids = set(dataset_meta.get("wsi_ids", []))
-    if model_wsi_ids and dataset_wsi_ids and (model_wsi_ids & dataset_wsi_ids):
-        return "training data overlap"
-
-    if dataset_meta.get("dataset_id") in training_dataset_ids:
-        return "target dataset is part of training data"
-
-    return None
 
 
 # Maximum PDF papers to include in the AI supplement response (awaited tasks).
@@ -4375,28 +4269,6 @@ async def chat_with_ai(
     else:
         data_types_info = "None"
 
-    # Format trained models info (with detailed info for external validation)
-    # Embedding dimension mapping for feature extractors
-    EXTRACTOR_EMBED_DIM = {
-        "resnet50": 2048,
-        "vit_l_16": 1024,
-        "conch": 512,
-        "uni": 1024,
-        "uni2": 1536,
-        "virchow": 1280,
-        "virchow2": 1280,
-        "plip": 512,
-        "phikon": 1024,
-        "phikon2": 1024,
-        "patho_clip": 512,
-        "openmidnight": 1536,
-        "conch15": 512,
-        "H-Optimus-1": 1536,
-        "H-Optimus-0": 1536,
-        "mSTAR": 1024,
-        "GPFM": 1024,
-    }
-
     if trained_models:
         model_summaries = []
         # Batch query all training tasks to get detailed info with eager loading
@@ -4540,10 +4412,31 @@ async def chat_with_ai(
             # Get embedding dimension for WSI models
             embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
 
-            # -----------------------------------------------------------------------
-            # Pre-compute compatible datasets for external validation at API level.
-            # Rules mirror the frontend/backend external validation validation logic.
-            # -----------------------------------------------------------------------
+            _seg_spec = _get_segmentation_model_spec(m, training_task)
+            _model_raw_classes = list(
+                (
+                    training_task.classes
+                    if isinstance(training_task, TrainingTask)
+                    else None
+                )
+                or m.classes
+                or []
+            )
+            _extval_model_info = ExtvalModelInfo(
+                data_type=data_type,
+                task_type=task_type,
+                classes=_model_raw_classes,
+                feature_extractor=str(getattr(m, "feature_extractor", "") or ""),
+                wsi_ids=model_wsi_ids,
+                source_dataset_id=source_dataset_id,
+                seg_task_architecture=_seg_spec["task_architecture"],
+                seg_task_backbone=_seg_spec["task_backbone"],
+                seg_saved_architecture=_seg_spec["saved_architecture"],
+                seg_saved_backbone=_seg_spec["saved_backbone"],
+                segmentation_labels=_model_raw_classes,
+                training_dataset_ids=training_dataset_ids,
+            )
+
             compatible_datasets = []
             if data_type != "unknown" and task_type != "unknown":
                 _now_compat = time.monotonic()
@@ -4574,22 +4467,20 @@ async def chat_with_ai(
                             )
                         continue
 
-                    ds["available_feature_extractors"] = (
-                        available_extractors_per_dataset.get(cand_id, [])
-                    )
-                    ds["wsi_ids"] = dataset_wsi_ids_per_dataset.get(
-                        cand_id, ds.get("wsi_ids", [])
-                    )
-                    compatibility_error = _get_external_validation_compatibility_error(
-                        model=m,
-                        training_task=training_task,
-                        model_data_type=data_type,
-                        model_task_type=task_type,
-                        source_dataset_id=source_dataset_id,
-                        training_dataset_ids=training_dataset_ids,
-                        model_wsi_ids=model_wsi_ids,
-                        dataset_meta=ds,
-                        extractor_embed_dim=EXTRACTOR_EMBED_DIM,
+                    compatibility_error = check_extval_compatibility(
+                        model_info=_extval_model_info,
+                        dataset_info=ExtvalDatasetInfo(
+                            dataset_id=cand_id,
+                            data_type=ds.get("data_type", "unknown"),
+                            task_type=ds.get("task_type", "unknown"),
+                            aggregation_level=ds.get("aggregation_level", "file"),
+                            labels=list((ds.get("labels") or {}).keys()),
+                            segmentation_labels=ds.get("segmentation_labels") or [],
+                            feature_extractors=available_extractors_per_dataset.get(
+                                cand_id, []
+                            ),
+                            wsi_ids=set(dataset_wsi_ids_per_dataset.get(cand_id, [])),
+                        ),
                     )
                     _compat_check_cache[_ck] = (
                         compatibility_error is None,

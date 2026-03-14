@@ -75,7 +75,13 @@ from .analysis_helpers import (
 from .classification_analysis import _run_classification_analysis
 from .segmentation_analysis import _run_segmentation_analysis
 from .survival_analysis import _run_survival_analysis
-from .external_validation_analysis import _run_external_validation_analysis
+from .external_validation_analysis import (
+    _run_external_validation_analysis,
+    check_extval_compatibility,
+    ExtvalModelInfo,
+    ExtvalDatasetInfo,
+    _is_extval_segmentation_task,
+)
 from .analysis_metrics import (
     _calculate_all_metrics,
     _calculate_bootstrap_ci,
@@ -3071,196 +3077,79 @@ async def start_external_validation(
     # COMPATIBILITY VALIDATION
     # ========================================================================
 
-    # Get data_type and task_type from DataGroup relationships
     model_data_group = model_task.data_group
     target_data_group = target_dataset.data_group
 
-    # 1. Validate data_type compatibility (WSI model <-> WSI data, Patch model <-> Patch data)
     model_data_type = model_data_group.data_type if model_data_group else "wsi"
     target_data_type = target_data_group.data_type if target_data_group else "wsi"
-    if model_data_type != target_data_type:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Data type mismatch: Model trained on '{model_data_type}' data cannot validate '{target_data_type}' data. "
-            f"Please select a dataset with '{model_data_type}' data type.",
-        )
-
-    # 2. Validate task_type compatibility (Classification <-> Classification, Survival <-> Survival)
-    # Normalize task types for comparison
-    def is_classification_task(task_type: str) -> bool:
-        return task_type in (
-            "classification",
-            "wsi_classification",
-            "patch_classification",
-        )
-
-    def is_survival_task(task_type: str) -> bool:
-        return task_type in ("wsi_survival", "survival")
-
-    def is_segmentation_task(task_type: str) -> bool:
-        return task_type in ("segmentation", "patch_segmentation")
-
     model_task_type = (
         model_data_group.task_type if model_data_group else "classification"
     )
     target_task_type = (
         target_data_group.task_type if target_data_group else "classification"
     )
+    target_aggregation_level = (
+        target_data_group.aggregation_level if target_data_group else "file"
+    )
 
-    model_is_classification = is_classification_task(model_task_type)
-    target_is_classification = is_classification_task(target_task_type)
-    model_is_survival = is_survival_task(model_task_type)
-    target_is_survival = is_survival_task(target_task_type)
-    model_is_segmentation = is_segmentation_task(model_task_type)
-    target_is_segmentation = is_segmentation_task(target_task_type)
-
-    if model_is_segmentation and not target_is_segmentation:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task type mismatch: Segmentation model cannot validate non-segmentation data. "
-            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-            f"Please select a segmentation dataset.",
-        )
-
-    if model_is_classification and not target_is_classification:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task type mismatch: Classification model cannot validate survival data. "
-            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-            f"Please select a classification dataset.",
-        )
-
-    if model_is_survival and not target_is_survival:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task type mismatch: Survival model cannot validate classification data. "
-            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-            f"Please select a survival dataset.",
-        )
-
-    # 3. Validate class label name matching (for classification tasks)
-    if model_is_classification and target_is_classification:
-        model_classes = set(_coerce_str_list(trained_model.classes))
-        dataset_labels = set(
-            await DatasetRepository.get_distinct_labels(db, req.dataset_id)
-        )
-        if model_classes != dataset_labels:
-            missing_in_dataset = model_classes - dataset_labels
-            extra_in_dataset = dataset_labels - model_classes
-            detail_parts = ["Label mismatch between model and dataset."]
-            if missing_in_dataset:
-                detail_parts.append(
-                    f"Model classes not in dataset: {sorted(missing_in_dataset)}"
-                )
-            if extra_in_dataset:
-                detail_parts.append(
-                    f"Dataset labels not in model: {sorted(extra_in_dataset)}"
-                )
-            raise HTTPException(
-                status_code=400,
-                detail=" ".join(detail_parts),
-            )
-
-    if model_is_segmentation and target_is_segmentation:
-        source_task_id = _coerce_str(trained_model.task_id)
-        source_dataset_id = (
-            await TrainingTaskRepository.get_source_dataset_ids_batch(
-                db, [source_task_id]
-            )
-        ).get(source_task_id)
-        if not source_dataset_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot determine the source training dataset for this segmentation model. "
-                "External validation requires a source model trained on a single dataset.",
-            )
-
-        if source_dataset_id == req.dataset_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Target dataset must be different from the source training dataset for segmentation external validation.",
-            )
-
-        model_config = (
-            model_task.model_config if isinstance(model_task.model_config, dict) else {}
-        )
-        task_architecture = str(model_config.get("architecture") or "").strip()
-        task_backbone = str(model_config.get("backbone") or "").strip()
-        saved_architecture = str(trained_model.aggregator or "").strip()
-        saved_backbone = str(trained_model.feature_extractor or "").strip()
-
-        if (
-            not task_architecture
-            or not task_backbone
-            or not saved_architecture
-            or not saved_backbone
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation model architecture metadata is incomplete. "
-                "The source model must include both architecture and backbone metadata for external validation.",
-            )
-
-        if task_architecture != saved_architecture or task_backbone != saved_backbone:
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation model metadata mismatch detected. "
-                f"Task config expects architecture/backbone '{task_architecture}/{task_backbone}', "
-                f"but stored model metadata is '{saved_architecture}/{saved_backbone}'.",
-            )
-
-        model_segmentation_labels = _normalize_label_names(
-            _coerce_str_list(model_task.classes or trained_model.classes or [])
-        )
-        target_segmentation_labels = _extract_segmentation_label_names(
-            await WSIRepository._get_coco_categories_for_dataset(db, req.dataset_id)
-        )
-
-        if not model_segmentation_labels or not target_segmentation_labels:
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation label metadata is incomplete. "
-                "Both the source model and target dataset must define labels for external validation.",
-            )
-
-        if model_segmentation_labels != target_segmentation_labels:
-            missing_in_dataset = sorted(
-                set(model_segmentation_labels) - set(target_segmentation_labels)
-            )
-            extra_in_dataset = sorted(
-                set(target_segmentation_labels) - set(model_segmentation_labels)
-            )
-            detail_parts = [
-                "Segmentation label mismatch between source model and target dataset."
-            ]
-            if missing_in_dataset:
-                detail_parts.append(
-                    f"Model labels not in dataset: {missing_in_dataset}"
-                )
-            if extra_in_dataset:
-                detail_parts.append(f"Dataset labels not in model: {extra_in_dataset}")
-            raise HTTPException(status_code=400, detail=" ".join(detail_parts))
-
-    # Get WSI IDs from target dataset
     wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
     if not wsi_ids:
         raise HTTPException(
             status_code=400, detail=f"No WSI IDs found for dataset: {req.dataset_id}"
         )
 
-    # 4. Prevent validating on data that overlaps with training data (WSI-level check)
     model_wsi_ids = set(
         await TrainingTaskRepository.get_wsi_ids(db, _coerce_str(trained_model.task_id))
     )
-    data_wsi_ids = set(wsi_ids)
-    overlapping_wsi_ids = model_wsi_ids & data_wsi_ids
-    if overlapping_wsi_ids:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Data leakage detected: {len(overlapping_wsi_ids)} WSI(s) in the selected dataset "
-            f"were also used in the model's training data. "
-            f"Please select a dataset with no overlapping slides for external validation.",
+
+    dataset_labels = await DatasetRepository.get_distinct_labels(db, req.dataset_id)
+
+    source_dataset_id: Optional[str] = None
+    target_seg_labels: List[str] = []
+    model_config = (
+        model_task.model_config if isinstance(model_task.model_config, dict) else {}
+    )
+    if _is_extval_segmentation_task(model_task_type):
+        source_task_id = _coerce_str(trained_model.task_id)
+        source_dataset_id = (
+            await TrainingTaskRepository.get_source_dataset_ids_batch(
+                db, [source_task_id]
+            )
+        ).get(source_task_id)
+        target_seg_labels = _extract_segmentation_label_names(
+            await WSIRepository._get_coco_categories_for_dataset(db, req.dataset_id)
         )
+
+    compat_error = check_extval_compatibility(
+        model_info=ExtvalModelInfo(
+            data_type=model_data_type,
+            task_type=model_task_type,
+            classes=_coerce_str_list(trained_model.classes),
+            feature_extractor=str(trained_model.feature_extractor or ""),
+            wsi_ids=model_wsi_ids,
+            source_dataset_id=source_dataset_id,
+            seg_task_architecture=str(model_config.get("architecture") or "").strip(),
+            seg_task_backbone=str(model_config.get("backbone") or "").strip(),
+            seg_saved_architecture=str(trained_model.aggregator or "").strip(),
+            seg_saved_backbone=str(trained_model.feature_extractor or "").strip(),
+            segmentation_labels=_coerce_str_list(
+                model_task.classes or trained_model.classes or []
+            ),
+            training_dataset_ids=set(),
+        ),
+        dataset_info=ExtvalDatasetInfo(
+            dataset_id=req.dataset_id,
+            data_type=target_data_type,
+            task_type=target_task_type,
+            aggregation_level=target_aggregation_level,
+            labels=dataset_labels,
+            segmentation_labels=target_seg_labels,
+            feature_extractors=[],
+            wsi_ids=set(wsi_ids),
+        ),
+    )
+    if compat_error:
+        raise HTTPException(status_code=400, detail=compat_error)
 
     # Check if inference results already exist for this model + data combination
     # Look for existing extval_*_result.json files in the WSI ai_results directories
@@ -3348,7 +3237,7 @@ async def start_external_validation(
         )
 
     # Prepare analysis options (use segmentation-specific defaults if needed)
-    if model_is_segmentation:
+    if _is_extval_segmentation_task(model_task_type):
         analysis_metrics = req.metrics or [
             "iou",
             "dice",
@@ -3453,7 +3342,7 @@ async def start_external_validation(
 
     validation_task = TrainingTask(
         task_id=validation_id,
-        task_name=f"External Validation: {trained_model.model_name} → {target_dataset.name or req.dataset_id}",
+        task_name=f"{model_task.task_name} → {target_dataset.name or req.dataset_id}",
         group_id=validation_data_group.group_id,
         user_id=str(user.id),
         task_description=f"Validate model '{trained_model.model_name}' on dataset '{target_dataset.name}'",
@@ -3473,6 +3362,9 @@ async def start_external_validation(
             "dataset_name": target_dataset.name,  # Store dataset name for display
             "total_wsi": len(wsi_ids),
             "aggregator": trained_model.aggregator,  # Store aggregator name for task list display
+            # Store pipeline params needed to re-submit after system restart (resume_interrupted_tasks)
+            "model_task_type": model_task_type,  # e.g. "classification", "survival", "wsi_survival"
+            "model_data_type": model_data_type,  # "wsi" or "patch"
             # Store analysis options for auto-triggered analysis
             "analysis_metrics": analysis_metrics,
             "analysis_charts": analysis_charts,
@@ -6085,8 +5977,6 @@ async def run_task_analysis(
     # Build meaningful title based on task type
     is_external = task_type_str == "external_validation"
     if is_external:
-        # External validation: task_name already has format "External Validation: model → dataset"
-        # Extract source and target from task_name or model_config
         model_config = task.model_config or {}
         model_id = model_config.get("model_id", "")
         dataset_id = model_config.get("dataset_id", "")

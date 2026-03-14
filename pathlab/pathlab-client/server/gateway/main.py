@@ -1,4 +1,5 @@
 from typing import Any
+
 """
 PathLab Gateway Service
 
@@ -602,25 +603,78 @@ async def resume_interrupted_tasks():
                         if task.data_group
                         else "classification"
                     )
-                    pipeline_kwargs = {
-                        "data_type": data_type,
-                        "wsi_ids": wsi_ids,
-                        "preprocessing_config": task.preprocessing_config or {},
-                        "model_config": task.model_config or {},
-                        # Token is not persisted for security. During resume:
-                        # - If features are already cached: no model loading needed, works fine
-                        # - If model checkpoint already downloaded: no token needed, works fine
-                        # - If model needs downloading (first use of a private HF model): will fail
-                        #   with auth error — user must re-submit the task with their HF token
-                        "huggingface_token": None,
-                        "training_task_type": task_type,  # Use same param name as pipeline
-                    }
-                    await task_queue.submit(
-                        task_id=task.task_id,
-                        task_type=TaskType.TRAINING,
-                        coro_func=run_training_pipeline,
-                        **pipeline_kwargs,
-                    )
+
+                    if task_type == "external_validation":
+                        # External validation tasks use a dedicated pipeline, not run_training_pipeline.
+                        # All necessary params were persisted in model_config at submission time.
+                        from gateway.routes.results import _run_external_validation
+
+                        model_config = task.model_config or {}
+
+                        # model_task_type / model_data_type were added to model_config after the
+                        # resume fix. For tasks submitted before that change, fall back to a DB
+                        # lookup via the original training task so that survival and segmentation
+                        # models are also recovered correctly.
+                        resolved_model_task_type = model_config.get("model_task_type")
+                        resolved_model_data_type = model_config.get("model_data_type")
+
+                        if not resolved_model_task_type or not resolved_model_data_type:
+                            src_task_id = model_config.get("model_task_id", "")
+                            if src_task_id:
+                                src_task = await TrainingTaskRepository.get_by_id(
+                                    db, src_task_id
+                                )
+                                if src_task and src_task.data_group:
+                                    if not resolved_model_task_type:
+                                        resolved_model_task_type = (
+                                            src_task.data_group.task_type
+                                        )
+                                    if not resolved_model_data_type:
+                                        resolved_model_data_type = (
+                                            src_task.data_group.data_type
+                                        )
+
+                        # Final safe defaults
+                        resolved_model_task_type = (
+                            resolved_model_task_type or "classification"
+                        )
+                        resolved_model_data_type = resolved_model_data_type or data_type
+
+                        ext_pipeline_kwargs = {
+                            "model_task_id": model_config.get("model_task_id", ""),
+                            "model_id": model_config.get("model_id", ""),
+                            "model_classes": task.classes,
+                            "model_task_type": resolved_model_task_type,
+                            "model_data_type": resolved_model_data_type,
+                            "dataset_id": model_config.get("dataset_id", ""),
+                            "wsi_ids": wsi_ids,
+                        }
+                        await task_queue.submit(
+                            task_id=task.task_id,
+                            task_type=TaskType.EXTERNAL_VALIDATION,
+                            coro_func=_run_external_validation,
+                            **ext_pipeline_kwargs,
+                        )
+                    else:
+                        pipeline_kwargs = {
+                            "data_type": data_type,
+                            "wsi_ids": wsi_ids,
+                            "preprocessing_config": task.preprocessing_config or {},
+                            "model_config": task.model_config or {},
+                            # Token is not persisted for security. During resume:
+                            # - If features are already cached: no model loading needed, works fine
+                            # - If model checkpoint already downloaded: no token needed, works fine
+                            # - If model needs downloading (first use of a private HF model): will fail
+                            #   with auth error — user must re-submit the task with their HF token
+                            "huggingface_token": None,
+                            "training_task_type": task_type,  # Use same param name as pipeline
+                        }
+                        await task_queue.submit(
+                            task_id=task.task_id,
+                            task_type=TaskType.TRAINING,
+                            coro_func=run_training_pipeline,
+                            **pipeline_kwargs,
+                        )
 
                     logger.info(
                         f"✓ Task {task.task_id} queued for resume (claimed by this instance)"

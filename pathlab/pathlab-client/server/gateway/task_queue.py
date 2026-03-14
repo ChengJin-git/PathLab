@@ -549,6 +549,22 @@ class TaskQueueManager:
                             TaskStatus.FAILED,
                             error_message=f"Task failed (safety net): {error_msg}",
                         )
+                elif task_type == TaskType.EXTERNAL_VALIDATION:
+                    # External validation reuses TrainingTask table
+                    from backend.database.repositories import TrainingTaskRepository
+
+                    task = await TrainingTaskRepository.get_by_id(db, task_id)
+                    if task and task.status in NON_TERMINAL:
+                        logger.warning(
+                            f"Safety net: task {task_id} still in '{task.status}' after exception, "
+                            f"forcing to 'failed'"
+                        )
+                        await TrainingTaskRepository.update_status(
+                            db,
+                            task_id,
+                            TaskStatus.FAILED,
+                            error_message=f"Task failed (safety net): {error_msg}",
+                        )
                 await db.commit()
         except Exception as fallback_err:
             # Last resort: if even the safety net fails, just log it.

@@ -564,7 +564,13 @@ async def list_training_tasks(
             task_dict = task.to_dict()
 
         task_id = task_dict["task_id"]
-        task_dict["wsi_count"] = wsi_counts.get(task_id, 0)
+        junction_count = wsi_counts.get(task_id, 0)
+        if junction_count == 0 and task_dict.get("task_type") == "external_validation":
+            task_dict["wsi_count"] = (task_dict.get("model_config") or {}).get(
+                "total_wsi", 0
+            )
+        else:
+            task_dict["wsi_count"] = junction_count
         task_dict["source_dataset_id"] = source_dataset_ids.get(task_id)
         if task_id in file_progress:
             task_dict["progress"] = file_progress[task_id]
