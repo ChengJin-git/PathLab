@@ -90,3 +90,21 @@ temp/
 
 # agentv2 (experimental, not tracked)
 pathlab/pathlab-client/server/backend/agentv2/
+
+# AI coding tools
+.agent/
+.agents/
+.claude/
+.codex/
+.cursor/
+.cursorindexingignore
+AGENTS.md
+skills/
+skills-lock.json
+
+# Database files
+*.db
+
+# Documentation (generated)
+docs/
+pathlab/pathlab-client/docs/
