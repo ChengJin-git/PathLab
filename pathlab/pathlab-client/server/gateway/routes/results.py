@@ -4,6 +4,7 @@ AI Results API Routes
 Handles retrieval of AI analysis results, task-level analysis execution,
 and saving analysis results to logs/analysis/{task_id}/.
 """
+
 import asyncio
 import functools
 import logging
@@ -14,7 +15,7 @@ import traceback
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional, Callable, Tuple
+from typing import List, Dict, Any, Optional, Callable, Tuple, cast as type_cast
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
@@ -25,14 +26,43 @@ from sqlalchemy.orm import selectinload
 
 from backend.ai.schemas.base import TaskStatus
 from backend.database import get_db, safe_session
-from backend.database.models import AIResult, AITask, WSISlide, TrainingTask, TrainedModel, TrainingTaskWSI, DataGroup, Dataset
-from backend.database.repositories import AIResultRepository, WSIRepository, TrainingTaskRepository, TrainedModelRepository, DataGroupRepository, DatasetRepository, DatasetPermissionRepository
+from backend.database.models import (
+    AIResult,
+    AITask,
+    WSISlide,
+    TrainingTask,
+    TrainedModel,
+    TrainingTaskWSI,
+    DataGroup,
+    Dataset,
+)
+from backend.database.repositories import (
+    AIResultRepository,
+    WSIRepository,
+    TrainingTaskRepository,
+    TrainedModelRepository,
+    DataGroupRepository,
+    DatasetRepository,
+    DatasetPermissionRepository,
+)
 from backend.common.config import Config
 from backend.storage import StorageManager
-from backend.auth import current_active_user, User, get_user_from_header_or_param, get_user_from_token_param
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, check_wsi_access_permission
+from backend.auth import (
+    current_active_user,
+    User,
+    get_user_from_header_or_param,
+    get_user_from_token_param,
+)
+from backend.auth.dependencies import (
+    require_pathologist_or_admin,
+    check_data_ownership,
+    check_dataset_gpu_permission,
+    check_wsi_access_permission,
+)
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
-from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
+from backend.preprocessing.heatmap_preview_cache import (
+    ensure_recommendation_preview_cache,
+)
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
@@ -72,11 +102,13 @@ def _normalize_label_names(labels: List[str]) -> List[str]:
 
 
 def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
-    return _normalize_label_names([
-        str(category.get("name", "")).strip()
-        for category in categories
-        if category.get("name")
-    ])
+    return _normalize_label_names(
+        [
+            str(category.get("name", "")).strip()
+            for category in categories
+            if category.get("name")
+        ]
+    )
 
 
 def _coerce_path(path_value: Any) -> Optional[Path]:
@@ -88,7 +120,19 @@ def _coerce_path(path_value: Any) -> Optional[Path]:
         return None
 
 
-def _candidate_metrics_paths(task_id: str, trained_model: Optional[Dict[str, Any]]) -> List[Path]:
+def _coerce_str(value: Any) -> str:
+    return value if isinstance(value, str) else str(value)
+
+
+def _coerce_str_list(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(v) for v in values if isinstance(v, (str, int, float)) or v is not None]
+
+
+def _candidate_metrics_paths(
+    task_id: str, trained_model: Optional[Dict[str, Any]]
+) -> List[Path]:
     uploads_dir = Config.get_uploads_dir()
     candidates: List[Path] = []
 
@@ -102,10 +146,12 @@ def _candidate_metrics_paths(task_id: str, trained_model: Optional[Dict[str, Any
         if model_id:
             candidates.append(uploads_dir / "models" / str(model_id) / "metrics.json")
 
-    candidates.extend([
-        uploads_dir / "training" / task_id / "checkpoints" / "metrics.json",
-        uploads_dir / "training" / task_id / "metrics.json",
-    ])
+    candidates.extend(
+        [
+            uploads_dir / "training" / task_id / "checkpoints" / "metrics.json",
+            uploads_dir / "training" / task_id / "metrics.json",
+        ]
+    )
 
     deduped: List[Path] = []
     seen: set[str] = set()
@@ -120,7 +166,9 @@ def _candidate_metrics_paths(task_id: str, trained_model: Optional[Dict[str, Any
 def _derive_companion_artifact_path(result_file: Path, artifact_suffix: str) -> Path:
     result_name = result_file.name
     if result_name.endswith("_result.json"):
-        return result_file.with_name(f"{result_name[:-len('_result.json')]}{artifact_suffix}")
+        return result_file.with_name(
+            f"{result_name[: -len('_result.json')]}{artifact_suffix}"
+        )
     return result_file.with_name(f"{result_file.stem}{artifact_suffix}")
 
 
@@ -147,25 +195,37 @@ def _required_ai_result_artifacts(
     result_dir = uploads_dir / "ai_results" / wsi_id
     metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
 
-    result_file = _coerce_path(metadata.get("result_file")) or (result_dir / f"train_{task_id}_result.json")
+    result_file = _coerce_path(metadata.get("result_file")) or (
+        result_dir / f"train_{task_id}_result.json"
+    )
     artifacts: List[Tuple[str, Path]] = [("result_file", result_file)]
 
     if task_type in ("segmentation", "patch_segmentation"):
-        pred_mask_file = _coerce_path(metadata.get("pred_mask_file")) or _derive_companion_artifact_path(result_file, "_pred_mask.npy")
-        cam_file = _coerce_path(metadata.get("cam_file")) or _derive_companion_artifact_path(result_file, "_cam.npy")
-        artifacts.extend([
-            ("pred_mask_file", pred_mask_file),
-            ("cam_file", cam_file),
-        ])
+        pred_mask_file = _coerce_path(
+            metadata.get("pred_mask_file")
+        ) or _derive_companion_artifact_path(result_file, "_pred_mask.npy")
+        cam_file = _coerce_path(
+            metadata.get("cam_file")
+        ) or _derive_companion_artifact_path(result_file, "_cam.npy")
+        artifacts.extend(
+            [
+                ("pred_mask_file", pred_mask_file),
+                ("cam_file", cam_file),
+            ]
+        )
         return artifacts
 
     if data_type == "patch":
-        cam_file = _coerce_path(metadata.get("cam_file")) or _derive_companion_artifact_path(result_file, "_cam.npy")
+        cam_file = _coerce_path(
+            metadata.get("cam_file")
+        ) or _derive_companion_artifact_path(result_file, "_cam.npy")
         artifacts.append(("cam_file", cam_file))
         return artifacts
 
     if _expects_wsi_attention(metadata):
-        attention_file = _coerce_path(metadata.get("attention_file")) or _derive_companion_artifact_path(result_file, "_attention.npy")
+        attention_file = _coerce_path(
+            metadata.get("attention_file")
+        ) or _derive_companion_artifact_path(result_file, "_attention.npy")
         artifacts.append(("attention_file", attention_file))
     return artifacts
 
@@ -182,27 +242,33 @@ def _collect_missing_ai_result_artifacts(
     missing_artifacts: List[Dict[str, Any]] = []
     missing_count = 0
 
-    for artifact_name, artifact_path in _required_ai_result_artifacts(task_id, task_type, data_type, wsi_id, metadata):
+    for artifact_name, artifact_path in _required_ai_result_artifacts(
+        task_id, task_type, data_type, wsi_id, metadata
+    ):
         if artifact_path.exists():
             continue
         missing_count += 1
         if len(missing_artifacts) < sample_limit:
-            missing_artifacts.append({
-                "wsi_id": wsi_id,
-                "artifact": artifact_name,
-                "path": str(artifact_path),
-            })
+            missing_artifacts.append(
+                {
+                    "wsi_id": wsi_id,
+                    "artifact": artifact_name,
+                    "path": str(artifact_path),
+                }
+            )
 
     if data_type != "patch" and _expects_wsi_attention(metadata):
         coords_file = find_any_cached_coords_for_wsi(Config.get_uploads_dir(), wsi_id)
         if coords_file is None:
             missing_count += 1
             if len(missing_artifacts) < sample_limit:
-                missing_artifacts.append({
-                    "wsi_id": wsi_id,
-                    "artifact": "coords_file",
-                    "path": f"[cache lookup] coords.h5 for {wsi_id}",
-                })
+                missing_artifacts.append(
+                    {
+                        "wsi_id": wsi_id,
+                        "artifact": "coords_file",
+                        "path": f"[cache lookup] coords.h5 for {wsi_id}",
+                    }
+                )
 
     return missing_count, missing_artifacts
 
@@ -210,10 +276,9 @@ def _collect_missing_ai_result_artifacts(
 def _analysis_has_required_files(analysis_run_dir: Path) -> bool:
     if not analysis_run_dir.is_dir():
         return False
-    return (
-        (analysis_run_dir / "summary.json").exists()
-        and (analysis_run_dir / "results.json").exists()
-    )
+    return (analysis_run_dir / "summary.json").exists() and (
+        analysis_run_dir / "results.json"
+    ).exists()
 
 
 def _iter_complete_analysis_runs(analysis_dir: Path):
@@ -224,14 +289,18 @@ def _iter_complete_analysis_runs(analysis_dir: Path):
             yield item
 
 
-def _read_latest_complete_analysis_sync(analysis_dir: Path) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+def _read_latest_complete_analysis_sync(
+    analysis_dir: Path,
+) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     for item in _iter_complete_analysis_runs(analysis_dir):
-        with open(item / "summary.json", 'r') as f:
+        with open(item / "summary.json", "r") as f:
             return item.name, json.load(f)
     return None, None
 
 
-def _analysis_requires_training_metrics(task_type: str, charts: Optional[List[str]], is_kfold: bool) -> bool:
+def _analysis_requires_training_metrics(
+    task_type: str, charts: Optional[List[str]], is_kfold: bool
+) -> bool:
     if is_kfold:
         return True
 
@@ -242,14 +311,20 @@ def _analysis_requires_training_metrics(task_type: str, charts: Optional[List[st
     return bool(requested_charts & required_charts)
 
 
-def _missing_training_metrics_message(task_id: str, resources: Dict[str, Any], charts: Optional[List[str]], is_kfold: bool) -> str:
+def _missing_training_metrics_message(
+    task_id: str, resources: Dict[str, Any], charts: Optional[List[str]], is_kfold: bool
+) -> str:
     requested_parts = []
     requested_charts = sorted(set(charts or []))
     if requested_charts:
         requested_parts.append(f"requested charts={', '.join(requested_charts)}")
     if is_kfold:
         requested_parts.append("task uses k-fold training summary")
-    requested_detail = "; ".join(requested_parts) if requested_parts else "analysis requires training metrics"
+    requested_detail = (
+        "; ".join(requested_parts)
+        if requested_parts
+        else "analysis requires training metrics"
+    )
     metrics_path = resources.get("metrics_file") or "metrics.json"
     return (
         f"Training metrics artifact is missing for task {task_id}: {metrics_path}. "
@@ -258,9 +333,13 @@ def _missing_training_metrics_message(task_id: str, resources: Dict[str, Any], c
     )
 
 
-async def _enrich_single_task_resources(task_id: str, db: AsyncSession, base_resources: Dict[str, Any]) -> Dict[str, Any]:
+async def _enrich_single_task_resources(
+    task_id: str, db: AsyncSession, base_resources: Dict[str, Any]
+) -> Dict[str, Any]:
     resources = dict(base_resources)
-    resources.setdefault("has_complete_ai_results", resources.get("has_ai_results", False))
+    resources.setdefault(
+        "has_complete_ai_results", resources.get("has_ai_results", False)
+    )
     resources.setdefault("missing_ai_result_artifacts", [])
     resources.setdefault("missing_ai_result_artifact_count", 0)
     resources.setdefault("has_training_metrics", False)
@@ -295,10 +374,14 @@ async def _enrich_single_task_resources(task_id: str, db: AsyncSession, base_res
 
     metrics_candidates = _candidate_metrics_paths(task_id, trained_model)
     metrics_file = next((path for path in metrics_candidates if path.exists()), None)
-    resources["metrics_file"] = str(metrics_file or metrics_candidates[0]) if metrics_candidates else None
+    resources["metrics_file"] = (
+        str(metrics_file or metrics_candidates[0]) if metrics_candidates else None
+    )
     resources["has_training_metrics"] = metrics_file is not None
     if not resources["has_training_metrics"]:
-        resources["missing_training_artifacts"] = [resources["metrics_file"] or "metrics.json"]
+        resources["missing_training_artifacts"] = [
+            resources["metrics_file"] or "metrics.json"
+        ]
 
     if resources.get("ai_results_count", 0) <= 0:
         resources["has_ai_results"] = False
@@ -307,8 +390,9 @@ async def _enrich_single_task_resources(task_id: str, db: AsyncSession, base_res
 
     ai_result_rows = (
         await db.execute(
-            select(AIResult.wsi_id, AIResult.extra_metadata)
-            .where(AIResult.task_id == task_id)
+            select(AIResult.wsi_id, AIResult.extra_metadata).where(
+                AIResult.task_id == task_id
+            )
         )
     ).all()
 
@@ -336,7 +420,9 @@ async def _enrich_single_task_resources(task_id: str, db: AsyncSession, base_res
     return resources
 
 
-async def _get_elevated_dataset_ids(user: User, db: AsyncSession) -> Optional[List[str]]:
+async def _get_elevated_dataset_ids(
+    user: User, db: AsyncSession
+) -> Optional[List[str]]:
     """
     Get dataset IDs for which the user has temporary elevated permissions.
     Returns None for admin users (no filtering needed).
@@ -345,7 +431,7 @@ async def _get_elevated_dataset_ids(user: User, db: AsyncSession) -> Optional[Li
     if user.is_admin():
         return None
     permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-    return [p.dataset_id for p in permissions if p.is_valid()]
+    return [_coerce_str(p.dataset_id) for p in permissions if p.is_valid()]
 
 
 def _build_owned_ai_result_filter(user: User):
@@ -357,7 +443,9 @@ def _build_owned_ai_result_filter(user: User):
     """
     user_id = str(user.id)
     owned_ai_task_ids = select(AITask.task_id).where(AITask.user_id == user_id)
-    owned_training_task_ids = select(TrainingTask.task_id).where(TrainingTask.user_id == user_id)
+    owned_training_task_ids = select(TrainingTask.task_id).where(
+        TrainingTask.user_id == user_id
+    )
     return or_(
         AIResult.user_id == user_id,
         AIResult.task_id.in_(owned_ai_task_ids),
@@ -365,13 +453,12 @@ def _build_owned_ai_result_filter(user: User):
     )
 
 
-
 @router.get("")
 async def get_all_results(
     skip: int = Query(0, ge=0),
     limit: int = Query(1000, ge=1, le=10000),
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get all AI results with associated WSI labels for analysis.
@@ -381,9 +468,8 @@ async def get_all_results(
         List of results with predictions and ground truth labels
     """
     # Query results with WSI info
-    query = (
-        select(AIResult, WSISlide)
-        .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
+    query = select(AIResult, WSISlide).join(
+        WSISlide, AIResult.wsi_id == WSISlide.wsi_id
     )
     # Filter to the current user's own derived results if not admin.
     if not user.is_admin():
@@ -408,7 +494,7 @@ async def get_all_results(
 async def get_analysis_stats(
     task_id: Optional[str] = Query(None, description="Filter by task_id"),
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get comprehensive analysis statistics for all predictions.
@@ -446,7 +532,7 @@ async def get_analysis_stats(
             "confusion_matrix": {},
             "class_metrics": {},
             "roc_data": {},
-            "classes": []
+            "classes": [],
         }
 
     # Collect predictions and labels
@@ -468,13 +554,16 @@ async def get_analysis_stats(
             "confusion_matrix": {},
             "class_metrics": {},
             "roc_data": {},
-            "classes": []
+            "classes": [],
         }
 
     # Use sklearn for metrics calculation
     from sklearn.metrics import (
-        accuracy_score, precision_score, recall_score, f1_score,
-        confusion_matrix as sklearn_confusion_matrix, roc_curve, auc
+        accuracy_score,
+        precision_recall_fscore_support,
+        confusion_matrix as sklearn_confusion_matrix,
+        roc_curve,
+        auc,
     )
 
     all_classes = sorted(set(labels) | set(predictions))
@@ -490,13 +579,22 @@ async def get_analysis_stats(
             all_classes[i]: {all_classes[j]: int(cm[i, j]) for j in range(n_classes)}
             for i in range(n_classes)
         },
-        "classes": all_classes
+        "classes": all_classes,
     }
 
     # Per-class metrics using sklearn
-    precision_per_class = precision_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
-    recall_per_class = recall_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
-    f1_per_class = f1_score(labels, predictions, labels=all_classes, average=None, zero_division=0)
+    zero_division_value = type_cast("Any", 0)
+    per_class_scores = type_cast(
+        "tuple[Any, Any, Any, Any]",
+        precision_recall_fscore_support(
+            labels,
+            predictions,
+            labels=all_classes,
+            average=None,
+            zero_division=zero_division_value,
+        ),
+    )
+    precision_per_class, recall_per_class, f1_per_class, _ = per_class_scores
 
     class_metrics = {}
     for i, cls in enumerate(all_classes):
@@ -507,25 +605,46 @@ async def get_analysis_stats(
         specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
 
         class_metrics[cls] = {
-            "tp": int(tp), "fp": int(fp), "fn": int(fn), "tn": int(tn),
+            "tp": int(tp),
+            "fp": int(fp),
+            "fn": int(fn),
+            "tn": int(tn),
             "precision": round(float(precision_per_class[i]), 4),
             "recall": round(float(recall_per_class[i]), 4),
             "sensitivity": round(float(recall_per_class[i]), 4),
             "specificity": round(float(specificity), 4),
             "f1": round(float(f1_per_class[i]), 4),
-            "support": int(tp + fn)
+            "support": int(tp + fn),
         }
 
     # Overall metrics using sklearn
     accuracy = accuracy_score(labels, predictions)
-    macro_precision = precision_score(labels, predictions, average='macro', zero_division=0)
-    macro_recall = recall_score(labels, predictions, average='macro', zero_division=0)
-    macro_f1 = f1_score(labels, predictions, average='macro', zero_division=0)
-    macro_specificity = sum(m["specificity"] for m in class_metrics.values()) / n_classes if n_classes > 0 else 0
+    macro_scores = type_cast(
+        "tuple[Any, Any, Any, Any]",
+        precision_recall_fscore_support(
+            labels,
+            predictions,
+            average="macro",
+            zero_division=zero_division_value,
+        ),
+    )
+    macro_precision, macro_recall, macro_f1, _ = macro_scores
+    macro_specificity = (
+        sum(m["specificity"] for m in class_metrics.values()) / n_classes
+        if n_classes > 0
+        else 0
+    )
 
-    weighted_precision = precision_score(labels, predictions, average='weighted', zero_division=0)
-    weighted_recall = recall_score(labels, predictions, average='weighted', zero_division=0)
-    weighted_f1 = f1_score(labels, predictions, average='weighted', zero_division=0)
+    weighted_scores = type_cast(
+        "tuple[Any, Any, Any, Any]",
+        precision_recall_fscore_support(
+            labels,
+            predictions,
+            average="weighted",
+            zero_division=zero_division_value,
+        ),
+    )
+    weighted_precision, weighted_recall, weighted_f1, _ = weighted_scores
 
     overall_metrics = {
         "accuracy": round(float(accuracy), 4),
@@ -549,7 +668,11 @@ async def get_analysis_stats(
                 scores.append(probs[cls])
                 binary_labels.append(1 if labels[j] == cls else 0)
 
-        if scores and sum(binary_labels) > 0 and sum(binary_labels) < len(binary_labels):
+        if (
+            scores
+            and sum(binary_labels) > 0
+            and sum(binary_labels) < len(binary_labels)
+        ):
             fpr, tpr, _ = roc_curve(binary_labels, scores)
             roc_auc = auc(fpr, tpr)
             roc_points = [{"fpr": float(f), "tpr": float(t)} for f, t in zip(fpr, tpr)]
@@ -559,7 +682,9 @@ async def get_analysis_stats(
                 class_metrics[cls]["auc"] = round(float(roc_auc), 4)
 
     if roc_data:
-        overall_metrics["macro_auc"] = round(sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4)
+        overall_metrics["macro_auc"] = round(
+            sum(r["auc"] for r in roc_data.values()) / len(roc_data), 4
+        )
 
     # Label and prediction distributions
     label_dist = defaultdict(int)
@@ -579,11 +704,13 @@ async def get_analysis_stats(
         "confusion_matrix": cm_dict,
         "roc_data": roc_data,
         "label_distribution": dict(label_dist),
-        "prediction_distribution": dict(pred_dist)
+        "prediction_distribution": dict(pred_dist),
     }
 
 
-async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> Dict[str, dict]:
+async def _check_task_resources_batch(
+    task_ids: List[str], db: AsyncSession
+) -> Dict[str, dict[str, Any]]:
     """Batch check resources for multiple tasks.
 
     Uses database queries instead of file system scanning for better performance.
@@ -620,8 +747,7 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     # Step 0.5: Get total WSI count for all tasks (for external validation display)
     total_wsi_count_query = (
         select(
-            TrainingTaskWSI.task_id,
-            func.count(TrainingTaskWSI.wsi_id).label('count')
+            TrainingTaskWSI.task_id, func.count(TrainingTaskWSI.wsi_id).label("count")
         )
         .where(TrainingTaskWSI.task_id.in_(task_ids))
         .group_by(TrainingTaskWSI.task_id)
@@ -630,13 +756,15 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     total_wsi_by_task = {row[0]: row[1] for row in total_wsi_count_result.all()}
 
     # Step 0.6: For case-level tasks, count distinct case_ids
-    case_level_task_ids = [tid for tid in task_ids if task_aggregation_levels.get(tid) == "case"]
+    case_level_task_ids = [
+        tid for tid in task_ids if task_aggregation_levels.get(tid) == "case"
+    ]
     total_case_by_task = {}
     if case_level_task_ids:
         total_case_count_query = (
             select(
                 TrainingTaskWSI.task_id,
-                func.count(func.distinct(WSISlide.case_id)).label('count')
+                func.count(func.distinct(WSISlide.case_id)).label("count"),
             )
             .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
             .where(TrainingTaskWSI.task_id.in_(case_level_task_ids))
@@ -661,7 +789,7 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         test_wsi_count_query = (
             select(
                 TrainingTaskWSI.task_id,
-                func.count(TrainingTaskWSI.wsi_id).label('count')
+                func.count(TrainingTaskWSI.wsi_id).label("count"),
             )
             .where(TrainingTaskWSI.task_id.in_(list(tasks_with_test_set)))
             .where(TrainingTaskWSI.split == "test")
@@ -672,12 +800,14 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
 
     # Step 1.6: For case-level tasks, count distinct test case_ids
     test_case_count_by_task = {}
-    test_case_level_task_ids = [tid for tid in tasks_with_test_set if task_aggregation_levels.get(tid) == "case"]
+    test_case_level_task_ids = [
+        tid for tid in tasks_with_test_set if task_aggregation_levels.get(tid) == "case"
+    ]
     if test_case_level_task_ids:
         test_case_count_query = (
             select(
                 TrainingTaskWSI.task_id,
-                func.count(func.distinct(WSISlide.case_id)).label('count')
+                func.count(func.distinct(WSISlide.case_id)).label("count"),
             )
             .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
             .where(TrainingTaskWSI.task_id.in_(test_case_level_task_ids))
@@ -685,23 +815,22 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
             .group_by(TrainingTaskWSI.task_id)
         )
         test_case_count_result = await db.execute(test_case_count_query)
-        test_case_count_by_task = {row[0]: row[1] for row in test_case_count_result.all()}
+        test_case_count_by_task = {
+            row[0]: row[1] for row in test_case_count_result.all()
+        }
 
     # Step 2: For tasks WITH test set, count AI results joined with test WSIs
     ai_count_with_test = {}
     if tasks_with_test_set:
         ai_count_with_test_query = (
-            select(
-                AIResult.task_id,
-                func.count(AIResult.id).label('count')
-            )
+            select(AIResult.task_id, func.count(AIResult.id).label("count"))
             .join(
                 TrainingTaskWSI,
                 and_(
                     AIResult.task_id == TrainingTaskWSI.task_id,
                     AIResult.wsi_id == TrainingTaskWSI.wsi_id,
-                    TrainingTaskWSI.split == "test"
-                )
+                    TrainingTaskWSI.split == "test",
+                ),
             )
             .where(AIResult.task_id.in_(list(tasks_with_test_set)))
             .group_by(AIResult.task_id)
@@ -714,15 +843,14 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     ai_count_without_test = {}
     if tasks_without_test_set:
         ai_count_without_test_query = (
-            select(
-                AIResult.task_id,
-                func.count(AIResult.id).label('count')
-            )
+            select(AIResult.task_id, func.count(AIResult.id).label("count"))
             .where(AIResult.task_id.in_(list(tasks_without_test_set)))
             .group_by(AIResult.task_id)
         )
         ai_count_without_test_result = await db.execute(ai_count_without_test_query)
-        ai_count_without_test = {row[0]: row[1] for row in ai_count_without_test_result.all()}
+        ai_count_without_test = {
+            row[0]: row[1] for row in ai_count_without_test_result.all()
+        }
 
     # Combine AI results counts
     ai_results_by_task = {**ai_count_with_test, **ai_count_without_test}
@@ -767,12 +895,16 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         for model_dir in model_dirs_cache:
             if task_id in model_dir.name:
                 # Check regular checkpoint location
-                if (model_dir / "aggregator.pth").exists() or (model_dir / "linear_probe.pth").exists():
+                if (model_dir / "aggregator.pth").exists() or (
+                    model_dir / "linear_probe.pth"
+                ).exists():
                     has_model = True
                     model_id = model_dir.name
                     break
                 # Check K-Fold checkpoint location
-                fold_checkpoints = list(model_dir.glob("fold_*/aggregator.pth")) + list(model_dir.glob("fold_*/linear_probe.pth"))
+                fold_checkpoints = list(model_dir.glob("fold_*/aggregator.pth")) + list(
+                    model_dir.glob("fold_*/linear_probe.pth")
+                )
                 if fold_checkpoints:
                     has_model = True
                     model_id = model_dir.name
@@ -800,7 +932,9 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
         aggregation_level = task_aggregation_levels.get(task_id, "file")
         test_wsi_count = test_wsi_count_by_task.get(task_id, 0)
         test_case_count = test_case_count_by_task.get(task_id, 0)
-        test_display_count = test_case_count if aggregation_level == "case" else test_wsi_count
+        test_display_count = (
+            test_case_count if aggregation_level == "case" else test_wsi_count
+        )
 
         results[task_id] = {
             "has_features": has_features,
@@ -819,30 +953,32 @@ async def _check_task_resources_batch(task_ids: List[str], db: AsyncSession) -> 
     return results
 
 
-async def _check_task_resources(task_id: str, db: AsyncSession) -> dict:
+async def _check_task_resources(task_id: str, db: AsyncSession) -> dict[str, Any]:
     """Check if task has features, model, and ai_results.
 
     NOTE: This is a wrapper around _check_task_resources_batch for single task use.
     For multiple tasks, use _check_task_resources_batch directly for better performance.
     """
     results = await _check_task_resources_batch([task_id], db)
-    base_resources = results.get(task_id, {
-        "has_features": False,
-        "has_model": False,
-        "model_id": None,
-        "has_ai_results": False,
-        "ai_results_count": 0,
-        "total_wsi_count": 0,
-        "total_case_count": 0,
-        "aggregation_level": "file",
-    })
+    base_resources = results.get(
+        task_id,
+        {
+            "has_features": False,
+            "has_model": False,
+            "model_id": None,
+            "has_ai_results": False,
+            "ai_results_count": 0,
+            "total_wsi_count": 0,
+            "total_case_count": 0,
+            "aggregation_level": "file",
+        },
+    )
     return await _enrich_single_task_resources(task_id, db, base_resources)
 
 
 @router.get("/tasks")
 async def get_analysis_tasks(
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
     """
     Get list of tasks available for analysis.
@@ -857,9 +993,11 @@ async def get_analysis_tasks(
 
     # Get completed tasks from database
     # Use selectinload to eagerly load data_group relationship to avoid lazy loading in async context
-    query = select(TrainingTask).options(
-        selectinload(TrainingTask.data_group)
-    ).where(TrainingTask.status == TaskStatus.COMPLETED)
+    query = (
+        select(TrainingTask)
+        .options(selectinload(TrainingTask.data_group))
+        .where(TrainingTask.status == TaskStatus.COMPLETED)
+    )
     # Filter to the current user's own tasks if not admin.
     if not user.is_admin():
         query = query.where(TrainingTask.user_id == str(user.id))
@@ -871,27 +1009,33 @@ async def get_analysis_tasks(
         return {"items": [], "total": 0}
 
     # Batch check resources for all tasks at once
-    task_ids = [task.task_id for task in tasks]
+    task_ids = [_coerce_str(task.task_id) for task in tasks]
     all_resources = await _check_task_resources_batch(task_ids, db)
 
     # Batch get WSI IDs for all tasks (for frontend WSI overlap detection)
     all_wsi_ids_by_task = await TrainingTaskRepository.get_wsi_ids_batch(db, task_ids)
-    source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
+    source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(
+        db, task_ids
+    )
 
     for task in tasks:
-        resources = all_resources.get(task.task_id, {
-            "has_features": False,
-            "has_model": False,
-            "model_id": None,
-            "has_ai_results": False,
-            "ai_results_count": 0,
-            "total_wsi_count": 0,
-            "total_case_count": 0,
-            "test_wsi_count": 0,
-            "test_case_count": 0,
-            "test_display_count": 0,
-            "aggregation_level": "file",
-        })
+        task_id = _coerce_str(task.task_id)
+        resources = all_resources.get(
+            task_id,
+            {
+                "has_features": False,
+                "has_model": False,
+                "model_id": None,
+                "has_ai_results": False,
+                "ai_results_count": 0,
+                "total_wsi_count": 0,
+                "total_case_count": 0,
+                "test_wsi_count": 0,
+                "test_case_count": 0,
+                "test_display_count": 0,
+                "aggregation_level": "file",
+            },
+        )
 
         # Get data_type and task_type from DataGroup relationship
         data_group = task.data_group
@@ -908,7 +1052,7 @@ async def get_analysis_tasks(
             if not (resources["has_features"] and resources["has_model"]):
                 continue
 
-        analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
+        analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
         has_analysis = False
         if analysis_dir.exists():
             for item in _iter_complete_analysis_runs(analysis_dir):
@@ -919,11 +1063,13 @@ async def get_analysis_tasks(
         feature_extractor = None
         is_segmentation_task = task_type in ("segmentation", "patch_segmentation")
         is_kfold = False
-        if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
+        if isinstance(task.preprocessing_config, dict):
             feature_extractor = task.preprocessing_config.get("feature_extractor")
             # Check split strategy to determine if K-Fold training
             split_config = task.preprocessing_config.get("split_config", {})
-            is_kfold = not is_segmentation_task and split_config.get("strategy") == "k_fold"
+            is_kfold = (
+                not is_segmentation_task and split_config.get("strategy") == "k_fold"
+            )
 
         # Determine display count based on aggregation_level
         aggregation_level = resources.get("aggregation_level", "file")
@@ -932,39 +1078,44 @@ async def get_analysis_tasks(
         else:
             display_count = resources["total_wsi_count"]
 
-        task_list.append({
-            "task_id": task.task_id,
-            "name": task.task_name or task.task_id,
-            "task_type": task_type,
-            "data_type": data_type,  # 'wsi' or 'patch'
-            "aggregation_level": aggregation_level,  # 'file' or 'case'
-            "status": task.status,
-            "created_at": task.created_at.isoformat() + 'Z' if task.created_at else None,
-            "has_analysis": has_analysis,
-            "feature_extractor": feature_extractor,
-            "has_features": resources["has_features"],
-            "has_model": resources["has_model"],
-            "model_id": resources["model_id"],
-            "has_ai_results": resources["has_ai_results"],
-            "ai_results_count": resources["ai_results_count"],
-            "total_wsi_count": resources["total_wsi_count"],
-            "total_case_count": resources["total_case_count"],
-            "test_wsi_count": resources["test_wsi_count"],
-            "test_case_count": resources["test_case_count"],
-            "test_display_count": resources["test_display_count"],
-            "display_count": display_count,  # Count based on aggregation level
-            "wsi_ids": all_wsi_ids_by_task.get(task.task_id, []),  # For WSI overlap detection
-            "classes": task.classes,
-            "model_config": task.model_config,
-            "source_dataset_id": source_dataset_ids.get(task.task_id),
-            "is_kfold": is_kfold,
-            "source": "database"
-        })
+        task_list.append(
+            {
+                "task_id": task_id,
+                "name": task.task_name or task_id,
+                "task_type": task_type,
+                "data_type": data_type,  # 'wsi' or 'patch'
+                "aggregation_level": aggregation_level,  # 'file' or 'case'
+                "status": task.status,
+                "created_at": (
+                    task.created_at.isoformat() + "Z"
+                    if isinstance(task.created_at, datetime)
+                    else None
+                ),
+                "has_analysis": has_analysis,
+                "feature_extractor": feature_extractor,
+                "has_features": resources["has_features"],
+                "has_model": resources["has_model"],
+                "model_id": resources["model_id"],
+                "has_ai_results": resources["has_ai_results"],
+                "ai_results_count": resources["ai_results_count"],
+                "total_wsi_count": resources["total_wsi_count"],
+                "total_case_count": resources["total_case_count"],
+                "test_wsi_count": resources["test_wsi_count"],
+                "test_case_count": resources["test_case_count"],
+                "test_display_count": resources["test_display_count"],
+                "display_count": display_count,  # Count based on aggregation level
+                "wsi_ids": all_wsi_ids_by_task.get(
+                    task_id, []
+                ),  # For WSI overlap detection
+                "classes": task.classes,
+                "model_config": task.model_config,
+                "source_dataset_id": source_dataset_ids.get(task_id),
+                "is_kfold": is_kfold,
+                "source": "database",
+            }
+        )
 
     return {"items": task_list, "total": len(task_list)}
-
-
-
 
 
 def _split_case_attention_to_slides_static(
@@ -989,7 +1140,7 @@ def _split_case_attention_to_slides_static(
     if len(wsi_ids) != len(patch_counts):
         return {wsi_id: None for wsi_id in wsi_ids}
 
-    slide_attentions: Dict[str, Optional["np.ndarray"]] = {}
+    slide_attentions: Dict[str, Optional["np.ndarray[Any, Any]"]] = {}
     start_idx = 0
 
     for wsi_id, count in zip(wsi_ids, patch_counts):
@@ -1006,7 +1157,9 @@ def _split_case_attention_to_slides_static(
 
 
 async def _run_inference_if_needed(
-    task, db: AsyncSession, progress_callback: Optional[Callable[[float], Any]] = None,
+    task,
+    db: AsyncSession,
+    progress_callback: Optional[Callable[[float], Any]] = None,
     assigned_device: Optional[str] = None,
 ) -> bool:
     """
@@ -1063,14 +1216,42 @@ async def _run_inference_if_needed(
     # Route to appropriate inference handler based on data_type and task_type
     if data_type == "patch":
         if task_type in ("segmentation", "patch_segmentation"):
-            await _run_inference_patch_segmentation(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
+            await _run_inference_patch_segmentation(
+                task,
+                wsi_ids,
+                resources,
+                db,
+                progress_callback,
+                assigned_device=assigned_device,
+            )
         else:
-            await _run_inference_patch_classification(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
+            await _run_inference_patch_classification(
+                task,
+                wsi_ids,
+                resources,
+                db,
+                progress_callback,
+                assigned_device=assigned_device,
+            )
     elif task_type in ("wsi_survival", "survival"):
-        await _run_inference_wsi_survival(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
+        await _run_inference_wsi_survival(
+            task,
+            wsi_ids,
+            resources,
+            db,
+            progress_callback,
+            assigned_device=assigned_device,
+        )
     else:
         # Default: WSI classification
-        await _run_inference_wsi_classification(task, wsi_ids, resources, db, progress_callback, assigned_device=assigned_device)
+        await _run_inference_wsi_classification(
+            task,
+            wsi_ids,
+            resources,
+            db,
+            progress_callback,
+            assigned_device=assigned_device,
+        )
 
     logger.info(f"GPU inference completed for task {task_id}")
     if progress_callback:
@@ -1079,7 +1260,10 @@ async def _run_inference_if_needed(
 
 
 async def _run_inference_wsi_classification(
-    task, wsi_ids: List[str], resources: dict, db: AsyncSession,
+    task,
+    wsi_ids: List[str],
+    resources: dict[str, Any],
+    db: AsyncSession,
     progress_callback: Optional[Callable[[float], Any]] = None,
     assigned_device: Optional[str] = None,
 ):
@@ -1124,54 +1308,65 @@ async def _run_inference_wsi_classification(
     # Load config
     config = {}
     if config_path.exists():
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config = json.load(f)
 
     # Check if case-level from config
     aggregation_level = config.get("aggregation_level", "file")
-    is_case_level = (aggregation_level == "case")
+    is_case_level = aggregation_level == "case"
 
     # Determine classes from WSI labels
-    classes = []
+    classes: List[str] = []
     for wsi_id in wsi_ids:
         wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if wsi and wsi.label and wsi.label not in classes:
+        if wsi is not None and isinstance(wsi.label, str) and wsi.label not in classes:
             classes.append(wsi.label)
     classes = sorted(classes)
 
     if len(classes) == 0:
-        raise HTTPException(status_code=400, detail="Could not determine classes from WSI labels")
+        raise HTTPException(
+            status_code=400, detail="Could not determine classes from WSI labels"
+        )
 
     # Build labels dict
-    labels = {}
+    labels: Dict[str, int] = {}
     for wsi_id in wsi_ids:
         wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if wsi and wsi.label:
+        if wsi is not None and isinstance(wsi.label, str):
             labels[wsi_id] = classes.index(wsi.label)
 
     # Features directory
     features_dir = uploads_dir / "training" / task_id / "features"
 
     # Filter wsi_ids to only those with existing features
-    valid_wsi_ids = [wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()]
+    valid_wsi_ids = [
+        wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()
+    ]
     if not valid_wsi_ids:
         raise HTTPException(status_code=400, detail="Could not find any feature files")
 
     # Load model checkpoint
-    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        assigned_device
+        if assigned_device
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     # Get aggregator
     aggregator_name = config.get("model", "abmil")
-    model = get_aggregator(
-        aggregator_name,
-        in_dim=checkpoint["in_dim"],
-        num_classes=checkpoint["num_classes"]
-    ).to(device)
+    model = type_cast(
+        "Any",
+        get_aggregator(
+            aggregator_name,
+            in_dim=checkpoint["in_dim"],
+            num_classes=checkpoint["num_classes"],
+        ).to(device),
+    )
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 
-    has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+    has_raw_attention = hasattr(model, "forward_with_raw_attention")
 
     # Delete old AIResult records before regenerating to avoid duplicates
     deleted_count = await AIResultRepository.delete_by_task_id(db, task_id)
@@ -1183,7 +1378,7 @@ async def _run_inference_wsi_classification(
     results_saved = 0
 
     feature_extractor = None
-    if task.preprocessing_config and isinstance(task.preprocessing_config, dict):
+    if isinstance(task.preprocessing_config, dict):
         feature_extractor = task.preprocessing_config.get("feature_extractor")
 
     # Prepare case-level structures if needed
@@ -1219,20 +1414,40 @@ async def _run_inference_wsi_classification(
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-            logger.info(f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides")
+            logger.info(
+                f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides"
+            )
             total_items = len(case_ids)
 
             # Run inference per case using DataLoader
-            for idx, (features, label, case_id, batch_wsi_ids, batch_patch_counts) in enumerate(dataloader):
+            for idx, (
+                features,
+                label,
+                case_id,
+                batch_wsi_ids,
+                batch_patch_counts,
+            ) in enumerate(dataloader):
                 # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
                 if progress_callback and total_items > 0:
                     await progress_callback(0.1 + 0.8 * (idx / total_items))
                 # Unpack batch (batch_size=1)
-                H = features.squeeze(0).to(device)
+                h_features = features.squeeze(0).to(device)
                 case_id = case_id[0]
-                wsi_ids_in_case = list(batch_wsi_ids[0]) if isinstance(batch_wsi_ids[0], (list, tuple)) else [batch_wsi_ids[0]]
+                wsi_ids_in_case = (
+                    list(batch_wsi_ids[0])
+                    if isinstance(batch_wsi_ids[0], (list, tuple))
+                    else [batch_wsi_ids[0]]
+                )
                 patch_counts = [int(c) for c in batch_patch_counts[0]]
                 case_wsi_patch_counts[case_id] = patch_counts
+
+                if has_raw_attention:
+                    logits, attention, raw_attention = model.forward_with_raw_attention(
+                        h_features
+                    )
+                else:
+                    logits, attention = type_cast("Any", model(h_features))
+                    raw_attention = None
 
                 # Forward pass
                 probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
@@ -1241,8 +1456,12 @@ async def _run_inference_wsi_classification(
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
 
                 # Split attention back to per-slide
-                attention_np = attention.cpu().numpy() if attention is not None else None
-                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+                attention_np = (
+                    attention.cpu().numpy() if attention is not None else None
+                )
+                raw_attention_np = (
+                    raw_attention.cpu().numpy() if raw_attention is not None else None
+                )
 
                 slide_attentions = _split_case_attention_to_slides_static(
                     attention_np, case_id, case_wsi_patch_counts, case_to_wsi
@@ -1253,7 +1472,11 @@ async def _run_inference_wsi_classification(
 
                 # Save result for each slide in the case
                 for wsi_id in case_to_wsi[case_id]:
-                    gt_label = classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
+                    gt_label = (
+                        classes[labels.get(wsi_id, 0)]
+                        if wsi_id in labels
+                        else "unknown"
+                    )
 
                     wsi_result_dir = ai_results_root / wsi_id
                     wsi_result_dir.mkdir(parents=True, exist_ok=True)
@@ -1261,10 +1484,14 @@ async def _run_inference_wsi_classification(
                     slide_att = slide_attentions.get(wsi_id)
                     slide_raw_att = slide_raw_attentions.get(wsi_id)
 
-                    attention_shape = list(slide_att.shape) if slide_att is not None else None
+                    attention_shape = (
+                        list(slide_att.shape) if slide_att is not None else None
+                    )
                     attention_type = "none"
                     if slide_att is not None:
-                        attention_type = "multi_class" if slide_att.ndim == 2 else "single"
+                        attention_type = (
+                            "multi_class" if slide_att.ndim == 2 else "single"
+                        )
 
                     result_data = {
                         "wsi_id": wsi_id,
@@ -1284,18 +1511,22 @@ async def _run_inference_wsi_classification(
                     }
 
                     result_file = wsi_result_dir / f"train_{task_id}_result.json"
-                    with open(result_file, 'w', encoding='utf-8') as f:
+                    with open(result_file, "w", encoding="utf-8") as f:
                         json.dump(result_data, f, ensure_ascii=False, indent=2)
 
                     attention_file_path = None
                     if slide_raw_att is not None:
-                        raw_att_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
+                        raw_att_file = (
+                            wsi_result_dir / f"train_{task_id}_attention_raw.npy"
+                        )
                         np.save(raw_att_file, slide_raw_att)
 
                     if slide_att is not None:
                         att_file = wsi_result_dir / f"train_{task_id}_attention.npy"
                         np.save(att_file, slide_att)
-                        ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
+                        ensure_recommendation_preview_cache(
+                            wsi_id, att_file, Config.get_uploads_dir()
+                        )
                         attention_file_path = str(att_file)
 
                     db_result_data = {
@@ -1315,7 +1546,7 @@ async def _run_inference_wsi_classification(
                             "attention_file": attention_file_path,
                             "case_id": case_id,
                             "aggregation_level": "case",
-                        }
+                        },
                     }
                     await AIResultRepository.create(db, db_result_data)
                     results_saved += 1
@@ -1336,13 +1567,15 @@ async def _run_inference_wsi_classification(
                     await progress_callback(0.1 + 0.8 * (idx / total_items))
 
                 # Unpack batch (batch_size=1)
-                H = features.squeeze(0).to(device)
+                h_features = features.squeeze(0).to(device)
                 wsi_id = wsi_id[0]
 
                 if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                    logits, attention, raw_attention = model.forward_with_raw_attention(
+                        h_features
+                    )
                 else:
-                    logits, attention = model(H)
+                    logits, attention = type_cast("Any", model(h_features))
                     raw_attention = None
 
                 probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
@@ -1350,7 +1583,9 @@ async def _run_inference_wsi_classification(
                 pred_label = classes[pred_idx]
 
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                gt_label = classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
+                gt_label = (
+                    classes[labels.get(wsi_id, 0)] if wsi_id in labels else "unknown"
+                )
 
                 wsi_result_dir = ai_results_root / wsi_id
                 wsi_result_dir.mkdir(parents=True, exist_ok=True)
@@ -1358,10 +1593,13 @@ async def _run_inference_wsi_classification(
                 attention_shape = None
                 attention_type = "none"
                 attention_file_path = None
+                attention_np = None
                 if attention is not None:
                     attention_np = attention.cpu().numpy()
                     attention_shape = list(attention_np.shape)
-                    attention_type = "multi_class" if attention_np.ndim == 2 else "single"
+                    attention_type = (
+                        "multi_class" if attention_np.ndim == 2 else "single"
+                    )
 
                 result_data = {
                     "wsi_id": wsi_id,
@@ -1379,7 +1617,7 @@ async def _run_inference_wsi_classification(
                 }
 
                 result_file = wsi_result_dir / f"train_{task_id}_result.json"
-                with open(result_file, 'w', encoding='utf-8') as f:
+                with open(result_file, "w", encoding="utf-8") as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
 
                 if raw_attention is not None:
@@ -1387,10 +1625,12 @@ async def _run_inference_wsi_classification(
                     raw_att_file = wsi_result_dir / f"train_{task_id}_attention_raw.npy"
                     np.save(raw_att_file, raw_attention_np)
 
-                if attention is not None:
+                if attention_np is not None:
                     att_file = wsi_result_dir / f"train_{task_id}_attention.npy"
                     np.save(att_file, attention_np)
-                    ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
+                    ensure_recommendation_preview_cache(
+                        wsi_id, att_file, Config.get_uploads_dir()
+                    )
                     attention_file_path = str(att_file)
 
                 db_result_data = {
@@ -1408,13 +1648,15 @@ async def _run_inference_wsi_classification(
                         "attention_shape": attention_shape,
                         "result_file": str(result_file),
                         "attention_file": attention_file_path,
-                    }
+                    },
                 }
                 await AIResultRepository.create(db, db_result_data)
                 results_saved += 1
 
     await db.commit()
-    logger.info(f"Generated AI results for WSI classification task {task_id}: {results_saved} WSIs")
+    logger.info(
+        f"Generated AI results for WSI classification task {task_id}: {results_saved} WSIs"
+    )
 
     return {
         "message": "AI results generated successfully",
@@ -1426,7 +1668,10 @@ async def _run_inference_wsi_classification(
 
 
 async def _run_inference_patch_classification(
-    task, wsi_ids: List[str], resources: dict, db: AsyncSession,
+    task,
+    wsi_ids: List[str],
+    resources: dict[str, Any],
+    db: AsyncSession,
     progress_callback: Optional[Callable[[float], Any]] = None,
     assigned_device: Optional[str] = None,
 ):
@@ -1450,7 +1695,11 @@ async def _run_inference_patch_classification(
         build_patch_classification_transform,
         resolve_patch_resize_size,
     )
-    from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size, is_cnn_extractor
+    from backend.ai.utils.cam_utils import (
+        get_cam_extractor,
+        get_cam_spatial_size,
+        is_cnn_extractor,
+    )
     from backend.database.repositories import AIResultRepository
 
     task_id = task.task_id
@@ -1462,20 +1711,26 @@ async def _run_inference_patch_classification(
     config_path = model_dir / "config.json"
 
     if not ckpt_path.exists():
-        raise HTTPException(status_code=500, detail="Model checkpoint (linear_probe.pth) not found")
+        raise HTTPException(
+            status_code=500, detail="Model checkpoint (linear_probe.pth) not found"
+        )
 
     # Load config
     config = {}
     if config_path.exists():
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config = json.load(f)
 
     # Determine classes from WSI labels or config
-    classes = config.get("classes", [])
+    classes = _coerce_str_list(config.get("classes", []))
     if not classes:
         for wsi_id in wsi_ids:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if wsi and wsi.label and wsi.label not in classes:
+            if (
+                wsi is not None
+                and isinstance(wsi.label, str)
+                and wsi.label not in classes
+            ):
                 classes.append(wsi.label)
         classes = sorted(classes)
 
@@ -1483,23 +1738,29 @@ async def _run_inference_patch_classification(
         raise HTTPException(status_code=400, detail="Could not determine classes")
 
     # Build labels dict and image paths
-    labels = {}
-    image_paths = {}
+    labels: Dict[str, int] = {}
+    image_paths: Dict[str, str] = {}
     for wsi_id in wsi_ids:
         wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if wsi:
-            if wsi.label and wsi.label in classes:
+        if wsi is not None:
+            if isinstance(wsi.label, str) and wsi.label in classes:
                 labels[wsi_id] = classes.index(wsi.label)
-            image_paths[wsi_id] = wsi.wsi_path
+            image_paths[wsi_id] = _coerce_str(wsi.wsi_path)
 
     if not image_paths:
         raise HTTPException(status_code=400, detail="No image paths found")
 
     # Load checkpoint
-    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        assigned_device
+        if assigned_device
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     checkpoint = torch.load(ckpt_path, map_location=device)
 
-    extractor_name = checkpoint.get("extractor_name", config.get("extractor", "resnet50"))
+    extractor_name = checkpoint.get(
+        "extractor_name", config.get("extractor", "resnet50")
+    )
     extractor_dim = checkpoint["extractor_dim"]
     num_classes = checkpoint["num_classes"]
 
@@ -1562,7 +1823,8 @@ async def _run_inference_patch_classification(
 
             try:
                 img = Image.open(img_path).convert("RGB")
-                img_tensor = fm_transform(img).unsqueeze(0).to(device)
+                transformed = type_cast("Any", fm_transform(img))
+                img_tensor = transformed.unsqueeze(0).to(device)
 
                 # Forward pass
                 with torch.inference_mode():
@@ -1580,7 +1842,9 @@ async def _run_inference_patch_classification(
                     )
                     cam_map = cam_map.squeeze(0)
                 except Exception:
-                    cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
+                    cam_map = np.ones(cam_size, dtype=np.float32) / (
+                        cam_size[0] * cam_size[1]
+                    )
 
                 probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
                 gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
@@ -1606,7 +1870,7 @@ async def _run_inference_patch_classification(
                 }
 
                 result_file = wsi_result_dir / f"train_{task_id}_result.json"
-                with open(result_file, 'w', encoding='utf-8') as f:
+                with open(result_file, "w", encoding="utf-8") as f:
                     json.dump(result_data, f, ensure_ascii=False, indent=2)
 
                 # Save to database
@@ -1623,7 +1887,7 @@ async def _run_inference_patch_classification(
                         "cam_file": str(cam_file),
                         "cam_size": list(cam_size),
                         "result_file": str(result_file),
-                    }
+                    },
                 }
                 await AIResultRepository.create(db, db_result_data)
                 results_saved += 1
@@ -1633,7 +1897,9 @@ async def _run_inference_patch_classification(
                 continue
 
     await db.commit()
-    logger.info(f"Generated AI results for patch classification task {task_id}: {results_saved} images")
+    logger.info(
+        f"Generated AI results for patch classification task {task_id}: {results_saved} images"
+    )
 
     return {
         "message": "AI results generated successfully",
@@ -1659,9 +1925,9 @@ def _get_seg_grad_cam_target_layers(model):
         return [model.decoder[-1]]
 
     # SMP models: try common decoder structures
-    if hasattr(model, 'decoder'):
+    if hasattr(model, "decoder"):
         dec = model.decoder
-        if hasattr(dec, 'blocks') and len(dec.blocks) > 0:
+        if hasattr(dec, "blocks") and len(dec.blocks) > 0:
             return [dec.blocks[-1]]
         # Fallback: last child of decoder
         children = list(dec.children())
@@ -1669,7 +1935,7 @@ def _get_seg_grad_cam_target_layers(model):
             return [children[-1]]
 
     # Last resort: find the last Conv2d layer before segmentation_head
-    if hasattr(model, 'segmentation_head'):
+    if hasattr(model, "segmentation_head"):
         return [model.segmentation_head[0]]
 
     raise ValueError("Cannot determine Grad-CAM target layer for segmentation model")
@@ -1684,35 +1950,65 @@ def _build_segmentation_per_image_metrics(
     precision,
     recall,
 ) -> Dict[str, Any]:
-    iou_flat = iou_per_class.squeeze(0) if getattr(iou_per_class, "dim", lambda: 0)() > 1 else iou_per_class
-    dice_flat = dice_per_class.squeeze(0) if getattr(dice_per_class, "dim", lambda: 0)() > 1 else dice_per_class
-    precision_flat = precision_per_class.squeeze(0) if getattr(precision_per_class, "dim", lambda: 0)() > 1 else precision_per_class
-    recall_flat = recall_per_class.squeeze(0) if getattr(recall_per_class, "dim", lambda: 0)() > 1 else recall_per_class
+    iou_flat = (
+        iou_per_class.squeeze(0)
+        if getattr(iou_per_class, "dim", lambda: 0)() > 1
+        else iou_per_class
+    )
+    dice_flat = (
+        dice_per_class.squeeze(0)
+        if getattr(dice_per_class, "dim", lambda: 0)() > 1
+        else dice_per_class
+    )
+    precision_flat = (
+        precision_per_class.squeeze(0)
+        if getattr(precision_per_class, "dim", lambda: 0)() > 1
+        else precision_per_class
+    )
+    recall_flat = (
+        recall_per_class.squeeze(0)
+        if getattr(recall_per_class, "dim", lambda: 0)() > 1
+        else recall_per_class
+    )
     num_classes = int(iou_flat.numel()) if hasattr(iou_flat, "numel") else len(iou_flat)
     primary_iou_key = "miou" if num_classes > 1 else "iou"
 
     precision_value = precision.item()
     recall_value = recall.item()
-    f1_value = (2 * precision_value * recall_value / (precision_value + recall_value)) if (precision_value + recall_value) > 0 else 0.0
+    f1_value = (
+        (2 * precision_value * recall_value / (precision_value + recall_value))
+        if (precision_value + recall_value) > 0
+        else 0.0
+    )
 
     return {
         primary_iou_key: iou_flat.mean().item(),
         "iou_per_class": iou_flat.tolist() if iou_flat.dim() > 0 else [iou_flat.item()],
         "dice": dice_flat.mean().item(),
-        "dice_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
+        "dice_per_class": dice_flat.tolist()
+        if dice_flat.dim() > 0
+        else [dice_flat.item()],
         "f1": f1_value,
-        "f1_per_class": dice_flat.tolist() if dice_flat.dim() > 0 else [dice_flat.item()],
+        "f1_per_class": dice_flat.tolist()
+        if dice_flat.dim() > 0
+        else [dice_flat.item()],
         "accuracy": accuracy.item(),
         "precision": precision_value,
-        "precision_per_class": precision_flat.tolist() if precision_flat.dim() > 0 else [precision_flat.item()],
+        "precision_per_class": precision_flat.tolist()
+        if precision_flat.dim() > 0
+        else [precision_flat.item()],
         "recall": recall_value,
-        "recall_per_class": recall_flat.tolist() if recall_flat.dim() > 0 else [recall_flat.item()],
+        "recall_per_class": recall_flat.tolist()
+        if recall_flat.dim() > 0
+        else [recall_flat.item()],
     }
 
 
-
 async def _run_inference_patch_segmentation(
-    task, wsi_ids: List[str], resources: dict, db: AsyncSession,
+    task,
+    wsi_ids: List[str],
+    resources: dict[str, Any],
+    db: AsyncSession,
     progress_callback: Optional[Callable[[float], Any]] = None,
     assigned_device: Optional[str] = None,
 ):
@@ -1732,7 +2028,10 @@ async def _run_inference_patch_segmentation(
     import segmentation_models_pytorch as smp
     from backend.ai.segmentors import Segmentor
     from backend.ai.utils.patch_resize import resolve_patch_resize_size
-    from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
+    from backend.ai.utils.segmentation_dataset import (
+        SegmentationDataset,
+        get_transforms,
+    )
     from backend.database.repositories import AIResultRepository, TrainedModelRepository
     from PIL import Image
     from torchvision.transforms import v2
@@ -1745,15 +2044,23 @@ async def _run_inference_patch_segmentation(
     if not trained_models:
         raise ValueError(f"No trained model found for segmentation task {task_id}")
     trained_model = trained_models[0]  # Most recent
-    checkpoint_path = trained_model.model_path
-    class_names = _normalize_label_names(task.classes or trained_model.classes or [])
+    checkpoint_path = _coerce_str(trained_model.model_path)
+    class_names = _normalize_label_names(
+        _coerce_str_list(task.classes or trained_model.classes or [])
+    )
 
-    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        assigned_device
+        if assigned_device
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
     logger.info(f"Loading segmentation model from {checkpoint_path}")
 
     def _load_model():
-        checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+        checkpoint = torch.load(
+            checkpoint_path, map_location=device, weights_only=False
+        )
         config = checkpoint.get("config", {})
         architecture = config.get("architecture", "unet")
         backbone = config.get("backbone", "resnet50")
@@ -1767,9 +2074,8 @@ async def _run_inference_patch_segmentation(
             in_channels=in_channels,
             classes=num_classes,
         )
-        model = segmentor.build_model()
+        model = type_cast("Any", segmentor.build_model())
         if checkpoint.get("is_fm", False):
-            from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
             model.load_decoder_state_dict(checkpoint["model_state_dict"])
         else:
             model.load_state_dict(checkpoint["model_state_dict"])
@@ -1777,12 +2083,17 @@ async def _run_inference_patch_segmentation(
         model.eval()
 
         norm_mean, norm_std = segmentor.get_normalization_params()
-        resize_size = resolve_patch_resize_size(
-            backbone, is_segmentation_backbone=True
-        )
+        resize_size = resolve_patch_resize_size(backbone, is_segmentation_backbone=True)
         return model, config, norm_mean, norm_std, num_classes, resize_size
 
-    model, model_config, norm_mean, norm_std, num_classes, resize_size = await asyncio.to_thread(_load_model)
+    (
+        model,
+        model_config,
+        norm_mean,
+        norm_std,
+        num_classes,
+        resize_size,
+    ) = await asyncio.to_thread(_load_model)
     if not class_names:
         class_names = _normalize_label_names(
             (model_config.get("dataset") or {}).get("class_names", [])
@@ -1792,11 +2103,13 @@ async def _run_inference_patch_segmentation(
         await progress_callback(0.1)
 
     # Build image paths and labels from WSI records
-    image_paths = {}
+    image_paths: Dict[str, str] = {}
     for wsi_id in wsi_ids:
         wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if wsi and wsi.wsi_path:
-            image_paths[wsi_id] = wsi.wsi_path
+        if wsi is not None:
+            wsi_path = _coerce_str(wsi.wsi_path)
+            if wsi_path:
+                image_paths[wsi_id] = wsi_path
 
     if not image_paths:
         raise ValueError(f"No image paths found for segmentation task {task_id}")
@@ -1809,6 +2122,7 @@ async def _run_inference_patch_segmentation(
     # Discover COCO annotations for ground truth metrics
     def _discover_annotations():
         from pathlib import Path as _Path
+
         image_dirs = set()
         for img_path in image_paths.values():
             image_dirs.add(str(_Path(img_path).parent))
@@ -1819,21 +2133,29 @@ async def _run_inference_patch_segmentation(
                     continue
                 for json_file in search_dir.glob("*.json"):
                     try:
-                        with open(json_file, 'r') as f:
+                        with open(json_file, "r") as f:
                             data = json.load(f)
-                        if "images" in data and "annotations" in data and "categories" in data:
+                        if (
+                            "images" in data
+                            and "annotations" in data
+                            and "categories" in data
+                        ):
                             return str(json_file), img_dir
                     except Exception:
                         continue
         return None, None
 
-    annotations_path, annotations_img_dir = await asyncio.to_thread(_discover_annotations)
+    annotations_path, annotations_img_dir = await asyncio.to_thread(
+        _discover_annotations
+    )
     has_annotations = annotations_path is not None
 
     if has_annotations:
         logger.info(f"Found COCO annotations: {annotations_path}")
     else:
-        logger.info("No COCO annotations found — running inference only (no per-image metrics)")
+        logger.info(
+            "No COCO annotations found — running inference only (no per-image metrics)"
+        )
 
     # Run inference
     val_transform = get_transforms(
@@ -1879,7 +2201,7 @@ async def _run_inference_patch_segmentation(
                     # Prepare image tensor
                     img_tensor = v2.ToImage()(img)
                     img_tensor = val_transform(img_tensor)
-                    img_tensor = img_tensor.unsqueeze(0).to(device)
+                    img_tensor = type_cast("Any", img_tensor).unsqueeze(0).to(device)
 
                     # Run inference
                     outputs = model(img_tensor)
@@ -1892,20 +2214,36 @@ async def _run_inference_patch_segmentation(
                     if gt_dataset is not None and img_filename in gt_filename_map:
                         gt_idx = gt_filename_map[img_filename]
                         _, gt_mask = gt_dataset[gt_idx]
-                        gt_mask = gt_mask.unsqueeze(0).to(device)
+                        gt_mask = type_cast("Any", gt_mask).unsqueeze(0).to(device)
                         has_gt = True
 
                         tp, fp, fn, tn = smp.metrics.get_stats(
-                            preds_binary.long().cpu(), gt_mask.long().cpu(),
-                            mode='multilabel', threshold=None
+                            type_cast("Any", preds_binary.long().cpu()),
+                            type_cast("Any", gt_mask.long().cpu()),
+                            mode="multilabel",
+                            threshold=None,
                         )
-                        iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
-                        dice_per_class = smp.metrics.f1_score(tp, fp, fn, tn, reduction='none')
-                        precision_per_class = smp.metrics.precision(tp, fp, fn, tn, reduction='none')
-                        recall_per_class = smp.metrics.recall(tp, fp, fn, tn, reduction='none')
-                        accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction='micro')
-                        precision_val = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
-                        recall_val = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
+                        iou_per_class = smp.metrics.iou_score(
+                            tp, fp, fn, tn, reduction="none"
+                        )
+                        dice_per_class = smp.metrics.f1_score(
+                            tp, fp, fn, tn, reduction="none"
+                        )
+                        precision_per_class = smp.metrics.precision(
+                            tp, fp, fn, tn, reduction="none"
+                        )
+                        recall_per_class = smp.metrics.recall(
+                            tp, fp, fn, tn, reduction="none"
+                        )
+                        accuracy = smp.metrics.accuracy(
+                            tp, fp, fn, tn, reduction="micro"
+                        )
+                        precision_val = smp.metrics.precision(
+                            tp, fp, fn, tn, reduction="micro"
+                        )
+                        recall_val = smp.metrics.recall(
+                            tp, fp, fn, tn, reduction="micro"
+                        )
 
                         per_image_metrics = _build_segmentation_per_image_metrics(
                             iou_per_class,
@@ -1924,36 +2262,60 @@ async def _run_inference_patch_segmentation(
                     # Keep segmentation artifacts streamed to disk during inference to avoid
                     # retaining many large masks/CAMs in memory. Store binary masks as uint8
                     # to reduce write volume without changing viewer semantics.
-                    pred_mask = preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
+                    pred_mask = (
+                        preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
+                    )
                     mask_file = wsi_result_dir / f"train_{task_id}_pred_mask.npy"
                     np.save(mask_file, pred_mask)
 
                     # Extract Grad-CAM for segmentation model
                     try:
                         from pytorch_grad_cam import GradCAM
-                        from pytorch_grad_cam.utils.model_targets import SemanticSegmentationTarget
+                        from pytorch_grad_cam.utils.model_targets import (
+                            SemanticSegmentationTarget,
+                        )
 
                         # Determine target layer based on model type
                         target_layers = _get_seg_grad_cam_target_layers(model)
 
                         # Use dominant predicted class for Grad-CAM target
-                        pred_mask_for_cam = pred_mask.astype(np.float32, copy=False)  # (C, H, W)
-                        if pred_mask_for_cam.ndim == 3 and pred_mask_for_cam.shape[0] > 1:
-                            dominant_class = int(pred_mask_for_cam.sum(axis=(1, 2)).argmax())
+                        pred_mask_for_cam = pred_mask.astype(
+                            np.float32, copy=False
+                        )  # (C, H, W)
+                        if (
+                            pred_mask_for_cam.ndim == 3
+                            and pred_mask_for_cam.shape[0] > 1
+                        ):
+                            dominant_class = int(
+                                pred_mask_for_cam.sum(axis=(1, 2)).argmax()
+                            )
                         else:
                             dominant_class = 0
                         sem_mask = pred_mask_for_cam[dominant_class]  # (H, W) binary
 
-                        targets = [SemanticSegmentationTarget(dominant_class, sem_mask)]
+                        targets = [
+                            type_cast(
+                                "Any",
+                                SemanticSegmentationTarget(dominant_class, sem_mask),
+                            )
+                        ]
                         cam_input = img_tensor.clone().detach().requires_grad_(True)
 
                         with torch.enable_grad():
-                            with GradCAM(model=model, target_layers=target_layers) as grad_cam:
-                                cam_map = grad_cam(input_tensor=cam_input, targets=targets)
+                            with GradCAM(
+                                model=model, target_layers=target_layers
+                            ) as grad_cam:
+                                cam_map = grad_cam(
+                                    input_tensor=cam_input, targets=targets
+                                )
                         cam_map = cam_map[0]  # (H, W)
                     except Exception as cam_err:
-                        logger.warning(f"Grad-CAM extraction failed for {wsi_id}: {cam_err}")
-                        cam_map = np.zeros((img_tensor.shape[2], img_tensor.shape[3]), dtype=np.float32)
+                        logger.warning(
+                            f"Grad-CAM extraction failed for {wsi_id}: {cam_err}"
+                        )
+                        cam_map = np.zeros(
+                            (img_tensor.shape[2], img_tensor.shape[3]), dtype=np.float32
+                        )
 
                     cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
                     np.save(cam_file, cam_map)
@@ -1974,17 +2336,19 @@ async def _run_inference_patch_segmentation(
                         "metrics": per_image_metrics,
                     }
                     result_file = wsi_result_dir / f"train_{task_id}_result.json"
-                    with open(result_file, 'w', encoding='utf-8') as f:
+                    with open(result_file, "w", encoding="utf-8") as f:
                         json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-                    all_results.append({
-                        "wsi_id": wsi_id,
-                        "metrics": per_image_metrics,
-                        "has_ground_truth": has_gt,
-                        "class_names": class_names,
-                        "pred_mask_file": str(mask_file),
-                        "result_file": str(result_file),
-                    })
+                    all_results.append(
+                        {
+                            "wsi_id": wsi_id,
+                            "metrics": per_image_metrics,
+                            "has_ground_truth": has_gt,
+                            "class_names": class_names,
+                            "pred_mask_file": str(mask_file),
+                            "result_file": str(result_file),
+                        }
+                    )
                     results_saved += 1
 
                 except Exception as e:
@@ -2001,28 +2365,32 @@ async def _run_inference_patch_segmentation(
     # Save to database in batches to reduce write-transaction churn.
     db_records = []
     for r in all_results:
-        db_records.append({
-            "wsi_id": r["wsi_id"],
-            "task_id": task_id,
-            "pred": "segmentation",
-            "probs": r["metrics"] if r["metrics"] else {},
-            "extra_metadata": {
-                "task_type": "patch_segmentation",
-                "aggregation_level": "file",
-                "has_ground_truth": r["has_ground_truth"],
-                "class_names": r.get("class_names", []),
-                "metrics": r["metrics"],
-                "pred_mask_file": r["pred_mask_file"],
-                "result_file": r["result_file"],
+        db_records.append(
+            {
+                "wsi_id": r["wsi_id"],
+                "task_id": task_id,
+                "pred": "segmentation",
+                "probs": r["metrics"] if r["metrics"] else {},
+                "extra_metadata": {
+                    "task_type": "patch_segmentation",
+                    "aggregation_level": "file",
+                    "has_ground_truth": r["has_ground_truth"],
+                    "class_names": r.get("class_names", []),
+                    "metrics": r["metrics"],
+                    "pred_mask_file": r["pred_mask_file"],
+                    "result_file": r["result_file"],
+                },
             }
-        })
+        )
 
     if db_records:
         await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
     await db.commit()
 
-    logger.info(f"Generated AI results for patch segmentation task {task_id}: {results_saved}/{total_items} images")
+    logger.info(
+        f"Generated AI results for patch segmentation task {task_id}: {results_saved}/{total_items} images"
+    )
 
     if progress_callback:
         await progress_callback(1.0)
@@ -2036,7 +2404,10 @@ async def _run_inference_patch_segmentation(
 
 
 async def _run_inference_wsi_survival(
-    task, wsi_ids: List[str], resources: dict, db: AsyncSession,
+    task,
+    wsi_ids: List[str],
+    resources: dict[str, Any],
+    db: AsyncSession,
     progress_callback: Optional[Callable[[float], Any]] = None,
     assigned_device: Optional[str] = None,
 ):
@@ -2080,18 +2451,20 @@ async def _run_inference_wsi_survival(
     # Load config
     config = {}
     if config_path.exists():
-        with open(config_path, 'r') as f:
+        with open(config_path, "r") as f:
             config = json.load(f)
 
     # Check if case-level from config
     aggregation_level = config.get("aggregation_level", "file")
-    is_case_level = (aggregation_level == "case")
+    is_case_level = aggregation_level == "case"
 
     # Features directory
     features_dir = uploads_dir / "training" / task_id / "features"
 
     # Filter wsi_ids to only those with existing features
-    valid_wsi_ids = [wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()]
+    valid_wsi_ids = [
+        wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()
+    ]
     if not valid_wsi_ids:
         raise HTTPException(status_code=400, detail="Could not find any feature files")
 
@@ -2103,35 +2476,50 @@ async def _run_inference_wsi_survival(
     wsi_map = await WSIRepository.get_by_ids(db, valid_wsi_ids)
     for wsi_id in valid_wsi_ids:
         wsi = wsi_map.get(wsi_id)
-        if wsi:
-            times_map[wsi_id] = float(wsi.event_time) if wsi.event_time is not None else 0.0
-            statuses_map[wsi_id] = int(wsi.event_status) if wsi.event_status is not None else 0
+        if wsi is not None:
+            event_time_value = type_cast("Any", getattr(wsi, "event_time", None))
+            event_status_value = type_cast("Any", getattr(wsi, "event_status", None))
+            times_map[wsi_id] = (
+                float(event_time_value) if event_time_value is not None else 0.0
+            )
+            statuses_map[wsi_id] = (
+                int(event_status_value) if event_status_value is not None else 0
+            )
         else:
             times_map[wsi_id] = 0.0
             statuses_map[wsi_id] = 0
 
     # Load model checkpoint
-    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        assigned_device
+        if assigned_device
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     # Get bin_edges from checkpoint (required for survival)
     bin_edges = checkpoint.get("bin_edges", None)
     if bin_edges is None:
-        raise HTTPException(status_code=500, detail="Checkpoint missing bin_edges for survival task")
+        raise HTTPException(
+            status_code=500, detail="Checkpoint missing bin_edges for survival task"
+        )
     if isinstance(bin_edges, torch.Tensor):
         bin_edges = bin_edges.cpu().numpy()
 
     # Get aggregator
     aggregator_name = config.get("model", "abmil")
-    model = get_aggregator(
-        aggregator_name,
-        in_dim=checkpoint["in_dim"],
-        num_classes=checkpoint["num_classes"]
-    ).to(device)
+    model = type_cast(
+        "Any",
+        get_aggregator(
+            aggregator_name,
+            in_dim=checkpoint["in_dim"],
+            num_classes=checkpoint["num_classes"],
+        ).to(device),
+    )
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
 
-    has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+    has_raw_attention = hasattr(model, "forward_with_raw_attention")
 
     # Delete old AIResult records before regenerating to avoid duplicates
     deleted_count = await AIResultRepository.delete_by_task_id(db, task_id)
@@ -2141,7 +2529,9 @@ async def _run_inference_wsi_survival(
     # Run inference and collect results
     ai_results_root = uploads_dir / "ai_results"
 
-    bin_edges_list = bin_edges.tolist() if hasattr(bin_edges, 'tolist') else list(bin_edges)
+    bin_edges_list = (
+        bin_edges.tolist() if hasattr(bin_edges, "tolist") else list(bin_edges)
+    )
 
     # Collect all risk scores first (for median calculation)
     all_risks: List[float] = []
@@ -2184,24 +2574,35 @@ async def _run_inference_wsi_survival(
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
-            logger.info(f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides")
+            logger.info(
+                f"Case-level inference: {len(case_ids)} cases from {len(valid_wsi_ids)} slides"
+            )
             total_items = len(case_ids)
 
             # Case-level inference using DataLoader
-            for idx, (features, time_val, status_val, case_id, batch_wsi_ids, batch_patch_counts) in enumerate(dataloader):
+            for idx, (
+                features,
+                time_val,
+                status_val,
+                case_id,
+                batch_wsi_ids,
+                batch_patch_counts,
+            ) in enumerate(dataloader):
                 # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
                 if progress_callback and total_items > 0:
                     await progress_callback(0.1 + 0.8 * (idx / total_items))
                 # Unpack batch (batch_size=1)
-                H = features.squeeze(0).to(device)
+                h_features = features.squeeze(0).to(device)
                 case_id = case_id[0]
                 patch_counts = [int(c) for c in batch_patch_counts[0]]
                 case_wsi_patch_counts[case_id] = patch_counts
 
                 if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                    logits, attention, raw_attention = model.forward_with_raw_attention(
+                        h_features
+                    )
                 else:
-                    logits, attention = model(H)
+                    logits, attention = type_cast("Any", model(h_features))
                     raw_attention = None
 
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
@@ -2209,19 +2610,25 @@ async def _run_inference_wsi_survival(
                 risk_score = float(np.sum(hazards))
                 all_risks.append(risk_score)
 
-                attention_np = attention.cpu().numpy() if attention is not None else None
-                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+                attention_np = (
+                    attention.cpu().numpy() if attention is not None else None
+                )
+                raw_attention_np = (
+                    raw_attention.cpu().numpy() if raw_attention is not None else None
+                )
 
-                case_results.append({
-                    "case_id": case_id,
-                    "risk_score": risk_score,
-                    "hazards": hazards.tolist(),
-                    "surv_probs": surv.tolist(),
-                    "event_time": float(time_val.item()),
-                    "event_status": int(status_val.item()),
-                    "attention_np": attention_np,
-                    "raw_attention_np": raw_attention_np,
-                })
+                case_results.append(
+                    {
+                        "case_id": case_id,
+                        "risk_score": risk_score,
+                        "hazards": hazards.tolist(),
+                        "surv_probs": surv.tolist(),
+                        "event_time": float(time_val.item()),
+                        "event_status": int(status_val.item()),
+                        "attention_np": attention_np,
+                        "raw_attention_np": raw_attention_np,
+                    }
+                )
         else:
             # Slide-level inference using WSIFeatureDataset
             dataset = WSIFeatureDataset(
@@ -2240,13 +2647,15 @@ async def _run_inference_wsi_survival(
                     await progress_callback(0.1 + 0.8 * (idx / total_items))
 
                 # Unpack batch (batch_size=1)
-                H = features.squeeze(0).to(device)
+                h_features = features.squeeze(0).to(device)
                 wsi_id = wsi_id[0]
 
                 if has_raw_attention:
-                    logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                    logits, attention, raw_attention = model.forward_with_raw_attention(
+                        h_features
+                    )
                 else:
-                    logits, attention = model(H)
+                    logits, attention = type_cast("Any", model(h_features))
                     raw_attention = None
 
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
@@ -2254,19 +2663,25 @@ async def _run_inference_wsi_survival(
                 risk_score = float(np.sum(hazards))
                 all_risks.append(risk_score)
 
-                attention_np = attention.cpu().numpy() if attention is not None else None
-                raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+                attention_np = (
+                    attention.cpu().numpy() if attention is not None else None
+                )
+                raw_attention_np = (
+                    raw_attention.cpu().numpy() if raw_attention is not None else None
+                )
 
-                case_results.append({
-                    "wsi_id": wsi_id,
-                    "risk_score": risk_score,
-                    "hazards": hazards.tolist(),
-                    "surv_probs": surv.tolist(),
-                    "event_time": float(time_val.item()),
-                    "event_status": int(status_val.item()),
-                    "attention_np": attention_np,
-                    "raw_attention_np": raw_attention_np,
-                })
+                case_results.append(
+                    {
+                        "wsi_id": wsi_id,
+                        "risk_score": risk_score,
+                        "hazards": hazards.tolist(),
+                        "surv_probs": surv.tolist(),
+                        "event_time": float(time_val.item()),
+                        "event_status": int(status_val.item()),
+                        "attention_np": attention_np,
+                        "raw_attention_np": raw_attention_np,
+                    }
+                )
 
     # Calculate median risk score for stratification
     median_risk_score = float(np.median(all_risks)) if all_risks else 0.0
@@ -2286,7 +2701,10 @@ async def _run_inference_wsi_survival(
                 case_result["attention_np"], case_id, case_wsi_patch_counts, case_to_wsi
             )
             slide_raw_attentions = _split_case_attention_to_slides_static(
-                case_result["raw_attention_np"], case_id, case_wsi_patch_counts, case_to_wsi
+                case_result["raw_attention_np"],
+                case_id,
+                case_wsi_patch_counts,
+                case_to_wsi,
             )
 
             for wsi_id in case_to_wsi[case_id]:
@@ -2296,7 +2714,9 @@ async def _run_inference_wsi_survival(
                 slide_att = slide_attentions.get(wsi_id)
                 slide_raw_att = slide_raw_attentions.get(wsi_id)
 
-                attention_shape = list(slide_att.shape) if slide_att is not None else None
+                attention_shape = (
+                    list(slide_att.shape) if slide_att is not None else None
+                )
                 attention_type = "none"
                 if slide_att is not None:
                     attention_type = "multi_class" if slide_att.ndim == 2 else "single"
@@ -2308,7 +2728,9 @@ async def _run_inference_wsi_survival(
                     "hazards": case_result["hazards"],
                     "surv_probs": case_result["surv_probs"],
                     "event_time": times_map.get(wsi_id, case_result["event_time"]),
-                    "event_status": statuses_map.get(wsi_id, case_result["event_status"]),
+                    "event_status": statuses_map.get(
+                        wsi_id, case_result["event_status"]
+                    ),
                     "bin_edges": bin_edges_list,
                     "aggregator": aggregator_name,
                     "median_risk_score": median_risk_score,
@@ -2320,14 +2742,16 @@ async def _run_inference_wsi_survival(
                 }
 
                 result_file = result_dir / f"train_{task_id}_result.json"
-                with open(result_file, 'w') as f:
+                with open(result_file, "w") as f:
                     json.dump(result_data, f, indent=2)
 
                 attention_file_path = None
                 if slide_att is not None:
                     att_file = result_dir / f"train_{task_id}_attention.npy"
                     np.save(att_file, slide_att)
-                    ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
+                    ensure_recommendation_preview_cache(
+                        wsi_id, att_file, Config.get_uploads_dir()
+                    )
                     attention_file_path = str(att_file)
 
                 if slide_raw_att is not None:
@@ -2356,7 +2780,7 @@ async def _run_inference_wsi_survival(
                         "attention_file": attention_file_path,
                         "case_id": case_id,
                         "aggregation_level": "case",
-                    }
+                    },
                 }
                 await AIResultRepository.create(db, db_result_data)
                 results_saved += 1
@@ -2373,7 +2797,9 @@ async def _run_inference_wsi_survival(
             attention_np = slide_result["attention_np"]
             raw_attention_np = slide_result["raw_attention_np"]
 
-            attention_shape = list(attention_np.shape) if attention_np is not None else None
+            attention_shape = (
+                list(attention_np.shape) if attention_np is not None else None
+            )
             attention_type = "none"
             if attention_np is not None:
                 attention_type = "multi_class" if attention_np.ndim == 2 else "single"
@@ -2395,14 +2821,16 @@ async def _run_inference_wsi_survival(
             }
 
             result_file = result_dir / f"train_{task_id}_result.json"
-            with open(result_file, 'w') as f:
+            with open(result_file, "w") as f:
                 json.dump(result_data, f, indent=2)
 
             attention_file_path = None
             if attention_np is not None:
                 att_file = result_dir / f"train_{task_id}_attention.npy"
                 np.save(att_file, attention_np)
-                ensure_recommendation_preview_cache(wsi_id, att_file, Config.get_uploads_dir())
+                ensure_recommendation_preview_cache(
+                    wsi_id, att_file, Config.get_uploads_dir()
+                )
                 attention_file_path = str(att_file)
 
             if raw_attention_np is not None:
@@ -2429,13 +2857,15 @@ async def _run_inference_wsi_survival(
                     "attention_shape": attention_shape,
                     "result_file": str(result_file),
                     "attention_file": attention_file_path,
-                }
+                },
             }
             await AIResultRepository.create(db, db_result_data)
             results_saved += 1
 
     await db.commit()
-    logger.info(f"Generated AI results for WSI survival task {task_id}: {results_saved} WSIs")
+    logger.info(
+        f"Generated AI results for WSI survival task {task_id}: {results_saved} WSIs"
+    )
 
     return {
         "message": "AI results generated successfully",
@@ -2448,8 +2878,7 @@ async def _run_inference_wsi_survival(
 
 @router.get("/datasets-for-validation")
 async def get_datasets_for_validation(
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
     """
     List all datasets available for external validation selection.
@@ -2474,10 +2903,10 @@ async def get_datasets_for_validation(
         if dg.task_type == "external_validation":
             continue
 
-        dataset_id = ds.dataset_id
+        dataset_id = _coerce_str(ds.dataset_id)
 
         if not user.is_admin():
-            owns_dataset = ds.user_id == str(user.id)
+            owns_dataset = _coerce_str(ds.user_id) == str(user.id)
             has_temp_access = dataset_id in elevated_dataset_ids
             if not owns_dataset and not has_temp_access:
                 continue
@@ -2495,7 +2924,7 @@ async def get_datasets_for_validation(
         # This replaces the old feature_extracted DB column check which was inconsistent
         # with how the chat context detects features (disk-based).
         # Datasets without any features on disk for WSI are skipped.
-        available_feature_extractors: list = []
+        available_feature_extractors: list[Any] = []
         if dg.data_type != "patch" and wsi_ids:
             first_wsi_id = wsi_ids[0]
             features_root = Config.get_uploads_dir() / "features"
@@ -2506,7 +2935,9 @@ async def get_datasets_for_validation(
                             if params_hash_dir.is_dir():
                                 feat_file = params_hash_dir / f"{first_wsi_id}.pt"
                                 if feat_file.exists():
-                                    available_feature_extractors.append(extractor_dir.name)
+                                    available_feature_extractors.append(
+                                        extractor_dir.name
+                                    )
                                     break  # Found for this extractor, move to next
             # WSI datasets must have at least one feature extractor available
             if not available_feature_extractors:
@@ -2520,47 +2951,59 @@ async def get_datasets_for_validation(
             total_case_count = len(set(case_map.values()))
 
         # Determine display count based on aggregation_level
-        display_count = total_case_count if dg.aggregation_level == "case" else total_wsi_count
+        display_count = (
+            total_case_count if dg.aggregation_level == "case" else total_wsi_count
+        )
         segmentation_labels: List[str] = []
         if dg.task_type in ("segmentation", "patch_segmentation"):
-            coco_categories = await WSIRepository._get_coco_categories_for_dataset(db, dataset_id)
+            coco_categories = await WSIRepository._get_coco_categories_for_dataset(
+                db, dataset_id
+            )
             segmentation_labels = _extract_segmentation_label_names(coco_categories)
 
-        result.append({
-            "dataset_id": dataset_id,
-            "name": ds.name,
-            "data_type": dg.data_type,
-            "aggregation_level": dg.aggregation_level,
-            "task_type": dg.task_type,
-            "total_wsi_count": total_wsi_count,
-            "total_case_count": total_case_count,
-            "display_count": display_count,
-            "distinct_label_count": distinct_label_count,
-            "distinct_labels": sorted(distinct_labels),
-            "segmentation_labels": segmentation_labels,
-            "available_feature_extractors": available_feature_extractors,
-            "wsi_ids": wsi_ids,
-        })
+        result.append(
+            {
+                "dataset_id": dataset_id,
+                "name": ds.name,
+                "data_type": dg.data_type,
+                "aggregation_level": dg.aggregation_level,
+                "task_type": dg.task_type,
+                "total_wsi_count": total_wsi_count,
+                "total_case_count": total_case_count,
+                "display_count": display_count,
+                "distinct_label_count": distinct_label_count,
+                "distinct_labels": sorted(distinct_labels),
+                "segmentation_labels": segmentation_labels,
+                "available_feature_extractors": available_feature_extractors,
+                "wsi_ids": wsi_ids,
+            }
+        )
 
     return {"items": result, "total": len(result)}
 
 
 class ExternalValidationRequest(BaseModel):
     """Request for external validation - use a trained model on a dataset."""
-    model_id: str  # TrainedModel ID from the models table
-    dataset_id: str   # Dataset whose WSIs will be used for validation
-    # Analysis options
-    metrics: Optional[List[str]] = None  # Metrics to compute (default: accuracy, precision, recall, f1, auc, weighted_kappa)
-    charts: Optional[List[str]] = None  # Charts to generate (default: confusion_matrix, roc_curve)
-    compute_bootstrap_ci: Optional[bool] = False  # Whether to compute 95% CI via bootstrap
 
+    model_id: str  # TrainedModel ID from the models table
+    dataset_id: str  # Dataset whose WSIs will be used for validation
+    # Analysis options
+    metrics: Optional[List[str]] = (
+        None  # Metrics to compute (default: accuracy, precision, recall, f1, auc, weighted_kappa)
+    )
+    charts: Optional[List[str]] = (
+        None  # Charts to generate (default: confusion_matrix, roc_curve)
+    )
+    compute_bootstrap_ci: Optional[bool] = (
+        False  # Whether to compute 95% CI via bootstrap
+    )
 
 
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Start external validation: use a trained model to run inference on WSIs from a dataset.
@@ -2581,40 +3024,53 @@ async def start_external_validation(
         raise HTTPException(status_code=404, detail=f"Model not found: {req.model_id}")
 
     # Check ownership of the model via its training task.
-    model_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
+    trained_model_task_id = _coerce_str(trained_model.task_id)
+    model_task = await TrainingTaskRepository.get_by_id(db, trained_model_task_id)
     if not model_task:
-        raise HTTPException(status_code=404, detail=f"Model's training task not found: {trained_model.task_id}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model's training task not found: {trained_model_task_id}",
+        )
     await _require_task_access(
         user,
         model_task,
         db,
-        owner_user_id=trained_model.user_id,
+        owner_user_id=_coerce_str(trained_model.user_id),
         forbidden_detail="You don't have permission to use this model",
     )
 
-    if not trained_model.is_active:
-        raise HTTPException(status_code=400, detail=f"Model is not active: {req.model_id}")
+    if not bool(trained_model.is_active):
+        raise HTTPException(
+            status_code=400, detail=f"Model is not active: {req.model_id}"
+        )
 
     # Validate target dataset exists
     target_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
     if not target_dataset:
-        raise HTTPException(status_code=404, detail=f"Dataset not found: {req.dataset_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Dataset not found: {req.dataset_id}"
+        )
 
     # Check ownership of the dataset (supports temporary elevated dataset permissions)
-    if target_dataset.user_id and not check_data_ownership(target_dataset.user_id, user):
+    target_dataset_user_id = _coerce_str(target_dataset.user_id)
+    if target_dataset_user_id and not check_data_ownership(
+        target_dataset_user_id, user
+    ):
         # Fallback: check temporary elevated permission for the target dataset
         has_temp_dataset_perm = await DatasetPermissionRepository.has_valid_permission(
             db, req.dataset_id, str(user.id), "pathologist"
         )
         if not has_temp_dataset_perm:
-            raise HTTPException(status_code=403, detail="You don't have permission to use this dataset")
+            raise HTTPException(
+                status_code=403, detail="You don't have permission to use this dataset"
+            )
 
     # Check GPU permission for the target dataset
     has_permission = await check_dataset_gpu_permission(user, req.dataset_id, db)
     if not has_permission and not user.can_use_gpu():
         raise HTTPException(
             status_code=403,
-            detail="You don't have GPU permission for this dataset. Contact admin for temporary access."
+            detail="You don't have GPU permission for this dataset. Contact admin for temporary access.",
         )
 
     # ========================================================================
@@ -2632,13 +3088,17 @@ async def start_external_validation(
         raise HTTPException(
             status_code=400,
             detail=f"Data type mismatch: Model trained on '{model_data_type}' data cannot validate '{target_data_type}' data. "
-                   f"Please select a dataset with '{model_data_type}' data type."
+            f"Please select a dataset with '{model_data_type}' data type.",
         )
 
     # 2. Validate task_type compatibility (Classification <-> Classification, Survival <-> Survival)
     # Normalize task types for comparison
     def is_classification_task(task_type: str) -> bool:
-        return task_type in ("classification", "wsi_classification", "patch_classification")
+        return task_type in (
+            "classification",
+            "wsi_classification",
+            "patch_classification",
+        )
 
     def is_survival_task(task_type: str) -> bool:
         return task_type in ("wsi_survival", "survival")
@@ -2646,8 +3106,12 @@ async def start_external_validation(
     def is_segmentation_task(task_type: str) -> bool:
         return task_type in ("segmentation", "patch_segmentation")
 
-    model_task_type = model_data_group.task_type if model_data_group else "classification"
-    target_task_type = target_data_group.task_type if target_data_group else "classification"
+    model_task_type = (
+        model_data_group.task_type if model_data_group else "classification"
+    )
+    target_task_type = (
+        target_data_group.task_type if target_data_group else "classification"
+    )
 
     model_is_classification = is_classification_task(model_task_type)
     target_is_classification = is_classification_task(target_task_type)
@@ -2660,52 +3124,61 @@ async def start_external_validation(
         raise HTTPException(
             status_code=400,
             detail=f"Task type mismatch: Segmentation model cannot validate non-segmentation data. "
-                   f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-                   f"Please select a segmentation dataset."
+            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
+            f"Please select a segmentation dataset.",
         )
 
     if model_is_classification and not target_is_classification:
         raise HTTPException(
             status_code=400,
             detail=f"Task type mismatch: Classification model cannot validate survival data. "
-                   f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-                   f"Please select a classification dataset."
+            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
+            f"Please select a classification dataset.",
         )
 
     if model_is_survival and not target_is_survival:
         raise HTTPException(
             status_code=400,
             detail=f"Task type mismatch: Survival model cannot validate classification data. "
-                   f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-                   f"Please select a survival dataset."
+            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
+            f"Please select a survival dataset.",
         )
 
     # 3. Validate class label name matching (for classification tasks)
     if model_is_classification and target_is_classification:
-        model_classes = set(trained_model.classes) if trained_model.classes else set()
-        dataset_labels = set(await DatasetRepository.get_distinct_labels(db, req.dataset_id))
+        model_classes = set(_coerce_str_list(trained_model.classes))
+        dataset_labels = set(
+            await DatasetRepository.get_distinct_labels(db, req.dataset_id)
+        )
         if model_classes != dataset_labels:
             missing_in_dataset = model_classes - dataset_labels
             extra_in_dataset = dataset_labels - model_classes
             detail_parts = ["Label mismatch between model and dataset."]
             if missing_in_dataset:
-                detail_parts.append(f"Model classes not in dataset: {sorted(missing_in_dataset)}")
+                detail_parts.append(
+                    f"Model classes not in dataset: {sorted(missing_in_dataset)}"
+                )
             if extra_in_dataset:
-                detail_parts.append(f"Dataset labels not in model: {sorted(extra_in_dataset)}")
+                detail_parts.append(
+                    f"Dataset labels not in model: {sorted(extra_in_dataset)}"
+                )
             raise HTTPException(
                 status_code=400,
                 detail=" ".join(detail_parts),
             )
 
     if model_is_segmentation and target_is_segmentation:
+        source_task_id = _coerce_str(trained_model.task_id)
         source_dataset_id = (
-            await TrainingTaskRepository.get_source_dataset_ids_batch(db, [trained_model.task_id])
-        ).get(trained_model.task_id)
+            await TrainingTaskRepository.get_source_dataset_ids_batch(
+                db, [source_task_id]
+            )
+        ).get(source_task_id)
         if not source_dataset_id:
             raise HTTPException(
                 status_code=400,
                 detail="Cannot determine the source training dataset for this segmentation model. "
-                       "External validation requires a source model trained on a single dataset.",
+                "External validation requires a source model trained on a single dataset.",
             )
 
         if source_dataset_id == req.dataset_id:
@@ -2714,28 +3187,37 @@ async def start_external_validation(
                 detail="Target dataset must be different from the source training dataset for segmentation external validation.",
             )
 
-        model_config = model_task.model_config if isinstance(model_task.model_config, dict) else {}
+        model_config = (
+            model_task.model_config if isinstance(model_task.model_config, dict) else {}
+        )
         task_architecture = str(model_config.get("architecture") or "").strip()
         task_backbone = str(model_config.get("backbone") or "").strip()
         saved_architecture = str(trained_model.aggregator or "").strip()
         saved_backbone = str(trained_model.feature_extractor or "").strip()
 
-        if not task_architecture or not task_backbone or not saved_architecture or not saved_backbone:
+        if (
+            not task_architecture
+            or not task_backbone
+            or not saved_architecture
+            or not saved_backbone
+        ):
             raise HTTPException(
                 status_code=400,
                 detail="Segmentation model architecture metadata is incomplete. "
-                       "The source model must include both architecture and backbone metadata for external validation.",
+                "The source model must include both architecture and backbone metadata for external validation.",
             )
 
         if task_architecture != saved_architecture or task_backbone != saved_backbone:
             raise HTTPException(
                 status_code=400,
                 detail="Segmentation model metadata mismatch detected. "
-                       f"Task config expects architecture/backbone '{task_architecture}/{task_backbone}', "
-                       f"but stored model metadata is '{saved_architecture}/{saved_backbone}'.",
+                f"Task config expects architecture/backbone '{task_architecture}/{task_backbone}', "
+                f"but stored model metadata is '{saved_architecture}/{saved_backbone}'.",
             )
 
-        model_segmentation_labels = _normalize_label_names(model_task.classes or trained_model.classes or [])
+        model_segmentation_labels = _normalize_label_names(
+            _coerce_str_list(model_task.classes or trained_model.classes or [])
+        )
         target_segmentation_labels = _extract_segmentation_label_names(
             await WSIRepository._get_coco_categories_for_dataset(db, req.dataset_id)
         )
@@ -2744,15 +3226,23 @@ async def start_external_validation(
             raise HTTPException(
                 status_code=400,
                 detail="Segmentation label metadata is incomplete. "
-                       "Both the source model and target dataset must define labels for external validation.",
+                "Both the source model and target dataset must define labels for external validation.",
             )
 
         if model_segmentation_labels != target_segmentation_labels:
-            missing_in_dataset = sorted(set(model_segmentation_labels) - set(target_segmentation_labels))
-            extra_in_dataset = sorted(set(target_segmentation_labels) - set(model_segmentation_labels))
-            detail_parts = ["Segmentation label mismatch between source model and target dataset."]
+            missing_in_dataset = sorted(
+                set(model_segmentation_labels) - set(target_segmentation_labels)
+            )
+            extra_in_dataset = sorted(
+                set(target_segmentation_labels) - set(model_segmentation_labels)
+            )
+            detail_parts = [
+                "Segmentation label mismatch between source model and target dataset."
+            ]
             if missing_in_dataset:
-                detail_parts.append(f"Model labels not in dataset: {missing_in_dataset}")
+                detail_parts.append(
+                    f"Model labels not in dataset: {missing_in_dataset}"
+                )
             if extra_in_dataset:
                 detail_parts.append(f"Dataset labels not in model: {extra_in_dataset}")
             raise HTTPException(status_code=400, detail=" ".join(detail_parts))
@@ -2760,18 +3250,22 @@ async def start_external_validation(
     # Get WSI IDs from target dataset
     wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
     if not wsi_ids:
-        raise HTTPException(status_code=400, detail=f"No WSI IDs found for dataset: {req.dataset_id}")
+        raise HTTPException(
+            status_code=400, detail=f"No WSI IDs found for dataset: {req.dataset_id}"
+        )
 
     # 4. Prevent validating on data that overlaps with training data (WSI-level check)
-    model_wsi_ids = set(await TrainingTaskRepository.get_wsi_ids(db, trained_model.task_id))
+    model_wsi_ids = set(
+        await TrainingTaskRepository.get_wsi_ids(db, _coerce_str(trained_model.task_id))
+    )
     data_wsi_ids = set(wsi_ids)
     overlapping_wsi_ids = model_wsi_ids & data_wsi_ids
     if overlapping_wsi_ids:
         raise HTTPException(
             status_code=400,
             detail=f"Data leakage detected: {len(overlapping_wsi_ids)} WSI(s) in the selected dataset "
-                   f"were also used in the model's training data. "
-                   f"Please select a dataset with no overlapping slides for external validation."
+            f"were also used in the model's training data. "
+            f"Please select a dataset with no overlapping slides for external validation.",
         )
 
     # Check if inference results already exist for this model + data combination
@@ -2783,39 +3277,64 @@ async def start_external_validation(
 
     def _check_existing_results():
         """Check for existing external validation results."""
-        nonlocal existing_results_count, existing_validation_id, incomplete_existing_examples
+        nonlocal \
+            existing_results_count, \
+            existing_validation_id, \
+            incomplete_existing_examples
         for wsi_id in wsi_ids:
             ai_results_dir = uploads_dir / "ai_results" / wsi_id
             if ai_results_dir.exists():
                 # Look for extval_*_result.json files
                 for result_file in ai_results_dir.glob("extval_*_result.json"):
                     try:
-                        with open(result_file, 'r') as f:
+                        with open(result_file, "r") as f:
                             result_data = json.load(f)
                         # Check if this result is from the same model
                         if result_data.get("task_id") == trained_model.task_id:
                             validation_task_id = result_data.get("validation_task_id")
-                            if not validation_task_id and result_file.name.endswith("_result.json"):
-                                validation_task_id = result_file.name[:-len("_result.json")]
+                            if not validation_task_id and result_file.name.endswith(
+                                "_result.json"
+                            ):
+                                validation_task_id = result_file.name[
+                                    : -len("_result.json")
+                                ]
 
                             result_metadata = dict(result_data)
                             result_metadata["result_file"] = str(result_file)
-                            derived_attention_file = _derive_companion_artifact_path(result_file, "_attention.npy")
-                            if model_data_type != "patch" and not result_metadata.get("attention_file") and derived_attention_file.exists():
-                                result_metadata["attention_file"] = str(derived_attention_file)
+                            derived_attention_file = _derive_companion_artifact_path(
+                                result_file, "_attention.npy"
+                            )
+                            if (
+                                model_data_type != "patch"
+                                and not result_metadata.get("attention_file")
+                                and derived_attention_file.exists()
+                            ):
+                                result_metadata["attention_file"] = str(
+                                    derived_attention_file
+                                )
                                 result_metadata.setdefault("attention_type", "derived")
 
-                            missing_count, missing_examples = _collect_missing_ai_result_artifacts(
-                                task_id=validation_task_id or result_file.name[:-len("_result.json")],
-                                task_type=str(result_data.get("task_type") or model_task_type),
-                                data_type=model_data_type,
-                                wsi_id=wsi_id,
-                                extra_metadata=result_metadata,
-                                sample_limit=1,
+                            missing_count, missing_examples = (
+                                _collect_missing_ai_result_artifacts(
+                                    task_id=validation_task_id
+                                    or result_file.name[: -len("_result.json")],
+                                    task_type=str(
+                                        result_data.get("task_type") or model_task_type
+                                    ),
+                                    data_type=model_data_type,
+                                    wsi_id=wsi_id,
+                                    extra_metadata=result_metadata,
+                                    sample_limit=1,
+                                )
                             )
                             if missing_count > 0:
-                                if len(incomplete_existing_examples) < 5 and missing_examples:
-                                    incomplete_existing_examples.extend(missing_examples)
+                                if (
+                                    len(incomplete_existing_examples) < 5
+                                    and missing_examples
+                                ):
+                                    incomplete_existing_examples.extend(
+                                        missing_examples
+                                    )
                                 continue
 
                             existing_results_count += 1
@@ -2836,10 +3355,23 @@ async def start_external_validation(
 
     # Prepare analysis options (use segmentation-specific defaults if needed)
     if model_is_segmentation:
-        analysis_metrics = req.metrics or ["iou", "dice", "accuracy", "precision", "recall"]
+        analysis_metrics = req.metrics or [
+            "iou",
+            "dice",
+            "accuracy",
+            "precision",
+            "recall",
+        ]
         analysis_charts = req.charts or ["per_class_iou", "per_class_dice"]
     else:
-        analysis_metrics = req.metrics or ["accuracy", "precision", "recall", "f1", "auc", "weighted_kappa"]
+        analysis_metrics = req.metrics or [
+            "accuracy",
+            "precision",
+            "recall",
+            "f1",
+            "auc",
+            "weighted_kappa",
+        ]
         analysis_charts = req.charts or ["confusion_matrix", "roc_curve"]
     bootstrap_ci_metrics = analysis_metrics if req.compute_bootstrap_ci else []
 
@@ -2848,14 +3380,18 @@ async def start_external_validation(
     # If the DB was reset or the task was deleted, the cached task ID is stale — fall through
     # to create a new task instead.
     if existing_results_count >= len(wsi_ids) and existing_validation_id:
-        existing_task = await TrainingTaskRepository.get_by_id(db, existing_validation_id)
+        existing_task = await TrainingTaskRepository.get_by_id(
+            db, existing_validation_id
+        )
         if existing_task is None:
             logger.warning(
                 f"Existing results reference task {existing_validation_id} which no longer exists in DB. "
                 f"Ignoring cached results and creating a new task."
             )
         else:
-            logger.info(f"Found existing inference results for {existing_results_count}/{len(wsi_ids)} WSIs, skipping GPU inference")
+            logger.info(
+                f"Found existing inference results for {existing_results_count}/{len(wsi_ids)} WSIs, skipping GPU inference"
+            )
             logger.info(f"  - Existing validation task: {existing_validation_id}")
 
             # Check if analysis results also already exist
@@ -2867,7 +3403,9 @@ async def start_external_validation(
                     break
 
             if analysis_exists:
-                logger.info(f"Both inference and analysis exist for {existing_validation_id}, skipping entirely")
+                logger.info(
+                    f"Both inference and analysis exist for {existing_validation_id}, skipping entirely"
+                )
                 return {
                     "task_id": existing_validation_id,
                     "status": TaskStatus.COMPLETED,
@@ -2876,12 +3414,14 @@ async def start_external_validation(
                     "message": "External validation already completed (inference + analysis exist)",
                 }
 
-            logger.info(f"  - Running analysis directly with bootstrap_ci={req.compute_bootstrap_ci}")
+            logger.info(
+                f"  - Running analysis directly with bootstrap_ci={req.compute_bootstrap_ci}"
+            )
 
             # Run analysis directly on existing results
             await _auto_trigger_external_validation_analysis(
                 task_id=existing_validation_id,
-                model_task_id=trained_model.task_id,
+                model_task_id=trained_model_task_id,
                 model_id=req.model_id,
                 dataset_id=req.dataset_id,
                 metrics=analysis_metrics,
@@ -2904,16 +3444,19 @@ async def start_external_validation(
     # Get or create DataGroup for external validation
     # Use the same data_type as the target dataset, with "external_validation" task_type
     # and the target dataset's aggregation level
-    target_aggregation_level = target_data_group.aggregation_level if target_data_group else "file"
+    target_aggregation_level = (
+        target_data_group.aggregation_level if target_data_group else "file"
+    )
     validation_data_group = await DataGroupRepository.get_or_create(
         db,
         data_type=target_data_type,
         aggregation_level=target_aggregation_level,
-        task_type="external_validation"
+        task_type="external_validation",
     )
 
     # Create task record in database (reuse TrainingTask table)
     from backend.database.models import TrainingTask
+
     validation_task = TrainingTask(
         task_id=validation_id,
         task_name=f"External Validation: {trained_model.model_name} → {target_dataset.name or req.dataset_id}",
@@ -2923,7 +3466,8 @@ async def start_external_validation(
         status=TaskStatus.PENDING,
         progress=0,
         classes=trained_model.classes,
-        preprocessing_config=model_task.preprocessing_config or {
+        preprocessing_config=model_task.preprocessing_config
+        or {
             "feature_extractor": trained_model.feature_extractor,
         },
         model_config={
@@ -2966,7 +3510,7 @@ async def start_external_validation(
         task_id=validation_id,
         task_type=TaskType.EXTERNAL_VALIDATION,
         coro_func=_run_external_validation,
-        **pipeline_kwargs
+        **pipeline_kwargs,
     )
 
     return {
@@ -2979,8 +3523,7 @@ async def start_external_validation(
 
 @router.get("/external-validation/completed")
 async def get_completed_external_validations(
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
     """
     Get all completed external validation tasks with their analysis status.
@@ -3010,25 +3553,32 @@ async def get_completed_external_validations(
 
     items = []
     for task in tasks:
-        mc = task.model_config or {}
+        task_id_str = _coerce_str(task.task_id)
+        mc = task.model_config if isinstance(task.model_config, dict) else {}
         # Check if analysis results exist on disk
-        analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task.task_id
+        analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id_str
         has_analysis = False
         if analysis_dir.exists():
             for item in _iter_complete_analysis_runs(analysis_dir):
                 has_analysis = True
                 break
 
-        items.append({
-            "task_id": task.task_id,
-            "model_id": mc.get("model_id"),
-            "model_task_id": mc.get("model_task_id"),
-            "dataset_id": mc.get("dataset_id"),
-            "total_wsi": mc.get("total_wsi", 0),
-            "results_count": mc.get("results_count", 0),
-            "has_analysis": has_analysis,
-            "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
-        })
+        items.append(
+            {
+                "task_id": task_id_str,
+                "model_id": mc.get("model_id"),
+                "model_task_id": mc.get("model_task_id"),
+                "dataset_id": mc.get("dataset_id"),
+                "total_wsi": mc.get("total_wsi", 0),
+                "results_count": mc.get("results_count", 0),
+                "has_analysis": has_analysis,
+                "created_at": (
+                    task.created_at.isoformat() + "Z"
+                    if isinstance(task.created_at, datetime)
+                    else None
+                ),
+            }
+        )
 
     return {"items": items}
 
@@ -3037,7 +3587,7 @@ async def get_completed_external_validations(
 async def get_validation_progress(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get the progress of an external validation task. Users can only view their own tasks."""
     task, _ = await _get_task_with_access(
@@ -3052,13 +3602,16 @@ async def get_validation_progress(
     task_data_group = task.data_group
     task_type = task_data_group.task_type if task_data_group else None
     if task_type != "external_validation":
-        raise HTTPException(status_code=400, detail=f"Task {task_id} is not an external validation task")
+        raise HTTPException(
+            status_code=400, detail=f"Task {task_id} is not an external validation task"
+        )
 
     model_config = task.model_config or {}
 
     # Overlay file-based progress if available (more up-to-date than DB during inference).
     # This mirrors the pattern used in the training SSE endpoint (training.py lines 306-308).
     from backend.common.progress_store import get_progress
+
     file_prog = await get_progress(task_id)
     progress = file_prog if file_prog is not None else task.progress
 
@@ -3109,13 +3662,20 @@ async def _run_external_validation_patch_segmentation(
     import segmentation_models_pytorch as smp
     from backend.ai.segmentors import Segmentor
     from backend.ai.utils.patch_resize import resolve_patch_resize_size
-    from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
+    from backend.ai.utils.segmentation_dataset import (
+        SegmentationDataset,
+        get_transforms,
+    )
     from backend.database.repositories import WSIRepository, TrainedModelRepository
     from backend.database.database import safe_session
     from backend.common.progress_store import clear_progress
 
     uploads_dir = Config.get_uploads_dir()
-    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        assigned_device
+        if assigned_device
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
     try:
         # 1. Load model checkpoint and rebuild model
@@ -3124,13 +3684,19 @@ async def _run_external_validation_patch_segmentation(
             if not trained_model:
                 raise ValueError(f"Trained model not found: {model_id}")
             checkpoint_path = trained_model.model_path
-            source_task = await TrainingTaskRepository.get_by_id(db, model_task_id) if model_task_id else None
+            source_task = (
+                await TrainingTaskRepository.get_by_id(db, model_task_id)
+                if model_task_id
+                else None
+            )
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Patch segmentation: loading model from {checkpoint_path}")
 
         def _load_model():
-            checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
+            checkpoint = torch.load(
+                _coerce_str(checkpoint_path), map_location=device, weights_only=False
+            )
             config = checkpoint.get("config", {})
             architecture = config.get("architecture", "unet")
             backbone = config.get("backbone", "resnet50")
@@ -3144,11 +3710,10 @@ async def _run_external_validation_patch_segmentation(
                 in_channels=in_channels,
                 classes=num_classes,
             )
-            model = segmentor.build_model()
+            model = type_cast("Any", segmentor.build_model())
             # FM-based checkpoints contain only decoder+head weights;
             # the frozen backbone is already loaded by build_model().
             if checkpoint.get("is_fm", False):
-                from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
                 model.load_decoder_state_dict(checkpoint["model_state_dict"])
             else:
                 model.load_state_dict(checkpoint["model_state_dict"])
@@ -3161,26 +3726,45 @@ async def _run_external_validation_patch_segmentation(
             )
             return model, config, norm_mean, norm_std, num_classes, resize_size
 
-        model, model_config, norm_mean, norm_std, num_classes, resize_size = await asyncio.to_thread(_load_model)
+        (
+            model,
+            model_config,
+            norm_mean,
+            norm_std,
+            num_classes,
+            resize_size,
+        ) = await asyncio.to_thread(_load_model)
         class_names = _normalize_label_names(
-            (source_task.classes if source_task else None)
-            or trained_model.classes
-            or (model_config.get("dataset") or {}).get("class_names", [])
+            _coerce_str_list(
+                (source_task.classes if source_task else None)
+                or trained_model.classes
+                or (model_config.get("dataset") or {}).get("class_names", [])
+            )
         )
 
         await update_task_progress(TaskStatus.PATCHING, 10)
 
         # 2. Get image paths and discover annotations from target dataset
-        image_paths = {}
+        image_paths: Dict[str, str] = {}
         task_user_id = None
         async with safe_session() as db:
             for wsi_id in wsi_ids:
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
-                if wsi and wsi.wsi_path:
-                    image_paths[wsi_id] = wsi.wsi_path
+                if wsi is not None:
+                    wsi_path = _coerce_str(wsi.wsi_path)
+                    if wsi_path:
+                        image_paths[wsi_id] = wsi_path
 
             task_record = await TrainingTaskRepository.get_by_id(db, task_id)
-            task_user_id = str(task_record.user_id) if task_record and task_record.user_id else None
+            task_user_id = (
+                str(task_record.user_id)
+                if isinstance(task_record, TrainingTask)
+                and isinstance(task_record.user_id, str)
+                else None
+            )
+
+            survival_data: Dict[str, Dict[str, Any]] = {}
+            labels: Dict[str, int] = {}
 
         if not image_paths:
             raise ValueError("No image paths found for target WSIs")
@@ -3189,6 +3773,7 @@ async def _run_external_validation_patch_segmentation(
         def _discover_annotations():
             """Search for COCO-format JSON annotation files near image directories."""
             from pathlib import Path as _Path
+
             image_dirs = set()
             for img_path in image_paths.values():
                 image_dirs.add(str(_Path(img_path).parent))
@@ -3202,16 +3787,22 @@ async def _run_external_validation_patch_segmentation(
                         continue
                     for json_file in search_dir.glob("*.json"):
                         try:
-                            with open(json_file, 'r') as f:
+                            with open(json_file, "r") as f:
                                 data = json.load(f)
                             # Validate it's a COCO-format annotation file
-                            if "images" in data and "annotations" in data and "categories" in data:
+                            if (
+                                "images" in data
+                                and "annotations" in data
+                                and "categories" in data
+                            ):
                                 return str(json_file), img_dir
                         except Exception:
                             continue
             return None, None
 
-        annotations_path, annotations_img_dir = await asyncio.to_thread(_discover_annotations)
+        annotations_path, annotations_img_dir = await asyncio.to_thread(
+            _discover_annotations
+        )
 
         has_annotations = annotations_path is not None
 
@@ -3219,7 +3810,9 @@ async def _run_external_validation_patch_segmentation(
             if has_annotations:
                 await tl.info(f"Found COCO annotations: {annotations_path}")
             else:
-                await tl.info("No COCO annotations found for target dataset — running inference only (no metrics)")
+                await tl.info(
+                    "No COCO annotations found for target dataset — running inference only (no metrics)"
+                )
             await tl.info(f"Running inference on {len(image_paths)} images")
 
         await update_task_progress(TaskStatus.PATCHING, 20)
@@ -3273,7 +3866,9 @@ async def _run_external_validation_patch_segmentation(
                         # Prepare image tensor
                         img_tensor = v2.ToImage()(img)
                         img_tensor = val_transform(img_tensor)
-                        img_tensor = img_tensor.unsqueeze(0).to(device)
+                        img_tensor = (
+                            type_cast("Any", img_tensor).unsqueeze(0).to(device)
+                        )
 
                         # Run inference
                         outputs = model(img_tensor)
@@ -3286,21 +3881,37 @@ async def _run_external_validation_patch_segmentation(
                         if gt_dataset is not None and img_filename in gt_filename_map:
                             gt_idx = gt_filename_map[img_filename]
                             _, gt_mask = gt_dataset[gt_idx]
-                            gt_mask = gt_mask.unsqueeze(0).to(device) if not isinstance(gt_mask, torch.Tensor) else gt_mask.unsqueeze(0).to(device)
+                            gt_mask = type_cast("Any", gt_mask).unsqueeze(0).to(device)
                             has_gt = True
 
                             # Compute metrics using SMP
                             tp, fp, fn, tn = smp.metrics.get_stats(
-                                preds_binary.long().cpu(), gt_mask.long().cpu(),
-                                mode='multilabel', threshold=None
+                                type_cast("Any", preds_binary.long().cpu()),
+                                type_cast("Any", gt_mask.long().cpu()),
+                                mode="multilabel",
+                                threshold=None,
                             )
-                            iou_per_class = smp.metrics.iou_score(tp, fp, fn, tn, reduction='none')
-                            dice_per_class = smp.metrics.f1_score(tp, fp, fn, tn, reduction='none')
-                            precision_per_class = smp.metrics.precision(tp, fp, fn, tn, reduction='none')
-                            recall_per_class = smp.metrics.recall(tp, fp, fn, tn, reduction='none')
-                            accuracy = smp.metrics.accuracy(tp, fp, fn, tn, reduction='micro')
-                            precision = smp.metrics.precision(tp, fp, fn, tn, reduction='micro')
-                            recall = smp.metrics.recall(tp, fp, fn, tn, reduction='micro')
+                            iou_per_class = smp.metrics.iou_score(
+                                tp, fp, fn, tn, reduction="none"
+                            )
+                            dice_per_class = smp.metrics.f1_score(
+                                tp, fp, fn, tn, reduction="none"
+                            )
+                            precision_per_class = smp.metrics.precision(
+                                tp, fp, fn, tn, reduction="none"
+                            )
+                            recall_per_class = smp.metrics.recall(
+                                tp, fp, fn, tn, reduction="none"
+                            )
+                            accuracy = smp.metrics.accuracy(
+                                tp, fp, fn, tn, reduction="micro"
+                            )
+                            precision = smp.metrics.precision(
+                                tp, fp, fn, tn, reduction="micro"
+                            )
+                            recall = smp.metrics.recall(
+                                tp, fp, fn, tn, reduction="micro"
+                            )
 
                             per_image_metrics = _build_segmentation_per_image_metrics(
                                 iou_per_class,
@@ -3319,34 +3930,63 @@ async def _run_external_validation_patch_segmentation(
                         # Keep segmentation artifacts streamed to disk during inference to avoid
                         # retaining many large masks/CAMs in memory. Store binary masks as uint8
                         # to reduce write volume without changing viewer semantics.
-                        pred_mask = preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
+                        pred_mask = (
+                            preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
+                        )
                         mask_file = wsi_result_dir / f"extval_{task_id}_pred_mask.npy"
                         np.save(mask_file, pred_mask)
 
                         # Extract Grad-CAM for segmentation model
                         try:
                             from pytorch_grad_cam import GradCAM
-                            from pytorch_grad_cam.utils.model_targets import SemanticSegmentationTarget
+                            from pytorch_grad_cam.utils.model_targets import (
+                                SemanticSegmentationTarget,
+                            )
 
                             target_layers = _get_seg_grad_cam_target_layers(model)
 
-                            pred_mask_for_cam = pred_mask.astype(np.float32, copy=False)  # (C, H, W)
-                            if pred_mask_for_cam.ndim == 3 and pred_mask_for_cam.shape[0] > 1:
-                                dominant_class = int(pred_mask_for_cam.sum(axis=(1, 2)).argmax())
+                            pred_mask_for_cam = pred_mask.astype(
+                                np.float32, copy=False
+                            )  # (C, H, W)
+                            if (
+                                pred_mask_for_cam.ndim == 3
+                                and pred_mask_for_cam.shape[0] > 1
+                            ):
+                                dominant_class = int(
+                                    pred_mask_for_cam.sum(axis=(1, 2)).argmax()
+                                )
                             else:
                                 dominant_class = 0
-                            sem_mask = pred_mask_for_cam[dominant_class]  # (H, W) binary
+                            sem_mask = pred_mask_for_cam[
+                                dominant_class
+                            ]  # (H, W) binary
 
-                            targets = [SemanticSegmentationTarget(dominant_class, sem_mask)]
+                            targets = [
+                                type_cast(
+                                    "Any",
+                                    SemanticSegmentationTarget(
+                                        dominant_class, sem_mask
+                                    ),
+                                )
+                            ]
                             cam_input = img_tensor.clone().detach().requires_grad_(True)
 
                             with torch.enable_grad():
-                                with GradCAM(model=model, target_layers=target_layers) as grad_cam:
-                                    cam_map = grad_cam(input_tensor=cam_input, targets=targets)
+                                with GradCAM(
+                                    model=model, target_layers=target_layers
+                                ) as grad_cam:
+                                    cam_map = grad_cam(
+                                        input_tensor=cam_input, targets=targets
+                                    )
                             cam_map = cam_map[0]  # (H, W)
                         except Exception as cam_err:
-                            logger.warning(f"Grad-CAM extraction failed for {wsi_id}: {cam_err}")
-                            cam_map = np.zeros((img_tensor.shape[2], img_tensor.shape[3]), dtype=np.float32)
+                            logger.warning(
+                                f"Grad-CAM extraction failed for {wsi_id}: {cam_err}"
+                            )
+                            cam_map = np.zeros(
+                                (img_tensor.shape[2], img_tensor.shape[3]),
+                                dtype=np.float32,
+                            )
 
                         cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
                         np.save(cam_file, cam_map)
@@ -3370,17 +4010,19 @@ async def _run_external_validation_patch_segmentation(
                         }
 
                         result_file = wsi_result_dir / f"extval_{task_id}_result.json"
-                        with open(result_file, 'w', encoding='utf-8') as f:
+                        with open(result_file, "w", encoding="utf-8") as f:
                             json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-                        all_results.append({
-                            "wsi_id": wsi_id,
-                            "metrics": per_image_metrics,
-                            "has_ground_truth": has_gt,
-                            "class_names": class_names,
-                            "pred_mask_file": str(mask_file),
-                            "result_file": str(result_file),
-                        })
+                        all_results.append(
+                            {
+                                "wsi_id": wsi_id,
+                                "metrics": per_image_metrics,
+                                "has_ground_truth": has_gt,
+                                "class_names": class_names,
+                                "pred_mask_file": str(mask_file),
+                                "result_file": str(result_file),
+                            }
+                        )
                         results_saved += 1
 
                     except Exception as e:
@@ -3394,37 +4036,44 @@ async def _run_external_validation_patch_segmentation(
         # 4. Save to database
         async with safe_session() as db:
             from backend.database.repositories import AIResultRepository
+
             db_records = []
             for r in all_results:
-                db_records.append({
-                    "wsi_id": r["wsi_id"],
-                    "task_id": task_id,
-                    "user_id": task_user_id,
-                    "pred": "segmentation",
-                    "probs": r["metrics"] if r["metrics"] else {},
-                    "extra_metadata": {
-                        "validation_type": "external",
-                        "model_task_id": model_task_id,
-                        "dataset_id": dataset_id,
-                        "aggregation_level": "file",
-                        "task_type": "patch_segmentation",
-                        "has_ground_truth": r["has_ground_truth"],
-                        "class_names": r.get("class_names", []),
-                        "metrics": r["metrics"],
-                        "pred_mask_file": r["pred_mask_file"],
-                        "result_file": r["result_file"],
+                db_records.append(
+                    {
+                        "wsi_id": r["wsi_id"],
+                        "task_id": task_id,
+                        "user_id": task_user_id,
+                        "pred": "segmentation",
+                        "probs": r["metrics"] if r["metrics"] else {},
+                        "extra_metadata": {
+                            "validation_type": "external",
+                            "model_task_id": model_task_id,
+                            "dataset_id": dataset_id,
+                            "aggregation_level": "file",
+                            "task_type": "patch_segmentation",
+                            "has_ground_truth": r["has_ground_truth"],
+                            "class_names": r.get("class_names", []),
+                            "metrics": r["metrics"],
+                            "pred_mask_file": r["pred_mask_file"],
+                            "result_file": r["result_file"],
+                        },
                     }
-                })
+                )
 
             if db_records:
                 await AIResultRepository.bulk_create(db, db_records, batch_size=100)
             await db.commit()
 
         await clear_progress(task_id)
-        await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
+        await update_task_progress(
+            TaskStatus.COMPLETED, 100, results_saved, results_saved
+        )
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Patch segmentation external validation completed: {results_saved}/{total_items} images processed")
+            await tl.info(
+                f"Patch segmentation external validation completed: {results_saved}/{total_items} images processed"
+            )
 
         # Auto-trigger analysis
         await _auto_trigger_external_validation_analysis(
@@ -3438,7 +4087,10 @@ async def _run_external_validation_patch_segmentation(
 
     except Exception as e:
         import traceback
-        logger.error(f"Patch segmentation external validation {task_id} failed: {e}\n{traceback.format_exc()}")
+
+        logger.error(
+            f"Patch segmentation external validation {task_id} failed: {e}\n{traceback.format_exc()}"
+        )
         try:
             await clear_progress(task_id)
             async with logger_manager.session() as (tl, _db):
@@ -3449,13 +4101,16 @@ async def _run_external_validation_patch_segmentation(
     finally:
         try:
             import gc
+
             gc.collect()
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
         except Exception as cleanup_err:
-            logger.warning(f"Patch seg ext-val {task_id}: VRAM cleanup failed: {cleanup_err}")
+            logger.warning(
+                f"Patch seg ext-val {task_id}: VRAM cleanup failed: {cleanup_err}"
+            )
 
 
 async def _run_external_validation_patch_classification(
@@ -3485,13 +4140,21 @@ async def _run_external_validation_patch_classification(
         build_patch_classification_transform,
         resolve_patch_resize_size,
     )
-    from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size, is_cnn_extractor
+    from backend.ai.utils.cam_utils import (
+        get_cam_extractor,
+        get_cam_spatial_size,
+        is_cnn_extractor,
+    )
     from backend.database.repositories import AIResultRepository, WSIRepository
     from backend.database.database import safe_session
     from backend.common.progress_store import clear_progress
 
     uploads_dir = Config.get_uploads_dir()
-    device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+    device = (
+        assigned_device
+        if assigned_device
+        else ("cuda" if torch.cuda.is_available() else "cpu")
+    )
 
     try:
         # Load model checkpoint(s)
@@ -3500,7 +4163,7 @@ async def _run_external_validation_patch_classification(
 
         config = {}
         if config_path.exists():
-            with open(config_path, 'r') as f:
+            with open(config_path, "r") as f:
                 config = json.load(f)
 
         classes = model_classes or config.get("classes", [])
@@ -3512,7 +4175,9 @@ async def _run_external_validation_patch_classification(
 
         async with logger_manager.session() as (tl, _db):
             kfold_msg = f" (k-fold: {num_folds} folds)" if is_kfold else ""
-            await tl.info(f"Patch classification: loading model {model_id} with {len(classes)} classes{kfold_msg}")
+            await tl.info(
+                f"Patch classification: loading model {model_id} with {len(classes)} classes{kfold_msg}"
+            )
 
         # Load checkpoint(s) and build model(s) (in thread to avoid blocking event loop)
         def _load_models():
@@ -3524,11 +4189,15 @@ async def _run_external_validation_patch_classification(
                 for fold_idx in range(num_folds):
                     fold_ckpt_path = model_dir / f"fold_{fold_idx}" / "linear_probe.pth"
                     if not fold_ckpt_path.exists():
-                        raise FileNotFoundError(f"Fold {fold_idx} checkpoint not found: {fold_ckpt_path}")
+                        raise FileNotFoundError(
+                            f"Fold {fold_idx} checkpoint not found: {fold_ckpt_path}"
+                        )
 
                     checkpoint = torch.load(fold_ckpt_path, map_location=device)
                     # K-fold checkpoints use "feature_dim" instead of "extractor_dim"
-                    extractor_dim = checkpoint.get("feature_dim") or checkpoint.get("extractor_dim")
+                    extractor_dim = checkpoint.get("feature_dim") or checkpoint.get(
+                        "extractor_dim"
+                    )
                     _num_classes = checkpoint["num_classes"]
 
                     fold_probe = nn.Linear(extractor_dim, _num_classes).to(device)
@@ -3539,11 +4208,15 @@ async def _run_external_validation_patch_classification(
                 # Regular: single checkpoint at root
                 ckpt_path = model_dir / "linear_probe.pth"
                 if not ckpt_path.exists():
-                    raise FileNotFoundError(f"Model checkpoint (linear_probe.pth) not found at {ckpt_path}")
+                    raise FileNotFoundError(
+                        f"Model checkpoint (linear_probe.pth) not found at {ckpt_path}"
+                    )
 
                 checkpoint = torch.load(ckpt_path, map_location=device)
                 _extractor_name = checkpoint.get("extractor_name", _extractor_name)
-                extractor_dim = checkpoint.get("extractor_dim") or checkpoint.get("feature_dim")
+                extractor_dim = checkpoint.get("extractor_dim") or checkpoint.get(
+                    "feature_dim"
+                )
                 _num_classes = checkpoint["num_classes"]
 
                 probe = nn.Linear(extractor_dim, _num_classes).to(device)
@@ -3592,26 +4265,33 @@ async def _run_external_validation_patch_classification(
         combined_model.eval()
 
         # Build labels dict and image paths from target dataset WSIs
-        labels = {}
-        image_paths = {}
+        labels: Dict[str, int] = {}
+        image_paths: Dict[str, str] = {}
         task_user_id = None
         async with safe_session() as db:
             for wsi_id in wsi_ids:
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
-                if wsi:
-                    if wsi.label and wsi.label in classes:
+                if wsi is not None:
+                    if isinstance(wsi.label, str) and wsi.label in classes:
                         labels[wsi_id] = classes.index(wsi.label)
-                    image_paths[wsi_id] = wsi.wsi_path
+                    image_paths[wsi_id] = _coerce_str(wsi.wsi_path)
 
             # Get user_id from the task for saving results later
             task_record = await TrainingTaskRepository.get_by_id(db, task_id)
-            task_user_id = str(task_record.user_id) if task_record and task_record.user_id else None
+            task_user_id = (
+                str(task_record.user_id)
+                if isinstance(task_record, TrainingTask)
+                and isinstance(task_record.user_id, str)
+                else None
+            )
 
         if not image_paths:
             raise ValueError("No image paths found for target WSIs")
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Running inference on {len(image_paths)} images (extractor: {extractor_name})")
+            await tl.info(
+                f"Running inference on {len(image_paths)} images (extractor: {extractor_name})"
+            )
 
         await update_task_progress(TaskStatus.PATCHING, 10)
 
@@ -3620,7 +4300,9 @@ async def _run_external_validation_patch_classification(
             deleted_count = await AIResultRepository.delete_by_task_id(db, task_id)
             await db.commit()
             if deleted_count > 0:
-                logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
+                logger.info(
+                    f"Deleted {deleted_count} old AIResult records for task {task_id}"
+                )
 
         # Run inference (in thread to avoid blocking event loop)
         ai_results_root = uploads_dir / "ai_results"
@@ -3634,7 +4316,8 @@ async def _run_external_validation_patch_classification(
                 for idx, (wsi_id, img_path) in enumerate(image_paths.items()):
                     try:
                         img = Image.open(img_path).convert("RGB")
-                        img_tensor = fm_transform(img).unsqueeze(0).to(device)
+                        transformed = type_cast("Any", fm_transform(img))
+                        img_tensor = transformed.unsqueeze(0).to(device)
 
                         # K-fold ensemble: average logits across all folds
                         if is_kfold:
@@ -3645,13 +4328,20 @@ async def _run_external_validation_patch_classification(
                                     fold_logits = fold_probe(features)
                                     all_logits.append(fold_logits)
                                 avg_logits = torch.mean(torch.stack(all_logits), dim=0)
-                                probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
+                                probs = (
+                                    F.softmax(avg_logits, dim=-1)
+                                    .squeeze(0)
+                                    .cpu()
+                                    .numpy()
+                                )
                                 pred_idx = int(probs.argmax())
                                 pred_label = classes[pred_idx]
                         else:
                             with torch.inference_mode():
                                 logits = combined_model(img_tensor)
-                                probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                                probs = (
+                                    F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
+                                )
                                 pred_idx = int(probs.argmax())
                                 pred_label = classes[pred_idx]
 
@@ -3664,10 +4354,16 @@ async def _run_external_validation_patch_classification(
                             )
                             cam_map = cam_map.squeeze(0)
                         except Exception:
-                            cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
+                            cam_map = np.ones(cam_size, dtype=np.float32) / (
+                                cam_size[0] * cam_size[1]
+                            )
 
-                        probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
-                        gt_label = classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+                        probs_dict = {
+                            cls: float(probs[i]) for i, cls in enumerate(classes)
+                        }
+                        gt_label = (
+                            classes[labels[wsi_id]] if wsi_id in labels else "unknown"
+                        )
 
                         wsi_result_dir = ai_results_root / wsi_id
                         wsi_result_dir.mkdir(parents=True, exist_ok=True)
@@ -3687,7 +4383,9 @@ async def _run_external_validation_patch_classification(
                             "pred": pred_label,
                             "probs": probs_dict,
                             "ground_truth": gt_label,
-                            "correct": pred_label == gt_label if gt_label != "unknown" else None,
+                            "correct": pred_label == gt_label
+                            if gt_label != "unknown"
+                            else None,
                             "classes": classes,
                             "cam_file": str(cam_file),
                             "cam_size": list(cam_size),
@@ -3696,19 +4394,23 @@ async def _run_external_validation_patch_classification(
                         }
 
                         result_file = wsi_result_dir / f"extval_{task_id}_result.json"
-                        with open(result_file, 'w', encoding='utf-8') as f:
+                        with open(result_file, "w", encoding="utf-8") as f:
                             json.dump(result_data, f, ensure_ascii=False, indent=2)
 
-                        all_results.append({
-                            "wsi_id": wsi_id,
-                            "pred": pred_label,
-                            "probs": probs_dict,
-                            "gt_label": gt_label,
-                            "correct": pred_label == gt_label if gt_label != "unknown" else None,
-                            "cam_file": str(cam_file),
-                            "cam_size": list(cam_size),
-                            "result_file": str(result_file),
-                        })
+                        all_results.append(
+                            {
+                                "wsi_id": wsi_id,
+                                "pred": pred_label,
+                                "probs": probs_dict,
+                                "gt_label": gt_label,
+                                "correct": pred_label == gt_label
+                                if gt_label != "unknown"
+                                else None,
+                                "cam_file": str(cam_file),
+                                "cam_size": list(cam_size),
+                                "result_file": str(result_file),
+                            }
+                        )
                         results_saved += 1
                     except Exception as e:
                         logger.warning(f"Failed to process {wsi_id}: {e}")
@@ -3738,16 +4440,20 @@ async def _run_external_validation_patch_classification(
                         "cam_file": r["cam_file"],
                         "cam_size": r["cam_size"],
                         "result_file": r["result_file"],
-                    }
+                    },
                 }
                 await AIResultRepository.create(db, db_result_data)
             await db.commit()
 
         await clear_progress(task_id)
-        await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
+        await update_task_progress(
+            TaskStatus.COMPLETED, 100, results_saved, results_saved
+        )
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Patch classification external validation completed: {results_saved}/{total_items} images processed")
+            await tl.info(
+                f"Patch classification external validation completed: {results_saved}/{total_items} images processed"
+            )
 
         # Auto-trigger analysis
         await _auto_trigger_external_validation_analysis(
@@ -3759,7 +4465,10 @@ async def _run_external_validation_patch_classification(
 
     except Exception as e:
         import traceback
-        logger.error(f"Patch classification external validation {task_id} failed: {e}\n{traceback.format_exc()}")
+
+        logger.error(
+            f"Patch classification external validation {task_id} failed: {e}\n{traceback.format_exc()}"
+        )
         try:
             await clear_progress(task_id)
             async with logger_manager.session() as (tl, _db):
@@ -3770,25 +4479,30 @@ async def _run_external_validation_patch_classification(
     finally:
         try:
             import gc
+
             gc.collect()
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
         except Exception as cleanup_err:
-            logger.warning(f"Patch ext-val {task_id}: VRAM cleanup failed: {cleanup_err}")
+            logger.warning(
+                f"Patch ext-val {task_id}: VRAM cleanup failed: {cleanup_err}"
+            )
 
 
 async def _run_external_validation(
     task_id: str,
     model_task_id: str,
     model_id: str,
-    model_classes: List[str],
+    model_classes: Optional[List[str]],
     model_task_type: str,  # "classification", "wsi_classification", "survival", "wsi_survival", "patch_classification"
     model_data_type: str = "wsi",  # "wsi" or "patch"
     dataset_id: str = "",
-    wsi_ids: List[str] = None,
-    assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
+    wsi_ids: Optional[List[str]] = None,
+    assigned_device: Optional[
+        str
+    ] = None,  # GPU device assigned by task queue (e.g., "cuda:0")
 ):
     """Background task to run external validation.
 
@@ -3813,7 +4527,11 @@ async def _run_external_validation(
     from backend.common.progress_store import set_progress, clear_progress
     from gateway.pipeline import ScopedLogger
     from gateway.dependencies import AI_SERVICE_URL
-    from backend.ai.tasks.feature_cache import compute_params_hash, find_cached_features, create_symlink_to_cache
+    from backend.ai.tasks.feature_cache import (
+        compute_params_hash,
+        find_cached_features,
+        create_symlink_to_cache,
+    )
     from gateway.utils import ensure_coords_ready
 
     wsi_ids = wsi_ids or []
@@ -3827,17 +4545,26 @@ async def _run_external_validation(
     # Determine if this is a survival task
     is_survival = model_task_type in ("survival", "wsi_survival")
 
-    async def update_task_progress(status: str, progress: int, processed_wsi: int = 0,
-                                   results_count: int = 0, error_msg: str = None):
+    async def update_task_progress(
+        status: str,
+        progress: int,
+        processed_wsi: int = 0,
+        results_count: int = 0,
+        error_msg: Optional[str] = None,
+    ):
         """Helper to update task status in database. Uses safe_session for background tasks."""
         async with safe_session() as db:
             # Update status and progress
-            await TrainingTaskRepository.update_status(db, task_id, status, progress, error_msg)
+            await TrainingTaskRepository.update_status(
+                db, task_id, status, progress, error_msg
+            )
 
             # Update model_config with processed_wsi and results_count
             task = await TrainingTaskRepository.get_by_id(db, task_id)
-            if task:
-                model_config = task.model_config or {}
+            if isinstance(task, TrainingTask):
+                model_config = (
+                    task.model_config if isinstance(task.model_config, dict) else {}
+                )
                 model_config["processed_wsi"] = processed_wsi
                 model_config["results_count"] = results_count
                 await db.execute(
@@ -3852,7 +4579,9 @@ async def _run_external_validation(
         await update_task_progress(TaskStatus.PATCHING, 0)
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Starting external validation for task: {task_id}")
-            await tl.info(f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Data type: {model_data_type} | Task type: {model_task_type}")
+            await tl.info(
+                f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Data type: {model_data_type} | Task type: {model_task_type}"
+            )
 
         uploads_dir = Config.get_uploads_dir()
 
@@ -3860,7 +4589,10 @@ async def _run_external_validation(
         # Patch-level tasks: branch to dedicated handlers
         # ================================================================
         if model_data_type == "patch":
-            is_patch_segmentation = model_task_type in ("patch_segmentation", "segmentation")
+            is_patch_segmentation = model_task_type in (
+                "patch_segmentation",
+                "segmentation",
+            )
             if is_patch_segmentation:
                 await _run_external_validation_patch_segmentation(
                     task_id=task_id,
@@ -3868,7 +4600,7 @@ async def _run_external_validation(
                     model_id=model_id,
                     dataset_id=dataset_id,
                     wsi_ids=wsi_ids,
-                    assigned_device=assigned_device,
+                    assigned_device=assigned_device or "",
                     logger_manager=logger_manager,
                     update_task_progress=update_task_progress,
                 )
@@ -3879,10 +4611,10 @@ async def _run_external_validation(
                 task_id=task_id,
                 model_task_id=model_task_id,
                 model_id=model_id,
-                model_classes=model_classes,
+                model_classes=model_classes or [],
                 dataset_id=dataset_id,
                 wsi_ids=wsi_ids,
-                assigned_device=assigned_device,
+                assigned_device=assigned_device or "",
                 logger_manager=logger_manager,
                 update_task_progress=update_task_progress,
             )
@@ -3892,7 +4624,11 @@ async def _run_external_validation(
         # CPU-intensive (pickle deserialization) and would block the event loop.
         model_dir = uploads_dir / "models" / model_id
         config_path = model_dir / "config.json"
-        device = assigned_device if assigned_device else ("cuda" if torch.cuda.is_available() else "cpu")
+        device = (
+            assigned_device
+            if assigned_device
+            else ("cuda" if torch.cuda.is_available() else "cpu")
+        )
 
         def _sync_load_models():
             """Load model config and checkpoint(s). Runs in thread to avoid blocking event loop."""
@@ -3900,7 +4636,7 @@ async def _run_external_validation(
 
             _config = {}
             if config_path.exists():
-                with open(config_path, 'r') as f:
+                with open(config_path, "r") as f:
                     _config = json.load(f)
 
             _is_kfold = _config.get("split_type") == "kfold"
@@ -3911,19 +4647,26 @@ async def _run_external_validation(
             _bin_edges = None
 
             if _is_kfold:
-                logger.info(f"K-fold model detected with {_num_folds} folds, loading all checkpoints")
+                logger.info(
+                    f"K-fold model detected with {_num_folds} folds, loading all checkpoints"
+                )
                 _all_fold_bin_edges = []
                 for fold_idx in range(_num_folds):
                     fold_ckpt_path = model_dir / f"fold_{fold_idx}" / "aggregator.pth"
                     if not fold_ckpt_path.exists():
-                        raise FileNotFoundError(f"Fold {fold_idx} checkpoint not found: {fold_ckpt_path}")
+                        raise FileNotFoundError(
+                            f"Fold {fold_idx} checkpoint not found: {fold_ckpt_path}"
+                        )
 
                     checkpoint = torch.load(fold_ckpt_path, map_location=device)
-                    fold_model = get_aggregator(
-                        _aggregator_name,
-                        in_dim=checkpoint["in_dim"],
-                        num_classes=checkpoint["num_classes"]
-                    ).to(device)
+                    fold_model = type_cast(
+                        "Any",
+                        get_aggregator(
+                            _aggregator_name,
+                            in_dim=checkpoint["in_dim"],
+                            num_classes=checkpoint["num_classes"],
+                        ).to(device),
+                    )
                     fold_model.load_state_dict(checkpoint["state_dict"])
                     fold_model.eval()
                     _models.append(fold_model)
@@ -3931,7 +4674,11 @@ async def _run_external_validation(
                     if is_survival:
                         fold_be = checkpoint.get("bin_edges")
                         if fold_be is not None:
-                            fold_be = np.array(fold_be) if not isinstance(fold_be, np.ndarray) else fold_be
+                            fold_be = (
+                                np.array(fold_be)
+                                if not isinstance(fold_be, np.ndarray)
+                                else fold_be
+                            )
                             _all_fold_bin_edges.append(fold_be)
 
                 # Average bin_edges across all folds for ensemble survival model
@@ -3949,11 +4696,14 @@ async def _run_external_validation(
                     raise FileNotFoundError(f"Model checkpoint not found: {ckpt_path}")
 
                 checkpoint = torch.load(ckpt_path, map_location=device)
-                _model = get_aggregator(
-                    _aggregator_name,
-                    in_dim=checkpoint["in_dim"],
-                    num_classes=checkpoint["num_classes"]
-                ).to(device)
+                _model = type_cast(
+                    "Any",
+                    get_aggregator(
+                        _aggregator_name,
+                        in_dim=checkpoint["in_dim"],
+                        num_classes=checkpoint["num_classes"],
+                    ).to(device),
+                )
                 _model.load_state_dict(checkpoint["state_dict"])
                 _model.eval()
                 _models.append(_model)
@@ -3961,63 +4711,106 @@ async def _run_external_validation(
                 if is_survival:
                     _bin_edges = checkpoint.get("bin_edges")
                     if _bin_edges is not None:
-                        _bin_edges = np.array(_bin_edges) if not isinstance(_bin_edges, np.ndarray) else _bin_edges
+                        _bin_edges = (
+                            np.array(_bin_edges)
+                            if not isinstance(_bin_edges, np.ndarray)
+                            else _bin_edges
+                        )
 
-            _has_raw_attention = hasattr(_models[0], 'forward_with_raw_attention')
-            return _models, _bin_edges, _has_raw_attention, _config, _is_kfold, _num_folds, _aggregator_name
+            _has_raw_attention = hasattr(_models[0], "forward_with_raw_attention")
+            return (
+                _models,
+                _bin_edges,
+                _has_raw_attention,
+                _config,
+                _is_kfold,
+                _num_folds,
+                _aggregator_name,
+            )
 
-        models, bin_edges, has_raw_attention, config, is_kfold, num_folds, aggregator_name = await asyncio.to_thread(_sync_load_models)
+        (
+            models,
+            bin_edges,
+            has_raw_attention,
+            config,
+            is_kfold,
+            num_folds,
+            aggregator_name,
+        ) = await asyncio.to_thread(_sync_load_models)
 
         async with logger_manager.session() as (tl, _db):
             if is_kfold:
-                await tl.info(f"Loaded k-fold model ({num_folds} folds) on device: {device}, aggregator: {aggregator_name}")
+                await tl.info(
+                    f"Loaded k-fold model ({num_folds} folds) on device: {device}, aggregator: {aggregator_name}"
+                )
             else:
-                await tl.info(f"Loaded model on device: {device}, aggregator: {aggregator_name}")
+                await tl.info(
+                    f"Loaded model on device: {device}, aggregator: {aggregator_name}"
+                )
 
         # Use classes from TrainedModel directly (for classification)
-        classes = model_classes
+        classes = model_classes or []
 
         # Get test dataset's data_level and ground truth data
         is_case_level = False
         wsi_case_map: Dict[str, str] = {}
+        survival_data: Dict[str, Dict[str, Any]] = {}
+        labels: Dict[str, int] = {}
 
         async with safe_session() as db:
             # Get aggregation_level from target dataset
-            aggregation_level = await DatasetRepository.get_aggregation_level(db, dataset_id)
+            aggregation_level = await DatasetRepository.get_aggregation_level(
+                db, dataset_id
+            )
             is_case_level = aggregation_level == "case"
-            logger.info(f"External validation: target dataset aggregation_level = {aggregation_level}, is_case_level = {is_case_level}")
+            logger.info(
+                f"External validation: target dataset aggregation_level = {aggregation_level}, is_case_level = {is_case_level}"
+            )
 
             if is_case_level:
                 # Get case_id mapping for case-level inference
                 wsi_case_map = await DatasetRepository.get_wsi_case_ids(db, dataset_id)
-                logger.info(f"External validation: loaded case_id mapping for {len(wsi_case_map)} WSIs")
+                logger.info(
+                    f"External validation: loaded case_id mapping for {len(wsi_case_map)} WSIs"
+                )
 
             # Batch-fetch all WSI metadata in one query (avoids N+1 query problem)
             wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
 
             # Get user_id from the task for saving results later
             task_record = await TrainingTaskRepository.get_by_id(db, task_id)
-            task_user_id = str(task_record.user_id) if task_record and task_record.user_id else None
+            task_user_id = (
+                str(task_record.user_id)
+                if isinstance(task_record, TrainingTask)
+                and isinstance(task_record.user_id, str)
+                else None
+            )
 
             if is_survival:
                 # For survival: get event_time and event_status from WSI metadata
-                survival_data = {}
                 for wsi_id in wsi_ids:
                     wsi = wsi_map.get(wsi_id)
                     if wsi:
-                        event_time = getattr(wsi, 'event_time', None) or (wsi.extra_metadata or {}).get('event_time')
-                        event_status = getattr(wsi, 'event_status', None) or (wsi.extra_metadata or {}).get('event_status')
+                        event_time = getattr(wsi, "event_time", None) or (
+                            wsi.extra_metadata or {}
+                        ).get("event_time")
+                        event_status = getattr(wsi, "event_status", None) or (
+                            wsi.extra_metadata or {}
+                        ).get("event_status")
                         if event_time is not None:
                             survival_data[wsi_id] = {
                                 "event_time": float(event_time),
-                                "event_status": int(event_status or 0)
+                                "event_status": int(event_status or 0),
                             }
             else:
                 # For classification: get class labels
-                labels = {}
                 for wsi_id in wsi_ids:
                     wsi = wsi_map.get(wsi_id)
-                    if wsi and wsi.label and wsi.label in classes:
+                    if (
+                        wsi is not None
+                        and isinstance(wsi.label, str)
+                        and wsi.label in classes
+                    ):
                         labels[wsi_id] = classes.index(wsi.label)
 
         # ================================================================
@@ -4031,7 +4824,9 @@ async def _run_external_validation(
         # Get preprocessing_config from the validation task record
         async with safe_session() as db:
             val_task = await TrainingTaskRepository.get_by_id(db, task_id)
-            preprocessing_config = (val_task.preprocessing_config if val_task else {}) or {}
+            preprocessing_config = (
+                val_task.preprocessing_config if val_task else {}
+            ) or {}
 
         feature_extractor = preprocessing_config.get("feature_extractor", "resnet50")
 
@@ -4079,7 +4874,9 @@ async def _run_external_validation(
 
         def _check_feature_cache():
             for wsi_id in wsi_ids:
-                cached_path = find_cached_features(uploads_dir, feature_extractor, params_hash, wsi_id)
+                cached_path = find_cached_features(
+                    uploads_dir, feature_extractor, params_hash, wsi_id
+                )
                 if cached_path is not None:
                     create_symlink_to_cache(features_dir, wsi_id, cached_path)
                     cached_wsi_ids.append(wsi_id)
@@ -4089,7 +4886,9 @@ async def _run_external_validation(
         await asyncio.to_thread(_check_feature_cache)
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Feature cache: {len(cached_wsi_ids)}/{len(wsi_ids)} WSIs found in global cache (hash={params_hash})")
+            await tl.info(
+                f"Feature cache: {len(cached_wsi_ids)}/{len(wsi_ids)} WSIs found in global cache (hash={params_hash})"
+            )
 
         # Step 2: If features are missing, extract them via preprocessing + AI services
         # with resilient fallback: skip problematic WSIs instead of failing the entire task
@@ -4098,7 +4897,9 @@ async def _run_external_validation(
 
         if missing_wsi_ids:
             async with logger_manager.session() as (tl, _db):
-                await tl.info(f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache...")
+                await tl.info(
+                    f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache..."
+                )
 
             # Update status to EXTRACTING so frontend shows feature extraction stage
             await update_task_progress(TaskStatus.EXTRACTING, 5)
@@ -4115,20 +4916,26 @@ async def _run_external_validation(
                 coords_result = None
                 coords_error = None
 
-                async def _log_retry(attempt: int, max_retries: int, retry_err: Exception, wait_secs: int):
+                async def _log_retry(
+                    attempt: int, max_retries: int, retry_err: Exception, wait_secs: int
+                ):
                     async with logger_manager.session() as (tl, _db):
                         await tl.warning(
                             f"[{idx}/{total_missing}] compute_patches attempt {attempt}/{max_retries} "
                             f"failed for {wsi_id}: {type(retry_err).__name__}. "
                             f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
-                            metadata={"wsi_id": wsi_id, "attempt": attempt, "error": str(retry_err)}
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "attempt": attempt,
+                                "error": str(retry_err),
+                            },
                         )
 
                 async def _log_lock_wait(wait_seconds: float):
                     async with logger_manager.session() as (tl, _db):
                         await tl.info(
                             f"[{idx}/{total_missing}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
-                            metadata={"wsi_id": wsi_id, "wait_seconds": wait_seconds}
+                            metadata={"wsi_id": wsi_id, "wait_seconds": wait_seconds},
                         )
 
                 try:
@@ -4143,22 +4950,28 @@ async def _run_external_validation(
                 except httpx.HTTPStatusError as http_err:
                     coords_error = http_err
                     try:
-                        resp_body = http_err.response.text[:500] if http_err.response else ""
+                        resp_body = (
+                            http_err.response.text[:500] if http_err.response else ""
+                        )
                     except Exception:
                         resp_body = "(unable to read response body)"
                     async with logger_manager.session() as (tl, _db):
                         await tl.warning(
                             f"[{idx}/{total_missing}] Patch extraction failed for {wsi_id}: "
                             f"HTTP {http_err.response.status_code if http_err.response else 'N/A'} - {resp_body}",
-                            metadata={"wsi_id": wsi_id, "error": str(http_err), "response_body": resp_body}
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "error": str(http_err),
+                                "response_body": resp_body,
+                            },
                         )
                 except Exception as e:
                     coords_error = e
 
                 # Handle result
                 if coords_result is not None:
-                    num_patches = coords_result.get('num_patches', 0)
-                    cached = coords_result.get('cached', False)
+                    num_patches = coords_result.get("num_patches", 0)
+                    cached = coords_result.get("cached", False)
 
                     if num_patches == 0:
                         # 0 patches = no detectable tissue (even after adaptive seg_level fallback)
@@ -4166,7 +4979,7 @@ async def _run_external_validation(
                             await tl.warning(
                                 f"[{idx}/{total_missing}] Skipping {wsi_id}: 0 patches extracted "
                                 f"(no detectable tissue after adaptive seg_level fallback)",
-                                metadata={"wsi_id": wsi_id, "num_patches": 0}
+                                metadata={"wsi_id": wsi_id, "num_patches": 0},
                             )
                         failed_wsi_ids.append(wsi_id)
                         failed_reasons[wsi_id] = "0 patches (no detectable tissue)"
@@ -4176,31 +4989,51 @@ async def _run_external_validation(
                             await tl.warning(
                                 f"[{idx}/{total_missing}] Skipping {wsi_id}: only {num_patches} patches "
                                 f"(minimum {MIN_PATCHES_THRESHOLD} required for reliable inference)",
-                                metadata={"wsi_id": wsi_id, "num_patches": num_patches, "threshold": MIN_PATCHES_THRESHOLD}
+                                metadata={
+                                    "wsi_id": wsi_id,
+                                    "num_patches": num_patches,
+                                    "threshold": MIN_PATCHES_THRESHOLD,
+                                },
                             )
                         failed_wsi_ids.append(wsi_id)
-                        failed_reasons[wsi_id] = f"low patches ({num_patches} < {MIN_PATCHES_THRESHOLD})"
+                        failed_reasons[wsi_id] = (
+                            f"low patches ({num_patches} < {MIN_PATCHES_THRESHOLD})"
+                        )
                     else:
                         coords_success_wsi_ids.append(wsi_id)
                         async with logger_manager.session() as (tl, _db):
                             if cached:
                                 await tl.info(
                                     f"[{idx}/{total_missing}] Coords cache hit for {wsi_id} ({num_patches} patches)",
-                                    metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": True}
+                                    metadata={
+                                        "wsi_id": wsi_id,
+                                        "num_patches": num_patches,
+                                        "cached": True,
+                                    },
                                 )
                             else:
                                 await tl.info(
                                     f"[{idx}/{total_missing}] Extracted {num_patches} patches from {wsi_id}",
-                                    metadata={"wsi_id": wsi_id, "num_patches": num_patches, "cached": False}
+                                    metadata={
+                                        "wsi_id": wsi_id,
+                                        "num_patches": num_patches,
+                                        "cached": False,
+                                    },
                                 )
                 else:
                     # Coords extraction failed after retries
-                    err_type = type(coords_error).__name__ if coords_error else "Unknown"
+                    err_type = (
+                        type(coords_error).__name__ if coords_error else "Unknown"
+                    )
                     err_msg = str(coords_error) if coords_error else "Unknown error"
                     async with logger_manager.session() as (tl, _db):
                         await tl.error(
                             f"[{idx}/{total_missing}] Skipping {wsi_id}: coords extraction failed - [{err_type}] {err_msg}",
-                            metadata={"wsi_id": wsi_id, "error": err_msg, "error_type": err_type}
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "error": err_msg,
+                                "error_type": err_type,
+                            },
                         )
                     failed_wsi_ids.append(wsi_id)
                     failed_reasons[wsi_id] = f"coords failed: {err_type}"
@@ -4219,17 +5052,20 @@ async def _run_external_validation(
                         "success_count": len(coords_success_wsi_ids),
                         "failed_count": len(failed_wsi_ids),
                         "failed_wsi_ids": failed_wsi_ids[:20],  # Cap at 20 for log size
-                    }
+                    },
                 )
 
             # Step 2b: Feature extraction via AI service (only for WSIs with valid coords)
             if coords_success_wsi_ids:
                 feature_batch_size = preprocessing_config.get("feature_batch_size", 64)
                 from gateway.pipeline import get_training_timeout
+
                 timeout = get_training_timeout()
 
                 async with logger_manager.session() as (tl, _db):
-                    await tl.info(f"Calling AI service for feature extraction (using {feature_extractor}) on {len(coords_success_wsi_ids)} WSIs")
+                    await tl.info(
+                        f"Calling AI service for feature extraction (using {feature_extractor}) on {len(coords_success_wsi_ids)} WSIs"
+                    )
 
                 await update_task_progress(TaskStatus.EXTRACTING, 30)
                 await set_progress(task_id, 30)
@@ -4252,21 +5088,32 @@ async def _run_external_validation(
                         resp.raise_for_status()
                         feat_result = resp.json()
                         # Check for skipped WSIs from feature extraction
-                        feat_skipped = feat_result.get("skipped_wsi_ids", []) if feat_result else []
+                        feat_skipped = (
+                            feat_result.get("skipped_wsi_ids", [])
+                            if feat_result
+                            else []
+                        )
                         if feat_skipped:
                             for skip_wsi in feat_skipped:
                                 if skip_wsi not in failed_wsi_ids:
                                     failed_wsi_ids.append(skip_wsi)
-                                    failed_reasons[skip_wsi] = "feature extraction skipped (low patches)"
+                                    failed_reasons[skip_wsi] = (
+                                        "feature extraction skipped (low patches)"
+                                    )
                             async with logger_manager.session() as (tl, _db):
                                 await tl.warning(
                                     f"AI service skipped {len(feat_skipped)} WSIs during feature extraction: {feat_skipped[:10]}",
-                                    metadata={"skipped_count": len(feat_skipped), "skipped_wsi_ids": feat_skipped[:20]}
+                                    metadata={
+                                        "skipped_count": len(feat_skipped),
+                                        "skipped_wsi_ids": feat_skipped[:20],
+                                    },
                                 )
                 except httpx.HTTPStatusError as e:
                     body = e.response.text if e.response is not None else str(e)
                     async with logger_manager.session() as (tl, _db):
-                        await tl.error(f"Feature extraction failed: {e}", metadata={"body": body})
+                        await tl.error(
+                            f"Feature extraction failed: {e}", metadata={"body": body}
+                        )
                     raise
                 except httpx.TimeoutException as e:
                     async with logger_manager.session() as (tl, _db):
@@ -4274,7 +5121,9 @@ async def _run_external_validation(
                     raise
 
                 async with logger_manager.session() as (tl, _db):
-                    await tl.info(f"Feature extraction completed for {len(coords_success_wsi_ids)} WSIs")
+                    await tl.info(
+                        f"Feature extraction completed for {len(coords_success_wsi_ids)} WSIs"
+                    )
 
                 await update_task_progress(TaskStatus.EXTRACTING, 33)
                 await set_progress(task_id, 33)
@@ -4286,13 +5135,17 @@ async def _run_external_validation(
                     valid_wsi_ids = []
                     invalid_wsi_ids = []
                     for wsi_id in coords_success_wsi_ids:
-                        cached_path = find_cached_features(uploads_dir, feature_extractor, params_hash, wsi_id)
+                        cached_path = find_cached_features(
+                            uploads_dir, feature_extractor, params_hash, wsi_id
+                        )
                         if cached_path is None:
                             invalid_wsi_ids.append((wsi_id, "no cached features found"))
                             continue
 
                         # Validate the feature file is not corrupted/empty
-                        feats, load_error = safe_load_features(cached_path, delete_if_corrupted=True)
+                        feats, load_error = safe_load_features(
+                            cached_path, delete_if_corrupted=True
+                        )
                         if feats is None:
                             invalid_wsi_ids.append((wsi_id, f"corrupted: {load_error}"))
                             continue
@@ -4302,7 +5155,12 @@ async def _run_external_validation(
                             continue
 
                         if feats.shape[0] < MIN_PATCHES_THRESHOLD:
-                            invalid_wsi_ids.append((wsi_id, f"low patches ({feats.shape[0]} < {MIN_PATCHES_THRESHOLD})"))
+                            invalid_wsi_ids.append(
+                                (
+                                    wsi_id,
+                                    f"low patches ({feats.shape[0]} < {MIN_PATCHES_THRESHOLD})",
+                                )
+                            )
                             continue
 
                         # Feature is valid - create symlink
@@ -4311,7 +5169,9 @@ async def _run_external_validation(
 
                     return valid_wsi_ids, invalid_wsi_ids
 
-                valid_wsi_ids, invalid_wsi_ids = await asyncio.to_thread(_validate_and_symlink_features)
+                valid_wsi_ids, invalid_wsi_ids = await asyncio.to_thread(
+                    _validate_and_symlink_features
+                )
 
                 # Update tracking for invalid features
                 for wsi_id, reason in invalid_wsi_ids:
@@ -4325,8 +5185,10 @@ async def _run_external_validation(
                             f"Feature validation: {len(invalid_wsi_ids)} WSIs have invalid features",
                             metadata={
                                 "invalid_count": len(invalid_wsi_ids),
-                                "invalid_details": {w: r for w, r in invalid_wsi_ids[:20]},
-                            }
+                                "invalid_details": {
+                                    w: r for w, r in invalid_wsi_ids[:20]
+                                },
+                            },
                         )
 
                 # Move valid WSIs to cached list
@@ -4343,8 +5205,10 @@ async def _run_external_validation(
                             "total_wsi": len(wsi_ids),
                             "skipped_count": len(failed_wsi_ids),
                             "skipped_wsi_ids": failed_wsi_ids[:50],
-                            "reasons": {k: v for k, v in list(failed_reasons.items())[:50]},
-                        }
+                            "reasons": {
+                                k: v for k, v in list(failed_reasons.items())[:50]
+                            },
+                        },
                     )
         else:
             # No missing WSIs - all features cached
@@ -4356,12 +5220,17 @@ async def _run_external_validation(
         await set_progress(task_id, 35)
         async with logger_manager.session() as (tl, _db):
             valid_count = len(cached_wsi_ids)
-            await tl.info(f"Features ready for {valid_count}/{len(wsi_ids)} WSIs. Starting inference...")
+            await tl.info(
+                f"Features ready for {valid_count}/{len(wsi_ids)} WSIs. Starting inference..."
+            )
 
         ai_results_root = uploads_dir / "ai_results"
 
         # Import Dataset classes for memory-efficient loading
-        from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
+        from backend.ai.utils.feature_dataset import (
+            WSIFeatureDataset,
+            CaseFeatureDataset,
+        )
 
         # ================================================================
         # Data preparation: build Dataset objects (fast, pure Python)
@@ -4385,25 +5254,26 @@ async def _run_external_validation(
                     case_to_wsi[case_id] = []
                 case_to_wsi[case_id].append(wsi_id)
 
-            # Build case-level survival/label data
-            if is_survival:
-                case_times: Dict[str, float] = {}
-                case_statuses: Dict[str, int] = {}
-                for case_id, case_wsi_ids in case_to_wsi.items():
-                    first_wsi = case_wsi_ids[0]
-                    if first_wsi in survival_data:
-                        case_times[case_id] = survival_data[first_wsi]["event_time"]
-                        case_statuses[case_id] = survival_data[first_wsi]["event_status"]
-                    else:
-                        case_times[case_id] = 0.0
-                        case_statuses[case_id] = 0
-            else:
+            if not is_survival:
                 for case_id, case_wsi_ids in case_to_wsi.items():
                     first_wsi = case_wsi_ids[0]
                     if first_wsi in labels:
                         case_labels_map[case_id] = labels[first_wsi]
 
             case_ids = list(case_to_wsi.keys())
+            case_times: Dict[str, float] = {}
+            case_statuses: Dict[str, int] = {}
+            if is_survival:
+                for case_id, case_wsi_ids in case_to_wsi.items():
+                    first_wsi = case_wsi_ids[0]
+                    if first_wsi in survival_data:
+                        case_times[case_id] = survival_data[first_wsi]["event_time"]
+                        case_statuses[case_id] = survival_data[first_wsi][
+                            "event_status"
+                        ]
+                    else:
+                        case_times[case_id] = 0.0
+                        case_statuses[case_id] = 0
             if is_survival:
                 dataset = CaseFeatureDataset(
                     features_dir=features_dir,
@@ -4424,11 +5294,15 @@ async def _run_external_validation(
                     device=device,
                 )
             total = len(case_ids)
-            logger.info(f"External validation case-level: {total} cases from {len(valid_wsi_ids)} WSIs")
+            logger.info(
+                f"External validation case-level: {total} cases from {len(valid_wsi_ids)} WSIs"
+            )
 
         else:
             # Slide-level: validate feature existence and create dataset
-            valid_wsi_ids = [wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()]
+            valid_wsi_ids = [
+                wsi_id for wsi_id in wsi_ids if (features_dir / f"{wsi_id}.pt").exists()
+            ]
             if not valid_wsi_ids:
                 raise FileNotFoundError("No feature files found for any WSI")
 
@@ -4491,7 +5365,14 @@ async def _run_external_validation(
                         #   survival: (features, time, status, case_id, wsi_ids, patch_counts)
                         #   classification: (features, label, case_id, wsi_ids, patch_counts)
                         if is_survival:
-                            features, _time, _status, item_id, item_wsi_ids, patch_counts = item
+                            (
+                                features,
+                                _time,
+                                _status,
+                                item_id,
+                                item_wsi_ids,
+                                patch_counts,
+                            ) = item
                         else:
                             features, _label, item_id, item_wsi_ids, patch_counts = item
                         case_wsi_patch_counts[item_id] = patch_counts
@@ -4507,60 +5388,102 @@ async def _run_external_validation(
                         item_wsi_ids = [item_id]
                         agg_level = "file"
 
-                    H = features.to(device)
+                    h_features = features.to(device)
 
                     # --- Model inference ---
                     if is_kfold:
                         if is_survival:
+                            hazards = np.array([], dtype=np.float32)
+                            risk_score = 0.0
+                            surv_probs = []
                             all_hazards = []
                             all_attentions = []
                             for fold_model in models:
                                 if has_raw_attention:
-                                    logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                                    logits_f, attn_f, _ = (
+                                        fold_model.forward_with_raw_attention(
+                                            h_features
+                                        )
+                                    )
                                 else:
-                                    logits_f, attn_f = fold_model(H)
-                                hazards_f = torch.sigmoid(logits_f).cpu().numpy().flatten()
+                                    logits_f, attn_f = fold_model(h_features)
+                                hazards_f = (
+                                    torch.sigmoid(logits_f).cpu().numpy().flatten()
+                                )
                                 all_hazards.append(hazards_f)
                                 if attn_f is not None:
                                     all_attentions.append(attn_f.cpu().numpy())
                             hazards = np.mean(all_hazards, axis=0)
                             surv_probs = np.cumprod(1 - hazards).tolist()
                             risk_score = float(np.sum(hazards))
-                            attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                            attention = (
+                                np.mean(all_attentions, axis=0)
+                                if all_attentions
+                                else None
+                            )
                             raw_attention = None
                         else:
+                            probs = np.array([], dtype=np.float32)
                             all_logits = []
                             all_attentions = []
                             for fold_model in models:
                                 if has_raw_attention:
-                                    logits_f, attn_f, _ = fold_model.forward_with_raw_attention(H)
+                                    logits_f, attn_f, _ = (
+                                        fold_model.forward_with_raw_attention(
+                                            h_features
+                                        )
+                                    )
                                 else:
-                                    logits_f, attn_f = fold_model(H)
+                                    logits_f, attn_f = fold_model(h_features)
                                 all_logits.append(logits_f)
                                 if attn_f is not None:
                                     all_attentions.append(attn_f.cpu().numpy())
                             avg_logits = torch.mean(torch.stack(all_logits), dim=0)
-                            probs = F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
-                            attention = np.mean(all_attentions, axis=0) if all_attentions else None
+                            probs = (
+                                F.softmax(avg_logits, dim=-1).squeeze(0).cpu().numpy()
+                            )
+                            attention = (
+                                np.mean(all_attentions, axis=0)
+                                if all_attentions
+                                else None
+                            )
                             raw_attention = None
                     else:
                         _model = models[0]
                         if has_raw_attention:
-                            logits, attention_t, raw_attention_t = _model.forward_with_raw_attention(H)
+                            logits, attention_t, raw_attention_t = (
+                                _model.forward_with_raw_attention(h_features)
+                            )
                         else:
-                            logits, attention_t = _model(H)
+                            logits, attention_t = _model(h_features)
                             raw_attention_t = None
 
                         if is_survival:
                             hazards = torch.sigmoid(logits).cpu().numpy().flatten()
                             surv_probs = np.cumprod(1 - hazards).tolist()
                             risk_score = float(np.sum(hazards))
-                            attention = attention_t.cpu().numpy() if attention_t is not None else None
-                            raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+                            attention = (
+                                attention_t.cpu().numpy()
+                                if attention_t is not None
+                                else None
+                            )
+                            raw_attention = (
+                                raw_attention_t.cpu().numpy()
+                                if raw_attention_t is not None
+                                else None
+                            )
                         else:
                             probs = F.softmax(logits, dim=-1).squeeze(0).cpu().numpy()
-                            attention = attention_t.cpu().numpy() if attention_t is not None else None
-                            raw_attention = raw_attention_t.cpu().numpy() if raw_attention_t is not None else None
+                            attention = (
+                                attention_t.cpu().numpy()
+                                if attention_t is not None
+                                else None
+                            )
+                            raw_attention = (
+                                raw_attention_t.cpu().numpy()
+                                if raw_attention_t is not None
+                                else None
+                            )
 
                     # --- Split attention for case-level ---
                     if is_case_level:
@@ -4572,22 +5495,45 @@ async def _run_external_validation(
                         )
 
                     # --- Build prediction data ---
+                    gt_data: Dict[str, Any] = {}
+                    hazards = np.array([], dtype=np.float32)
+                    risk_score = 0.0
+                    surv_probs: List[float] = []
+                    probs = np.array([], dtype=np.float32)
                     if is_survival:
                         gt_data = survival_data.get(item_id, {})
-                        _chunk_risk_scores.append(float(np.sum(hazards)) if isinstance(hazards, np.ndarray) else risk_score)
+                        _chunk_risk_scores.append(
+                            float(np.sum(hazards))
+                            if isinstance(hazards, np.ndarray)
+                            else risk_score
+                        )
                         pred_label = None
                         probs_dict = None
                         gt_label = None
                     else:
                         pred_idx = int(probs.argmax())
-                        pred_label = classes[pred_idx] if pred_idx < len(classes) else "unknown"
-                        probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
+                        pred_label = (
+                            classes[pred_idx] if pred_idx < len(classes) else "unknown"
+                        )
+                        probs_dict = {
+                            cls: float(probs[i]) for i, cls in enumerate(classes)
+                        }
                         if is_case_level:
-                            gt_label = classes[case_labels_map[item_id]] if item_id in case_labels_map else "unknown"
+                            gt_label = (
+                                classes[case_labels_map[item_id]]
+                                if item_id in case_labels_map
+                                else "unknown"
+                            )
                         else:
-                            gt_label = classes[labels[item_id]] if item_id in labels else "unknown"
+                            gt_label = (
+                                classes[labels[item_id]]
+                                if item_id in labels
+                                else "unknown"
+                            )
 
                     # --- Save per-WSI results ---
+                    slide_attentions: Dict[str, Any] = {}
+                    slide_raw_attentions: Dict[str, Any] = {}
                     for wsi_id in item_wsi_ids:
                         wsi_result_dir = ai_results_root / wsi_id
                         wsi_result_dir.mkdir(parents=True, exist_ok=True)
@@ -4599,7 +5545,11 @@ async def _run_external_validation(
                             slide_attn = attention
                             slide_raw_attn = raw_attention
 
-                        attention_shape = list(slide_attn.shape) if hasattr(slide_attn, "shape") else None
+                        attention_shape = (
+                            list(slide_attn.shape)
+                            if slide_attn is not None and hasattr(slide_attn, "shape")
+                            else None
+                        )
                         if slide_attn is None:
                             attention_type = "none"
                         elif getattr(slide_attn, "ndim", None) == 1:
@@ -4617,11 +5567,15 @@ async def _run_external_validation(
                                 "task_type": "survival",
                                 "aggregation_level": agg_level,
                                 "risk_score": risk_score,
-                                "hazards": hazards.tolist() if isinstance(hazards, np.ndarray) else hazards,
+                                "hazards": hazards.tolist()
+                                if isinstance(hazards, np.ndarray)
+                                else hazards,
                                 "surv_probs": surv_probs,
                                 "event_time": gt_data.get("event_time"),
                                 "event_status": gt_data.get("event_status"),
-                                "bin_edges": bin_edges.tolist() if bin_edges is not None else None,
+                                "bin_edges": bin_edges.tolist()
+                                if bin_edges is not None
+                                else None,
                                 "attention_type": attention_type,
                                 "attention_shape": attention_shape,
                                 "is_kfold": is_kfold,
@@ -4639,7 +5593,9 @@ async def _run_external_validation(
                                 "pred": pred_label,
                                 "probs": probs_dict,
                                 "ground_truth": gt_label,
-                                "correct": pred_label == gt_label if gt_label != "unknown" else None,
+                                "correct": pred_label == gt_label
+                                if gt_label != "unknown"
+                                else None,
                                 "classes": classes,
                                 "aggregator": aggregator_name,
                                 "attention_type": attention_type,
@@ -4652,16 +5608,23 @@ async def _run_external_validation(
                         attention_file = None
 
                         if slide_raw_attn is not None:
-                            np.save(wsi_result_dir / f"extval_{task_id}_attention_raw.npy", slide_raw_attn)
+                            np.save(
+                                wsi_result_dir / f"extval_{task_id}_attention_raw.npy",
+                                slide_raw_attn,
+                            )
                         if slide_attn is not None:
-                            attention_file = wsi_result_dir / f"extval_{task_id}_attention.npy"
+                            attention_file = (
+                                wsi_result_dir / f"extval_{task_id}_attention.npy"
+                            )
                             np.save(attention_file, slide_attn)
-                            ensure_recommendation_preview_cache(wsi_id, attention_file, Config.get_uploads_dir())
+                            ensure_recommendation_preview_cache(
+                                wsi_id, attention_file, Config.get_uploads_dir()
+                            )
 
                         if attention_file is not None:
                             result_data["attention_file"] = str(attention_file)
 
-                        with open(result_file, 'w', encoding='utf-8') as f:
+                        with open(result_file, "w", encoding="utf-8") as f:
                             json.dump(result_data, f, ensure_ascii=False, indent=2)
 
                         if is_survival:
@@ -4670,27 +5633,38 @@ async def _run_external_validation(
                         _chunk_saved += 1
 
                         # Collect DB record
-                        _chunk_db_records.append({
-                            "wsi_id": wsi_id,
-                            "task_id": task_id,
-                            "user_id": task_user_id,
-                            "pred": pred_label,
-                            "probs": probs_dict,
-                            "extra_metadata": {
-                                "validation_type": "external",
-                                "model_task_id": model_task_id,
-                                "dataset_id": dataset_id,
-                                "aggregation_level": agg_level,
-                                "case_id": item_id if is_case_level else None,
-                                "task_type": "survival" if is_survival else "classification",
-                                "attention_type": attention_type,
-                                "attention_shape": attention_shape,
-                                "attention_file": str(attention_file) if attention_file is not None else None,
-                                "result_file": str(result_file),
-                            },
-                        })
+                        _chunk_db_records.append(
+                            {
+                                "wsi_id": wsi_id,
+                                "task_id": task_id,
+                                "user_id": task_user_id,
+                                "pred": pred_label,
+                                "probs": probs_dict,
+                                "extra_metadata": {
+                                    "validation_type": "external",
+                                    "model_task_id": model_task_id,
+                                    "dataset_id": dataset_id,
+                                    "aggregation_level": agg_level,
+                                    "case_id": item_id if is_case_level else None,
+                                    "task_type": "survival"
+                                    if is_survival
+                                    else "classification",
+                                    "attention_type": attention_type,
+                                    "attention_shape": attention_shape,
+                                    "attention_file": str(attention_file)
+                                    if attention_file is not None
+                                    else None,
+                                    "result_file": str(result_file),
+                                },
+                            }
+                        )
 
-            return _chunk_saved, _chunk_risk_scores, _chunk_result_files, _chunk_db_records
+            return (
+                _chunk_saved,
+                _chunk_risk_scores,
+                _chunk_result_files,
+                _chunk_db_records,
+            )
 
         # ================================================================
         # Run inference in CHUNKS to avoid blocking the event loop.
@@ -4708,9 +5682,12 @@ async def _run_external_validation(
 
         for chunk_start in range(0, total, CHUNK_SIZE):
             chunk_end = min(chunk_start + CHUNK_SIZE, total)
-            chunk_saved, chunk_risk_scores, chunk_result_files, chunk_db_records = await asyncio.to_thread(
-                _sync_run_chunk, chunk_start, chunk_end
-            )
+            (
+                chunk_saved,
+                chunk_risk_scores,
+                chunk_result_files,
+                chunk_db_records,
+            ) = await asyncio.to_thread(_sync_run_chunk, chunk_start, chunk_end)
             results_saved += chunk_saved
             db_records.extend(chunk_db_records)
             if is_survival:
@@ -4729,18 +5706,24 @@ async def _run_external_validation(
         # Run in thread to avoid blocking the event loop.
         if is_survival and all_risk_scores:
             median_risk_score = float(np.median(all_risk_scores))
-            logger.info(f"Survival external validation: median risk score = {median_risk_score:.4f}")
+            logger.info(
+                f"Survival external validation: median risk score = {median_risk_score:.4f}"
+            )
 
             def _sync_update_survival_result_files():
                 for result_file, wsi_id in saved_result_files:
-                    with open(result_file, 'r') as f:
+                    with open(result_file, "r") as f:
                         result_data = json.load(f)
 
-                    risk_group = "High Risk" if result_data["risk_score"] >= median_risk_score else "Low Risk"
+                    risk_group = (
+                        "High Risk"
+                        if result_data["risk_score"] >= median_risk_score
+                        else "Low Risk"
+                    )
                     result_data["median_risk_score"] = median_risk_score
                     result_data["risk_group"] = risk_group
 
-                    with open(result_file, 'w', encoding='utf-8') as f:
+                    with open(result_file, "w", encoding="utf-8") as f:
                         json.dump(result_data, f, ensure_ascii=False, indent=2)
 
             await asyncio.to_thread(_sync_update_survival_result_files)
@@ -4753,19 +5736,27 @@ async def _run_external_validation(
                 await db.commit()
             logger.info(f"Saved {len(db_records)} results to database")
 
-        await update_task_progress(TaskStatus.TRAINING, 95, results_saved, results_saved)
+        await update_task_progress(
+            TaskStatus.TRAINING, 95, results_saved, results_saved
+        )
 
         # Clear file-based progress (task is finishing)
         await clear_progress(task_id)
 
         # Mark as completed
-        await update_task_progress(TaskStatus.COMPLETED, 100, results_saved, results_saved)
+        await update_task_progress(
+            TaskStatus.COMPLETED, 100, results_saved, results_saved
+        )
         case_level_msg = " (case-level)" if is_case_level else ""
         kfold_msg = f" (k-fold: {num_folds} folds averaged)" if is_kfold else ""
-        logger.info(f"External validation {task_id} completed: {results_saved} results (type: {'survival' if is_survival else 'classification'}){case_level_msg}{kfold_msg}")
+        logger.info(
+            f"External validation {task_id} completed: {results_saved} results (type: {'survival' if is_survival else 'classification'}){case_level_msg}{kfold_msg}"
+        )
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"External validation completed: {results_saved} results saved{case_level_msg}{kfold_msg}")
+            await tl.info(
+                f"External validation completed: {results_saved} results saved{case_level_msg}{kfold_msg}"
+            )
 
         # Auto-trigger analysis after inference completes
         await _auto_trigger_external_validation_analysis(
@@ -4777,7 +5768,10 @@ async def _run_external_validation(
 
     except Exception as e:
         import traceback
-        logger.error(f"External validation {task_id} failed: {e}\n{traceback.format_exc()}")
+
+        logger.error(
+            f"External validation {task_id} failed: {e}\n{traceback.format_exc()}"
+        )
 
         # For HTTPStatusError, extract the actual error detail from the response body
         # instead of the generic "Server error '500 Internal Server Error' for url ..." message
@@ -4806,6 +5800,7 @@ async def _run_external_validation(
         try:
             import gc
             from backend.ai.utils.feature_dataset import clear_feature_cache
+
             clear_feature_cache()
             gc.collect()
             gc.collect()  # Second pass for cyclic references
@@ -4814,9 +5809,13 @@ async def _run_external_validation(
                 torch.cuda.synchronize()
                 logger.info(f"External validation {task_id}: GPU memory cleaned up")
             else:
-                logger.info(f"External validation {task_id}: gc.collect() done (no GPU)")
+                logger.info(
+                    f"External validation {task_id}: gc.collect() done (no GPU)"
+                )
         except Exception as cleanup_err:
-            logger.warning(f"External validation {task_id}: VRAM cleanup failed: {cleanup_err}")
+            logger.warning(
+                f"External validation {task_id}: VRAM cleanup failed: {cleanup_err}"
+            )
 
 
 async def _auto_trigger_external_validation_analysis(
@@ -4854,7 +5853,9 @@ async def _auto_trigger_external_validation_analysis(
     analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id
     if analysis_dir.exists():
         for item in _iter_complete_analysis_runs(analysis_dir):
-            logger.info(f"Analysis already exists for external validation {task_id}, skipping auto-trigger")
+            logger.info(
+                f"Analysis already exists for external validation {task_id}, skipping auto-trigger"
+            )
             return
 
     state = get_analysis_state()
@@ -4893,9 +5894,21 @@ async def _auto_trigger_external_validation_analysis(
             title = f"{source_name} → {target_name}"
 
             # Use provided options or get from model_config or use defaults
-            analysis_metrics = metrics or model_config.get("analysis_metrics") or ["accuracy", "precision", "recall", "f1", "auc", "weighted_kappa"]
-            analysis_charts = charts or model_config.get("analysis_charts") or ["confusion_matrix", "roc_curve"]
-            analysis_bootstrap_ci = bootstrap_ci_metrics if bootstrap_ci_metrics is not None else (model_config.get("bootstrap_ci_metrics") or [])
+            analysis_metrics = (
+                metrics
+                or model_config.get("analysis_metrics")
+                or ["accuracy", "precision", "recall", "f1", "auc", "weighted_kappa"]
+            )
+            analysis_charts = (
+                charts
+                or model_config.get("analysis_charts")
+                or ["confusion_matrix", "roc_curve"]
+            )
+            analysis_bootstrap_ci = (
+                bootstrap_ci_metrics
+                if bootstrap_ci_metrics is not None
+                else (model_config.get("bootstrap_ci_metrics") or [])
+            )
 
             # Create analysis state entry
             await state.create(
@@ -4903,7 +5916,7 @@ async def _auto_trigger_external_validation_analysis(
                 task_id=task_id,
                 user_id=user_id,
                 title=title,
-                analysis_type="external"
+                analysis_type="external",
             )
 
             # Start analysis pipeline as asyncio task (CPU-only)
@@ -4922,17 +5935,21 @@ async def _auto_trigger_external_validation_analysis(
             )
             # Register task for potential cancellation
             state.register_task(analysis_id, analysis_task)
-            logger.info(f"Auto-triggered analysis for external validation: task_id={task_id}, analysis_id={analysis_id}, bootstrap_ci={len(analysis_bootstrap_ci) > 0}")
+            logger.info(
+                f"Auto-triggered analysis for external validation: task_id={task_id}, analysis_id={analysis_id}, bootstrap_ci={len(analysis_bootstrap_ci) > 0}"
+            )
 
     except Exception as e:
-        logger.error(f"Failed to auto-trigger analysis for external validation {task_id}: {e}")
+        logger.error(
+            f"Failed to auto-trigger analysis for external validation {task_id}: {e}"
+        )
 
 
 @router.get("/tasks/{task_id}/analysis")
 async def get_task_analysis(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get existing analysis results for a task. Users can only view their own tasks.
@@ -4957,7 +5974,7 @@ async def get_task_analysis(
         result = []
         for item in _iter_complete_analysis_runs(analysis_dir):
             summary_file = item / "summary.json"
-            with open(summary_file, 'r') as f:
+            with open(summary_file, "r") as f:
                 summary = json.load(f)
                 summary["analysis_id"] = item.name
                 result.append(summary)
@@ -4979,18 +5996,22 @@ async def get_task_analysis(
         user_map = {}
         if user_ids:
             result = await db.execute(
-                select(User.id, User.nickname, User.email)
-                .where(cast(User.id, String).in_(list(user_ids)))
+                select(User).where(cast(User.id, String).in_(list(user_ids)))
             )
             for row in result.all():
-                uid_str = str(row[0])
-                user_map[uid_str] = row[1] or row[2]  # nickname or email
+                user_obj = row[0]
+                uid_str = str(user_obj.id)
+                user_map[uid_str] = (
+                    user_obj.nickname or user_obj.email
+                )  # nickname or email
 
         # Resolve submitted_by from user_id to display name
         for analysis in analyses:
             submitted_by_id = analysis.get("submitted_by")
             if submitted_by_id:
-                analysis["submitted_by"] = user_map.get(submitted_by_id, submitted_by_id)
+                analysis["submitted_by"] = user_map.get(
+                    submitted_by_id, submitted_by_id
+                )
     else:
         # Non-admin: only show their own analyses, remove submitted_by field
         user_id_str = str(user.id)
@@ -5009,7 +6030,7 @@ async def run_task_analysis(
     task_id: str,
     request: AnalysisRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Submit analysis on a completed training task to background queue.
@@ -5049,14 +6070,18 @@ async def run_task_analysis(
     state = get_analysis_state()
     existing_analyses = await state.get_by_task_id(task_id)
     for existing in existing_analyses:
-        if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.PATCHING):
+        if existing["status"] in (
+            TaskStatus.PENDING,
+            TaskStatus.QUEUED,
+            TaskStatus.PATCHING,
+        ):
             # Return existing pending/queued/running analysis
             return {
                 "task_id": task_id,
                 "analysis_id": existing["analysis_id"],
                 "status": existing["status"],
                 "progress": existing["progress"],
-                "message": "Analysis is already in progress"
+                "message": "Analysis is already in progress",
             }
 
     # Get task_type from DataGroup relationship
@@ -5101,19 +6126,37 @@ async def run_task_analysis(
         analysis_type = "internal"
 
     # Create analysis state entry
-    await state.create(analysis_id, task_id, str(user.id), title=title, analysis_type=analysis_type, task_category=task_category)
+    await state.create(
+        analysis_id,
+        task_id,
+        str(user.id),
+        title=title,
+        analysis_type=analysis_type,
+        task_category=task_category,
+    )
 
     # Check if GPU inference is needed (AI results missing)
     # External validation does not need GPU check here as it handles its own inference flow
     needs_gpu = False
     if not is_external:
         resources = await _check_task_resources(task_id, db)
-        split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
-        is_kfold = task_type_str not in ("segmentation", "patch_segmentation") and split_config.get("strategy", "random") == "k_fold"
-        if _analysis_requires_training_metrics(task_type_str, request.charts, is_kfold) and not resources.get("has_training_metrics", True):
+        split_config = (
+            task.preprocessing_config.get("split_config", {})
+            if task.preprocessing_config
+            else {}
+        )
+        is_kfold = (
+            task_type_str not in ("segmentation", "patch_segmentation")
+            and split_config.get("strategy", "random") == "k_fold"
+        )
+        if _analysis_requires_training_metrics(
+            task_type_str, request.charts, is_kfold
+        ) and not resources.get("has_training_metrics", True):
             raise HTTPException(
                 status_code=409,
-                detail=_missing_training_metrics_message(task_id, resources, request.charts, is_kfold),
+                detail=_missing_training_metrics_message(
+                    task_id, resources, request.charts, is_kfold
+                ),
             )
         needs_gpu = not resources["has_ai_results"]
 
@@ -5135,7 +6178,9 @@ async def run_task_analysis(
             bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
             submitted_by=str(user.id),
         )
-        logger.info(f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}")
+        logger.info(
+            f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}"
+        )
     else:
         # No GPU needed - run directly without queuing
         analysis_task = asyncio.create_task(
@@ -5153,7 +6198,9 @@ async def run_task_analysis(
         )
         # Register task for potential cancellation
         state.register_task(analysis_id, analysis_task)
-        logger.info(f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}")
+        logger.info(
+            f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}"
+        )
 
     # Return immediately with pending/queued status
     return {
@@ -5161,7 +6208,7 @@ async def run_task_analysis(
         "analysis_id": analysis_id,
         "status": TaskStatus.QUEUED if needs_gpu else TaskStatus.PENDING,
         "progress": 0,
-        "message": "Analysis submitted successfully"
+        "message": "Analysis submitted successfully",
     }
 
 
@@ -5186,7 +6233,9 @@ async def stream_analysis_tasks(user: User = Depends(get_user_from_token_param))
             while True:
                 try:
                     # Get all analysis tasks for this user
-                    tasks = await state.get_all(user_id=user_id_filter, max_age_minutes=10)
+                    tasks = await state.get_all(
+                        user_id=user_id_filter, max_age_minutes=10
+                    )
 
                     # Send SSE event
                     data = json.dumps({"items": tasks})
@@ -5208,28 +6257,39 @@ async def stream_analysis_tasks(user: User = Depends(get_user_from_token_param))
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
     )
 
 
 class QuickAnalysisRequest(BaseModel):
     """Request body for quick analysis - specify what metrics/charts to return."""
+
     metrics: Optional[List[str]] = None  # If None, return all available metrics
-    charts: Optional[List[str]] = None   # If None, return all available charts
-    run_if_missing: bool = True           # If True, run analysis if not available
+    charts: Optional[List[str]] = None  # If None, return all available charts
+    run_if_missing: bool = True  # If True, run analysis if not available
 
 
 @router.get("/tasks/{task_id}/quick-analysis")
 async def get_quick_analysis(
     task_id: str,
-    metrics: Optional[str] = Query(None, description="Comma-separated metrics to return (e.g., accuracy,auc,f1)"),
-    charts: Optional[str] = Query(None, description="Comma-separated charts to return (e.g., roc_curve,confusion_matrix)"),
+    metrics: Optional[str] = Query(
+        None, description="Comma-separated metrics to return (e.g., accuracy,auc,f1)"
+    ),
+    charts: Optional[str] = Query(
+        None,
+        description="Comma-separated charts to return (e.g., roc_curve,confusion_matrix)",
+    ),
     run_if_missing: bool = Query(True, description="Run analysis if not available"),
-    bootstrap_ci_metrics: Optional[str] = Query(None, description="Comma-separated metrics to compute 95% CI for (e.g., accuracy,auc)"),
-    compute_bootstrap_ci: bool = Query(False, description="Legacy: compute CI for all metrics if true"),
+    bootstrap_ci_metrics: Optional[str] = Query(
+        None,
+        description="Comma-separated metrics to compute 95% CI for (e.g., accuracy,auc)",
+    ),
+    compute_bootstrap_ci: bool = Query(
+        False, description="Legacy: compute CI for all metrics if true"
+    ),
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get quick analysis results for a task.
@@ -5282,7 +6342,11 @@ async def get_quick_analysis(
         state = get_analysis_state()
         existing_analyses = await state.get_by_task_id(task_id)
         for existing in existing_analyses:
-            if existing["status"] in (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.PATCHING):
+            if existing["status"] in (
+                TaskStatus.PENDING,
+                TaskStatus.QUEUED,
+                TaskStatus.PATCHING,
+            ):
                 # Return existing pending/queued/running analysis
                 return {
                     "task_id": task_id,
@@ -5290,12 +6354,16 @@ async def get_quick_analysis(
                     "has_analysis": False,
                     "status": existing["status"],
                     "progress": existing["progress"],
-                    "message": "Analysis is in progress"
+                    "message": "Analysis is in progress",
                 }
 
         # Get task_type from DataGroup relationship
         quick_task_data_group = task.data_group
-        quick_task_type_str = quick_task_data_group.task_type if quick_task_data_group else "classification"
+        quick_task_type_str = (
+            quick_task_data_group.task_type
+            if quick_task_data_group
+            else "classification"
+        )
 
         # Build meaningful title and metadata for background task display
         is_external = quick_task_type_str == "external_validation"
@@ -5350,7 +6418,14 @@ async def get_quick_analysis(
             default_metrics = ["iou", "dice", "accuracy", "precision", "recall", "f1"]
             default_charts = ["loss_curve", "iou_curve", "dice_curve"]
         else:
-            default_metrics = ["accuracy", "precision", "recall", "specificity", "f1", "auc"]
+            default_metrics = [
+                "accuracy",
+                "precision",
+                "recall",
+                "specificity",
+                "f1",
+                "auc",
+            ]
             default_charts = ["roc_curve", "confusion_matrix", "loss_curve"]
 
         # Parse bootstrap_ci_metrics from query param or use legacy compute_bootstrap_ci
@@ -5363,12 +6438,23 @@ async def get_quick_analysis(
 
         # Check if GPU inference is needed (AI results missing)
         resources = await _check_task_resources(task_id, db)
-        split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
-        is_kfold = quick_task_type_str not in ("segmentation", "patch_segmentation") and split_config.get("strategy", "random") == "k_fold"
-        if _analysis_requires_training_metrics(quick_task_type_str, default_charts, is_kfold) and not resources.get("has_training_metrics", True):
+        split_config = (
+            task.preprocessing_config.get("split_config", {})
+            if task.preprocessing_config
+            else {}
+        )
+        is_kfold = (
+            quick_task_type_str not in ("segmentation", "patch_segmentation")
+            and split_config.get("strategy", "random") == "k_fold"
+        )
+        if _analysis_requires_training_metrics(
+            quick_task_type_str, default_charts, is_kfold
+        ) and not resources.get("has_training_metrics", True):
             raise HTTPException(
                 status_code=409,
-                detail=_missing_training_metrics_message(task_id, resources, default_charts, is_kfold),
+                detail=_missing_training_metrics_message(
+                    task_id, resources, default_charts, is_kfold
+                ),
             )
         needs_gpu = not resources["has_ai_results"]
 
@@ -5390,7 +6476,9 @@ async def get_quick_analysis(
                 bootstrap_ci_metrics=ci_metrics_list,
                 submitted_by=str(user.id),
             )
-            logger.info(f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}")
+            logger.info(
+                f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}"
+            )
         else:
             # No GPU needed - run directly without queuing
             analysis_task = asyncio.create_task(
@@ -5408,7 +6496,9 @@ async def get_quick_analysis(
             )
             # Register task for potential cancellation
             state.register_task(analysis_id, analysis_task)
-            logger.info(f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}")
+            logger.info(
+                f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}"
+            )
 
         # Return immediately with pending/queued status
         return {
@@ -5417,14 +6507,14 @@ async def get_quick_analysis(
             "has_analysis": False,
             "status": TaskStatus.QUEUED if needs_gpu else TaskStatus.PENDING,
             "progress": 0,
-            "message": "Analysis submitted to queue"
+            "message": "Analysis submitted to queue",
         }
 
     if latest_summary is None:
         return {
             "task_id": task_id,
             "has_analysis": False,
-            "message": "No analysis results available. Set run_if_missing=true to generate."
+            "message": "No analysis results available. Set run_if_missing=true to generate.",
         }
 
     # Filter metrics if requested
@@ -5436,8 +6526,10 @@ async def get_quick_analysis(
         if "miou" in requested_metric_keys:
             requested_metric_keys.add("iou")
         result_metrics = {
-            k: v for k, v in result_metrics.items()
-            if k in requested_metric_keys or k.replace("macro_", "") in requested_metric_keys
+            k: v
+            for k, v in result_metrics.items()
+            if k in requested_metric_keys
+            or k.replace("macro_", "") in requested_metric_keys
         }
 
     # Merge bootstrap CI into metrics if available
@@ -5448,13 +6540,20 @@ async def get_quick_analysis(
         merged_metrics = {}
         for metric_name, metric_value in result_metrics.items():
             # Check if we have CI for this metric (try both with and without macro_ prefix)
-            ci_data = metrics_ci.get(metric_name) or metrics_ci.get(metric_name.replace("macro_", ""))
-            if ci_data and isinstance(ci_data, dict) and "ci_lower" in ci_data and "ci_upper" in ci_data:
+            ci_data = metrics_ci.get(metric_name) or metrics_ci.get(
+                metric_name.replace("macro_", "")
+            )
+            if (
+                ci_data
+                and isinstance(ci_data, dict)
+                and "ci_lower" in ci_data
+                and "ci_upper" in ci_data
+            ):
                 # Merge CI data with the metric value
                 merged_metrics[metric_name] = {
                     "value": ci_data.get("value", metric_value),
                     "ci_lower": ci_data["ci_lower"],
-                    "ci_upper": ci_data["ci_upper"]
+                    "ci_upper": ci_data["ci_upper"],
                 }
             else:
                 merged_metrics[metric_name] = metric_value
@@ -5463,7 +6562,9 @@ async def get_quick_analysis(
     # Filter charts if requested
     result_chart_data = latest_summary.get("chart_data", {})
     if requested_charts:
-        result_chart_data = {k: v for k, v in result_chart_data.items() if k in requested_charts}
+        result_chart_data = {
+            k: v for k, v in result_chart_data.items() if k in requested_charts
+        }
 
     response = {
         "task_id": task_id,
@@ -5482,7 +6583,7 @@ async def get_quick_analysis(
             chart: f"/results/tasks/{task_id}/analysis/{analysis_id}/file/{chart}.png"
             for chart in (latest_summary.get("chart_paths", {}).keys())
             if not requested_charts or chart in requested_charts
-        }
+        },
     }
 
     # Include K-Fold training details if available
@@ -5500,7 +6601,7 @@ async def get_analysis_file(
     analysis_id: str,
     filename: str,
     user: User = Depends(get_user_from_header_or_param),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get a specific file from an analysis run. Users can only view their own task's files.
@@ -5519,7 +6620,14 @@ async def get_analysis_file(
             forbidden_detail="You don't have permission to view this file",
         )
 
-    file_path = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id / filename
+    file_path = (
+        Config.get_uploads_dir()
+        / "logs"
+        / "analysis"
+        / task_id
+        / analysis_id
+        / filename
+    )
 
     if not file_path.exists():
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
@@ -5532,7 +6640,7 @@ async def delete_task_analysis(
     task_id: str,
     analysis_id: str,
     user: User = Depends(require_pathologist_or_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Delete a specific analysis run for a task.
@@ -5547,32 +6655,46 @@ async def delete_task_analysis(
     """
     # Check task ownership
     task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if task and not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to delete this analysis")
+    if task is not None and not check_data_ownership(_coerce_str(task.user_id), user):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to delete this analysis"
+        )
 
-    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id
+    analysis_dir = (
+        Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id
+    )
 
     if not analysis_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Analysis not found: {analysis_id}"
+        )
 
     if not analysis_dir.is_dir():
-        raise HTTPException(status_code=400, detail=f"Invalid analysis ID: {analysis_id}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid analysis ID: {analysis_id}"
+        )
 
     try:
         # Run in thread pool to avoid blocking event loop
         await asyncio.to_thread(shutil.rmtree, analysis_dir)
         logger.info(f"Deleted analysis {analysis_id} for task {task_id}")
-        return {"message": f"Analysis {analysis_id} deleted successfully", "task_id": task_id, "analysis_id": analysis_id}
+        return {
+            "message": f"Analysis {analysis_id} deleted successfully",
+            "task_id": task_id,
+            "analysis_id": analysis_id,
+        }
     except Exception as e:
         logger.error(f"Failed to delete analysis {analysis_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete analysis: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete analysis: {str(e)}"
+        )
 
 
 @router.get("/analysis/{analysis_id}/status")
 async def get_analysis_status(
     analysis_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of an analysis task.
@@ -5613,10 +6735,12 @@ async def get_analysis_status(
                             "status": TaskStatus.COMPLETED,
                             "progress": 100,
                             "error_message": None,
-                            "message": "Analysis completed"
+                            "message": "Analysis completed",
                         }
 
-        raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Analysis not found: {analysis_id}"
+        )
 
     # Check task ownership/admin access.
     task_id = analysis_state.get("task_id")
@@ -5639,7 +6763,10 @@ async def get_analysis_status(
         "created_at": analysis_state.get("created_at"),
         "started_at": analysis_state.get("started_at"),
         "finished_at": analysis_state.get("finished_at"),
-        "message": _get_analysis_status_message(analysis_state.get("status"), analysis_state.get("progress"))
+        "message": _get_analysis_status_message(
+            str(analysis_state.get("status") or TaskStatus.PENDING),
+            int(analysis_state.get("progress") or 0),
+        ),
     }
 
 
@@ -5663,12 +6790,11 @@ def _get_analysis_status_message(status: str, progress: int) -> str:
     return "Unknown status"
 
 
-
 @router.get("/wsi/{wsi_id}")
 async def get_results(
     wsi_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get AI analysis results for a WSI from database.
@@ -5685,9 +6811,14 @@ async def get_results(
     # Check WSI access permission (ownership or elevated dataset permission)
     wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
     if wsi:
-        has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+        has_access = await check_wsi_access_permission(
+            user, _coerce_str(wsi.dataset_id), _coerce_str(wsi.user_id), db
+        )
         if not has_access:
-            raise HTTPException(status_code=403, detail="You don't have permission to view results for this WSI")
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view results for this WSI",
+            )
 
     # Get latest derived result visible to the current user.
     result_query = select(AIResult).where(AIResult.wsi_id == wsi_id)
@@ -5706,9 +6837,11 @@ async def get_results(
 @router.delete("/wsi/{wsi_id}")
 async def delete_wsi_results(
     wsi_id: str,
-    task_id: Optional[str] = Query(None, description="Delete results for specific task only"),
+    task_id: Optional[str] = Query(
+        None, description="Delete results for specific task only"
+    ),
     user: User = Depends(require_pathologist_or_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Delete AI analysis results for a WSI.
@@ -5740,8 +6873,11 @@ async def delete_wsi_results(
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
         # Check ownership
-        if not check_data_ownership(wsi.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to delete results for this WSI")
+        if not check_data_ownership(_coerce_str(wsi.user_id), user):
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to delete results for this WSI",
+            )
 
         # Delete from database
         database_deleted = 0
@@ -5749,8 +6885,7 @@ async def delete_wsi_results(
             # Delete specific task result
             result = await db.execute(
                 sql_delete(AIResult).where(
-                    AIResult.wsi_id == wsi_id,
-                    AIResult.task_id == task_id
+                    AIResult.wsi_id == wsi_id, AIResult.task_id == task_id
                 )
             )
             database_deleted = result.rowcount
@@ -5765,29 +6900,29 @@ async def delete_wsi_results(
 
         # Delete files from disk
         storage_cleanup = storage_manager.delete_wsi_ai_results(wsi_id, task_id)
-        logger.info(storage_cleanup['summary'])
+        logger.info(storage_cleanup["summary"])
 
         return {
             "message": "AI results deleted successfully",
             "wsi_id": wsi_id,
             "task_id": task_id,
             "database_deleted": database_deleted,
-            "storage_cleanup": storage_cleanup
+            "storage_cleanup": storage_cleanup,
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to delete AI results for WSI {wsi_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete AI results: {str(e)}")
-
-
-
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete AI results: {str(e)}"
+        )
 
 
 # =============================================================================
 # Async Analysis Pipeline
 # =============================================================================
+
 
 async def run_analysis_pipeline(
     task_id: str,
@@ -5836,7 +6971,9 @@ async def run_analysis_pipeline(
     try:
         # Mark as running
         await state.set_running(analysis_id)
-        logger.info(f"Starting analysis pipeline for task {training_task_id}, analysis_id={analysis_id}")
+        logger.info(
+            f"Starting analysis pipeline for task {training_task_id}, analysis_id={analysis_id}"
+        )
 
         # Create database session with proper cleanup - use safe_session for background task
         async with safe_session() as db:
@@ -5847,24 +6984,46 @@ async def run_analysis_pipeline(
 
             # Determine workload: check if GPU inference and/or CI calculation is needed
             needs_gpu_inference = False
-            has_ci_calculation = bool(bootstrap_ci_metrics and len(bootstrap_ci_metrics) > 0)
+            has_ci_calculation = bool(
+                bootstrap_ci_metrics and len(bootstrap_ci_metrics) > 0
+            )
 
             # Check if K-Fold (K-Fold skips CI, uses mean ± std instead)
             # split_strategy is stored in preprocessing_config.split_config.strategy
             # NOTE: Only skip CI for internal analysis. External validation always allows CI
             # because it measures uncertainty on the new dataset, independent of training method.
-            split_config = task.preprocessing_config.get("split_config", {}) if task.preprocessing_config else {}
+            split_config = (
+                task.preprocessing_config.get("split_config", {})
+                if isinstance(task.preprocessing_config, dict)
+                else {}
+            )
             split_strategy = split_config.get("strategy", "random")
-            is_segmentation_task = task_type_str in ("segmentation", "patch_segmentation")
+            is_segmentation_task = task_type_str in (
+                "segmentation",
+                "patch_segmentation",
+            )
             is_kfold = not is_segmentation_task and split_strategy == "k_fold"
-            if is_kfold and has_ci_calculation and task_type_str != "external_validation":
-                has_ci_calculation = False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
+            if (
+                is_kfold
+                and has_ci_calculation
+                and task_type_str != "external_validation"
+            ):
+                has_ci_calculation = (
+                    False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
+                )
 
             if task_type_str != "external_validation":
                 # Check if AI results exist
-                resources = await _check_task_resources(task.task_id, db)
-                if _analysis_requires_training_metrics(task_type_str, charts, is_kfold) and not resources.get("has_training_metrics", True):
-                    raise ValueError(_missing_training_metrics_message(task.task_id, resources, charts, is_kfold))
+                task_id_str = _coerce_str(task.task_id)
+                resources = await _check_task_resources(task_id_str, db)
+                if _analysis_requires_training_metrics(
+                    task_type_str, charts, is_kfold
+                ) and not resources.get("has_training_metrics", True):
+                    raise ValueError(
+                        _missing_training_metrics_message(
+                            task_id_str, resources, charts, is_kfold
+                        )
+                    )
                 needs_gpu_inference = not resources["has_ai_results"]
 
             # Determine progress ranges based on workload
@@ -5894,9 +7053,11 @@ async def run_analysis_pipeline(
                 analysis_ci_start = 35  # Not used
                 analysis_ci_end = 90
 
-            logger.info(f"Analysis pipeline workload: needs_gpu={needs_gpu_inference}, has_ci={has_ci_calculation}, "
-                       f"is_kfold={is_kfold}, progress_ranges: inference_end={inference_end}, "
-                       f"analysis_start={analysis_start}, ci_range={analysis_ci_start}-{analysis_ci_end}")
+            logger.info(
+                f"Analysis pipeline workload: needs_gpu={needs_gpu_inference}, has_ci={has_ci_calculation}, "
+                f"is_kfold={is_kfold}, progress_ranges: inference_end={inference_end}, "
+                f"analysis_start={analysis_start}, ci_range={analysis_ci_start}-{analysis_ci_end}"
+            )
 
             # Step 1: Run GPU inference if needed
             if needs_gpu_inference:
@@ -5905,7 +7066,12 @@ async def run_analysis_pipeline(
                     progress = int(fraction * inference_end)
                     await state.update(analysis_id, progress=progress)
 
-                await _run_inference_if_needed(task, db, progress_callback=inference_progress, assigned_device=assigned_device)
+                await _run_inference_if_needed(
+                    task,
+                    db,
+                    progress_callback=inference_progress,
+                    assigned_device=assigned_device,
+                )
                 await state.update(analysis_id, progress=inference_end)
 
             # Create analysis request
@@ -5913,7 +7079,7 @@ async def run_analysis_pipeline(
                 metrics=metrics,
                 charts=charts,
                 description=description,
-                bootstrap_ci_metrics=bootstrap_ci_metrics or []
+                bootstrap_ci_metrics=bootstrap_ci_metrics or [],
             )
 
             # Update progress - starting analysis phase
@@ -5937,34 +7103,60 @@ async def run_analysis_pipeline(
             match task_type_str:
                 case "wsi_survival" | "survival":
                     result = await _run_survival_analysis(
-                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
+                        task,
+                        request,
+                        db,
+                        progress_callback=update_progress,
+                        progress_config=progress_config,
+                        submitted_by=submitted_by,
                     )
                 case "external_validation":
                     result = await _run_external_validation_analysis(
-                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
+                        task,
+                        request,
+                        db,
+                        progress_callback=update_progress,
+                        progress_config=progress_config,
+                        submitted_by=submitted_by,
                     )
                 case "segmentation" | "patch_segmentation":
                     result = await _run_segmentation_analysis(
-                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
+                        task,
+                        request,
+                        db,
+                        progress_callback=update_progress,
+                        progress_config=progress_config,
+                        submitted_by=submitted_by,
                     )
                 case _:
                     result = await _run_classification_analysis(
-                        task, request, db, progress_callback=update_progress, progress_config=progress_config, submitted_by=submitted_by
+                        task,
+                        request,
+                        db,
+                        progress_callback=update_progress,
+                        progress_config=progress_config,
+                        submitted_by=submitted_by,
                     )
 
             # Mark as completed
             await state.set_completed(analysis_id)
-            logger.info(f"Analysis pipeline completed for task {training_task_id}, analysis_id={analysis_id}")
+            logger.info(
+                f"Analysis pipeline completed for task {training_task_id}, analysis_id={analysis_id}"
+            )
 
     except asyncio.CancelledError:
         # Task was cancelled by user
-        logger.info(f"Analysis pipeline cancelled for task {training_task_id}, analysis_id={analysis_id}")
+        logger.info(
+            f"Analysis pipeline cancelled for task {training_task_id}, analysis_id={analysis_id}"
+        )
         await state.set_cancelled(analysis_id)
         raise  # Re-raise to properly handle task cancellation
 
     except Exception as e:
         error_msg = str(e)
-        logger.error(f"Analysis pipeline failed for task {training_task_id}: {error_msg}")
+        logger.error(
+            f"Analysis pipeline failed for task {training_task_id}: {error_msg}"
+        )
         await state.set_failed(analysis_id, error_msg)
         raise
 

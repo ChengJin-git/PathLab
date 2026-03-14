@@ -7,7 +7,7 @@
 #   https://github.com/facebookresearch/dino/blob/master/vision_transformer.py
 #   https://github.com/rwightman/pytorch-image-models/tree/master/timm/layers/patch_embed.py
 
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional, Tuple, Union, Any
 
 from torch import Tensor
 import torch.nn as nn
@@ -40,7 +40,7 @@ class PatchEmbed(nn.Module):
         patch_size: Union[int, Tuple[int, int]] = 16,
         in_chans: int = 3,
         embed_dim: int = 768,
-        norm_layer: Optional[Callable] = None,
+        norm_layer: Optional[Callable[..., Any]] = None,
         flatten_embedding: bool = True,
     ) -> None:
         super().__init__()

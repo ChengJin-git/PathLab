@@ -68,7 +68,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         wsi_ids: List[str],
         session_maker: Any,
         logger: Any,
-    ) -> tuple:
+    ) -> tuple[Any, ...]:
         """Load survival data (times, statuses) for given WSI IDs."""
         times = []
         statuses = []
@@ -89,7 +89,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         return times, statuses, valid_ids
 
-    def _compute_bin_edges(self, times: List[float], statuses: List[int], n_bins: int) -> np.ndarray:
+    def _compute_bin_edges(self, times: List[float], statuses: List[int], n_bins: int) -> np.ndarray[Any, Any]:
         """Compute bin edges from uncensored data quantiles."""
         uncensored_times = [t for t, s in zip(times, statuses) if s == 1]
 
@@ -104,7 +104,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         return bin_edges
 
-    def _discretize_times(self, times: List[float], bin_edges: np.ndarray) -> List[int]:
+    def _discretize_times(self, times: List[float], bin_edges: np.ndarray[Any, Any]) -> List[int]:
         """Discretize continuous times into bin indices."""
         class_bounds = bin_edges[1:]
         discretized_labels = []
@@ -127,7 +127,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         val_ratio: float = 0.1,
         test_ratio: float = 0.2,
         seed: int = 42,
-    ) -> tuple:
+    ) -> tuple[Any, ...]:
         """
         Split sample_ids into train/val/test sets, stratified by event_status.
 
@@ -903,7 +903,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         y_events_map: Dict[str, int],
         criterion: nn.Module,
         is_case_level: bool = False,
-    ) -> tuple:
+    ) -> tuple[Any, ...]:
         """Evaluate survival model on a split using Dataset."""
         from torch.utils.data import DataLoader
 
@@ -958,7 +958,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         task_id: str,
         fold_keys: List[str],
         splits_map: Optional[Dict[str, List[str]]] = None,
-    ) -> tuple:
+    ) -> tuple[Any, ...]:
         """
         Calculate comprehensive metrics for K-Fold survival training by reading saved JSON files.
 
@@ -1518,11 +1518,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
     def _split_case_attention_to_slides(
         self,
-        attention: Optional[np.ndarray],
+        attention: Optional[np.ndarray[Any, Any]],
         case_id: str,
         case_wsi_patch_counts: Dict[str, List[int]],
         case_to_wsi: Dict[str, List[str]],
-    ) -> Dict[str, Optional[np.ndarray]]:
+    ) -> Dict[str, Optional[np.ndarray[Any, Any]]]:
         """
         Split case-level attention weights back to individual slides.
 
@@ -1550,7 +1550,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Fallback: return None for all slides
             return {wsi_id: None for wsi_id in wsi_ids}
 
-        slide_attentions: Dict[str, Optional[np.ndarray]] = {}
+        slide_attentions: Dict[str, Optional[np.ndarray[Any, Any]]] = {}
         start_idx = 0
 
         for wsi_id, count in zip(wsi_ids, patch_counts):

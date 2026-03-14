@@ -3,7 +3,7 @@ ExportTaskRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ class ExportTaskRepository:
         user_id: str,
         export_type: str,
         file_format: str,
-        filter_params: Optional[Dict] = None
+        filter_params: Optional[Dict[str, Any]] = None
     ) -> ExportTask:
         """Create a new export task"""
         task = ExportTask(
@@ -94,5 +94,4 @@ class ExportTaskRepository:
             )
         )
         return result.rowcount
-
 

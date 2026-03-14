@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 
 import numpy as np
 import torch
@@ -35,7 +35,7 @@ class PatchCAMResult:
     coord: Tuple[int, int]    # WSI level0 coordinates (x, y)
     pred: int                  # Predicted class index
     prob: float                # Prediction probability
-    cam: np.ndarray           # CAM heatmap (H, W), e.g., (14, 14) or (7, 7)
+    cam: np.ndarray[Any, Any]           # CAM heatmap (H, W), e.g., (14, 14) or (7, 7)
 
 
 # =============================================================================
@@ -55,7 +55,7 @@ class BaseCAMExtractor(ABC):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract CAM from model for given input.
 
@@ -104,7 +104,7 @@ class ResNetCAMExtractor(BaseCAMExtractor):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract Grad-CAM from ResNet model.
 
@@ -330,7 +330,7 @@ class TransformerCAMExtractor(BaseCAMExtractor):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract attention-based CAM from Transformer model.
 
@@ -551,7 +551,7 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract GradCAM from ViT model using official pytorch-grad-cam method.
 

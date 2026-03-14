@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Optional, Callable, TYPE_CHECKING, Any
 
 import numpy as np
 from PIL import Image
@@ -41,7 +41,7 @@ from backend.preprocessing.tiling import safe_load_h5_coords
 logger = logging.getLogger(__name__)
 
 
-def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Callable:
+def get_torchvision_transforms(image_size: int = 224, mode: str = "eval") -> Callable[..., Any]:
     """
     Get default torchvision transforms.
 
@@ -64,7 +64,7 @@ def _load_slide(wsi_path: str):
     return load_slide(wsi_path)
 
 
-class WSIPatchDataset(Dataset):
+class WSIPatchDataset(Dataset[Any]):
     """
     Dataset backed by HDF5 coordinates and ASlide slide reading.
 
@@ -87,7 +87,7 @@ class WSIPatchDataset(Dataset):
         self,
         wsi_path: str,
         coords_h5: str,
-        transform: Optional[Callable] = None,
+        transform: Optional[Callable[..., Any]] = None,
         extractor: Optional["BaseExtractor"] = None,
         mode: str = "eval",
         fast_read: bool = True,
@@ -203,7 +203,7 @@ def build_dataloader(
     pin_memory: bool = False,  # Disabled by default to avoid CUDA pin memory errors
     extractor: Optional["BaseExtractor"] = None,
     mode: str = "eval",
-    transform: Optional[Callable] = None,
+    transform: Optional[Callable[..., Any]] = None,
 ):
     """
     Build a DataLoader for WSI patch extraction.
@@ -252,4 +252,3 @@ def build_dataloader(
         multiprocessing_context='spawn' if num_workers > 0 else None,  # Avoid fork deadlock in multithreaded env
     )
     return loader, dataset
-

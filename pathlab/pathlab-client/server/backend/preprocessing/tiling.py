@@ -14,7 +14,7 @@ import json
 import numpy as np
 import cv2
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 from PIL import Image
 import logging
 
@@ -108,7 +108,7 @@ class TissueSegmenter:
         mthresh: int = 7,
         close: int = 4,
         use_otsu: bool = False,
-        filter_params: Optional[Dict] = None
+        filter_params: Optional[Dict[str, Any]] = None
     ):
         """
         Args:
@@ -135,7 +135,7 @@ class TissueSegmenter:
             'max_n_holes': 8 # Max holes per contour
         }
 
-    def segment_tissue(self, slide) -> Tuple[List, List]:
+    def segment_tissue(self, slide) -> Tuple[List[Any], List[Any]]:
         """
         Segment tissue regions from WSI
 
@@ -237,7 +237,7 @@ class TissueSegmenter:
         hierarchy,
         seg_level: int,
         slide
-    ) -> Tuple[List, List]:
+    ) -> Tuple[List[Any], List[Any]]:
         """Filter contours by area and extract holes"""
         # Calculate scaled reference patch area
         scale = slide.level_downsamples[seg_level]
@@ -395,10 +395,10 @@ class WSITiler:
         self,
         slide,
         save_path: Optional[Path] = None,
-        tissue_contours: Optional[List] = None,
-        hole_contours: Optional[List] = None,
-        seg_params: Optional[Dict] = None,
-        filter_params: Optional[Dict] = None
+        tissue_contours: Optional[List[Any]] = None,
+        hole_contours: Optional[List[Any]] = None,
+        seg_params: Optional[Dict[str, Any]] = None,
+        filter_params: Optional[Dict[str, Any]] = None
     ) -> List[Tuple[int, int]]:
         """
         Compute patch coordinates within tissue contours
@@ -446,7 +446,7 @@ class WSITiler:
         self,
         slide,
         contour,
-        holes: List,
+        holes: List[Any],
         cont_idx: int
     ) -> List[Tuple[int, int]]:
         """
@@ -599,7 +599,7 @@ class WSITiler:
             return check_fn
 
     @staticmethod
-    def _is_in_contour(cont_check_fn, pt, holes: List, patch_size: int) -> bool:
+    def _is_in_contour(cont_check_fn, pt, holes: List[Any], patch_size: int) -> bool:
         """Check if point is in contour and not in any holes"""
         if not cont_check_fn(pt):
             return False
@@ -616,10 +616,10 @@ class WSITiler:
         self,
         coordinates: List[Tuple[int, int]],
         save_path,  # Can be str or Path
-        tissue_contours: Optional[List] = None,
-        hole_contours: Optional[List] = None,
-        seg_params: Optional[Dict] = None,
-        filter_params: Optional[Dict] = None
+        tissue_contours: Optional[List[Any]] = None,
+        hole_contours: Optional[List[Any]] = None,
+        seg_params: Optional[Dict[str, Any]] = None,
+        filter_params: Optional[Dict[str, Any]] = None
     ):
         """
         Save coordinates and metadata to HDF5 file using atomic write pattern.
@@ -690,7 +690,7 @@ class WSITiler:
         logger.info(f"Saved {len(coordinates)} coordinates to {save_path}")
 
     @staticmethod
-    def load_coordinates(load_path: Path) -> Dict:
+    def load_coordinates(load_path: Path) -> Dict[str, Any]:
         """Load coordinates from JSON file"""
         with open(load_path, 'r') as f:
             data = json.load(f)

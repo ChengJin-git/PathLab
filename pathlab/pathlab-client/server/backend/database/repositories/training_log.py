@@ -3,7 +3,7 @@ TrainingLogRepository - Redis Streams backend
 """
 import json
 import logging
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 from backend.common.redis_client import get_redis, make_key
 from backend.database.utils.json_utils import sanitize_for_json
@@ -39,7 +39,7 @@ class _TrainingLogEntry:
 
         self.created_at = fields.get("created_at", "")
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.stream_id,
             "task_id": self.task_id,
@@ -59,7 +59,7 @@ class TrainingLogRepository:
     """
 
     @staticmethod
-    async def create(db, log_data: Dict) -> _TrainingLogEntry:
+    async def create(db, log_data: Dict[str, Any]) -> _TrainingLogEntry:
         r = get_redis()
         task_id = log_data["task_id"]
         stream_key = make_key("training_logs", task_id)
@@ -153,5 +153,4 @@ class TrainingLogRepository:
         seq_key = make_key("training_logs", task_id, "seq")
         deleted = await r.delete(stream_key, seq_key)
         return deleted > 0
-
 

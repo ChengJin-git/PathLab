@@ -1,3 +1,4 @@
+from typing import Any
 """
 Annotation routes – segmentation annotation CRUD + ROI extraction proxy + SSE progress
 
@@ -184,7 +185,7 @@ def _delete_preview_file_if_possible(path: Path) -> None:
         logger.warning("Failed to delete GT preview cache file %s: %s", path, exc)
 
 
-def _write_ground_truth_preview_metadata(metadata_path: Path, cache_key: dict) -> None:
+def _write_ground_truth_preview_metadata(metadata_path: Path, cache_key: dict[str, Any]) -> None:
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     temp_metadata_path = metadata_path.with_name(f"{metadata_path.name}.tmp")
     _delete_preview_file_if_possible(temp_metadata_path)
@@ -215,7 +216,7 @@ def _save_ground_truth_preview_image(preview_image, preview_path: Path) -> None:
         raise
 
 
-def _is_ground_truth_preview_cache_valid(preview_path: Path, cache_key: dict) -> bool:
+def _is_ground_truth_preview_cache_valid(preview_path: Path, cache_key: dict[str, Any]) -> bool:
     metadata_path = _ground_truth_preview_metadata_path(preview_path)
     if not preview_path.exists() or not metadata_path.exists():
         return False
@@ -260,7 +261,7 @@ def _color_to_rgba(color: str | None, alpha: int) -> tuple[int, int, int, int]:
     return (*rgb, alpha)
 
 
-def _render_ground_truth_preview(file_path: Path, size: int, regions: list[dict], render_width: int, render_height: int):
+def _render_ground_truth_preview(file_path: Path, size: int, regions: list[dict[str, Any]], render_width: int, render_height: int):
     thumbnail = _load_patch_thumbnail(file_path, size).convert("RGBA")
     overlay = Image.new("RGBA", thumbnail.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay, "RGBA")
@@ -294,7 +295,7 @@ def _render_ground_truth_preview(file_path: Path, size: int, regions: list[dict]
     return Image.alpha_composite(thumbnail, overlay).convert("RGB")
 
 
-def _build_ground_truth_preview_cache_key(wsi, record, file_path: Path, file_size: int, render_width: int, render_height: int, size: int) -> dict:
+def _build_ground_truth_preview_cache_key(wsi, record, file_path: Path, file_size: int, render_width: int, render_height: int, size: int) -> dict[str, Any]:
     return {
         "version": GROUND_TRUTH_PREVIEW_CACHE_VERSION,
         "annotation_id": record.annotation_id,
@@ -309,7 +310,7 @@ def _build_ground_truth_preview_cache_key(wsi, record, file_path: Path, file_siz
     }
 
 
-def _ensure_ground_truth_preview_cache(wsi, record, regions: list[dict], render_width: int, render_height: int, size: int) -> Path:
+def _ensure_ground_truth_preview_cache(wsi, record, regions: list[dict[str, Any]], render_width: int, render_height: int, size: int) -> Path:
     file_path = Path(wsi.wsi_path)
     file_size = int(wsi.file_size or file_path.stat().st_size)
     preview_path = _ground_truth_preview_path(wsi.wsi_id, size)
@@ -902,7 +903,7 @@ async def extract_regions(
 
     # Convert annotations dict to the format expected by preprocessing:
     # { wsi_id: [{ type, x, y, width, height, label, points }, ...] }
-    regions: dict = {}
+    regions: dict[str, Any] = {}
     for wsi_id, roi_list in annotations.items():
         regions[wsi_id] = [
             {

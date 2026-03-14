@@ -126,7 +126,7 @@ def get_extractor_transforms(
     mode: str = "eval",
     pretrained: bool = True,
     **kwargs
-) -> Callable:
+) -> Callable[..., Any]:
     """
     Get preprocessing transforms for an extractor without loading the full model.
 

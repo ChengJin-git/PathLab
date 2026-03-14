@@ -8,7 +8,7 @@ import json
 import numpy as np
 import cv2
 from pathlib import Path
-from typing import List, Tuple, Optional, Dict
+from typing import List, Tuple, Optional, Dict, Any
 from PIL import Image
 import logging
 
@@ -38,7 +38,7 @@ def _delete_corrupted_h5(h5_path: Path) -> None:
 def safe_load_h5_coords(
     h5_path: Path,
     delete_if_corrupted: bool = True,
-) -> Tuple[Optional[np.ndarray], Optional[Dict], Optional[str]]:
+) -> Tuple[Optional[np.ndarray[Any, Any]], Optional[Dict[str, Any]], Optional[str]]:
     """
     Safely load coordinates and attributes from an HDF5 file.
 
@@ -92,7 +92,7 @@ def safe_load_h5_coords(
 def safe_load_h5_coords_attrs(
     h5_path: Path,
     delete_if_corrupted: bool = True,
-) -> Tuple[Optional[Dict], Optional[str]]:
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """
     Safely load only coords.h5 dataset attributes without reading the full coords array.
 
@@ -133,10 +133,10 @@ def safe_load_h5_coords_attrs(
 
 
 def _check_coords_params_match(
-    attrs: Dict,
+    attrs: Dict[str, Any],
     level: int,
-    seg_params: Optional[Dict],
-    filter_params: Optional[Dict],
+    seg_params: Optional[Dict[str, Any]],
+    filter_params: Optional[Dict[str, Any]],
     contour_fn: str,
     use_padding: bool,
     seg_level: int = -1,
@@ -235,8 +235,8 @@ def check_coords_cache_valid(
     wsi_id: str,
     coords_dir: Path,
     level: int = 0,
-    seg_params: Optional[Dict] = None,
-    filter_params: Optional[Dict] = None,
+    seg_params: Optional[Dict[str, Any]] = None,
+    filter_params: Optional[Dict[str, Any]] = None,
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
@@ -309,13 +309,13 @@ def get_or_compute_coordinates(
     coords_dir: Path,
     level: int = 0,
     force_recompute: bool = False,
-    seg_params: Optional[Dict] = None,
-    filter_params: Optional[Dict] = None,
+    seg_params: Optional[Dict[str, Any]] = None,
+    filter_params: Optional[Dict[str, Any]] = None,
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
-    tissue_contours: Optional[List] = None,
-    hole_contours: Optional[List] = None,
+    tissue_contours: Optional[List[Any]] = None,
+    hole_contours: Optional[List[Any]] = None,
     **kwargs,  # Ignore legacy patch_size, stride parameters
 ) -> Tuple[List[Tuple[int, int]], Path]:
     """
@@ -573,8 +573,8 @@ def get_or_compute_coordinates(
 
 def visualize_segmentation(
     slide,
-    tissue_contours: List,
-    hole_contours: List,
+    tissue_contours: List[Any],
+    hole_contours: List[Any],
     vis_level: int = -1,
     line_thickness: int = 5,
     color: Tuple[int, int, int] = (0, 255, 0),
@@ -634,4 +634,3 @@ def visualize_segmentation(
     result = Image.fromarray(img_np)
     del img_np
     return result
-

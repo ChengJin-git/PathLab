@@ -25,12 +25,12 @@ class AnalysisTaskState:
     """
 
     def __init__(self):
-        self._running_tasks: Dict[str, asyncio.Task] = {}
+        self._running_tasks: Dict[str, asyncio.Task[Any]] = {}
 
     def _key(self, analysis_id: str) -> str:
         return make_key("analysis", analysis_id)
 
-    async def _hash_to_dict(self, data: dict) -> Dict[str, Any]:
+    async def _hash_to_dict(self, data: dict[str, Any]) -> Dict[str, Any]:
         progress = data.get("progress", "0")
         return {
             "analysis_id": data.get("analysis_id", ""),
@@ -163,7 +163,7 @@ class AnalysisTaskState:
             finished_at=datetime.now(timezone.utc).isoformat()
         )
 
-    def register_task(self, analysis_id: str, task: asyncio.Task) -> None:
+    def register_task(self, analysis_id: str, task: asyncio.Task[Any]) -> None:
         self._running_tasks[analysis_id] = task
 
     def unregister_task(self, analysis_id: str) -> None:

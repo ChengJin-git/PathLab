@@ -4,16 +4,16 @@
 # found in the LICENSE file in the root directory of this source tree.
 
 
-from typing import Dict, Union
+from typing import Dict, Union, Any
 
 import numpy as np
 import torch
 
 
-TypeSpec = Union[str, np.dtype, torch.dtype]
+TypeSpec = Union[str, np.dtype[Any], torch.dtype]
 
 
-_NUMPY_TO_TORCH_DTYPE: Dict[np.dtype, torch.dtype] = {
+_NUMPY_TO_TORCH_DTYPE: Dict[np.dtype[Any], torch.dtype] = {
     np.dtype("bool"): torch.bool,
     np.dtype("uint8"): torch.uint8,
     np.dtype("int8"): torch.int8,

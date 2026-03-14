@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import torch
 from torch.utils.data import Dataset
@@ -83,7 +83,7 @@ def clear_feature_cache() -> None:
     logger.info("Feature cache cleared")
 
 
-class WSIFeatureDataset(Dataset):
+class WSIFeatureDataset(Dataset[Any]):
     """
     Dataset for loading pre-extracted WSI features on-demand.
 
@@ -133,7 +133,7 @@ class WSIFeatureDataset(Dataset):
     def __len__(self) -> int:
         return len(self.wsi_ids)
 
-    def __getitem__(self, idx: int) -> Tuple:
+    def __getitem__(self, idx: int) -> Tuple[Any, ...]:
         """
         Load and return sample for the given index.
 
@@ -222,7 +222,7 @@ class WSIFeatureDataset(Dataset):
         return corrupted_ids, low_patch_ids
 
 
-class CaseFeatureDataset(Dataset):
+class CaseFeatureDataset(Dataset[Any]):
     """
     Dataset for case-level training with on-demand feature loading and concatenation.
 
@@ -276,7 +276,7 @@ class CaseFeatureDataset(Dataset):
     def __len__(self) -> int:
         return len(self.case_ids)
 
-    def __getitem__(self, idx: int) -> Tuple:
+    def __getitem__(self, idx: int) -> Tuple[Any, ...]:
         """
         Load, concatenate, and return features for a case.
 
@@ -376,4 +376,3 @@ class CaseFeatureDataset(Dataset):
                     )
                     low_patch_ids.append(wsi_id)
         return corrupted_ids, low_patch_ids
-

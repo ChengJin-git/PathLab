@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # All supported image extensions for orphan detection
 # Combines WSI, Patch, and TIF extensions
-ALL_IMAGE_EXTENSIONS: frozenset = WSI_EXTENSIONS | PATCH_EXTENSIONS | TIF_EXTENSIONS
+ALL_IMAGE_EXTENSIONS: frozenset[Any] = WSI_EXTENSIONS | PATCH_EXTENSIONS | TIF_EXTENSIONS
 
 # Orphan cache filename
 ORPHAN_CACHE_FILE = ".orphan_cache.json"
@@ -57,7 +57,7 @@ class StorageOrphanMixin:
                 self._orphan_cache = None
                 self._orphan_dir_mtime_cache = {}
 
-    def _save_orphan_persistent_cache(self, cache_time: float, orphan_result: Dict,
+    def _save_orphan_persistent_cache(self, cache_time: float, orphan_result: Dict[str, Any],
                                        wsi_ids_hash: str, task_ids_hash: str, model_ids_hash: str) -> None:
         """Save orphan detection result to persistent cache file."""
         cache_file = self._get_orphan_cache_file_path()
@@ -158,7 +158,7 @@ class StorageOrphanMixin:
 
     # ==================== Orphan Detection ====================
 
-    def _scan_wsi_files(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+    def _scan_wsi_files(self, directory: Path, existing_wsi_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for WSI files."""
         if directory.exists():
             for item in directory.iterdir():
@@ -175,7 +175,7 @@ class StorageOrphanMixin:
                         result["total_orphaned_count"] += 1
                         result["total_orphaned_file_count"] += 1
 
-    def _scan_coordinates(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+    def _scan_coordinates(self, directory: Path, existing_wsi_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for coordinate files."""
         if directory.exists():
             for params_hash_dir in directory.iterdir():
@@ -194,7 +194,7 @@ class StorageOrphanMixin:
                             result["total_orphaned_count"] += 1
                             result["total_orphaned_file_count"] += 1
 
-    def _scan_masks(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+    def _scan_masks(self, directory: Path, existing_wsi_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for mask files."""
         if directory.exists():
             for item in directory.glob("*_mask.png"):
@@ -210,7 +210,7 @@ class StorageOrphanMixin:
                     result["total_orphaned_count"] += 1
                     result["total_orphaned_file_count"] += 1
 
-    def _scan_features_cache(self, directory: Path, existing_wsi_set: set, result: Dict[str, Any]) -> None:
+    def _scan_features_cache(self, directory: Path, existing_wsi_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for feature cache files."""
         if directory.exists():
             for extractor_dir in directory.iterdir():
@@ -232,7 +232,7 @@ class StorageOrphanMixin:
                                     result["total_orphaned_count"] += 1
                                     result["total_orphaned_file_count"] += 1
 
-    def _scan_ai_results(self, directory: Path, existing_wsi_set: set, existing_task_set: set, result: Dict[str, Any]) -> None:
+    def _scan_ai_results(self, directory: Path, existing_wsi_set: set[Any], existing_task_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for AI results."""
         if directory.exists():
             for wsi_dir in directory.iterdir():
@@ -277,7 +277,7 @@ class StorageOrphanMixin:
                                     result["total_orphaned_count"] += 1
                                     result["total_orphaned_file_count"] += 1
 
-    def _scan_training_dirs(self, directory: Path, existing_task_set: set, result: Dict[str, Any]) -> None:
+    def _scan_training_dirs(self, directory: Path, existing_task_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for training directories."""
         if directory.exists():
             for task_dir in directory.iterdir():
@@ -294,7 +294,7 @@ class StorageOrphanMixin:
                         result["total_orphaned_count"] += 1
                         result["total_orphaned_dir_count"] += 1
 
-    def _scan_models(self, directory: Path, existing_model_set: set, result: Dict[str, Any]) -> None:
+    def _scan_models(self, directory: Path, existing_model_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for model directories."""
         if directory.exists():
             for model_dir in directory.iterdir():
@@ -311,7 +311,7 @@ class StorageOrphanMixin:
                         result["total_orphaned_count"] += 1
                         result["total_orphaned_dir_count"] += 1
 
-    def _scan_logs(self, directory: Path, existing_task_set: set, result: Dict[str, Any]) -> None:
+    def _scan_logs(self, directory: Path, existing_task_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for log directories and files."""
         if directory.exists():
             training_logs_dir = directory / "training"

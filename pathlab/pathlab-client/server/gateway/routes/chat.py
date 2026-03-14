@@ -11,14 +11,15 @@ import os
 import re
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
-from typing import List, Dict, AsyncIterator, Optional, Any, Set
+from typing import Any, TypedDict
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -34,7 +35,6 @@ from backend.database.repositories import (
 )
 from backend.database.models import (
     TrainingTask,
-    DataGroup,
     WSISlide,
     TrainingTaskWSI,
     AIResult,
@@ -73,20 +73,19 @@ from .chat_patch_inference import (
     get_chat_patch_task,
 )
 from .chat_pdf import (
-    is_pdf_url,
     process_pdf_url,
     get_pdf_image_path,
     search_pdf_pages,
     get_cached_markdown,
     get_cached_pdf_meta,
-    _split_md_into_pages,
-    _get_url_hash,
-    _get_pdf_cache_dir,
-    _tokenize_for_search,
+    split_md_into_pages,
+    get_url_hash,
+    get_pdf_cache_dir,
+    tokenize_for_search,
     detect_source_type,
     is_academic_content,
     format_reference_card,
-    _ACADEMIC_SOURCE_TYPES,
+    ACADEMIC_SOURCE_TYPES,
     find_cached_articles_by_title,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
@@ -146,7 +145,7 @@ def _get_llm_http_client() -> httpx.AsyncClient:
 # _check_local_vllm_available() does an HTTP round-trip (3 s timeout) on every
 # chat request.  Cache the result for 30 s on success, use exponential backoff
 # on repeated failures so a down server doesn't add 3 s latency per request.
-_vllm_cache: dict = {
+_vllm_cache: dict[str, Any] = {
     "available": None,
     "model": None,
     "base_url": None,
@@ -156,14 +155,24 @@ _vllm_cache: dict = {
 _VLLM_CACHE_TTL_OK = 30.0
 _VLLM_CACHE_TTL_FAIL_BASE = 5.0
 
-_feature_extractor_scan_cache: dict = {}
+_feature_extractor_scan_cache: dict[tuple[str, str], tuple[list[str], float]] = {}
 _FEATURE_SCAN_CACHE_TTL = 60.0
 
-_compat_check_cache: dict = {}
+_CompatCacheKey = tuple[str, str, str, str, str | None, tuple[str, ...], int]
+_compat_check_cache: dict[_CompatCacheKey, tuple[bool, float]] = {}
 _COMPAT_CACHE_TTL = 120.0
 
 
-async def _get_available_extractors(features_root: Path, wsi_id: str) -> list:
+class _PaperMeta(TypedDict):
+    url: str
+    meta: dict[str, Any]
+    title: str
+    parse_method: str | None
+    image_count: int
+    is_academic: bool
+
+
+async def _get_available_extractors(features_root: Path, wsi_id: str) -> list[str]:
     cache_key = (str(features_root), wsi_id)
     now = time.monotonic()
     cached_entry = _feature_extractor_scan_cache.get(cache_key)
@@ -172,8 +181,8 @@ async def _get_available_extractors(features_root: Path, wsi_id: str) -> list:
         if now - cached_at < _FEATURE_SCAN_CACHE_TTL:
             return cached_result
 
-    def _scan() -> list:
-        result = []
+    def _scan() -> list[str]:
+        result: list[str] = []
         if not features_root.exists():
             return result
         for extractor_dir in features_root.iterdir():
@@ -206,7 +215,7 @@ def _get_generation_cancelled_text(detected_lang: str) -> str:
     )
 
 
-def _has_training_recommendation_context(messages: list[dict]) -> bool:
+def _has_training_recommendation_context(messages: list[dict[str, object]]) -> bool:
     for msg in messages:
         if msg.get("role") != "user":
             continue
@@ -305,11 +314,11 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
 
 
 def _prepare_generation_messages(
-    messages: List[Dict],
+    messages: list[dict[str, object]],
     detected_lang: str,
     disable_web_search: bool,
     conversation_mode: ConversationMode,
-) -> List[Dict]:
+) -> list[dict[str, object]]:
     prepared_messages = messages.copy()
     if disable_web_search:
         prepared_messages = prepared_messages + [
@@ -463,7 +472,7 @@ def _build_training_recommendation_context_block(
 
 
 def _build_training_recommendation_search_retry_instruction(
-    detected_lang: str, profile: str
+    detected_lang: str, _profile: str
 ) -> str:
     if detected_lang == "zh_CN":
         return (
@@ -505,7 +514,7 @@ def _sanitize_training_recommendation_output(text: str) -> str:
 
 def _apply_patch_inference_exit_updates(
     content: str,
-    task_updates: Optional[Dict[str, Dict[str, Any]]] = None,
+    task_updates: dict[str, dict[str, object]] | None = None,
 ) -> str:
     """Mark in-message image inference runs as cancelled or with the latest terminal snapshot."""
     match = _PATCH_INFERENCE_BLOCK_RE.search(content or "")
@@ -756,7 +765,7 @@ async def _raise_for_status_with_detail(response: httpx.Response) -> None:
 
     detail = ""
     with suppress(Exception):
-        await response.aread()
+        _ = await response.aread()
         detail = response.text or ""
 
     status_kind = "Client" if 400 <= response.status_code < 500 else "Server"
@@ -813,22 +822,22 @@ async def _require_conversation_write_access(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    if not check_data_ownership(conversation.user_id, user):
+    if not check_data_ownership(str(conversation.user_id), user):
         raise HTTPException(
             status_code=403,
             detail="You don't have permission to modify this conversation",
         )
 
 
-def _is_segmentation_task(task_type: Optional[str]) -> bool:
+def _is_segmentation_task(task_type: str | None) -> bool:
     return task_type in SEGMENTATION_TASK_TYPES
 
 
-def _normalize_label_names(labels: List[str]) -> List[str]:
+def _normalize_label_names(labels: list[str]) -> list[str]:
     return sorted({str(label).strip() for label in labels if str(label).strip()})
 
 
-def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
+def _extract_segmentation_label_names(categories: list[dict[str, object]]) -> list[str]:
     return _normalize_label_names(
         [
             str(category.get("name", "")).strip()
@@ -847,12 +856,14 @@ async def _get_patch_model_for_chat(
     trained_model = await TrainedModelRepository.get_by_id(db, model_id)
     if not trained_model:
         raise HTTPException(status_code=404, detail="Trained model not found")
-    if not check_data_ownership(trained_model.user_id, user):
+    if not check_data_ownership(str(trained_model.user_id), user):
         raise HTTPException(
             status_code=403, detail="You don't have permission to use this model"
         )
 
-    training_task = await TrainingTaskRepository.get_by_id(db, trained_model.task_id)
+    training_task = await TrainingTaskRepository.get_by_id(
+        db, str(trained_model.task_id)
+    )
     if not training_task or not training_task.data_group:
         raise HTTPException(
             status_code=400, detail="Training task metadata is incomplete"
@@ -878,11 +889,13 @@ async def _get_patch_model_for_chat(
     return trained_model
 
 
-def _clean_optional_str(value: Any) -> str:
+def _clean_optional_str(value: object) -> str:
     return str(value).strip() if isinstance(value, str) else ""
 
 
-def _normalize_segmentation_task_config(task_config: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_segmentation_task_config(
+    task_config: dict[str, object],
+) -> dict[str, object]:
     normalized = dict(task_config)
     normalized["data_type"] = "patch"
 
@@ -908,7 +921,7 @@ def _normalize_segmentation_task_config(task_config: Dict[str, Any]) -> Dict[str
     elif seg_architecture:
         normalized["seg_architecture"] = seg_architecture
 
-    normalized.pop("encoder", None)
+    _ = normalized.pop("encoder", None)
     return normalized
 
 
@@ -937,7 +950,7 @@ def _normalize_task_config_blocks(response_text: str) -> str:
     return pattern.sub(_replace, response_text)
 
 
-def _format_prompt_number(value: Any) -> Optional[str]:
+def _format_prompt_number(value: Any) -> str | None:
     if value is None or isinstance(value, bool):
         return None
     try:
@@ -963,7 +976,7 @@ def _shorten_prompt_text(text: str, limit: int = 140) -> str:
     return clean[: limit - 3].rstrip() + "..."
 
 
-def _extract_latest_training_snapshot(logs: List[Any]) -> Optional[str]:
+def _extract_latest_training_snapshot(logs: list[object]) -> str | None:
     metric_labels = [
         ("train_loss", "train_loss"),
         ("val_loss", "val_loss"),
@@ -987,7 +1000,7 @@ def _extract_latest_training_snapshot(logs: List[Any]) -> Optional[str]:
         if not metadata and not epoch_match:
             continue
 
-        summary_parts: List[str] = []
+        summary_parts: list[str] = []
         fold_value = _format_prompt_number(metadata.get("fold"))
         if fold_value:
             summary_parts.append(f"fold={fold_value}")
@@ -1027,8 +1040,8 @@ def _extract_latest_training_snapshot(logs: List[Any]) -> Optional[str]:
 
 
 def _get_segmentation_model_spec(
-    model: Any, training_task: Optional[TrainingTask]
-) -> Dict[str, str | bool]:
+    model: Any, training_task: TrainingTask | None
+) -> dict[str, str | bool]:
     model_config = (
         training_task.model_config
         if training_task and isinstance(training_task.model_config, dict)
@@ -1059,22 +1072,28 @@ def _get_segmentation_model_spec(
 def _get_external_validation_compatibility_error(
     *,
     model: Any,
-    training_task: Optional[TrainingTask],
+    training_task: TrainingTask | None,
     model_data_type: str,
     model_task_type: str,
-    source_dataset_id: Optional[str],
-    training_dataset_ids: Set[str],
-    model_wsi_ids: Set[str],
-    dataset_meta: Dict[str, Any],
-    extractor_embed_dim: Dict[str, int],
-) -> Optional[str]:
+    source_dataset_id: str | None,
+    training_dataset_ids: set[str],
+    model_wsi_ids: set[str],
+    dataset_meta: dict[str, Any],
+    extractor_embed_dim: dict[str, int],
+) -> str | None:
     model_is_survival = model_task_type == "survival"
     model_is_segmentation = _is_segmentation_task(model_task_type)
     model_classes = set(
         _normalize_label_names(
-            (training_task.classes if training_task and training_task.classes else None)
-            or model.classes
-            or []
+            list(
+                (
+                    training_task.classes
+                    if isinstance(training_task, TrainingTask)
+                    else None
+                )
+                or model.classes
+                or []
+            )
         )
     )
     model_extractor = str(getattr(model, "feature_extractor", "") or "").strip()
@@ -1112,9 +1131,15 @@ def _get_external_validation_compatibility_error(
             return "target dataset is the source training dataset"
 
         model_segmentation_labels = _normalize_label_names(
-            (training_task.classes if training_task and training_task.classes else None)
-            or model.classes
-            or []
+            list(
+                (
+                    training_task.classes
+                    if isinstance(training_task, TrainingTask)
+                    else None
+                )
+                or model.classes
+                or []
+            )
         )
         dataset_segmentation_labels = _normalize_label_names(
             dataset_meta.get("segmentation_labels", [])
@@ -1405,7 +1430,7 @@ def _format_pdf_block_label(chunk: dict[str, Any]) -> str:
     return label
 
 
-def _collect_pdf_urls_from_contexts(messages: list[dict]) -> list[str]:
+def _collect_pdf_urls_from_contexts(messages: list[dict[str, object]]) -> list[str]:
     """Extract all unique PDF URLs from all [PDF_CONTEXT] blocks in conversation history.
 
     Returns a deduplicated list of URLs preserving first-seen order.
@@ -1439,7 +1464,7 @@ def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
     The server endpoint ``get_pdf_image_path`` resolves ``fig-N`` back to
     the real file by alphabetically sorted directory listing.
     """
-    images_dir = _get_pdf_cache_dir() / "images" / url_hash
+    images_dir = get_pdf_cache_dir() / "images" / url_hash
     if not images_dir.is_dir():
         return md_content
 
@@ -1455,7 +1480,7 @@ def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
     # Reverse map: real filename → fig-N number (1-based)
     file_to_fig: dict[str, int] = {name: i + 1 for i, name in enumerate(image_files)}
 
-    def _replacer(match: re.Match) -> str:
+    def _replacer(match: re.Match[str]) -> str:
         alt = match.group(1)
         prefix = match.group(2)  # up to and including …/pdf-images/hash/
         filename_with_ext = match.group(3)  # e.g. "abc123…def.jpg"
@@ -1471,9 +1496,11 @@ def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
     # Pattern: ![alt](…/pdf-images/{url_hash}/filename.ext)
     pattern = (
         r"!\[([^\]]*)\]\("
-        r"((?:[^\)]*?/)?pdf-images/" + re.escape(url_hash) + r"/)"
-        r"([^/\)\s]+)"
-        r"\)"
+        + r"((?:[^\)]*?/)?pdf-images/"
+        + re.escape(url_hash)
+        + r"/)"
+        + r"([^/\)\s]+)"
+        + r"\)"
     )
     return re.sub(pattern, _replacer, md_content, flags=re.IGNORECASE)
 
@@ -1500,7 +1527,7 @@ def _build_merged_pdf_context(
 
     # ── Global Document Registry ─────────────────────────────────────────────
     registry_lines = [f"## Document Registry ({total} documents):\n"]
-    paper_metas: list[dict] = []
+    paper_metas: list[_PaperMeta] = []
     for idx, url in enumerate(all_urls, 1):
         meta = get_cached_pdf_meta(url) or {}
         title = meta.get("title", "Unknown")
@@ -1520,8 +1547,8 @@ def _build_merged_pdf_context(
         label = "Paper" if is_academic else "Doc"
 
         # Image status detection
-        url_hash = _get_url_hash(url)
-        images_dir = _get_pdf_cache_dir() / "images" / url_hash
+        url_hash = get_url_hash(url)
+        images_dir = get_pdf_cache_dir() / "images" / url_hash
         image_count = 0
         if images_dir.is_dir():
             image_count = sum(1 for f in images_dir.iterdir() if f.is_file())
@@ -1542,8 +1569,8 @@ def _build_merged_pdf_context(
         )
 
         logger.info(
-            f"[BM25] {label} {idx} '{title}': parse_method={parse_method}, "
-            f"is_academic={is_academic}, images_available={image_count > 0} ({image_count} images)"
+            f"[BM25] {label} {idx} '{title}': parse_method={parse_method},"
+            + f" is_academic={is_academic}, images_available={image_count > 0} ({image_count} images)"
         )
 
     registry_lines.append("")
@@ -1567,9 +1594,9 @@ def _build_merged_pdf_context(
 
         enhanced_parts.append(
             f"### [{label} {paper_idx} of {total}] {title}\n"
-            f"- **URL**: {url}\n"
-            f"- **Content type**: {content_type}\n"
-            f"- **Total pages**: {page_info}\n"
+            + f"- **URL**: {url}\n"
+            + f"- **Content type**: {content_type}\n"
+            + f"- **Total pages**: {page_info}\n"
         )
 
         # Read full cached markdown (always re-reads from disk → picks up newer high-quality cache)
@@ -1582,7 +1609,7 @@ def _build_merged_pdf_context(
 
         # 改动 9: Replace hash-based image filenames with fig-N aliases.
         # LLMs hallucinate 64-char SHA-256 hashes → cascading 404 errors.
-        url_hash_for_imgs = _get_url_hash(url)
+        url_hash_for_imgs = get_url_hash(url)
         full_md = _replace_images_with_fig_aliases(full_md, url_hash_for_imgs)
 
         # Short papers: include everything
@@ -1592,17 +1619,17 @@ def _build_merged_pdf_context(
             continue
 
         # ── Vector search for relevant chunks (with BM25 fallback) ──────────
-        url_hash = _get_url_hash(url)
+        url_hash = get_url_hash(url)
         vector_results = search_pdf_chunks(user_query, url_hashes=[url_hash], top_k=15)
 
         if vector_results:
             # Use vector search results — group by page, sorted by page_num
             logger.info(
-                f"[VectorSearch] {label} {paper_idx}: {len(vector_results)} chunks "
-                f"retrieved (best distance={vector_results[0]['_distance']:.3f})"
+                f"[VectorSearch] {label} {paper_idx}: {len(vector_results)} chunks"
+                + f" retrieved (best distance={vector_results[0]['_distance']:.3f})"
             )
             # Always include first and last page for context
-            all_pages = _split_md_into_pages(full_md)
+            all_pages = split_md_into_pages(full_md)
             first_pn, first_content = all_pages[0] if all_pages else (0, "")
             last_pn, last_content = all_pages[-1] if all_pages else (0, "")
 
@@ -1684,7 +1711,7 @@ def _build_merged_pdf_context(
             logger.info(
                 f"[BM25 Fallback] {label} {paper_idx}: no vector results, using BM25"
             )
-            all_pages = _split_md_into_pages(full_md)
+            all_pages = split_md_into_pages(full_md)
             if not all_pages:
                 enhanced_parts.append(
                     full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n"
@@ -1749,7 +1776,7 @@ from .chat_feedback import router as chat_feedback_router
 router.include_router(chat_feedback_router)
 
 
-def extract_text_from_content(content) -> str:
+def extract_text_from_content(content: object) -> str:
     """Extract text content from message content (handles both string and multimodal format)"""
     if isinstance(content, str):
         return content
@@ -1763,12 +1790,12 @@ def extract_text_from_content(content) -> str:
     return ""
 
 
-def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
+def _infer_model_request_filters(user_text: str) -> dict[str, Any]:
     normalized_text = (user_text or "").strip().lower()
     if not normalized_text:
         return {}
 
-    task_type_keywords: Dict[str, List[str]] = {
+    task_type_keywords: dict[str, list[str]] = {
         "classification": ["classification", "classify", "classifier", "分类"],
         "survival": ["survival", "prognosis", "prognostic", "生存", "预后"],
         "segmentation": [
@@ -1781,7 +1808,7 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
             "圈区域",
         ],
     }
-    data_type_keywords: Dict[str, List[str]] = {
+    data_type_keywords: dict[str, list[str]] = {
         "wsi": [
             "wsi",
             "whole slide",
@@ -1864,7 +1891,7 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
         "some",
     }
 
-    def _detect_single_match(keyword_map: Dict[str, List[str]]) -> Optional[str]:
+    def _detect_single_match(keyword_map: dict[str, list[str]]) -> str | None:
         matches = [
             value
             for value, keywords in keyword_map.items()
@@ -1872,7 +1899,7 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
         ]
         return matches[0] if len(matches) == 1 else None
 
-    filters: Dict[str, Any] = {}
+    filters: dict[str, Any] = {}
     task_type = _detect_single_match(task_type_keywords)
     data_type = _detect_single_match(data_type_keywords)
     if task_type:
@@ -1880,7 +1907,7 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
     if data_type:
         filters["data_type"] = data_type
 
-    all_indicator_tokens: set = set()
+    all_indicator_tokens: set[str] = set()
     for tokens in task_type_keywords.values():
         all_indicator_tokens.update(tokens)
     for tokens in data_type_keywords.values():
@@ -1890,8 +1917,8 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
 
     raw_tokens = _re.split(r"[\s,;/|，；、。\-]+", normalized_text)
 
-    text_keywords: List[str] = []
-    seen: set = set()
+    text_keywords: list[str] = []
+    seen: set[str] = set()
     for tok in raw_tokens:
         tok = tok.strip()
         if not tok or len(tok) < 2:
@@ -1914,14 +1941,14 @@ def _infer_model_request_filters(user_text: str) -> Dict[str, Any]:
 
 
 def _matches_model_request_filters(
-    model_meta: Dict[str, Any], filters: Dict[str, Any]
+    model_meta: dict[str, Any], filters: dict[str, Any]
 ) -> bool:
     for key, expected in filters.items():
         if key in ("task_type", "data_type"):
             if expected and model_meta.get(key) != expected:
                 return False
         elif key == "text_keywords":
-            searchable_lists: List[List[str]] = [
+            searchable_lists: list[list[str]] = [
                 model_meta.get("classes", []),
                 model_meta.get("dataset_names", []),
                 model_meta.get("dataset_sources", []),
@@ -1939,7 +1966,7 @@ def _matches_model_request_filters(
     return True
 
 
-def _matches_quick_model_request_filters(model: Any, filters: Dict[str, Any]) -> bool:
+def _matches_quick_model_request_filters(model: Any, filters: dict[str, Any]) -> bool:
     """Fast keyword-only model match used for chunked scan early-stop.
 
     This intentionally performs a conservative subset of full matching logic
@@ -1954,7 +1981,7 @@ def _matches_quick_model_request_filters(model: Any, filters: Dict[str, Any]) ->
     if not isinstance(classes, list):
         classes = []
 
-    search_space: List[str] = [
+    search_space: list[str] = [
         (model.model_name or "").lower(),
         (model.feature_extractor or "").lower(),
         (model.aggregator or "").lower(),
@@ -1967,7 +1994,7 @@ def _matches_quick_model_request_filters(model: Any, filters: Dict[str, Any]) ->
     )
 
 
-def _format_model_filter_summary(filters: Dict[str, Any]) -> str:
+def _format_model_filter_summary(filters: dict[str, Any]) -> str:
     parts = []
     if filters.get("task_type"):
         parts.append(f"task_type={filters['task_type']}")
@@ -1978,7 +2005,7 @@ def _format_model_filter_summary(filters: Dict[str, Any]) -> str:
     return ", ".join(parts)
 
 
-def _extract_images_from_content(content) -> list[str]:
+def _extract_images_from_content(content: object) -> list[str]:
     """Extract image base64 URLs from multimodal message content.
 
     Returns a list of data URLs (e.g. 'data:image/jpeg;base64,...') for persistence.
@@ -2000,7 +2027,7 @@ def _extract_citation_contexts(
     article_pdf_content: str,
     per_paper_content: dict[int, str] | None = None,
     per_paper_source_ids: dict[int, str] | None = None,
-) -> dict | None:
+) -> dict[str, dict[str, Any]] | None:
     """Extract citation contexts from AI response using BM25 paragraph search.
 
     For each ``[N, p.Y]`` citation found in *ai_response*, locate the
@@ -2037,15 +2064,16 @@ def _extract_citation_contexts(
         return None
 
     # Build per-paper page maps to avoid page-number collisions
+    _single_page_map: dict[int, str] = {}
     if per_paper_content:
         paper_page_maps: dict[int, dict[int, str]] = {}
         for paper_idx, content in per_paper_content.items():
-            pgs = _split_md_into_pages(content)
+            pgs = split_md_into_pages(content)
             paper_page_maps[paper_idx] = {pn: ct for pn, ct in pgs}
     else:
         # Single-paper mode: all citations share the same page map
-        pages = _split_md_into_pages(article_pdf_content)
-        _single_page_map: dict[int, str] = {pn: ct for pn, ct in pages}
+        pages = split_md_into_pages(article_pdf_content)
+        _single_page_map = {pn: ct for pn, ct in pages}
         paper_page_maps = {}  # unused in single mode
 
     def _best_paragraph(page_text: str, query: str, max_len: int = 200) -> str:
@@ -2099,7 +2127,7 @@ def _extract_citation_contexts(
         if not paragraphs:
             return _clean_snippet_text(page_text)[:max_len].strip()
 
-        q_tokens = _tokenize_for_search(query)
+        q_tokens = tokenize_for_search(query)
         if not q_tokens:
             for paragraph in paragraphs:
                 cleaned = _clean_snippet_text(paragraph)
@@ -2108,7 +2136,7 @@ def _extract_citation_contexts(
             cleaned_page = _clean_snippet_text(page_text)
             return cleaned_page[:max_len] if cleaned_page else paragraphs[0][:max_len]
 
-        para_tokens = [_tokenize_for_search(p) for p in paragraphs]
+        para_tokens = [tokenize_for_search(p) for p in paragraphs]
         N = len(paragraphs)
         avgdl = sum(len(t) for t in para_tokens) / N if N else 1
         k1, b = 1.5, 0.75
@@ -2157,7 +2185,7 @@ def _extract_citation_contexts(
             snippet += "…"
         return snippet
 
-    contexts: dict[str, dict] = {}
+    contexts: dict[str, dict[str, Any]] = {}
     for idx_str, page_part in citations:
         # Normalize key: remove whitespace from page part for consistent lookup
         key = f"{idx_str}-{page_part.replace(' ', '')}"
@@ -2252,7 +2280,7 @@ def _extract_citation_contexts(
 
 
 async def _stream_from_openai_compatible(
-    messages: List[Dict],
+    messages: list[dict[str, Any]],
     base_url: str,
     api_key: str,
     model: str,
@@ -2317,7 +2345,7 @@ async def _stream_from_openai_compatible(
 
 
 async def _check_local_vllm_available(
-    base_url: str, api_key: str = None
+    base_url: str, api_key: str | None = None
 ) -> tuple[bool, str | None]:
     now = time.monotonic()
     cached = _vllm_cache
@@ -2381,7 +2409,7 @@ async def _check_local_vllm_available(
 
 
 async def _call_ai_complete(
-    messages: List[Dict], base_url: str, api_key: str, model: str
+    messages: list[dict[str, Any]], base_url: str, api_key: str, model: str
 ) -> str:
     """
     Call AI completion API (non-streaming) and return the full response content.
@@ -2421,7 +2449,7 @@ async def _call_ai_complete(
 
 async def _execute_exa_search(
     query: str, exa_api_key: str, num_results: int = 5
-) -> Dict:
+) -> dict[str, Any]:
     """
     Execute Exa search and return results.
 
@@ -2446,7 +2474,7 @@ async def _execute_exa_search(
                 "contents": {"text": True},
             },
         )
-        response.raise_for_status()
+        _ = response.raise_for_status()
         data = response.json()
 
         # Extract results
@@ -2474,10 +2502,10 @@ class ClientDisconnectedError(Exception):
     pass
 
 
-def _consume_task_exception(task: asyncio.Task[Any]) -> None:
+def _consume_task_exception(task: asyncio.Task[object]) -> None:
     """Drain task exceptions so detached cleanup paths do not emit warnings."""
     try:
-        task.exception()
+        _ = task.exception()
     except (asyncio.CancelledError, Exception):
         pass
 
@@ -2488,7 +2516,7 @@ async def _wait_for_disconnect(request: Request) -> None:
         await asyncio.sleep(0.25)
 
 
-async def _run_or_cancel_on_disconnect(coro, request: Request):
+async def _run_or_cancel_on_disconnect(coro, request: Request | None):
     """Race *coro* against client disconnect.
 
     If *request* is ``None`` (no disconnect detection available), simply
@@ -2507,7 +2535,7 @@ async def _run_or_cancel_on_disconnect(coro, request: Request):
     )
 
     for p in pending:
-        p.cancel()
+        _ = p.cancel()
         try:
             await p
         except (asyncio.CancelledError, Exception):
@@ -2519,7 +2547,9 @@ async def _run_or_cancel_on_disconnect(coro, request: Request):
     return task.result()
 
 
-def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
+def _deduplicate_search_results(
+    results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Remove duplicate search results based on title similarity.
 
     Two results are considered duplicates when their normalised titles share
@@ -2537,13 +2567,13 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
     _bracket_re = re.compile(r"\[.*?\]")
     _word_re = re.compile(r"[a-zA-Z0-9]{3,}")
 
-    def _title_words(title: str) -> set:
+    def _title_words(title: str) -> set[str]:
         title = _bracket_re.sub("", title)
         return set(w.lower() for w in _word_re.findall(title))
 
-    def _source_priority(result: Dict) -> int:
+    def _source_priority(result: dict[str, Any]) -> int:
         source_type = detect_source_type(str(result.get("url", "")))
-        if source_type in _ACADEMIC_SOURCE_TYPES:
+        if source_type in ACADEMIC_SOURCE_TYPES:
             return 50
         if source_type == "pdf":
             return 40
@@ -2556,7 +2586,7 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
         return 5
 
     seen: list[dict[str, Any]] = []
-    deduplicated: list[Dict] = []
+    deduplicated: list[dict[str, Any]] = []
 
     for result in results:
         words = _title_words(result.get("title", ""))
@@ -2587,7 +2617,7 @@ def _deduplicate_search_results(results: List[Dict]) -> List[Dict]:
     return deduplicated
 
 
-def _format_search_results_for_ai(search_results: Dict) -> str:
+def _format_search_results_for_ai(search_results: dict[str, Any]) -> str:
     """Format search-like results for the next AI iteration."""
     query = str(search_results.get("query", "") or "")
     source = str(search_results.get("source", "web") or "web")
@@ -2599,7 +2629,7 @@ def _format_search_results_for_ai(search_results: Dict) -> str:
     for idx, result in enumerate(search_results.get("results", []), 1):
         r_url = str(result.get("url", "") or "")
         src_type = str(result.get("source_type") or detect_source_type(r_url))
-        is_academic_src = src_type in _ACADEMIC_SOURCE_TYPES
+        is_academic_src = src_type in ACADEMIC_SOURCE_TYPES
         ref_type = "paper" if is_academic_src else "webpage"
         results_text += (
             f"{idx}. {result.get('title', '')}\n"
@@ -2611,12 +2641,12 @@ def _format_search_results_for_ai(search_results: Dict) -> str:
 
 
 async def stream_ai_response(
-    messages: List[Dict],
-    api_key: str = None,
-    base_url: str = None,
-    model: str = None,
+    messages: list[dict[str, Any]],
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str | None = None,
     detected_lang: str = "en",
-    request: Request = None,
+    request: Request | None = None,
     disable_web_search: bool = False,
     conversation_mode: ConversationMode = ConversationMode.GENERAL_CHAT,
 ) -> AsyncIterator[str]:
@@ -2683,11 +2713,17 @@ async def stream_ai_response(
             logger.warning("Local vLLM server is offline, falling back to OpenRouter")
 
     # Determine effective API settings
+    effective_model: str = openrouter_model
+    effective_base_url: str = str(openrouter_base_url or "")
+    effective_api_key: str = str(openrouter_api_key or "")
+
     if use_local:
-        effective_model = local_vllm_model or detected_model
-        effective_base_url = local_vllm_base_url
-        effective_api_key = local_vllm_api_key
-        if not effective_model:
+        local_model_resolved = local_vllm_model or detected_model
+        if local_model_resolved:
+            effective_model = local_model_resolved
+            effective_base_url = local_vllm_base_url
+            effective_api_key = local_vllm_api_key
+        else:
             logger.error(
                 "No model specified and auto-detect failed, falling back to OpenRouter"
             )
@@ -2714,8 +2750,8 @@ After saving, return here and start chatting!"""
             return
 
         effective_model = openrouter_model
-        effective_base_url = openrouter_base_url
-        effective_api_key = openrouter_api_key
+        effective_base_url = str(openrouter_base_url or "")
+        effective_api_key = str(openrouter_api_key or "")
 
     provider_name = "Local vLLM" if use_local else "OpenRouter"
 
@@ -2736,8 +2772,8 @@ After saving, return here and start chatting!"""
         )
         use_local = False
         effective_model = openrouter_model
-        effective_base_url = openrouter_base_url
-        effective_api_key = openrouter_api_key
+        effective_base_url = str(openrouter_base_url or "")
+        effective_api_key = str(openrouter_api_key or "")
         provider_name = "OpenRouter"
         return True
 
@@ -2775,7 +2811,7 @@ After saving, return here and start chatting!"""
             cached_md = get_cached_markdown(url)
             if cached_md:
                 _per_paper_pdf_content[idx] = cached_md
-            _per_paper_source_ids[idx] = _get_url_hash(url)
+            _per_paper_source_ids[idx] = get_url_hash(url)
             meta = get_cached_pdf_meta(url) or {}
             title = meta.get("title", "Unknown")
             src_type = detect_source_type(url)
@@ -2810,8 +2846,8 @@ After saving, return here and start chatting!"""
     for iteration in range(max_tool_iterations):
         # ── Streaming path: yield tokens directly to the client ──────────
         if _stream_next_iteration:
+            streamed_response = ""
             try:
-                streamed_response = ""
                 response_truncated = False
                 async for chunk in _stream_from_openai_compatible(
                     messages=current_messages,
@@ -3026,8 +3062,6 @@ After saving, return here and start chatting!"""
         search_match = json.loads("null")
         _search_json_error = False
         try:
-            import re
-
             pattern = r"\[WEB_SEARCH\](.*?)\[/WEB_SEARCH\]"
             match = re.search(pattern, full_response, re.DOTALL)
             if match:
@@ -3368,7 +3402,7 @@ After saving, return here and start chatting!"""
                     )
                     # 改动 9b: Replace hash-based image filenames with fig-N aliases
                     # (first-read path — same as 改动 9 in _build_merged_pdf_context)
-                    _first_read_url_hash = _get_url_hash(article_url)
+                    _first_read_url_hash = get_url_hash(article_url)
                     content = _replace_images_with_fig_aliases(
                         content, _first_read_url_hash
                     )
@@ -3583,18 +3617,17 @@ After saving, return here and start chatting!"""
         if _has_dangling_tool_block:
             cleaned = _strip_tool_blocks(final_response_text)
             if cleaned:
-                _CHUNK_SIZE = 80
-                for i in range(0, len(cleaned), _CHUNK_SIZE):
-                    yield f"data: {json.dumps({'content': cleaned[i : i + _CHUNK_SIZE]})}\n\n"
+                chunk_size = 80
+                for i in range(0, len(cleaned), chunk_size):
+                    yield f"data: {json.dumps({'content': cleaned[i : i + chunk_size]})}\n\n"
                 yield f"data: {json.dumps({'content': chr(10) + chr(10)})}\n\n"
         yield f"data: {json.dumps({'content': fallback_msg})}\n\n"
-        final_response_text = fallback_msg  # for citation context below
+        final_response_text = fallback_msg
 
     elif not _response_already_streamed and final_response_text:
-        # Buffered response (tool-call iteration that fell through) — emit now
-        _CHUNK_SIZE = 80
-        for i in range(0, len(final_response_text), _CHUNK_SIZE):
-            yield f"data: {json.dumps({'content': final_response_text[i : i + _CHUNK_SIZE]})}\n\n"
+        chunk_size = 80
+        for i in range(0, len(final_response_text), chunk_size):
+            yield f"data: {json.dumps({'content': final_response_text[i : i + chunk_size]})}\n\n"
 
     if (
         _final_response_truncated
@@ -3939,7 +3972,7 @@ async def chat_with_ai(
     req: ChatRequest,
     request: Request,
     user: User = Depends(current_active_user),
-    user_id_filter: Optional[str] = Depends(get_user_id_filter),
+    user_id_filter: str | None = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -4187,8 +4220,8 @@ async def chat_with_ai(
     data_type_dist = stats["data_types"]
 
     # Auxiliary lookup dict built during the dataset loop (used later for model compatibility)
-    available_extractors_per_dataset: dict = {}  # dataset_id -> list[str]
-    dataset_wsi_ids_per_dataset: dict = {}  # dataset_id -> list[str]
+    available_extractors_per_dataset: dict[str, list[str]] = {}
+    dataset_wsi_ids_per_dataset: dict[str, list[str]] = {}
 
     # Format datasets with detailed info (data_type and labels per dataset)
     # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
@@ -4369,12 +4402,12 @@ async def chat_with_ai(
         task_ids = list(set(m.task_id for m in trained_models if m.task_id))
         training_tasks_map = {}
         # task_id -> set of dataset_ids actually used in training (via TrainingTaskWSI → WSISlide)
-        training_dataset_ids_map: Dict[str, set] = {}
-        training_wsi_ids_map: Dict[str, Set[str]] = {}
-        source_dataset_ids_map: Dict[str, Optional[str]] = {}
+        training_dataset_ids_map: dict[str, set[str]] = {}
+        training_wsi_ids_map: dict[str, set[str]] = {}
+        source_dataset_ids_map: dict[str, str | None] = {}
         # task_id -> dataset_ids with persisted AI results/heatmap artifacts
-        result_dataset_ids_map: Dict[str, Set[str]] = {}
-        heatmap_dataset_ids_map: Dict[str, Set[str]] = {}
+        result_dataset_ids_map: dict[str, set[str]] = {}
+        heatmap_dataset_ids_map: dict[str, set[str]] = {}
         if task_ids:
             from sqlalchemy import select
 
@@ -4755,7 +4788,7 @@ async def chat_with_ai(
             if str(getattr(t, "status", "") or "").lower() in ACTIVE_TRAINING_STATUSES
         ]
         live_progress_map = await get_all_progress() if active_task_ids else {}
-        recent_logs_by_task_id: Dict[str, List[Any]] = {}
+        recent_logs_by_task_id: dict[str, list[object]] = {}
         if active_task_ids:
             recent_logs_batches = await asyncio.gather(
                 *(get_training_snapshot(task_id) for task_id in active_task_ids)

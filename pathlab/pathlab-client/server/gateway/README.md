@@ -1,6 +1,6 @@
 # PathLab Gateway
 
-> 适用版本：`PathLab v1.0.0`
+> 适用版本：`PathLab v1.0.1`
 
 Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
 

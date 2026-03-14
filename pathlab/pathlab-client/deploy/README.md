@@ -1,6 +1,6 @@
 # PathLab Deployment
 
-> 适用版本：`PathLab v1.0.0`
+> 适用版本：`PathLab v1.0.1`
 
 `deploy/` 目录保存的是当前**固定端口 Web / 运维部署**所需脚本与配置，不是 Electron 桌面打包流程。
 

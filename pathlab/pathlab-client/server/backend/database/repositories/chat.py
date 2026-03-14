@@ -3,7 +3,7 @@ ChatRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,7 +17,7 @@ class ChatRepository:
     """Repository for Chat Conversation and Message operations"""
 
     @staticmethod
-    async def create_conversation(db: AsyncSession, conversation_data: Dict) -> ChatConversation:
+    async def create_conversation(db: AsyncSession, conversation_data: Dict[str, Any]) -> ChatConversation:
         """Create a new conversation"""
         conversation = ChatConversation(**conversation_data)
         db.add(conversation)
@@ -63,7 +63,7 @@ class ChatRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def add_message(db: AsyncSession, message_data: Dict) -> ChatMessage:
+    async def add_message(db: AsyncSession, message_data: Dict[str, Any]) -> ChatMessage:
         """Add a message to a conversation"""
         message = ChatMessage(**message_data)
         db.add(message)
@@ -101,7 +101,7 @@ class ChatRepository:
         db: AsyncSession,
         message_id: int,
         content: str,
-        extra_metadata: Optional[Dict] = None
+        extra_metadata: Optional[Dict[str, Any]] = None
     ) -> Optional[ChatMessage]:
         """Update a message's content"""
         result = await db.execute(
@@ -180,5 +180,4 @@ class ChatRepository:
             .where(ChatConversation.user_id == user_id)
         )
         return result.scalar()
-
 

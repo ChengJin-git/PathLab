@@ -1,5 +1,5 @@
 import os
-from typing import Callable, Optional
+from typing import Callable, Optional, Any
 import numpy as np
 from torch.utils.data import Dataset
 from PIL import Image
@@ -75,7 +75,7 @@ def parser_csv_annotations(annotations_full_path: str, force_split = False,
     return train_items, val_items, test_items, label_mapper
 
 
-class PatchDataset(Dataset):
+class PatchDataset(Dataset[Any]):
     """
     A dataset class for image patch tasks.
 
@@ -90,10 +90,10 @@ class PatchDataset(Dataset):
     def __init__(
         self,
         img_dir: str,
-        annotations: dict,
-        label_mapper: dict,
-        transform: Optional[Callable] = None,
-        extractor: Optional[Callable] = None,
+        annotations: dict[str, Any],
+        label_mapper: dict[str, Any],
+        transform: Optional[Callable[..., Any]] = None,
+        extractor: Optional[Callable[..., Any]] = None,
         mode: str = "train",
     ):
         assert mode in ['train', 'val', 'test'], "mode should be one of 'train', 'val', or 'test'"
@@ -123,7 +123,7 @@ class PatchDataset(Dataset):
         img = Image.open(image_path).convert("RGB")
         return img
     
-    def set_extractor(self, extractor: Callable):
+    def set_extractor(self, extractor: Callable[..., Any]):
         self.extractor = extractor
 
     def __getitem__(self, idx: int):
@@ -142,7 +142,7 @@ class PatchDataset(Dataset):
         return len(self.image_items)
 
 
-class PatchDatasetFromDB(Dataset):
+class PatchDatasetFromDB(Dataset[Any]):
     """
     A dataset class for patch classification using absolute paths from database.
 
@@ -157,10 +157,10 @@ class PatchDatasetFromDB(Dataset):
     """
     def __init__(
         self,
-        annotations: dict,
-        label_mapper: dict,
-        transform: Optional[Callable] = None,
-        extractor: Optional[Callable] = None,
+        annotations: dict[str, Any],
+        label_mapper: dict[str, Any],
+        transform: Optional[Callable[..., Any]] = None,
+        extractor: Optional[Callable[..., Any]] = None,
     ):
         # annotations is {absolute_path: class_label}
         self.image_items = [
@@ -190,7 +190,7 @@ class PatchDatasetFromDB(Dataset):
         img = Image.open(image_path).convert("RGB")
         return img
 
-    def set_extractor(self, extractor: Callable):
+    def set_extractor(self, extractor: Callable[..., Any]):
         self.extractor = extractor
 
     def __getitem__(self, idx: int):
@@ -209,7 +209,7 @@ class PatchDatasetFromDB(Dataset):
         return len(self.image_items)
 
 
-def build_datasets(cfg: dict):
+def build_datasets(cfg: dict[str, Any]):
     """
     Build PatchDataset from config.
     Args:

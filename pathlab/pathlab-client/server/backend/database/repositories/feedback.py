@@ -3,7 +3,7 @@ FeedbackRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, desc, insert, cast, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +27,7 @@ class FeedbackRepository:
         related_task_id: Optional[str],
         time_to_action_seconds: Optional[float],
         message_content: Optional[str],
-        context_messages: Optional[List[dict]],
+        context_messages: Optional[List[dict[str, Any]]],
         task_type: Optional[str],
         task_title: Optional[str],
     ) -> None:
@@ -61,7 +61,7 @@ class FeedbackRepository:
         related_task_id: Optional[str] = None,
         time_to_action_seconds: Optional[float] = None,
         message_content: Optional[str] = None,
-        context_messages: Optional[List[dict]] = None,
+        context_messages: Optional[List[dict[str, Any]]] = None,
         task_type: Optional[str] = None,
         task_title: Optional[str] = None
     ) -> MessageFeedback:
@@ -188,7 +188,7 @@ class FeedbackRepository:
         user_id_filter: Optional[str] = None,
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None
-    ) -> tuple[List[dict], int]:
+    ) -> tuple[List[dict[str, Any]], int]:
         """
         Get all feedbacks with pagination and filtering (admin only).
         Returns tuple of (feedbacks list with username, total count).
@@ -253,7 +253,7 @@ class FeedbackRepository:
         return feedbacks_with_username, total
 
     @staticmethod
-    async def get_feedback_stats(db: AsyncSession) -> Dict:
+    async def get_feedback_stats(db: AsyncSession) -> Dict[str, Any]:
         """
         Get feedback statistics (admin only).
         Returns counts of different feedback types and helpfulness ratings.
@@ -407,5 +407,4 @@ class FeedbackRepository:
 
         result = await db.execute(query)
         return result.scalars().all()
-
 

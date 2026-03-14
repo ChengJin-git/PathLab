@@ -8,7 +8,7 @@ import shutil
 import csv
 import io
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,7 +96,7 @@ async def _append_segmentation_annotation_to_existing_dataset(
     *,
     dataset_id: str,
     annotation_name: str,
-    annotation_payload: dict,
+    annotation_payload: dict[str, Any],
     user_id: str,
     source: str,
 ):
@@ -365,7 +365,7 @@ async def upload_wsi_file(
         wsi_path: Optional[Path] = None
         file_size = 0
         file_data_type: Optional[str] = None
-        props: dict = {}
+        props: dict[str, Any] = {}
 
         if is_json_annotation_upload:
             segmentation_annotation = load_coco_annotation_bytes(

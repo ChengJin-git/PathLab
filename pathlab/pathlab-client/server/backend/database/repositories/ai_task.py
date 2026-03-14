@@ -3,7 +3,7 @@ AITaskRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ class AITaskRepository:
     """Repository for AI Task operations"""
 
     @staticmethod
-    async def create(db: AsyncSession, task_data: Dict) -> AITask:
+    async def create(db: AsyncSession, task_data: Dict[str, Any]) -> AITask:
         """Create a new AI task"""
         task = AITask(**task_data)
         db.add(task)
@@ -176,5 +176,4 @@ class AITaskRepository:
             "pending": row.pending or 0,
             "failed": row.failed or 0,
         }
-
 

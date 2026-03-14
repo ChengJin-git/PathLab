@@ -40,7 +40,7 @@ class WSIClassifyRequest(BaseModel):
     wsi_id: str
     classes: Optional[List[str]] = None  # Optional: classes for classification (auto-detected if not provided)
     model_id: Optional[str] = None  # Optional: specific model to use
-    params: Optional[Dict] = None
+    params: Optional[Dict[str, Any]] = None
 
 
 class SplitConfig(BaseModel):
@@ -62,8 +62,8 @@ class TrainingTaskRequest(BaseModel):
     task_description: Optional[str] = None
     dataset_id: Optional[str] = None  # If provided, wsi_ids are resolved from this dataset on server
     wsi_ids: List[str] = []  # Optional when dataset_id is provided
-    preprocessing: Dict  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
-    model: Dict  # {aggregator, learning_rate, epochs, optimizer, batch_size}
+    preprocessing: Dict[str, Any]  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
+    model: Dict[str, Any]  # {aggregator, learning_rate, epochs, optimizer, batch_size}
     huggingface_token: Optional[str] = None  # HuggingFace token for gated models
     split_config: Optional[SplitConfig] = None
 
@@ -148,7 +148,7 @@ class ChatRequest(BaseModel):
       ]}
     """
     conversation_id: Optional[str] = None  # Optional conversation ID for persistence
-    messages: List[Dict]  # Changed from Dict[str, str] to Dict to support multimodal content
+    messages: List[Dict[str, Any]]  # Changed from Dict[str, str] to Dict[str, Any] to support multimodal content
 
 
 class CreateConversationRequest(BaseModel):
@@ -196,7 +196,7 @@ class MessageFeedbackRequest(BaseModel):
     time_to_action_seconds: Optional[float] = None  # Time from last user message to task submission
     # Preserved message content (for thumbs up/down feedback)
     message_content: Optional[str] = None  # The rated message content
-    context_messages: Optional[List[dict]] = None  # Previous message(s) for context
+    context_messages: Optional[List[dict[str, Any]]] = None  # Previous message(s) for context
     # Task info (for task helpfulness feedback)
     task_type: Optional[str] = None  # 'training', 'inference', 'analysis'
     task_title: Optional[str] = None  # Task name/title
@@ -304,12 +304,12 @@ class AnnotationSaveRequest(BaseModel):
     annotation_id: str
     source_dataset_id: Optional[str] = None
     # { wsi_id: [{ type, x, y, width, height, points, label, color }, ...] }
-    annotations: Dict
+    annotations: Dict[str, Any]
 
 class AnnotationExtractRequest(BaseModel):
     """Request model for extracting annotated ROIs into a new dataset"""
     annotation_id: Optional[str] = None    # Load annotations from saved annotation
-    annotations: Optional[Dict] = None     # Or provide directly (overrides saved)
+    annotations: Optional[Dict[str, Any]] = None     # Or provide directly (overrides saved)
     dataset_name: str
     task_type: str = "classification"       # classification or segmentation
     source_dataset_id: Optional[str] = None  # For segmentation: reuse existing dataset

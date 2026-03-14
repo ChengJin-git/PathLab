@@ -1,8 +1,8 @@
 # PathLab
 
-> 正式版本号：`v1.0.0`
+> 正式版本号：`v1.0.1`
 
-发布日期：2026 年 3 月 12 日
+发布日期：2026 年 3 月 14 日
 
 PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。当前主应用位于 `pathlab/pathlab-client/`，由 **Electron 主进程 / preload、React 渲染层、Python FastAPI sidecar** 共同组成。
 
@@ -12,6 +12,7 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 - React 前端源码位于 `pathlab/pathlab-client/src/renderer/src`
 - Python 统一入口位于 `pathlab/pathlab-client/server/main.py`
 - `server/main.py` 当前会拉起 3 个内部服务：`Gateway`、`Preprocessing`、`AI`
+- 前端单元测试位于 `pathlab/pathlab-client/test/`，当前使用 Vitest（`test` / `test:run` / `test:coverage`）
 - 固定端口部署、Nginx 与 systemd 模板位于 `pathlab/pathlab-client/deploy/`
 - `server/backend/deep-research/` 当前仍在代码树中，但不属于默认 sidecar 启动的独立服务
 
@@ -46,6 +47,8 @@ pathlab/
     │   ├── main.py          # Python sidecar 统一入口
     │   ├── gateway/         # 对外 API 网关
     │   └── backend/         # AI / preprocessing / database / storage / auth
+    ├── test/                # 前端单元测试（Vitest）
+    ├── vitest.config.ts     # Vitest 配置
     └── deploy/              # 固定端口启动、热更新、Nginx、systemd 模板
 ```
 
@@ -59,6 +62,7 @@ pathlab/
 - [Storage Management](pathlab/pathlab-client/server/backend/storage/README.md)
 - [Frontend](pathlab/pathlab-client/src/renderer/README.md)
 - [Frontend Source](pathlab/pathlab-client/src/renderer/src/README.md)
+- [Frontend Tests](pathlab/pathlab-client/test/README.md)
 - [Deployment](pathlab/pathlab-client/deploy/README.md)
 
 说明：仓库当前没有单独维护的 `deep-research` README；该目录未纳入 `server/main.py` 默认启动链，因此只在总览文档中顺带说明。

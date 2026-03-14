@@ -1,3 +1,4 @@
+from typing import Any
 """
 Storage batch task routes — background tasks, task management, and SSE streaming.
 
@@ -157,7 +158,7 @@ async def reset_derived_data(
 # Background Task Functions for Batch Operations
 # ==============================================================================
 
-async def _run_batch_import_task(task_id: str, user_id: str, request_params: dict):
+async def _run_batch_import_task(task_id: str, user_id: str, request_params: dict[str, Any]):
     """
     Background task for batch importing WSI files.
     Updates progress in database as it processes files.
@@ -658,7 +659,7 @@ async def _cleanup_empty_dataset_record(db: AsyncSession, dataset_id: str) -> bo
     return True
 
 
-async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
+async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list[Any]):
     """
     Background task for deleting external WSI records.
     Updates progress in database as it processes files.
@@ -988,7 +989,7 @@ async def _run_cleanup_empty_datasets_task(task_id: str, user_id: str):
             await db.commit()
 
 
-async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_params: dict):
+async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_params: dict[str, Any]):
     """
     Background task for batch updating WSI metadata.
     Updates progress in database as it processes files.

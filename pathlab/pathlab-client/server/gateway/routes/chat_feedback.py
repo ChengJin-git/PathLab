@@ -9,7 +9,7 @@ import os
 import uuid
 import tempfile
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -261,7 +261,7 @@ async def process_export_task(
     task_id: str,
     export_type: str,
     file_format: str,
-    filter_params: dict,
+    filter_params: dict[str, Any],
     db_session_maker
 ):
     """

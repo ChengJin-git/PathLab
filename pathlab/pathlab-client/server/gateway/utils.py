@@ -83,7 +83,7 @@ def get_file_size_safe(file_path: str | Path) -> int:
         return 0
 
 
-def build_default_wsi_properties(file_path: str | Path, file_size: Optional[int] = None) -> dict:
+def build_default_wsi_properties(file_path: str | Path, file_size: Optional[int] = None) -> dict[str, Any]:
     if file_size is None:
         file_size = get_file_size_safe(file_path)
     return {
@@ -127,7 +127,7 @@ def resolve_file_data_type_and_properties(
     *,
     cached_file_data_type: Optional[str] = None,
     file_size: Optional[int] = None,
-) -> tuple[str, dict]:
+) -> tuple[str, dict[str, Any]]:
     if file_size is None:
         file_size = get_file_size_safe(file_path)
 
@@ -350,7 +350,7 @@ def find_matching_segmentation_annotation_path(image_path: str | Path) -> Option
     return match_path
 
 
-def validate_coco_annotation_payload(payload: Any, *, source_name: str) -> dict:
+def validate_coco_annotation_payload(payload: Any, *, source_name: str) -> dict[str, Any]:
     """Validate the minimum COCO structure required by PathLab segmentation."""
     if not isinstance(payload, dict):
         raise HTTPException(status_code=400, detail=f"{source_name}: annotation must be a JSON object")
@@ -365,7 +365,7 @@ def validate_coco_annotation_payload(payload: Any, *, source_name: str) -> dict:
     return payload
 
 
-def load_coco_annotation_bytes(raw_bytes: bytes, *, source_name: str) -> dict:
+def load_coco_annotation_bytes(raw_bytes: bytes, *, source_name: str) -> dict[str, Any]:
     """Parse and validate uploaded COCO JSON bytes."""
     try:
         payload = json.loads(raw_bytes.decode("utf-8"))
@@ -377,7 +377,7 @@ def load_coco_annotation_bytes(raw_bytes: bytes, *, source_name: str) -> dict:
     return validate_coco_annotation_payload(payload, source_name=source_name)
 
 
-def load_coco_annotation_file(annotation_path: str | Path) -> dict:
+def load_coco_annotation_file(annotation_path: str | Path) -> dict[str, Any]:
     """Load and validate a COCO JSON annotation from disk."""
     path_obj = Path(annotation_path)
     try:
@@ -650,7 +650,7 @@ async def ensure_coords_ready(
                     await asyncio.sleep(wait_secs)
 
 
-def extract_wsi_properties(wsi_path: str) -> dict:
+def extract_wsi_properties(wsi_path: str) -> dict[str, Any]:
     """
     Extract properties from a WSI file using ASlide.
     Returns a dict with mpp, vendor, width, height, magnification, file_size.

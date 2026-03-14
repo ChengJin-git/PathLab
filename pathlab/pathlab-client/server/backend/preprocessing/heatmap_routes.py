@@ -13,7 +13,7 @@ import math
 import re
 import struct
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import FileResponse, Response
@@ -121,7 +121,7 @@ def _get_thumbnail_blur_radius(
     return max(1.0, base_radius)
 
 
-def _get_npy_shape_fast(filepath: Path) -> Optional[tuple]:
+def _get_npy_shape_fast(filepath: Path) -> Optional[tuple[Any, ...]]:
     """
     Read numpy array shape from file header without loading the entire array.
     This is much faster than np.load() for large arrays.
@@ -495,7 +495,7 @@ async def get_heatmap_thumbnail(
 
         # Create heatmap overlay using coolwarm colormap (matching WSI Viewer)
         # Coolwarm: blue (low) -> white (mid) -> red (high)
-        def weight_to_rgb(w: float) -> tuple:
+        def weight_to_rgb(w: float) -> tuple[Any, ...]:
             """Convert attention weight to RGB using coolwarm colormap"""
             w = max(0, min(1, w))
             if w < 0.5:
@@ -851,7 +851,7 @@ async def get_available_heatmaps(
             })
 
         # Get best_fold info and validation performance for each model from metrics.json
-        model_metrics: Dict[str, Dict] = {}
+        model_metrics: Dict[str, Dict[str, Any]] = {}
         task_best_folds: Dict[str, str] = {}
 
         possible_prefixes = [

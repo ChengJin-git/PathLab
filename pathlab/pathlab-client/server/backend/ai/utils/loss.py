@@ -1,3 +1,4 @@
+from typing import Any
 import torch
 
 
@@ -9,7 +10,7 @@ LOSS_MAPPING = {
 
 
 class ClassificationLoss:
-    def __init__(self, loss_cfg: dict, loss_weights: dict):
+    def __init__(self, loss_cfg: dict[str, Any], loss_weights: dict[str, Any]):
         self.loss_fns = {}
         self.loss_weights = loss_weights
         for loss_name, params in loss_cfg.items():

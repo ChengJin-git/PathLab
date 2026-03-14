@@ -1,3 +1,4 @@
+from typing import Any
 """
 PathLab Python Sidecar - Unified Entry Point
 
@@ -39,7 +40,7 @@ def run_service(app_module: str, port: int, name: str, workers: int = 1, limit_m
         extra = f", limit_max_requests={limit_max_requests}"
     print(f"[{name}] Starting on port {port} with {workers} worker(s){extra}...", flush=True)
 
-    kwargs: dict = dict(
+    kwargs: dict[str, Any] = dict[str, Any](
         host="0.0.0.0",
         port=port,
         log_level="info",

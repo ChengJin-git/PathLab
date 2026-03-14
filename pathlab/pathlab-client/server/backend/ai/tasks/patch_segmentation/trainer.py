@@ -326,7 +326,7 @@ class SegmentationTrainer:
         return generator
 
     
-    def build_loaders(self) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
+    def build_loaders(self) -> Tuple[DataLoader[Any], DataLoader[Any], Optional[DataLoader[Any]]]:
         """
         Build DataLoaders for training, validation, and testing datasets.
         """
@@ -362,7 +362,7 @@ class SegmentationTrainer:
             )
         return train_loader, val_loader, test_loader
     
-    def evaluate_model(self, data_loader: DataLoader) -> Dict[str, SegmentationMetricValue]:
+    def evaluate_model(self, data_loader: DataLoader[Any]) -> Dict[str, SegmentationMetricValue]:
         """
         Evaluate the model on the given DataLoader and return metrics.
         """
@@ -567,7 +567,7 @@ class SegmentationTrainer:
     def _build_scheduler(
         self, 
         optimizer: optim.Optimizer, 
-        train_loader: DataLoader
+        train_loader: DataLoader[Any]
     ) -> Optional[Any]:
         """
         Build learning rate scheduler based on configuration.
@@ -623,7 +623,7 @@ class SegmentationTrainer:
     def _train_one_epoch(
         self,
         model: nn.Module,
-        train_loader: DataLoader,
+        train_loader: DataLoader[Any],
         optimizer: optim.Optimizer,
         scheduler: Optional[Any],
         scaler: Optional[GradScaler],
@@ -731,7 +731,7 @@ class SegmentationTrainer:
     def _validate(
         self,
         model: nn.Module,
-        val_loader: DataLoader,
+        val_loader: DataLoader[Any],
     ) -> Tuple[float, Dict[str, SegmentationMetricValue]]:
         """
         Validate the model.

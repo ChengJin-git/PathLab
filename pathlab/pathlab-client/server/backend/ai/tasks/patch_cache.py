@@ -208,8 +208,8 @@ def find_valid_cached_coords_summary(
     wsi_id: str,
     *,
     level: int,
-    seg_params: Optional[Dict] = None,
-    filter_params: Optional[Dict] = None,
+    seg_params: Optional[Dict[str, Any]] = None,
+    filter_params: Optional[Dict[str, Any]] = None,
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
@@ -253,7 +253,7 @@ def find_valid_cached_coords_summary(
 def safe_load_cached_coords(
     coords_path: Path,
     delete_if_corrupted: bool = True,
-) -> Tuple[Optional[np.ndarray], Optional[Dict], Optional[str]]:
+) -> Tuple[Optional[np.ndarray[Any, Any]], Optional[Dict[str, Any]], Optional[str]]:
     """
     Safely load coordinates and attributes from a cached HDF5 file.
 
@@ -300,7 +300,7 @@ def delete_cached_coords(
 def delete_all_cached_coords_for_wsi(
     uploads_root: Path,
     wsi_id: str,
-) -> Dict:
+) -> Dict[str, Any]:
     """
     Delete all cached coordinates for a WSI across all params_hash directories.
 

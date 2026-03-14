@@ -3,7 +3,7 @@ WSIRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, desc, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -55,7 +55,7 @@ class WSIRepository:
         data_type: Optional[str] = None,
         search: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None,
-    ) -> List:
+    ) -> List[Any]:
         filters = [WSIRepository._build_dataset_membership_filter(dataset_id)]
 
         if user_id is not None and not WSIRepository._has_elevated_dataset_access(dataset_id, elevated_dataset_ids):
@@ -222,7 +222,7 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def create(db: AsyncSession, wsi_data: Dict) -> WSISlide:
+    async def create(db: AsyncSession, wsi_data: Dict[str, Any]) -> WSISlide:
         """Create a new WSI slide record"""
         wsi = WSISlide(**wsi_data)
         db.add(wsi)
@@ -286,7 +286,7 @@ class WSIRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def update(db: AsyncSession, wsi_id: str, update_data: Dict) -> Optional[WSISlide]:
+    async def update(db: AsyncSession, wsi_id: str, update_data: Dict[str, Any]) -> Optional[WSISlide]:
         """Update WSI slide (returns WSISlide with dataset relationship loaded)"""
         update_data["updated_at"] = utc_now()
         await db.execute(
@@ -298,7 +298,7 @@ class WSIRepository:
         return await WSIRepository.get_by_id_with_dataset(db, wsi_id)
 
     @staticmethod
-    async def update_splits(db: AsyncSession, dataset_name: str, updates: List[tuple]) -> int:
+    async def update_splits(db: AsyncSession, dataset_name: str, updates: List[tuple[Any, ...]]) -> int:
         """
         Batch update split column for multiple WSIs.
         
@@ -437,7 +437,7 @@ class WSIRepository:
         db: AsyncSession,
         user_id: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """
         Get all statistics needed for chat context in a SINGLE optimized query.
         This combines count, label distribution, data type distribution, and dataset info.
@@ -836,7 +836,7 @@ class WSIRepository:
         source_organ: Optional[str] = None,
         skip: int = 0,
         limit: int = 0,
-    ) -> List[Dict]:
+    ) -> List[Dict[str, Any]]:
         """
         Get all datasets with file count, total size, and split statistics.
 
@@ -910,7 +910,7 @@ class WSIRepository:
         return datasets
 
     @staticmethod
-    async def _get_coco_categories_for_dataset(db: AsyncSession, dataset_id: str) -> List[Dict]:
+    async def _get_coco_categories_for_dataset(db: AsyncSession, dataset_id: str) -> List[Dict[str, Any]]:
         """
         Extract COCO categories from segmentation annotations stored in DB.
 
@@ -1084,7 +1084,7 @@ class WSIRepository:
         return result.scalar_one()
 
     @staticmethod
-    async def get_dataset_cache_key(db: AsyncSession, dataset_id: str) -> dict:
+    async def get_dataset_cache_key(db: AsyncSession, dataset_id: str) -> dict[str, Any]:
         """Return a lightweight cache key for WSI membership/metadata in a dataset."""
         query = select(func.count(WSISlide.id), func.max(WSISlide.updated_at))
 
@@ -1135,7 +1135,7 @@ class WSIRepository:
         user_id: Optional[str] = None,
         data_type: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Count distinct case groups for case-level pagination.
 
         A "case" is a distinct non-NULL case_id.  Files with NULL case_id
@@ -1313,5 +1313,4 @@ class WSIRepository:
             )
             total_updated += result.rowcount
         return total_updated
-
 

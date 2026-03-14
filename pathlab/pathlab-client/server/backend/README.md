@@ -1,6 +1,6 @@
 # PathLab Backend Services
 
-> 适用版本：`PathLab v1.0.0`
+> 适用版本：`PathLab v1.0.1`
 
 `server/backend/` 存放 Gateway 共享的核心后端模块、两个内部 FastAPI 服务（Preprocessing / AI）的具体实现，以及一个当前未纳入默认 sidecar 启动链的 `deep-research/` 代码树。
 

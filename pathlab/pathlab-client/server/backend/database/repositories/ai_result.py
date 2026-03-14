@@ -3,7 +3,7 @@ AIResultRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, delete, func, desc, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ class AIResultRepository:
     """Repository for AI Result operations"""
 
     @staticmethod
-    async def create(db: AsyncSession, result_data: Dict) -> AIResult:
+    async def create(db: AsyncSession, result_data: Dict[str, Any]) -> AIResult:
         """Create a new AI result"""
         result = AIResult(**result_data)
         db.add(result)
@@ -25,7 +25,7 @@ class AIResultRepository:
         return result
 
     @staticmethod
-    async def bulk_create(db: AsyncSession, results_data: List[Dict], batch_size: int = 100) -> int:
+    async def bulk_create(db: AsyncSession, results_data: List[Dict[str, Any]], batch_size: int = 100) -> int:
         """
         Bulk insert AI results for performance optimization.
 
@@ -102,5 +102,4 @@ class AIResultRepository:
         )
         await db.flush()
         return result.rowcount
-
 

@@ -16,7 +16,7 @@ Usage:
 """
 from __future__ import annotations
 
-from typing import Callable, List, Tuple, Optional
+from typing import Callable, List, Tuple, Optional, Any
 
 # Lazy import to avoid overhead
 _T = None
@@ -40,7 +40,7 @@ def get_default_transforms(
     mode: str = "eval",
     mean: Tuple[float, float, float] = IMAGENET_MEAN,
     std: Tuple[float, float, float] = IMAGENET_STD,
-) -> Callable:
+) -> Callable[..., Any]:
     """
     Get default preprocessing transforms.
     
@@ -80,7 +80,7 @@ def get_pathology_transforms(
     mode: str = "eval",
     mean: Tuple[float, float, float] = IMAGENET_MEAN,
     std: Tuple[float, float, float] = IMAGENET_STD,
-) -> Callable:
+) -> Callable[..., Any]:
     """
     Get transforms optimized for pathology images.
     
@@ -133,4 +133,3 @@ UNI_STD: Tuple[float, float, float] = IMAGENET_STD
 # CONCH uses CLIP normalization
 CONCH_MEAN: Tuple[float, float, float] = OPENAI_CLIP_MEAN
 CONCH_STD: Tuple[float, float, float] = OPENAI_CLIP_STD
-

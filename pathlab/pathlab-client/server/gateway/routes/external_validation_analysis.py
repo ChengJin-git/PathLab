@@ -276,7 +276,7 @@ async def _run_external_validation_survival_analysis(task, request, db, model_co
 
     # For case-level: aggregate results by case_id (one case = one sample)
     if is_case_level and wsi_results:
-        case_results_map: Dict[str, Dict] = {}
+        case_results_map: Dict[str, Dict[str, Any]] = {}
         for res in wsi_results:
             case_id = res["case_id"]
             if case_id not in case_results_map:
@@ -740,7 +740,7 @@ async def _run_external_validation_classification_analysis(task, request, db, mo
 
     # For case-level: aggregate results by case_id (one case = one sample)
     if is_case_level and wsi_results:
-        case_results: Dict[str, Dict] = {}
+        case_results: Dict[str, Dict[str, Any]] = {}
         for res in wsi_results:
             case_id = res["case_id"]
             if case_id not in case_results:

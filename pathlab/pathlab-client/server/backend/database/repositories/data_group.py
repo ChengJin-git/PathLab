@@ -3,7 +3,7 @@ DataGroupRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, delete, insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -116,7 +116,7 @@ class DataGroupRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def update(db: AsyncSession, group_id: str, update_data: Dict) -> Optional[DataGroup]:
+    async def update(db: AsyncSession, group_id: str, update_data: Dict[str, Any]) -> Optional[DataGroup]:
         """Update data group"""
         update_data["updated_at"] = utc_now()
         await db.execute(
@@ -201,5 +201,4 @@ class DataGroupRepository:
         )
         await db.flush()
         return result.rowcount > 0
-
 

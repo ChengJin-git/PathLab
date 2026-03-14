@@ -4,7 +4,7 @@ DatasetRepository - Data Access Layer
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -150,7 +150,7 @@ class DatasetRepository:
 
     @staticmethod
     async def update(
-        db: AsyncSession, dataset_id: str, update_data: Dict
+        db: AsyncSession, dataset_id: str, update_data: Dict[str, Any]
     ) -> Optional[Dataset]:
         """Update dataset"""
         update_data["updated_at"] = utc_now()
@@ -273,7 +273,7 @@ class DatasetRepository:
         return result.scalar() or 0
 
     @staticmethod
-    async def get_distinct_labels(db: AsyncSession, dataset_id: str) -> list:
+    async def get_distinct_labels(db: AsyncSession, dataset_id: str) -> list[Any]:
         """Get the list of distinct non-null labels in a dataset."""
         result = await db.execute(
             select(WSISlide.label)

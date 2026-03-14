@@ -38,7 +38,7 @@ class QueuedTask:
     task_id: str
     task_type: TaskType
     coro_func: Callable[..., Awaitable[Any]]
-    args: tuple = field(default_factory=tuple)
+    args: tuple[Any, ...] = field(default_factory=tuple[Any, ...])
     kwargs: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
     assigned_gpu: Optional[int] = None  # GPU index assigned to this task
@@ -96,7 +96,7 @@ class TaskQueueManager:
         self.vram_check_interval = vram_check_interval
         self.gpu_count = gpu_count
         self._queue: asyncio.Queue[QueuedTask] = asyncio.Queue()
-        self._running_tasks: Dict[str, asyncio.Task] = {}
+        self._running_tasks: Dict[str, asyncio.Task[Any]] = {}
         self._pending_tasks: Dict[str, QueuedTask] = {}  # task_id -> QueuedTask
         self._gpu_assignments: Dict[
             str, int
@@ -107,7 +107,7 @@ class TaskQueueManager:
         self._vram_condition: Optional[asyncio.Condition] = (
             None  # For VRAM availability notification
         )
-        self._worker_task: Optional[asyncio.Task] = None
+        self._worker_task: Optional[asyncio.Task[Any]] = None
         self._shutdown: bool = False
 
         TaskQueueManager._initialized = True

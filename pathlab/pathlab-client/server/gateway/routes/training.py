@@ -9,7 +9,7 @@ import os
 import random
 import uuid
 from collections import defaultdict
-from typing import Optional
+from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,7 +48,7 @@ router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
 
 async def _check_file_accessibility(
-    paths_to_check: list[tuple],
+    paths_to_check: list[tuple[Any, ...]],
     uploads_dir: str,
 ) -> list[str]:
     local_paths = [
@@ -60,7 +60,7 @@ async def _check_file_accessibility(
 
     inaccessible: list[str] = []
 
-    async def _stat(wsi_id: str, path: str, filename: str) -> tuple:
+    async def _stat(wsi_id: str, path: str, filename: str) -> tuple[Any, ...]:
         exists = await asyncio.to_thread(os.path.exists, path)
         return (wsi_id, path, filename, exists)
 
@@ -134,11 +134,11 @@ async def _check_file_accessibility(
                 )
 
         # 2. Random sample per mount root — catches individually-deleted files
-        paths_by_root: dict = defaultdict(list)
+        paths_by_root: dict[str, Any] = defaultdict(list)
         for item in external_paths:
             paths_by_root[_mount_root(item[1])].append(item)
 
-        sample: list[tuple] = []
+        sample: list[tuple[Any, ...]] = []
         for items in paths_by_root.values():
             sample.extend(random.sample(items, min(SAMPLE_SIZE, len(items))))
 
@@ -163,9 +163,9 @@ async def _check_file_accessibility(
 
 async def _validate_files_and_enqueue(
     task_id: str,
-    paths_to_check: list[tuple],
+    paths_to_check: list[tuple[Any, ...]],
     uploads_dir: str,
-    pipeline_kwargs: dict,
+    pipeline_kwargs: dict[str, Any],
 ) -> None:
     training_logger = TrainingLogger(task_id)
 

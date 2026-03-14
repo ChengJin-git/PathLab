@@ -1,3 +1,4 @@
+from typing import Any
 """
 Centralized configuration for PathLab backend services
 """
@@ -88,7 +89,7 @@ class Config:
     CLEANUP_OLD_TASKS_DAYS = 7  # Days to keep old finished tasks
 
     # Aslide color correction supported formats (case-insensitive check)
-    COLOR_CORRECTION_FORMATS: frozenset = frozenset(
+    COLOR_CORRECTION_FORMATS: frozenset[Any] = frozenset[Any](
         {
             ".sdpc",
             ".dyqx",
@@ -155,7 +156,7 @@ class Config:
         return "default"
 
     @classmethod
-    def _read_config(cls) -> dict:
+    def _read_config(cls) -> dict[str, Any]:
         """Read all config from storage.json."""
         config_file = cls._get_storage_config_file()
         if config_file.exists():
@@ -167,7 +168,7 @@ class Config:
         return {}
 
     @classmethod
-    def _write_config(cls, data: dict) -> None:
+    def _write_config(cls, data: dict[str, Any]) -> None:
         """Write config to storage.json (merges with existing)."""
         config_file = cls._get_storage_config_file()
         config_file.parent.mkdir(parents=True, exist_ok=True)
@@ -234,11 +235,11 @@ class Config:
         cls._write_config({"max_concurrent": max_concurrent})
         return max_concurrent
 
-    _global_settings_cache: dict = None
+    _global_settings_cache: dict[str, Any] = None
     _global_settings_dirty: bool = True
 
     @classmethod
-    def _build_global_settings(cls, data: dict) -> dict:
+    def _build_global_settings(cls, data: dict[str, Any]) -> dict[str, Any]:
         def str_to_bool(value: str) -> bool:
             if isinstance(value, bool):
                 return value
@@ -284,7 +285,7 @@ class Config:
         }
 
     @classmethod
-    def get_global_settings(cls) -> dict:
+    def get_global_settings(cls) -> dict[str, Any]:
         if not cls._global_settings_dirty and cls._global_settings_cache is not None:
             return dict(cls._global_settings_cache)
         data = cls._read_config()
@@ -294,7 +295,7 @@ class Config:
         return dict(result)
 
     @classmethod
-    def update_global_settings(cls, settings: dict) -> dict:
+    def update_global_settings(cls, settings: dict[str, Any]) -> dict[str, Any]:
         allowed_keys = {
             "openrouter_api_key",
             "openrouter_base_url",
@@ -394,13 +395,13 @@ class Config:
 
     # ========== Maintenance Notice (Announcement) ==========
     @classmethod
-    def get_maintenance_notice(cls) -> dict | None:
+    def get_maintenance_notice(cls) -> dict[str, Any] | None:
         """Get current maintenance notice. Returns {message, updated_at} or None."""
         config_data = cls._read_config()
         return config_data.get("maintenance_notice", None)
 
     @classmethod
-    def set_maintenance_notice(cls, message: str | None) -> dict | None:
+    def set_maintenance_notice(cls, message: str | None) -> dict[str, Any] | None:
         """Set or clear maintenance notice. Returns the saved notice or None."""
         from datetime import datetime, timezone
 

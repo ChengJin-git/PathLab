@@ -13,7 +13,7 @@ import asyncio
 import csv
 import io
 from pathlib import Path
-from typing import Optional, List, Dict, Set, Literal
+from typing import Optional, List, Dict, Set, Literal, Any
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, UploadFile, File, Depends, Query
 from fastapi.responses import StreamingResponse
@@ -277,7 +277,7 @@ def _generate_split_assignments(
 
 
 def _mark_coco_image_matches(
-    payload: Optional[dict],
+    payload: Optional[dict[str, Any]],
     *,
     exact_lookup: Dict[str, str],
     stem_lookup: Dict[str, str],
@@ -398,7 +398,7 @@ async def _serialize_dataset_wsi_items(
     *,
     is_admin: bool,
     user_id_str: str,
-) -> List[dict]:
+) -> List[dict[str, Any]]:
     annotation_presence: Dict[str, bool] = {}
     dataset_data_type: Optional[str] = None
 
@@ -718,7 +718,7 @@ async def list_datasets(
     is_admin = user.is_admin()
 
     # For admin users, batch-lookup usernames for all dataset owners
-    username_map: dict = {}
+    username_map: dict[str, Any] = {}
     if is_admin:
         from sqlalchemy import select as sql_select, cast, String
         from backend.auth.models import User as AuthUser
@@ -1874,7 +1874,7 @@ async def export_dataset_labels(
 
         # Write one row per file, grouped by case_id for case-level datasets
         if aggregation_level == "case":
-            case_groups: Dict[str, List] = {}
+            case_groups: Dict[str, List[Any]] = {}
             for wsi in wsis:
                 case_id = wsi.case_id or wsi.wsi_id
                 if case_id not in case_groups:

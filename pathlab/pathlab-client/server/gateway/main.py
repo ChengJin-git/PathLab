@@ -1,3 +1,4 @@
+from typing import Any
 """
 PathLab Gateway Service
 
@@ -58,7 +59,7 @@ from .routes import (
 from backend.common.config import Config
 
 
-async def _build_chat_context_cache_for_user(user_id: str | None) -> dict:
+async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, Any]:
     async with async_session() as db:
         stats = await WSIRepository.get_chat_context_stats(
             db, user_id=user_id, elevated_dataset_ids=None

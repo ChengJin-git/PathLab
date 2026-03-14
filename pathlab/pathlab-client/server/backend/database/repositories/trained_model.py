@@ -3,7 +3,7 @@ TrainedModelRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,7 @@ class TrainedModelRepository:
     """Repository for Trained Model operations"""
 
     @staticmethod
-    async def create(db: AsyncSession, model_data: Dict) -> TrainedModel:
+    async def create(db: AsyncSession, model_data: Dict[str, Any]) -> TrainedModel:
         """Create a new trained model"""
         model = TrainedModel(**model_data)
         db.add(model)
@@ -144,5 +144,4 @@ class TrainedModelRepository:
         )
         await db.flush()
         return await TrainedModelRepository.get_by_id(db, model_id)
-
 

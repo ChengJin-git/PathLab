@@ -3,7 +3,7 @@ OrphanedRecordsRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,7 +20,7 @@ class OrphanedRecordsRepository:
     """
 
     @staticmethod
-    async def detect_orphaned_records(db: AsyncSession) -> Dict:
+    async def detect_orphaned_records(db: AsyncSession) -> Dict[str, Any]:
         """
         Detect orphaned records in the database.
 
@@ -176,7 +176,7 @@ class OrphanedRecordsRepository:
     async def cleanup_orphaned_records(
         db: AsyncSession,
         categories: Optional[List[str]] = None
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """
         Clean up orphaned records from the database.
 
