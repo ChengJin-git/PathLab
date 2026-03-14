@@ -86,7 +86,7 @@ def _get_embedding_model():
     return _embedding_model
 
 
-def _embed_texts(texts: list[str]) -> np.ndarray:
+def _embed_texts(texts: list[str]) -> np.ndarray[Any, Any]:
     """Encode a list of texts into embedding vectors."""
     model = _get_embedding_model()
     return model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
@@ -128,7 +128,7 @@ def _extract_pages(markdown: str) -> list[tuple[int, str]]:
 
 # ── Chunking (LlamaIndex pipeline) ────────────────────────────────────────
 
-def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict]:
+def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict[str, Any]]:
     """Split markdown into structure- and sentence-aware chunks with metadata.
 
     Pipeline:
@@ -162,7 +162,7 @@ def _chunk_markdown(markdown: str, url_hash: str, paper_title: str) -> list[dict
 
 def _chunk_markdown_llamaindex(
     markdown: str, url_hash: str, paper_title: str,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Structure-aware chunking via LlamaIndex MarkdownNodeParser + SentenceSplitter."""
     from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
     from llama_index.core.schema import Document
@@ -174,7 +174,7 @@ def _chunk_markdown_llamaindex(
     )
 
     pages = _extract_pages(markdown)
-    chunks: list[dict] = []
+    chunks: list[dict[str, Any]] = []
     chunk_index = 0
 
     for page_num, page_text in pages:
@@ -220,10 +220,10 @@ def _chunk_markdown_llamaindex(
 
 def _chunk_markdown_fallback(
     markdown: str, url_hash: str, paper_title: str,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Simple character-based chunking (fallback when llama-index is unavailable)."""
     pages = _extract_pages(markdown)
-    chunks: list[dict] = []
+    chunks: list[dict[str, Any]] = []
     chunk_index = 0
 
     for page_num, page_text in pages:
@@ -252,7 +252,7 @@ def _chunk_markdown_fallback(
     return chunks
 
 
-def _stringify_block_for_embedding(block: dict, paper_title: str) -> str:
+def _stringify_block_for_embedding(block: dict[str, Any], paper_title: str) -> str:
     block_type = str(block.get("type") or "paragraph")
     section_path = block.get("section_path") or []
     section_prefix = " / ".join(str(item) for item in section_path if item)
@@ -289,7 +289,7 @@ def _stringify_block_for_embedding(block: dict, paper_title: str) -> str:
     return candidate or f"[BlockType: {block_type}] {paper_title}"
 
 
-def _stringify_block_for_display(block: dict) -> str:
+def _stringify_block_for_display(block: dict[str, Any]) -> str:
     block_type = str(block.get("type") or "paragraph")
     if block_type in {"paragraph", "section", "list", "code"}:
         return str(block.get("text") or "").strip()
@@ -310,16 +310,16 @@ def _stringify_block_for_display(block: dict) -> str:
 
 
 def _chunk_structured_content(
-    structured_content: dict,
+    structured_content: dict[str, Any],
     url_hash: str,
     paper_title: str,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Flatten the normalized Document Graph / Block Graph into embedding chunks."""
     blocks = structured_content.get("blocks") if isinstance(structured_content, dict) else None
     if not isinstance(blocks, list):
         return []
 
-    chunks: list[dict] = []
+    chunks: list[dict[str, Any]] = []
     for chunk_index, block in enumerate(blocks):
         if not isinstance(block, dict):
             continue
@@ -345,7 +345,7 @@ def _chunk_structured_content(
     return chunks
 
 
-def _create_or_replace_table(db: Any, records: list[dict]) -> None:
+def _create_or_replace_table(db: Any, records: list[dict[str, Any]]) -> None:
     try:
         db.drop_table(TABLE_NAME)
     except Exception:
@@ -373,7 +373,7 @@ def index_pdf_to_vectorstore(
     url_hash: str,
     markdown: str,
     paper_title: str,
-    structured_content: Optional[dict] = None,
+    structured_content: Optional[dict[str, Any]] = None,
     *,
     vectorstore_dir: Path | None = None,
 ) -> int:
@@ -442,7 +442,7 @@ def search_pdf_chunks(
     top_k: int = 15,
     *,
     vectorstore_dir: Path | None = None,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     """Search indexed PDF chunks by semantic similarity.
 
     Parameters

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 from abc import ABC, abstractmethod
-from typing import Tuple, Callable
+from typing import Tuple, Callable, Any
 
 import torch
 import torch.nn as nn
@@ -73,7 +73,7 @@ class BaseExtractor(ABC, nn.Module):
         """
         return IMAGENET_STD
 
-    def get_transforms(self, mode: str = "eval") -> Callable:
+    def get_transforms(self, mode: str = "eval") -> Callable[..., Any]:
         """
         Get preprocessing transforms for this extractor.
 
@@ -219,4 +219,3 @@ class BaseExtractor(ABC, nn.Module):
             Initialized extractor instance
         """
         pass
-

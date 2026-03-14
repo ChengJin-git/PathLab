@@ -150,7 +150,7 @@
     "donate": "Donate",
     "enterUsername": "Enter your username",
     "enterPassword": "Enter your password",
-    "buildVersion": "Build v1.0.0-stable",
+    "buildVersion": "Build v1.0.1-stable",
     "legalNotice": "Before signing in, you may review the Terms of Service and Privacy Notice. First access still requires acceptance before you can enter the system.",
     "viewTerms": "View Terms of Service",
     "viewPrivacy": "View Privacy Notice"
@@ -828,6 +828,8 @@
     "heroTitle2": "Reimagined",
     "heroTitle3": "",
     "heroSubtitle": "Train, analyze, and gain insights while keeping your data private. Experience the future of medical research today.",
+    "inviteOnlyNotice": "Registration is currently invite-only. Contact your administrator for an invitation.",
+    "inviteOnlyNoticeWithContact": "Registration is currently invite-only. <contactLink>Contact administrator</contactLink> for an invitation.",
     "agenticAI": "Agentic AI Powered",
     "coreCapabilities": "Core Capabilities",
     "coreCapabilitiesTitle": "Everything you need for digital pathology",
@@ -1004,6 +1006,7 @@
       "liveLogs": "Live Logs",
       "liveStream": "Live Stream",
       "connecting": "Connecting to task stream...",
+      "creatingTaskFirstLine": "Task request submitted. Waiting for backend to create task record...",
       "error": "Error: "
     },
     "progressSection": {
@@ -1228,6 +1231,7 @@
       "decoder": "Decoder"
     },
     "progress": {
+      "creatingTask": "Creating Task",
       "extracting": "Extracting Features",
       "testing": "Testing Model",
       "patching": "Patching Images",
@@ -1282,6 +1286,7 @@
     "aiErrorFallback": "Sorry, I encountered an error. Please try again.",
     "generationCancelled": "Response cancelled by user.",
     "generationTimeout": "Response timed out. Please try again.",
+    "pdfLargeDocumentSlowNotice": "Processing a large document — this may take a few minutes, please be patient.",
     "imageAnalysis": "Image Analysis",
     "excelMultipleSheets": "Excel file has {{count}} sheets:",
     "excelMoreSheets": "  ... and {{count}} more",
@@ -1666,6 +1671,7 @@
     "exportLabelsWithSplit": "Export Labels with Split",
     "exportSuccess": "Labels exported successfully",
     "exportFailed": "Failed to export labels",
+    "exportFallbackNonStratified": "Insufficient samples for stratified splitting. Export automatically fell back to a non-stratified split.",
     "splitRatios": "Split Ratios",
     "train": "Train",
     "val": "Val",
@@ -2567,7 +2573,9 @@
 	      "startFailed": "Failed to start image inference",
 	      "failed": "Image inference failed.",
 	      "noModel": "No compatible image inference model is available.",
-      "noSegmentationMask": "No positive segmentation mask was detected."
+      "noSegmentationMask": "No positive segmentation mask was detected.",
+      "segmentationOverlay": "Segmentation overlay",
+      "originalImage": "Original"
     },
     "referenceCard": {
       "references": "References",
@@ -2588,7 +2596,7 @@
     "metrics": "Metrics",
     "perClassPerformance": "Per-Class Performance",
     "class": "Class",
-    "support": "Support",
+    "support": "Sample Size",
     "analysisCharts": "Analysis Charts",
     "confusionMatrix": "Confusion Matrix",
     "rocCurve": "ROC Curve",
@@ -2632,7 +2640,9 @@
     "time": "Time",
     "survivalProbability": "Survival Probability",
     "survivalCurve": "Survival Curve",
-    "metricCurve": "Curve"
+    "metricCurve": "Curve",
+    "showPercent": "Show % (row)",
+    "showCount": "Show count"
   },
   "listComponents": {
     "editModals": {
@@ -2916,6 +2926,7 @@
     },
     "serverStatus": {
       "training": {
+        "creating": "Creating Task",
         "queued": "Queued",
         "pending": "Pending",
         "patching": "Patching Images",

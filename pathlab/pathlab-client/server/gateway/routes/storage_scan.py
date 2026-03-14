@@ -1,3 +1,4 @@
+from typing import Any
 """
 Storage scan and external file management routes.
 
@@ -44,7 +45,7 @@ router = APIRouter()
 # Directory Scanning
 # ==============================================================================
 
-def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = False) -> list:
+def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = False) -> list[Any]:
     """
     Scan a directory for WSI and patch files (non-recursive).
     Handles special formats: MRXS (requires data folder), TMAP (may have DT files).
@@ -74,7 +75,7 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
     all_items = {item.name: item for item in entries}
     annotation_index = build_segmentation_annotation_index(dir_path) if include_annotation_json else {}
 
-    def _build_file_info(item: Path, *, file_size: int, data_type: str) -> dict:
+    def _build_file_info(item: Path, *, file_size: int, data_type: str) -> dict[str, Any]:
         total_size = file_size
         ext = item.suffix.lower()
 
@@ -297,7 +298,7 @@ def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
     return result[0]
 
 
-def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None, timeout: float = 5.0) -> tuple[bool, str]:
+def _check_wsi_file_availability(wsi_path: str, associated_files: dict[str, Any] = None, timeout: float = 5.0) -> tuple[bool, str]:
     """
     Check if a WSI file and its associated data are available.
 
@@ -363,9 +364,9 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict = None, t
 
 
 def _check_external_files_sync(
-    wsi_data: list[dict],
+    wsi_data: list[dict[str, Any]],
     uploads_dir: str
-) -> dict:
+) -> dict[str, Any]:
     """
     Check external files availability synchronously.
     Designed to run in a thread pool via asyncio.to_thread() to avoid blocking the event loop.
@@ -472,7 +473,7 @@ async def get_external_datasets_summary(
         wsi_list = await WSIRepository.get_all_with_dataset(db, limit=0)
 
         # Filter external files and group by dataset (pure string comparison, no file I/O)
-        dataset_stats: dict[str, dict] = {}
+        dataset_stats: dict[str, dict[str, Any]] = {}
         for wsi in wsi_list:
             if not wsi.wsi_path.startswith(uploads_dir):
                 ds_id = wsi.dataset_id or "uncategorized"

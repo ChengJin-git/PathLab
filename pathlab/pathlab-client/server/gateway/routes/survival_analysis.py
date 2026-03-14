@@ -9,7 +9,7 @@ import functools
 import json
 import logging
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -159,7 +159,7 @@ async def _run_survival_analysis(task, request, db, progress_callback=None, prog
 
     # For case-level: aggregate results by case_id (one case = one sample)
     if is_case_level and wsi_results:
-        case_results_map: Dict[str, Dict] = {}
+        case_results_map: Dict[str, Dict[str, Any]] = {}
         for res in wsi_results:
             case_id = res["case_id"]
             if case_id not in case_results_map:

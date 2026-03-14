@@ -429,7 +429,9 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
           <div className={`grid grid-cols-1 ${isSurvival ? 'xl:grid-cols-2 lg:max-w-5xl' : 'xl:grid-cols-2'} gap-8`}>
             {/* Confusion Matrix */}
             {shouldShowChart('confusion_matrix') && (analysis.chart_data?.confusion_matrix ? (
-              <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title={t('analysisDetails.confusionMatrix')} />
+              <div className={analysis.chart_data.confusion_matrix.classes.length > 10 ? 'xl:col-span-2' : ''}>
+                <ConfusionMatrixChart data={analysis.chart_data.confusion_matrix} title={t('analysisDetails.confusionMatrix')} />
+              </div>
             ) : analysis.chart_paths?.confusion_matrix && (
               <div className="bg-white rounded-lg border border-gray-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow">
                 <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">

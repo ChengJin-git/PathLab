@@ -13,7 +13,7 @@ import json
 import asyncio
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
 
 import numpy as np
@@ -124,7 +124,7 @@ def calculate_kfold_classification_metrics(
     fold_keys: List[str],
     classes: List[str],
     splits_map: Optional[Dict[str, List[str]]] = None,
-) -> tuple:
+) -> tuple[Any, ...]:
     """
     Calculate comprehensive metrics for K-Fold classification training.
 
@@ -301,4 +301,3 @@ def calculate_kfold_classification_metrics(
                 }
 
     return aggregated, per_fold_metrics
-

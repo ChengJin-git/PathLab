@@ -17,11 +17,14 @@ import {
   type Conversation,
   type ConversationWithMessages,
   type ChatMessage,
-  type ChatMessageContent
+  type ChatMessageContent,
+  type MessageArtifacts,
+  type WebSearchResultEvent,
+  type PdfParseResultEvent
 } from '../api'
 import { useVoiceSession } from '../lib/useVoiceSession'
 import { formatFileSize } from '../lib/utils'
-import * as XLSX from 'xlsx'
+import { xlsxToCSV } from '../lib/csvImporter'
 import {
   Send, Loader2, Bot, User, MessageSquare, Trash2, Plus, Clock,
   Mic, MicOff, Paperclip, X, Sparkles, FileSpreadsheet, History,
@@ -51,7 +54,6 @@ import { parseCancelTaskConfig } from '../components/chat/CancelTaskCard'
 import { removeVoiceControlBlock } from '../components/chat/VoiceControlBlock'
 import { removeModelListBlock } from '../components/chat/ModelListCard'
 import { parsePatchInferenceConfig, removePatchInferenceBlock } from '../components/chat/PatchInferenceCard'
-import { removePdfParseStatusBlock } from '../components/chat/SearchingStatus'
 import { parseRenameTaskConfig, removeRenameTaskBlock } from '../components/chat/RenameTaskCard'
 import { MULTIMODAL_MODELS } from '../components/settings/GeneralTab'
 import { BEFORE_LOGOUT_EVENT } from '../contexts/AuthContext'
@@ -65,6 +67,7 @@ interface Message {
   images?: string[] // base64 images for display
   timestamp: Date
   csvAttachments?: { fileName: string; content: string }[] // CSV file contents for processing
+  artifacts?: MessageArtifacts
 }
 
 interface ImageAttachment {
@@ -192,7 +195,6 @@ export default function AIChatPage() {
   // idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
   type GenerationPhase = 'idle' | 'thinking' | 'streaming'
   const [generationPhase, setGenerationPhase] = useState<GenerationPhase>('idle')
-  // Derived booleans for backward compatibility with existing read sites
   const isLoading = generationPhase === 'thinking'
   const isGenerating = generationPhase !== 'idle'
   const generationPhaseRef = useRef<GenerationPhase>('idle')
@@ -376,8 +378,11 @@ export default function AIChatPage() {
       id: String(msg.id),
       role: msg.role as 'user' | 'assistant',
       content: msg.content,
-      ...((msg as { metadata?: { images?: string[] } | null }).metadata?.images?.length
-        ? { images: (msg as { metadata?: { images?: string[] } | null }).metadata!.images }
+      ...((msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata?.images?.length
+        ? { images: (msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata!.images }
+        : {}),
+      ...((msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata?.artifacts
+        ? { artifacts: (msg as { metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null }).metadata!.artifacts }
         : {}),
       timestamp: new Date(msg.created_at)
     }))
@@ -790,7 +795,7 @@ export default function AIChatPage() {
         : loadedMessages
 
       const hasPersistedPatchInferenceCancel = Boolean(pendingPatchInferenceCancel)
-        && hasPersistedPatchInferenceCancellation(sortedApiMessages, pendingPatchInferenceCancel)
+        && hasPersistedPatchInferenceCancellation(sortedApiMessages, pendingPatchInferenceCancel!)
 
       if (pendingPatchInferenceCancel) {
         if (hasPersistedPatchInferenceCancel) {
@@ -1014,13 +1019,9 @@ export default function AIChatPage() {
         file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
         file.type === 'application/vnd.ms-excel') {
         try {
-          const arrayBuffer = await file.arrayBuffer()
-          const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+          const { sheetNames, csv: csvContent } = await xlsxToCSV(await file.arrayBuffer())
 
-          // Check for multiple sheets - if so, we'll note it for the agent to reject
-          const sheetNames = workbook.SheetNames
           if (sheetNames.length > 1) {
-            // Multiple sheets - let agent know to reject
             newFileAttachments.push({
               id: `${Date.now()}-${i}`,
               file,
@@ -1034,20 +1035,14 @@ export default function AIChatPage() {
               ].filter(Boolean)
             })
           } else {
-            // Single sheet - convert to CSV
-            const worksheet = workbook.Sheets[sheetNames[0]]
-            const csvContent = XLSX.utils.sheet_to_csv(worksheet)
-
-            // Parse CSV to get preview (first 5 rows)
             const lines = csvContent.split('\n').filter(line => line.trim())
-            const preview = lines.slice(0, 6) // Header + 5 data rows
-
+            const preview = lines.slice(0, 6)
             newFileAttachments.push({
               id: `${Date.now()}-${i}`,
               file,
               name: file.name,
-              type: 'xlsx', // Keep as xlsx to indicate original format
-              content: csvContent, // Store as CSV content
+              type: 'xlsx',
+              content: csvContent,
               preview
             })
           }
@@ -1229,6 +1224,9 @@ export default function AIChatPage() {
     const SILENCE_TIMEOUT_MS = 60_000
     let isTimeoutAbort = false
     let silenceTimer: ReturnType<typeof setTimeout> | null = null
+    // Slow-document warning: shown after 60 s of continuous PDF downloading/parsing
+    let pdfSlowWarningTimer: ReturnType<typeof setTimeout> | null = null
+    let pdfSlowWarningSent = false
 
     const startSilenceTimer = () => {
       if (silenceTimer !== null) clearTimeout(silenceTimer)
@@ -1256,13 +1254,17 @@ export default function AIChatPage() {
       if (!chunkBuffer) return
       const buffered = chunkBuffer
       chunkBuffer = ''
-      setMessages(prev =>
-        prev.map(m =>
-          m.id === trackingId
-            ? { ...m, content: m.content + buffered }
-            : m
-        )
-      )
+      const currentId = trackingId
+      setMessages(prev => {
+        const lastIdx = prev.length - 1
+        if (lastIdx >= 0 && prev[lastIdx].id === currentId) {
+          const updated = { ...prev[lastIdx], content: prev[lastIdx].content + buffered }
+          const next = [...prev]
+          next[lastIdx] = updated
+          return next
+        }
+        return prev.map(m => m.id === currentId ? { ...m, content: m.content + buffered } : m)
+      })
     }
 
     try {
@@ -1274,10 +1276,9 @@ export default function AIChatPage() {
           hasReceivedContent = true
           setGenerationPhase('streaming')
         }
-        // Handle __CLEAR_CONTENT__ marker: the backend emits this when text
-        // was already streamed but a tool block ([WEB_SEARCH] / [READ_ARTICLE])
-        // was found afterwards.  Clear the message so the follow-up AI response
-        // (with search results) appears cleanly instead of being concatenated.
+        // Handle __CLEAR_CONTENT__ marker: the backend emits this when a
+        // normalize/sanitize transform rewrites the response. Clear the
+        // message so the corrected response appears cleanly.
         if (chunk === '__CLEAR_CONTENT__') {
           if (rafId !== null) {
             cancelAnimationFrame(rafId)
@@ -1381,6 +1382,130 @@ export default function AIChatPage() {
             ...prev.slice(assistantIndex)
           ]
         })
+      }, (event) => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: [...(prev_search?.statuses ?? []), event],
+                phase: 'searching',
+                pdfStatuses: prev_search?.pdfStatuses ?? [],
+                webSearchResults: prev_search?.webSearchResults ?? [],
+                pdfParseResults: prev_search?.pdfParseResults ?? [],
+              }
+            }
+          }
+        }))
+      }, (event) => {
+        // PDF heartbeat events keep the connection alive — reset the silence timer
+        // so large-document parsing doesn't trigger a false timeout abort.
+        startSilenceTimer()
+        // Start the slow-document notice timer on the first downloading/parsing event.
+        if (!pdfSlowWarningSent && pdfSlowWarningTimer === null &&
+            (event.status === 'downloading' || event.status === 'parsing')) {
+          pdfSlowWarningTimer = setTimeout(() => {
+            pdfSlowWarningTimer = null
+            pdfSlowWarningSent = true
+            showToastRef.current('info', t('aiChat.pdfLargeDocumentSlowNotice'))
+          }, 60_000)
+        }
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: prev_search?.statuses ?? [],
+                phase: prev_search?.phase ?? 'idle',
+                pdfStatuses: [...(prev_search?.pdfStatuses ?? []), event],
+                webSearchResults: prev_search?.webSearchResults ?? [],
+                pdfParseResults: prev_search?.pdfParseResults ?? [],
+              }
+            }
+          }
+        }))
+      }, () => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          if (!prev_search) return m
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: { ...prev_search, phase: 'summarizing' }
+            }
+          }
+        }))
+      }, (event: WebSearchResultEvent) => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: prev_search?.statuses ?? [],
+                phase: prev_search?.phase ?? 'idle',
+                pdfStatuses: prev_search?.pdfStatuses ?? [],
+                webSearchResults: [...(prev_search?.webSearchResults ?? []), event],
+                pdfParseResults: prev_search?.pdfParseResults ?? [],
+              }
+            }
+          }
+        }))
+      }, (event: PdfParseResultEvent) => {
+        const currentId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== currentId) return m
+          const prev_search = m.artifacts?.search
+          const existing = prev_search?.pdfParseResults ?? []
+          const updated = existing.some(p => p.url === event.url)
+            ? existing.map(p => p.url === event.url ? event : p)
+            : [...existing, event]
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: {
+                statuses: prev_search?.statuses ?? [],
+                phase: prev_search?.phase ?? 'idle',
+                pdfStatuses: prev_search?.pdfStatuses ?? [],
+                webSearchResults: prev_search?.webSearchResults ?? [],
+                pdfParseResults: updated,
+              }
+            }
+          }
+        }))
+      }, () => {
+        // search_clear: backend signals that a search/read_article tool was
+        // invoked after text was already streamed. Preserve the pre-search text
+        // (flush any buffered chunks into it) so it isn't lost.
+        if (rafId !== null) {
+          cancelAnimationFrame(rafId)
+          rafId = null
+        }
+        const buffered = chunkBuffer
+        chunkBuffer = ''
+        const currentId = trackingId
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === currentId
+              ? { ...m, content: m.content + buffered }
+              : m
+          )
+        )
       })
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1428,6 +1553,11 @@ export default function AIChatPage() {
         clearTimeout(silenceTimer)
         silenceTimer = null
       }
+      // Clear slow-document warning timer
+      if (pdfSlowWarningTimer !== null) {
+        clearTimeout(pdfSlowWarningTimer)
+        pdfSlowWarningTimer = null
+      }
       // Flush any remaining buffered chunks before finishing
       if (rafId !== null) {
         cancelAnimationFrame(rafId)
@@ -1446,6 +1576,19 @@ export default function AIChatPage() {
       }
       if (generationIdRef.current === currentGenerationId) {
         setGenerationPhase('idle')
+        const doneTrackingId = trackingId
+        setMessages(prev => prev.map(m => {
+          if (m.id !== doneTrackingId) return m
+          const prev_search = m.artifacts?.search
+          if (!prev_search) return m
+          return {
+            ...m,
+            artifacts: {
+              ...m.artifacts,
+              search: { ...prev_search, phase: 'done' }
+            }
+          }
+        }))
         abortControllerRef.current = null
 
         // Persist the final message content (including cancel/error text) to backend.
@@ -1461,7 +1604,7 @@ export default function AIChatPage() {
             const isBackendId = !isNaN(numericId) && numericId < 1000000000
             try {
               if (isBackendId) {
-                await updateMessage(conversationId, numericId, finalMsg.content)
+                await updateMessage(conversationId, numericId, finalMsg.content, finalMsg.artifacts ?? undefined)
               } else {
                 const saved = await addMessage(conversationId, 'assistant', finalMsg.content)
                 setMessages(prev => prev.map(m =>
@@ -1686,8 +1829,6 @@ export default function AIChatPage() {
     cleaned = removeVoiceControlBlock(cleaned)
     cleaned = removeModelListBlock(cleaned)
     cleaned = removePatchInferenceBlock(cleaned)
-    // Remove PDF_PARSE_STATUS blocks - internal status tags
-    cleaned = removePdfParseStatusBlock(cleaned)
     // Remove CONTEXT_LIMIT block - UI-only warning card
     cleaned = removeContextLimitBlock(cleaned)
     // Remove RESPONSE_TRUNCATED block - UI-only warning card
@@ -2058,13 +2199,14 @@ export default function AIChatPage() {
       timestamp: new Date()
     }
     setMessages(prev => [...prev, successMessage])
+    showToast('success', t('chatComponents.taskConfig.taskCreatedSuccess'))
 
     // Don't navigate — stay on the chat page (fire-and-forget).
     // The success message already contains a NAVIGATE card for the user to click if they want.
 
     // Persist success message in background
     persistNewAssistantMessage(successMessage.id, successContent).catch(console.error)
-  }, [persistMessageUpdate, persistNewAssistantMessage, t])
+  }, [persistMessageUpdate, persistNewAssistantMessage, showToast, t])
 
   // Handle registration success (persist to message history)
   const handleRegistrationSuccess = useCallback(async (
@@ -2409,7 +2551,7 @@ export default function AIChatPage() {
               return (
               <div
                 key={message.id}
-                className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
+                className={`group flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
               >
                 {/* Avatar */}
                 <div className="flex-shrink-0 mt-1">
@@ -2522,6 +2664,7 @@ export default function AIChatPage() {
                         conversationId={currentConversationId || undefined}
                         referenceImages={referenceImages}
                         onMessageContentReplace={replaceMessageContent}
+                        searchArtifacts={message.artifacts ?? null}
                       />
                         )
                       })()
@@ -2600,7 +2743,7 @@ export default function AIChatPage() {
 
                   {/* Timestamp & Actions for User Messages */}
                   {message.role === 'user' && (
-                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end">
                       {/* Timestamp */}
                       <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
                         {formatTimestamp(message.timestamp)}
@@ -2964,5 +3107,3 @@ export default function AIChatPage() {
     </div>
   )
 }
-
-

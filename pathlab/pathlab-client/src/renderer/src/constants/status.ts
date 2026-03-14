@@ -13,6 +13,7 @@
  * Training task status labels for display.
  */
 export const TRAINING_STATUS_LABELS: Record<string, string> = {
+  creating: 'Creating Task',
   pending: 'Pending',
   queued: 'Queued',
   patching: 'Patching Images',
@@ -28,6 +29,7 @@ export const TRAINING_STATUS_LABELS: Record<string, string> = {
  * External validation (inference) status labels.
  */
 export const VALIDATION_STATUS_LABELS: Record<string, string> = {
+  creating: 'Creating Task',
   pending: 'Pending',
   queued: 'Queued',
   patching: 'Patching Images',
@@ -43,6 +45,7 @@ export const VALIDATION_STATUS_LABELS: Record<string, string> = {
  * Analysis task status labels.
  */
 export const ANALYSIS_STATUS_LABELS: Record<string, string> = {
+  creating: 'Creating Task',
   pending: 'Pending',
   queued: 'Queued',
   patching: 'Analyzing',
@@ -69,6 +72,7 @@ export interface StatusBadgeConfig {
  * Includes background color, text color, and label.
  */
 export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
+  creating: { bg: 'bg-blue-50', text: 'text-blue-700', label: 'Creating Task' },
   pending: { bg: 'bg-gray-100', text: 'text-gray-800', label: 'Pending' },
   queued: { bg: 'bg-yellow-100', text: 'text-yellow-800', label: 'Queued' },
 
@@ -86,6 +90,7 @@ export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
  * Uses combined color class for simpler styling.
  */
 export const TASK_LIST_STATUS_BADGES: Record<string, { color: string; label: string }> = {
+  creating: { color: 'bg-blue-50 text-blue-700', label: 'Creating Task' },
   pending: { color: 'bg-gray-100 text-gray-800', label: 'Pending' },
   queued: { color: 'bg-yellow-100 text-yellow-800', label: 'Queued' },
 
@@ -127,7 +132,7 @@ export function getAnalysisStatusLabel(status: string): string {
  * Check if a task status represents an active/running state.
  */
 export function isActiveStatus(status: string): boolean {
-  return status === 'patching' || status === 'extracting' || status === 'training' || status === 'resuming'
+  return status === 'creating' || status === 'patching' || status === 'extracting' || status === 'training' || status === 'resuming'
 }
 
 // ============================================================================
@@ -138,6 +143,7 @@ export function isActiveStatus(status: string): boolean {
  * Statuses that can be cancelled for training tasks.
  */
 export const TRAINING_CANCELLABLE_STATUSES = [
+  'creating',
   'pending',
   'queued',
   'patching',
@@ -191,4 +197,3 @@ export function isCancellableStatus(status: string, taskType: 'training' | 'vali
       return false
   }
 }
-

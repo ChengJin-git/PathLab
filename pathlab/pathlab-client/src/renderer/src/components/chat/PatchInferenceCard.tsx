@@ -51,6 +51,17 @@ export function removePatchInferenceBlock(content: string): string {
   return content.replace(/\[PATCH_INFERENCE\][\s\S]*?\[\/PATCH_INFERENCE\]/g, '').trim()
 }
 
+const SEG_PALETTE = [
+  'rgb(255,100,100)',
+  'rgb(100,200,255)',
+  'rgb(120,255,120)',
+  'rgb(255,220,80)',
+  'rgb(200,100,255)',
+  'rgb(255,160,50)',
+  'rgb(80,255,220)',
+  'rgb(255,80,200)',
+]
+
 const toRun = (task: ChatPatchInferenceTask): PatchInferenceRun => ({
   task_id: task.task_id,
   model_id: task.model_id,
@@ -60,6 +71,10 @@ const toRun = (task: ChatPatchInferenceTask): PatchInferenceRun => ({
   result: task.result,
   error: task.error,
 })
+
+const segmentationPanelClassName = 'overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/80 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]'
+
+const segmentationImageClassName = 'aspect-[4/3] w-full rounded-xl object-cover bg-white'
 
 export function PatchInferenceCard({ config, conversationId, messageId, referenceImages = [], onPersistConfig, onToast }: PatchInferenceCardProps) {
   const { t } = useTranslation()
@@ -158,7 +173,7 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
               <span className="truncate">{effectiveRun.model_name}</span>
               <span className="text-xs px-2 py-1 rounded-full bg-blue-50 text-blue-700">{statusLabel}</span>
             </div>
-            {isBusy && <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden"><div className="h-full bg-blue-500" style={{ width: `${effectiveRun.progress ?? 15}%` }} /></div>}
+            {isBusy && <div className="w-full h-2 rounded-full bg-gray-100 overflow-hidden"><div className="h-full bg-blue-500 transition-all duration-700 ease-in-out" style={{ width: `${effectiveRun.progress ?? 15}%` }} /></div>}
             {effectiveRun.status === 'completed' && type === 'classification' && effectiveRun.result?.predicted_label && (
               <div className="space-y-1">
                 <div className="flex items-center gap-2 text-green-700"><CheckCircle2 className="w-4 h-4" />{effectiveRun.result.predicted_label}</div>
@@ -168,9 +183,39 @@ export function PatchInferenceCard({ config, conversationId, messageId, referenc
               </div>
             )}
             {effectiveRun.status === 'completed' && type === 'segmentation' && (
-              <div className="space-y-1 text-xs text-gray-600">
-                {(effectiveRun.result?.coverage_by_class ?? []).map(item => <div key={item.label} className="flex justify-between"><span>{item.label}</span><span>{(item.coverage_ratio * 100).toFixed(1)}%</span></div>)}
-                {!effectiveRun.result?.coverage_by_class?.length && <div>{t('chatComponents.patchInference.noSegmentationMask')}</div>}
+              <div className="space-y-3">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1.35fr)_minmax(260px,0.85fr)]">
+                  <div className={`${segmentationPanelClassName} p-2.5`}>
+                    <div className="mb-2 flex items-center justify-between gap-3 px-0.5">
+                      <div className="text-xs font-medium tracking-[0.02em] text-slate-600">{t('chatComponents.patchInference.segmentationOverlay')}</div>
+                      <span className="rounded-full bg-white/90 px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">{effectiveRun.model_name}</span>
+                    </div>
+                    {effectiveRun.result?.overlay_image_data_url
+                      ? <img src={effectiveRun.result.overlay_image_data_url} alt="segmentation overlay" className={segmentationImageClassName} />
+                      : <div className="flex aspect-[4/3] items-center justify-center rounded-xl border border-dashed border-slate-200 bg-white px-4 text-center text-xs text-slate-400">{t('chatComponents.patchInference.noSegmentationMask')}</div>
+                    }
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                    <div className={`${segmentationPanelClassName} p-2.5`}>
+                      <div className="mb-2 px-0.5 text-xs font-medium tracking-[0.02em] text-slate-600">{t('chatComponents.patchInference.originalImage')}</div>
+                      <img src={selectedImage ?? ''} alt="original" className={segmentationImageClassName} />
+                    </div>
+
+                    {!!effectiveRun.result?.coverage_by_class?.length && (
+                      <div className={`${segmentationPanelClassName} p-3`}>
+                        <div className="flex flex-wrap gap-2">
+                          {effectiveRun.result.coverage_by_class.map((item, idx) => (
+                            <div key={item.label} className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-medium text-slate-600 ring-1 ring-slate-200">
+                              <span className="inline-block h-2.5 w-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: SEG_PALETTE[idx % SEG_PALETTE.length] }} />
+                              <span>{item.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
             {(effectiveRun.status === 'failed' || effectiveRun.status === 'cancelled') && (

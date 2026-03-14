@@ -78,9 +78,9 @@ def _get_color_for_label(
 
 
 def roi_annotations_to_coco(
-    annotations_map: Dict[str, List[dict]],
-    wsi_dimensions: Dict[str, dict],
-) -> dict:
+    annotations_map: Dict[str, List[dict[str, Any]]],
+    wsi_dimensions: Dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     """
     Convert viewer ROI annotations to COCO format.
 
@@ -91,8 +91,8 @@ def roi_annotations_to_coco(
     Returns:
         COCO-format dict: { "images": [...], "annotations": [...], "categories": [...] }
     """
-    coco_images: List[dict] = []
-    coco_annotations: List[dict] = []
+    coco_images: List[dict[str, Any]] = []
+    coco_annotations: List[dict[str, Any]] = []
     label_to_category_id: Dict[str, int] = {}
     image_id_counter = 0
     annotation_id_counter = 0
@@ -165,15 +165,15 @@ def roi_annotations_to_coco(
     }
 
 
-def merge_coco_datasets(coco_payloads: List[dict]) -> dict:
+def merge_coco_datasets(coco_payloads: List[dict[str, Any]]) -> dict[str, Any]:
     """
     Merge one or more COCO payloads into a single normalized dataset.
 
     The merge is resilient to per-file imports where image/category IDs restart from 1.
     Categories are unified by category name and re-indexed to a stable global list.
     """
-    merged_images: List[dict] = []
-    merged_annotations: List[dict] = []
+    merged_images: List[dict[str, Any]] = []
+    merged_annotations: List[dict[str, Any]] = []
     category_name_to_id: Dict[str, int] = {}
     next_image_id = 1
     next_annotation_id = 1
@@ -240,7 +240,7 @@ def merge_coco_datasets(coco_payloads: List[dict]) -> dict:
 
 
 def extract_coco_wsi_label_sets(
-    coco_data: dict,
+    coco_data: dict[str, Any],
     file_name_to_wsi_id: Dict[str, str],
     file_stem_to_wsi_id: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Set[str]]:
@@ -292,7 +292,7 @@ def extract_coco_wsi_label_sets(
 
 
 def materialize_coco_to_disk(
-    coco_data: dict,
+    coco_data: dict[str, Any],
     output_path: Path,
 ) -> Path:
     """
@@ -313,11 +313,11 @@ def materialize_coco_to_disk(
 
 
 def coco_to_roi_annotations(
-    coco_data: dict,
+    coco_data: dict[str, Any],
     file_name_to_wsi_id: Dict[str, str],
     file_stem_to_wsi_id: Optional[Dict[str, str]] = None,
     default_color: str = "#3b82f6",
-) -> Dict[str, List[dict]]:
+) -> Dict[str, List[dict[str, Any]]]:
     """
     Convert COCO annotations for a dataset into viewer ROI annotations.
 
@@ -332,7 +332,7 @@ def coco_to_roi_annotations(
 
     categories = _normalize_categories(coco_data.get("categories", []))
     image_id_to_wsi_id: Dict[Any, str] = {}
-    roi_map: Dict[str, List[dict]] = {}
+    roi_map: Dict[str, List[dict[str, Any]]] = {}
     label_to_color: Dict[str, str] = {}
 
     for image in coco_data.get("images") or []:

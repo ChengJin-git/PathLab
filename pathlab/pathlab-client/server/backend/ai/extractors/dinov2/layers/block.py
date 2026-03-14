@@ -158,7 +158,7 @@ def add_residual(x, brange, residual, residual_scale_factor, scaling_vector=None
     return x_plus_residual
 
 
-attn_bias_cache: Dict[Tuple, Any] = {}
+attn_bias_cache: Dict[Tuple[Any, ...], Any] = {}
 
 
 def get_attn_bias_and_cat(x_list, branges=None):

@@ -1,3 +1,4 @@
+from typing import Any
 """
 PathLab Python Sidecar - Unified Entry Point
 
@@ -33,18 +34,26 @@ DEFAULT_PREPROCESSING_PORT = 6101
 DEFAULT_AI_PORT = 6102
 
 
-def run_service(app_module: str, port: int, name: str):
+def run_service(app_module: str, port: int, name: str, workers: int = 1, limit_max_requests: int | None = None):
     """Run a single uvicorn service in a subprocess"""
     import uvicorn
 
-    print(f"[{name}] Starting on port {port}...", flush=True)
-    uvicorn.run(
-        app_module,
+    extra = ""
+    if limit_max_requests:
+        extra = f", limit_max_requests={limit_max_requests}"
+    print(f"[{name}] Starting on port {port} with {workers} worker(s){extra}...", flush=True)
+
+    kwargs: dict[str, Any] = dict[str, Any](
         host="0.0.0.0",
         port=port,
         log_level="info",
         reload=False,  # Disable reload in subprocess
+        workers=workers,
     )
+    if limit_max_requests:
+        kwargs["limit_max_requests"] = limit_max_requests
+
+    uvicorn.run(app_module, **kwargs)
 
 
 def main():

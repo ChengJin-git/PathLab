@@ -89,7 +89,7 @@ class ScopedSession:
         self.log_dir = log_dir
         self._session_maker = async_session_maker
     
-    def get_session_maker(self) -> Callable:
+    def get_session_maker(self) -> Callable[..., Any]:
         """Return the session maker factory for trainers to use."""
         return self._session_maker
     
@@ -170,7 +170,7 @@ class ScopedTrainingLogger:
         self._sequence_initialized = False
 
         # Background flush task
-        self._flush_task: Optional[asyncio.Task] = None
+        self._flush_task: Optional[asyncio.Task[Any]] = None
         self._running = False
         self._consecutive_failures = 0  # Track consecutive flush failures for backoff
 
@@ -335,19 +335,19 @@ class ScopedTrainingLogger:
         # Start flush task if not running
         self._start_flush_task()
 
-    async def info(self, message: str, metadata: Optional[dict] = None):
+    async def info(self, message: str, metadata: Optional[dict[str, Any]] = None):
         """Log INFO level message."""
         await self._log("INFO", message, metadata)
 
-    async def warning(self, message: str, metadata: Optional[dict] = None):
+    async def warning(self, message: str, metadata: Optional[dict[str, Any]] = None):
         """Log WARNING level message."""
         await self._log("WARNING", message, metadata)
 
-    async def error(self, message: str, metadata: Optional[dict] = None):
+    async def error(self, message: str, metadata: Optional[dict[str, Any]] = None):
         """Log ERROR level message."""
         await self._log("ERROR", message, metadata)
 
-    async def debug(self, message: str, metadata: Optional[dict] = None):
+    async def debug(self, message: str, metadata: Optional[dict[str, Any]] = None):
         """Log DEBUG level message."""
         await self._log("DEBUG", message, metadata)
 

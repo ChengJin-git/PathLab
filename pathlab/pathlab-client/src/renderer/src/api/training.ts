@@ -350,7 +350,7 @@ export interface TrainingTaskConfig {
     max_n_holes?: number  // Maximum number of holes to keep
   }
   model: {
-    aggregator: string
+    aggregator?: string  // Required for classification/survival; omitted for segmentation
     classifier?: string  // Classifier head for patch-level: linear, mlp, attention
     backbone?: string  // Patch classification extractor or segmentation seg_backbone
     learning_rate: number

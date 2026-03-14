@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 
 import numpy as np
 import torch
@@ -35,7 +35,7 @@ class PatchCAMResult:
     coord: Tuple[int, int]    # WSI level0 coordinates (x, y)
     pred: int                  # Predicted class index
     prob: float                # Prediction probability
-    cam: np.ndarray           # CAM heatmap (H, W), e.g., (14, 14) or (7, 7)
+    cam: np.ndarray[Any, Any]           # CAM heatmap (H, W), e.g., (14, 14) or (7, 7)
 
 
 # =============================================================================
@@ -55,7 +55,7 @@ class BaseCAMExtractor(ABC):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract CAM from model for given input.
 
@@ -104,7 +104,7 @@ class ResNetCAMExtractor(BaseCAMExtractor):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract Grad-CAM from ResNet model.
 
@@ -330,7 +330,7 @@ class TransformerCAMExtractor(BaseCAMExtractor):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,  # noqa: ARG002
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract attention-based CAM from Transformer model.
 
@@ -431,6 +431,24 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
             # tensor shape: (B, N, C) where N = num_prefix_tokens + H*W
             # Remove prefix tokens (CLS + registers)
             result = tensor[:, num_prefix_tokens:, :]
+
+            expected_tokens = height * width
+            current_tokens = result.size(1)
+
+            # Some ViT variants (for example DINOv3-based backbones) include
+            # extra prefix tokens that differ from static config. Infer prefix
+            # token count from N - H*W to keep GradCAM reshape robust.
+            if current_tokens != expected_tokens:
+                inferred_prefix_tokens = tensor.size(1) - expected_tokens
+                if 0 <= inferred_prefix_tokens < tensor.size(1):
+                    result = tensor[:, inferred_prefix_tokens:, :]
+                    current_tokens = result.size(1)
+
+            if current_tokens != expected_tokens:
+                raise ValueError(
+                    f"ViT token mismatch for GradCAM reshape: got {current_tokens} tokens "
+                    f"after prefix removal, expected {expected_tokens} (H={height}, W={width})."
+                )
 
             # Reshape to (B, H, W, C)
             result = result.reshape(tensor.size(0), height, width, tensor.size(2))
@@ -533,7 +551,7 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         model: nn.Module,
         input_tensor: torch.Tensor,
         target_class: Optional[int] = None,
-    ) -> np.ndarray:
+    ) -> np.ndarray[Any, Any]:
         """
         Extract GradCAM from ViT model using official pytorch-grad-cam method.
 
@@ -658,6 +676,7 @@ _EXTRACTOR_CAM_CONFIG = {
     "conch": {"type": "vit", "patch_size": 16},
     "conch15": {"type": "vit", "patch_size": 16},
     "mSTAR": {"type": "vit", "patch_size": 16},
+    "SmartCyto": {"type": "vit", "patch_size": 16, "num_registers": 4},
 
     # Transformer-based (patch_size=14)
     "patho_clip": {"type": "vit", "patch_size": 14},  # OpenCLIP ViT-L-14

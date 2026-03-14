@@ -20,7 +20,7 @@ from .chat_pdf import (
     MARKER_CACHE_SUFFIX,
     PDF_PARSE_METHOD_MARKER,
     STRUCTURED_CACHE_SUFFIX,
-    _get_url_hash,
+    get_url_hash,
     _parse_pdf_with_marker_best_effort,
     override_marker_gpu_queue,
 )
@@ -523,7 +523,7 @@ def get_bundled_training_knowledge_status() -> Dict[str, bool]:
     status: Dict[str, bool] = {}
     for source in BUNDLED_TRAINING_PDF_SOURCES.values():
         url = str(source["url"])
-        url_hash = _get_url_hash(url)
+        url_hash = get_url_hash(url)
         marker_ready = _get_bundled_markdown(url) is not None
         structured_ready = _get_bundled_structured_content(url) is not None
         vector_ready = bool(url_hash in _LOCAL_INDEX_READY or is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR))
@@ -589,7 +589,7 @@ async def _ensure_local_source_ready(url: str, *, force_upgrade: bool = False) -
             logger.warning(f"Bundled training recommendation PDF not found: {path}")
             return False
 
-        url_hash = _get_url_hash(url)
+        url_hash = get_url_hash(url)
         ready = bool(
             _get_bundled_markdown(url)
             and _get_bundled_structured_content(url)
@@ -634,11 +634,11 @@ async def _ensure_vector_index(
     url: str,
     markdown: str,
     paper_title: str,
-    structured_content: dict | None,
+    structured_content: dict[str, Any] | None,
     *,
     force: bool = False,
 ) -> None:
-    url_hash = _get_url_hash(url)
+    url_hash = get_url_hash(url)
     if not force and url_hash in _LOCAL_INDEX_READY:
         return
     if not force and is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR):
@@ -758,7 +758,7 @@ def _build_bundled_evidence_lines(query: str, urls: list[str], detected_lang: st
     found_any = False
     seen_excerpts: set[str] = set()
     for url in urls:
-        url_hash = _get_url_hash(url)
+        url_hash = get_url_hash(url)
         results = search_pdf_chunks(
             query,
             url_hashes=[url_hash],
@@ -791,7 +791,7 @@ def _build_bundled_evidence_lines(query: str, urls: list[str], detected_lang: st
 
 
 def _get_bundled_meta(url: str) -> dict[str, Any] | None:
-    meta_path = _get_bundled_cache_dir() / f"{_get_url_hash(url)}.json"
+    meta_path = _get_bundled_cache_dir() / f"{get_url_hash(url)}.json"
     if not meta_path.exists():
         return None
     try:
@@ -801,7 +801,7 @@ def _get_bundled_meta(url: str) -> dict[str, Any] | None:
 
 
 def _get_bundled_markdown(url: str) -> str | None:
-    md_path = _get_bundled_cache_dir() / f"{_get_url_hash(url)}{MARKER_CACHE_SUFFIX}"
+    md_path = _get_bundled_cache_dir() / f"{get_url_hash(url)}{MARKER_CACHE_SUFFIX}"
     if not md_path.exists():
         return None
     try:
@@ -811,7 +811,7 @@ def _get_bundled_markdown(url: str) -> str | None:
 
 
 def _get_bundled_structured_content(url: str) -> dict[str, Any] | None:
-    structured_path = _get_bundled_cache_dir() / f"{_get_url_hash(url)}{STRUCTURED_CACHE_SUFFIX}"
+    structured_path = _get_bundled_cache_dir() / f"{get_url_hash(url)}{STRUCTURED_CACHE_SUFFIX}"
     if not structured_path.exists():
         return None
     try:
@@ -830,7 +830,7 @@ def _save_bundled_marker_cache(
     page_count: int,
 ) -> None:
     cache_dir = _get_bundled_cache_dir()
-    url_hash = _get_url_hash(url)
+    url_hash = get_url_hash(url)
     (cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}").write_text(markdown, encoding="utf-8")
     structured_path = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
     structured_path.write_text(

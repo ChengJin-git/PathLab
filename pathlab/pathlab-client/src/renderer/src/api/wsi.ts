@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
-import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken } from './client'
+import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken, type DownloadApiFileResult } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
 // ============================================================================
@@ -375,7 +375,7 @@ export async function renameDataset(
   datasetId: string,
   newName: string
 ): Promise<{ message: string; dataset: { dataset_id: string; name: string } }> {
-  const result = await apiFetch(
+  const result = await apiFetch<{ message: string; dataset: { dataset_id: string; name: string } }>(
     `${API_BASE}/wsi/datasets`,
     {
       method: 'PUT',
@@ -504,7 +504,7 @@ export interface ExportLabelsOptions {
 export async function exportDatasetLabels(
   datasetId: string,
   options: ExportLabelsOptions = {}
-): Promise<void> {
+): Promise<DownloadApiFileResult> {
   const strategy = options.strategy ?? 'random'
   const params = buildSearchParams(
     options.generateSplit
@@ -528,7 +528,7 @@ export async function exportDatasetLabels(
   const queryString = params.toString()
   const url = `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/export-labels${queryString ? `?${queryString}` : ''}`
 
-  await downloadApiFile(url, 'dataset_labels.csv', undefined, 'Failed to export labels')
+  return downloadApiFile(url, 'dataset_labels.csv', undefined, 'Failed to export labels')
 }
 
 /**
@@ -600,7 +600,6 @@ export async function uploadWSIFile(
     case_id?: string
     age?: number
     gender?: string
-    source?: string
     wsi_id?: string
     event_time?: number
     event_status?: number
@@ -620,7 +619,6 @@ export async function uploadWSIFile(
   if (options?.case_id) formData.append('case_id', options.case_id)
   if (options?.age !== undefined) formData.append('age', options.age.toString())
   if (options?.gender) formData.append('gender', options.gender)
-  if (options?.source) formData.append('source', options.source)
   if (options?.wsi_id) formData.append('wsi_id', options.wsi_id)
   if (options?.event_time !== undefined) formData.append('event_time', options.event_time.toString())
   if (options?.event_status !== undefined) formData.append('event_status', options.event_status.toString())
@@ -707,7 +705,6 @@ export async function uploadWSIByPath(
     wsi_id?: string
     age?: number
     gender?: string
-    source?: string
     event_time?: number
     event_status?: number
     signal?: AbortSignal
@@ -729,7 +726,6 @@ export async function uploadWSIByPath(
         wsi_id: options?.wsi_id,
         age: options?.age,
         gender: options?.gender,
-        source: options?.source,
         event_time: options?.event_time,
         event_status: options?.event_status
       }),
@@ -897,7 +893,6 @@ export async function updateWSIMetadata(
     case_id?: string
     age?: number
     gender?: string
-    source?: string
     event_time?: number
     event_status?: number
   }

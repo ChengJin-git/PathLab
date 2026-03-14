@@ -16,6 +16,11 @@ from .scoped_session import (
     ScopedSession,
     ScopedTrainingLogger,
 )
+from .patch_resize import (
+    DEFAULT_NON_FM_PATCH_RESIZE,
+    resolve_patch_resize_size,
+    build_patch_classification_transform,
+)
 
 __all__ = [
     "PatchCAMResult",
@@ -27,6 +32,9 @@ __all__ = [
     "is_cnn_extractor",
     "is_vit_extractor",
     "get_cam_spatial_size",
+    "DEFAULT_NON_FM_PATCH_RESIZE",
+    "resolve_patch_resize_size",
+    "build_patch_classification_transform",
     # Scoped session utilities for preventing DB connection hogging
     "ScopedSession",
     "ScopedTrainingLogger",

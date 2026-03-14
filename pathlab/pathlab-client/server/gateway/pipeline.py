@@ -99,7 +99,7 @@ def _build_segmentation_wsi_lookups(wsis: List[Dict[str, Any]]) -> Tuple[Dict[st
     return exact_lookup, stem_lookup
 
 
-async def _load_segmentation_coco_payloads(db, dataset_id: str) -> List[dict]:
+async def _load_segmentation_coco_payloads(db, dataset_id: str) -> List[dict[str, Any]]:
     records = await SegmentationAnnotationRepository.get_all_by_dataset(
         db,
         dataset_id,
@@ -119,12 +119,12 @@ async def _load_segmentation_coco_payloads(db, dataset_id: str) -> List[dict]:
 
 
 def _build_split_coco_payload(
-    coco_data: dict,
+    coco_data: dict[str, Any],
     allowed_wsi_ids: Set[str],
     exact_lookup: Dict[str, str],
     stem_lookup: Dict[str, str],
     wsi_to_relative_path: Dict[str, str],
-) -> dict:
+) -> dict[str, Any]:
     allowed_image_ids: Set[int] = set()
     images = []
 
@@ -165,8 +165,8 @@ async def _load_segmentation_training_dataset_inputs(
     db,
     task_id: str,
     wsi_ids: List[str],
-    preprocessing_config: Dict,
-) -> Tuple[List[Dict[str, Any]], List[dict], Dict[str, List[str]]]:
+    preprocessing_config: Dict[str, Any],
+) -> Tuple[List[Dict[str, Any]], List[dict[str, Any]], Dict[str, List[str]]]:
     wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
     wsis = [_serialize_segmentation_wsi(wsi_map[wsi_id]) for wsi_id in wsi_ids if wsi_id in wsi_map]
     if not wsis:
@@ -196,9 +196,9 @@ async def _load_segmentation_training_dataset_inputs(
 def _prepare_segmentation_training_dataset(
     task_id: str,
     wsis: List[Dict[str, Any]],
-    coco_payloads: List[dict],
+    coco_payloads: List[dict[str, Any]],
     splits_map: Dict[str, List[str]],
-) -> Tuple[Dict, int]:
+) -> Tuple[Dict[str, Any], int]:
     coco_data = merge_coco_datasets(coco_payloads)
     if not coco_data.get("images"):
         raise ValueError("Segmentation dataset has no COCO images available for training")
@@ -243,10 +243,10 @@ async def _call_ai_service(
     logger_manager: 'ScopedLogger',
     task_id: str,
     endpoint: str,
-    payload: dict,
+    payload: dict[str, Any],
     operation_name: str,
     timeout: int = None,
-) -> dict:
+) -> dict[str, Any]:
     """
     Unified AI service HTTP call with standardized error handling.
 
@@ -401,8 +401,8 @@ async def run_training_pipeline(
     task_id: str,
     data_type: str,
     wsi_ids: List[str],
-    preprocessing_config: Dict,
-    model_config: Dict,
+    preprocessing_config: Dict[str, Any],
+    model_config: Dict[str, Any],
     huggingface_token: str = None,
     training_task_type: str = "classification",  # "classification", "survival", or "segmentation"
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")

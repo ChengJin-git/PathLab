@@ -14,6 +14,7 @@ import {
 } from '../../api'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
 import { generateId } from './helpers'
+import { markTrainingSubmissionCancelled } from '../../lib/trainingSubmissionTracker'
 import type {
   BackgroundTask, TaskItem, TaskStatus,
   UploadTaskFile, UploadTaskOptions,
@@ -146,7 +147,6 @@ export function useTaskActions(params: TaskActionsParams) {
               case_id: file.metadata?.case_id,
               age: file.metadata?.age,
               gender: file.metadata?.gender,
-              source: file.metadata?.source,
               event_time: file.metadata?.event_time,
               event_status: file.metadata?.event_status,
               signal: abortController.signal
@@ -161,7 +161,6 @@ export function useTaskActions(params: TaskActionsParams) {
               case_id: file.metadata?.case_id,
               age: file.metadata?.age,
               gender: file.metadata?.gender,
-              source: file.metadata?.source,
               event_time: file.metadata?.event_time,
               event_status: file.metadata?.event_status,
               associatedFiles: file.associatedFiles,
@@ -526,6 +525,9 @@ export function useTaskActions(params: TaskActionsParams) {
         return result.cancelled
       } else {
         const result = await cancelQueueTask(actualTaskId)
+        if (result.cancelled) {
+          markTrainingSubmissionCancelled(actualTaskId)
+        }
         return result.cancelled
       }
     } catch (error) {

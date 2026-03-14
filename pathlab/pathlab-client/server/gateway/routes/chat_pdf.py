@@ -152,7 +152,7 @@ class PdfParseBusyError(RuntimeError):
     """Raised when the foreground PDF parse queue is saturated."""
 
 
-def _get_pdf_cache_dir() -> Path:
+def get_pdf_cache_dir() -> Path:
     global _pdf_cache_dir
     if _pdf_cache_dir is None:
         uploads_dir = Config.get_uploads_dir()
@@ -171,7 +171,7 @@ def get_pdf_image_path(url_hash: str, filename: str) -> Path:
     (alphabetically sorted) in the directory.  This prevents 404 errors
     caused by LLMs hallucinating hash-based filenames.
     """
-    images_dir = _get_pdf_cache_dir() / "images" / url_hash
+    images_dir = get_pdf_cache_dir() / "images" / url_hash
 
     # ── fig-N alias resolution ────────────────────────────────────────────
     # Tolerant regex: accepts fig-3.jpg, fig-2d.png, fig-12a.jpg, etc.
@@ -363,13 +363,13 @@ def is_pdf_url(url: str) -> bool:
     return False
 
 
-def _get_url_hash(url: str) -> str:
+def get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
 def _remove_cached_pdf_artifacts(url_hash: str, *, remove_vectorstore: bool = False) -> None:
     """Delete all persisted cache artifacts for a cached PDF hash."""
-    cache_dir = _get_pdf_cache_dir()
+    cache_dir = get_pdf_cache_dir()
     for suffix in CACHE_ARTEFACT_SUFFIXES:
         file_path = cache_dir / f"{url_hash}{suffix}"
         if file_path.exists():
@@ -390,8 +390,8 @@ def _remove_cached_pdf_artifacts(url_hash: str, *, remove_vectorstore: bool = Fa
 def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | None] | None:
     """Returns (pdf_bytes, meta, cached_markdown_or_None, parse_method_or_None)."""
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         pdf_file = cache_dir / f"{url_hash}.pdf"
 
@@ -435,8 +435,8 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | 
 
 def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: str = "") -> None:
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         pdf_file = cache_dir / f"{url_hash}.pdf"
 
@@ -482,8 +482,8 @@ def _save_lightweight_markdown_to_cache(
 ) -> None:
     """Persist lightweight webpage / repository extraction using the existing markdown cache."""
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         md_file = cache_dir / f"{url_hash}{PYMUPDF_CACHE_SUFFIX}"
         now_iso = datetime.now().isoformat()
@@ -1081,8 +1081,8 @@ def _extract_openreview_id(url: str) -> str | None:
 def _update_meta_fields(url: str, **fields: Any) -> None:
     """Best-effort update for cached PDF metadata fields."""
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         if not meta_file.exists():
             return
@@ -1133,8 +1133,8 @@ def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
     without re-running heuristic detection.
     """
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         if not meta_file.exists():
             return
@@ -1150,8 +1150,8 @@ def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
 def _save_structured_to_cache(url: str, structured_content: dict[str, Any]) -> None:
     """Persist the normalized Document Graph / Block Graph sidecar."""
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
         structured_file.write_text(
             json.dumps(structured_content, ensure_ascii=False, indent=2),
@@ -1164,8 +1164,8 @@ def _save_structured_to_cache(url: str, structured_content: dict[str, Any]) -> N
 def get_cached_structured_content(url: str) -> dict[str, Any] | None:
     """Return the cached normalized Document Graph / Block Graph for *url*."""
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
         if not structured_file.exists():
             return None
@@ -1197,8 +1197,8 @@ def _save_markdown_to_cache(
     """Save pymupdf-parsed markdown to cache (fast tier)."""
     del _paper_title
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         md_file = cache_dir / f"{url_hash}{PYMUPDF_CACHE_SUFFIX}"
         md_file.write_text(markdown, encoding='utf-8')
         page_count = _extract_page_count(markdown)
@@ -1222,8 +1222,8 @@ def _save_markdown_to_cache(
 
 def _get_high_quality_cache_method(url: str) -> str | None:
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         for suffix, method in HIGH_QUALITY_CACHE_SUFFIXES:
             if (cache_dir / f"{url_hash}{suffix}").exists():
                 return method
@@ -1245,8 +1245,8 @@ def _save_marker_to_cache(
     """Save Marker high-quality parse result to cache."""
     del _paper_title
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         marker_file = cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}"
         marker_file.write_text(markdown, encoding='utf-8')
         page_count = _extract_page_count(markdown)
@@ -1385,7 +1385,7 @@ def _trigger_vector_index(
 
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
 
-def _tokenize_for_search(text: str) -> list[str]:
+def tokenize_for_search(text: str) -> list[str]:
     """Simple tokenizer for BM25 search. Handles English, numbers, CJK, Japanese, and Korean.
 
     - Lowercases all text
@@ -1399,7 +1399,7 @@ def _tokenize_for_search(text: str) -> list[str]:
     )
 
 
-def _split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
+def split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
     """Split markdown by ``--- Page X ---`` markers into ``(page_num, content)`` pairs.
 
     Content before the first marker (if any) is assigned page number 0.
@@ -1674,7 +1674,7 @@ def _append_blocks_from_markdown_text(
 
 def _build_document_graph_from_markdown(markdown: str, parse_method: PdfParseMethod) -> dict[str, Any]:
     """Normalize markdown into a lightweight Document Graph / Block Graph sidecar."""
-    page_entries = _split_md_into_pages(markdown)
+    page_entries = split_md_into_pages(markdown)
     blocks: list[dict[str, Any]] = []
     section_nodes: list[dict[str, Any]] = []
     block_counter = 0
@@ -2153,16 +2153,16 @@ def search_pdf_pages(
     import math
     from collections import Counter
 
-    pages = _split_md_into_pages(markdown)
+    pages = split_md_into_pages(markdown)
     if not pages:
         return []
 
-    query_tokens = _tokenize_for_search(query)
+    query_tokens = tokenize_for_search(query)
     if not query_tokens:
         return []
 
     # Tokenize every page once
-    page_token_lists = [_tokenize_for_search(content) for _, content in pages]
+    page_token_lists = [tokenize_for_search(content) for _, content in pages]
 
     # BM25 hyper-parameters
     k1, b = 1.5, 0.75
@@ -2202,8 +2202,8 @@ def get_cached_markdown(url: str) -> str | None:
     Prefers high-quality structured parses over PyMuPDF.
     """
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         for suffix, _ in CACHED_MARKDOWN_CANDIDATES:
             md_file = cache_dir / f"{url_hash}{suffix}"
             if md_file.exists():
@@ -2221,7 +2221,7 @@ def invalidate_pdf_cache(url: str) -> None:
     served on the next request.
     """
     try:
-        url_hash = _get_url_hash(url)
+        url_hash = get_url_hash(url)
         _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
         logger.info(f"Invalidated PDF cache artefacts for {url}")
     except Exception as e:
@@ -2231,8 +2231,8 @@ def invalidate_pdf_cache(url: str) -> None:
 def get_cached_pdf_meta(url: str) -> dict[str, Any] | None:
     """Return the cached JSON metadata dict for *url*, or ``None``."""
     try:
-        cache_dir = _get_pdf_cache_dir()
-        url_hash = _get_url_hash(url)
+        cache_dir = get_pdf_cache_dir()
+        url_hash = get_url_hash(url)
         meta_file = cache_dir / f"{url_hash}.json"
         if not meta_file.exists():
             return None
@@ -2333,8 +2333,8 @@ async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes)
         )
         return
 
-    url_hash = _get_url_hash(url)
-    images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
+    url_hash = get_url_hash(url)
+    images_output_dir = get_pdf_cache_dir() / "images" / url_hash
     images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
     try:
         if PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS > 0:
@@ -2425,7 +2425,7 @@ async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes)
 
 def schedule_marker_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
     """Schedule a background Marker upgrade unless one is already cached or running."""
-    url_hash = _get_url_hash(url)
+    url_hash = get_url_hash(url)
     if not PDF_ENABLE_BACKGROUND_MARKER_UPGRADE:
         _record_high_quality_upgrade_state(
             url,
@@ -2476,7 +2476,7 @@ def schedule_marker_upgrade(url: str, title: str, pdf_bytes: bytes) -> bool:
 def cleanup_expired_pdf_cache() -> int:
     cleaned = 0
     try:
-        cache_dir = _get_pdf_cache_dir()
+        cache_dir = get_pdf_cache_dir()
         if not cache_dir.exists():
             return 0
         
@@ -3986,7 +3986,7 @@ def format_reference_card(
     display_type = "paper" if is_academic else "webpage"
 
     icon = source_icons.get(source_type, "📚")
-    source_id = _get_url_hash(url)
+    source_id = get_url_hash(url)
 
     if source_type == "arxiv":
         arxiv_id = ""
@@ -4108,7 +4108,7 @@ def detect_source_type(url: str) -> str:
 
 
 # Known academic source types — used to determine if a source is inherently academic.
-_ACADEMIC_SOURCE_TYPES = frozenset({
+ACADEMIC_SOURCE_TYPES = frozenset({
     "arxiv", "openreview", "pubmed", "nature", "science", "cell", "lancet",
     "nejm", "jama", "bmj", "modernpathology", "springer", "ieee", "acm",
     "biorxiv", "elsevier", "wiley", "frontiers", "mdpi", "oup", "plos",
@@ -4130,7 +4130,7 @@ def is_academic_content(content: str, source_type: str) -> bool:
     Returns True for academic papers, False for brochures / ads / general docs.
     """
     # Tier 1: known academic domains are always academic
-    if source_type in _ACADEMIC_SOURCE_TYPES:
+    if source_type in ACADEMIC_SOURCE_TYPES:
         return True
 
     # Clearly non-academic sources are never academic.
@@ -4183,12 +4183,12 @@ def _normalize_cached_article_lookup_text(text: str) -> str:
     normalized = re.sub(r'^(?:please\s+)?(?:read|open|view|show\s+me|look(?:\s+at)?)\s+', '', normalized)
     normalized = re.sub(r'\s+(?:paper|article|pdf)\s*$', '', normalized)
     normalized = re.sub(r'https?://\S+', ' ', normalized)
-    tokens = _tokenize_for_search(normalized)
+    tokens = tokenize_for_search(normalized)
     return " ".join(tokens)
 
 
 def _cached_article_source_priority_for_source(source_type: str) -> int:
-    if source_type in _ACADEMIC_SOURCE_TYPES:
+    if source_type in ACADEMIC_SOURCE_TYPES:
         return 50
     if source_type == "pdf":
         return 40
@@ -4210,7 +4210,7 @@ def _cached_article_variant_kind(source_type: str) -> str:
         return "preprint"
     if source_type == "openreview":
         return "openreview"
-    if source_type in _ACADEMIC_SOURCE_TYPES:
+    if source_type in ACADEMIC_SOURCE_TYPES:
         return "formal"
     return "generic"
 
@@ -4257,11 +4257,11 @@ def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict
     if not normalized_query:
         return []
 
-    query_tokens = _tokenize_for_search(normalized_query)
+    query_tokens = tokenize_for_search(normalized_query)
     if len(query_tokens) < 2 and len(normalized_query) < 8:
         return []
 
-    cache_dir = _get_pdf_cache_dir()
+    cache_dir = get_pdf_cache_dir()
     matches: list[dict[str, Any]] = []
     seen_urls: set[str] = set()
     now = datetime.now()
@@ -4311,7 +4311,7 @@ def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict
             "url": url,
             "snippet": f"Local cache hit — {variant_kind} version already downloaded and parsed.",
             "source_type": source_type,
-            "is_academic": bool(meta.get("is_academic", source_type in _ACADEMIC_SOURCE_TYPES)),
+            "is_academic": bool(meta.get("is_academic", source_type in ACADEMIC_SOURCE_TYPES)),
             "cached_at": cached_at_raw,
             "match_type": "exact_normalized_title",
             "variant_kind": variant_kind,
@@ -4356,7 +4356,7 @@ async def _save_markdown_to_cache_async(
         high_quality_pending=high_quality_pending,
     )
     _trigger_vector_index(
-        _get_url_hash(url),
+        get_url_hash(url),
         markdown,
         paper_title,
         structured_content,
@@ -4378,7 +4378,7 @@ async def _save_marker_to_cache_async(
         structured_content,
     )
     _trigger_vector_index(
-        _get_url_hash(url),
+        get_url_hash(url),
         markdown,
         paper_title,
         structured_content,
@@ -4442,7 +4442,7 @@ async def process_pdf_url(
                 logger.info(f"Using cached PDF for {url}" + (" (with cached markdown)" if cached_markdown else ""))
 
         if not pdf_bytes:
-            pdf_bytes = await download_pdf(url)
+            pdf_bytes = await download_pdf(url, timeout=180.0)
             if pdf_bytes and use_cache:
                 _save_pdf_to_cache(url, pdf_bytes, title)
 
@@ -4480,8 +4480,8 @@ async def process_pdf_url(
                     (get_cached_pdf_meta(url) or {}).get("high_quality_parse_pending")
                 )
         else:
-            url_hash = _get_url_hash(url)
-            sync_images_output_dir = _get_pdf_cache_dir() / "images" / url_hash
+            url_hash = get_url_hash(url)
+            sync_images_output_dir = get_pdf_cache_dir() / "images" / url_hash
             sync_images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
 
             parse_result = await parse_pdf(
@@ -4561,8 +4561,8 @@ async def process_pdf_url(
 
         # Determine whether extracted images are already available.
         # Both Marker and PyMuPDF write into the same per-document images dir.
-        url_hash_for_images = _get_url_hash(url)
-        images_dir_for_check = _get_pdf_cache_dir() / "images" / url_hash_for_images
+        url_hash_for_images = get_url_hash(url)
+        images_dir_for_check = get_pdf_cache_dir() / "images" / url_hash_for_images
         image_count_on_disk = 0
         if images_dir_for_check.exists() and images_dir_for_check.is_dir():
             image_count_on_disk = sum(1 for f in images_dir_for_check.iterdir() if f.is_file())

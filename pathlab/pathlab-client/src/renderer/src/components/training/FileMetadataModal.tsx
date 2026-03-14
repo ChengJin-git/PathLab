@@ -4,7 +4,6 @@
  * Modal for setting metadata when uploading files.
  */
 
-import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
 import { TaskType } from '../../constants/training'
@@ -97,16 +96,6 @@ export function FileMetadataModal({
                           <option value="Female">{t('training.fileMetadata.female')}</option>
                           <option value="Unspecified">{t('training.fileMetadata.unspecified')}</option>
                         </select>
-                      </div>
-                      <div className="col-span-2">
-                        <label className="block text-sm font-medium text-gray-700 mb-1">{t('training.fileMetadata.source')}</label>
-                        <input
-                          type="text"
-                          placeholder={t('training.fileMetadata.sourcePlaceholder')}
-                          value={fileMetadata.get(file.name)?.source || ''}
-                          onChange={(e) => updateFileMetadata(file.name, 'source', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                        />
                       </div>
                     </div>
                   </div>

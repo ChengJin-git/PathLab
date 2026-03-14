@@ -88,7 +88,7 @@ class WSIClassificationTrainer(BaseTrainer):
         logger: Any,
         session_maker: Any,
         hf_token: str = "",
-        preprocessing_config: Optional[Dict] = None,
+        preprocessing_config: Optional[Dict[str, Any]] = None,
     ) -> FeatureExtractionResponse:
         """
         Extract features for all WSI slides sequentially (single-GPU optimized).
@@ -535,7 +535,7 @@ class WSIClassificationTrainer(BaseTrainer):
         """
         # Build case_splits by collecting unique case_ids for each split
         case_splits: Dict[str, List[str]] = {split_name: [] for split_name in splits_map.keys()}
-        seen_cases: set = set()
+        seen_cases: set[Any] = set[Any]()
 
         for split_name, wsi_ids in splits_map.items():
             for wsi_id in wsi_ids:
@@ -548,11 +548,11 @@ class WSIClassificationTrainer(BaseTrainer):
 
     def _split_case_attention_to_slides(
         self,
-        attention: Optional[np.ndarray],
+        attention: Optional[np.ndarray[Any, Any]],
         case_id: str,
         case_wsi_patch_counts: Dict[str, List[int]],
         case_to_wsi: Dict[str, List[str]],
-    ) -> Dict[str, Optional[np.ndarray]]:
+    ) -> Dict[str, Optional[np.ndarray[Any, Any]]]:
         """
         Split case-level attention weights back to individual slides.
 
@@ -580,7 +580,7 @@ class WSIClassificationTrainer(BaseTrainer):
             # Fallback: return None for all slides
             return {wsi_id: None for wsi_id in wsi_ids}
 
-        slide_attentions: Dict[str, Optional[np.ndarray]] = {}
+        slide_attentions: Dict[str, Optional[np.ndarray[Any, Any]]] = {}
         start_idx = 0
 
         for wsi_id, count in zip(wsi_ids, patch_counts):
@@ -687,7 +687,7 @@ class WSIClassificationTrainer(BaseTrainer):
         fold_keys: List[str],
         classes: List[str],
         splits_map: Optional[Dict[str, List[str]]] = None,
-    ) -> tuple:
+    ) -> tuple[Any, ...]:
         """Delegate to shared classification metrics calculator."""
         return calculate_kfold_classification_metrics(
             self.uploads_root, task_id, fold_keys, classes, splits_map
@@ -1010,7 +1010,7 @@ class WSIClassificationTrainer(BaseTrainer):
 
         Returns list of WSI IDs that could not be repaired (still missing/invalid after re-extraction).
         """
-        def _scan_features_sync() -> tuple:
+        def _scan_features_sync() -> tuple[Any, ...]:
             needs_reextract = []
             reasons = {}
             for wsi_id in all_wsi_ids:
@@ -1071,7 +1071,7 @@ class WSIClassificationTrainer(BaseTrainer):
             preprocessing_config=preprocessing_config,
         )
 
-        def _post_repair_check_sync() -> list:
+        def _post_repair_check_sync() -> list[Any]:
             still_bad = []
             for wsi_id in needs_reextract:
                 feat_path = features_dir / f"{wsi_id}.pt"

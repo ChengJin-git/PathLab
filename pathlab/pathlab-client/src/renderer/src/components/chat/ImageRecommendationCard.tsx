@@ -5,6 +5,7 @@ import { Loader2, Image as ImageIcon, ExternalLink, AlertCircle, ImageOff, Layer
 import {
   fetchWSIList,
   fetchWSIIds,
+  fetchWSIDetail,
   fetchAllResults,
   getRecommendationThumbnailUrl as getThumbnailUrl,
   fetchAvailableHeatmaps,
@@ -81,11 +82,103 @@ export function removeImageRecommendationBlock(content: string): string {
 }
 
 // Global cache for loaded images with heatmap info (persists across component remounts)
-const imageCache = new Map<string, { images: ImageWithOverlays[]; error: string | null }>()
+const RECOMMENDATION_CACHE_TTL_MS = 5 * 60 * 1000
+const RECOMMENDATION_ERROR_CACHE_TTL_MS = 20 * 1000
+const RECOMMENDATION_CACHE_MAX_ENTRIES = 120
+
+interface RecommendationCacheSnapshot {
+  images: ImageWithOverlays[]
+  error: string | null
+}
+
+interface RecommendationCacheEntry {
+  value: RecommendationCacheSnapshot
+  timestamp: number
+}
+
+type RecommendationFilterSignature = {
+  query: string
+  label: string | null
+  pred: string | null
+  has_predictions: boolean
+  dataset_id: string | null
+  data_type: 'wsi' | 'patch' | 'all' | null
+  event_status: number | null
+  max_count: number
+  show_heatmap: boolean
+  heatmap_filter_feature_extractor: string | null
+  heatmap_filter_aggregator: string | null
+  segmentation_mask_source: SegmentationMaskSource | null
+  segmentation_mask_task_id: string | null
+}
+
+function buildRecommendationFilterSignature(
+  recommendation: ImageRecommendation,
+  maxCount: number,
+): RecommendationFilterSignature {
+  return {
+    query: recommendation.query,
+    label: recommendation.filters?.label ?? null,
+    pred: recommendation.filters?.pred ?? null,
+    has_predictions: recommendation.filters?.has_predictions === true,
+    dataset_id: recommendation.filters?.dataset_id ?? null,
+    data_type: recommendation.filters?.data_type ?? null,
+    event_status: recommendation.filters?.event_status ?? null,
+    max_count: maxCount,
+    show_heatmap: recommendation.show_heatmap === true,
+    heatmap_filter_feature_extractor: recommendation.heatmap_filter?.feature_extractor ?? null,
+    heatmap_filter_aggregator: recommendation.heatmap_filter?.aggregator ?? null,
+    segmentation_mask_source: recommendation.segmentation_mask?.source ?? null,
+    segmentation_mask_task_id: recommendation.segmentation_mask?.task_id ?? null,
+  }
+}
+
+function buildRecommendationFilterKey(signature: RecommendationFilterSignature): string {
+  return JSON.stringify(signature)
+}
+
+const recommendationCache = new Map<string, RecommendationCacheEntry>()
+const recommendationInFlightRequests = new Map<string, Promise<RecommendationCacheSnapshot>>()
+
+function getCachedRecommendation(key: string): RecommendationCacheSnapshot | null {
+  const cached = recommendationCache.get(key)
+  if (!cached) return null
+
+  const ttl = cached.value.error ? RECOMMENDATION_ERROR_CACHE_TTL_MS : RECOMMENDATION_CACHE_TTL_MS
+  if (Date.now() - cached.timestamp >= ttl) {
+    recommendationCache.delete(key)
+    return null
+  }
+
+  return cached.value
+}
+
+function setCachedRecommendation(key: string, value: RecommendationCacheSnapshot): void {
+  recommendationCache.set(key, {
+    value,
+    timestamp: Date.now(),
+  })
+
+  if (recommendationCache.size <= RECOMMENDATION_CACHE_MAX_ENTRIES) return
+
+  let oldestKey: string | null = null
+  let oldestTimestamp = Number.POSITIVE_INFINITY
+  for (const [entryKey, entry] of recommendationCache.entries()) {
+    if (entry.timestamp < oldestTimestamp) {
+      oldestTimestamp = entry.timestamp
+      oldestKey = entryKey
+    }
+  }
+
+  if (oldestKey) {
+    recommendationCache.delete(oldestKey)
+  }
+}
+
 const CARD_THUMBNAIL_SIZE = 160
-const OVERLAY_FETCH_CONCURRENCY = 2
-const DETAIL_FETCH_CONCURRENCY = 2
-const OVERLAY_THUMBNAIL_LOAD_CONCURRENCY = 2
+const OVERLAY_FETCH_CONCURRENCY = 4
+const DETAIL_FETCH_CONCURRENCY = 3
+const OVERLAY_THUMBNAIL_LOAD_CONCURRENCY = 4
 
 interface QueueWaiter {
   cancelled: boolean
@@ -484,29 +577,35 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
   // Memoize filter key to prevent unnecessary re-fetches
   // Include query in the key so each unique recommendation gets its own cache entry
+  const filterSignature = useMemo(
+    () => buildRecommendationFilterSignature(recommendation, maxCount),
+    [
+      recommendation.query,
+      recommendation.filters?.label,
+      recommendation.filters?.pred,
+      recommendation.filters?.has_predictions,
+      recommendation.filters?.dataset_id,
+      recommendation.filters?.data_type,
+      recommendation.filters?.event_status,
+      recommendation.show_heatmap,
+      recommendation.heatmap_filter?.feature_extractor,
+      recommendation.heatmap_filter?.aggregator,
+      recommendation.segmentation_mask?.source,
+      recommendation.segmentation_mask?.task_id,
+      maxCount,
+    ]
+  )
+
   const filterKey = useMemo(
-    () =>
-      JSON.stringify({
-        query: recommendation.query,
-        label: recommendation.filters?.label,
-        pred: recommendation.filters?.pred,
-        has_predictions: recommendation.filters?.has_predictions,
-        dataset_id: recommendation.filters?.dataset_id,
-        data_type: recommendation.filters?.data_type,
-        event_status: recommendation.filters?.event_status,
-        max_count: maxCount,
-        show_heatmap: recommendation.show_heatmap,
-        segmentation_mask_source: recommendation.segmentation_mask?.source,
-        segmentation_mask_task_id: recommendation.segmentation_mask?.task_id,
-      }),
-    [recommendation.query, recommendation.filters, maxCount, recommendation.show_heatmap, recommendation.segmentation_mask]
+    () => buildRecommendationFilterKey(filterSignature),
+    [filterSignature]
   )
 
   useEffect(() => {
     let active = true
 
     // Check cache first
-    const cached = imageCache.get(filterKey)
+    const cached = getCachedRecommendation(filterKey)
     if (cached) {
       setImagesWithOverlays(cached.images)
       setError(cached.error)
@@ -517,7 +616,27 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       }
     }
 
-    void loadImages(() => active)
+    const inFlight = recommendationInFlightRequests.get(filterKey)
+    if (inFlight) {
+      void inFlight.then((result) => {
+        if (!active || result == null) return
+        setImagesWithOverlays(result.images)
+        setError(result.error)
+        setIsOverlayInfoLoading(false)
+        setIsLoading(false)
+      })
+      return () => {
+        active = false
+      }
+    }
+
+    const requestPromise = loadImages(() => active)
+      .finally(() => {
+        if (recommendationInFlightRequests.get(filterKey) === requestPromise) {
+          recommendationInFlightRequests.delete(filterKey)
+        }
+      })
+    recommendationInFlightRequests.set(filterKey, requestPromise)
 
     return () => {
       active = false
@@ -557,11 +676,12 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
     return filtered
   }
 
-  const loadImages = async (isActive: () => boolean = () => true) => {
-    if (!isActive()) return
-    setIsLoading(true)
-    setIsOverlayInfoLoading(false)
-    setError(null)
+  const loadImages = async (isActive: () => boolean = () => true): Promise<RecommendationCacheSnapshot> => {
+    if (isActive()) {
+      setIsLoading(true)
+      setIsOverlayInfoLoading(false)
+      setError(null)
+    }
     try {
       let displayImages: WSISummary[] = []
       let predictionByWsiId = new Map<string, string | null>()
@@ -652,9 +772,10 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         resultPrediction: predictionByWsiId.get(img.wsi_id) ?? null,
       }))
 
-      if (!isActive()) return
-      setImagesWithOverlays(baseImageInfo)
-      setIsLoading(false)
+      if (isActive()) {
+        setImagesWithOverlays(baseImageInfo)
+        setIsLoading(false)
+      }
 
       const hydratedImagesPromise = shouldHydrateLimitedImages
         ? mapWithConcurrencyLimit(limitedImages, DETAIL_FETCH_CONCURRENCY, async (img) => {
@@ -670,8 +791,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
 
       let imageOverlayInfo: ImageWithOverlays[]
       if (needsOverlayLookup) {
-        if (!isActive()) return
-        setIsOverlayInfoLoading(true)
+        if (isActive()) {
+          setIsOverlayInfoLoading(true)
+        }
         imageOverlayInfo = await mapWithConcurrencyLimit(limitedImages, OVERLAY_FETCH_CONCURRENCY, async (img) => {
           if (!isActive()) {
             return {
@@ -740,7 +862,6 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       }
 
       const hydratedImages = await hydratedImagesPromise
-      if (!isActive()) return
       if (hydratedImages.length > 0) {
         const hydratedById = new Map(hydratedImages.filter((img): img is WSISummary => !!img).map(img => [img.wsi_id, img]))
         imageOverlayInfo = imageOverlayInfo.map(item => ({
@@ -751,21 +872,29 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         }))
       }
 
-      if (!isActive()) return
-      setImagesWithOverlays(imageOverlayInfo)
       // Cache the result
-      imageCache.set(filterKey, { images: imageOverlayInfo, error: null })
+      const cacheValue = { images: imageOverlayInfo, error: null }
+      if (isActive()) {
+        setImagesWithOverlays(imageOverlayInfo)
+      }
+      setCachedRecommendation(filterKey, cacheValue)
+      return cacheValue
     } catch (err) {
-      if (!isActive()) return
-      setImagesWithOverlays([])
-      setError(t('chatComponents.imageRecommendation.failedToLoad'))
+      const errorMessage = t('chatComponents.imageRecommendation.failedToLoad')
+      if (isActive()) {
+        setImagesWithOverlays([])
+        setError(errorMessage)
+      }
       console.error('Failed to load images:', err)
       // Cache the error state too
-      imageCache.set(filterKey, { images: [], error: t('chatComponents.imageRecommendation.failedToLoad') })
+      const cacheValue = { images: [], error: errorMessage }
+      setCachedRecommendation(filterKey, cacheValue)
+      return cacheValue
     } finally {
-      if (!isActive()) return
-      setIsOverlayInfoLoading(false)
-      setIsLoading(false)
+      if (isActive()) {
+        setIsOverlayInfoLoading(false)
+        setIsLoading(false)
+      }
     }
   }
 

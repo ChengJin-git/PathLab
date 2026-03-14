@@ -23,7 +23,7 @@ import json
 import logging
 import traceback
 from pathlib import Path
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 import torch
 from fastapi import APIRouter, Depends, HTTPException
@@ -172,7 +172,7 @@ async def _safe_update_status(
     return True
 
 
-def _get_split_strategy_description(splits_map: dict, preprocessing_config: dict = None) -> str:
+def _get_split_strategy_description(splits_map: dict[str, Any], preprocessing_config: dict[str, Any] = None) -> str:
     """
     Generate a human-readable description of the split strategy.
 
@@ -217,7 +217,7 @@ def _get_split_strategy_description(splits_map: dict, preprocessing_config: dict
         return "Unknown Split Strategy"
 
 
-def _format_splits_count(splits_map: dict) -> str:
+def _format_splits_count(splits_map: dict[str, Any]) -> str:
     """
     Format splits count for logging.
 

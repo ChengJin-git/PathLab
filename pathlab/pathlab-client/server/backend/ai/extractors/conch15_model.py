@@ -2,7 +2,7 @@
 """
 import math
 from functools import partial
-from typing import Callable, Optional, Sequence, Tuple, Union
+from typing import Callable, Optional, Sequence, Tuple, Union, Any
 import torchvision
 import timm
 from timm.layers import Mlp, DropPath, trunc_normal_, PatchDropout, use_fused_attn
@@ -90,7 +90,7 @@ class PatchEmbed(nn.Module):
             patch_size: int = 16,
             in_chans: int = 3,
             embed_dim: int = 768,
-            norm_layer: Optional[Callable] = None,
+            norm_layer: Optional[Callable[..., Any]] = None,
             flatten: bool = True,
             output_fmt: Optional[str] = None,
             bias: bool = True,
@@ -286,11 +286,11 @@ class VisionTransformer(nn.Module):
             attn_drop_rate: float = 0.,  # same
             drop_path_rate: float = 0.,  # same
             weight_init: str = '',
-            embed_layer: Callable = PatchEmbed,
-            norm_layer: Optional[Callable] = None,
-            act_layer: Optional[Callable] = None,
-            block_fn: Callable = Block,     
-            mlp_layer: Callable = Mlp,  # New
+            embed_layer: Callable[..., Any] = PatchEmbed,
+            norm_layer: Optional[Callable[..., Any]] = None,
+            act_layer: Optional[Callable[..., Any]] = None,
+            block_fn: Callable[..., Any] = Block,     
+            mlp_layer: Callable[..., Any] = Mlp,  # New
             return_all_tokens=False,    # iBOT
             masked_im_modeling=False    # iBOT
     ):
@@ -446,7 +446,7 @@ class VisionTransformer(nn.Module):
     def _intermediate_layers(
             self,
             x: torch.Tensor,
-            n: Union[int, Sequence] = 1,
+            n: Union[int, Sequence[Any]] = 1,
     ):
         outputs, num_blocks = [], len(self.blocks)
         take_indices = set(range(num_blocks - n, num_blocks) if isinstance(n, int) else n)
@@ -466,7 +466,7 @@ class VisionTransformer(nn.Module):
     def get_intermediate_layers(
             self,
             x: torch.Tensor,
-            n: Union[int, Sequence] = 1,
+            n: Union[int, Sequence[Any]] = 1,
             reshape: bool = False,
             return_class_token: bool = False,
             norm: bool = False,
@@ -603,7 +603,7 @@ class AttentionalPooler(nn.Module):
             context_dim: int,
             n_head: int = 8,
             n_queries: int = 256,
-            norm_layer: Callable = nn.LayerNorm
+            norm_layer: Callable[..., Any] = nn.LayerNorm
     ):
         super().__init__()
         self.query = nn.Parameter(torch.randn(n_queries, d_model))

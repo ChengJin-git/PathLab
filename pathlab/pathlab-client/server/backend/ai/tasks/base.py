@@ -51,7 +51,7 @@ class BaseTrainer(ABC):
         logger: Any,
         db: Any,
         hf_token: str = "",
-        preprocessing_config: Optional[Dict] = None,
+        preprocessing_config: Optional[Dict[str, Any]] = None,
     ) -> FeatureExtractionResponse:
         """
         Extract features for all WSI slides.

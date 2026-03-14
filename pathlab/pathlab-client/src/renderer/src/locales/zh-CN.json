@@ -150,7 +150,7 @@
     "donate": "捐赠",
     "enterUsername": "请输入用户名",
     "enterPassword": "请输入密码",
-    "buildVersion": "版本 v1.0.0-stable",
+    "buildVersion": "版本 v1.0.1-stable",
     "legalNotice": "登录前，您可先查看服务条款及隐私声明。首次进入系统前，系统仍会要求您完成同意确认。",
     "viewTerms": "查看服务条款",
     "viewPrivacy": "查看隐私声明"
@@ -828,6 +828,8 @@
     "heroTitle2": "重新定义",
     "heroTitle3": "数字病理学",
     "heroSubtitle": "在保护数据隐私的同时进行训练、分析和获取洞察。体验医学研究的未来。",
+    "inviteOnlyNotice": "当前仅支持受邀注册。如需开通账号，请联系管理员。",
+    "inviteOnlyNoticeWithContact": "当前仅支持受邀注册。如需开通账号，请<contactLink>联系管理员</contactLink>。",
     "agenticAI": "由 AI 智能体驱动",
     "coreCapabilities": "核心能力",
     "coreCapabilitiesTitle": "数字病理学所需的一切",
@@ -1004,6 +1006,7 @@
       "liveLogs": "实时日志",
       "liveStream": "任务流状态",
       "connecting": "正在连接任务流...",
+      "creatingTaskFirstLine": "任务请求已提交，正在等待后端创建任务记录...",
       "error": "错误: "
     },
     "progressSection": {
@@ -1228,6 +1231,7 @@
       "decoder": "解码器"
     },
     "progress": {
+      "creatingTask": "正在创建任务",
       "extracting": "提取特征中",
       "testing": "测试模型中",
       "patching": "图像切片中",
@@ -1282,6 +1286,7 @@
     "aiErrorFallback": "抱歉，我遇到了错误。请重试。",
     "generationCancelled": "用户取消了回答。",
     "generationTimeout": "回答超时，请重试。",
+    "pdfLargeDocumentSlowNotice": "正在处理大型文档，解析可能需要几分钟，请耐心等待。",
     "imageAnalysis": "图像分析",
     "excelMultipleSheets": "Excel 文件有 {{count}} 个工作表：",
     "excelMoreSheets": "  ... 以及另外 {{count}} 个",
@@ -1666,6 +1671,7 @@
     "exportLabelsWithSplit": "导出标签并划分数据集",
     "exportSuccess": "标签导出成功",
     "exportFailed": "导出标签失败",
+    "exportFallbackNonStratified": "分层划分样本不足，已自动降级为非分层拆分并完成导出。",
     "splitRatios": "数据集划分比例",
     "train": "训练集",
     "val": "验证集",
@@ -2567,7 +2573,9 @@
 	      "startFailed": "启动图像推理失败",
 	      "failed": "图像推理失败。",
 	      "noModel": "当前没有可用的图像推理模型。",
-      "noSegmentationMask": "未检测到阳性分割区域。"
+      "noSegmentationMask": "未检测到阳性分割区域。",
+      "segmentationOverlay": "分割叠加图",
+      "originalImage": "原图"
     },
     "referenceCard": {
       "references": "参考文献",
@@ -2862,6 +2870,7 @@
     },
     "serverStatus": {
       "training": {
+        "creating": "正在创建任务",
         "queued": "排队中",
         "pending": "待处理",
         "patching": "图像切片中",
@@ -2920,7 +2929,7 @@
         "items": [
           "1.1 通过点击“同意并继续”，或以其他方式注册、登录、下载、安装、访问或使用本服务，即表示您确认已阅读、理解并同意受本条款约束。",
           "1.2 如您代表某组织使用本服务，即表示您有权约束该组织，且该组织对您的使用行为负责。",
-          "1.3 我们可保留电子同意记录，包括可获得的账号标识、时间戳，以及您在同意时提交或被识别到的 IP 信息，以作为同意、安全与合规的证明。在香港地区，此安排亦拟与 <lawCap553>《电子交易条例》（第553章）</lawCap553> 保持一致。",
+          "1.3 我们可保留电子同意记录，包括可获得的账号标识、时间戳，以及您在同意时提交或被识别到的 IP 信息，以作为同意、安全与合规的证明。在香港地区，此安排参照 <lawCap553>《电子交易条例》（第553章）</lawCap553> 的原则制定。",
           "1.4 如您不同意本条款，请勿使用本服务。"
         ]
       },
@@ -3245,7 +3254,7 @@
     "metrics": "指标",
     "perClassPerformance": "各类别性能",
     "class": "类别",
-    "support": "支持数",
+    "support": "样本量",
     "analysisCharts": "分析图表",
     "confusionMatrix": "混淆矩阵",
     "rocCurve": "ROC 曲线",
@@ -3289,7 +3298,9 @@
     "time": "时间",
     "survivalProbability": "生存概率",
     "survivalCurve": "生存曲线",
-    "metricCurve": "曲线"
+    "metricCurve": "曲线",
+    "showPercent": "按行百分比",
+    "showCount": "按计数"
   },
   "annotation": {
     "annotate": "标注",

@@ -12,7 +12,7 @@ Usage:
 """
 
 import logging
-from typing import Tuple
+from typing import Tuple, Any
 
 import torch
 
@@ -299,7 +299,7 @@ def get_gpu_count() -> int:
     return torch.cuda.device_count()
 
 
-def get_all_gpu_info() -> list:
+def get_all_gpu_info() -> list[Any]:
     """
     Get information about all available GPUs.
 

@@ -56,7 +56,7 @@ def _write_json_sync(path, data):
 def _calculate_all_metrics(
     labels: List[str],
     predictions: List[str],
-    probs_list: List[Dict],
+    probs_list: List[Dict[str, Any]],
     all_classes: List[str],
     requested_metrics: List[str]
 ) -> Dict[str, Any]:
@@ -160,7 +160,7 @@ def _calculate_all_metrics(
 def _calculate_bootstrap_ci(
     labels: List[str],
     predictions: List[str],
-    probs_list: List[Dict],
+    probs_list: List[Dict[str, Any]],
     all_classes: List[str],
     requested_metrics: List[str],
     n_bootstrap: int = 1000,
@@ -389,7 +389,7 @@ def _calculate_survival_bootstrap_ci(
     n_bootstrap: int = 1000,
     confidence_level: float = 0.95,
     progress_callback: Optional[Callable[[float], None]] = None
-) -> Dict:
+) -> Dict[str, Any]:
     """
     Calculate bootstrap confidence intervals for survival metrics (C-Index, IBS).
 

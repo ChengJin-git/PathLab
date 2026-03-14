@@ -49,7 +49,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         """
         self.set_uploads_dir(uploads_dir)
         # Cache for storage stats: (timestamp, stats_dict)
-        self._stats_cache: Optional[Tuple[float, Dict]] = None
+        self._stats_cache: Optional[Tuple[float, Dict[str, Any]]] = None
         # Flag to indicate if cache was loaded from persistent storage (survives restart)
         self._stats_cache_from_persistent: bool = False
         # Lock for background refresh to prevent multiple concurrent refreshes
@@ -59,7 +59,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         self._dir_mtime_cache: Dict[str, float] = {}
 
         # Orphan detection cache: (timestamp, orphan_result, wsi_ids_hash, task_ids_hash, model_ids_hash)
-        self._orphan_cache: Optional[Tuple[float, Dict, str, str, str]] = None
+        self._orphan_cache: Optional[Tuple[float, Dict[str, Any], str, str, str]] = None
         self._orphan_cache_from_persistent: bool = False
         self._orphan_refresh_lock = threading.Lock()
         self._orphan_refresh_in_progress = False
@@ -118,7 +118,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                         seen_paths.add(file_path)
                         yield file_path
 
-    def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict:
+    def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict[str, Any]:
         """
         Delete files associated with a WSI.
 
@@ -321,7 +321,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "mode": mode
         }
 
-    def delete_wsi_ai_results(self, wsi_id: str, task_id: Optional[str] = None) -> Dict:
+    def delete_wsi_ai_results(self, wsi_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Delete AI results for a specific WSI.
 
@@ -417,7 +417,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "summary": summary
         }
 
-    def delete_training_task_files(self, task_id: str, model_paths: Optional[List[str]] = None, mode: str = "standard") -> Dict:
+    def delete_training_task_files(self, task_id: str, model_paths: Optional[List[str]] = None, mode: str = "standard") -> Dict[str, Any]:
         """
         Delete files associated with a training task.
 
@@ -560,7 +560,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "mode": mode
         }
 
-    def get_wsi_storage_info(self, wsi_id: str, wsi_path: Optional[str] = None) -> Dict:
+    def get_wsi_storage_info(self, wsi_id: str, wsi_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Get storage information for a WSI.
 
@@ -698,7 +698,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         return info
 
-    def get_training_task_storage_info(self, task_id: str, model_paths: Optional[List[str]] = None) -> Dict:
+    def get_training_task_storage_info(self, task_id: str, model_paths: Optional[List[str]] = None) -> Dict[str, Any]:
         """
         Get storage information for a training task.
 
@@ -944,7 +944,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         return result
 
-    def save_wsi_metadata(self, wsi_id: str, metadata: Dict) -> str:
+    def save_wsi_metadata(self, wsi_id: str, metadata: Dict[str, Any]) -> str:
         """
         Save WSI metadata to JSON file.
 
@@ -978,7 +978,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             logger.error(f"Failed to save WSI metadata for {wsi_id}: {e}")
             raise
 
-    def get_wsi_metadata(self, wsi_id: str) -> Optional[Dict]:
+    def get_wsi_metadata(self, wsi_id: str) -> Optional[Dict[str, Any]]:
         """
         Load WSI metadata from JSON file.
 

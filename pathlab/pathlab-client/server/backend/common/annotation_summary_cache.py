@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Any, Dict, Iterable, Optional
 
 from backend.common.config import Config
 from backend.common.coco_utils import coco_to_roi_annotations
@@ -14,16 +14,25 @@ from backend.common.file_types import is_patch_file
 CACHE_VERSION = 2
 
 
-def _to_isoformat(value) -> Optional[str]:
+def _to_isoformat(value: Any) -> Optional[str]:
     return value.isoformat() if value else None
 
 
-def _latest_updated_at_iso(items: Iterable) -> Optional[str]:
-    latest_value = max((getattr(item, "updated_at", None) for item in items), default=None)
+def _latest_updated_at_iso(items: Iterable[Any]) -> Optional[str]:
+    latest_value: datetime | None = None
+    for item in items:
+        updated_at = getattr(item, "updated_at", None)
+        if not isinstance(updated_at, datetime):
+            continue
+        if latest_value is None or updated_at > latest_value:
+            latest_value = updated_at
     return _to_isoformat(latest_value)
 
 
-def _build_cache_key(finalized_annotations_key: dict, wsi_key: dict) -> dict:
+def _build_cache_key(
+    finalized_annotations_key: dict[str, Any],
+    wsi_key: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "version": CACHE_VERSION,
         "finalized_annotations": {
@@ -51,7 +60,7 @@ def get_draft_annotation_summary_cache_path(annotation_id: str) -> Path:
     return _cache_dir() / "drafts" / f"{annotation_id}.json"
 
 
-def load_dataset_annotation_summary_cache(dataset_id: str) -> Optional[dict]:
+def load_dataset_annotation_summary_cache(dataset_id: str) -> Optional[dict[str, Any]]:
     path = get_dataset_annotation_summary_cache_path(dataset_id)
     if not path.exists():
         return None
@@ -63,7 +72,7 @@ def load_dataset_annotation_summary_cache(dataset_id: str) -> Optional[dict]:
         return None
 
 
-def load_draft_annotation_summary_cache(annotation_id: str) -> Optional[dict]:
+def load_draft_annotation_summary_cache(annotation_id: str) -> Optional[dict[str, Any]]:
     path = get_draft_annotation_summary_cache_path(annotation_id)
     if not path.exists():
         return None
@@ -75,13 +84,17 @@ def load_draft_annotation_summary_cache(annotation_id: str) -> Optional[dict]:
         return None
 
 
-def save_dataset_annotation_summary_cache(dataset_id: str, cache_data: dict) -> None:
+def save_dataset_annotation_summary_cache(
+    dataset_id: str, cache_data: dict[str, Any]
+) -> None:
     path = get_dataset_annotation_summary_cache_path(dataset_id)
     with open(path, "w", encoding="utf-8") as f:
         json.dump(cache_data, f, ensure_ascii=False, indent=2)
 
 
-def save_draft_annotation_summary_cache(annotation_id: str, cache_data: dict) -> None:
+def save_draft_annotation_summary_cache(
+    annotation_id: str, cache_data: dict[str, Any]
+) -> None:
     path = get_draft_annotation_summary_cache_path(annotation_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as f:
@@ -89,16 +102,22 @@ def save_draft_annotation_summary_cache(annotation_id: str, cache_data: dict) ->
 
 
 def is_dataset_annotation_summary_cache_valid(
-    cache_data: Optional[dict],
-    finalized_annotations_key: dict,
-    wsi_key: dict,
+    cache_data: Optional[dict[str, Any]],
+    finalized_annotations_key: dict[str, Any],
+    wsi_key: dict[str, Any],
 ) -> bool:
     if not cache_data or not isinstance(cache_data, dict):
         return False
-    return cache_data.get("cache_key") == _build_cache_key(finalized_annotations_key, wsi_key)
+    return cache_data.get("cache_key") == _build_cache_key(
+        finalized_annotations_key, wsi_key
+    )
 
 
-def _build_draft_cache_key(annotation_id: str, draft_updated_at: Optional[str], wsi_key: dict) -> dict:
+def _build_draft_cache_key(
+    annotation_id: str,
+    draft_updated_at: Optional[str],
+    wsi_key: dict[str, Any],
+) -> dict[str, Any]:
     return {
         "version": CACHE_VERSION,
         "annotation_id": annotation_id,
@@ -111,17 +130,21 @@ def _build_draft_cache_key(annotation_id: str, draft_updated_at: Optional[str], 
 
 
 def is_draft_annotation_summary_cache_valid(
-    cache_data: Optional[dict],
+    cache_data: Optional[dict[str, Any]],
     annotation_id: str,
     draft_updated_at: Optional[str],
-    wsi_key: dict,
+    wsi_key: dict[str, Any],
 ) -> bool:
     if not cache_data or not isinstance(cache_data, dict):
         return False
-    return cache_data.get("cache_key") == _build_draft_cache_key(annotation_id, draft_updated_at, wsi_key)
+    return cache_data.get("cache_key") == _build_draft_cache_key(
+        annotation_id, draft_updated_at, wsi_key
+    )
 
 
-def _build_dataset_wsi_lookups(wsis: Iterable) -> tuple[Dict[str, str], Dict[str, str]]:
+def _build_dataset_wsi_lookups(
+    wsis: Iterable[Any],
+) -> tuple[Dict[str, str], Dict[str, str]]:
     exact_lookup: Dict[str, str] = {}
     stem_lookup: Dict[str, str] = {}
     for wsi in wsis:
@@ -133,10 +156,14 @@ def _build_dataset_wsi_lookups(wsis: Iterable) -> tuple[Dict[str, str], Dict[str
     return exact_lookup, stem_lookup
 
 
-def _build_slide_summary_from_regions(regions, is_wsi_source: bool) -> dict:
-    labels = {}
+def _build_slide_summary_from_regions(
+    regions: Any, is_wsi_source: bool
+) -> dict[str, Any]:
+    labels: dict[str, dict[str, Any]] = {}
     total_regions = 0
     for region in regions if isinstance(regions, list) else []:
+        if not isinstance(region, dict):
+            continue
         label = str(region.get("label") or "unlabeled")
         entry = labels.setdefault(label, {"count": 0, "color": region.get("color")})
         entry["count"] += 1
@@ -150,8 +177,10 @@ def _build_slide_summary_from_regions(regions, is_wsi_source: bool) -> dict:
     }
 
 
-def _aggregate_slide_summaries(slide_summaries: Dict[str, dict]) -> dict:
-    labels = {}
+def _aggregate_slide_summaries(
+    slide_summaries: Dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    labels: dict[str, dict[str, Any]] = {}
     total_regions = 0
     total_slides = 0
     has_wsi_sources = False
@@ -165,8 +194,17 @@ def _aggregate_slide_summaries(slide_summaries: Dict[str, dict]) -> dict:
         total_slides += 1
         has_wsi_sources = has_wsi_sources or bool(slide.get("is_wsi_source"))
 
-        for label, data in (slide.get("labels") or {}).items():
-            entry = labels.setdefault(label, {"total_regions": 0, "total_slides": 0, "color": data.get("color")})
+        slide_labels = slide.get("labels")
+        if not isinstance(slide_labels, dict):
+            continue
+
+        for label, data in slide_labels.items():
+            if not isinstance(data, dict):
+                continue
+            entry = labels.setdefault(
+                label,
+                {"total_regions": 0, "total_slides": 0, "color": data.get("color")},
+            )
             entry["total_regions"] += int(data.get("count") or 0)
             entry["total_slides"] += 1
             if not entry.get("color") and data.get("color"):
@@ -182,14 +220,16 @@ def _aggregate_slide_summaries(slide_summaries: Dict[str, dict]) -> dict:
 
 def build_dataset_annotation_summary_cache(
     dataset_id: str,
-    annotations: Dict[str, list],
-    wsis: Iterable,
-    finalized_annotations_key: Optional[dict] = None,
-    wsi_key: Optional[dict] = None,
-) -> dict:
+    annotations: Dict[str, list[dict[str, Any]]],
+    wsis: Iterable[Any],
+    finalized_annotations_key: Optional[dict[str, Any]] = None,
+    wsi_key: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     wsis = list(wsis)
     wsi_source_map = {
-        wsi.wsi_id: not is_patch_file(str(getattr(wsi, "wsi_path", "") or ""), getattr(wsi, "file_size", 0) or 0)
+        wsi.wsi_id: not is_patch_file(
+            str(getattr(wsi, "wsi_path", "") or ""), getattr(wsi, "file_size", 0) or 0
+        )
         for wsi in wsis
     }
     finalized_annotations_key = finalized_annotations_key or {
@@ -219,14 +259,16 @@ def build_draft_annotation_summary_cache(
     annotation_id: str,
     dataset_id: str,
     user_id: str,
-    annotations: Dict[str, list],
-    wsis: Iterable,
+    annotations: Dict[str, list[dict[str, Any]]],
+    wsis: Iterable[Any],
     draft_updated_at: Optional[str] = None,
-    wsi_key: Optional[dict] = None,
-) -> dict:
+    wsi_key: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
     wsis = list(wsis)
     wsi_source_map = {
-        wsi.wsi_id: not is_patch_file(str(getattr(wsi, "wsi_path", "") or ""), getattr(wsi, "file_size", 0) or 0)
+        wsi.wsi_id: not is_patch_file(
+            str(getattr(wsi, "wsi_path", "") or ""), getattr(wsi, "file_size", 0) or 0
+        )
         for wsi in wsis
     }
     wsi_key = wsi_key or {
@@ -252,10 +294,10 @@ def build_draft_annotation_summary_cache(
 
 def build_effective_summary_from_cache(
     dataset_id: str,
-    gt_cache: Optional[dict],
-    draft_slide_summaries: Optional[Dict[str, dict]],
+    gt_cache: Optional[dict[str, Any]],
+    draft_slide_summaries: Optional[Dict[str, dict[str, Any]]],
     annotation_id: Optional[str] = None,
-) -> dict:
+) -> dict[str, Any]:
     if not gt_cache:
         gt_cache = build_dataset_annotation_summary_cache(dataset_id, {}, [])
 
@@ -271,26 +313,40 @@ def build_effective_summary_from_cache(
     }
 
 
-async def rebuild_dataset_annotation_summary_cache(db, dataset_id: str) -> dict:
-    from backend.database.repositories import SegmentationAnnotationRepository, WSIRepository
+async def rebuild_dataset_annotation_summary_cache(
+    db: Any, dataset_id: str
+) -> dict[str, Any]:
+    from backend.database.repositories import (
+        SegmentationAnnotationRepository,
+        WSIRepository,
+    )
 
     wsis = await WSIRepository.get_by_dataset(db, dataset_id, skip=0, limit=0)
-    merged_annotations = {}
+    merged_annotations: Dict[str, list[dict[str, Any]]] = {}
 
     gt_records = await SegmentationAnnotationRepository.get_all_by_dataset(
         db, dataset_id, include_drafts=False
     )
     if gt_records and wsis:
-        dataset_level_record = next(
-            (record for record in gt_records if record.annotation_id == f"annot_{dataset_id}"),
-            None,
-        )
+        dataset_level_record: Any = None
+        target_annotation_id = f"annot_{dataset_id}"
+        for record in gt_records:
+            record_annotation_id = getattr(record, "annotation_id", None)
+            if (
+                isinstance(record_annotation_id, str)
+                and record_annotation_id == target_annotation_id
+            ):
+                dataset_level_record = record
+                break
         records_to_use = [dataset_level_record] if dataset_level_record else gt_records
         exact_lookup, stem_lookup = _build_dataset_wsi_lookups(wsis)
 
         for record in records_to_use:
+            record_annotations = getattr(record, "annotations", {})
+            if not isinstance(record_annotations, dict):
+                continue
             roi_map = coco_to_roi_annotations(
-                record.annotations,
+                record_annotations,
                 file_name_to_wsi_id=exact_lookup,
                 file_stem_to_wsi_id=stem_lookup,
             )
@@ -318,14 +374,19 @@ async def rebuild_dataset_annotation_summary_cache(db, dataset_id: str) -> dict:
 
 
 async def rebuild_draft_annotation_summary_cache(
-    db,
+    db: Any,
     annotation_id: str,
     user_id: str,
     dataset_id: str,
-) -> Optional[dict]:
-    from backend.database.repositories import SegmentationAnnotationRepository, WSIRepository
+) -> Optional[dict[str, Any]]:
+    from backend.database.repositories import (
+        SegmentationAnnotationRepository,
+        WSIRepository,
+    )
 
-    draft_annotation = await SegmentationAnnotationRepository.get(db, annotation_id, user_id)
+    draft_annotation = await SegmentationAnnotationRepository.get(
+        db, annotation_id, user_id
+    )
     if not draft_annotation:
         return None
 
@@ -334,7 +395,9 @@ async def rebuild_draft_annotation_summary_cache(
         annotation_id=annotation_id,
         dataset_id=dataset_id,
         user_id=user_id,
-        annotations=draft_annotation.annotations if isinstance(draft_annotation.annotations, dict) else {},
+        annotations=draft_annotation.annotations
+        if isinstance(draft_annotation.annotations, dict)
+        else {},
         wsis=wsis,
         draft_updated_at=_to_isoformat(draft_annotation.updated_at),
     )

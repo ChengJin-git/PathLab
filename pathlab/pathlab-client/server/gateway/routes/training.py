@@ -2,11 +2,14 @@
 Training task management routes
 Handles training task creation, monitoring, and deletion
 """
+
 import asyncio
 import json
 import os
+import random
 import uuid
-from typing import Optional
+from collections import defaultdict
+from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +25,14 @@ from backend.database.repositories import (
     DatasetRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
-from backend.auth.dependencies import require_can_use_gpu, require_pathologist_or_admin, check_data_ownership, check_dataset_gpu_permission, get_user_id_filter, check_wsi_access_permission
+from backend.auth.dependencies import (
+    require_can_use_gpu,
+    require_pathologist_or_admin,
+    check_data_ownership,
+    check_dataset_gpu_permission,
+    get_user_id_filter,
+    check_wsi_access_permission,
+)
 from ..utils import ensure_dataset_segmentation_contract
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
@@ -32,8 +42,185 @@ from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMod
 from ..pipeline import run_training_pipeline
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training, require_no_active_batch_imports
+from backend.common.chat_context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
+
+
+async def _check_file_accessibility(
+    paths_to_check: list[tuple[Any, ...]],
+    uploads_dir: str,
+) -> list[str]:
+    local_paths = [
+        (wid, p, fn) for wid, p, fn in paths_to_check if p.startswith(uploads_dir)
+    ]
+    external_paths = [
+        (wid, p, fn) for wid, p, fn in paths_to_check if not p.startswith(uploads_dir)
+    ]
+
+    inaccessible: list[str] = []
+
+    async def _stat(wsi_id: str, path: str, filename: str) -> tuple[Any, ...]:
+        exists = await asyncio.to_thread(os.path.exists, path)
+        return (wsi_id, path, filename, exists)
+
+    def _mount_root(path: str) -> str:
+        abs_path = os.path.abspath(path)
+        try:
+            with open("/proc/mounts") as f:
+                mounts = [line.split()[1] for line in f if len(line.split()) >= 2]
+            return max(
+                (m for m in mounts if abs_path.startswith(m.rstrip("/") + "/")),
+                key=len,
+                default="/",
+            )
+        except OSError:
+            cur = abs_path
+            while cur != "/":
+                parent = os.path.dirname(cur)
+                if os.path.ismount(cur):
+                    return cur
+                cur = parent
+            return "/"
+
+    # ── Strategy A: local paths — exhaustive check ────────────────────────────
+    if local_paths:
+        LOCAL_TIMEOUT = 10
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*[_stat(wid, p, fn) for wid, p, fn in local_paths]),
+                timeout=LOCAL_TIMEOUT,
+            )
+            inaccessible += [fn or wid for wid, _, fn, ok in results if not ok]
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Local storage I/O timeout after {LOCAL_TIMEOUT}s. "
+                    "The server may be experiencing disk issues."
+                ),
+            )
+
+    # ── Strategy B: external/NFS paths — mount-root check + per-root sampling ─
+    # NFS failures are mount-level. Per-file stat on thousands of files under
+    # load causes guaranteed timeouts. Verify mount roots first (O(1)), then
+    # sample a few files per root to catch individually-deleted files.
+    if external_paths:
+        EXTERNAL_TIMEOUT = 10
+        SAMPLE_SIZE = 5
+
+        mount_roots = {_mount_root(p) for _, p, _ in external_paths}
+        for root in mount_roots:
+            try:
+                accessible = await asyncio.wait_for(
+                    asyncio.to_thread(os.path.exists, root),
+                    timeout=EXTERNAL_TIMEOUT,
+                )
+            except asyncio.TimeoutError:
+                raise HTTPException(
+                    status_code=408,
+                    detail=(
+                        f"External storage not responding (timed out after {EXTERNAL_TIMEOUT}s): {root}. "
+                        "Please check your network storage connection and try again."
+                    ),
+                )
+            if not accessible:
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"External storage mount is not accessible: {root}. "
+                        "Please ensure the network storage is mounted and try again."
+                    ),
+                )
+
+        # 2. Random sample per mount root — catches individually-deleted files
+        paths_by_root: dict[str, Any] = defaultdict(list)
+        for item in external_paths:
+            paths_by_root[_mount_root(item[1])].append(item)
+
+        sample: list[tuple[Any, ...]] = []
+        for items in paths_by_root.values():
+            sample.extend(random.sample(items, min(SAMPLE_SIZE, len(items))))
+
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*[_stat(wid, p, fn) for wid, p, fn in sample]),
+                timeout=EXTERNAL_TIMEOUT,
+            )
+            inaccessible += [fn or wid for wid, _, fn, ok in results if not ok]
+        except asyncio.TimeoutError:
+            # Mount roots are reachable but individual stat is slow under heavy NFS
+            # load. This is not a missing-file error — warn and allow the submission
+            # to proceed. The training pipeline will catch any truly missing files.
+            logger.warning(
+                f"External storage sample check timed out ({EXTERNAL_TIMEOUT}s) but mount "
+                f"roots are accessible — NFS under heavy load. Allowing submission to proceed. "
+                f"Sampled paths: {[p for _, p, _ in sample]}"
+            )
+
+    return inaccessible
+
+
+async def _validate_files_and_enqueue(
+    task_id: str,
+    paths_to_check: list[tuple[Any, ...]],
+    uploads_dir: str,
+    pipeline_kwargs: dict[str, Any],
+) -> None:
+    training_logger = TrainingLogger(task_id)
+
+    async def _fail(detail: str) -> None:
+        logger.error(f"Training task {task_id} failed pre-flight file check: {detail}")
+        async with safe_session() as db:
+            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.FAILED)
+            await db.commit()
+        await training_logger.error(
+            f"[PreFlight] {detail}",
+            metadata={"status": TaskStatus.FAILED},
+        )
+
+    try:
+        inaccessible = await _check_file_accessibility(paths_to_check, uploads_dir)
+    except HTTPException as exc:
+        await _fail(exc.detail)
+        return
+    except Exception as exc:
+        await _fail(f"Unexpected error during file accessibility check: {exc}")
+        return
+
+    if inaccessible:
+        if len(inaccessible) <= 5:
+            files_str = ", ".join(inaccessible)
+        else:
+            files_str = (
+                ", ".join(inaccessible[:5]) + f" and {len(inaccessible) - 5} more"
+            )
+        await _fail(f"The following files are not accessible: {files_str}")
+        return
+
+    task_queue = get_task_queue()
+    await task_queue.submit(
+        task_id=task_id,
+        task_type=TaskType.TRAINING,
+        coro_func=run_training_pipeline,
+        **pipeline_kwargs,
+    )
+
+    async with safe_session() as db:
+        await TrainingTaskRepository.update_status(
+            db, task_id, TaskStatus.QUEUED, progress=0
+        )
+        await db.commit()
+
+    await training_logger.info(
+        "[Queue] Task submitted to training queue, waiting for available worker/GPU resources",
+        metadata={
+            "status": TaskStatus.QUEUED,
+            "task_type": pipeline_kwargs.get("training_task_type"),
+            "data_type": pipeline_kwargs.get("data_type"),
+            "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
+        },
+    )
 
 
 @router.post("")
@@ -58,9 +245,14 @@ async def create_training_task(
             async with safe_session() as db:
                 wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
             if not wsi_ids:
-                raise HTTPException(status_code=400, detail="No WSI files found in the specified dataset")
+                raise HTTPException(
+                    status_code=400,
+                    detail="No WSI files found in the specified dataset",
+                )
         if not wsi_ids:
-            raise HTTPException(status_code=400, detail="At least one WSI must be selected")
+            raise HTTPException(
+                status_code=400, detail="At least one WSI must be selected"
+            )
 
         expected_task_type = None
         expected_data_type = None
@@ -69,9 +261,14 @@ async def create_training_task(
         # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
         async with safe_session() as db:
             if user.is_admin() and req.rerun_from_task_id:
-                source_task = await TrainingTaskRepository.get_by_id(db, req.rerun_from_task_id)
+                source_task = await TrainingTaskRepository.get_by_id(
+                    db, req.rerun_from_task_id
+                )
                 if not source_task:
-                    raise HTTPException(status_code=404, detail="Source training task not found for rerun")
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Source training task not found for rerun",
+                    )
                 if source_task.user_id:
                     effective_task_owner_user_id = source_task.user_id
 
@@ -81,7 +278,9 @@ async def create_training_task(
             # Check for missing WSIs
             missing_wsi_ids = [wsi_id for wsi_id in wsi_ids if wsi_id not in wsi_map]
             if missing_wsi_ids:
-                raise HTTPException(status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}")
+                raise HTTPException(
+                    status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}"
+                )
 
             # Collect dataset IDs and check access permissions
             dataset_ids_involved = set()
@@ -93,32 +292,48 @@ async def create_training_task(
                     wsi = wsi_map[wsi_id]
                     dataset_ids_involved.add(wsi.dataset_id)
                     if wsi.wsi_path:
-                        paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
+                        paths_to_check.append(
+                            (wsi_id, wsi.wsi_path, wsi.original_filename)
+                        )
             else:
                 # Non-admin: batch-fetch all user permissions upfront, then check in-memory
                 from backend.database.repositories import DatasetPermissionRepository
-                user_permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-                elevated_dataset_ids = {p.dataset_id for p in user_permissions if p.is_valid()}
+
+                user_permissions = await DatasetPermissionRepository.get_valid_by_user(
+                    db, str(user.id)
+                )
+                elevated_dataset_ids = {
+                    p.dataset_id for p in user_permissions if p.is_valid()
+                }
 
                 for wsi_id in wsi_ids:
                     wsi = wsi_map[wsi_id]
                     # In-memory permission check (no DB query per WSI)
                     has_access = (
                         wsi.user_id == str(user.id)  # Owner
-                        or (wsi.dataset_id and wsi.dataset_id in elevated_dataset_ids)  # Elevated permission
+                        or (
+                            wsi.dataset_id and wsi.dataset_id in elevated_dataset_ids
+                        )  # Elevated permission
                     )
                     if not has_access:
-                        raise HTTPException(status_code=403, detail=f"You don't have permission to use WSI: {wsi_id}")
+                        raise HTTPException(
+                            status_code=403,
+                            detail=f"You don't have permission to use WSI: {wsi_id}",
+                        )
                     dataset_ids_involved.add(wsi.dataset_id)
                     if wsi.wsi_path:
-                        paths_to_check.append((wsi_id, wsi.wsi_path, wsi.original_filename))
+                        paths_to_check.append(
+                            (wsi_id, wsi.wsi_path, wsi.original_filename)
+                        )
 
             await require_no_active_batch_imports(
                 db,
                 detail="Cannot submit training task while files are being imported. Please wait for all imports to complete.",
             )
 
-            dataset_ids = [dataset_id for dataset_id in dataset_ids_involved if dataset_id]
+            dataset_ids = [
+                dataset_id for dataset_id in dataset_ids_involved if dataset_id
+            ]
             dataset_map = {
                 dataset.dataset_id: dataset
                 for dataset in await DatasetRepository.get_by_ids(db, list(dataset_ids))
@@ -127,18 +342,30 @@ async def create_training_task(
             for dataset_id in dataset_ids:
                 dataset = dataset_map.get(dataset_id)
                 if dataset is None:
-                    raise HTTPException(status_code=400, detail=f"Dataset not found: {dataset_id}")
-                data_group = ensure_dataset_segmentation_contract(dataset, context='Training dataset')
-                group_contracts.add((data_group.task_type, data_group.data_type, data_group.aggregation_level))
+                    raise HTTPException(
+                        status_code=400, detail=f"Dataset not found: {dataset_id}"
+                    )
+                data_group = ensure_dataset_segmentation_contract(
+                    dataset, context="Training dataset"
+                )
+                group_contracts.add(
+                    (
+                        data_group.task_type,
+                        data_group.data_type,
+                        data_group.aggregation_level,
+                    )
+                )
 
             if len(group_contracts) != 1:
                 raise HTTPException(
                     status_code=400,
-                    detail='All selected files must belong to datasets with the same task_type, data_type, and aggregation_level',
+                    detail="All selected files must belong to datasets with the same task_type, data_type, and aggregation_level",
                 )
 
             if group_contracts:
-                expected_task_type, expected_data_type, expected_aggregation_level = group_contracts.pop()
+                expected_task_type, expected_data_type, expected_aggregation_level = (
+                    group_contracts.pop()
+                )
                 if req.task_type != expected_task_type:
                     raise HTTPException(
                         status_code=400,
@@ -153,63 +380,14 @@ async def create_training_task(
             # Check GPU permission for non-GPU users (in same session)
             if not user.can_use_gpu():
                 for dataset_id in dataset_ids_involved:
-                    has_permission = await check_dataset_gpu_permission(user, dataset_id, db)
+                    has_permission = await check_dataset_gpu_permission(
+                        user, dataset_id, db
+                    )
                     if not has_permission:
                         raise HTTPException(
                             status_code=403,
-                            detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}"
+                            detail=f"GPU operations not available. You need pathologist access or temporary elevated permission for dataset: {dataset_id}",
                         )
-
-        # Check file accessibility concurrently using asyncio.to_thread
-        # Use timeout to prevent hanging when external storage is unreachable
-        FILE_CHECK_TIMEOUT = 15  # seconds for the entire batch check
-        inaccessible_files = []
-        if paths_to_check:
-            async def check_file_exists(wsi_id: str, path: str, filename: str) -> tuple:
-                exists = await asyncio.to_thread(os.path.exists, path)
-                return (wsi_id, path, filename, exists)
-
-            try:
-                results = await asyncio.wait_for(
-                    asyncio.gather(*[
-                        check_file_exists(wsi_id, path, filename)
-                        for wsi_id, path, filename in paths_to_check
-                    ]),
-                    timeout=FILE_CHECK_TIMEOUT
-                )
-                for wsi_id, path, filename, exists in results:
-                    if not exists:
-                        inaccessible_files.append(filename or wsi_id)
-            except asyncio.TimeoutError:
-                # Determine which paths are external vs local
-                uploads_dir = str(Config.get_uploads_dir())
-                external_paths = [p for _, p, _ in paths_to_check if not p.startswith(uploads_dir)]
-                if external_paths:
-                    # Extract common root directory from external paths for user hint
-                    sample_path = external_paths[0]
-                    path_root = "/".join(sample_path.split("/")[:3])  # e.g. /jhcnas7/Pathology
-                    raise HTTPException(
-                        status_code=408,
-                        detail=f"External storage not responding (timed out after {FILE_CHECK_TIMEOUT}s). "
-                               f"Cannot verify accessibility of {len(external_paths)} file(s) on {path_root}. "
-                               f"Please check your network storage connection and try again."
-                    )
-                else:
-                    raise HTTPException(
-                        status_code=408,
-                        detail=f"File accessibility check timed out after {FILE_CHECK_TIMEOUT}s. "
-                               f"Please check your storage connection and try again."
-                    )
-
-        if inaccessible_files:
-            if len(inaccessible_files) <= 5:
-                files_str = ", ".join(inaccessible_files)
-            else:
-                files_str = ", ".join(inaccessible_files[:5]) + f" and {len(inaccessible_files) - 5} more"
-            raise HTTPException(
-                status_code=400,
-                detail=f"The following files are not accessible: {files_str}"
-            )
 
         # Use client-provided task_id (for fire-and-forget submission) or generate one
         task_id = req.task_id or f"train_{uuid.uuid4().hex[:16]}"
@@ -223,7 +401,7 @@ async def create_training_task(
                 db,
                 data_type=req.data_type,  # 'wsi' or 'patch'
                 aggregation_level=aggregation_level,  # 'file' or 'case'
-                task_type=req.task_type  # 'classification' or 'survival'
+                task_type=req.task_type,  # 'classification' or 'survival'
             )
 
             # Prepare task data
@@ -246,9 +424,11 @@ async def create_training_task(
             prefetched_wsis = list(wsi_map.values())
             try:
                 task = await TrainingTaskRepository.create(
-                    db, task_data, wsi_ids,
+                    db,
+                    task_data,
+                    wsi_ids,
                     split_config=split_config_dict,
-                    prefetched_wsis=prefetched_wsis
+                    prefetched_wsis=prefetched_wsis,
                 )
                 await db.commit()
             except ValueError as e:
@@ -257,56 +437,43 @@ async def create_training_task(
 
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")
-        logger.info(f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})")
-        logger.info(f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}")
+        logger.info(
+            f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})"
+        )
+        logger.info(
+            f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}"
+        )
         logger.info(f"  - WSI count: {len(wsi_ids)}")
         logger.info(f"  - Classes: {task.classes}")
 
-        # Submit task to queue for execution
-        # The queue manages GPU task concurrency to prevent overload
-        task_queue = get_task_queue()
-
-        # Get huggingface_token: request > global settings
         global_settings = Config.get_global_settings()
-        huggingface_token = req.huggingface_token or global_settings.get("huggingface_token", "")
+        huggingface_token = req.huggingface_token or global_settings.get(
+            "huggingface_token", ""
+        )
 
         pipeline_kwargs = {
-            # Note: task_id is automatically added by task_queue.submit()
             "data_type": req.data_type,
             "wsi_ids": wsi_ids,
             "preprocessing_config": pipeline_preprocessing_config,
             "model_config": req.model,
             "huggingface_token": huggingface_token,
-            "training_task_type": req.task_type,  # Use different name to avoid conflict with TaskType enum
+            "training_task_type": req.task_type,
             "user_id": str(user.id),
             "user_is_admin": user.is_admin(),
         }
-        # Use positional arguments to avoid conflict: submit()'s task_type (for queue) vs pipeline_kwargs' training_task_type (for coro_func)
-        await task_queue.submit(
-            task_id,
-            TaskType.TRAINING,  # This is for queue management (training/inference)
-            run_training_pipeline,
-            **pipeline_kwargs
+
+        asyncio.create_task(
+            _validate_files_and_enqueue(
+                task_id=task_id,
+                paths_to_check=paths_to_check,
+                uploads_dir=str(Config.get_uploads_dir()),
+                pipeline_kwargs=pipeline_kwargs,
+            )
         )
+        await invalidate_chat_context(effective_task_owner_user_id)
 
-        async with safe_session() as db:
-            await TrainingTaskRepository.update_status(db, task_id, TaskStatus.QUEUED, progress=0)
-            await db.commit()
-
-        training_logger = TrainingLogger(task_id)
-        await training_logger.info(
-            "[Queue] Task submitted to training queue, waiting for available worker/GPU resources",
-            metadata={
-                "status": TaskStatus.QUEUED,
-                "task_type": req.task_type,
-                "data_type": req.data_type,
-                "wsi_count": len(wsi_ids),
-            }
-        )
-
-        # Return task info
         result = task.to_dict()
-        result["status"] = TaskStatus.QUEUED
+        result["status"] = TaskStatus.PENDING
         result["progress"] = 0
         result["wsi_count"] = len(wsi_ids)
 
@@ -316,7 +483,9 @@ async def create_training_task(
         raise
     except Exception as e:
         logger.error(f"Failed to create training task: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create training task: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create training task: {str(e)}"
+        )
 
 
 @router.get("")
@@ -324,16 +493,20 @@ async def list_training_tasks(
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=100),
     search: Optional[str] = Query(None, description="Search by task name or task ID"),
-    status_filter: str = Query("all", description="all|running|completed|failed|cancelled"),
+    status_filter: str = Query(
+        "all", description="all|running|completed|failed|cancelled"
+    ),
     sort_by: str = Query("updated", description="updated|created|name"),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """List training tasks. Users see only their own tasks, admin sees all (with username)."""
     valid_status_filters = {"all", "running", "completed", "failed", "cancelled"}
     if status_filter not in valid_status_filters:
-        raise HTTPException(status_code=400, detail=f"Invalid status_filter: {status_filter}")
+        raise HTTPException(
+            status_code=400, detail=f"Invalid status_filter: {status_filter}"
+        )
 
     valid_sort_fields = {"updated", "created", "name"}
     if sort_by not in valid_sort_fields:
@@ -370,11 +543,14 @@ async def list_training_tasks(
         task_ids = [task.task_id for task in tasks]
 
     wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
-    source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
-    
+    source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(
+        db, task_ids
+    )
+
     # Overlay real-time progress from shared store so list responses stay in sync
     # with SSE/detail endpoints during long-running tasks.
     from backend.common.progress_store import get_all_progress
+
     file_progress = await get_all_progress()
 
     # Add WSI count to each task
@@ -430,17 +606,26 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                 async with safe_session() as db:
                     try:
                         # Fetch training tasks filtered by user
-                        tasks = await TrainingTaskRepository.get_all(db, limit=100, offset=0, user_id=user_id_filter, include_username=include_username)
+                        tasks = await TrainingTaskRepository.get_all(
+                            db,
+                            limit=100,
+                            offset=0,
+                            user_id=user_id_filter,
+                            include_username=include_username,
+                        )
 
                         # Batch get WSI counts for all tasks (avoids N+1 query)
                         if include_username:
                             task_ids = [task["task_id"] for task in tasks]
                         else:
                             task_ids = [task.task_id for task in tasks]
-                        wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(db, task_ids)
+                        wsi_counts = await TrainingTaskRepository.get_wsi_counts_batch(
+                            db, task_ids
+                        )
 
                         # Read real-time progress from shared files (no HTTP, no DB lock)
                         from backend.common.progress_store import get_all_progress
+
                         file_progress = await get_all_progress()
 
                         # Add WSI count and overlay file-based progress
@@ -459,8 +644,13 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                             # For external validation tasks, WSIs aren't in TrainingTaskWSI junction table
                             # so use model_config.total_wsi as the count
                             junction_count = wsi_counts.get(task_id, 0)
-                            if junction_count == 0 and task_dict.get("task_type") == "external_validation":
-                                task_dict["wsi_count"] = model_config.get("total_wsi", 0)
+                            if (
+                                junction_count == 0
+                                and task_dict.get("task_type") == "external_validation"
+                            ):
+                                task_dict["wsi_count"] = model_config.get(
+                                    "total_wsi", 0
+                                )
                             else:
                                 task_dict["wsi_count"] = junction_count
                             # Overlay file progress if available (more up-to-date than DB)
@@ -471,6 +661,7 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         # Change detection: only send if data changed
                         data = json.dumps({"items": result_tasks})
                         import hashlib
+
                         data_hash = hashlib.md5(data.encode()).hexdigest()
                         if data_hash != last_data_hash:
                             yield f"data: {data}\n\n"
@@ -479,12 +670,14 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         consecutive_errors = 0  # Reset on success
                     except Exception as e:
                         consecutive_errors += 1
-                        logger.error(f"Error fetching training tasks in SSE (consecutive={consecutive_errors}): {e}")
+                        logger.error(
+                            f"Error fetching training tasks in SSE (consecutive={consecutive_errors}): {e}"
+                        )
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
                 # Exponential backoff on consecutive errors: 5s → 10s → 20s → 30s (cap)
                 if consecutive_errors > 0:
-                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    backoff = min(BASE_INTERVAL * (2**consecutive_errors), 30)
                     await asyncio.sleep(backoff)
                 else:
                     await asyncio.sleep(BASE_INTERVAL)
@@ -499,8 +692,8 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
     )
 
 
@@ -508,20 +701,24 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
 async def get_training_task(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get training task details. Users can only view their own tasks, admin can view all (with username)."""
     # Admin users get username information
     include_username = user.is_admin()
 
-    task = await TrainingTaskRepository.get_by_id(db, task_id, include_username=include_username)
+    task = await TrainingTaskRepository.get_by_id(
+        db, task_id, include_username=include_username
+    )
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
     # Check ownership
     task_user_id = task["user_id"] if include_username else task.user_id
     if not check_data_ownership(task_user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task")
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to view this task"
+        )
 
     # Get associated WSI IDs
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
@@ -545,6 +742,7 @@ async def get_training_task(
     # Overlay real-time progress from shared file (if available)
     # This ensures the initial load shows the most up-to-date progress
     from backend.common.progress_store import get_progress
+
     # Get task_id from dict or object depending on include_username
     task_id_for_progress = task["task_id"] if include_username else task.task_id
     file_prog = await get_progress(task_id_for_progress)
@@ -559,7 +757,7 @@ async def update_training_task(
     task_id: str,
     req: TrainingTaskUpdateRequest,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Update a training task's name.
@@ -577,7 +775,7 @@ async def update_training_task(
     if not check_data_ownership(task.user_id, user):
         raise HTTPException(
             status_code=403,
-            detail="Only the task creator or admin can update this task"
+            detail="Only the task creator or admin can update this task",
         )
 
     # Validate task name
@@ -593,7 +791,10 @@ async def update_training_task(
     if not updated_task:
         raise HTTPException(status_code=500, detail="Failed to update task")
 
-    logger.info(f"Training task {task_id} renamed to '{req.task_name}' by user {user.id}")
+    await invalidate_chat_context(str(task.user_id or user.id))
+    logger.info(
+        f"Training task {task_id} renamed to '{req.task_name}' by user {user.id}"
+    )
 
     return updated_task.to_dict()
 
@@ -603,7 +804,7 @@ async def delete_training_task(
     task_id: str,
     mode: str = "standard",
     user: User = Depends(require_pathologist_or_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Delete a training task and associated files.
@@ -629,15 +830,26 @@ async def delete_training_task(
         # Get task from database
         task = await TrainingTaskRepository.get_by_id(db, task_id)
         if not task:
-            raise HTTPException(status_code=404, detail=f"Training task not found: {task_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Training task not found: {task_id}"
+            )
 
         # Check ownership
         if not check_data_ownership(task.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to delete this task")
+            raise HTTPException(
+                status_code=403, detail="You don't have permission to delete this task"
+            )
 
         # If task is still active, cancel it first in both gateway queue and AI service.
         # This makes delete behave as "cancel then delete" for running/queued tasks.
-        if task.status in [TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.RESUMING, TaskStatus.PATCHING, TaskStatus.EXTRACTING, TaskStatus.TRAINING]:
+        if task.status in [
+            TaskStatus.PENDING,
+            TaskStatus.QUEUED,
+            TaskStatus.RESUMING,
+            TaskStatus.PATCHING,
+            TaskStatus.EXTRACTING,
+            TaskStatus.TRAINING,
+        ]:
             queue = get_task_queue()
             await queue.cancel_task(task_id)
             await cancel_ai_service_training(task_id)
@@ -649,39 +861,47 @@ async def delete_training_task(
         # Delete task-scoped AI result records before removing the task record itself.
         await AIResultRepository.delete_by_task_id(db, task_id)
 
-        # Delete task from database (cascades to associations, models, logs)
+        task_owner_id = str(task.user_id or user.id)
         await TrainingTaskRepository.delete(db, task_id)
         await db.commit()
 
-        # Delete files using StorageManager based on mode
-        storage_cleanup = storage_manager.delete_training_task_files(task_id, model_ids, mode)
-        logger.info(storage_cleanup['summary'])
+        await invalidate_chat_context(task_owner_id)
+
+        storage_cleanup = storage_manager.delete_training_task_files(
+            task_id, model_ids, mode
+        )
+        logger.info(storage_cleanup["summary"])
 
         # Clean up progress file (ephemeral, may still exist if AI Service didn't finish cleanup)
         from backend.common.progress_store import clear_progress
+
         await clear_progress(task_id)
 
         return {
             "message": "Training task deleted successfully",
             "task_id": task_id,
-            "storage_cleanup": storage_cleanup
+            "storage_cleanup": storage_cleanup,
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to delete training task: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete training task: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete training task: {str(e)}"
+        )
 
 
 @router.get("/{task_id}/logs")
 async def get_training_logs(
     task_id: str,
-    level: Optional[str] = Query(None, description="Filter by log level (INFO, WARNING, ERROR)"),
+    level: Optional[str] = Query(
+        None, description="Filter by log level (INFO, WARNING, ERROR)"
+    ),
     limit: int = Query(100, description="Maximum number of logs to return"),
     offset: int = Query(0, description="Offset for pagination"),
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get training logs for a specific task with optional filtering and pagination.
@@ -709,7 +929,9 @@ async def get_training_logs(
 
     # Check ownership
     if not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task's logs")
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to view this task's logs"
+        )
 
     # Get logs from database
     logs = await TrainingLogRepository.get_by_task_id(db, task_id, level, limit, offset)
@@ -719,14 +941,13 @@ async def get_training_logs(
         "logs": [log.to_dict() for log in logs],
         "count": len(logs),
         "limit": limit,
-        "offset": offset
+        "offset": offset,
     }
 
 
 @router.get("/{task_id}/logs/stream")
 async def stream_training_logs(
-    task_id: str,
-    user: User = Depends(get_user_from_token_param)
+    task_id: str, user: User = Depends(get_user_from_token_param)
 ):
     """
     Real-time SSE streaming of training logs.
@@ -752,7 +973,10 @@ async def stream_training_logs(
 
         # Check ownership
         if not check_data_ownership(task.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to stream this task's logs")
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to stream this task's logs",
+            )
 
     async def log_event_generator():
         """Generate SSE events with new logs and task status updates"""
@@ -764,11 +988,21 @@ async def stream_training_logs(
                 try:
                     task = await TrainingTaskRepository.get_by_id(db, task_id)
                     # For completed/failed tasks, load all logs; for running tasks, load recent 50
-                    log_count = 10000 if task and task.status in ('completed', 'failed', 'cancelled') else 50
-                    recent_logs = await TrainingLogRepository.get_recent(db, task_id, count=log_count)
+                    log_count = (
+                        10000
+                        if task and task.status in ("completed", "failed", "cancelled")
+                        else 50
+                    )
+                    recent_logs = await TrainingLogRepository.get_recent(
+                        db, task_id, count=log_count
+                    )
 
                     # Get WSI IDs for task
-                    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []
+                    wsi_ids = (
+                        await TrainingTaskRepository.get_wsi_ids(db, task_id)
+                        if task
+                        else []
+                    )
 
                     # Build task dict with wsi_ids and wsi_count
                     task_dict = None
@@ -776,22 +1010,34 @@ async def stream_training_logs(
                         task_dict = task.to_dict()
                         task_dict["wsi_ids"] = wsi_ids
                         # For external validation tasks, WSIs aren't in junction table
-                        if len(wsi_ids) == 0 and task_dict.get("task_type") == "external_validation":
-                            task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                        if (
+                            len(wsi_ids) == 0
+                            and task_dict.get("task_type") == "external_validation"
+                        ):
+                            task_dict["wsi_count"] = (task.model_config or {}).get(
+                                "total_wsi", 0
+                            )
                         else:
                             task_dict["wsi_count"] = len(wsi_ids)
                         # Overlay real-time progress from shared file
                         from backend.common.progress_store import get_progress
+
                         file_prog = await get_progress(task.task_id)
                         if file_prog is not None:
                             task_dict["progress"] = file_prog
 
                     # Send initial data with both logs and task status
-                    data = json.dumps({
-                        "logs": [log.to_dict() for log in recent_logs] if recent_logs else [],
-                        "last_sequence": recent_logs[-1].sequence if recent_logs else 0,
-                        "task": task_dict
-                    })
+                    data = json.dumps(
+                        {
+                            "logs": [log.to_dict() for log in recent_logs]
+                            if recent_logs
+                            else [],
+                            "last_sequence": recent_logs[-1].sequence
+                            if recent_logs
+                            else 0,
+                            "task": task_dict,
+                        }
+                    )
                     yield f"data: {data}\n\n"
 
                     if recent_logs:
@@ -821,7 +1067,11 @@ async def stream_training_logs(
                         )
 
                         # Get WSI IDs for task
-                        wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id) if task else []
+                        wsi_ids = (
+                            await TrainingTaskRepository.get_wsi_ids(db, task_id)
+                            if task
+                            else []
+                        )
 
                         # Build task dict with wsi_ids and wsi_count
                         task_dict = None
@@ -829,25 +1079,38 @@ async def stream_training_logs(
                             task_dict = task.to_dict()
                             task_dict["wsi_ids"] = wsi_ids
                             # For external validation tasks, WSIs aren't in junction table
-                            if len(wsi_ids) == 0 and task_dict.get("task_type") == "external_validation":
-                                task_dict["wsi_count"] = (task.model_config or {}).get("total_wsi", 0)
+                            if (
+                                len(wsi_ids) == 0
+                                and task_dict.get("task_type") == "external_validation"
+                            ):
+                                task_dict["wsi_count"] = (task.model_config or {}).get(
+                                    "total_wsi", 0
+                                )
                             else:
                                 task_dict["wsi_count"] = len(wsi_ids)
                             # Overlay real-time progress from shared file
                             from backend.common.progress_store import get_progress
+
                             file_prog = await get_progress(task.task_id)
                             if file_prog is not None:
                                 task_dict["progress"] = file_prog
 
                         # Build data payload
-                        data = json.dumps({
-                            "logs": [log.to_dict() for log in new_logs] if new_logs else [],
-                            "last_sequence": new_logs[-1].sequence if new_logs else last_sequence,
-                            "task": task_dict
-                        })
+                        data = json.dumps(
+                            {
+                                "logs": [log.to_dict() for log in new_logs]
+                                if new_logs
+                                else [],
+                                "last_sequence": new_logs[-1].sequence
+                                if new_logs
+                                else last_sequence,
+                                "task": task_dict,
+                            }
+                        )
 
                         # Change detection: only send if data changed
                         import hashlib
+
                         data_hash = hashlib.md5(data.encode()).hexdigest()
                         if data_hash != last_data_hash:
                             yield f"data: {data}\n\n"
@@ -858,7 +1121,7 @@ async def stream_training_logs(
 
                         # Check if task completed - handle outside session to avoid
                         # holding DB connection during sleep
-                        if task and task.status in ['completed', 'failed', 'cancelled']:
+                        if task and task.status in ["completed", "failed", "cancelled"]:
                             task_completed = True
                             cached_wsi_ids = wsi_ids
                             cached_task_dict = task.to_dict()
@@ -866,7 +1129,9 @@ async def stream_training_logs(
                         consecutive_errors = 0  # Reset on success
                     except Exception as e:
                         consecutive_errors += 1
-                        logger.error(f"Error polling logs for task {task_id} (consecutive={consecutive_errors}): {e}")
+                        logger.error(
+                            f"Error polling logs for task {task_id} (consecutive={consecutive_errors}): {e}"
+                        )
                         yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
                 # Handle task completion outside session to avoid holding DB
@@ -876,34 +1141,50 @@ async def stream_training_logs(
                     # Open a new short-lived session for final log fetch
                     async with safe_session() as db:
                         try:
-                            final_logs = await TrainingLogRepository.get_logs_after_sequence(
-                                db, task_id, last_sequence, limit=100
+                            final_logs = (
+                                await TrainingLogRepository.get_logs_after_sequence(
+                                    db, task_id, last_sequence, limit=100
+                                )
                             )
 
                             # Build final task dict with wsi_ids and wsi_count
                             final_task_dict = cached_task_dict.copy()
                             final_task_dict["wsi_ids"] = cached_wsi_ids
                             # For external validation tasks, WSIs aren't in junction table
-                            if len(cached_wsi_ids) == 0 and final_task_dict.get("task_type") == "external_validation":
-                                final_task_dict["wsi_count"] = final_task_dict.get("model_config", {}).get("total_wsi", 0)
+                            if (
+                                len(cached_wsi_ids) == 0
+                                and final_task_dict.get("task_type")
+                                == "external_validation"
+                            ):
+                                final_task_dict["wsi_count"] = final_task_dict.get(
+                                    "model_config", {}
+                                ).get("total_wsi", 0)
                             else:
                                 final_task_dict["wsi_count"] = len(cached_wsi_ids)
 
-                            data = json.dumps({
-                                "logs": [log.to_dict() for log in final_logs] if final_logs else [],
-                                "last_sequence": final_logs[-1].sequence if final_logs else last_sequence,
-                                "task": final_task_dict,
-                                "status": "complete"
-                            })
+                            data = json.dumps(
+                                {
+                                    "logs": [log.to_dict() for log in final_logs]
+                                    if final_logs
+                                    else [],
+                                    "last_sequence": final_logs[-1].sequence
+                                    if final_logs
+                                    else last_sequence,
+                                    "task": final_task_dict,
+                                    "status": "complete",
+                                }
+                            )
                             yield f"data: {data}\n\n"
                         except Exception as e:
-                            logger.error(f"Error fetching final logs for task {task_id}: {e}")
+                            logger.error(
+                                f"Error fetching final logs for task {task_id}: {e}"
+                            )
                             yield f"data: {json.dumps({'error': str(e)})}\n\n"
                     return  # Use return instead of break to properly exit generator
 
                 # Exponential backoff on consecutive errors: 3s → 6s → 12s → 24s → 30s (cap)
                 if consecutive_errors > 0:
-                    backoff = min(BASE_INTERVAL * (2 ** consecutive_errors), 30)
+                    backoff = min(BASE_INTERVAL * (2**consecutive_errors), 30)
                     await asyncio.sleep(backoff)
                 else:
                     await asyncio.sleep(BASE_INTERVAL)
@@ -921,8 +1202,8 @@ async def stream_training_logs(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
     )
 
 
@@ -931,7 +1212,7 @@ async def get_recent_training_logs(
     task_id: str,
     count: int = Query(100, description="Number of recent logs to return"),
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the most recent N logs for a training task.
@@ -946,7 +1227,9 @@ async def get_recent_training_logs(
 
     # Check ownership
     if not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task's logs")
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to view this task's logs"
+        )
 
     # Get recent logs
     logs = await TrainingLogRepository.get_recent(db, task_id, count)
@@ -954,7 +1237,7 @@ async def get_recent_training_logs(
     return {
         "task_id": task_id,
         "logs": [log.to_dict() for log in logs],
-        "count": len(logs)
+        "count": len(logs),
     }
 
 
@@ -962,7 +1245,7 @@ async def get_recent_training_logs(
 async def get_task_models(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Get all models from a training task. Users can only view their own tasks' models, admin can view all."""
     # Verify task exists
@@ -972,8 +1255,10 @@ async def get_task_models(
 
     # Check ownership
     if not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to view this task's models")
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have permission to view this task's models",
+        )
 
     models = await TrainedModelRepository.get_by_task_id(db, task_id)
     return {"items": [model.to_dict() for model in models], "total": len(models)}
-

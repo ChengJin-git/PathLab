@@ -1,3 +1,4 @@
+from typing import Any
 """
 Storage batch task routes — background tasks, task management, and SSE streaming.
 
@@ -157,7 +158,7 @@ async def reset_derived_data(
 # Background Task Functions for Batch Operations
 # ==============================================================================
 
-async def _run_batch_import_task(task_id: str, user_id: str, request_params: dict):
+async def _run_batch_import_task(task_id: str, user_id: str, request_params: dict[str, Any]):
     """
     Background task for batch importing WSI files.
     Updates progress in database as it processes files.
@@ -658,7 +659,7 @@ async def _cleanup_empty_dataset_record(db: AsyncSession, dataset_id: str) -> bo
     return True
 
 
-async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list):
+async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list[Any]):
     """
     Background task for deleting external WSI records.
     Updates progress in database as it processes files.
@@ -988,7 +989,7 @@ async def _run_cleanup_empty_datasets_task(task_id: str, user_id: str):
             await db.commit()
 
 
-async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_params: dict):
+async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_params: dict[str, Any]):
     """
     Background task for batch updating WSI metadata.
     Updates progress in database as it processes files.
@@ -1006,7 +1007,6 @@ async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_pa
             new_case_id = request_params.get('case_id')
             new_age = request_params.get('age')
             new_gender = request_params.get('gender')
-            new_source = request_params.get('source')
             new_event_time = request_params.get('event_time')
             new_event_status = request_params.get('event_status')
 
@@ -1064,8 +1064,6 @@ async def _run_batch_update_metadata_task(task_id: str, user_id: str, request_pa
                         update_data['age'] = new_age
                     if new_gender is not None and wsi.gender != new_gender:
                         update_data['gender'] = new_gender
-                    if new_source is not None and wsi.source != new_source:
-                        update_data['source'] = new_source
                     if new_event_time is not None and wsi.event_time != new_event_time:
                         update_data['event_time'] = new_event_time
                     if new_event_status is not None and wsi.event_status != new_event_status:
@@ -1414,7 +1412,6 @@ async def start_batch_update_metadata_task(
             request.case_id is not None,
             request.age is not None,
             request.gender is not None,
-            request.source is not None,
             request.event_time is not None,
             request.event_status is not None,
         ])
@@ -1435,7 +1432,6 @@ async def start_batch_update_metadata_task(
             "case_id": request.case_id,
             "age": request.age,
             "gender": request.gender,
-            "source": request.source,
             "event_time": request.event_time,
             "event_status": request.event_status,
         }

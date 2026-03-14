@@ -28,6 +28,10 @@ from sklearn.metrics import (
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.classifiers import get_classifier
+from backend.ai.utils.patch_resize import (
+    build_patch_classification_transform,
+    resolve_patch_resize_size,
+)
 from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
@@ -88,7 +92,7 @@ class PatchClassificationTrainer(BaseTrainer):
         logger: Any,
         session_maker: Any,
         hf_token: str = "",
-        preprocessing_config: Optional[Dict] = None,
+        preprocessing_config: Optional[Dict[str, Any]] = None,
     ) -> FeatureExtractionResponse:
         """
         Patch classification extracts features on-the-fly during training.
@@ -110,7 +114,7 @@ class PatchClassificationTrainer(BaseTrainer):
         fold_keys: List[str],
         classes: List[str],
         splits_map: Optional[Dict[str, List[str]]] = None,
-    ) -> tuple:
+    ) -> tuple[Any, ...]:
         """Delegate to shared classification metrics calculator."""
         return calculate_kfold_classification_metrics(
             self.uploads_root, task_id, fold_keys, classes, splits_map
@@ -202,7 +206,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
     @staticmethod
     def _run_one_epoch(
-        train_loader: DataLoader,
+        train_loader: DataLoader[Any],
         extractor: nn.Module,
         classifier_head: nn.Module,
         criterion: nn.Module,
@@ -987,13 +991,15 @@ class PatchClassificationTrainer(BaseTrainer):
         test_items: Dict[str, str],
         label_mapper: Dict[str, int],
         extractor_name: str,
-    ) -> Tuple[DataLoader, Optional[DataLoader], Optional[DataLoader]]:
+    ) -> Tuple[DataLoader[Any], Optional[DataLoader[Any]], Optional[DataLoader[Any]]]:
         """Build train/val/test dataloaders."""
-        # Get transforms from extractor - train with augmentation, eval without
         extractor = get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
-        train_transform = extractor.get_transforms(mode="train")
-        eval_transform = extractor.get_transforms(mode="eval")
-        del extractor  # Free memory
+        try:
+            target_size = resolve_patch_resize_size(extractor_name, hf_token=self.hf_token)
+            train_transform = build_patch_classification_transform(extractor, target_size, mode="train")
+            eval_transform = build_patch_classification_transform(extractor, target_size, mode="eval")
+        finally:
+            del extractor
 
         train_dataset = PatchDatasetFromDB(
             annotations=train_items,
@@ -1047,7 +1053,7 @@ class PatchClassificationTrainer(BaseTrainer):
     def _evaluate(
         self,
         model: nn.Module,
-        dataloader: torch.utils.data.DataLoader,
+        dataloader: torch.utils.data.DataLoader[Any],
         criterion: Optional[nn.Module] = None,
     ) -> Dict[str, float]:
         """Evaluate model on dataloader."""
@@ -1117,9 +1123,9 @@ class PatchClassificationTrainer(BaseTrainer):
         num_classes: int,
         epochs: int,
         lr: float,
-        history: Dict,
-        val_metrics: Optional[Dict] = None,
-        test_metrics: Optional[Dict] = None,
+        history: Dict[str, Any],
+        val_metrics: Optional[Dict[str, Any]] = None,
+        test_metrics: Optional[Dict[str, Any]] = None,
         classes: Optional[List[str]] = None,
     ) -> None:
         """Save model checkpoint and config."""
@@ -1164,9 +1170,9 @@ class PatchClassificationTrainer(BaseTrainer):
 
     def _save_final_metrics(
         self,
-        history: Dict,
-        val_metrics: Optional[Dict] = None,
-        test_metrics: Optional[Dict] = None,
+        history: Dict[str, Any],
+        val_metrics: Optional[Dict[str, Any]] = None,
+        test_metrics: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Save final metrics with complete training history after training ends."""
         model_id = f"patch_cls_{self.task_id}"
@@ -1267,10 +1273,13 @@ class PatchClassificationTrainer(BaseTrainer):
         ai_results_root = self.uploads_root / "ai_results"
         num_classes = len(classes)
 
-        # Get transforms for inference using actual extractor
+        # Get transforms for inference using actual extractor resize rules
         extractor_temp = get_extractor(extractor_name, pretrained=False, hf_token=self.hf_token)
-        fm_transform = extractor_temp.get_transforms()
-        del extractor_temp
+        try:
+            target_size = resolve_patch_resize_size(extractor_name, hf_token=self.hf_token)
+            fm_transform = build_patch_classification_transform(extractor_temp, target_size, mode="eval")
+        finally:
+            del extractor_temp
 
         # Get CAM extractor for heatmap generation
         cam_extractor = get_cam_extractor(extractor_name)

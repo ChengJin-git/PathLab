@@ -4,7 +4,7 @@ Handles temporary elevated access permissions for datasets (demo/review use case
 """
 import httpx
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict, Tuple, Any
 from fastapi import APIRouter, HTTPException, Form, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -50,7 +50,7 @@ async def _grant_or_renew_dataset_permission(
     user_id: str,
     granted_by: str,
     expires_at: Optional[datetime],
-) -> Tuple[str, Dict]:
+) -> Tuple[str, Dict[str, Any]]:
     existing = await DatasetPermissionRepository.get_by_dataset_and_user(db, dataset_id, user_id)
     if existing:
         if existing.is_expired():
@@ -79,7 +79,7 @@ async def _grant_or_renew_dataset_permission(
 async def _find_affected_training_tasks(
     db: AsyncSession,
     target_user_id: str,
-    dataset_wsi_ids: set,
+    dataset_wsi_ids: set[Any],
 ) -> List[str]:
     affected_task_ids: List[str] = []
     if not dataset_wsi_ids:
@@ -121,8 +121,8 @@ async def _revoke_dataset_permission_with_side_effects(
     db: AsyncSession,
     dataset_id: str,
     target_user_id: str,
-    dataset_wsi_ids: set,
-) -> Dict:
+    dataset_wsi_ids: set[Any],
+) -> Dict[str, Any]:
     affected_task_ids = await _find_affected_training_tasks(db, target_user_id, dataset_wsi_ids)
     revoked_tasks = await _notify_ai_service_permission_revocation(affected_task_ids)
 
@@ -142,7 +142,7 @@ async def _revoke_dataset_permission_with_side_effects(
     if not deleted:
         raise HTTPException(status_code=404, detail="Permission not found")
 
-    result: Dict = {"message": "Permission revoked successfully"}
+    result: Dict[str, Any] = {"message": "Permission revoked successfully"}
     if revoked_tasks:
         result["affected_tasks"] = revoked_tasks
         result["message"] = f"Permission revoked. {len(revoked_tasks)} running task(s) will be stopped."

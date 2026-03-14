@@ -8,7 +8,7 @@ import shutil
 import csv
 import io
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,7 +96,7 @@ async def _append_segmentation_annotation_to_existing_dataset(
     *,
     dataset_id: str,
     annotation_name: str,
-    annotation_payload: dict,
+    annotation_payload: dict[str, Any],
     user_id: str,
     source: str,
 ):
@@ -132,19 +132,18 @@ async def upload_wsi_by_csv(
     Batch register WSI files by uploading a CSV file.
 
     CSV format (with header):
-    wsi_path,label,case_id,age,gender,source,wsi_id,event_time,event_status
-    /path/to/slide1.svs,Benign,case_001,45,Female,Cervix,slide_001,,
-    /path/to/slide2.svs,,case_002,52,Male,Lung,slide_002,365,1
+    wsi_path,label,case_id,age,gender,wsi_id,event_time,event_status
+    /path/to/slide1.svs,Benign,case_001,45,Female,slide_001,,
+    /path/to/slide2.svs,,case_002,52,Male,slide_002,365,1
 
     Notes:
     - wsi_path is required
-    - label, case_id, age, gender, source, wsi_id are optional
+    - label, case_id, age, gender, wsi_id are optional
     - If wsi_id is not provided, it will be auto-generated
     - If case_id is not provided, it will be auto-generated as "case_{wsi_id}"
     - If label is not provided, it will remain empty
     - age should be an integer (patient age in years)
     - gender should be a string (e.g., Male, Female, Other)
-    - source should be a string (organ/tissue source, e.g., Cervix, Lung, Breast)
     - event_time: time to event for survival analysis (float, days/months)
     - event_status: event status for survival analysis (1 = event occurred, 0 = censored)
 
@@ -190,7 +189,6 @@ async def upload_wsi_by_csv(
             age_str = row.get('age', '').strip()
             age = int(age_str) if age_str and age_str.isdigit() else None
             gender = row.get('gender', '').strip() or None
-            source = row.get('source', '').strip() or None
             wsi_id = row.get('wsi_id', '').strip() or None
             # Survival analysis fields
             event_time_str = row.get('event_time', '').strip()
@@ -251,7 +249,6 @@ async def upload_wsi_by_csv(
                     "file_size": file_size,
                     "age": age,
                     "gender": gender,
-                    "source": source,
                     "event_time": event_time,
                     "event_status": event_status,
                     "mpp": wsi_props["mpp"],
@@ -320,7 +317,6 @@ async def upload_wsi_file(
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
     gender: Optional[str] = Form(None),
-    source: Optional[str] = Form(None),
     wsi_id: Optional[str] = Form(None),
     # Survival analysis fields
     event_time: Optional[float] = Form(None),
@@ -345,7 +341,6 @@ async def upload_wsi_file(
         case_id: Case identifier (optional)
         age: Patient age (optional)
         gender: Patient gender (optional)
-        source: Tissue source/organ (optional)
         wsi_id: Custom WSI ID (optional, UUID auto-generated if not provided)
 
     Returns:
@@ -370,7 +365,7 @@ async def upload_wsi_file(
         wsi_path: Optional[Path] = None
         file_size = 0
         file_data_type: Optional[str] = None
-        props: dict = {}
+        props: dict[str, Any] = {}
 
         if is_json_annotation_upload:
             segmentation_annotation = load_coco_annotation_bytes(
@@ -571,7 +566,6 @@ async def upload_wsi_file(
             "wsi_path": str(wsi_path),
             "age": age,
             "gender": gender,
-            "source": source,
             "event_time": event_time,
             "event_status": event_status,
             "mpp": props.get("mpp"),
@@ -891,7 +885,6 @@ async def upload_wsi_by_path(
             "file_size": file_size,
             "age": req.age,
             "gender": req.gender,
-            "source": req.source,
             "event_time": req.event_time,
             "event_status": req.event_status,
             "mpp": wsi_props["mpp"],

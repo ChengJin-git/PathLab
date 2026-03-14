@@ -16,6 +16,11 @@ import { useTrainingSSE } from './useTrainingSSE'
 import { useAnalysisSSE } from './useAnalysisSSE'
 import { useStorageSSE } from './useStorageSSE'
 import { useTaskActions } from './useTaskActions'
+import {
+  clearTrainingSubmissionRecord,
+  isTrainingSubmissionPendingTimedOut,
+  listTrainingSubmissionRecords,
+} from '../../lib/trainingSubmissionTracker'
 import type {
   BackgroundTask, BackgroundTaskContextType, BackgroundTaskProviderProps,
   DiskSpaceInfo, MetadataUploadResult
@@ -152,8 +157,38 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       return task
     })
 
+    const serverTaskIdSet = new Set(filteredTrainingTasks.map(t => t.id.replace(/^training_/, '').replace(/^extval_/, '')))
+    const syntheticSubmissionTasks: BackgroundTask[] = listTrainingSubmissionRecords(['pending'])
+      .filter(record => {
+        if (isTrainingSubmissionPendingTimedOut(record)) {
+          clearTrainingSubmissionRecord(record.taskId)
+          return false
+        }
+        return !serverTaskIdSet.has(record.taskId)
+      })
+      .map(record => ({
+        id: `training_${record.taskId}`,
+        type: 'training',
+        title: record.taskName || record.taskId,
+        items: [{
+          id: record.taskId,
+          name: `Training: ${record.taskName || record.taskId}`,
+          status: 'pending',
+          progress: 0,
+        }],
+        status: 'pending',
+        createdAt: new Date(record.createdAt),
+        totalProgress: 0,
+        successCount: 0,
+        failedCount: 0,
+        isServerTask: true,
+        serverTaskStatus: 'creating',
+        taskName: record.taskName,
+      }))
+
     return [
       ...localTasks,
+      ...syntheticSubmissionTasks,
       ...mergedTrainingTasks,
       ...internalAnalysisTasks,
       ...filteredStorageTasks

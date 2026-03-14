@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
+import { useAuth } from '../../contexts/AuthContext'
 import {
   markTrainingSubmissionCreated,
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
 } from '../../lib/trainingSubmissionTracker'
+import { ApiError } from '../../api/client'
 import {
   TASK_TYPES,
   DATA_LEVELS,
@@ -196,6 +198,7 @@ export function removeTaskConfigBlock(content: string): string {
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
   const { t } = useTranslation()
   const { hasUploadingTasks } = useBackgroundTask()
+  const { canUseGpuForDataset } = useAuth()
   const [config, setConfig] = useState<AgentTaskConfig>(normalizeAgentTaskConfig(initialConfig))
   const [isSubmitting, setIsSubmitting] = useState(false)
   // Initialize submitStatus based on whether task was already submitted (persisted in config)
@@ -244,6 +247,23 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const [randomSeed, setRandomSeed] = useState(initialConfig.seed ?? 42)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
+
+  const shouldMarkSubmissionAsFailed = (error: unknown): error is Error => {
+    if (!(error instanceof Error)) return false
+    const lowerMessage = error.message.toLowerCase()
+    const isDefinitiveStorageError =
+      lowerMessage.includes('external storage not responding') ||
+      (lowerMessage.includes('storage') && lowerMessage.includes('timed out')) ||
+      (lowerMessage.includes('network storage') && lowerMessage.includes('check')) ||
+      (lowerMessage.includes('cannot verify accessibility') && lowerMessage.includes('file'))
+
+    if (isDefinitiveStorageError) return true
+
+    if (error instanceof ApiError) {
+      return error.isValidationError() || error.isAuthError() || error.code === 'CONFLICT'
+    }
+    return false
+  }
 
   // Get the currently selected dataset summary (for file_count when WSI list not loaded)
   const normalizedDataType = useMemo(() => {
@@ -496,7 +516,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
             ? resolvedSegBackbone
             : (config.encoder ?? DEFAULT_EXTRACTOR),
           feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
-          use_gpu: true,
+          use_gpu: canUseGpuForDataset(selectedDatasetId ?? ''),
           // Tissue segmentation parameters (WSI only)
           sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,
           mthresh: config.mthresh ?? SEGMENTATION_DEFAULTS.mthresh,
@@ -534,12 +554,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         markTrainingSubmissionCreated(taskId)
       }).catch((error) => {
         const msg = error instanceof Error ? error.message : t('chatComponents.taskConfig.errors.failedToCreate')
-        markTrainingSubmissionFailed(taskId, msg)
-        console.error('Background task creation failed:', msg)
-        setSubmitStatus('error')
-        setErrorMessage(msg)
-        setIsSubmitting(false)
-        onSubmitError?.(msg)
+        if (shouldMarkSubmissionAsFailed(error)) {
+          markTrainingSubmissionFailed(taskId, msg)
+        }
+        console.error('Background task creation request returned error:', msg)
       })
 
       // Immediately report success and navigate — don't wait for backend

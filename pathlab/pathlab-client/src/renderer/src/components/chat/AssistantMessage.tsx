@@ -14,6 +14,7 @@ import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
 import 'katex/dist/katex.min.css'
 import { withAuthTokenQuery } from '../../api/client'
+import { type MessageArtifacts } from '../../api'
 
 import { OptionButtons, parseOptions, removeOptionsBlock } from './OptionButtons'
 import { TaskConfigCard, parseTaskConfig, removeTaskConfigBlock } from './TaskConfigCard'
@@ -37,17 +38,9 @@ import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './
 import { DeepResearchLinkCard, parseDeepResearchLinkBlock, removeDeepResearchLinkBlock } from './DeepResearchLinkCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
-  parseAllSearchStatus,
-  parseSearchStatus,
-  removeSearchStatusBlock,
   SearchCompletedCard,
   SummarizingSearchStatus,
   SummarizingPdfStatus,
-  parseAllWebSearchResults,
-  parseWebSearchResult,
-  removeWebSearchResultBlock,
-  parseAllPdfParseStatus,
-  removePdfParseStatusBlock,
   PdfParsingStatus,
   PdfParsingCompletedCard
 } from './SearchingStatus'
@@ -98,9 +91,14 @@ export interface AssistantMessageProps {
   conversationId?: string
   referenceImages?: string[]
   onMessageContentReplace?: (messageId: string, updatedContent: string, errorToastKey?: string) => void | Promise<void>
+  searchArtifacts?: MessageArtifacts | null
 }
 
-// All special block tag names used in the chat
+const FUNCTIONAL_CARD_INCOMPLETE_TAGS = new Set([
+  'TASK_CONFIG', 'ANALYSIS_CONFIG', 'IMAGE_RECOMMENDATION', 'PATCH_INFERENCE',
+  'QUICK_ANALYSIS_CONFIG', 'METRIC_CONFIG', 'CHART_CONFIG', 'OPTIONS',
+])
+
 const SPECIAL_BLOCK_TAGS = [
   'OPTIONS',
   'TASK_CONFIG',
@@ -455,40 +453,61 @@ const AssistantMessage = React.memo(function AssistantMessage({
   onNewChat,
   conversationId,
   referenceImages,
-  onMessageContentReplace
+  onMessageContentReplace,
+  searchArtifacts
 }: AssistantMessageProps) {
   const { t } = useTranslation()
   const codeCopyLabel = t('aiChat.copy')
   const codeCopiedLabel = t('aiChat.copied')
   const codeCopyAriaLabel = t('aiChat.copyCodeBlockAria')
 
-  // Parse special blocks
-  const contextLimitReached = parseContextLimit(content)
-  const responseTruncated = parseResponseTruncated(content)
-  const searchStatuses = parseAllSearchStatus(content)
-  const searchStatus = searchStatuses?.at(-1) ?? parseSearchStatus(content)
-  const webSearchResults = parseAllWebSearchResults(content)
-  const webSearchResult = webSearchResults?.at(-1) ?? parseWebSearchResult(content)
-  const options = parseOptions(content)
-  const taskConfig = parseTaskConfig(content)
-  const imageRecommendation = parseImageRecommendation(content)
-  const csvAction = parseCSVAction(content)
-  const navigateBlock = parseNavigateBlock(content)
-  const analysisConfig = parseAnalysisConfig(content)
-  const metricConfig = parseMetricConfig(content)
-  const chartConfig = parseChartConfig(content)
-  const quickAnalysisConfig = parseQuickAnalysisConfig(content)
-  const taskHistoryConfig = parseTaskHistoryConfig(content)
-  const cancelTaskConfig = parseCancelTaskConfig(content)
-  const renameTaskConfig = parseRenameTaskConfig(content)
-  const datasetRegistrationConfig = parseDatasetRegistrationConfig(content)
-  const metadataUploadConfig = parseMetadataUploadConfig(content)
-  const modelListConfig = parseModelListConfig(content)
-  const patchInferenceConfig = parsePatchInferenceConfig(content)
-  const deepResearchLink = parseDeepResearchLinkBlock(content)
-  const referenceCards = parseAllReferenceCards(content)
-  const pdfParseStatusItems = parseAllPdfParseStatus(content)
-  const citationContexts = parseCitationContexts(content)
+  const {
+    contextLimitReached,
+    responseTruncated,
+    options,
+    taskConfig,
+    imageRecommendation,
+    csvAction,
+    navigateBlock,
+    analysisConfig,
+    metricConfig,
+    chartConfig,
+    quickAnalysisConfig,
+    taskHistoryConfig,
+    cancelTaskConfig,
+    renameTaskConfig,
+    datasetRegistrationConfig,
+    metadataUploadConfig,
+    modelListConfig,
+    patchInferenceConfig,
+    deepResearchLink,
+    referenceCards,
+    citationContexts,
+  } = useMemo(() => {
+    return {
+      contextLimitReached: parseContextLimit(content),
+      responseTruncated: parseResponseTruncated(content),
+      options: parseOptions(content),
+      taskConfig: parseTaskConfig(content),
+      imageRecommendation: parseImageRecommendation(content),
+      csvAction: parseCSVAction(content),
+      navigateBlock: parseNavigateBlock(content),
+      analysisConfig: parseAnalysisConfig(content),
+      metricConfig: parseMetricConfig(content),
+      chartConfig: parseChartConfig(content),
+      quickAnalysisConfig: parseQuickAnalysisConfig(content),
+      taskHistoryConfig: parseTaskHistoryConfig(content),
+      cancelTaskConfig: parseCancelTaskConfig(content),
+      renameTaskConfig: parseRenameTaskConfig(content),
+      datasetRegistrationConfig: parseDatasetRegistrationConfig(content),
+      metadataUploadConfig: parseMetadataUploadConfig(content),
+      modelListConfig: parseModelListConfig(content),
+      patchInferenceConfig: parsePatchInferenceConfig(content),
+      deepResearchLink: parseDeepResearchLinkBlock(content),
+      referenceCards: parseAllReferenceCards(content),
+      citationContexts: parseCitationContexts(content),
+    }
+  }, [content])
 
   // For article citations, build a sequential renumbering map.
   // AI uses [N, p.Y] where N is always the same paper number (e.g. 1).
@@ -539,7 +558,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const citationMap = useMemo(() => {
     const map = new Map<number, { title: string; url: string; snippet: string; source: string; pageInfo?: string }>()
     // 1) Web search results — index is 1-based ordinal
-    const flattenedWebSearchResults = webSearchResults?.flatMap(result => result.results ?? []) ?? []
+    const flattenedWebSearchResults = searchArtifacts?.search?.webSearchResults?.flatMap(result => result.results ?? []) ?? []
     if (flattenedWebSearchResults.length > 0) {
       flattenedWebSearchResults.forEach((r, i) => {
         const source = getHostnameFromUrl(r.url) || 'Unknown'
@@ -608,7 +627,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       }
     }
     return map
-  }, [webSearchResults, citationContexts, articleCitationRenumber, referenceCards])
+  }, [searchArtifacts, citationContexts, articleCitationRenumber, referenceCards])
 
   // Custom ReactMarkdown components:
   // - img: inject auth token for /pdf-images/ URLs so <img> tags can load authenticated images
@@ -763,12 +782,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
   if (patchInferenceConfig) displayContent = removePatchInferenceBlock(displayContent)
   if (deepResearchLink) displayContent = removeDeepResearchLinkBlock(displayContent)
-  // Remove SEARCH_STATUS block - it handled separately
-  if (searchStatus) displayContent = removeSearchStatusBlock(displayContent)
-  // Remove WEB_SEARCH_RESULT block - it handled separately
-  if (webSearchResult) displayContent = removeWebSearchResultBlock(displayContent)
-  // Remove PDF_PARSE_STATUS blocks - handled separately
-  if (pdfParseStatusItems) displayContent = removePdfParseStatusBlock(displayContent)
   // Remove WEB_SEARCH request block - AI's internal search request
   displayContent = displayContent.replace(/\[WEB_SEARCH\][\s\S]*?\[\/WEB_SEARCH\]/g, '').trim()
   // Remove READ_ARTICLE request block - AI's internal article reading request
@@ -894,68 +907,69 @@ const AssistantMessage = React.memo(function AssistantMessage({
   const { content: cleanedContent, incompleteTag } = getIncompleteBlock(displayContent, isStreaming)
   displayContent = cleanedContent
 
-  const searchStatusCount = searchStatuses?.length ?? (searchStatus ? 1 : 0)
-  const webSearchResultCount = webSearchResults?.length ?? (webSearchResult ? 1 : 0)
+  const searchArt = searchArtifacts?.search ?? null
+  const effectivePdfStatuses = searchArt?.pdfStatuses ?? null
+  const effectiveWebSearchResults = searchArt?.webSearchResults?.length ? searchArt.webSearchResults : null
+  const effectivePdfParseResults = searchArt?.pdfParseResults?.length ? searchArt.pdfParseResults : null
 
-  // Show searching indicator only while streaming and before the latest results arrive
-  const showSearchingStatus = !!searchStatus && isStreaming && searchStatusCount > webSearchResultCount
+  const webSearchResultCount = effectiveWebSearchResults?.length ?? 0
 
-  // PDF parsing status: show animated indicator while any PDF is still "parsing" or "downloading".
-  // Hide entirely during web-search streaming — the AI may autonomously trigger
-  // [READ_ARTICLE] and cached PDFs finish before the summary text appears, which
-  // looks confusing alongside "Summarizing search results…".
-  const hasPdfParsingInProgress = pdfParseStatusItems?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
-  const isWebSearchStreaming = isStreaming && webSearchResultCount > 0
-  const showPdfParsingStatus = !!pdfParseStatusItems && hasPdfParsingInProgress && isStreaming && !isWebSearchStreaming
+  const activeSearchStatus = searchArt?.statuses.at(-1)
 
-  // Show "summarizing search results" indicator after search completes but before
-  // the AI starts streaming actual summary text. This fills the visual gap between
-  // the search-completed card and the streamed markdown content.
-  const showSummarizingSearch = webSearchResultCount > 0 && !showSearchingStatus && isStreaming && !displayContent.trim()
+  const showSearchingStatus = searchArt?.phase === 'searching' && isStreaming
 
-  // Show completed card when all PDFs are done (not streaming OR all statuses are final).
-  // Hide during web-search streaming to avoid "Parsed N PDFs" card appearing before
-  // or alongside "Summarizing search results…" (jarring when PDF is cached).
-  const showPdfParsingCompleted = !!pdfParseStatusItems && !hasPdfParsingInProgress && !isWebSearchStreaming
+  const hasPdfParsingInProgress = effectivePdfStatuses?.some(i => i.status === 'parsing' || i.status === 'downloading') ?? false
+  const showPdfParsingStatus = !!effectivePdfStatuses && hasPdfParsingInProgress && isStreaming
 
-  // Show "summarizing PDF" indicator after PDF parsing completes but before
-  // the AI starts streaming the actual summary. Fills the visual gap between
-  // the "已解析 N 篇 PDF 论文" card and the streamed markdown content.
-  const hasCompletedPdf = pdfParseStatusItems?.some(i => i.status === 'completed') ?? false
-  const showSummarizingPdf = showPdfParsingCompleted && hasCompletedPdf && isStreaming && !displayContent.trim()
+  const hasFunctionalCard = !!(
+    taskConfig || analysisConfig || imageRecommendation || patchInferenceConfig ||
+    quickAnalysisConfig || metricConfig || chartConfig || options
+  ) || FUNCTIONAL_CARD_INCOMPLETE_TAGS.has(incompleteTag ?? '')
+
+  const showSummarizingSearch = searchArt
+    ? searchArt.phase === 'summarizing' && isStreaming && !displayContent.trim() && !incompleteTag && !hasFunctionalCard
+    : false
+
+  const showPdfParsingCompleted = !!effectivePdfParseResults?.length && !hasPdfParsingInProgress
+
+  const hasCompletedPdf = (effectivePdfParseResults ?? effectivePdfStatuses)?.some(i => i.status === 'completed') ?? false
+  const showSummarizingPdf = !hasPdfParsingInProgress && hasCompletedPdf
+    && isStreaming && !displayContent.trim() && !incompleteTag && !hasFunctionalCard && !showSummarizingSearch
+
+  const showSearchZone = showSearchingStatus || !!effectiveWebSearchResults?.length
+    || showSummarizingSearch || showPdfParsingStatus || showPdfParsingCompleted || showSummarizingPdf
 
   return (
     <div className="w-full min-w-0">
-      {/* Searching Status indicator */}
-      {showSearchingStatus && (
-        <SearchingStatus query={searchStatus?.query} reason={searchStatus?.reason} />
+      {showSearchZone && (
+        <div className="search-zone mb-2">
+          {showSearchingStatus && (
+            <SearchingStatus query={activeSearchStatus?.query} reason={activeSearchStatus?.reason} />
+          )}
+
+          {effectiveWebSearchResults?.map((result, index) => (
+            <div key={`${result.query}-${index}`} className={hasFunctionalCard && isStreaming ? 'opacity-60' : undefined}>
+              <SearchCompletedCard
+                query={result.query}
+                resultCount={result.results?.length || 0}
+                results={result.results}
+              />
+            </div>
+          ))}
+
+          {showSummarizingSearch && <SummarizingSearchStatus />}
+
+          {showPdfParsingStatus && effectivePdfStatuses && (
+            <PdfParsingStatus items={effectivePdfStatuses} />
+          )}
+
+          {showPdfParsingCompleted && effectivePdfParseResults && (
+            <PdfParsingCompletedCard items={effectivePdfParseResults} />
+          )}
+
+          {showSummarizingPdf && <SummarizingPdfStatus />}
+        </div>
       )}
-
-      {/* Search Completed Card */}
-      {webSearchResults?.map((result, index) => (
-        <SearchCompletedCard
-          key={`${result.query}-${index}`}
-          query={result.query}
-          resultCount={result.results?.length || 0}
-          results={result.results}
-        />
-      ))}
-
-      {/* Summarizing Search Results indicator */}
-      {showSummarizingSearch && <SummarizingSearchStatus />}
-
-      {/* PDF Parsing Status indicator */}
-      {showPdfParsingStatus && pdfParseStatusItems && (
-        <PdfParsingStatus items={pdfParseStatusItems} />
-      )}
-
-      {/* PDF Parsing Completed Card */}
-      {showPdfParsingCompleted && pdfParseStatusItems && (
-        <PdfParsingCompletedCard items={pdfParseStatusItems} />
-      )}
-
-      {/* Summarizing PDF indicator */}
-      {showSummarizingPdf && <SummarizingPdfStatus />}
 
       {/* Markdown content — no skeleton; stream starts directly */}
       {displayContent.trim() && (
@@ -973,8 +987,8 @@ const AssistantMessage = React.memo(function AssistantMessage({
           prose-table:text-sm
           prose-img:rounded-lg prose-img:shadow-md prose-img:my-3 prose-img:max-w-full prose-img:h-auto prose-img:border prose-img:border-gray-200">
           <ReactMarkdown
-            remarkPlugins={[remarkGfm, remarkMath]}
-            rehypePlugins={[
+            remarkPlugins={isStreaming ? [remarkGfm] : [remarkGfm, remarkMath]}
+            rehypePlugins={isStreaming ? [] : [
               rehypeKatex,
               [rehypeHighlight, { ignoreMissing: true, detect: true }],
             ]}
@@ -1344,7 +1358,6 @@ const AssistantMessage = React.memo(function AssistantMessage({
           )}
       </AnimatePresence>
 
-      {/* Reference Cards */}
       {referenceCards && referenceCards.length > 0 && (
         <ReferenceCardList cards={referenceCards} />
       )}

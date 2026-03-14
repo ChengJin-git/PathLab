@@ -1,24 +1,35 @@
+from typing import Any
 """
 PathLab Gateway Service
 
 Main entry point that registers all route modules.
 Most route logic has been moved to separate files in routes/ directory.
 """
+
 import asyncio
 import httpx
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
+from sqlalchemy import select
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.database import init_db, close_db, get_db
+from backend.database import init_db, close_db, get_db, async_session
+from backend.auth.models import User
 from backend.ai.schemas.base import TaskStatus
+from backend.common.chat_context_cache import (
+    set_cached_context_kwargs,
+    set_cached_context_kwargs_admin,
+)
 from backend.database.repositories import (
+    AITaskRepository,
     TrainingTaskRepository,
+    TrainedModelRepository,
     ExportTaskRepository,
     StorageTaskRepository,
+    WSIRepository,
 )
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
@@ -50,6 +61,149 @@ from .routes import (
 from backend.common.config import Config
 
 
+async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, Any]:
+    async with async_session() as db:
+        stats = await WSIRepository.get_chat_context_stats(
+            db, user_id=user_id, elevated_dataset_ids=None
+        )
+        trained_models = await TrainedModelRepository.get_all(
+            db, limit=200, offset=0, user_id=user_id
+        )
+        trained_models_total = await TrainedModelRepository.count(db, user_id=user_id)
+        training_tasks = await TrainingTaskRepository.get_all(
+            db, limit=10, offset=0, user_id=user_id
+        )
+        training_tasks_stats = await TrainingTaskRepository.get_status_counts(
+            db, user_id=user_id
+        )
+        inference_tasks = await AITaskRepository.get_recent(
+            db, limit=10, user_id=user_id
+        )
+        inference_tasks_stats = await AITaskRepository.get_status_counts(
+            db, user_id=user_id
+        )
+
+    wsi_count = stats.get("total_count", 0)
+    data_type_dist = stats.get("data_types", {})
+    wsi_count_val = data_type_dist.get("wsi", 0)
+    patch_count_val = data_type_dist.get("patch", 0)
+    if wsi_count_val > 0 and patch_count_val > 0:
+        data_types_info = f"WSI: {wsi_count_val}, Patches: {patch_count_val}"
+    elif wsi_count_val > 0:
+        data_types_info = f"WSI only: {wsi_count_val}"
+    elif patch_count_val > 0:
+        data_types_info = f"Patches only: {patch_count_val}"
+    else:
+        data_types_info = "None"
+
+    if stats.get("datasets"):
+        datasets_list = "\n".join(
+            [
+                f"  - {d.get('dataset_name', 'unknown')} (dataset_id={d.get('dataset_id', 'unknown')}): {d.get('file_count', 0)} files, type={d.get('data_type', 'unknown')}"
+                for d in stats["datasets"]
+            ]
+        )
+    else:
+        datasets_list = "  None"
+
+    model_summaries = []
+    for m in trained_models:
+        model_summaries.append(
+            {
+                "id": m.model_id,
+                "task_type": "unknown",
+                "data_type": "unknown",
+                "classes": [c.lower() for c in (m.classes or [])],
+                "dataset_names": [],
+                "dataset_sources": [],
+                "task_name": "",
+                "line": f"  - {m.model_name} (id={m.model_id}, trained_on_task={m.task_id})",
+            }
+        )
+
+    training_tasks_total = training_tasks_stats.get("total", 0)
+    training_tasks_completed = training_tasks_stats.get("completed", 0)
+    training_tasks_running = training_tasks_stats.get("running", 0)
+    training_tasks_failed = training_tasks_stats.get("failed", 0)
+
+    if training_tasks:
+        training_tasks_list = "\n".join(
+            [
+                f"  - [{str(t.status).upper()}] {t.task_name} (id={t.task_id})"
+                for t in training_tasks
+            ]
+        )
+    else:
+        training_tasks_list = "  None - user has not created any training tasks yet"
+
+    inference_tasks_total = inference_tasks_stats.get("total", 0)
+    inference_tasks_completed = inference_tasks_stats.get("completed", 0)
+    inference_tasks_running = inference_tasks_stats.get("running", 0)
+
+    if inference_tasks:
+        inference_tasks_list = "\n".join(
+            [
+                f"  - [{str(t.status).upper()}] {t.task_type} on {t.wsi_id} (id={t.task_id})"
+                for t in inference_tasks
+            ]
+        )
+    else:
+        inference_tasks_list = "  None - user has not run any inference tasks yet"
+
+    return {
+        "wsi_count": wsi_count,
+        "data_types_info": data_types_info,
+        "datasets_list": datasets_list,
+        "trained_models_total": trained_models_total,
+        "model_summaries": model_summaries,
+        "training_tasks_total": training_tasks_total,
+        "training_tasks_completed": training_tasks_completed,
+        "training_tasks_running": training_tasks_running,
+        "training_tasks_failed": training_tasks_failed,
+        "training_tasks_list": training_tasks_list,
+        "inference_tasks_total": inference_tasks_total,
+        "inference_tasks_completed": inference_tasks_completed,
+        "inference_tasks_running": inference_tasks_running,
+        "inference_tasks_list": inference_tasks_list,
+    }
+
+
+async def _startup_prewarm_chat_context_cache() -> None:
+    try:
+        async with async_session() as db:
+            result = await db.execute(select(User.id).where(User.role != "admin"))
+            user_ids = [str(row[0]) for row in result.all()]
+
+        total = len(user_ids)
+        warmed = 0
+        failed = 0
+
+        for uid in user_ids:
+            try:
+                kwargs = await _build_chat_context_cache_for_user(uid)
+                await set_cached_context_kwargs(uid, kwargs)
+                warmed += 1
+            except Exception as exc:
+                failed += 1
+                logger.warning(f"Chat context prewarm failed user={uid}: {exc}")
+
+        try:
+            admin_kwargs = await _build_chat_context_cache_for_user(user_id=None)
+            await set_cached_context_kwargs_admin(admin_kwargs)
+            logger.info("Chat context startup prewarm finished for admin global scope")
+        except Exception as exc:
+            logger.warning(f"Chat context prewarm failed for admin global scope: {exc}")
+
+        logger.info(
+            f"Chat context startup prewarm finished: total={total}, warmed={warmed}, failed={failed}"
+        )
+    except asyncio.CancelledError:
+        logger.info("Chat context startup prewarm cancelled")
+        raise
+    except Exception as exc:
+        logger.error(f"Chat context startup prewarm failed: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -60,6 +214,7 @@ async def lifespan(app: FastAPI):
     """
     # === Startup ===
     training_rag_prewarm_task: asyncio.Task[None] | None = None
+    chat_context_prewarm_task: asyncio.Task[None] | None = None
 
     logger.info("Initializing database...")
     await init_db()
@@ -67,6 +222,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize Redis connection pool
     from backend.common.redis_client import init_redis, close_redis
+
     logger.info("Initializing Redis...")
     await init_redis()
     logger.info("✓ Redis initialized")
@@ -74,6 +230,7 @@ async def lifespan(app: FastAPI):
     # Detect GPU count and determine max_concurrent
     try:
         from backend.common.gpu_utils import get_gpu_count
+
         gpu_count = get_gpu_count()
     except ImportError:
         logger.warning("Could not import gpu_utils, assuming 1 GPU")
@@ -87,7 +244,9 @@ async def lifespan(app: FastAPI):
     else:
         # Read persisted setting from config, default to 1 if not set
         max_concurrent = Config.get_max_concurrent(default=1)
-        logger.info(f"Detected {gpu_count} GPUs, max_concurrent={max_concurrent} (from config)")
+        logger.info(
+            f"Detected {gpu_count} GPUs, max_concurrent={max_concurrent} (from config)"
+        )
 
     # Initialize task queue manager
     logger.info("Initializing task queue manager...")
@@ -100,6 +259,7 @@ async def lifespan(app: FastAPI):
     # and start writing progress files while resume_interrupted_tasks() is still awaiting.
     # If cleanup ran after resume, it could delete freshly-written progress files.
     from backend.common.progress_store import cleanup_all_progress
+
     await cleanup_all_progress()
 
     # Resume interrupted training tasks
@@ -113,6 +273,7 @@ async def lifespan(app: FastAPI):
 
     # Cleanup expired PDF cache files
     from .routes.chat_pdf import cleanup_expired_pdf_cache
+
     # Run synchronous cleanup in thread pool
     await asyncio.get_event_loop().run_in_executor(None, cleanup_expired_pdf_cache)
 
@@ -127,10 +288,13 @@ async def lifespan(app: FastAPI):
             f"{ready_count}/{len(bundled_status)} source(s) ready"
         )
     except Exception as e:
-        logger.error(f"Failed to inspect bundled training recommendation knowledge: {e}")
+        logger.error(
+            f"Failed to inspect bundled training recommendation knowledge: {e}"
+        )
 
     try:
         import torch
+
         has_cuda = bool(torch.cuda.is_available())
     except Exception:
         has_cuda = False
@@ -159,15 +323,29 @@ async def lifespan(app: FastAPI):
             logger.error(f"Bundled training recommendation startup prewarm failed: {e}")
 
     training_rag_prewarm_task = asyncio.create_task(_startup_prewarm_training_rag())
+    chat_context_prewarm_task = asyncio.create_task(
+        _startup_prewarm_chat_context_cache()
+    )
 
     try:
         yield  # Application runs here
     finally:
         # === Shutdown ===
-        if training_rag_prewarm_task is not None and not training_rag_prewarm_task.done():
+        if (
+            training_rag_prewarm_task is not None
+            and not training_rag_prewarm_task.done()
+        ):
             training_rag_prewarm_task.cancel()
             with suppress(asyncio.CancelledError):
                 await training_rag_prewarm_task
+
+        if (
+            chat_context_prewarm_task is not None
+            and not chat_context_prewarm_task.done()
+        ):
+            chat_context_prewarm_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await chat_context_prewarm_task
 
         logger.info("Shutting down task queue manager...")
         await shutdown_task_queue()
@@ -228,21 +406,33 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # Serve user avatars as static files
 # These are stored in uploads/avatars/
-app.mount("/avatars", StaticFiles(directory=str(Config.get_uploads_dir() / "avatars")), name="avatars")
+app.mount(
+    "/avatars",
+    StaticFiles(directory=str(Config.get_uploads_dir() / "avatars")),
+    name="avatars",
+)
 
 # Serve frontend static assets (images, js, css) for direct Gateway access without Nginx
 # In production Nginx serves these; this ensures they work on dev / direct 127.0.0.1:6100 access
-_renderer_dist = Path(__file__).resolve().parent.parent.parent / "src" / "renderer" / "dist"
+_renderer_dist = (
+    Path(__file__).resolve().parent.parent.parent / "src" / "renderer" / "dist"
+)
 if _renderer_dist.is_dir():
     _images_dir = _renderer_dist / "images"
     if _images_dir.is_dir():
-        app.mount("/images", StaticFiles(directory=str(_images_dir)), name="frontend-images")
+        app.mount(
+            "/images", StaticFiles(directory=str(_images_dir)), name="frontend-images"
+        )
     _assets_dir = _renderer_dist / "assets"
     if _assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=str(_assets_dir)), name="frontend-assets")
+        app.mount(
+            "/assets", StaticFiles(directory=str(_assets_dir)), name="frontend-assets"
+        )
 
 
-async def wait_for_services_ready(timeout: float = 60.0, check_interval: float = 2.0) -> bool:
+async def wait_for_services_ready(
+    timeout: float = 60.0, check_interval: float = 2.0
+) -> bool:
     """
     Wait for AI and Preprocessing services to be ready.
 
@@ -278,10 +468,13 @@ async def wait_for_services_ready(timeout: float = 60.0, check_interval: float =
 
         await asyncio.sleep(check_interval)
         elapsed += check_interval
-        logger.info(f"Waiting for services to be ready... ({elapsed:.0f}s/{timeout:.0f}s)")
+        logger.info(
+            f"Waiting for services to be ready... ({elapsed:.0f}s/{timeout:.0f}s)"
+        )
 
     logger.warning(f"Timeout waiting for services after {timeout}s")
     return False
+
 
 async def cleanup_old_tasks():
     """
@@ -301,15 +494,21 @@ async def cleanup_old_tasks():
             total_deleted = 0
 
             # Cleanup training tasks
-            training_deleted = await TrainingTaskRepository.cleanup_old_finished_tasks(db, days=cleanup_days)
+            training_deleted = await TrainingTaskRepository.cleanup_old_finished_tasks(
+                db, days=cleanup_days
+            )
             total_deleted += training_deleted
 
             # Cleanup export tasks
-            export_deleted = await ExportTaskRepository.cleanup_old_tasks(db, days=cleanup_days)
+            export_deleted = await ExportTaskRepository.cleanup_old_tasks(
+                db, days=cleanup_days
+            )
             total_deleted += export_deleted
 
             # Cleanup storage tasks
-            storage_deleted = await StorageTaskRepository.cleanup_old_tasks(db, days=cleanup_days)
+            storage_deleted = await StorageTaskRepository.cleanup_old_tasks(
+                db, days=cleanup_days
+            )
             total_deleted += storage_deleted
 
             if total_deleted > 0:
@@ -357,16 +556,22 @@ async def resume_interrupted_tasks():
             # Only wait for services if we have tasks to resume
             services_ready = await wait_for_services_ready(timeout=60.0)
             if not services_ready:
-                logger.error("Cannot resume interrupted tasks: dependent services are not ready")
+                logger.error(
+                    "Cannot resume interrupted tasks: dependent services are not ready"
+                )
                 # Mark all interrupted tasks as failed since we can't resume them
                 for task in interrupted_tasks:
                     try:
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, TaskStatus.FAILED,
-                            error_message="Failed to resume: dependent services not available after system restart"
+                            db,
+                            task.task_id,
+                            TaskStatus.FAILED,
+                            error_message="Failed to resume: dependent services not available after system restart",
                         )
                     except Exception as e:
-                        logger.error(f"Failed to mark task {task.task_id} as failed: {e}")
+                        logger.error(
+                            f"Failed to mark task {task.task_id} as failed: {e}"
+                        )
                 await db.commit()
                 return
 
@@ -374,7 +579,7 @@ async def resume_interrupted_tasks():
                 try:
                     # Tasks already in 'resuming' state were claimed by a previous restart
                     # but the pipeline never started. Skip CAS and re-submit directly.
-                    already_resuming = (task.status == TaskStatus.RESUMING)
+                    already_resuming = task.status == TaskStatus.RESUMING
 
                     if already_resuming:
                         logger.info(
@@ -384,22 +589,30 @@ async def resume_interrupted_tasks():
                     else:
                         # Try to claim the task atomically (multi-instance safe)
                         # Only one instance can successfully claim a task
-                        claimed = await TrainingTaskRepository.try_claim_for_resume(db, task.task_id)
+                        claimed = await TrainingTaskRepository.try_claim_for_resume(
+                            db, task.task_id
+                        )
                         await db.commit()
 
                         if not claimed:
                             # Another instance already claimed this task
-                            logger.info(f"Task {task.task_id} already claimed by another instance, skipping")
+                            logger.info(
+                                f"Task {task.task_id} already claimed by another instance, skipping"
+                            )
                             continue
 
                     # Get associated WSI IDs
                     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
 
                     if not wsi_ids:
-                        logger.warning(f"Task {task.task_id} has no associated WSI IDs, marking as failed")
+                        logger.warning(
+                            f"Task {task.task_id} has no associated WSI IDs, marking as failed"
+                        )
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, TaskStatus.FAILED,
-                            error_message="No associated WSI IDs found during resume"
+                            db,
+                            task.task_id,
+                            TaskStatus.FAILED,
+                            error_message="No associated WSI IDs found during resume",
                         )
                         await db.commit()
                         continue
@@ -418,7 +631,11 @@ async def resume_interrupted_tasks():
                     # Note: task_id is automatically added by task_queue.submit(), don't include it here
                     # Get data_type and task_type from DataGroup relationship
                     data_type = task.data_group.data_type if task.data_group else "wsi"
-                    task_type = task.data_group.task_type if task.data_group else "classification"
+                    task_type = (
+                        task.data_group.task_type
+                        if task.data_group
+                        else "classification"
+                    )
                     pipeline_kwargs = {
                         "data_type": data_type,
                         "wsi_ids": wsi_ids,
@@ -436,18 +653,22 @@ async def resume_interrupted_tasks():
                         task_id=task.task_id,
                         task_type=TaskType.TRAINING,
                         coro_func=run_training_pipeline,
-                        **pipeline_kwargs
+                        **pipeline_kwargs,
                     )
 
-                    logger.info(f"✓ Task {task.task_id} queued for resume (claimed by this instance)")
+                    logger.info(
+                        f"✓ Task {task.task_id} queued for resume (claimed by this instance)"
+                    )
 
                 except Exception as e:
                     logger.error(f"Failed to resume task {task.task_id}: {e}")
                     # Mark the task as failed if we can't resume it
                     try:
                         await TrainingTaskRepository.update_status(
-                            db, task.task_id, TaskStatus.FAILED,
-                            error_message=f"Failed to resume after system restart: {str(e)}"
+                            db,
+                            task.task_id,
+                            TaskStatus.FAILED,
+                            error_message=f"Failed to resume after system restart: {str(e)}",
                         )
                         await db.commit()
                     except Exception as update_err:
@@ -483,4 +704,3 @@ app.include_router(annotation_router)
 app.include_router(research_chat_router)
 
 logger.info("Gateway service initialized with all route modules")
-

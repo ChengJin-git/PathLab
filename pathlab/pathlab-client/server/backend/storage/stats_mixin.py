@@ -10,7 +10,7 @@ import json
 import time
 import threading
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 from datetime import datetime, timezone
 import logging
 
@@ -54,7 +54,7 @@ class StorageStatsMixin:
                 self._stats_cache_from_persistent = False
                 self._dir_mtime_cache = {}
 
-    def _save_persistent_cache(self, cache_time: float, stats: Dict) -> None:
+    def _save_persistent_cache(self, cache_time: float, stats: Dict[str, Any]) -> None:
         """Save storage stats to persistent cache file."""
         cache_file = self._get_cache_file_path()
         try:
@@ -147,7 +147,7 @@ class StorageStatsMixin:
 
     # ==================== Stats Calculation Methods ====================
 
-    def _calculate_storage_stats(self) -> Dict:
+    def _calculate_storage_stats(self) -> Dict[str, Any]:
         """
         Calculate storage statistics with incremental updates.
 
@@ -270,7 +270,7 @@ class StorageStatsMixin:
         thread = threading.Thread(target=self._refresh_stats_background, daemon=True)
         thread.start()
 
-    def get_total_storage_stats(self, force_refresh: bool = False) -> Dict:
+    def get_total_storage_stats(self, force_refresh: bool = False) -> Dict[str, Any]:
         """
         Get overall storage statistics with stale-while-revalidate caching.
 
@@ -394,7 +394,7 @@ class StorageStatsMixin:
             logger.warning(f"Error calculating directory size for {directory}: {e}")
         return total
 
-    def _get_file_info(self, file_path: Path) -> Dict:
+    def _get_file_info(self, file_path: Path) -> Dict[str, Any]:
         """Get file information."""
         if file_path.exists() and file_path.is_file():
             return {
@@ -409,7 +409,7 @@ class StorageStatsMixin:
                 "exists": False
             }
 
-    def _get_directory_stats(self, directory: Path) -> Dict:
+    def _get_directory_stats(self, directory: Path) -> Dict[str, Any]:
         """
         Get directory statistics (size and file count) in a single traversal.
 

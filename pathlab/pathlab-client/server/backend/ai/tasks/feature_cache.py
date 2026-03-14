@@ -25,7 +25,7 @@ import os
 import pickle
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 import torch
 
@@ -155,8 +155,8 @@ def get_lock_path(
 
 def compute_params_hash(
     level: int = 0,
-    seg_params: Optional[Dict] = None,
-    filter_params: Optional[Dict] = None,
+    seg_params: Optional[Dict[str, Any]] = None,
+    filter_params: Optional[Dict[str, Any]] = None,
     contour_fn: str = 'four_pt',
     use_padding: bool = True,
     seg_level: int = -1,
@@ -593,7 +593,7 @@ def delete_cached_features_with_symlinks(
     extractor_name: str,
     params_hash: str,
     wsi_id: str,
-) -> Dict:
+) -> Dict[str, Any]:
     """
     Delete a cached feature file and all symlinks pointing to it.
 
@@ -644,7 +644,7 @@ def delete_cached_features_with_symlinks(
     return result
 
 
-def cleanup_dangling_symlinks(uploads_root: Path) -> Dict:
+def cleanup_dangling_symlinks(uploads_root: Path) -> Dict[str, Any]:
     """
     Find and remove all dangling symlinks in training directories.
 
@@ -762,7 +762,7 @@ def acquire_feature_lock(
     )
 
 
-def cleanup_lock_files(uploads_root: Path) -> Dict:
+def cleanup_lock_files(uploads_root: Path) -> Dict[str, Any]:
     """
     Clean up stale lock files.
 

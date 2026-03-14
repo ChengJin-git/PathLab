@@ -358,7 +358,6 @@ export function DatasetRegistrationCard({
               case_id: '',
               age: undefined,
               gender: '',
-              source: '',
               event_time: undefined,
               event_status: undefined
             },

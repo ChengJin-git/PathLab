@@ -10,9 +10,9 @@ from sklearn.model_selection import StratifiedShuffleSplit, StratifiedKFold
 MULTILABEL_NEGATIVE_TAG = "__negative__"
 
 
-def _normalize_coco_categories(categories: Any) -> List[dict]:
+def _normalize_coco_categories(categories: Any) -> List[dict[str, Any]]:
     if isinstance(categories, list):
-        normalized: List[dict] = []
+        normalized: List[dict[str, Any]] = []
         for item in categories:
             if not isinstance(item, dict):
                 continue
@@ -448,12 +448,12 @@ def get_stratified_k_fold_splits(
 
 
 def get_random_splits(
-    items: list,
+    items: list[Any],
     train_ratio: float = 0.7,
     val_ratio: float = 0.1,
     test_ratio: float = 0.2,
     seed: int = 42,
-) -> dict:
+) -> dict[str, Any]:
     """
     Non-stratified random split (fallback when labels not available).
     Returns a dict mapping item -> split_label ('train', 'val', 'test').
@@ -482,10 +482,10 @@ def get_random_splits(
 
 
 def get_k_fold_splits(
-    items: list,
+    items: list[Any],
     k: int = 5,
     seed: int = 42,
-) -> dict:
+) -> dict[str, Any]:
     """
     Non-stratified K-Fold split (fallback when labels not available).
     Returns a dict mapping item -> 'fold_N'.
@@ -614,12 +614,12 @@ def split_case_dataset(
 
 
 def split_wsi_dataset(
-    wsi_ids: list,
+    wsi_ids: list[Any],
     strategy: str = "random",
     labels: Optional[Dict[str, str]] = None,
     multilabels: Optional[Dict[str, Sequence[str] | Set[str]]] = None,
     **kwargs
-) -> dict:
+) -> dict[str, Any]:
     """
     Main entry point for splitting a dataset of WSI IDs at the slide level.
 

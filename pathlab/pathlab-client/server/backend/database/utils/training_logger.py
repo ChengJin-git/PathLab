@@ -172,7 +172,7 @@ class TrainingLogReader:
     """
 
     @staticmethod
-    def read_log_file(task_id: str, log_dir: Optional[str] = None, tail_lines: Optional[int] = None) -> list:
+    def read_log_file(task_id: str, log_dir: Optional[str] = None, tail_lines: Optional[int] = None) -> list[Any]:
         """
         Read logs from file (fallback or for complete history).
 

@@ -9,68 +9,9 @@ import { useTranslation } from 'react-i18next'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Globe, FileText, Download, ChevronDown, ExternalLink, AlertCircle } from 'lucide-react'
 
-import { parseAllChatBlockJson, parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
-
 export interface SearchingStatusProps {
   query?: string
   reason?: string
-}
-
-/**
- * Parse [SEARCH_STATUS] block from content
- * Returns the parsed JSON config or null if not found
- */
-export function parseSearchStatus(content: string): { query?: string; reason?: string } | null {
-  const parsed = parseLastChatBlockJson<{ query?: string; reason?: string }>(content, 'SEARCH_STATUS', { allowIncompleteLast: true })
-  if (parsed) return parsed
-
-  const queryMatch = content.match(/"query"\s*:\s*"([^"]+)"/)
-  const reasonMatch = content.match(/"reason"\s*:\s*"([^"]+)"/)
-  if (!queryMatch && !reasonMatch) return null
-
-  return {
-    query: queryMatch?.[1],
-    reason: reasonMatch?.[1]
-  }
-}
-
-export function parseAllSearchStatus(content: string): Array<{ query?: string; reason?: string }> | null {
-  return parseAllChatBlockJson<{ query?: string; reason?: string }>(content, 'SEARCH_STATUS', { allowIncompleteLast: true })
-}
-
-/**
- * Remove [SEARCH_STATUS] block from content
- */
-export function removeSearchStatusBlock(content: string): string {
-  return stripChatBlocks(content, 'SEARCH_STATUS').trim()
-}
-
-/**
- * Parse [WEB_SEARCH_RESULT] block from content
- * Returns the parsed JSON result or null if not found
- */
-export interface WebSearchResult {
-  query: string
-  results: Array<{
-    title: string
-    url: string
-    snippet: string
-  }>
-}
- 
-export function parseWebSearchResult(content: string): WebSearchResult | null {
-  return parseLastChatBlockJson<WebSearchResult>(content, 'WEB_SEARCH_RESULT', { allowIncompleteLast: true })
-}
-
-export function parseAllWebSearchResults(content: string): WebSearchResult[] | null {
-  return parseAllChatBlockJson<WebSearchResult>(content, 'WEB_SEARCH_RESULT', { allowIncompleteLast: true })
-}
-
-/**
- * Remove [WEB_SEARCH_RESULT] block from content
- */
-export function removeWebSearchResultBlock(content: string): string {
-  return stripChatBlocks(content, 'WEB_SEARCH_RESULT').trim()
 }
 
 // Animated searching indicator component
@@ -367,38 +308,6 @@ export interface PdfParseStatusItem {
   title: string
   status: string // "parsing" | "completed" | "download_failed" | "parse_failed" | "parse_busy" | error strings
   from_cache?: boolean
-}
-
-/**
- * Parse all [PDF_PARSE_STATUS] blocks from content.
- * Deduplicates by URL, keeping the latest status.
- * Returns null if no blocks found.
- */
-export function parseAllPdfParseStatus(content: string): PdfParseStatusItem[] | null {
-  const regex = /\[PDF_PARSE_STATUS\]([\s\S]*?)\[\/PDF_PARSE_STATUS\]/g
-  const items = new Map<string, PdfParseStatusItem>()
-  let match: RegExpExecArray | null
-
-  while ((match = regex.exec(content)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1].trim()) as PdfParseStatusItem
-      if (parsed.url) {
-        items.set(parsed.url, parsed)
-      }
-    } catch {
-      // Skip invalid JSON
-    }
-  }
-
-  if (items.size === 0) return null
-  return Array.from(items.values())
-}
-
-/**
- * Remove all [PDF_PARSE_STATUS] blocks from content
- */
-export function removePdfParseStatusBlock(content: string): string {
-  return content.replace(/\[PDF_PARSE_STATUS\][\s\S]*?\[\/PDF_PARSE_STATUS\]/g, '').trim()
 }
 
 /**

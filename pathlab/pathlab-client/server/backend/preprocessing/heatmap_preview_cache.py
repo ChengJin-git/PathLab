@@ -6,7 +6,7 @@ import logging
 import math
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
 import numpy as np
 from PIL import Image, ImageEnhance, ImageFilter
@@ -126,7 +126,7 @@ def ensure_resized_recommendation_preview_cache(
         return preview_path if preview_path.exists() else None
 
 
-def _persist_wsi_metadata(metadata_file: Path, metadata: dict) -> None:
+def _persist_wsi_metadata(metadata_file: Path, metadata: dict[str, Any]) -> None:
     metadata_file.parent.mkdir(parents=True, exist_ok=True)
     metadata_with_timestamp = {
         **metadata,
@@ -143,9 +143,9 @@ def _load_wsi_metadata(
     wsi_id: str,
     wsi_path: Optional[str | Path] = None,
     file_size: Optional[int] = None,
-) -> dict:
+) -> dict[str, Any]:
     metadata_file = uploads_dir / "metadata" / f"{wsi_id}.json"
-    metadata: dict = {}
+    metadata: dict[str, Any] = {}
     if metadata_file.exists():
         metadata = json.loads(metadata_file.read_text(encoding="utf-8"))
 

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
@@ -118,6 +119,7 @@ export default function ResultsViewerPage() {
   const { analysisTasks, subscribeAnalysisSSE } = useBackgroundTask()
   const { isAdmin } = useAuth()
   const { t } = useTranslation()
+  const qc = useQueryClient()
 
   // Subscribe to analysis SSE when this page is mounted
   useEffect(() => {
@@ -133,14 +135,11 @@ export default function ResultsViewerPage() {
   const fromDeepResearch = (location.state as { fromDeepResearch?: boolean } | null)?.fromDeepResearch === true
   const deepResearchConversationId = (location.state as { deepResearchConversationId?: string } | null)?.deepResearchConversationId
 
-  const [tasks, setTasks] = useState<TrainingTask[]>([])
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
-  const [loading, setLoading] = useState(true)
   const [running, setRunning] = useState(false)
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([...DEFAULT_CLASSIFICATION_METRICS])
   const [selectedCharts, setSelectedCharts] = useState<string[]>([...DEFAULT_CLASSIFICATION_CHARTS])
   const [description, setDescription] = useState('')
-  const [analyses, setAnalyses] = useState<AnalysisSummary[]>([])
   const [currentResult, setCurrentResult] = useState<AnalysisResult | null>(null)
   const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
@@ -148,23 +147,18 @@ export default function ResultsViewerPage() {
   const [deleting, setDeleting] = useState(false)
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
-  const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])  // Metrics to compute 95% CI for
+  const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])
 
-  // External Validation state
   const [pageMode, setPageMode] = useState<PageMode>('internal-analysis')
-  const [trainedModels, setTrainedModels] = useState<TrainedModel[]>([])
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [datasetId, setDatasetId] = useState<string | null>(null)
-  const [validationDatasets, setValidationDatasets] = useState<ValidationDataset[]>([])
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
   const [isDataDropdownOpen, setIsDataDropdownOpen] = useState(false)
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
-  // Ref that always holds the latest selectedTaskId to avoid stale closures in async callbacks
   const selectedTaskIdRef = useRef<string | null>(selectedTaskId)
 
-  // Completed external validation tasks (for restoring results on page return)
   interface CompletedExtValTask {
     task_id: string
     model_id: string | null
@@ -175,25 +169,74 @@ export default function ResultsViewerPage() {
     has_analysis: boolean
     created_at: string | null
   }
-  const [completedExtValTasks, setCompletedExtValTasks] = useState<CompletedExtValTask[]>([])
 
-  // External validation analysis history (mirrors `analyses` for internal)
-  const [extAnalyses, setExtAnalyses] = useState<AnalysisSummary[]>([])
+  const [extValQueryTaskId, setExtValQueryTaskId] = useState<string | null>(null)
   const [showExtHistory, setShowExtHistory] = useState(false)
   const [expandedExtAnalysis, setExpandedExtAnalysis] = useState<string | null>(null)
 
-  useEffect(() => {
-    loadTasks()
-    loadTrainedModels()
-    loadValidationDatasets()
-    loadCompletedExtValTasks()
-  }, [])
+  const { data: tasks = [] as TrainingTask[], isLoading: loading } = useQuery({
+    queryKey: ['results-tasks'],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE}/results/tasks`, buildAuthRequestInit())
+      if (!response.ok) throw new Error('Failed to load tasks')
+      const data = await response.json()
+      return (data.items || []) as TrainingTask[]
+    },
+    staleTime: 30 * 1000,
+  })
 
-  useEffect(() => {
-    if (selectedTaskId) {
-      loadAnalyses(selectedTaskId)
-    }
-  }, [selectedTaskId])
+  const { data: trainedModels = [] as TrainedModel[] } = useQuery({
+    queryKey: ['trained-models'],
+    queryFn: async () => {
+      const data = await getTrainedModels()
+      return data.items.filter(m => m.is_active) as TrainedModel[]
+    },
+    staleTime: 2 * 60 * 1000,
+  })
+
+  const { data: validationDatasets = [] as ValidationDataset[] } = useQuery({
+    queryKey: ['validation-datasets'],
+    queryFn: async () => {
+      const data = await fetchDatasetsForValidation()
+      return (data.items || []) as ValidationDataset[]
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const { data: completedExtValTasks = [] as CompletedExtValTask[] } = useQuery({
+    queryKey: ['completed-ext-val-tasks'],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE}/results/external-validation/completed`, buildAuthRequestInit())
+      if (!response.ok) throw new Error('Failed to load completed ext val tasks')
+      const data = await response.json()
+      return (data.items || []) as CompletedExtValTask[]
+    },
+    staleTime: 30 * 1000,
+  })
+
+  const { data: analyses = [] as AnalysisSummary[] } = useQuery({
+    queryKey: ['analyses', selectedTaskId],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, buildAuthRequestInit())
+      if (!response.ok) throw new Error('Failed to load analyses')
+      const data = await response.json()
+      return (data.analyses || []) as AnalysisSummary[]
+    },
+    enabled: !!selectedTaskId,
+    staleTime: 30 * 1000,
+  })
+
+  const { data: extAnalyses = [] as AnalysisSummary[] } = useQuery({
+    queryKey: ['ext-analyses', extValQueryTaskId],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE}/results/tasks/${extValQueryTaskId}/analysis`, buildAuthRequestInit())
+      if (!response.ok) throw new Error('Failed to load ext analyses')
+      const data = await response.json()
+      return (data.analyses || []) as AnalysisSummary[]
+    },
+    enabled: !!extValQueryTaskId,
+    staleTime: 30 * 1000,
+  })
 
   useEffect(() => {
     // Check for task_id in URL params first
@@ -218,8 +261,8 @@ export default function ResultsViewerPage() {
     if (state?.selectedTaskId && !taskIdFromUrl && state.selectedTaskId !== selectedTaskId) {
       if (state?.pageMode === 'external-validation') {
         // For external validation, load analyses directly instead of setting internal selectedTaskId
-        loadExtAnalyses(state.selectedTaskId)
-        loadCompletedExtValTasks()
+        setExtValQueryTaskId(state.selectedTaskId)
+        void qc.invalidateQueries({ queryKey: ['completed-ext-val-tasks'] })
       } else {
         setSelectedTaskId(state.selectedTaskId)
       }
@@ -316,12 +359,11 @@ export default function ResultsViewerPage() {
         results_count: matchingTask.results_count,
       })
       // Load analysis history for this task
-      loadExtAnalyses(matchingTask.task_id)
+      setExtValQueryTaskId(matchingTask.task_id)
     } else if (!validationProgress || validationProgress.model_id !== selectedModelId || validationProgress.dataset_id !== datasetId) {
-      // No matching completed task and selection changed — clear stale results
       setValidationProgress(null)
       setCurrentResult(null)
-      setExtAnalyses([])
+      setExtValQueryTaskId(null)
     }
   }, [pageMode, selectedModelId, datasetId, completedExtValTasks])
 
@@ -342,17 +384,14 @@ export default function ResultsViewerPage() {
 
         // Check if this is an external validation analysis
         if (task.analysisType === 'external' && task.trainingTaskId) {
-          // Load analysis history for the external validation task
-          loadExtAnalyses(task.trainingTaskId)
-          // Also refresh the completed extval tasks list for future visits
-          loadCompletedExtValTasks()
+          setExtValQueryTaskId(task.trainingTaskId)
+          void qc.invalidateQueries({ queryKey: ['completed-ext-val-tasks'] })
         } else {
-          // Internal analysis — existing logic
           if (currentResult?._pending) {
             setCurrentResult(null)
           }
           if (selectedTaskId) {
-            loadAnalyses(selectedTaskId)
+            void qc.invalidateQueries({ queryKey: ['analyses', selectedTaskId] })
           }
         }
       }
@@ -364,86 +403,20 @@ export default function ResultsViewerPage() {
     selectedTaskIdRef.current = selectedTaskId
   }, [selectedTaskId])
 
-  const loadTasks = async () => {
-    setLoading(true)
-    try {
-      const response = await fetch(`${API_BASE}/results/tasks`, buildAuthRequestInit())
-      if (response.ok) {
-        const data = await response.json()
-        const taskList = data.items || []
-        setTasks(taskList)
-        // Use ref to get the current selectedTaskId — avoids stale closure when called from
-        // the empty-deps useEffect that captured an earlier render's selectedTaskId value
-        if (taskList.length > 0 && !selectedTaskIdRef.current) {
-          setSelectedTaskId(taskList[0].task_id)
-        }
-      }
-    } catch (error) {
-      console.error('Failed to load tasks:', error)
-    } finally {
-      setLoading(false)
+  useEffect(() => {
+    if (tasks.length > 0 && !selectedTaskIdRef.current) {
+      setSelectedTaskId(tasks[0].task_id)
     }
-  }
+  }, [tasks])
 
-  const loadTrainedModels = async () => {
-    try {
-      const data = await getTrainedModels()
-      const activeModels = data.items.filter(m => m.is_active)
-      setTrainedModels(activeModels)
-      // Auto-select default model if exists
-      const defaultModel = activeModels.find(m => m.is_default)
+  useEffect(() => {
+    if (trainedModels.length > 0) {
+      const defaultModel = trainedModels.find(m => m.is_default)
       if (defaultModel && !selectedModelId) {
         setSelectedModelId(defaultModel.model_id)
       }
-    } catch (error) {
-      console.error('Failed to load trained models:', error)
     }
-  }
-
-  const loadValidationDatasets = async () => {
-    try {
-      const data = await fetchDatasetsForValidation()
-      setValidationDatasets(data.items || [])
-    } catch (error) {
-      console.error('Failed to load validation datasets:', error)
-    }
-  }
-
-  const loadCompletedExtValTasks = async () => {
-    try {
-      const response = await fetch(`${API_BASE}/results/external-validation/completed`, buildAuthRequestInit())
-      if (response.ok) {
-        const data = await response.json()
-        setCompletedExtValTasks(data.items || [])
-      }
-    } catch (error) {
-      console.error('Failed to load completed external validation tasks:', error)
-    }
-  }
-
-  const loadAnalyses = async (taskId: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, buildAuthRequestInit())
-      if (response.ok) {
-        const data = await response.json()
-        setAnalyses(data.analyses || [])
-      }
-    } catch (error) {
-      console.error('Failed to load analyses:', error)
-    }
-  }
-
-  const loadExtAnalyses = async (taskId: string) => {
-    try {
-      const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis`, buildAuthRequestInit())
-      if (response.ok) {
-        const data = await response.json()
-        setExtAnalyses(data.analyses || [])
-      }
-    } catch (error) {
-      console.error('Failed to load external validation analyses:', error)
-    }
-  }
+  }, [trainedModels])
 
   const startExternalValidation = async () => {
     if (!selectedModelId || !datasetId || selectedMetrics.length === 0) return
@@ -482,7 +455,7 @@ export default function ResultsViewerPage() {
           dataset_id: datasetId,
           error: null,
         })
-        await loadExtAnalyses(result.task_id)
+        setExtValQueryTaskId(result.task_id)
       } else if (responseStatus === 'analysis_started') {
         // Inference results exist, analysis auto-triggered — wait for SSE
         setValidationProgress({
@@ -554,7 +527,7 @@ export default function ResultsViewerPage() {
             }
             // Reload tasks to update ai_results counts
             if (progress.status === 'completed') {
-              await loadTasks()
+              await qc.invalidateQueries({ queryKey: ['results-tasks'] })
             }
           }
         }
@@ -612,7 +585,7 @@ export default function ResultsViewerPage() {
           setCurrentResult(result)
           setExpandedAnalysis(result.analysis_id)
           // Reload analyses list
-          await loadAnalyses(selectedTaskId)
+          void qc.invalidateQueries({ queryKey: ['analyses', selectedTaskId] })
         }
       } else {
         const error = await response.json()
@@ -691,14 +664,12 @@ export default function ResultsViewerPage() {
 
       if (response.ok) {
         if (pageMode === 'external-validation') {
-          // Remove from external analyses state
-          setExtAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+          void qc.invalidateQueries({ queryKey: ['ext-analyses', extValQueryTaskId] })
           if (expandedExtAnalysis === deleteConfirmId) {
             setExpandedExtAnalysis(null)
           }
         } else {
-          // Remove from internal analyses state
-          setAnalyses(prev => prev.filter(a => a.analysis_id !== deleteConfirmId))
+          void qc.invalidateQueries({ queryKey: ['analyses', selectedTaskId] })
           if (expandedAnalysis === deleteConfirmId) {
             setExpandedAnalysis(null)
           }

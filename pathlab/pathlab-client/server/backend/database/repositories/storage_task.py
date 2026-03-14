@@ -3,7 +3,7 @@ StorageTaskRepository - Data Access Layer
 """
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ class StorageTaskRepository:
         user_id: str,
         task_type: str,
         total_items: int = 0,
-        params: Optional[Dict] = None
+        params: Optional[Dict[str, Any]] = None
     ) -> StorageTask:
         """Create a new storage task"""
         task = StorageTask(
@@ -57,7 +57,7 @@ class StorageTaskRepository:
         failed_count: int = None,
         skipped_count: int = None,
         error_message: str = None,
-        results: list = None
+        results: list[Any] = None
     ) -> bool:
         """Update storage task status"""
         update_data = {"status": status}
@@ -130,5 +130,4 @@ class StorageTaskRepository:
             )
         )
         return result.rowcount
-
 

@@ -104,8 +104,8 @@ def _build_segmentation_class_metrics(
             if isinstance(values, list) and values:
                 per_image_rows.append([float(v) for v in values])
 
-        means: Optional[np.ndarray] = None
-        stds: Optional[np.ndarray] = None
+        means: Optional[np.ndarray[Any, Any]] = None
+        stds: Optional[np.ndarray[Any, Any]] = None
 
         if per_image_rows:
             arr = np.array(per_image_rows, dtype=np.float64)
@@ -177,8 +177,8 @@ def _load_segmentation_metrics_sync(task_id: str) -> Optional[Dict[str, Any]]:
 
 def _render_metric_curve_sync(
     metric_name: str,
-    train_values: list,
-    val_values: list,
+    train_values: list[Any],
+    val_values: list[Any],
     output_path: Path,
     title: str = "",
     y_label: str = "",
@@ -213,7 +213,7 @@ def _render_metric_curve_sync(
         return None
 
 
-def _extract_metric_series(metrics_list: list, metric_name: str) -> list:
+def _extract_metric_series(metrics_list: list[Any], metric_name: str) -> list[Any]:
     """Extract a specific metric's values across epochs from a list of per-epoch metric dicts."""
     return [m.get(metric_name, 0.0) for m in metrics_list if isinstance(m, dict)]
 
@@ -287,7 +287,7 @@ def _calculate_segmentation_bootstrap_ci(
         return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
 
     # Build arrays for fast vectorised bootstrap
-    arrays: Dict[str, np.ndarray] = {}
+    arrays: Dict[str, np.ndarray[Any, Any]] = {}
     for key in target_keys:
         arrays[key] = np.array([
             _resolve_segmentation_metric_value(m, key) or 0.0 for m in per_image_metrics

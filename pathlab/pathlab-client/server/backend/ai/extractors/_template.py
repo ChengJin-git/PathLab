@@ -26,7 +26,7 @@ Example usage after registration:
     features = extractor(images)  # [B, 3, H, W] -> [B, output_dim]
 """
 from __future__ import annotations
-from typing import Tuple, Callable
+from typing import Tuple, Callable, Any
 
 import torch
 import torch.nn as nn
@@ -148,7 +148,7 @@ class TemplateExtractor(BaseExtractor):
         """
         return IMAGENET_STD  # TODO: Change if your model uses different normalization
 
-    def get_transforms(self, mode: str = "eval") -> Callable:
+    def get_transforms(self, mode: str = "eval") -> Callable[..., Any]:
         """
         Get preprocessing transforms for this model.
 
@@ -294,4 +294,3 @@ class TemplateExtractor(BaseExtractor):
 #
 # 7. Forgetting to set default_image_size for models expecting non-224 input
 #    Solution: Override default_image_size property
-

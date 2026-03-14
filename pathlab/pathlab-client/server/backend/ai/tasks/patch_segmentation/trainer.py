@@ -42,6 +42,7 @@ from backend.ai.tasks.base import BaseTrainer
 from backend.ai.tasks.training_utils import safe_update_progress as _safe_update_progress
 from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
 from backend.ai.segmentors import Segmentor
+from backend.ai.utils.patch_resize import resolve_patch_resize_size
 from backend.common.redis_client import close_redis
 from backend.database.utils.training_logger import TrainingLogger
 
@@ -148,21 +149,22 @@ class SegmentationTrainer:
         )
         # build dataset and dataloaders
         normalization_mean, normalization_std = segmentor.get_normalization_params()
+        self.image_size = resolve_patch_resize_size(self.config["backbone"], is_segmentation_backbone=True)
         self.train_dataset = SegmentationDataset(
             img_dir=self.config["dataset"]["train"]["image_dir"],
             annotations_path=self.config["dataset"]["train"]["annotations_path"],
-            transform=get_transforms("train", normalization_mean=normalization_mean, normalization_std=normalization_std)
+            transform=get_transforms("train", size=(self.image_size, self.image_size), normalization_mean=normalization_mean, normalization_std=normalization_std)
         )
         self.val_dataset = SegmentationDataset(
             img_dir=self.config["dataset"]["val"]["image_dir"],
             annotations_path=self.config["dataset"]["val"]["annotations_path"],
-            transform=get_transforms("val", normalization_mean=normalization_mean, normalization_std=normalization_std)
+            transform=get_transforms("val", size=(self.image_size, self.image_size), normalization_mean=normalization_mean, normalization_std=normalization_std)
         )
         if self.config["dataset"].get("test") is not None:
             self.test_dataset = SegmentationDataset(
                 img_dir=self.config["dataset"]["test"]["image_dir"],
                 annotations_path=self.config["dataset"]["test"]["annotations_path"],
-                transform=get_transforms("test", normalization_mean=normalization_mean, normalization_std=normalization_std)
+                transform=get_transforms("test", size=(self.image_size, self.image_size), normalization_mean=normalization_mean, normalization_std=normalization_std)
             )
         else:
             self.test_dataset = None
@@ -324,7 +326,7 @@ class SegmentationTrainer:
         return generator
 
     
-    def build_loaders(self) -> Tuple[DataLoader, DataLoader, Optional[DataLoader]]:
+    def build_loaders(self) -> Tuple[DataLoader[Any], DataLoader[Any], Optional[DataLoader[Any]]]:
         """
         Build DataLoaders for training, validation, and testing datasets.
         """
@@ -360,7 +362,7 @@ class SegmentationTrainer:
             )
         return train_loader, val_loader, test_loader
     
-    def evaluate_model(self, data_loader: DataLoader) -> Dict[str, SegmentationMetricValue]:
+    def evaluate_model(self, data_loader: DataLoader[Any]) -> Dict[str, SegmentationMetricValue]:
         """
         Evaluate the model on the given DataLoader and return metrics.
         """
@@ -565,7 +567,7 @@ class SegmentationTrainer:
     def _build_scheduler(
         self, 
         optimizer: optim.Optimizer, 
-        train_loader: DataLoader
+        train_loader: DataLoader[Any]
     ) -> Optional[Any]:
         """
         Build learning rate scheduler based on configuration.
@@ -621,7 +623,7 @@ class SegmentationTrainer:
     def _train_one_epoch(
         self,
         model: nn.Module,
-        train_loader: DataLoader,
+        train_loader: DataLoader[Any],
         optimizer: optim.Optimizer,
         scheduler: Optional[Any],
         scaler: Optional[GradScaler],
@@ -729,7 +731,7 @@ class SegmentationTrainer:
     def _validate(
         self,
         model: nn.Module,
-        val_loader: DataLoader,
+        val_loader: DataLoader[Any],
     ) -> Tuple[float, Dict[str, SegmentationMetricValue]]:
         """
         Validate the model.

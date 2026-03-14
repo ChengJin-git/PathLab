@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class MigrationManager:
     def __init__(self):
-        self._migration_process: Optional[subprocess.Popen] = None
+        self._migration_process: Optional[subprocess.Popen[Any]] = None
         self._source: Optional[str] = None
         self._destination: Optional[str] = None
         self._status: str = "idle"  # idle, running, completed, failed

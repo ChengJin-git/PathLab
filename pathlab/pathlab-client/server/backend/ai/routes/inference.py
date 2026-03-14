@@ -12,7 +12,7 @@ import asyncio
 import uuid
 import logging
 import traceback
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 
 import torch
 import torch.nn.functional as F
@@ -65,7 +65,7 @@ class InferenceRequest(BaseModel):
     wsi_id: str
     classes: List[str]
     model_id: Optional[str] = None
-    params: Optional[Dict] = None
+    params: Optional[Dict[str, Any]] = None
 
 
 @router.post("/analyze")
@@ -344,7 +344,7 @@ async def run_inference_pipeline_sync(
     wsi_id: str,
     model_id: str,
     device: str
-) -> Dict:
+) -> Dict[str, Any]:
     """
     Synchronous inference pipeline for queue-managed execution.
 

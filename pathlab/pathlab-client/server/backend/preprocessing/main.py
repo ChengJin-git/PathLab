@@ -9,7 +9,7 @@ import ctypes
 import logging
 from pathlib import Path
 from collections import OrderedDict
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
@@ -1411,7 +1411,7 @@ async def _extract_segmentation_dataset(
     return completed
 
 
-def _save_coco_json(coco_data: dict, output_path: Path):
+def _save_coco_json(coco_data: dict[str, Any], output_path: Path):
     """Save COCO JSON to file (runs in thread)."""
     import json
     with open(output_path, "w", encoding="utf-8") as f:

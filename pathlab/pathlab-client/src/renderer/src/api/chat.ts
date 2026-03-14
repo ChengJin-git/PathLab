@@ -33,6 +33,46 @@ export interface ChatMessage {
  * @returns Promise that resolves when streaming is complete
  * @throws {ApiError} If the request fails
  */
+export interface SearchStatusEvent {
+  query: string
+  reason: string
+  status?: 'timeout' | 'error'
+}
+
+export interface PdfStatusEvent {
+  url: string
+  title: string
+  status: string
+  from_cache?: boolean
+}
+
+export interface WebSearchResultEvent {
+  query: string
+  reason?: string
+  source?: string
+  results: Array<{ title: string; url: string; snippet: string }>
+}
+
+export interface PdfParseResultEvent {
+  url: string
+  title: string
+  status: string
+  from_cache?: boolean
+  parse_method?: string
+}
+
+export interface SearchArtifacts {
+  statuses: SearchStatusEvent[]
+  phase: 'idle' | 'searching' | 'summarizing' | 'done'
+  pdfStatuses: PdfStatusEvent[]
+  webSearchResults: WebSearchResultEvent[]
+  pdfParseResults: PdfParseResultEvent[]
+}
+
+export interface MessageArtifacts {
+  search?: SearchArtifacts
+}
+
 export async function chatWithAI(
   messages: ChatMessage[],
   onChunk: (chunk: string) => void,
@@ -41,7 +81,13 @@ export async function chatWithAI(
   signal?: AbortSignal,
   onContextLimit?: () => void,
   onResponseTruncated?: () => void,
-  onPdfContext?: (pdfContext: string) => void
+  onPdfContext?: (pdfContext: string) => void,
+  onSearchStatus?: (event: SearchStatusEvent) => void,
+  onPdfStatus?: (event: PdfStatusEvent) => void,
+  onSearchPhase?: (phase: 'summarizing') => void,
+  onWebSearchResult?: (event: WebSearchResultEvent) => void,
+  onPdfParseResult?: (event: PdfParseResultEvent) => void,
+  onSearchClear?: () => void
 ): Promise<void> {
   // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
@@ -143,6 +189,24 @@ export async function chatWithAI(
       if (typeof parsed.pdf_context === 'string' && onPdfContext) {
         onPdfContext(parsed.pdf_context)
       }
+      if (parsed.type === 'search_status' && onSearchStatus) {
+        onSearchStatus({ query: parsed.query, reason: parsed.reason, status: parsed.status })
+      }
+      if (parsed.type === 'pdf_status' && onPdfStatus) {
+        onPdfStatus({ url: parsed.url, title: parsed.title, status: parsed.status, from_cache: parsed.from_cache })
+      }
+      if (parsed.type === 'search_phase' && parsed.phase === 'summarizing' && onSearchPhase) {
+        onSearchPhase('summarizing')
+      }
+      if (parsed.type === 'web_search_result' && onWebSearchResult) {
+        onWebSearchResult(parsed.result as WebSearchResultEvent)
+      }
+      if (parsed.type === 'pdf_parse_result' && onPdfParseResult) {
+        onPdfParseResult(parsed.result as PdfParseResultEvent)
+      }
+      if (parsed.type === 'search_clear' && onSearchClear) {
+        onSearchClear()
+      }
     } catch {
       // Skip invalid JSON
     }
@@ -209,7 +273,7 @@ export interface ConversationWithMessages extends Conversation {
     conversation_id: string
     role: 'user' | 'assistant'
     content: string
-    metadata?: { images?: string[] } | null
+    metadata?: { images?: string[]; artifacts?: MessageArtifacts } | null
     created_at: string
   }>
 }
@@ -234,6 +298,7 @@ export interface ChatPatchInferenceTaskResult {
   coverage_by_class?: Array<{ label: string; coverage_ratio: number }>
   has_positive_mask?: boolean
   mask_shape?: [number, number]
+  overlay_image_data_url?: string
 }
 
 export interface ChatPatchInferenceTask {
@@ -351,14 +416,19 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 export async function updateMessage(
   conversationId: string,
   messageId: number,
-  content: string
+  content: string,
+  artifacts?: MessageArtifacts
 ): Promise<{ id: number; conversation_id: string; role: string; content: string; created_at: string }> {
+  const body: { content: string; metadata?: { artifacts: MessageArtifacts } } = { content }
+  if (artifacts) {
+    body.metadata = { artifacts }
+  }
   return apiFetch(
     `${API_BASE}/conversations/${conversationId}/messages/${messageId}`,
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content })
+      body: JSON.stringify(body)
     },
     'Failed to update message'
   )

@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Any
 import numpy as np
 import torch
 from torchvision.transforms import v2
@@ -10,10 +10,16 @@ from PIL import Image
 import cv2
 
 
-def get_transforms(split: str, size: Tuple[int, int] = (1024, 1024), normalization_mean: Optional[list] = None, normalization_std: Optional[list] = None) -> Callable:
+def get_transforms(split: str, size: Tuple[int, int] = (512, 512), normalization_mean: Optional[list[Any]] = None, normalization_std: Optional[list[Any]] = None) -> Callable[..., Any]:
     """
     Get transforms for segmentation tasks.
-    
+
+    Note:
+        Patch segmentation callers should prefer resolving size via
+        ``backend.ai.utils.patch_resize.resolve_patch_resize_size`` so FM
+        backbones use their native input size while non-FM backbones default
+        to 512.
+
     Args:
         split: "train", "val", or "test"
         size: Target size (H, W)
@@ -69,7 +75,7 @@ def read_images_and_masks(image_dir: str, annotations_full_path: str):
 
 
 
-class SegmentationDataset(Dataset):
+class SegmentationDataset(Dataset[Any]):
     """
     A dataset class for image segmentation tasks.
     The annotations file is expected to be prepared in format defined at dataset_template/segmentation_annotations.json.
@@ -79,7 +85,7 @@ class SegmentationDataset(Dataset):
     def __init__(self,
         img_dir: Optional[str] = None,
         annotations_path: Optional[str] = None,
-        transform: Optional[Callable] = None,
+        transform: Optional[Callable[..., Any]] = None,
     ):
         self.img_dir = img_dir
         self.annotations_path = annotations_path
@@ -92,7 +98,7 @@ class SegmentationDataset(Dataset):
         img = Image.open(image_path).convert("RGB")
         return img
     
-    def set_transform(self, transform: Callable):
+    def set_transform(self, transform: Callable[..., Any]):
         self.transform = transform
 
     def generate_label_masks(self, image_size, polygons_list, category_ids):

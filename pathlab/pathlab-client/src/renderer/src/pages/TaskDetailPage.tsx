@@ -6,7 +6,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
 import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery } from '../api'
-import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
+import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
 import { parseTaskError } from '../components/taskDetail/parseTaskError'
@@ -14,17 +14,69 @@ import { ProgressSection } from '../components/taskDetail/ProgressSection'
 import { ConfigurationPanel } from '../components/taskDetail/ConfigurationPanel'
 import { LogViewer } from '../components/taskDetail/LogViewer'
 import {
+  clearTrainingSubmissionRecord,
   getTrainingSubmissionRecord,
+  markTrainingSubmissionCancelled,
   markTrainingSubmissionCreated,
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
 } from '../lib/trainingSubmissionTracker'
+
+const makeSyntheticTask = (
+  taskId: string,
+  options?: { taskName?: string; status?: TaskDetail['status']; errorMessage?: string }
+): TaskDetail => ({
+  task_id: taskId,
+  task_name: options?.taskName || taskId,
+  task_type: 'classification',
+  data_type: 'wsi',
+  task_description: '',
+  status: options?.status || 'creating',
+  progress: 0,
+  error_message: options?.errorMessage,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+  wsi_count: 0,
+  preprocessing_config: {},
+  model_config: {},
+})
+
+const CREATING_LOG_ID = -1
+const SYNTHETIC_FAILURE_LOG_ID = -2
+const SYNTHETIC_CANCELLED_LOG_ID = -3
+
+const makeCreatingLogEntry = (taskId: string): LogEntry => ({
+  id: CREATING_LOG_ID,
+  task_id: taskId,
+  level: 'INFO',
+  message: 'Creating task record...',
+  sequence: -1,
+  created_at: new Date().toISOString(),
+})
+
+const makeSyntheticFailureLogEntry = (taskId: string, message: string): LogEntry => ({
+  id: SYNTHETIC_FAILURE_LOG_ID,
+  task_id: taskId,
+  level: 'ERROR',
+  message,
+  sequence: -2,
+  created_at: new Date().toISOString(),
+})
+
+const makeSyntheticCancelledLogEntry = (taskId: string, message: string): LogEntry => ({
+  id: SYNTHETIC_CANCELLED_LOG_ID,
+  task_id: taskId,
+  level: 'WARNING',
+  message,
+  sequence: -3,
+  created_at: new Date().toISOString(),
+})
 export default function TaskDetailPage() {
   const { t } = useTranslation()
   const { task_id } = useParams<{ task_id: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const { isAdmin } = useAuth()
+  const { isAdmin, canUseGpu } = useAuth()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const fromDeepResearch = (location.state as { fromDeepResearch?: boolean } | null)?.fromDeepResearch === true
   const deepResearchConversationId = (location.state as { deepResearchConversationId?: string } | null)?.deepResearchConversationId
@@ -33,7 +85,7 @@ export default function TaskDetailPage() {
   const [loading, setLoading] = useState(true)
   const [waitingForCreation, setWaitingForCreation] = useState(false)
   const [creationSlow, setCreationSlow] = useState(false)
-  const [creationIssue, setCreationIssue] = useState<{ kind: 'failed' | 'deleted'; message: string } | null>(null)
+  const [creationIssue, setCreationIssue] = useState<{ kind: 'failed' | 'cancelled'; message: string } | null>(null)
   const [rerunning, setRerunning] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
@@ -48,8 +100,8 @@ export default function TaskDetailPage() {
     if (tracked?.state === 'failed') {
       return { kind: 'failed' as const, message: tracked.error || t('taskDetail.creatingTaskFailedDescription') }
     }
-    if (tracked?.state === 'created') {
-      return { kind: 'deleted' as const, message: t('taskDetail.taskUnavailableAfterCreationDescription') }
+    if (tracked?.state === 'cancelled') {
+      return { kind: 'cancelled' as const, message: tracked.error || t('backgroundTask.serverStatus.training.cancelled') }
     }
     return null
   }
@@ -63,6 +115,40 @@ export default function TaskDetailPage() {
     setCreationIssue(null)
     loadTaskDetail()
   }, [task_id])
+
+  useEffect(() => {
+    if (!task_id) return
+
+    setLogs(prev => {
+      let next = prev
+
+      if (waitingForCreation) {
+        if (!next.some(log => log.id === CREATING_LOG_ID)) {
+          next = [makeCreatingLogEntry(task_id), ...next]
+        }
+      }
+
+      if (creationIssue?.kind === 'failed') {
+        const failureMessage = creationIssue.message || 'Task creation failed.'
+        if (!next.some(log => log.id === SYNTHETIC_FAILURE_LOG_ID)) {
+          next = [...next, makeSyntheticFailureLogEntry(task_id, failureMessage)]
+        }
+      } else {
+        next = next.filter(log => log.id !== SYNTHETIC_FAILURE_LOG_ID)
+      }
+
+      if (creationIssue?.kind === 'cancelled') {
+        const cancelledMessage = creationIssue.message || 'Task creation was cancelled.'
+        if (!next.some(log => log.id === SYNTHETIC_CANCELLED_LOG_ID)) {
+          next = [...next, makeSyntheticCancelledLogEntry(task_id, cancelledMessage)]
+        }
+      } else {
+        next = next.filter(log => log.id !== SYNTHETIC_CANCELLED_LOG_ID)
+      }
+
+      return next
+    })
+  }, [waitingForCreation, creationIssue, task_id])
 
   // Setup SSE for real-time log streaming and task status updates
   useEffect(() => {
@@ -182,6 +268,11 @@ export default function TaskDetailPage() {
         }
       } else {
         console.error('Failed to load task detail:', error)
+        const tracked = getTrainingSubmissionRecord(task_id)
+        if (tracked?.state === 'pending') {
+          setCreationIssue(null)
+          setWaitingForCreation(true)
+        }
       }
     } finally {
       setLoading(false)
@@ -220,6 +311,10 @@ export default function TaskDetailPage() {
         }
 
         console.error('Failed while waiting for task creation:', error)
+        const tracked = getTrainingSubmissionRecord(task_id)
+        if (tracked?.state === 'pending') {
+          return
+        }
       }
     }, 2000)
 
@@ -245,7 +340,7 @@ export default function TaskDetailPage() {
 
     // Determine icon based on status
     const getIcon = () => {
-      if (status === 'pending' || status === 'queued') return <Clock className="w-4 h-4 mr-1.5" />
+      if (status === 'creating' || status === 'pending' || status === 'queued') return <Clock className="w-4 h-4 mr-1.5" />
       if (isActiveStatus(status)) return <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
       if (status === 'completed') return <CheckCircle2 className="w-4 h-4 mr-1.5" />
       return <XCircle className="w-4 h-4 mr-1.5" />
@@ -306,7 +401,7 @@ export default function TaskDetailPage() {
           // Note: tile_size and stride are now auto-determined by PrePATH-style tiling
           feature_extractor: task.preprocessing_config.feature_extractor ?? 'resnet50',
           feature_batch_size: task.preprocessing_config.feature_batch_size ?? 256,
-          use_gpu: task.preprocessing_config.use_gpu ?? true,
+          use_gpu: (task.preprocessing_config.use_gpu ?? false) && canUseGpu,
           // Preserve tissue segmentation parameters
           level: task.preprocessing_config.level,
           sthresh: task.preprocessing_config.sthresh,
@@ -407,31 +502,23 @@ export default function TaskDetailPage() {
     )
   }
 
-  // Task is being created on backend (fire-and-forget submission) — show waiting state
-  if (waitingForCreation && !task) {
-    return (
-      <div className="flex flex-col items-center justify-center h-64 space-y-4">
-        <Loader2 className="w-12 h-12 text-primary-600 animate-spin" />
-        <div className="text-xl font-semibold text-gray-900">
-          {creationSlow ? t('taskDetail.creatingTaskSlow') : t('taskDetail.creatingTask', 'Creating Task...')}
-        </div>
-        <p className="text-gray-500 text-center max-w-xl">
-          {creationSlow
-            ? t('taskDetail.creatingTaskSlowDescription')
-            : t('taskDetail.creatingTaskDescription', 'Your task is being set up. This may take a moment for large datasets.')}
-        </p>
-      </div>
-    )
-  }
+  const trackedSubmission = task_id ? getTrainingSubmissionRecord(task_id) : null
+  const syntheticStatus = creationIssue?.kind === 'failed'
+    ? 'failed'
+    : creationIssue?.kind === 'cancelled'
+      ? 'cancelled'
+      : waitingForCreation
+        ? 'creating'
+        : null
+  const displayTask = (!task && task_id && syntheticStatus)
+    ? makeSyntheticTask(task_id, {
+      taskName: trackedSubmission?.taskName,
+      status: syntheticStatus,
+      errorMessage: creationIssue?.message,
+    })
+    : task
 
-  if (!task) {
-    const title = creationIssue?.kind === 'failed'
-      ? t('taskDetail.creatingTaskFailed')
-      : creationIssue?.kind === 'deleted'
-        ? t('taskDetail.taskUnavailableAfterCreation')
-        : t('taskDetail.taskNotFound')
-    const description = creationIssue?.message || t('taskDetail.taskNotFoundDescription')
-
+  if (!displayTask) {
     return (
       <div className="flex flex-col items-center justify-center h-64 space-y-4">
         <AlertCircle className="w-12 h-12 text-red-500" />
@@ -440,17 +527,29 @@ export default function TaskDetailPage() {
         <Button onClick={handleBackNavigation} variant="outline">
           {backLabel}
         </Button>
+        {task_id && (
+          <Button
+            variant="outline"
+            className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+            onClick={() => {
+              clearTrainingSubmissionRecord(task_id)
+              navigate('/task-list')
+            }}
+          >
+            {t('taskList.deleteTask')}
+          </Button>
+        )}
       </div>
     )
   }
 
-  const isPatchLevel = task.data_type === 'patch'
-  const isExternalValidation = task.task_type === 'external_validation'
+  const isPatchLevel = displayTask.data_type === 'patch'
+  const isExternalValidation = displayTask.task_type === 'external_validation'
 
   // Display task progress directly in the standard 0-100 range.
-  const displayProgress = task.status === 'completed'
+  const displayProgress = displayTask.status === 'completed'
     ? 100
-    : Math.max(0, Math.min(task.progress, 100))
+    : Math.max(0, Math.min(displayTask.progress, 100))
 
   return (
     <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6 pb-12">
@@ -468,12 +567,16 @@ export default function TaskDetailPage() {
         </Button>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 min-w-0">
-            <h1 className="text-xl sm:text-3xl font-bold text-gray-900 truncate mb-1" title={task.task_name}>{task.task_name}</h1>
-            <p className="text-xs sm:text-sm text-gray-500 line-clamp-2">{task.task_description}</p>
+            <h1 className="text-xl sm:text-3xl font-bold text-gray-900 truncate mb-1" title={displayTask.task_name}>{displayTask.task_name}</h1>
+            <p className="text-xs sm:text-sm text-gray-500 line-clamp-2">
+              {waitingForCreation
+                ? (creationSlow ? t('taskDetail.creatingTaskSlowDescription') : t('taskDetail.creatingTaskDescription'))
+                : displayTask.task_description}
+            </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
-            {getStatusBadge(task.status, task.task_type)}
-            {task.status === 'failed' && (
+            {getStatusBadge(displayTask.status, displayTask.task_type)}
+            {!waitingForCreation && task?.status === 'failed' && (
               <Button
                 variant="outline"
                 onClick={handleRerun}
@@ -493,10 +596,21 @@ export default function TaskDetailPage() {
               const cancellableStatuses = 
                 taskType === 'validation' ? VALIDATION_CANCELLABLE_STATUSES :
                 ANALYSIS_CANCELLABLE_STATUSES
-              return cancellableStatuses.includes(task.status as CancellableStatus) && (
+              const canCancelCreating = waitingForCreation
+              const canCancelServerTask = cancellableStatuses.some(status => status === displayTask.status)
+              return (canCancelCreating || canCancelServerTask) && (
                 <Button
                 variant="outline"
-                onClick={() => setShowCancelConfirm(true)}
+                onClick={() => {
+                  if (waitingForCreation) {
+                    if (task_id) {
+                      markTrainingSubmissionCancelled(task_id)
+                    }
+                    navigate(fromAIChat ? '/dashboard' : '/task-list')
+                    return
+                  }
+                  setShowCancelConfirm(true)
+                }}
                 disabled={cancelling}
                 className="flex items-center gap-2 h-9 px-4 rounded-full border-red-200 text-red-600 font-bold hover:bg-red-50 hover:text-red-700 shadow-sm transition-all"
               >
@@ -525,19 +639,19 @@ export default function TaskDetailPage() {
 
       {/* Task Info Grid */}
       <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
-        <div className={`grid grid-cols-2 ${isAdmin && task.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
+        <div className={`grid grid-cols-2 ${isAdmin && displayTask.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
           <div className="min-w-0">
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.taskId')}</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
-              <div className="font-mono text-[11px] sm:text-sm font-bold text-gray-700 truncate">{task.task_id}</div>
+              <div className="font-mono text-[11px] sm:text-sm font-bold text-gray-700 truncate">{displayTask.task_id}</div>
               <button
                 onClick={() => {
                   if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(task.task_id)
+                      navigator.clipboard.writeText(displayTask.task_id)
                   } else {
                     // Fallback for Electron or non-secure contexts
                     const textArea = document.createElement('textarea')
-                    textArea.value = task.task_id
+                    textArea.value = displayTask.task_id
                     textArea.style.position = 'fixed'
                     textArea.style.opacity = '0'
                     document.body.appendChild(textArea)
@@ -564,24 +678,24 @@ export default function TaskDetailPage() {
               {t('taskDetail.data')}
             </div>
             <div className="flex items-end gap-1.5">
-              <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{task.wsi_count}</span>
-              <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{task.data_type === 'patch' ? t('taskDetail.patches') : t('taskDetail.slides')}</span>
+                  <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{displayTask.wsi_count}</span>
+                  <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{displayTask.data_type === 'patch' ? t('taskDetail.patches') : t('taskDetail.slides')}</span>
             </div>
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.created')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.created_at)}</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(displayTask.created_at)}</div>
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.updated')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(task.updated_at)}</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(displayTask.updated_at)}</div>
           </div>
-          {isAdmin && task.username && (
+          {isAdmin && displayTask.username && (
             <div>
               <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.creator')}</div>
               <div className="flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-gray-400" />
-                <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={task.username}>{task.username}</div>
+                <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={displayTask.username}>{displayTask.username}</div>
               </div>
             </div>
           )}
@@ -590,15 +704,15 @@ export default function TaskDetailPage() {
 
       {/* Progress Section */}
       <ProgressSection
-        task={task}
+        task={displayTask}
         displayProgress={displayProgress}
         isPatchLevel={isPatchLevel}
         isExternalValidation={isExternalValidation}
       />
 
       {/* Error Message Display */}
-      {task.status === 'failed' && task.error_message && (() => {
-        const errorInfo = parseTaskError(task.error_message)
+      {displayTask.status === 'failed' && displayTask.error_message && (() => {
+        const errorInfo = parseTaskError(displayTask.error_message)
         return (
           <Card className="p-6 border-red-200 bg-red-50">
             <div className="flex items-start gap-3">
@@ -625,14 +739,50 @@ export default function TaskDetailPage() {
                     {t('taskDetail.showTechnicalDetails')}
                   </summary>
                   <pre className="mt-2 p-3 bg-red-100 rounded text-xs text-red-800 overflow-x-auto whitespace-pre-wrap">
-                    {task.error_message}
+                    {displayTask.error_message}
                   </pre>
                 </details>
+                {!task && task_id && (
+                  <div className="mt-4">
+                    <Button
+                      variant="outline"
+                      className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                      onClick={() => {
+                        clearTrainingSubmissionRecord(task_id)
+                        navigate('/task-list')
+                      }}
+                    >
+                      {t('taskList.deleteTask')}
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           </Card>
         )
       })()}
+
+      {displayTask.status === 'cancelled' && !task && task_id && (
+        <Card className="p-6 border-gray-200 bg-gray-50">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="w-6 h-6 text-gray-500 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <h3 className="text-lg font-semibold text-gray-800 mb-2">{t('backgroundTask.serverStatus.training.cancelled')}</h3>
+              <p className="text-gray-700 mb-3">{creationIssue?.message || t('backgroundTask.serverStatus.training.cancelled')}</p>
+              <Button
+                variant="outline"
+                className="text-red-600 border-red-200 hover:bg-red-50 hover:text-red-700"
+                onClick={() => {
+                  clearTrainingSubmissionRecord(task_id)
+                  navigate('/task-list')
+                }}
+              >
+                {t('taskList.deleteTask')}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Live Logs */}
       <LogViewer
@@ -642,7 +792,7 @@ export default function TaskDetailPage() {
       />
 
       {/* Configuration */}
-      <ConfigurationPanel task={task} />
+      {task && !waitingForCreation && <ConfigurationPanel task={task} />}
 
       {/* Cancel Confirmation Modal */}
       {showCancelConfirm && (

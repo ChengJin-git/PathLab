@@ -22,7 +22,6 @@ export interface FileMetadata {
   case_id: string
   age: string
   gender: string
-  source: string
   // Survival analysis fields
   event_time: string
   event_status: string
@@ -33,7 +32,6 @@ export const defaultMetadata: FileMetadata = {
   case_id: '',
   age: '',
   gender: '',
-  source: '',
   event_time: '',
   event_status: ''
 }

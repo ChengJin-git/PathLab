@@ -6,7 +6,7 @@ from functools import partial
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Dict, Set, Tuple
+from typing import List, Optional, Dict, Set, Tuple, Any
 from sqlalchemy import select, update, delete, func, desc, asc, insert, or_, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -46,7 +46,7 @@ def _build_segmentation_wsi_lookups(wsis: List[WSISlide]) -> Tuple[Dict[str, str
 
 
 def _extract_segmentation_multilabels_from_payloads(
-    payloads: List[dict],
+    payloads: List[dict[str, Any]],
     wsis: List[WSISlide],
 ) -> Tuple[List[str], Dict[str, Set[str]]]:
     merged_coco = merge_coco_datasets(payloads)
@@ -113,10 +113,10 @@ class TrainingTaskRepository:
     @staticmethod
     async def create(
         db: AsyncSession,
-        task_data: Dict,
+        task_data: Dict[str, Any],
         wsi_ids: List[str],
-        split_config: Optional[Dict] = None,
-        prefetched_wsis: Optional[List] = None
+        split_config: Optional[Dict[str, Any]] = None,
+        prefetched_wsis: Optional[List[Any]] = None
     ) -> TrainingTask:
         """
         Create a new training task with associated WSI slides.
@@ -642,7 +642,7 @@ class TrainingTaskRepository:
         return {task_id: counts.get(task_id, 0) for task_id in task_ids}
 
     @staticmethod
-    async def get_wsi_with_labels(db: AsyncSession, task_id: str) -> List[Dict]:
+    async def get_wsi_with_labels(db: AsyncSession, task_id: str) -> List[Dict[str, Any]]:
         """
         Get all WSI slides associated with a training task, including their labels and splits.
 
@@ -805,7 +805,7 @@ class TrainingTaskRepository:
     async def update_preprocessing_config(
         db: AsyncSession,
         task_id: str,
-        preprocessing_config: Dict,
+        preprocessing_config: Dict[str, Any],
     ) -> Optional[TrainingTask]:
         """Update a training task's preprocessing_config JSON blob."""
         await db.execute(
@@ -980,5 +980,4 @@ class TrainingTaskRepository:
 
         await db.flush()
         return result.rowcount
-
 

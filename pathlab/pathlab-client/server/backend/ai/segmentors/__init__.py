@@ -1,3 +1,4 @@
+from typing import Any
 import segmentation_models_pytorch as smp
 import torch
 from backend.ai.segmentors.loss import get_loss, CombinedLoss
@@ -94,7 +95,7 @@ class Segmentor:
         std = std.squeeze().tolist()
         return mean, std
 
-    def build_losses(self, loss_names: list = None, loss_weights: list = None, **kwargs):
+    def build_losses(self, loss_names: list[Any] = None, loss_weights: list[Any] = None, **kwargs):
 
         assert len(loss_names) == len(loss_weights) or loss_weights is None, "Length of loss_names and loss_weights must be the same."
         # deafult to DiceLoss if no losses provided

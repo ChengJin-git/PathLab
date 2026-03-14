@@ -6,7 +6,7 @@ Supports annotations from viewer drawing, file import, upload, and ROI extractio
 """
 
 import logging
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Any
 from sqlalchemy import select, delete, func, or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,7 @@ class SegmentationAnnotationRepository:
         db: AsyncSession,
         annotation_id: str,
         user_id: str,
-        annotations: dict,
+        annotations: dict[str, Any],
         source_dataset_id: Optional[str] = None,
         status: str = "draft",
         source: str = "viewer",
@@ -223,7 +223,7 @@ class SegmentationAnnotationRepository:
         db: AsyncSession,
         dataset_id: str,
         user_id: str,
-    ) -> Optional[dict]:
+    ) -> Optional[dict[str, Any]]:
         """Get lightweight metadata for the newest draft annotation of a dataset."""
         result = await db.execute(
             select(
@@ -291,7 +291,7 @@ class SegmentationAnnotationRepository:
     async def get_finalized_dataset_cache_key(
         db: AsyncSession,
         dataset_id: str,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Return a lightweight cache key for finalized annotations of a dataset."""
         result = await db.execute(
             select(

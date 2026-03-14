@@ -119,10 +119,10 @@ def select_attention_file(
 
 
 def handle_multi_class_attention(
-    attention: np.ndarray,
+    attention: np.ndarray[Any, Any],
     result_meta: Dict[str, Any],
     class_idx: Optional[int] = None
-) -> Tuple[np.ndarray, Optional[int]]:
+) -> Tuple[np.ndarray[Any, Any], Optional[int]]:
     """
     Handle multi-class attention arrays (e.g., from CLAM_MB).
     
@@ -158,7 +158,7 @@ def handle_multi_class_attention(
     return attention[selected_class_idx], selected_class_idx
 
 
-def normalize_attention(attention: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def normalize_attention(attention: np.ndarray[Any, Any]) -> Tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]:
     """
     Normalize attention weights for visualization.
 

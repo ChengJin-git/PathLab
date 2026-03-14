@@ -11,7 +11,7 @@ original input resolution ``(B, classes, H, W)``.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Tuple, Any
 
 import torch
 import torch.nn as nn
@@ -100,7 +100,7 @@ class FMSegmentationModel(nn.Module):
         self.extractor.eval()
         return self
 
-    def decoder_state_dict(self) -> dict:
+    def decoder_state_dict(self) -> dict[str, Any]:
         """Return only the trainable decoder + head weights (excludes frozen backbone).
 
         Use this when saving checkpoints to avoid storing the large FM backbone
@@ -109,7 +109,7 @@ class FMSegmentationModel(nn.Module):
         full = self.state_dict()
         return {k: v for k, v in full.items() if not k.startswith("extractor.")}
 
-    def load_decoder_state_dict(self, state_dict: dict) -> None:
+    def load_decoder_state_dict(self, state_dict: dict[str, Any]) -> None:
         """Load decoder + head weights saved by :meth:`decoder_state_dict`.
 
         The frozen backbone weights are **not** expected in *state_dict*;
@@ -151,4 +151,3 @@ class FMSegmentationModel(nn.Module):
 
         out = self.head(out)  # (B, classes, H, W)
         return out
-

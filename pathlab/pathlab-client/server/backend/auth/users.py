@@ -39,6 +39,7 @@ if _jwt_secret_env:
     JWT_SECRET = _jwt_secret_env
 else:
     import secrets
+
     JWT_SECRET = secrets.token_urlsafe(64)
     logger.warning(
         "JWT_SECRET not set in environment — generated a random secret. "
@@ -49,47 +50,51 @@ else:
 
 async def get_user_db(session: AsyncSession = Depends(get_db)):
     """Dependency to get user database adapter."""
-    yield SQLAlchemyUserDatabase(session, User)
+    yield SQLAlchemyUserDatabase[User, uuid.UUID](session, User)
 
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     """
     Custom User Manager with PathLab-specific logic.
-    
+
     Handles:
     - User registration hooks
     - Password reset tokens
     - Email verification tokens
     """
-    
+
     reset_password_token_secret = JWT_SECRET
     verification_token_secret = JWT_SECRET
-    
+
     async def on_after_register(self, user: User, request: Optional[Request] = None):
-        logger.info(f"User {user.email} (id={user.id}) has registered with role={user.role}")
+        logger.info(
+            f"User {user.email} (id={user.id}) has registered with role={user.role}"
+        )
 
         # Auto-verify user (no email verification required)
         # This is done in the database directly since we don't have session here
         user.is_verified = True
         await self.user_db.update(user, {"is_verified": True})
-    
+
     async def on_after_forgot_password(
         self, user: User, token: str, request: Optional[Request] = None
     ):
-        logger.info(f"User {user.email} requested password reset. Token: {token[:8]}...")
-    
+        logger.info(
+            f"User {user.email} requested password reset. Token: {token[:8]}..."
+        )
+
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
     ):
         logger.info(f"User {user.email} requested verification. Token: {token[:8]}...")
-    
+
     async def on_after_login(
-        self, user: User, request: Optional[Request] = None, response = None
+        self, user: User, request: Optional[Request] = None, response=None
     ):
         logger.info(f"User {user.email} (role={user.role}) logged in")
 
 
-async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db)):
+async def get_user_manager(user_db: SQLAlchemyUserDatabase[User, uuid.UUID] = Depends(get_user_db)):
     """Dependency to get user manager."""
     yield UserManager(user_db)
 
@@ -99,7 +104,7 @@ async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db
 bearer_transport = BearerTransport(tokenUrl="auth/secure-login")
 
 
-class SingleSessionJWTStrategy(JWTStrategy):
+class SingleSessionJWTStrategy(JWTStrategy[User, uuid.UUID]):
     """
     Custom JWT strategy that enforces single-device login.
 
@@ -109,7 +114,7 @@ class SingleSessionJWTStrategy(JWTStrategy):
     logging out the old device.
     """
 
-    async def write_token(self, user: models.UP) -> str:
+    async def write_token(self, user: User) -> str:
         """Generate JWT with a fresh session_nonce for single-session enforcement."""
         new_nonce = str(uuid.uuid4())
         async with db_session_factory() as session:
@@ -118,7 +123,9 @@ class SingleSessionJWTStrategy(JWTStrategy):
             )
             await session.commit()
 
-        logger.info(f"[Auth] New session nonce for user {user.id} (single-device enforcement)")
+        logger.info(
+            f"[Auth] New session nonce for user {user.id} (single-device enforcement)"
+        )
 
         data = {
             "sub": str(user.id),
@@ -130,8 +137,8 @@ class SingleSessionJWTStrategy(JWTStrategy):
         )
 
     async def read_token(
-        self, token: str | None, user_manager: BaseUserManagerType[models.UP, models.ID]
-    ) -> models.UP | None:
+        self, token: str | None, user_manager: BaseUserManagerType[User, uuid.UUID]
+    ) -> User | None:
         """Decode JWT and verify session_nonce matches DB (single-session check)."""
         if token is None:
             return None
@@ -160,9 +167,11 @@ class SingleSessionJWTStrategy(JWTStrategy):
             return None
 
         # Single-session enforcement: nonce must match DB
-        db_nonce = getattr(user, 'session_nonce', None)
+        db_nonce = getattr(user, "session_nonce", None)
         if jwt_nonce != db_nonce:
-            logger.info(f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch")
+            logger.info(
+                f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch"
+            )
             return None
 
         return user
@@ -170,7 +179,9 @@ class SingleSessionJWTStrategy(JWTStrategy):
 
 def get_jwt_strategy() -> SingleSessionJWTStrategy:
     """Get JWT strategy with single-device login enforcement."""
-    return SingleSessionJWTStrategy(secret=JWT_SECRET, lifetime_seconds=Config.JWT_LIFETIME_SECONDS)
+    return SingleSessionJWTStrategy(
+        secret=JWT_SECRET, lifetime_seconds=Config.JWT_LIFETIME_SECONDS
+    )
 
 
 # Authentication backend combining transport and strategy
@@ -193,4 +204,3 @@ current_active_user = fastapi_users.current_user(active=True)
 current_superuser = fastapi_users.current_user(active=True, superuser=True)
 # Optional user for routes that work with or without auth
 optional_current_user = fastapi_users.current_user(active=True, optional=True)
-
