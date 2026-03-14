@@ -2682,7 +2682,7 @@ export default function AIChatPage() {
               return (
               <div
                 key={message.id}
-                className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
+                className={`group flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'} items-start`}
               >
                 {/* Avatar */}
                 <div className="flex-shrink-0 mt-1">
@@ -2874,7 +2874,7 @@ export default function AIChatPage() {
 
                   {/* Timestamp & Actions for User Messages */}
                   {message.role === 'user' && (
-                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+                    <div className="flex items-center gap-2 mt-1.5 mr-1 text-gray-400 justify-end">
                       {/* Timestamp */}
                       <span className="text-xs text-gray-400" title={message.timestamp.toLocaleString()}>
                         {formatTimestamp(message.timestamp)}
@@ -3238,4 +3238,3 @@ export default function AIChatPage() {
     </div>
   )
 }
-
