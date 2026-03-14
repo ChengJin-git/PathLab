@@ -5382,10 +5382,6 @@ async def _run_external_validation(
 
                     # --- Build prediction data ---
                     gt_data: Dict[str, Any] = {}
-                    hazards = np.array([], dtype=np.float32)
-                    risk_score = 0.0
-                    surv_probs: List[float] = []
-                    probs = np.array([], dtype=np.float32)
                     if is_survival:
                         gt_data = survival_data.get(item_id, {})
                         _chunk_risk_scores.append(
@@ -5418,8 +5414,6 @@ async def _run_external_validation(
                             )
 
                     # --- Save per-WSI results ---
-                    slide_attentions: Dict[str, Any] = {}
-                    slide_raw_attentions: Dict[str, Any] = {}
                     for wsi_id in item_wsi_ids:
                         wsi_result_dir = ai_results_root / wsi_id
                         wsi_result_dir.mkdir(parents=True, exist_ok=True)

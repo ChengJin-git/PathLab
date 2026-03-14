@@ -5,7 +5,7 @@ import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCirc
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery, startExternalValidation } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
@@ -373,6 +373,38 @@ export default function TaskDetailPage() {
 
   const handleRerun = async () => {
     setRerunError(null)
+
+    if (task?.task_type === 'external_validation') {
+      const modelId = task.model_config?.model_id
+      const datasetId = task.model_config?.dataset_id
+      if (!modelId || !datasetId) {
+        setRerunError(t('taskDetail.rerunErrorMissingConfig'))
+        return
+      }
+      setRerunning(true)
+      try {
+        const result = await startExternalValidation(
+          modelId,
+          datasetId,
+          task.model_config?.analysis_metrics,
+          task.model_config?.analysis_charts,
+          (task.model_config?.bootstrap_ci_metrics?.length ?? 0) > 0
+        )
+        navigate(`/task/${result.task_id}`)
+      } catch (error: any) {
+        const errMsg = error?.message || error?.detail || String(error)
+        const parsed = parseTaskError(errMsg)
+        if (parsed.isStorageError) {
+          setRerunError(parsed.userFriendlyMessage + ' ' + (parsed.suggestion || ''))
+        } else {
+          setRerunError(t('taskDetail.rerunErrorGeneric'))
+        }
+      } finally {
+        setRerunning(false)
+      }
+      return
+    }
+
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
       setRerunError(t('taskDetail.rerunErrorMissingWsi'))
       return
