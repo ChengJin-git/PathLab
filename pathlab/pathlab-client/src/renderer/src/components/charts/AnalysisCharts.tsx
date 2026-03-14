@@ -103,8 +103,11 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
 
     // Adaptive font / label visibility
     const axisLabelFontSize = compact ? 10 : n > 20 ? 9 : n > 15 ? 10 : n > 10 ? 11 : 12
-    const cellLabelFontSize = compact ? 10 : n > 20 ? 0 : n > 15 ? 9 : n > 10 ? 10 : 14
-    const showCellLabel = !compact && n <= 20
+    // Cell labels: always show when not compact; shrink font for large matrices
+    // col-span-2 layout gives extra width for n>10, so even n=25 can fit 8px labels
+    const cellLabelFontSize = compact ? 10 : n > 25 ? 7 : n > 20 ? 8 : n > 15 ? 9 : n > 10 ? 10 : 14
+    const showCellLabel = !compact
+    const cellLabelBold = n <= 15
 
     // X-axis rotation: 45° when there are many classes so labels don't overlap
     const xRotate = compact ? 30 : isLarge ? 45 : 0
@@ -194,7 +197,7 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
         label: {
           show: showCellLabel,
           fontSize: cellLabelFontSize,
-          fontWeight: 'bold',
+          fontWeight: cellLabelBold ? 'bold' : 'normal',
           formatter: showPercent ? (params: any) => `${params.value[2]}%` : undefined
         },
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
