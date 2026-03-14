@@ -45,7 +45,6 @@ import { removeImageRecommendationBlock } from '../components/chat/ImageRecommen
 import { removeCSVActionBlock } from '../components/chat/CSVActionCard'
 import { removeNavigateBlock } from '../components/chat/NavigationCard'
 import { CSVPreviewCard, parseCSVPreview, removeCSVPreviewBlock } from '../components/chat/CSVPreviewCard'
-import { parseAnalysisConfig } from '../components/chat/AnalysisConfigCard'
 import { removeMetricConfigBlock } from '../components/chat/MetricCard'
 import { removeChartConfigBlock } from '../components/chat/ChartCard'
 import { removeQuickAnalysisConfigBlock, CachedAnalysisData } from '../components/chat/QuickAnalysisViewer'
@@ -2339,34 +2338,9 @@ export default function AIChatPage() {
       await persistMessageUpdate(messageId, updatedContent, 'aiChat.failedToSaveAnalysisStatus')
     }
 
-    // For external validation, build QUICK_ANALYSIS_CONFIG block for inline results display
-    let quickAnalysisBlock = ''
-    if (isExternalValidation && currentMessage) {
-      const origAnalysisConfig = parseAnalysisConfig(currentMessage.content)
-      if (origAnalysisConfig) {
-        const quickConfig: Record<string, unknown> = {
-          task_id: taskId,
-          task_name: origAnalysisConfig.target_name || origAnalysisConfig.task_name || taskId,
-          metrics: origAnalysisConfig.metrics || [],
-          charts: origAnalysisConfig.charts || [],
-          is_external_validation: true
-        }
-        if (origAnalysisConfig.compute_bootstrap_ci) {
-          quickConfig.compute_bootstrap_ci = true
-        }
-        if (origAnalysisConfig.bootstrap_ci_metrics) {
-          quickConfig.bootstrap_ci_metrics = origAnalysisConfig.bootstrap_ci_metrics
-        }
-        quickAnalysisBlock = `\n\n[QUICK_ANALYSIS_CONFIG]\n${JSON.stringify(quickConfig, null, 2)}\n[/QUICK_ANALYSIS_CONFIG]`
-      }
-    }
-
-    // Add success message with navigation card to Results Viewer
-    // Different message for external validation vs internal analysis
     const successContent = isExternalValidation
-      ? `${t('aiChat.taskSuccess.externalValidationStarted', { taskId })}${quickAnalysisBlock}\n\n[NAVIGATE]\n${JSON.stringify({
-          target: '/results',
-          state: { selectedTaskId: taskId, pageMode: 'external-validation' },
+      ? `${t('aiChat.taskSuccess.externalValidationStarted', { taskId })}\n\n[NAVIGATE]\n${JSON.stringify({
+          target: `/task/${taskId}`,
           buttonTextKey: 'aiChat.taskSuccess.viewResults',
           descriptionKey: 'aiChat.taskSuccess.validationResultsDesc'
         }, null, 2)}\n[/NAVIGATE]`
