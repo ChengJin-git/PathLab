@@ -10,6 +10,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -56,6 +57,7 @@ export default function TaskListPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageInput, setPageInput] = useState('1')
   const [itemsPerPage, setItemsPerPage] = useState(5)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
@@ -405,6 +407,20 @@ export default function TaskListPage() {
   useEffect(() => {
     setCurrentPage(prev => Math.min(prev, totalPages))
   }, [totalPages])
+
+  useEffect(() => {
+    setPageInput(String(currentPage))
+  }, [currentPage])
+
+  const commitPageInput = (rawValue: string) => {
+    const trimmed = rawValue.trim()
+    if (!trimmed) { setPageInput(String(currentPage)); return }
+    const parsed = Number.parseInt(trimmed, 10)
+    if (Number.isNaN(parsed)) { setPageInput(String(currentPage)); return }
+    const nextPage = Math.min(Math.max(parsed, 1), totalPages)
+    setCurrentPage(nextPage)
+    setPageInput(String(nextPage))
+  }
 
   return (
     <div className="w-full">
@@ -861,32 +877,55 @@ export default function TaskListPage() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2 sm:gap-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1}
-                  className="h-8 px-2 sm:px-3"
-                >
-                  <ChevronLeft className="w-4 h-4 sm:mr-1" />
-                  <span className="hidden sm:inline">{t('common.previous')}</span>
-                </Button>
+              <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">
+                      {t('taskList.pagination.goToPage')}
+                    </span>
+                    <Input
+                      value={pageInput}
+                      onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
+                      onBlur={() => commitPageInput(pageInput)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitPageInput(pageInput) }
+                        if (e.key === 'Escape') setPageInput(String(currentPage))
+                      }}
+                      inputMode="numeric"
+                      aria-label={t('taskList.pagination.goToPage')}
+                      className="h-8 w-16 px-2 text-center text-xs sm:text-sm"
+                    />
+                    <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">/ {totalPages}</span>
+                  </div>
+                )}
 
-                <span className="text-xs sm:text-sm font-semibold text-gray-600 min-w-[88px] text-center">
-                  {t('taskList.pagination.pageInfo', { current: currentPage, total: totalPages })}
-                </span>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="h-8 px-2 sm:px-3"
+                  >
+                    <ChevronLeft className="w-4 h-4 sm:mr-1" />
+                    <span className="hidden sm:inline">{t('common.previous')}</span>
+                  </Button>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                  className="h-8 px-2 sm:px-3"
-                >
-                  <span className="hidden sm:inline">{t('common.next')}</span>
-                  <ChevronRight className="w-4 h-4 sm:ml-1" />
-                </Button>
+                  <span className="text-xs sm:text-sm font-semibold text-gray-600 min-w-[88px] text-center">
+                    {t('taskList.pagination.pageInfo', { current: currentPage, total: totalPages })}
+                  </span>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="h-8 px-2 sm:px-3"
+                  >
+                    <span className="hidden sm:inline">{t('common.next')}</span>
+                    <ChevronRight className="w-4 h-4 sm:ml-1" />
+                  </Button>
+                </div>
               </div>
             </div>
           </Card>

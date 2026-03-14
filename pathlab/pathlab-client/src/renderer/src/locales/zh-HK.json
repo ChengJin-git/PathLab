@@ -1215,6 +1215,7 @@
     },
     "pagination": {
       "itemsPerPage": "每頁",
+      "goToPage": "跳轉到頁碼",
       "summary": "顯示第 {{start}} - {{end}} 項，共 {{total}} 個任務",
       "pageInfo": "第 {{current}} / {{total}} 頁"
     },

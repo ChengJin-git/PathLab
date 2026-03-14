@@ -1215,6 +1215,7 @@
     },
     "pagination": {
       "itemsPerPage": "Per page",
+      "goToPage": "Go to page",
       "summary": "Showing {{start}} to {{end}} of {{total}} tasks",
       "pageInfo": "Page {{current}} / {{total}}"
     },
