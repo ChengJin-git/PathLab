@@ -2987,6 +2987,9 @@ class ExternalValidationRequest(BaseModel):
 
     model_id: str  # TrainedModel ID from the models table
     dataset_id: str  # Dataset whose WSIs will be used for validation
+    rerun_from_task_id: Optional[str] = (
+        None  # Admin rerun only: preserve owner from source task
+    )
     # Analysis options
     metrics: Optional[List[str]] = (
         None  # Metrics to compute (default: accuracy, precision, recall, f1, auc, weighted_kappa)
@@ -3017,6 +3020,18 @@ async def start_external_validation(
     """
     import uuid as uuid_module
     from ..task_queue import get_task_queue, TaskType
+
+    effective_task_owner_user_id = str(user.id)
+
+    if user.is_admin() and req.rerun_from_task_id:
+        source_task = await TrainingTaskRepository.get_by_id(db, req.rerun_from_task_id)
+        if not source_task:
+            raise HTTPException(
+                status_code=404,
+                detail="Source training task not found for rerun",
+            )
+        if source_task.user_id:
+            effective_task_owner_user_id = source_task.user_id
 
     # Validate model exists
     trained_model = await TrainedModelRepository.get_by_id(db, req.model_id)
@@ -3344,7 +3359,7 @@ async def start_external_validation(
         task_id=validation_id,
         task_name=f"{model_task.task_name} → {target_dataset.name or req.dataset_id}",
         group_id=validation_data_group.group_id,
-        user_id=str(user.id),
+        user_id=effective_task_owner_user_id,
         task_description=f"Validate model '{trained_model.model_name}' on dataset '{target_dataset.name}'",
         status=TaskStatus.PENDING,
         progress=0,

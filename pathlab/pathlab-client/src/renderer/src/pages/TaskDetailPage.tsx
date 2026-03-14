@@ -388,7 +388,8 @@ export default function TaskDetailPage() {
           datasetId,
           task.model_config?.analysis_metrics,
           task.model_config?.analysis_charts,
-          (task.model_config?.bootstrap_ci_metrics?.length ?? 0) > 0
+          (task.model_config?.bootstrap_ci_metrics?.length ?? 0) > 0,
+          isAdmin ? task.task_id : undefined
         )
         navigate(`/task/${result.task_id}`)
       } catch (error: any) {
