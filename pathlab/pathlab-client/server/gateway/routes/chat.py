@@ -4010,7 +4010,17 @@ async def chat_with_ai(
         training_tasks_stats = {}
         inference_tasks = []
         inference_tasks_stats = {}
-        _cached_model_summaries = _ctx_cached.get("model_summaries", [])
+        _cached_model_summaries_raw = _ctx_cached.get("model_summaries", [])
+        _cached_model_summaries = []
+        if isinstance(_cached_model_summaries_raw, list):
+            for item in _cached_model_summaries_raw:
+                if not isinstance(item, dict):
+                    continue
+                line = item.get("line")
+                model_id = item.get("id")
+                if not isinstance(line, str):
+                    continue
+                _cached_model_summaries.append({**item, "line": line, "id": model_id})
         _cached_trained_models_total = _ctx_cached.get("trained_models_total", 0)
         if _cached_model_summaries:
             _recent = _cached_model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
@@ -4858,7 +4868,7 @@ async def chat_with_ai(
                 "data_types_info": data_types_info,
                 "datasets_list": datasets_list,
                 "trained_models_total": trained_models_total,
-                "model_summaries": locals().get("model_summaries", []),
+                "model_summaries": model_summaries,
                 "training_tasks_total": training_tasks_total,
                 "training_tasks_completed": training_tasks_completed,
                 "training_tasks_running": training_tasks_running,

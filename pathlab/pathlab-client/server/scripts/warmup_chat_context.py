@@ -124,8 +124,6 @@ async def _build_for_user(user_id: str) -> dict:
             "wsi_count": wsi_count,
             "data_types_info": data_types_info,
             "datasets_list": datasets_list,
-            "models_count": models_count,
-            "models_list": models_list,
             "trained_models_total": trained_models_total,
             "model_summaries": model_summaries,
             "training_tasks_total": training_tasks_total,

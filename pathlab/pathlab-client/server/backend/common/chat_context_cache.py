@@ -13,7 +13,7 @@ permission grant/revoke. Chat handler rebuilds on the next cache miss.
 
 import json
 import logging
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from backend.common.redis_client import get_redis, make_key
 
@@ -24,7 +24,7 @@ VER_TTL = 7200
 SNAPSHOT_TTL = 86400
 
 
-async def get_cached_context_kwargs(user_id: str) -> Optional[dict]:
+async def get_cached_context_kwargs(user_id: str) -> Optional[Dict[str, Any]]:
     """Return cached kwargs dict (everything except current_datetime), or None."""
     try:
         r = get_redis()
@@ -34,13 +34,16 @@ async def get_cached_context_kwargs(user_id: str) -> Optional[dict]:
         raw = await r.get(make_key("chat_ctx", user_id, ver))
         if not raw:
             return None
-        return json.loads(raw)
+        decoded = json.loads(raw)
+        if not isinstance(decoded, dict):
+            return None
+        return decoded
     except Exception as exc:
         logger.warning("[ChatCtxCache] read error uid=%s: %s", user_id, exc)
         return None
 
 
-async def set_cached_context_kwargs(user_id: str, kwargs: dict) -> None:
+async def set_cached_context_kwargs(user_id: str, kwargs: Dict[str, Any]) -> None:
     try:
         r = get_redis()
         ver_key = make_key("chat_ctx_ver", user_id)
