@@ -1163,12 +1163,13 @@ def _get_external_validation_compatibility_error(
 
     if model_data_type == "wsi" and model_extractor and model_embed_dim > 0:
         dataset_extractors = dataset_meta.get("available_feature_extractors", []) or []
-        has_same_dim = any(
-            (extractor_embed_dim.get(extractor, 0) == model_embed_dim)
-            for extractor in dataset_extractors
-        )
-        if not has_same_dim:
-            return "feature extractor embedding dimension mismatch"
+        if dataset_extractors:
+            has_same_dim = any(
+                (extractor_embed_dim.get(extractor, 0) == model_embed_dim)
+                for extractor in dataset_extractors
+            )
+            if not has_same_dim:
+                return "feature extractor embedding dimension mismatch"
 
     dataset_wsi_ids = set(dataset_meta.get("wsi_ids", []))
     if model_wsi_ids and dataset_wsi_ids and (model_wsi_ids & dataset_wsi_ids):
