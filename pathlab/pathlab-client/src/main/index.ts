@@ -152,21 +152,27 @@ ipcMain.handle('get-service-ports', () => {
 
 // IPC handler for file selection
 ipcMain.handle('select-files', async (_event, options?: { title?: string; filters?: { name: string; extensions: string[] }[] }) => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  const fileOpts: Electron.OpenDialogOptions = {
     title: options?.title || 'Select files',
     properties: ['openFile', 'multiSelections'],
     filters: options?.filters
-  })
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, fileOpts)
+    : await dialog.showOpenDialog(fileOpts)
   if (result.canceled) return []
   return result.filePaths
 })
 
 // IPC handler for directory selection
 ipcMain.handle('select-directory', async (_event, options?: { title?: string }) => {
-  const result = await dialog.showOpenDialog(mainWindow ?? undefined, {
+  const dirOpts: Electron.OpenDialogOptions = {
     title: options?.title || 'Select directory',
     properties: ['openDirectory']
-  })
+  }
+  const result = mainWindow
+    ? await dialog.showOpenDialog(mainWindow, dirOpts)
+    : await dialog.showOpenDialog(dirOpts)
   if (result.canceled || result.filePaths.length === 0) return null
   return result.filePaths[0]
 })

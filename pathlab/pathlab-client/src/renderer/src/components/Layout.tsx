@@ -288,7 +288,7 @@ export default function Layout({ children }: LayoutProps) {
       <MaintenanceNoticeModal
         isOpen={!needsAgreement && needsMaintenanceAcknowledgment}
         message={maintenanceNoticeMessage || ''}
-        onAcknowledge={acknowledgeMaintenanceNotice}
+        onAcknowledge={async () => { await acknowledgeMaintenanceNotice() }}
       />
     </div>
   )

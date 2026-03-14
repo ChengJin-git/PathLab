@@ -190,9 +190,9 @@ export function isCancellableStatus(status: string, taskType: 'training' | 'vali
     case 'training':
       return TRAINING_CANCELLABLE_STATUSES.includes(status as CancellableStatus)
     case 'validation':
-      return VALIDATION_CANCELLABLE_STATUSES.includes(status as CancellableStatus)
+      return (VALIDATION_CANCELLABLE_STATUSES as readonly string[]).includes(status)
     case 'analysis':
-      return ANALYSIS_CANCELLABLE_STATUSES.includes(status as CancellableStatus)
+      return (ANALYSIS_CANCELLABLE_STATUSES as readonly string[]).includes(status)
     default:
       return false
   }

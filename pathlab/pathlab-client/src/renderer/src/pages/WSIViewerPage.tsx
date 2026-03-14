@@ -1031,7 +1031,7 @@ export default function WSIViewerPage() {
     const recoverAnnotations = async () => {
       try {
         let matching = draftCacheRef.current?.key === draftCacheKey
-          ? draftCacheRef.current.draft
+          ? draftCacheRef.current?.draft ?? null
           : null
 
         if (draftCacheRef.current?.key !== draftCacheKey) {

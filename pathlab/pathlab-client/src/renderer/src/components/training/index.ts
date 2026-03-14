@@ -25,8 +25,8 @@ export { BatchEditModal } from './BatchEditModal'
 export { FileMetadataModal } from './FileMetadataModal'
 
 // Re-export types from individual components
-export type { DataSelectionStepProps, DatasetInfo, WSIItem } from './DataSelectionStep'
-export type { WSIDataTableProps } from './WSIDataTable'
+export type { DataSelectionStepProps } from './DataSelectionStep'
+export type { WSIDataTableProps, WSIItem } from './WSIDataTable'
 export type { DataSplitConfigProps } from './DataSplitConfig'
 export type { RegistrationProgressProps } from './RegistrationProgress'
 export type { DeleteConfirmModalProps, WSIDeleteInfo } from './DeleteConfirmModal'
