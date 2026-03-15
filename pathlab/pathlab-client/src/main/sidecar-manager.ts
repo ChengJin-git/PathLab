@@ -84,11 +84,7 @@ export function getServicePorts(): BackendServicePorts {
   return { ...servicePorts }
 }
 
-/**
- * Start the Python sidecar process
- * Returns a promise that resolves when the port is discovered
- */
-export function startPythonSidecar(): Promise<number> {
+export function startPythonSidecar(extraEnv?: Record<string, string>): Promise<number> {
   return new Promise((resolve, reject) => {
     const isDev = !app.isPackaged
 
@@ -96,27 +92,25 @@ export function startPythonSidecar(): Promise<number> {
     let scriptPath = ''
 
     if (isDev) {
-      // Development: run Python script directly
       scriptPath = join(process.cwd(), 'server/main.py')
-      // Set dev mode environment variable
-      process.env.PATHLAB_DEV = '0' // Disable reload in sidecar mode
+      process.env.PATHLAB_DEV = '0'
     } else {
-      // Production: use the bundled executable
       pythonPath = join(process.resourcesPath, 'server/main')
-      scriptPath = '' // No script path needed for executable
+      scriptPath = ''
     }
 
     console.log(`Starting Python sidecar: ${pythonPath} ${scriptPath}`)
 
-    // Spawn Python process
+    const spawnEnv = { ...process.env, ...extraEnv }
+
     if (isDev) {
       pythonProcess = spawn(pythonPath, [scriptPath], {
-        env: { ...process.env },
+        env: spawnEnv,
         stdio: ['pipe', 'pipe', 'pipe']
       })
     } else {
       pythonProcess = spawn(pythonPath, [], {
-        env: { ...process.env },
+        env: spawnEnv,
         stdio: ['pipe', 'pipe', 'pipe']
       })
     }

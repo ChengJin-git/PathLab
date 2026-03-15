@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, session } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { startPythonSidecar, stopPythonSidecar, getGatewayPort, getServicePorts } from './sidecar-manager'
+import { startEmbeddedServices, stopEmbeddedServices } from './services-manager'
 
 // Deep Link protocol
 const PROTOCOL_NAME = 'pathlab'
@@ -191,13 +192,25 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  // Start Python sidecar and wait for port discovery
-  startPythonSidecar()
+  const launchSidecar = app.isPackaged
+    ? startEmbeddedServices().then(({ databaseUrl, redisUrl }) => {
+        console.log('[Main] Embedded services ready, starting Python sidecar...')
+        return startPythonSidecar({ DATABASE_URL: databaseUrl, REDIS_URL: redisUrl })
+      })
+    : startPythonSidecar()
+
+  launchSidecar
     .then((port) => {
       console.log(`[Main] Python sidecar started on port ${port}`)
     })
     .catch((error) => {
-      console.error('[Main] Failed to start Python sidecar:', error)
+      console.error('[Main] Failed to start services:', error)
+      if (app.isPackaged) {
+        dialog.showErrorBox(
+          'PathLab 启动失败',
+          `后台服务启动失败：\n${error.message}`
+        )
+      }
     })
 
   createWindow()
@@ -220,11 +233,13 @@ app.whenReady().then(() => {
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
   stopPythonSidecar()
+  if (app.isPackaged) stopEmbeddedServices()
   if (process.platform !== 'darwin') {
     app.quit()
   }
 })
 
 app.on('before-quit', () => {
-    stopPythonSidecar()
+  stopPythonSidecar()
+  if (app.isPackaged) stopEmbeddedServices()
 })
