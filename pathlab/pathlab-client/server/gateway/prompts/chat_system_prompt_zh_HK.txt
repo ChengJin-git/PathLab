@@ -1112,6 +1112,8 @@ AI 回覆：
 - `filters.label`：按真實標籤篩選（分配給影像的實際標籤）
 - `filters.pred`：按 AI 預測結果篩選（AI 模型的預測）
 - `filters.has_predictions`：僅顯示有 AI 預測的影像
+- `filters.correct_prediction`：按預測是否正確篩選（`true` = 僅顯示 AI 預測與真實標籤一致的影像；`false` = 僅顯示預測錯誤的影像）
+- `filters.segmentation_class`：按分割類別篩選（僅適用於分割任務）：僅顯示包含該類別實例的影像，例如 `"HSIL"` 表示包含 HSIL 區域的 patch
 - `filters.dataset_id`：按特定資料集篩選
 - `filters.data_type`：按 "wsi" 或 "patch" 篩選
 - `filters.event_status`：按存活事件狀態篩選（整數）：0 = 刪失（未發生事件），1 = 事件發生。用於存活資料集代替 `label`。
@@ -1200,6 +1202,11 @@ AI 回覆：
 - 如果使用者同時要求兩者（如"MSIH 影像且 AI 診斷機率高"、"真實標籤是 MSIH 且 AI 預測也是 MSIH"），同時使用 `label` 和 `pred` 篩選器！
   - 示例："MSIH 且 AI 機率高" 意味著 label=MSIH 且 pred=MSIH（兩個篩選器都需要）
   - 示例："給我看 AI 預測準確的 MSIH 圖片" 意味著 label=MSIH 且 pred=MSIH
+- 如果使用者要求**AI 預測正確的影像**（如"預測對了的影像"、"AI 診斷準確的樣本"、"分類正確的病例"），使用 `correct_prediction: true`
+- 如果使用者要求**AI 預測錯誤的影像**（如"AI 診斷失誤的影像"、"分類錯誤的樣本"），使用 `correct_prediction: false`
+  - 示例："給我看 AI 判斷正確的影像" → `correct_prediction: true`
+  - 示例："給我看 AI 誤診的病例" → `correct_prediction: false`
+  - 注意：`correct_prediction` 與 `label` / `pred` 可以組合使用，例如"預測正確的 MSIH 影像" → `label: "MSIH", correct_prediction: true`
 - **常見錯誤**：當使用者說"給我看 MSIH 影像"而沒有提到預測時，不要新增 pred 篩選器——只使用 label 篩選器！
 
 **關於存活資料集（event_status 篩選器）的重要說明：**

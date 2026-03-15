@@ -34,6 +34,8 @@ export interface ImageRecommendation {
     label?: string
     pred?: string  // Filter by AI prediction result
     has_predictions?: boolean
+    correct_prediction?: boolean  // Filter images where AI prediction matches ground truth label
+    segmentation_class?: string  // Filter segmentation results containing a specific class
     dataset_id?: string
     data_type?: 'wsi' | 'patch' | 'all'
     event_status?: number  // Filter by survival event status: 1 = event occurred, 0 = censored
@@ -101,6 +103,8 @@ type RecommendationFilterSignature = {
   label: string | null
   pred: string | null
   has_predictions: boolean
+  correct_prediction: boolean | null
+  segmentation_class: string | null
   dataset_id: string | null
   data_type: 'wsi' | 'patch' | 'all' | null
   event_status: number | null
@@ -121,6 +125,8 @@ function buildRecommendationFilterSignature(
     label: recommendation.filters?.label ?? null,
     pred: recommendation.filters?.pred ?? null,
     has_predictions: recommendation.filters?.has_predictions === true,
+    correct_prediction: recommendation.filters?.correct_prediction ?? null,
+    segmentation_class: recommendation.filters?.segmentation_class ?? null,
     dataset_id: recommendation.filters?.dataset_id ?? null,
     data_type: recommendation.filters?.data_type ?? null,
     event_status: recommendation.filters?.event_status ?? null,
@@ -687,22 +693,40 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       let predictionByWsiId = new Map<string, string | null>()
       let shouldHydrateLimitedImages = false
 
-      // If has_predictions is true OR pred filter is specified, fetch from results endpoint
-      if (recommendation.filters?.has_predictions || recommendation.filters?.pred) {
+      const needsPredictionsPath = !!(
+        recommendation.filters?.has_predictions ||
+        recommendation.filters?.pred ||
+        recommendation.filters?.correct_prediction !== undefined ||
+        recommendation.filters?.segmentation_class
+      )
+
+      if (needsPredictionsPath) {
         const resultsData = await fetchAllResults()
         let resultsWithWsi = dedupeLatestResultsByWsi(resultsData.items)
 
-        // Apply pred filter (filter by AI prediction result) - use exact match to avoid substring issues
-        // e.g., "MSIH" should NOT match "nonMSIH"
         if (recommendation.filters?.pred) {
           resultsWithWsi = resultsWithWsi.filter(r =>
             r.pred?.toLowerCase() === recommendation.filters!.pred!.toLowerCase()
           )
         }
 
-        // Apply label filter (ground truth label) on results BEFORE creating the wsi_id set
-        // This is critical: we must filter by label here, not later on the WSI list
-        // Use exact match to avoid substring issues (e.g., "MSIH" matching "nonMSIH")
+        if (recommendation.filters?.correct_prediction !== undefined) {
+          const wantCorrect = recommendation.filters.correct_prediction
+          resultsWithWsi = resultsWithWsi.filter(r => {
+            const isCorrect = r.pred != null && r.label != null &&
+              r.pred.toLowerCase() === r.label.toLowerCase()
+            return wantCorrect ? isCorrect : !isCorrect
+          })
+        }
+
+        if (recommendation.filters?.segmentation_class) {
+          const targetClass = recommendation.filters.segmentation_class.toLowerCase()
+          resultsWithWsi = resultsWithWsi.filter(r => {
+            const classNames = (r as ResultWithWSI & { extra_metadata?: { class_names?: string[] } }).extra_metadata?.class_names
+            return Array.isArray(classNames) && classNames.some(c => c.toLowerCase() === targetClass)
+          })
+        }
+
         if (recommendation.filters?.label) {
           resultsWithWsi = resultsWithWsi.filter(r =>
             r.label?.toLowerCase() === recommendation.filters!.label!.toLowerCase()
@@ -748,15 +772,14 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
           shouldHydrateLimitedImages = true
         }
       } else {
-        // Normal fetch without predictions filter
         displayImages = await fetchAndFilterWSIList(recommendation)
       }
 
-      // Fallback: if show_heatmap is true but no images found with has_predictions filter,
-      // retry without the predictions constraint. This handles the case where heatmaps exist
-      // on disk (from training) but no AIResult records exist in the database.
-      if (needsOverlayLookup && displayImages.length === 0 && (recommendation.filters?.has_predictions || recommendation.filters?.pred)) {
-        console.warn('[ImageRecommendation] No images found with has_predictions filter, falling back to dataset images for heatmap display')
+      // Fallback: if predictions path returned nothing, retry with the WSI list.
+      // This handles large datasets where the 1000-record limit in fetchAllResults
+      // truncates results, as well as cases where AIResult records don't exist yet.
+      if (needsPredictionsPath && displayImages.length === 0) {
+        console.warn('[ImageRecommendation] No images found via predictions path, falling back to dataset images')
         displayImages = await fetchAndFilterWSIList(recommendation)
       }
 

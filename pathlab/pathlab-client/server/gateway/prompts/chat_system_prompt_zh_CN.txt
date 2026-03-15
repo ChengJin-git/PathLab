@@ -1112,6 +1112,8 @@ AI 回复：
 - `filters.label`：按真实标签筛选（分配给图像的实际标签）
 - `filters.pred`：按 AI 预测结果筛选（AI 模型的预测）
 - `filters.has_predictions`：仅显示有 AI 预测的图像
+- `filters.correct_prediction`：按预测是否正确筛选（`true` = 仅显示 AI 预测与真实标签一致的图像；`false` = 仅显示预测错误的图像）
+- `filters.segmentation_class`：按分割类别筛选（仅适用于分割任务）：仅显示包含该类别实例的图像，例如 `"HSIL"` 表示包含 HSIL 区域的 patch
 - `filters.dataset_id`：按特定数据集筛选
 - `filters.data_type`：按 "wsi" 或 "patch" 筛选
 - `filters.event_status`：按生存事件状态筛选（整数）：0 = 删失（未发生事件），1 = 事件发生。用于生存数据集代替 `label`。
@@ -1200,6 +1202,11 @@ AI 回复：
 - 如果用户同时要求两者（如"MSIH 图像且 AI 诊断概率高"、"真实标签是 MSIH 且 AI 预测也是 MSIH"），同时使用 `label` 和 `pred` 筛选器！
   - 示例："MSIH 且 AI 概率高" 意味着 label=MSIH 且 pred=MSIH（两个筛选器都需要）
   - 示例："给我看 AI 预测准确的 MSIH 图片" 意味着 label=MSIH 且 pred=MSIH
+- 如果用户要求**AI 预测正确的图像**（如"预测对了的图像"、"AI 诊断准确的样本"、"分类正确的病例"），使用 `correct_prediction: true`
+- 如果用户要求**AI 预测错误的图像**（如"AI 诊断失误的图像"、"分类错误的样本"），使用 `correct_prediction: false`
+  - 示例："给我看 AI 判断正确的图像" → `correct_prediction: true`
+  - 示例："给我看 AI 误诊的病例" → `correct_prediction: false`
+  - 注意：`correct_prediction` 与 `label` / `pred` 可以组合使用，例如"预测正确的 MSIH 图像" → `label: "MSIH", correct_prediction: true`
 - **常见错误**：当用户说"给我看 MSIH 图像"而没有提到预测时，不要添加 pred 筛选器——只使用 label 筛选器！
 
 **关于生存数据集（event_status 筛选器）的重要说明：**

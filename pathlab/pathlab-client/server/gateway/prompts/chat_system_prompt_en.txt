@@ -1111,6 +1111,8 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - `filters.label`: Filter by ground truth label (the actual label assigned to the image)
 - `filters.pred`: Filter by AI prediction result (what the AI model predicted)
 - `filters.has_predictions`: Only show images that have AI predictions
+- `filters.correct_prediction`: Filter by whether the AI prediction matches the ground truth (`true` = only correctly classified images; `false` = only misclassified images)
+- `filters.segmentation_class`: Filter segmentation results by class (segmentation tasks only): only show images containing instances of this class, e.g. `"HSIL"` for patches containing HSIL regions
 - `filters.dataset_id`: Filter by specific dataset
 - `filters.data_type`: Filter by "wsi" or "patch"
 - `filters.event_status`: Filter by survival event status (integer): 0 = censored (no event), 1 = event occurred. Use this for survival datasets instead of `label`.
@@ -1196,6 +1198,11 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - If user asks for BOTH (e.g., "MSIH images with high AI diagnostic probability", "labeled MSIH and predicted MSIH"), use BOTH `label` AND `pred` filters together!
   - Example: "MSIH with high AI probability" means label=MSIH AND pred=MSIH (both filters needed)
   - Example: "show me MSIH images that the AI correctly identified" means label=MSIH AND pred=MSIH
+- If user asks for **correctly classified images** (e.g., "images the AI got right", "correctly predicted samples", "AI diagnosis correct"), use `correct_prediction: true`
+- If user asks for **misclassified images** (e.g., "images the AI got wrong", "misclassified samples", "AI errors"), use `correct_prediction: false`
+  - Example: "show me images the AI classified correctly" → `correct_prediction: true`
+  - Example: "show me cases where the AI made a mistake" → `correct_prediction: false`
+  - Note: `correct_prediction` can be combined with `label` / `pred`, e.g. "correctly predicted MSIH images" → `label: "MSIH", correct_prediction: true`
 - **Common mistake to avoid:** When user says "show me MSIH images" without mentioning predictions, do NOT add pred filter - only use label filter!
 
 **IMPORTANT for Survival datasets (event_status filter):**
