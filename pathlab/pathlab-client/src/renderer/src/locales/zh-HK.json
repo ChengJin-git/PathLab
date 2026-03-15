@@ -2814,6 +2814,7 @@
     "confirmStop": "確認停止",
     "keepRunning": "繼續運行",
     "close": "關閉",
+    "viewDetail": "查看任務詳情",
     "error": "錯誤",
     "skipped": "已略過",
     "relocatingTo": "正在遷移至",

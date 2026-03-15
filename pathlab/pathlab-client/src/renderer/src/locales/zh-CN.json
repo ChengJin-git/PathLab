@@ -2822,6 +2822,7 @@
     "confirmStop": "确认停止",
     "keepRunning": "继续运行",
     "close": "关闭",
+    "viewDetail": "查看任务详情",
     "error": "错误",
     "skipped": "已跳过",
     "relocatingTo": "正在迁移至",
