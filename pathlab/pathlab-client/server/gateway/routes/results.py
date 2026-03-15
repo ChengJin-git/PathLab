@@ -3030,8 +3030,9 @@ async def start_external_validation(
                 status_code=404,
                 detail="Source training task not found for rerun",
             )
-        if source_task.user_id:
-            effective_task_owner_user_id = source_task.user_id
+        source_task_user_id = _coerce_str(source_task.user_id)
+        if source_task_user_id:
+            effective_task_owner_user_id = source_task_user_id
 
     # Validate model exists
     trained_model = await TrainedModelRepository.get_by_id(db, req.model_id)
@@ -3116,8 +3117,35 @@ async def start_external_validation(
     model_wsi_ids = set(
         await TrainingTaskRepository.get_wsi_ids(db, _coerce_str(trained_model.task_id))
     )
+    training_dataset_ids: set[str] = set()
+    training_ds_rows = await db.execute(
+        select(WSISlide.dataset_id)
+        .join(TrainingTaskWSI, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+        .where(
+            TrainingTaskWSI.task_id == trained_model_task_id,
+            WSISlide.dataset_id.isnot(None),
+        )
+        .distinct()
+    )
+    training_dataset_ids = {
+        _coerce_str(row[0]) for row in training_ds_rows.all() if _coerce_str(row[0])
+    }
 
     dataset_labels = await DatasetRepository.get_distinct_labels(db, req.dataset_id)
+    dataset_feature_extractors: List[str] = []
+    if target_data_type != "patch" and wsi_ids:
+        first_wsi_id = wsi_ids[0]
+        features_root = Config.get_uploads_dir() / "features"
+        if features_root.exists():
+            for extractor_dir in features_root.iterdir():
+                if not extractor_dir.is_dir():
+                    continue
+                for params_hash_dir in extractor_dir.iterdir():
+                    if not params_hash_dir.is_dir():
+                        continue
+                    if (params_hash_dir / f"{first_wsi_id}.pt").exists():
+                        dataset_feature_extractors.append(extractor_dir.name)
+                        break
 
     source_dataset_id: Optional[str] = None
     target_seg_labels: List[str] = []
@@ -3150,7 +3178,7 @@ async def start_external_validation(
             segmentation_labels=_coerce_str_list(
                 model_task.classes or trained_model.classes or []
             ),
-            training_dataset_ids=set(),
+            training_dataset_ids=training_dataset_ids,
         ),
         dataset_info=ExtvalDatasetInfo(
             dataset_id=req.dataset_id,
@@ -3159,7 +3187,7 @@ async def start_external_validation(
             aggregation_level=target_aggregation_level,
             labels=dataset_labels,
             segmentation_labels=target_seg_labels,
-            feature_extractors=[],
+            feature_extractors=dataset_feature_extractors,
             wsi_ids=set(wsi_ids),
         ),
     )
@@ -5140,6 +5168,7 @@ async def _run_external_validation(
         case_to_wsi: Dict[str, List[str]] = {}
         case_wsi_patch_counts: Dict[str, List[int]] = {}
         case_labels_map: Dict[str, int] = {}
+        case_survival_data: Dict[str, Dict[str, Any]] = {}
 
         if is_case_level:
             # Group WSIs by case_id and validate feature existence
@@ -5168,13 +5197,17 @@ async def _run_external_validation(
                 for case_id, case_wsi_ids in case_to_wsi.items():
                     first_wsi = case_wsi_ids[0]
                     if first_wsi in survival_data:
-                        case_times[case_id] = survival_data[first_wsi]["event_time"]
-                        case_statuses[case_id] = survival_data[first_wsi][
-                            "event_status"
-                        ]
+                        case_gt = survival_data[first_wsi]
+                        case_times[case_id] = case_gt["event_time"]
+                        case_statuses[case_id] = case_gt["event_status"]
+                        case_survival_data[case_id] = case_gt
                     else:
                         case_times[case_id] = 0.0
                         case_statuses[case_id] = 0
+                        case_survival_data[case_id] = {
+                            "event_time": 0.0,
+                            "event_status": 0,
+                        }
             if is_survival:
                 dataset = CaseFeatureDataset(
                     features_dir=features_dir,
@@ -5260,6 +5293,13 @@ async def _run_external_validation(
                 for idx in range(start_idx, end_idx):
                     # Load item from dataset (triggers torch.load for features)
                     item = dataset[idx]
+
+                    hazards = np.array([], dtype=np.float32)
+                    risk_score = 0.0
+                    surv_probs: List[float] = []
+                    probs = np.array([], dtype=np.float32)
+                    slide_attentions: Dict[str, Any] = {}
+                    slide_raw_attentions: Dict[str, Any] = {}
 
                     if is_case_level:
                         # CaseFeatureDataset returns:
@@ -5398,7 +5438,10 @@ async def _run_external_validation(
                     # --- Build prediction data ---
                     gt_data: Dict[str, Any] = {}
                     if is_survival:
-                        gt_data = survival_data.get(item_id, {})
+                        if is_case_level:
+                            gt_data = case_survival_data.get(item_id, {})
+                        else:
+                            gt_data = survival_data.get(item_id, {})
                         _chunk_risk_scores.append(
                             float(np.sum(hazards))
                             if isinstance(hazards, np.ndarray)
