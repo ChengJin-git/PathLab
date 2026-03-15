@@ -50,8 +50,7 @@ from backend.common.config import Config
 from ..dependencies import logger
 
 
-# Application-level salt for client-side hashing (should match frontend)
-APP_SALT = "PathLab2024SecureSalt"
+APP_SALT: str = os.getenv("APP_SALT", "PathLab2024SecureSalt")
 
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:
@@ -76,11 +75,13 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
                     "secret": secret_key,
                     "response": token,
                 },
-                timeout=10.0
+                timeout=10.0,
             )
 
             if response.status_code != 200:
-                logger.warning(f"Turnstile verification failed with status {response.status_code}")
+                logger.warning(
+                    f"Turnstile verification failed with status {response.status_code}"
+                )
                 return False
 
             result = response.json()
@@ -99,6 +100,7 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
 
 class SecureLoginRequest(BaseModel):
     """Request body for secure login with client-side hashed password."""
+
     username: str
     hashed_password: str  # SHA256(SHA256(password) + timestamp + APP_SALT)
     timestamp: int  # Unix timestamp in milliseconds
@@ -107,14 +109,15 @@ class SecureLoginRequest(BaseModel):
 
 class PaginatedUserListResponse(BaseModel):
     """Paginated admin user list response."""
+
     items: List[UserReadAdmin]
     total: int
     page: int
     page_size: int
 
+
 # Create main auth router
 router = APIRouter(tags=["Authentication"])
-
 
 
 # Include FastAPI-Users auth routes (/auth/jwt/login disabled via config, /auth/jwt/logout active)
@@ -122,6 +125,7 @@ router.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/auth/jwt",
 )
+
 
 # Custom register endpoint (replaces FastAPI-Users default to allow non-email usernames)
 @router.post("/auth/register", response_model=UserRead, tags=["Authentication"])
@@ -144,7 +148,7 @@ async def register_user(
     if existing_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="REGISTER_USER_ALREADY_EXISTS"
+            detail="REGISTER_USER_ALREADY_EXISTS",
         )
 
     # Hash password (bcrypt for storage, SHA256 for secure login)
@@ -177,7 +181,7 @@ async def register_user(
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="REGISTER_USER_ALREADY_EXISTS"
+            detail="REGISTER_USER_ALREADY_EXISTS",
         )
 
     logger.info(f"New user registered: {user.email} (role={user.role})")
@@ -215,19 +219,25 @@ async def secure_login(
 
     if turnstile_enabled and turnstile_secret_key:
         if not request.turnstile_token:
-            logger.warning(f"Login attempt without Turnstile token for user {request.username}")
+            logger.warning(
+                f"Login attempt without Turnstile token for user {request.username}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_TOKEN_REQUIRED"
+                detail="TURNSTILE_TOKEN_REQUIRED",
             )
 
         # Verify Turnstile token
-        turnstile_valid = await verify_turnstile(request.turnstile_token, turnstile_secret_key)
+        turnstile_valid = await verify_turnstile(
+            request.turnstile_token, turnstile_secret_key
+        )
         if not turnstile_valid:
-            logger.warning(f"Login attempt with invalid Turnstile token for user {request.username}")
+            logger.warning(
+                f"Login attempt with invalid Turnstile token for user {request.username}"
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_VERIFICATION_FAILED"
+                detail="TURNSTILE_VERIFICATION_FAILED",
             )
 
     # Validate timestamp (prevent replay attacks)
@@ -235,10 +245,11 @@ async def secure_login(
     time_diff_seconds = abs(current_time_ms - request.timestamp) / 1000
 
     if time_diff_seconds > Config.MAX_TIMESTAMP_DIFF_SECONDS:
-        logger.warning(f"Login attempt with expired timestamp for user {request.username}")
+        logger.warning(
+            f"Login attempt with expired timestamp for user {request.username}"
+        )
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LOGIN_TIMESTAMP_EXPIRED"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_TIMESTAMP_EXPIRED"
         )
 
     # Find user by username
@@ -248,24 +259,23 @@ async def secure_login(
     if not user:
         logger.warning(f"Login attempt for non-existent user: {request.username}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LOGIN_BAD_CREDENTIALS"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_BAD_CREDENTIALS"
         )
 
     # Check maintenance mode - only admin can log in during maintenance
     if Config.get_maintenance_mode() and user.role != "admin":
-        logger.warning(f"Login attempt during maintenance mode for non-admin user: {request.username}")
+        logger.warning(
+            f"Login attempt during maintenance mode for non-admin user: {request.username}"
+        )
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="MAINTENANCE_MODE"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="MAINTENANCE_MODE"
         )
 
     # Check if user is active
     if not user.is_active:
         logger.warning(f"Login attempt for inactive user: {request.username}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LOGIN_USER_NOT_ACTIVE"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_USER_NOT_ACTIVE"
         )
 
     # Verify password
@@ -293,8 +303,7 @@ async def secure_login(
     if not user.password_sha256:
         logger.warning(f"User {request.username} has no password hash")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LOGIN_BAD_CREDENTIALS"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_BAD_CREDENTIALS"
         )
 
     # Compute expected hash: SHA256(stored_sha256 + timestamp + APP_SALT)
@@ -304,8 +313,7 @@ async def secure_login(
     if request.hashed_password != expected_hash:
         logger.warning(f"Invalid password for user: {request.username}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="LOGIN_BAD_CREDENTIALS"
+            status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_BAD_CREDENTIALS"
         )
 
     # Generate JWT token
@@ -314,10 +322,7 @@ async def secure_login(
 
     logger.info(f"User {user.email} logged in securely (role={user.role})")
 
-    return {
-        "access_token": token,
-        "token_type": "bearer"
-    }
+    return {"access_token": token, "token_type": "bearer"}
 
 
 # Custom endpoints for admin user management
@@ -330,7 +335,7 @@ async def list_users(
 ):
     """
     List all users (admin only).
-    
+
     Returns all users with their roles and status.
     """
     result = await db.execute(
@@ -341,12 +346,18 @@ async def list_users(
     return users
 
 
-@router.get("/auth/users/paged", response_model=PaginatedUserListResponse, tags=["User Management"])
+@router.get(
+    "/auth/users/paged",
+    response_model=PaginatedUserListResponse,
+    tags=["User Management"],
+)
 async def list_users_paged(
     search: Optional[str] = Query(None, description="Search username or nickname"),
     page: int = Query(1, ge=1, description="Page number (1-based)"),
     page_size: int = Query(10, ge=1, le=100, description="Users per page"),
-    exclude_admin: bool = Query(False, description="Exclude admin users from the result"),
+    exclude_admin: bool = Query(
+        False, description="Exclude admin users from the result"
+    ),
     admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -375,13 +386,16 @@ async def list_users_paged(
     total = (await db.execute(count_stmt)).scalar_one()
     offset = (page - 1) * page_size
     users = (
-        await db.execute(
-            query_stmt
-            .order_by(User.created_at.desc())
-            .offset(offset)
-            .limit(page_size)
+        (
+            await db.execute(
+                query_stmt.order_by(User.created_at.desc())
+                .offset(offset)
+                .limit(page_size)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     logger.info(
         f"Admin {admin.email} listed {len(users)} users "
@@ -396,7 +410,9 @@ async def list_users_paged(
     }
 
 
-@router.get("/auth/users/{user_id}", response_model=UserReadAdmin, tags=["User Management"])
+@router.get(
+    "/auth/users/{user_id}", response_model=UserReadAdmin, tags=["User Management"]
+)
 async def get_user(
     user_id: str,
     admin: User = Depends(require_admin),
@@ -406,21 +422,24 @@ async def get_user(
     Get a specific user by ID (admin only).
     """
     import uuid
+
     try:
         user_uuid = uuid.UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid user ID format")
-    
+
     result = await db.execute(select(User).where(User.id == user_uuid))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    
+
     return user
 
 
-@router.patch("/auth/users/{user_id}", response_model=UserReadAdmin, tags=["User Management"])
+@router.patch(
+    "/auth/users/{user_id}", response_model=UserReadAdmin, tags=["User Management"]
+)
 async def update_user(
     user_id: str,
     user_update: AdminUserUpdate,
@@ -450,8 +469,8 @@ async def update_user(
     update_data = user_update.model_dump(exclude_unset=True)
 
     # Handle password separately - needs to be hashed
-    if 'password' in update_data:
-        password = update_data.pop('password')
+    if "password" in update_data:
+        password = update_data.pop("password")
         if password:  # Only update if not empty
             password_helper = PasswordHelper()
             user.hashed_password = password_helper.hash(password)
@@ -483,6 +502,7 @@ async def delete_user(
     Cannot delete yourself or the last admin.
     """
     import uuid
+
     try:
         user_uuid = uuid.UUID(user_id)
     except ValueError:
@@ -500,9 +520,7 @@ async def delete_user(
 
     # Check if this is the last admin
     if user.role == "admin":
-        admin_count_result = await db.execute(
-            select(User).where(User.role == "admin")
-        )
+        admin_count_result = await db.execute(select(User).where(User.role == "admin"))
         admin_count = len(admin_count_result.scalars().all())
         if admin_count <= 1:
             raise HTTPException(status_code=400, detail="Cannot delete the last admin")
@@ -517,7 +535,10 @@ async def delete_user(
 # Agreement acceptance endpoints
 class AcceptAgreementRequest(BaseModel):
     """Request body for accepting the agreement."""
-    ip: Optional[str] = Field(default=None, description="Client IP address when accepting the agreement")
+
+    ip: Optional[str] = Field(
+        default=None, description="Client IP address when accepting the agreement"
+    )
 
 
 @router.post("/auth/accept-agreement", response_model=UserRead, tags=["Authentication"])
@@ -541,11 +562,17 @@ async def accept_agreement(
     await db.commit()
     await db.refresh(user)
 
-    logger.info(f"User {user.email} accepted the agreement from IP: {request.ip if request else 'unknown'}")
+    logger.info(
+        f"User {user.email} accepted the agreement from IP: {request.ip if request else 'unknown'}"
+    )
     return user
 
 
-@router.post("/auth/users/{user_id}/revoke-agreement", response_model=UserReadAdmin, tags=["User Management"])
+@router.post(
+    "/auth/users/{user_id}/revoke-agreement",
+    response_model=UserReadAdmin,
+    tags=["User Management"],
+)
 async def revoke_user_agreement(
     user_id: str,
     admin: User = Depends(require_admin),
@@ -557,6 +584,7 @@ async def revoke_user_agreement(
     This will require the user to accept the agreement again on next login.
     """
     import uuid
+
     try:
         user_uuid = uuid.UUID(user_id)
     except ValueError:
@@ -581,8 +609,10 @@ async def revoke_user_agreement(
 # Batch User Operations (Admin only)
 # ============================================================================
 
+
 class BatchUserIdsRequest(BaseModel):
     """Request model for batch user operations."""
+
     user_ids: List[str]
 
 
@@ -597,6 +627,7 @@ async def batch_activate_users(
     Admin users and the current admin cannot be modified.
     """
     import uuid
+
     updated = 0
     for user_id in request.user_ids:
         try:
@@ -627,6 +658,7 @@ async def batch_deactivate_users(
     Admin users and the current admin cannot be modified.
     """
     import uuid
+
     updated = 0
     for user_id in request.user_ids:
         try:
@@ -657,6 +689,7 @@ async def batch_delete_users(
     Admin users and the current admin cannot be deleted.
     """
     import uuid
+
     deleted = 0
     for user_id in request.user_ids:
         try:
@@ -680,8 +713,10 @@ async def batch_delete_users(
 # Maintenance Mode (Admin only)
 # ============================================================================
 
+
 class MaintenanceModeRequest(BaseModel):
     """Request model for setting maintenance mode."""
+
     enabled: bool
 
 
@@ -712,7 +747,9 @@ async def set_maintenance_mode(
 
     if request.enabled:
         if previous_enabled:
-            logger.info(f"Admin {admin.email} requested maintenance mode enable, but it is already enabled")
+            logger.info(
+                f"Admin {admin.email} requested maintenance mode enable, but it is already enabled"
+            )
             return {"enabled": True, "affected_users": 0}
 
         # Deactivate all non-admin users
@@ -728,11 +765,15 @@ async def set_maintenance_mode(
 
         Config.set_maintenance_mode_state(True, restore_user_ids)
         await db.commit()
-        logger.info(f"Admin {admin.email} enabled maintenance mode, deactivated {affected_users} users")
+        logger.info(
+            f"Admin {admin.email} enabled maintenance mode, deactivated {affected_users} users"
+        )
     else:
         if not previous_enabled:
             Config.set_maintenance_mode_state(False, [])
-            logger.info(f"Admin {admin.email} requested maintenance mode disable, but it is already disabled")
+            logger.info(
+                f"Admin {admin.email} requested maintenance mode disable, but it is already disabled"
+            )
             return {"enabled": False, "affected_users": 0}
 
         import uuid
@@ -744,7 +785,9 @@ async def set_maintenance_mode(
             try:
                 restore_user_uuids.append(uuid.UUID(user_id))
             except (TypeError, ValueError):
-                logger.warning(f"Skipping invalid maintenance restore user id: {user_id}")
+                logger.warning(
+                    f"Skipping invalid maintenance restore user id: {user_id}"
+                )
 
         if restore_user_uuids:
             result = await db.execute(
@@ -761,7 +804,9 @@ async def set_maintenance_mode(
 
         await db.commit()
         Config.set_maintenance_mode_state(False, [])
-        logger.info(f"Admin {admin.email} disabled maintenance mode, restored {affected_users} users")
+        logger.info(
+            f"Admin {admin.email} disabled maintenance mode, restored {affected_users} users"
+        )
 
     return {"enabled": request.enabled, "affected_users": affected_users}
 
@@ -770,9 +815,13 @@ async def set_maintenance_mode(
 # Maintenance Notice (Announcement for non-admin users)
 # ============================================================================
 
+
 class MaintenanceNoticeRequest(BaseModel):
     """Request model for setting maintenance notice."""
-    message: Optional[str] = Field(default=None, description="Notice message. Empty or null to clear.")
+
+    message: Optional[str] = Field(
+        default=None, description="Notice message. Empty or null to clear."
+    )
 
 
 @router.get("/auth/maintenance-notice", tags=["User Management"])
@@ -793,6 +842,7 @@ async def get_maintenance_notice(
         notice_time = notice.get("updated_at")
         if notice_time:
             from datetime import datetime, timezone
+
             notice_dt = datetime.fromisoformat(notice_time)
             if notice_dt.tzinfo is None:
                 notice_dt = notice_dt.replace(tzinfo=timezone.utc)
@@ -825,14 +875,22 @@ async def set_maintenance_notice(
     """
     result = Config.set_maintenance_notice(request.message)
     if result:
-        logger.info(f"Admin {admin.email} set maintenance notice: {request.message[:50]}...")
-        return {"active": True, "message": result["message"], "updated_at": result["updated_at"]}
+        logger.info(
+            f"Admin {admin.email} set maintenance notice: {request.message[:50]}..."
+        )
+        return {
+            "active": True,
+            "message": result["message"],
+            "updated_at": result["updated_at"],
+        }
     else:
         logger.info(f"Admin {admin.email} cleared maintenance notice")
         return {"active": False, "message": None}
 
 
-@router.post("/auth/acknowledge-notice", response_model=UserRead, tags=["Authentication"])
+@router.post(
+    "/auth/acknowledge-notice", response_model=UserRead, tags=["Authentication"]
+)
 async def acknowledge_notice(
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -842,12 +900,15 @@ async def acknowledge_notice(
     Records the current timestamp so the user won't see the same notice again.
     """
     from datetime import datetime, timezone
+
     user.notice_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
     await db.refresh(user)
     logger.info(f"User {user.email} acknowledged maintenance notice")
     if user.avatar_path:
-        user.avatar_url = f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+        user.avatar_url = (
+            f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+        )
     return user
 
 
@@ -858,7 +919,9 @@ async def get_me(user: User = Depends(current_active_user)):
     Get current user info with populated avatar_url.
     """
     if user.avatar_path:
-        user.avatar_url = f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+        user.avatar_url = (
+            f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+        )
     return user
 
 
@@ -909,7 +972,7 @@ async def upload_avatar(
 
     # Populate avatar_url for response
     user.avatar_url = f"/avatars/{filename}?t={int(user.updated_at.timestamp())}"
-    
+
     logger.info(f"User {user.email} uploaded a new avatar")
     return user
 
@@ -930,11 +993,11 @@ async def delete_avatar(
                 avatar_path.unlink()
             except Exception as e:
                 logger.error(f"Failed to delete avatar file {avatar_path}: {e}")
-        
+
         user.avatar_path = None
         await db.commit()
         await db.refresh(user)
-    
+
     logger.info(f"User {user.email} deleted their avatar")
     return user
 
@@ -949,4 +1012,3 @@ router.include_router(
     fastapi_users.get_users_router(UserRead, UserUpdate),
     prefix="/auth",
 )
-

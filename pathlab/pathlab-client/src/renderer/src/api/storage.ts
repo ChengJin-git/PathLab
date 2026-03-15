@@ -3,6 +3,64 @@ import { createPersistentCache, PERSISTENT_CACHE_TTL } from '../lib/cache'
 import { apiFetch } from './client'
 
 // ============================================================================
+// Storage Configuration & Migration
+// ============================================================================
+
+export interface StorageConfig {
+  uploads_dir: string
+  source?: 'env' | 'config' | 'default' | string
+}
+
+export async function getStorageConfig(): Promise<StorageConfig> {
+  return apiFetch<StorageConfig>(`${API_BASE}/storage/config`, undefined, 'Failed to load storage config')
+}
+
+export async function updateStorageConfig(
+  uploads_dir: string
+): Promise<{ uploads_dir: string; restart_required: boolean; message?: string }> {
+  return apiFetch(
+    `${API_BASE}/storage/config`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uploads_dir }),
+    },
+    'Failed to update storage config'
+  )
+}
+
+export interface MigrationStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'success' | 'error'
+  source: string | null
+  destination: string | null
+  progress: number
+  error: string | null
+  delete_source: boolean
+  message?: string
+  new_path?: string
+}
+
+export async function startMigration(targetPath: string, deleteSource: boolean = false): Promise<void> {
+  await apiFetch<{ message: string }>(
+    `${API_BASE}/storage/migrate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_path: targetPath, delete_source: deleteSource }),
+    },
+    'Failed to start migration'
+  )
+}
+
+export async function getMigrationStatus(): Promise<MigrationStatus> {
+  return apiFetch<MigrationStatus>(
+    `${API_BASE}/storage/migration/status`,
+    undefined,
+    'Failed to get migration status'
+  )
+}
+
+// ============================================================================
 // Storage Management APIs
 // ============================================================================
 

@@ -5,12 +5,12 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { AuthProvider } from './contexts/AuthContext'
 import { BackgroundTaskProvider } from './contexts/BackgroundTaskContext'
 import { ToastProvider } from './contexts/ToastContext'
-import { BackgroundTaskPanel } from './components/BackgroundTaskPanel'
 import App from './App'
 import './index.css'
 import { initializeApiConfig, updateApiBase } from './config'
 import './i18n'
 import { queryClient } from './lib/queryClient'
+import { bootstrapTrainingOptions } from './constants/trainingOptionsBootstrap'
 
 // Use the base URL from Vite config
 const basename = import.meta.env.BASE_URL
@@ -60,6 +60,7 @@ async function bootstrap(): Promise<void> {
   }
 
   updateApiBase()
+  await bootstrapTrainingOptions()
   console.log('[Main] API configuration initialized')
 
   createRoot(document.getElementById('root')!).render(
@@ -79,4 +80,3 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap()
-

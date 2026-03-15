@@ -18,6 +18,7 @@ Route modules:
 - gpu: GPU information and status
 - annotation: Annotation draft CRUD and ROI extraction
 """
+
 from .auth import router as auth_router
 
 from .stats import router as stats_router
@@ -35,6 +36,7 @@ from .heatmap import router as heatmap_router
 from .settings import router as settings_router
 from .gpu import router as gpu_router
 from .annotation import router as annotation_router
+from .training_options import router as training_options_router
 
 __all__ = [
     "auth_router",
@@ -53,5 +55,5 @@ __all__ = [
     "settings_router",
     "gpu_router",
     "annotation_router",
+    "training_options_router",
 ]
-
