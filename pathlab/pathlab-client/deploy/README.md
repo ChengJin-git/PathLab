@@ -45,7 +45,7 @@ electron-builder ← 打包成安装包，注入 extraResources
 |---|---|---|---|
 | **Linux x86_64** | ✅ 完整支持 | ✅ | 主要开发 / 发布平台 |
 | **macOS (Apple Silicon / Intel)** | ✅ 支持 | ✅ | 需 Homebrew；Apple Silicon 自动选 arm64 PyInstaller |
-| **Windows x64** | ⚠️ 部分支持 | ⚠️ | 构建需 Git Bash；Redis 需手动准备（见下） |
+| **Windows x64** | ✅ 支持 | ✅ | 构建需 Git Bash；Redis 由脚本自动下载 Garnet |
 
 ### Windows 特殊说明
 

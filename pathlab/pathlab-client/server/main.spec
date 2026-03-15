@@ -56,7 +56,7 @@ packages_to_collect = [
     # Database
     'sqlalchemy', 'asyncpg',
     # Image processing
-    'PIL', 'cv2', 'tifffile',
+    'PIL', 'cv2', 'numpy', 'tifffile',
     # WSI
     'openslide',
     # ML / AI — these are the heaviest; collect_all is essential
