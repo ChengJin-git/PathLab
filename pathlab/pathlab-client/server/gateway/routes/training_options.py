@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import TypeAlias
-
 from fastapi import APIRouter, Depends
 
-from ...backend.auth import current_active_user
-from ...backend.ai.extractors.registry import get_available_extractors
-from ...backend.ai.aggregators.registry import list_aggregators
-from ...backend.ai.segmentors.specs import (
+from backend.auth import current_active_user
+from backend.ai.extractors.registry import get_available_extractors
+from backend.ai.aggregators.registry import list_aggregators
+from backend.ai.segmentors.specs import (
     SUPPORT_ARCHITECTURES,
     SUPPORT_FEATURE_EXTRACTORS,
 )
