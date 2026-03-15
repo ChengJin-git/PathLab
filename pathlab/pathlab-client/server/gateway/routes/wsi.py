@@ -1468,9 +1468,9 @@ async def upload_dataset_splits(
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
 
-    # Decode as UTF-8
+    # Decode as UTF-8 (utf-8-sig strips BOM if present — Excel often adds BOM to CSV)
     try:
-        text = content.decode("utf-8")
+        text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise HTTPException(
             status_code=400, detail="Invalid CSV file: not valid UTF-8 encoding"

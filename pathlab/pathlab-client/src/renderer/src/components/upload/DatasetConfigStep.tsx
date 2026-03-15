@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info, Database } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -39,7 +39,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
 
   const isSegmentation = uploadMode === 'segmentation'
   const isOtherSource = datasetSourceSelection === 'Other'
-  const canEditSource = true
+  const canEditSource = !isExistingDataset
   const sourceCustomPlaceholder = isOtherSource
     ? t('uploadComponents.datasetConfig.otherSourcePlaceholder')
     : datasetSourceSelection
@@ -127,15 +127,20 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   )}
                 </div>
                 {existingDatasets.length > 0 && !datasetName.trim() && (
-                  <div className="mt-4">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">{t('uploadComponents.datasetConfig.orSelectExisting')}</p>
-                    <div className="flex flex-wrap gap-2">
+                  <div className="mt-5 p-4 sm:p-5 bg-slate-50/80 rounded-xl sm:rounded-2xl border border-slate-200 shadow-sm">
+                    <div className="flex items-center gap-2 mb-3 sm:mb-4">
+                      <Database className="w-4 h-4 text-slate-500" />
+                      <p className="text-xs sm:text-sm font-semibold text-slate-700 uppercase tracking-wider">
+                        {t('uploadComponents.datasetConfig.orSelectExisting')}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2 sm:gap-2.5">
                       {existingDatasets.slice(0, 8).map(name => (
                         <button
                           key={name}
                           type="button"
                           onClick={() => onDatasetNameChange(name)}
-                          className="px-3 py-1.5 text-xs bg-white border border-slate-200 text-slate-600 rounded-lg hover:border-blue-500 hover:text-blue-600 transition-all shadow-sm"
+                          className="px-3 py-1.5 sm:px-4 sm:py-2 text-xs sm:text-sm bg-white border border-slate-200 text-slate-700 rounded-lg sm:rounded-xl hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50/50 hover:shadow-md transition-all text-left font-medium"
                         >
                           {name}
                         </button>
@@ -151,107 +156,107 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 sm:gap-8 items-stretch">
-              <div className="flex flex-col">
-                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.analysisType')}</label>
-                <div className="grid grid-cols-1 gap-3 sm:gap-4 flex-1">
-                  <button
-                    onClick={() => !isExistingDataset && handleUploadModeChange('classification')}
-                    disabled={isExistingDataset}
-                    className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
-                      ? 'border-blue-500 bg-blue-50/50'
-                      : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                      } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
-                  >
-                    <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                      <Tags className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.classification')}</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.classificationDesc')}</span>
-                    </div>
-                  </button>
+                <div className="flex flex-col">
+                  <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.analysisType')}</label>
+                  <div className="grid grid-cols-1 gap-3 sm:gap-4 flex-1">
+                    <button
+                      onClick={() => !isExistingDataset && handleUploadModeChange('classification')}
+                      disabled={isExistingDataset}
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
+                        ? 'border-blue-500 bg-blue-50/50'
+                        : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
+                    >
+                      <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <Tags className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.classification')}</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.classificationDesc')}</span>
+                      </div>
+                    </button>
 
-                  <button
-                    onClick={() => !isExistingDataset && handleUploadModeChange('survival')}
-                    disabled={isExistingDataset}
-                    className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
-                      ? 'border-emerald-500 bg-emerald-50/50'
-                      : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                      } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
-                  >
-                    <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                      <Activity className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.survivalAnalysis')}</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.survivalDesc')}</span>
-                    </div>
-                  </button>
+                    <button
+                      onClick={() => !isExistingDataset && handleUploadModeChange('survival')}
+                      disabled={isExistingDataset}
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
+                        ? 'border-emerald-500 bg-emerald-50/50'
+                        : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
+                    >
+                      <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <Activity className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.survivalAnalysis')}</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.survivalDesc')}</span>
+                      </div>
+                    </button>
 
-                  <button
-                    onClick={() => !isExistingDataset && handleUploadModeChange('segmentation')}
-                    disabled={isExistingDataset}
-                    className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'segmentation'
-                      ? 'border-violet-500 bg-violet-50/50'
-                      : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                      } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'segmentation' ? 'opacity-40' : ''}`}
-                  >
-                    <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'segmentation' ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                      <Layers className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className={`font-bold block ${uploadMode === 'segmentation' ? 'text-violet-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.segmentation')}</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.segmentationDesc')}</span>
-                    </div>
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex flex-col">
-                <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.dataLevel')}</label>
-                <div className="flex flex-col gap-3 sm:gap-4 flex-1">
-                  <button
-                    onClick={() => !isExistingDataset && !isSegmentation && onDataLevelChange('case')}
-                    disabled={isExistingDataset || isSegmentation}
-                    className={`flex-1 flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
-                      ? 'border-purple-500 bg-purple-50/50'
-                      : `border-slate-100 bg-white ${!isExistingDataset && !isSegmentation ? 'hover:border-slate-200' : ''}`
-                      } ${isExistingDataset || isSegmentation ? 'cursor-not-allowed' : ''} ${(isExistingDataset || isSegmentation) && dataLevel !== 'case' ? 'opacity-40' : ''}`}
-                  >
-                    <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                      <Users className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className={`font-bold block ${dataLevel === 'case' ? 'text-purple-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.caseLevel')}</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.caseLevelDesc')}</span>
-                    </div>
-                  </button>
-
-
-                  <button
-                    onClick={() => !isExistingDataset && onDataLevelChange('file')}
-                    disabled={isExistingDataset}
-                    className={`flex-1 flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'file'
-                      ? 'border-orange-500 bg-orange-50/50'
-                      : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                      } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'file' ? 'opacity-40' : ''}`}
-                  >
-                    <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'file' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                      <FileImage className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <span className={`font-bold block ${dataLevel === 'file' ? 'text-orange-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.fileLevel')}</span>
-                      <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.fileLevelDesc')}</span>
-                    </div>
-                  </button>
-                </div>
-                {isSegmentation && (
-                  <div className="flex items-start gap-2 mt-3 p-3 bg-violet-50 border border-violet-100 rounded-xl">
-                    <Info className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
-                    <span className="text-xs text-violet-700">{t('uploadComponents.datasetConfig.segmentationPatchOnly')}</span>
+                    <button
+                      onClick={() => !isExistingDataset && handleUploadModeChange('segmentation')}
+                      disabled={isExistingDataset}
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'segmentation'
+                        ? 'border-violet-500 bg-violet-50/50'
+                        : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'segmentation' ? 'opacity-40' : ''}`}
+                    >
+                      <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'segmentation' ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <Layers className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className={`font-bold block ${uploadMode === 'segmentation' ? 'text-violet-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.segmentation')}</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.segmentationDesc')}</span>
+                      </div>
+                    </button>
                   </div>
-                )}
-              </div>
+                </div>
+
+                <div className="flex flex-col">
+                  <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">{t('uploadComponents.datasetConfig.dataLevel')}</label>
+                  <div className="flex flex-col gap-3 sm:gap-4 flex-1">
+                    <button
+                      onClick={() => !isExistingDataset && !isSegmentation && onDataLevelChange('case')}
+                      disabled={isExistingDataset || isSegmentation}
+                      className={`flex-1 flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'case'
+                        ? 'border-purple-500 bg-purple-50/50'
+                        : `border-slate-100 bg-white ${!isExistingDataset && !isSegmentation ? 'hover:border-slate-200' : ''}`
+                        } ${isExistingDataset || isSegmentation ? 'cursor-not-allowed' : ''} ${(isExistingDataset || isSegmentation) && dataLevel !== 'case' ? 'opacity-40' : ''}`}
+                    >
+                      <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'case' ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <Users className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className={`font-bold block ${dataLevel === 'case' ? 'text-purple-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.caseLevel')}</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.caseLevelDesc')}</span>
+                      </div>
+                    </button>
+
+
+                    <button
+                      onClick={() => !isExistingDataset && onDataLevelChange('file')}
+                      disabled={isExistingDataset}
+                      className={`flex-1 flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${dataLevel === 'file'
+                        ? 'border-orange-500 bg-orange-50/50'
+                        : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
+                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && dataLevel !== 'file' ? 'opacity-40' : ''}`}
+                    >
+                      <div className={`p-2 rounded-lg mr-4 ${dataLevel === 'file' ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <FileImage className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className={`font-bold block ${dataLevel === 'file' ? 'text-orange-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.fileLevel')}</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.fileLevelDesc')}</span>
+                      </div>
+                    </button>
+                  </div>
+                  {isSegmentation && (
+                    <div className="flex items-start gap-2 mt-3 p-3 bg-violet-50 border border-violet-100 rounded-xl">
+                      <Info className="w-4 h-4 text-violet-500 mt-0.5 shrink-0" />
+                      <span className="text-xs text-violet-700">{t('uploadComponents.datasetConfig.segmentationPatchOnly')}</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -263,11 +268,10 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     value={datasetSourceSelection}
                     onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
                     disabled={!canEditSource}
-                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
-                      !canEditSource 
-                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60' 
+                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${!canEditSource
+                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60'
                         : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
-                    }`}
+                      }`}
                   >
                     <option value="">{t('uploadComponents.datasetConfig.selectDatasetSource')}</option>
                     {organSources.filter((source) => source !== 'Other').map((source) => (
@@ -279,13 +283,12 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     type="text"
                     value={isOtherSource ? debouncedSourceCustom : ''}
                     onChange={(e) => setDebouncedSourceCustom(e.target.value)}
-                    disabled={!isOtherSource}
+                    disabled={!isOtherSource || !canEditSource}
                     placeholder={sourceCustomPlaceholder}
-                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
-                      !isOtherSource
+                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${!isOtherSource || !canEditSource
                         ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60'
                         : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
-                    }`}
+                      }`}
                   />
                 </div>
                 <p className="mt-3 text-sm text-slate-400">
