@@ -31,7 +31,7 @@ import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
-import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
+import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, updateDatasetSource } from '../api'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
@@ -907,7 +907,19 @@ export default function RegisterPage() {
           existingDatasetSource={existingDatasetSource}
           showValidation={showValidation}
           fromAIChat={fromAIChat}
-          onNext={() => setStep(2)}
+          onNext={async () => {
+            if (isExistingDataset && datasetId) {
+              const resolvedSource = getResolvedDatasetSource()
+              if (resolvedSource && resolvedSource !== existingDatasetSource) {
+                try {
+                  await updateDatasetSource(datasetId, resolvedSource)
+                } catch (e) {
+                  console.warn('Failed to update dataset source organ:', e)
+                }
+              }
+            }
+            setStep(2)
+          }}
           onBack={() => navigate('/dashboard')}
         />
       ) : step === 3 ? (

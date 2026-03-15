@@ -1773,7 +1773,8 @@ async def export_dataset_labels(
     """
     Export dataset labels as CSV file.
 
-    Admin only. Non-blocking operation using StreamingResponse.
+    Available to dataset owners and users with elevated access permissions.
+    Non-blocking operation using StreamingResponse.
 
     If dataset has predefined splits, exports them directly.
     If generate_split=True and no predefined splits, generates splits using the same
@@ -1785,14 +1786,14 @@ async def export_dataset_labels(
     - Survival (file-level): filename, event_time, event_status, case_id, age, gender, split
     - Survival (case-level): case_id, event_time, event_status, file_count, age, gender, split, filenames
     """
-    # Admin only
-    if not user.is_admin():
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    # Get dataset
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset = await get_dataset_with_access(
+        dataset_id,
+        user,
+        db,
+        require_owner=False,
+        not_found_detail="Dataset not found",
+        forbidden_detail="You don't have permission to export this dataset",
+    )
 
     aggregation_level = (
         dataset.data_group.aggregation_level if dataset.data_group else "file"

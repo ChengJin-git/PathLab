@@ -1463,25 +1463,23 @@ export default function ListPage() {
                             <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
                               {dataset.dataset_name}
                             </h3>
-                            {dataset.can_delete && (
-                              <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
-                                {isAdmin && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
-                                    onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                    title={t('listPage.exportLabels')}
-                                    disabled={exporting}
-                                  >
-                                    {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    ) : (
-                                      <Download className="w-3.5 h-3.5" />
-                                    )}
-                                  </Button>
-                                )}
-                                <Button
+                              {dataset.can_delete && (
+                               <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
+                                 <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
+                                     onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                     title={t('listPage.exportLabels')}
+                                     disabled={exporting}
+                                   >
+                                     {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                     ) : (
+                                       <Download className="w-3.5 h-3.5" />
+                                     )}
+                                   </Button>
+                                 <Button
                                   variant="ghost"
                                   size="icon"
                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
@@ -1651,43 +1649,41 @@ export default function ListPage() {
 
                             <div className="hidden xl:flex items-center gap-1">
                               {dataset.can_delete && (
-                                <>
-                                  {isAdmin && (
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8 text-slate-400 hover:text-green-600"
-                                      onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                      title={t('listPage.exportLabels')}
-                                      disabled={exporting}
-                                    >
-                                      {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                      ) : (
-                                        <Download className="w-4 h-4" />
-                                      )}
-                                    </Button>
-                                  )}
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                    onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                    title={t('listPage.editDataset')}
-                                  >
-                                    <Pencil className="w-4 h-4" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                    onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                    title={t('listPage.deleteDataset')}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </Button>
-                                </>
-                              )}
+                                 <>
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                     onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                     title={t('listPage.exportLabels')}
+                                     disabled={exporting}
+                                   >
+                                     {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                       <Loader2 className="w-4 h-4 animate-spin" />
+                                     ) : (
+                                       <Download className="w-4 h-4" />
+                                     )}
+                                   </Button>
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                     onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                     title={t('listPage.editDataset')}
+                                   >
+                                     <Pencil className="w-4 h-4" />
+                                   </Button>
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                     onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                     title={t('listPage.deleteDataset')}
+                                   >
+                                     <Trash2 className="w-4 h-4" />
+                                   </Button>
+                                 </>
+                               )}
                               <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
                             </div>
                           </div>
@@ -1713,44 +1709,42 @@ export default function ListPage() {
 
                       <div className="flex xl:hidden items-center justify-between pt-3 border-t border-slate-100">
                         <div className="flex items-center gap-1">
-                          {dataset.can_delete && (
-                            <>
-                              {isAdmin && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-slate-400 hover:text-green-600"
-                                  onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                  title={t('listPage.exportLabels')}
-                                  disabled={exporting}
-                                >
-                                  {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Download className="w-4 h-4" />
-                                  )}
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                title={t('listPage.editDataset')}
-                              >
-                                <Pencil className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                title={t('listPage.deleteDataset')}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </>
-                          )}
+                           {dataset.can_delete && (
+                             <>
+                               <Button
+                                 variant="ghost"
+                                 size="icon"
+                                 className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                 onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                 title={t('listPage.exportLabels')}
+                                 disabled={exporting}
+                               >
+                                 {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                   <Loader2 className="w-4 h-4 animate-spin" />
+                                 ) : (
+                                   <Download className="w-4 h-4" />
+                                 )}
+                               </Button>
+                               <Button
+                                 variant="ghost"
+                                 size="icon"
+                                 className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                 onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                 title={t('listPage.editDataset')}
+                               >
+                                 <Pencil className="w-4 h-4" />
+                               </Button>
+                               <Button
+                                 variant="ghost"
+                                 size="icon"
+                                 className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                 onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                 title={t('listPage.deleteDataset')}
+                               >
+                                 <Trash2 className="w-4 h-4" />
+                               </Button>
+                             </>
+                           )}
                         </div>
                         <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
                       </div>

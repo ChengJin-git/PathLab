@@ -39,7 +39,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
 
   const isSegmentation = uploadMode === 'segmentation'
   const isOtherSource = datasetSourceSelection === 'Other'
-  const canEditSource = !isExistingDataset
+  const canEditSource = true
   const sourceCustomPlaceholder = isOtherSource
     ? t('uploadComponents.datasetConfig.otherSourcePlaceholder')
     : datasetSourceSelection
@@ -279,10 +279,10 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     type="text"
                     value={isOtherSource ? debouncedSourceCustom : ''}
                     onChange={(e) => setDebouncedSourceCustom(e.target.value)}
-                    disabled={!isOtherSource || !canEditSource}
+                    disabled={!isOtherSource}
                     placeholder={sourceCustomPlaceholder}
                     className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${
-                      !isOtherSource || !canEditSource
+                      !isOtherSource
                         ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60'
                         : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
                     }`}
