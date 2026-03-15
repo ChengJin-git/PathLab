@@ -1309,6 +1309,8 @@
     "noConversationsYet": "暂无对话",
     "startNewChat": "开始新对话",
     "deleteConversation": "删除对话",
+    "exportConversation": "导出对话",
+    "exportFailed": "导出对话失败",
     "closeChatHistory": "关闭聊天历史",
     "openChatHistory": "打开聊天历史",
     "chat": "聊天",

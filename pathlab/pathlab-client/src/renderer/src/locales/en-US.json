@@ -1309,6 +1309,8 @@
     "noConversationsYet": "No conversations yet",
     "startNewChat": "Start a new chat to begin",
     "deleteConversation": "Delete conversation",
+    "exportConversation": "Export conversation",
+    "exportFailed": "Failed to export conversation",
     "closeChatHistory": "Close chat history",
     "openChatHistory": "Open chat history",
     "chat": "Chat",

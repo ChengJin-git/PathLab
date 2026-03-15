@@ -5,6 +5,7 @@ import {
 	Clock,
 	Database,
 	FileSpreadsheet,
+	Share2,
 	History,
 	LineChart,
 	Loader2,
@@ -46,6 +47,7 @@ import {
 	createConversation,
 	deleteConversation,
 	deleteMessagesFrom,
+	downloadBlobFile,
 	getConversation,
 	getConversationFeedbacks,
 	getConversations,
@@ -1113,6 +1115,49 @@ export default function AIChatPage() {
 	) => {
 		e.stopPropagation();
 		setDeleteConfirmId(conversationId);
+	};
+
+	const handleExportConversation = async (
+		conversationId: string,
+		e: React.MouseEvent,
+	) => {
+		e.stopPropagation();
+		try {
+			const conversation = await getConversation(conversationId);
+
+			const lines: string[] = [];
+			lines.push(`# ${conversation.title}`);
+			lines.push("");
+			lines.push(`> Exported: ${new Date().toLocaleString()}`);
+			lines.push("");
+			lines.push("---");
+			lines.push("");
+
+			const visibleMessages = conversation.messages.filter(
+				(msg) => !isInternalOnlyMessage(msg.content),
+			);
+
+			for (const msg of visibleMessages) {
+				const roleLabel = msg.role === "user" ? "User" : "Assistant";
+				lines.push(`## ${roleLabel}`);
+				lines.push("");
+				lines.push(msg.content.trim());
+				lines.push("");
+				lines.push("---");
+				lines.push("");
+			}
+
+			const markdown = lines.join("\n");
+			const blob = new Blob([markdown], {
+				type: "text/markdown;charset=utf-8",
+			});
+			const safeTitle = (conversation.title || "conversation")
+				.replace(/[\\/:*?"<>|]/g, "_")
+				.slice(0, 80);
+			downloadBlobFile(blob, `${safeTitle}.md`);
+		} catch {
+			showToast("error", t("aiChat.exportFailed"));
+		}
 	};
 
 	const confirmDelete = async () => {
@@ -3148,16 +3193,28 @@ export default function AIChatPage() {
 														})}
 													</div>
 												</div>
-												<button
-													type="button"
-													onClick={(e) =>
-														handleDeleteConversation(conv.conversation_id, e)
-													}
-													className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-													title={t("aiChat.deleteConversation")}
-												>
-													<Trash2 className="w-4 h-4" />
-												</button>
+												<div className="flex items-center gap-0.5 flex-shrink-0">
+													<button
+														type="button"
+														onClick={(e) =>
+															handleExportConversation(conv.conversation_id, e)
+														}
+														className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+														title={t("aiChat.exportConversation")}
+													>
+														<Share2 className="w-4 h-4" />
+													</button>
+													<button
+														type="button"
+														onClick={(e) =>
+															handleDeleteConversation(conv.conversation_id, e)
+														}
+														className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+														title={t("aiChat.deleteConversation")}
+													>
+														<Trash2 className="w-4 h-4" />
+													</button>
+												</div>
 											</div>
 										</button>
 									</div>
