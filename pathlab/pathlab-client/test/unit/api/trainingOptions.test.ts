@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ok, errResp } from '../../helpers/apiHelpers'
 
 vi.mock('@renderer/config', () => ({
   API_BASE: 'http://localhost:6100',
@@ -14,26 +15,6 @@ import { setAuthToken } from '@renderer/api/client'
 
 const mockFetch = vi.mocked(fetch)
 
-function ok(data: unknown): Response {
-  return {
-    ok: true,
-    status: 200,
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response
-}
-
-function errResp(data: unknown, status: number): Response {
-  return {
-    ok: false,
-    status,
-    statusText: 'Error',
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response
-}
 
 const MOCK_OPTIONS: TrainingOptionsResponse = {
   feature_extractors: [
