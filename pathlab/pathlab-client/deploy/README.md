@@ -49,23 +49,19 @@ electron-builder ← 打包成安装包，注入 extraResources
 
 ### Windows 特殊说明
 
-Windows 没有官方 Redis 二进制。构建前需手动准备：
+Windows 上不存在官方 Redis 二进制，`prepare-redis.sh` 会自动下载 **Microsoft Garnet**（MIT 许可，Redis wire-protocol 兼容，微软研究院维护）替代：
 
-```powershell
-# 方案 A：下载社区版 Redis for Windows
-# https://github.com/tporadowski/redis/releases
-# 下载后将 redis-server.exe 放至 resources/redis-server.exe
-
-# 方案 B：WSL 内编译，拷出 redis-server.exe（实为 Linux 二进制，在 WSL 内运行）
-# 不推荐用于生产分发
-
-# 方案 C：Memurai（Redis for Windows 商业兼容实现）
-# https://www.memurai.com/
 ```
+scripts/prepare-redis.sh（Git Bash 中执行）
+  ↓ 检测到 MINGW/MSYS 环境
+  ↓ 从 github.com/microsoft/garnet/releases 下载最新 garnet-win-x64.zip
+  ↓ 提取 GarnetServer.exe → resources/redis-server.exe
+```
+
+Garnet 默认绑定 `127.0.0.1`（比 Redis 更安全），`services-manager.ts` 在 Windows 下自动使用 Garnet 的 `--address` 参数替代 Redis 的 `--bind`，并省略不适用的 `--appendonly` / `--daemonize` 等 Redis 专有参数。
 
 build 脚本要求 bash，在 Windows 上需用 Git Bash 执行：
 ```bash
-# Git Bash 中
 npm run build:win
 ```
 

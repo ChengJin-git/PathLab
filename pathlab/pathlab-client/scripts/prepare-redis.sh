@@ -1,22 +1,63 @@
 #!/bin/bash
-# prepare-redis.sh — 将 redis-server 二进制拷贝到 resources/
-# 打包 Electron 桌面版前必须先执行此脚本。
-# 产出：resources/redis-server（由 electron-builder extraResources 打入安装包）
-
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-DEST="$ROOT_DIR/resources/redis-server"
 
 mkdir -p "$ROOT_DIR/resources"
+
+PLATFORM="$(uname -s)"
+case "$PLATFORM" in
+    MINGW*|MSYS*|CYGWIN*)
+        IS_WINDOWS=1
+        DEST="$ROOT_DIR/resources/redis-server.exe"
+        ;;
+    *)
+        IS_WINDOWS=0
+        DEST="$ROOT_DIR/resources/redis-server"
+        ;;
+esac
 
 if [ -f "$DEST" ]; then
     echo "[prepare-redis] Already exists: $DEST"
     exit 0
 fi
 
-# 1. 尝试系统 redis-server
+if [ "$IS_WINDOWS" = "1" ]; then
+    echo "[prepare-redis] Windows detected — downloading Microsoft Garnet (Redis-compatible)..."
+
+    TMP_DIR="$(mktemp -d)"
+    cleanup() { rm -rf "$TMP_DIR"; }
+    trap cleanup EXIT
+
+    GARNET_VERSION="${GARNET_VERSION:-}"
+    if [ -z "$GARNET_VERSION" ]; then
+        GARNET_VERSION=$(curl -sSL "https://api.github.com/repos/microsoft/garnet/releases/latest" \
+            | grep '"tag_name"' | sed 's/.*"v\([^"]*\)".*/\1/' 2>/dev/null || true)
+    fi
+    if [ -z "$GARNET_VERSION" ]; then
+        GARNET_VERSION="1.1.1"
+    fi
+
+    echo "[prepare-redis] Garnet version: ${GARNET_VERSION}"
+    GARNET_URL="https://github.com/microsoft/garnet/releases/download/v${GARNET_VERSION}/garnet-win-x64.zip"
+    echo "[prepare-redis] Downloading: $GARNET_URL"
+    curl -sSL "$GARNET_URL" -o "$TMP_DIR/garnet.zip"
+
+    unzip -q "$TMP_DIR/garnet.zip" -d "$TMP_DIR/garnet"
+
+    GARNET_EXE="$(find "$TMP_DIR/garnet" -name "*.exe" | head -1)"
+    if [ -z "$GARNET_EXE" ]; then
+        echo "[prepare-redis] ERROR: No .exe found in Garnet zip"
+        exit 1
+    fi
+
+    cp "$GARNET_EXE" "$DEST"
+    chmod 755 "$DEST"
+    echo "[prepare-redis] Garnet placed at: $DEST"
+    exit 0
+fi
+
 if command -v redis-server &>/dev/null; then
     SRC="$(which redis-server)"
     echo "[prepare-redis] Copying from system: $SRC -> $DEST"
@@ -26,8 +67,11 @@ if command -v redis-server &>/dev/null; then
     exit 0
 fi
 
-# 2. 常见固定路径
-for candidate in /usr/bin/redis-server /usr/local/bin/redis-server /opt/homebrew/bin/redis-server; do
+for candidate in \
+    /usr/bin/redis-server \
+    /usr/local/bin/redis-server \
+    /opt/homebrew/bin/redis-server \
+    /opt/homebrew/opt/redis/bin/redis-server; do
     if [ -f "$candidate" ]; then
         echo "[prepare-redis] Copying from: $candidate -> $DEST"
         cp "$candidate" "$DEST"
@@ -37,11 +81,9 @@ for candidate in /usr/bin/redis-server /usr/local/bin/redis-server /opt/homebrew
     fi
 done
 
-# 3. 编译安装（Linux fallback，需要 build-essential）
-echo "[prepare-redis] redis-server not found, attempting to compile from source..."
+echo "[prepare-redis] redis-server not found, compiling from source (requires build-essential)..."
 REDIS_VER="7.4.2"
 TMP_DIR="$(mktemp -d)"
-
 cleanup() { rm -rf "$TMP_DIR"; }
 trap cleanup EXIT
 

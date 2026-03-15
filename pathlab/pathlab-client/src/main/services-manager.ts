@@ -77,19 +77,22 @@ async function startRedis(): Promise<string> {
     // ignore on read-only filesystems
   }
 
-  redisProcess = spawn(
-    redisBinary,
-    [
-      '--port', String(redisPort),
-      '--bind', '127.0.0.1',
-      '--dir', dataDir,
-      '--appendonly', 'yes',
-      '--appendfilename', 'pathlab.aof',
-      '--loglevel', 'warning',
-      '--daemonize', 'no'
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'] }
-  )
+  const redisArgs = process.platform === 'win32'
+    ? [
+        '--port', String(redisPort),
+        '--address', '127.0.0.1',
+      ]
+    : [
+        '--port', String(redisPort),
+        '--bind', '127.0.0.1',
+        '--dir', dataDir,
+        '--appendonly', 'yes',
+        '--appendfilename', 'pathlab.aof',
+        '--loglevel', 'warning',
+        '--daemonize', 'no',
+      ]
+
+  redisProcess = spawn(redisBinary, redisArgs, { stdio: ['ignore', 'pipe', 'pipe'] })
 
   redisProcess.stdout?.on('data', (d: Buffer) => console.log('[Redis]', d.toString().trim()))
   redisProcess.stderr?.on('data', (d: Buffer) => console.log('[Redis]', d.toString().trim()))
