@@ -25,6 +25,15 @@ pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
 ├── logs/                   # 固定端口脚本输出日志
 ├── server/                 # Python sidecar
+│   ├── tests/              # 后端单元测试（pytest）
+│   │   ├── conftest.py     # fixtures（auth mock、app factory）
+│   │   ├── test_config.py
+│   │   ├── test_settings.py
+│   │   ├── test_queue_config.py
+│   │   ├── test_ai_models.py
+│   │   └── test_ai_extractors_pretrained.py
+│   ├── pytest.ini          # asyncio_mode = auto
+│   └── requirements-test.txt
 ├── src/
 │   ├── main/               # Electron 主进程
 │   ├── preload/            # Electron preload
@@ -88,9 +97,11 @@ pathlab-client/
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
 - 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口
 
-## 单元测试
+## 测试
 
-前端测试基于 **Vitest** + **@testing-library/react**，覆盖全部 API 客户端模块、工具函数库和 AuthContext。
+### 前端测试（Vitest）
+
+基于 **Vitest** + **@testing-library/react**，覆盖全部 API 客户端模块、工具函数库和 AuthContext。
 
 ```bash
 npm run test:run      # 单次全量运行
@@ -118,6 +129,33 @@ npm run test:coverage # 生成覆盖率报告
 | React Context | `unit/contexts/AuthContext.test.tsx` | 认证状态机、角色判断、协议签署、维护公告 |
 
 详细说明见 [test/README.md](test/README.md)。
+
+### 后端测试（pytest）
+
+基于 **pytest** + **pytest-asyncio** + **httpx**，覆盖配置层、Gateway 路由以及 AI 模型推理（含 GPU smoke test）。
+
+```bash
+# 安装测试依赖
+pip install -r server/requirements-test.txt
+
+# 运行全部后端测试（跳过预训练模型）
+python -m pytest server/tests/ -v -k "not pretrained"
+
+# 运行预训练模型测试（需 GPU，耗时较长）
+python -m pytest server/tests/test_ai_extractors_pretrained.py -v
+```
+
+当前共 **116 个常规测试 + ~144 个预训练模型测试**，分布在 **5 个测试文件**：
+
+| 文件 | 测试数 | 覆盖内容 |
+|------|--------|---------|
+| `server/tests/test_config.py` | 28 | Config 全局设置、任务超时、并发数、维护模式 |
+| `server/tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm |
+| `server/tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id} |
+| `server/tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
+| `server/tests/test_ai_extractors_pretrained.py` | ~144 | 17 个 HuggingFace 预训练模型加载与推理验证 |
+
+详细说明见 [server/README.md](server/README.md)。
 
 ## 推荐阅读顺序
 

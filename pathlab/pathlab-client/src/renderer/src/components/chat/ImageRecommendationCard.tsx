@@ -687,8 +687,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       let predictionByWsiId = new Map<string, string | null>()
       let shouldHydrateLimitedImages = false
 
-      // If has_predictions is true, fetch from results endpoint
-      if (recommendation.filters?.has_predictions) {
+      // If has_predictions is true OR pred filter is specified, fetch from results endpoint
+      if (recommendation.filters?.has_predictions || recommendation.filters?.pred) {
         const resultsData = await fetchAllResults()
         let resultsWithWsi = dedupeLatestResultsByWsi(resultsData.items)
 
@@ -755,7 +755,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
       // Fallback: if show_heatmap is true but no images found with has_predictions filter,
       // retry without the predictions constraint. This handles the case where heatmaps exist
       // on disk (from training) but no AIResult records exist in the database.
-      if (needsOverlayLookup && displayImages.length === 0 && recommendation.filters?.has_predictions) {
+      if (needsOverlayLookup && displayImages.length === 0 && (recommendation.filters?.has_predictions || recommendation.filters?.pred)) {
         console.warn('[ImageRecommendation] No images found with has_predictions filter, falling back to dataset images for heatmap display')
         displayImages = await fetchAndFilterWSIList(recommendation)
       }
