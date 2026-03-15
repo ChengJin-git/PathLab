@@ -263,31 +263,57 @@ for src, dst in all_datas:
         seen_datas.add(key)
         dedup_datas.append((src, dst))
 
-# ---------------------------------------------------------------------------
-# Binaries: system shared libraries that Python dlopen()s at runtime
-# ---------------------------------------------------------------------------
 extra_binaries = []
 
-# libopenslide — dlopen()-ed by openslide-python
-for candidate in [
-    '/usr/lib/x86_64-linux-gnu/libopenslide.so.0',
-    '/usr/lib/x86_64-linux-gnu/libopenslide.so.0.4.1',
-    '/usr/lib64/libopenslide.so.0',
-    '/usr/local/lib/libopenslide.so.0',
-]:
-    if os.path.exists(candidate):
-        extra_binaries.append((candidate, '.'))
-        break
+if sys.platform == 'linux':
+    for candidate in [
+        '/usr/lib/x86_64-linux-gnu/libopenslide.so.0',
+        '/usr/lib/x86_64-linux-gnu/libopenslide.so.0.4.1',
+        '/usr/lib64/libopenslide.so.0',
+        '/usr/local/lib/libopenslide.so.0',
+    ]:
+        if os.path.exists(candidate):
+            extra_binaries.append((candidate, '.'))
+            break
 
-# libgomp — required by torch / numpy OpenMP
-for candidate in [
-    '/usr/lib/x86_64-linux-gnu/libgomp.so.1',
-    '/usr/lib/x86_64-linux-gnu/libgomp.so.1.0.0',
-    '/usr/lib64/libgomp.so.1',
-]:
-    if os.path.exists(candidate):
-        extra_binaries.append((candidate, '.'))
-        break
+    for candidate in [
+        '/usr/lib/x86_64-linux-gnu/libgomp.so.1',
+        '/usr/lib/x86_64-linux-gnu/libgomp.so.1.0.0',
+        '/usr/lib64/libgomp.so.1',
+    ]:
+        if os.path.exists(candidate):
+            extra_binaries.append((candidate, '.'))
+            break
+
+elif sys.platform == 'darwin':
+    for candidate in [
+        '/opt/homebrew/lib/libopenslide.dylib',
+        '/opt/homebrew/opt/openslide/lib/libopenslide.dylib',
+        '/usr/local/lib/libopenslide.dylib',
+        '/opt/local/lib/libopenslide.dylib',
+    ]:
+        if os.path.exists(candidate):
+            extra_binaries.append((candidate, '.'))
+            break
+
+    for candidate in [
+        '/opt/homebrew/opt/libomp/lib/libomp.dylib',
+        '/opt/homebrew/lib/libgomp.1.dylib',
+        '/usr/local/lib/libgomp.1.dylib',
+        '/opt/homebrew/opt/gcc/lib/gcc/current/libgomp.1.dylib',
+    ]:
+        if os.path.exists(candidate):
+            extra_binaries.append((candidate, '.'))
+            break
+
+elif sys.platform == 'win32':
+    for candidate in [
+        r'C:\Program Files\OpenSlide\bin\libopenslide-1.dll',
+        r'C:\Program Files\OpenSlide\bin\openslide.dll',
+    ]:
+        if os.path.exists(candidate):
+            extra_binaries.append((candidate, '.'))
+            break
 
 all_binaries += extra_binaries
 

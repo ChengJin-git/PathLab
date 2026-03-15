@@ -60,9 +60,10 @@ async function startRedis(): Promise<string> {
   const dataDir = join(app.getPath('userData'), 'redis-data')
   mkdirSync(dataDir, { recursive: true })
 
+  const redisBinaryName = process.platform === 'win32' ? 'redis-server.exe' : 'redis-server'
   const redisBinary = app.isPackaged
-    ? join(process.resourcesPath, 'redis-server')
-    : join(process.cwd(), 'resources', 'redis-server')
+    ? join(process.resourcesPath, redisBinaryName)
+    : join(process.cwd(), 'resources', redisBinaryName)
 
   if (!existsSync(redisBinary)) {
     throw new Error(

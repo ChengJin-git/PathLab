@@ -95,7 +95,8 @@ export function startPythonSidecar(extraEnv?: Record<string, string>): Promise<n
       scriptPath = join(process.cwd(), 'server/main.py')
       process.env.PATHLAB_DEV = '0'
     } else {
-      pythonPath = join(process.resourcesPath, 'server', 'main', 'main')
+      const exeSuffix = process.platform === 'win32' ? '.exe' : ''
+      pythonPath = join(process.resourcesPath, 'server', 'main', `main${exeSuffix}`)
       scriptPath = ''
     }
 
