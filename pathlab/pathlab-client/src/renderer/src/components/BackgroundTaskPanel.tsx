@@ -216,10 +216,10 @@ const TaskCard: React.FC<{
                     )}
                   </div>
                 </div>
-                {task.title.startsWith('Relocating to ') ? (
+                {task.type === 'migration' ? (
                   <div className="flex flex-col text-sm font-medium text-left w-full">
                     <span className="text-gray-500 text-xs">{t('backgroundTask.relocatingTo')}</span>
-                    <span className="break-words text-gray-700 leading-tight">{task.title.replace('Relocating to ', '')}</span>
+                    <span className="break-words text-gray-700 leading-tight">{task.title}</span>
                   </div>
                 ) : (
                   <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">

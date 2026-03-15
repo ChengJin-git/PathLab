@@ -2940,6 +2940,19 @@
       "failed": "failed",
       "cancelled": "cancelled",
       "tasksHistory": "tasks history"
+    },
+    "taskTitles": {
+      "uploading": "Uploading {{count}} file(s)",
+      "deletingFiles": "Deleting {{count}} file(s)",
+      "deletingTasks": "Deleting {{count}} training task(s)",
+      "metadata": "Metadata: {{name}}",
+      "movingData": "Moving data to {{path}}",
+      "uploadingMetadata": "Uploading metadata...",
+      "waitingForDataset": "Waiting for dataset...",
+      "updatedFiles": "Updated {{count}} file(s)",
+      "uploadFailed": "Upload failed",
+      "datasetNotFound": "Dataset not found",
+      "cancelled": "Cancelled"
     }
   },
   "disclaimer": {

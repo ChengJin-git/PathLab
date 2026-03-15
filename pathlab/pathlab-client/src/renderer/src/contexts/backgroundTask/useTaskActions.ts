@@ -6,6 +6,7 @@
  */
 
 import React, { useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import {
   uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask,
   checkUploadSpace, cancelQueueTask, cancelStorageTask,
@@ -38,6 +39,7 @@ export interface TaskActionsParams {
 }
 
 export function useTaskActions(params: TaskActionsParams) {
+  const { t } = useTranslation()
   const {
     setLocalTasks, setIsPanelExpanded, setDismissedServerTasks,
     setMetadataUploadResults, cancelledTasksRef, abortControllersRef,
@@ -104,7 +106,7 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'upload',
-      title: `Uploading ${files.length} file${files.length > 1 ? 's' : ''}`,
+      title: t('backgroundTask.taskTitles.uploading', { count: files.length }),
       items: files.map(f => ({
         id: f.key,
         name: f.name,
@@ -199,7 +201,7 @@ export function useTaskActions(params: TaskActionsParams) {
     processFiles()
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, abortControllersRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, abortControllersRef])
 
   // Add delete WSI task
   const addDeleteWSITask = useCallback(async (wsiIds: string[], mode: 'standard' | 'complete'): Promise<string> => {
@@ -207,7 +209,7 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'delete_wsi',
-      title: `Deleting ${wsiIds.length} file${wsiIds.length > 1 ? 's' : ''}`,
+      title: t('backgroundTask.taskTitles.deletingFiles', { count: wsiIds.length }),
       items: wsiIds.map(id => ({
         id,
         name: id,
@@ -253,7 +255,7 @@ export function useTaskActions(params: TaskActionsParams) {
     processDeletes()
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
 
   // Add migration task
   const addMigrationTask = useCallback(async (targetPath: string, deleteSource: boolean): Promise<string> => {
@@ -262,10 +264,10 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'migration',
-      title: `Relocating to ${targetDirName}`,
+      title: targetDirName,
       items: [{
         id: 'migration_main',
-        name: `Moving data to ${targetPath}`,
+        name: t('backgroundTask.taskTitles.movingData', { path: targetPath }),
         status: 'pending' as TaskStatus,
         progress: 0
       }],
@@ -328,7 +330,7 @@ export function useTaskActions(params: TaskActionsParams) {
     }
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
 
   // Add delete training task
   const addDeleteTrainingTask = useCallback(async (taskIds: string[], mode: 'standard' | 'complete'): Promise<string> => {
@@ -336,7 +338,7 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'delete_task',
-      title: `Deleting ${taskIds.length} training task${taskIds.length > 1 ? 's' : ''}`,
+      title: t('backgroundTask.taskTitles.deletingTasks', { count: taskIds.length }),
       items: taskIds.map(id => ({
         id,
         name: id,
@@ -378,7 +380,7 @@ export function useTaskActions(params: TaskActionsParams) {
     refreshDiskSpace()
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
 
   // Cancel a running task
   const cancelTask = useCallback((taskId: string) => {
@@ -552,10 +554,10 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'metadata_upload',
-      title: `Metadata: ${config.datasetName}`,
+      title: t('backgroundTask.taskTitles.metadata', { name: config.datasetName }),
       items: [{
         id: 'metadata_main',
-        name: config.datasetId ? 'Uploading metadata...' : 'Waiting for dataset...',
+        name: config.datasetId ? t('backgroundTask.taskTitles.uploadingMetadata') : t('backgroundTask.taskTitles.waitingForDataset'),
         status: 'running' as TaskStatus,
         progress: config.datasetId ? 50 : 10
       }],
@@ -580,7 +582,7 @@ export function useTaskActions(params: TaskActionsParams) {
 
         while (attempts < maxAttempts) {
           if (cancelledTasksRef.current.has(taskId)) {
-            updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: 'Cancelled' })
+            updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: t('backgroundTask.taskTitles.cancelled') })
             return
           }
 
@@ -593,7 +595,7 @@ export function useTaskActions(params: TaskActionsParams) {
             if (found && found.dataset_id) {
               datasetId = found.dataset_id
               updateTaskItem(taskId, 'metadata_main', {
-                name: 'Uploading metadata...',
+                name: t('backgroundTask.taskTitles.uploadingMetadata'),
                 progress: 50
               })
               break
@@ -613,7 +615,7 @@ export function useTaskActions(params: TaskActionsParams) {
           updateTaskItem(taskId, 'metadata_main', {
             status: 'error',
             progress: 0,
-            name: 'Dataset not found',
+            name: t('backgroundTask.taskTitles.datasetNotFound'),
             error: 'Could not find dataset after 5 minutes of polling'
           })
           return
@@ -622,13 +624,13 @@ export function useTaskActions(params: TaskActionsParams) {
 
       // Check if cancelled
       if (cancelledTasksRef.current.has(taskId)) {
-        updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: 'Cancelled' })
+        updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: t('backgroundTask.taskTitles.cancelled') })
         return
       }
 
       // Upload CSV
       try {
-        updateTaskItem(taskId, 'metadata_main', { name: 'Uploading metadata...', progress: 70 })
+        updateTaskItem(taskId, 'metadata_main', { name: t('backgroundTask.taskTitles.uploadingMetadata'), progress: 70 })
         const result = await uploadDatasetSplits(datasetId, config.csvFile)
 
         // Store result for retrieval by MetadataUploadCard
@@ -641,13 +643,13 @@ export function useTaskActions(params: TaskActionsParams) {
         updateTaskItem(taskId, 'metadata_main', {
           status: 'success',
           progress: 100,
-          name: `Updated ${result.updated_count} files`
+          name: t('backgroundTask.taskTitles.updatedFiles', { count: result.updated_count })
         })
       } catch (err) {
         updateTaskItem(taskId, 'metadata_main', {
           status: 'error',
           progress: 0,
-          name: 'Upload failed',
+          name: t('backgroundTask.taskTitles.uploadFailed'),
           error: err instanceof Error ? err.message : String(err)
         })
       }
@@ -655,7 +657,7 @@ export function useTaskActions(params: TaskActionsParams) {
 
     processMetadataUpload()
     return taskId
-  }, [updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, setMetadataUploadResults])
+  }, [t, updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, setMetadataUploadResults])
 
   // Add extraction task (per-task SSE for annotation ROI extraction progress)
   const addExtractionTask = useCallback((serverTaskId: string, datasetName: string): string => {

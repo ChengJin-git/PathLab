@@ -2876,6 +2876,19 @@
       "failed": "失敗",
       "cancelled": "已取消",
       "tasksHistory": "任務歷史"
+    },
+    "taskTitles": {
+      "uploading": "正在上傳 {{count}} 個檔案",
+      "deletingFiles": "正在刪除 {{count}} 個檔案",
+      "deletingTasks": "正在刪除 {{count}} 個訓練任務",
+      "metadata": "中繼資料：{{name}}",
+      "movingData": "正在遷移資料至 {{path}}",
+      "uploadingMetadata": "正在上傳中繼資料...",
+      "waitingForDataset": "等待資料集...",
+      "updatedFiles": "已更新 {{count}} 個檔案",
+      "uploadFailed": "上傳失敗",
+      "datasetNotFound": "找不到資料集",
+      "cancelled": "已取消"
     }
   },
   "disclaimer": {

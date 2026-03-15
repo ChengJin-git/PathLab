@@ -2884,6 +2884,19 @@
       "failed": "失败",
       "cancelled": "已取消",
       "tasksHistory": "任务历史"
+    },
+    "taskTitles": {
+      "uploading": "正在上传 {{count}} 个文件",
+      "deletingFiles": "正在删除 {{count}} 个文件",
+      "deletingTasks": "正在删除 {{count}} 个训练任务",
+      "metadata": "元数据：{{name}}",
+      "movingData": "正在迁移数据至 {{path}}",
+      "uploadingMetadata": "正在上传元数据...",
+      "waitingForDataset": "等待数据集...",
+      "updatedFiles": "已更新 {{count}} 个文件",
+      "uploadFailed": "上传失败",
+      "datasetNotFound": "未找到数据集",
+      "cancelled": "已取消"
     }
   },
   "disclaimer": {
