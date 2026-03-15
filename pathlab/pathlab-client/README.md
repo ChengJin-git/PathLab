@@ -12,7 +12,9 @@
 - `src/preload/index.ts`：向渲染层暴露后端端口发现能力
 - `src/renderer/vite.config.ts`：独立 Web 构建入口
 - `server/main.py`：Python sidecar 统一入口
-- `build-python.sh`、`main.spec`、`server/main.spec`：Python 侧打包辅助文件
+- `scripts/build-python.sh`：Python sidecar 打包脚本（PyInstaller onedir 模式）
+- `scripts/prepare-redis.sh`：嵌入式 Redis 二进制准备脚本
+- `server/main.spec`：PyInstaller spec（onedir 模式，含完整依赖配置）
 - `deploy/start.sh` / `deploy/hot-reload.sh`：固定端口部署与热更新脚本
 - `package.json`：Electron 开发 / 构建脚本定义（`dev`、`build`、`start` 等）
 
@@ -32,10 +34,11 @@ pathlab-client/
 │   ├── unit/api/           # API 客户端层测试（10 个文件）
 │   ├── unit/lib/           # 工具函数测试（3 个文件）
 │   └── unit/contexts/      # React Context 测试（1 个文件）
+├── scripts/                # 构建辅助脚本
+│   ├── build-python.sh     # Python sidecar 打包（PyInstaller）
+│   └── prepare-redis.sh    # 嵌入式 Redis 二进制准备
 ├── vitest.config.ts        # Vitest 配置
-├── build-python.sh
 ├── electron.vite.config.ts
-├── main.spec
 ├── package.json
 └── README.md
 ```
