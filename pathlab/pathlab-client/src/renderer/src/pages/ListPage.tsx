@@ -909,6 +909,7 @@ export default function ListPage() {
       }
 
       await qc.invalidateQueries({ queryKey: ['page-datasets'] })
+      void loadDatasetSourceOptions()
 
       // If this dataset was selected, update the displayed info
       if (selectedDatasetId === editingDatasetId) {
@@ -1255,7 +1256,7 @@ export default function ListPage() {
           )}
 
           {/* Datasets Empty State */}
-          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && (datasetsQuery.data?.total ?? 0) === 0 && (
+          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && (datasetsQuery.data?.total ?? 0) === 0 && !hasActiveDatasetFilters && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Database className="w-8 h-8 text-gray-400" />
@@ -1268,7 +1269,7 @@ export default function ListPage() {
           )}
 
           {/* Dataset Filters */}
-          {(datasetsQuery.data?.total ?? 0) > 0 && (
+          {((datasetsQuery.data?.total ?? 0) > 0 || hasActiveDatasetFilters) && (
             <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -1373,7 +1374,10 @@ export default function ListPage() {
           )}
 
           {/* Filtered Empty State */}
-          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && (datasetsQuery.data?.total ?? 0) > 0 && visibleDatasets.length === 0 && (
+          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && hasActiveDatasetFilters && (
+            ((datasetsQuery.data?.total ?? 0) === 0) ||
+            ((datasetsQuery.data?.total ?? 0) > 0 && visibleDatasets.length === 0)
+          ) && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Search className="w-8 h-8 text-gray-400" />
