@@ -1165,15 +1165,15 @@ export default function RegisterPage() {
               <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-2 sm:mb-4 mx-2 sm:mx-0 max-h-[600px]">
                 {segmentationJsonOnlyAppend ? (
                   <div className="flex-1 bg-white p-6 sm:p-8 flex items-center justify-center">
-                    <div className="max-w-2xl w-full rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-left">
+                    <div className="max-w-2xl w-full rounded-2xl border border-green-200 bg-green-50 px-5 py-6 text-left">
                       <div className="flex items-start gap-3">
-                        <FileJson className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                        <FileJson className="w-6 h-6 text-green-600 shrink-0 mt-0.5" />
                         <div>
-                          <h3 className="text-base sm:text-lg font-semibold text-amber-900">{t('uploadPage.jsonOnlyAppendTitle')}</h3>
-                          <p className="text-sm text-amber-800 mt-2 leading-relaxed">
+                          <h3 className="text-base sm:text-lg font-semibold text-green-900">{t('uploadPage.jsonOnlyAppendTitle')}</h3>
+                          <p className="text-sm text-green-800 mt-2 leading-relaxed">
                             {t('uploadPage.jsonOnlyAppendDesc', { count: segmentationJsonFiles.size })}
                           </p>
-                          <p className="text-xs text-amber-700 mt-2 leading-relaxed">
+                          <p className="text-xs text-green-700 mt-2 leading-relaxed">
                             {t('uploadPage.jsonOnlyAppendNote')}
                           </p>
                         </div>
