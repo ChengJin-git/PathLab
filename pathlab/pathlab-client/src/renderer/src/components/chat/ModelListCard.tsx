@@ -13,10 +13,12 @@ export interface ModelInfo {
   task_type: string
   data_type: string
   feature_extractor?: string
+  architecture?: string
   embedding_dim?: number
   classes?: string[]
   created_at?: string
   task_id?: string
+  task_name?: string
 }
 
 export interface ModelListConfig {
@@ -167,17 +169,24 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
                   <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                     <span className="inline-flex items-center gap-1 text-[11px] text-gray-500 bg-gray-50 border border-gray-100 px-1.5 py-0.5 rounded">
                       <Database className="w-2.5 h-2.5" />
-                      {model.data_type === 'wsi' ? 'WSI' : 'Patch'}
+                      {model.data_type === 'wsi'
+                        ? t('chatComponents.modelList.wsi')
+                        : t('chatComponents.modelList.patch')}
                     </span>
-                    {model.feature_extractor && (
-                      <span
-                        className="inline-flex items-center gap-1 text-[11px] text-gray-500 bg-gray-50 border border-gray-100 px-1.5 py-0.5 rounded truncate max-w-[160px]"
-                        title={model.feature_extractor}
-                      >
-                        <Network className="w-2.5 h-2.5 shrink-0" />
-                        {model.feature_extractor}
-                      </span>
-                    )}
+                    {(model.feature_extractor || model.architecture) && (() => {
+                      const archLabel = isSegType && model.architecture && model.feature_extractor
+                        ? `${model.architecture} + ${model.feature_extractor}`
+                        : model.architecture || model.feature_extractor
+                      return (
+                        <span
+                          className="inline-flex items-center gap-1 text-[11px] text-gray-500 bg-gray-50 border border-gray-100 px-1.5 py-0.5 rounded truncate max-w-[180px]"
+                          title={archLabel}
+                        >
+                          <Network className="w-2.5 h-2.5 shrink-0" />
+                          {archLabel}
+                        </span>
+                      )
+                    })()}
                   </div>
                 </div>
 
@@ -195,17 +204,19 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
                       {model.id}
                     </p>
                   </div>
-                  {model.task_id && (
+                  {(model.task_name || model.task_id) && (
                     <div>
                       <div className="flex items-center gap-0.5 text-[10px] text-gray-400 mb-0.5">
                         <Activity className="w-2.5 h-2.5" />
-                        {t('chatComponents.modelList.taskId')}
+                        {model.task_name
+                          ? t('chatComponents.modelList.taskName')
+                          : t('chatComponents.modelList.taskId')}
                       </div>
                       <p
-                        className="font-mono text-[10px] text-gray-600 bg-gray-50 rounded px-1.5 py-0.5 truncate"
-                        title={model.task_id}
+                        className="text-[10px] text-gray-600 bg-gray-50 rounded px-1.5 py-0.5 truncate"
+                        title={model.task_name || model.task_id}
                       >
-                        {model.task_id}
+                        {model.task_name || model.task_id}
                       </p>
                     </div>
                   )}
@@ -215,9 +226,9 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
                 {model.classes && model.classes.length > 0 && (
                   <div className="px-3 pb-2.5 flex items-center gap-1.5 flex-wrap">
                     <Tag className="w-3 h-3 text-gray-300 shrink-0" />
-                    {model.classes.map((cls, i) => (
+                    {model.classes.map((cls) => (
                       <span
-                        key={i}
+                        key={`${model.id}-${cls}`}
                         className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full leading-none"
                       >
                         {cls}

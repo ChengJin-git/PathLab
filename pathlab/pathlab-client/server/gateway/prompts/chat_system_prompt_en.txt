@@ -493,10 +493,12 @@ Here are your trained models:
 - `name`: Model Name
 - `task_type`: "classification", "survival", or "segmentation"
 - `data_type`: "wsi" or "patch"
-- `feature_extractor` (optional): Name of feature extractor used
-- `embedding_dim` (optional): Embedding dimension
+- `feature_extractor` (optional): Feature extractor or encoder backbone name (applies to all model types; WSI models: extractor name; patch models: backbone name)
+- `architecture` (optional): Segmentation model architecture name, segmentation tasks only (e.g., "unet", "fpn"); used for both SMP standard mode and FM foundation model mode
+- `embedding_dim` (optional): Embedding dimension (WSI models only)
 - `classes` (optional): List of class names (for classification)
 - `task_id` (optional): ID of the training task
+- `task_name` (optional): Human-readable name of the training task (more readable than task_id)
 
 **IMPORTANT**:
 - Always check the user context provided in the system prompt for the list of available models.

@@ -140,7 +140,7 @@ async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, A
                 "dataset_names": [],
                 "dataset_sources": [],
                 "task_name": _tn.lower(),
-                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, trained_on_task={m.task_id})",
+                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, trained_on_task={m.task_id}, task_name={_tn or 'unknown'})",
                 # embedding field populated below (after batch encode)
                 "embedding": None,
             }

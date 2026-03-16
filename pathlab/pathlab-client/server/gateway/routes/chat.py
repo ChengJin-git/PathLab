@@ -4642,11 +4642,15 @@ async def chat_with_ai(
                 if source_dataset_id:
                     info_parts.append(f"source_dataset_id={source_dataset_id}")
 
-            # Add feature extractor info for WSI models
-            if data_type == "wsi" and model_feature_extractor != "unknown":
+            # Add feature extractor / backbone for all model types.
+            # - WSI cls/survival: feature extractor name (uni, conch, …)
+            # - Patch cls:        feature extractor name (resnet50, uni, …)
+            # - Patch seg:        encoder backbone (resnet50, conch, …) stored in
+            #                     model.feature_extractor during training
+            if model_feature_extractor not in ("unknown", ""):
                 info_parts.append(f"feature_extractor={model_feature_extractor}")
-                if embed_dim > 0:
-                    info_parts.append(f"embedding_dim={embed_dim}")
+            if data_type == "wsi" and embed_dim > 0:
+                info_parts.append(f"embedding_dim={embed_dim}")
 
             # Add training dataset source / names for reference
             if training_dataset_sources:
@@ -4678,6 +4682,8 @@ async def chat_with_ai(
                 info_parts.append("heatmap_result_datasets=[]")
 
             info_parts.append(f"trained_on_task={model_task_id}")
+            if training_task and training_task.task_name:
+                info_parts.append(f"task_name={training_task.task_name}")
 
             # Add pre-computed compatible datasets list (API-level filtering)
             if compatible_datasets:

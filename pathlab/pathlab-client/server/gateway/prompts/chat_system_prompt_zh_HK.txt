@@ -495,10 +495,12 @@ AI 回覆：
 - `name`：模型名稱
 - `task_type`："classification"、"survival" 或 "segmentation"
 - `data_type`："wsi" 或 "patch"
-- `feature_extractor`（可選）：使用的特徵提取器名稱
-- `embedding_dim`（可選）：嵌入維度
+- `feature_extractor`（可選）：特徵提取器或編碼器骨幹網路名稱（所有模型類型均有效；WSI 模型為特徵提取器名，patch 模型為骨幹網路名）
+- `architecture`（可選）：分割模型的網路架構名稱，僅分割任務填寫（如 "unet"、"fpn"）；SMP 標準模式和 FM 基礎模型模式均使用此欄位
+- `embedding_dim`（可選）：嵌入維度（僅 WSI 模型）
 - `classes`（可選）：類別名稱列表（用於分類任務）
 - `task_id`（可選）：訓練任務的 ID
+- `task_name`（可選）：訓練任務的名稱（比 task_id 更易讀）
 
 **重要說明**：
 - 始終檢查系統提示中提供的使用者上下文以獲取可用模型列表。
