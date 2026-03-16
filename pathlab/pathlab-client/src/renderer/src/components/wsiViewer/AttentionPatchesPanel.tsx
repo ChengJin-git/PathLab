@@ -30,7 +30,7 @@ export function AttentionPatchesPanel({
     <>
       {/* Patch Heatmap Info Card - only for patch-level tasks */}
       {isPatchLevel && patchCAMData && (
-        <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
+        <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200 shrink-0" noPadding>
           <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-orange-50/50 to-white">
             <div className="p-1.5 bg-orange-100/50 rounded-md">
               <Layers className="w-4 h-4 text-orange-600" />
@@ -56,7 +56,7 @@ export function AttentionPatchesPanel({
 
       {/* Top Attention Patches Card - only for WSI-level tasks */}
       {!isPatchLevel && heatmapData?.top_patches && heatmapData.top_patches.length > 0 && (
-        <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
+        <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200 shrink-0" noPadding>
           <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-red-50/50 to-white">
             <div className="p-1.5 bg-red-100/50 rounded-md">
               <TrendingUp className="w-4 h-4 text-red-600" />
@@ -111,7 +111,7 @@ export function AttentionPatchesPanel({
 
       {/* Bottom Attention Patches Card - only for WSI-level tasks */}
       {!isPatchLevel && heatmapData?.bottom_patches && heatmapData.bottom_patches.length > 0 && (
-        <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200">
+        <Card className="overflow-hidden border-0 shadow-sm ring-1 ring-gray-200 shrink-0" noPadding>
           <div className="flex items-center gap-3 px-5 py-4 border-b border-gray-100 bg-gradient-to-r from-blue-50/50 to-white">
             <div className="p-1.5 bg-blue-100/50 rounded-md">
               <TrendingDown className="w-4 h-4 text-blue-600" />

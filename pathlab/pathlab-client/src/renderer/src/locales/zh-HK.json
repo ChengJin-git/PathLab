@@ -904,6 +904,8 @@
     "hideHeatmap": "隱藏熱圖",
     "showPredictionMask": "顯示預測標注",
     "hidePredictionMask": "隱藏預測標注",
+    "showGT": "顯示實際標注",
+    "hideGT": "隱藏實際標注",
     "opacity": "不透明度",
     "activation": "啟動值",
     "lowToHigh": "低 → 高",
@@ -2804,7 +2806,11 @@
       "patchHeatmap": "切片熱力圖",
       "patches": "切片",
       "noClasses": "暫無類別",
-      "riskScore": "風險評分"
+      "riskScore": "風險評分",
+      "groundTruth": "真實標籤",
+      "eventStatus": "事件狀態",
+      "event": "事件",
+      "censored": "截斷"
     }
   },
   "backgroundTask": {

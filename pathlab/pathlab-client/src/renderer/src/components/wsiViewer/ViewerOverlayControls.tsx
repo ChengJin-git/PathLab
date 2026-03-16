@@ -12,6 +12,9 @@ interface ViewerOverlayControlsProps {
   showSegMask: boolean
   onToggleSegMask: () => void
   segmentationClasses: string[]
+  canShowGT: boolean
+  showGT: boolean
+  onToggleGT: () => void
 }
 
 export function ViewerOverlayControls({
@@ -24,6 +27,9 @@ export function ViewerOverlayControls({
   showSegMask,
   onToggleSegMask,
   segmentationClasses,
+  canShowGT,
+  showGT,
+  onToggleGT,
 }: ViewerOverlayControlsProps) {
   const { t } = useTranslation()
 
@@ -44,6 +50,15 @@ export function ViewerOverlayControls({
         onClick: onToggleSegMask,
         label: showSegMask ? t('wsiViewer.hidePredictionMask') : t('wsiViewer.showPredictionMask'),
         activeClassName: 'bg-emerald-100 text-emerald-700 border border-emerald-300',
+      }
+      : null,
+    canShowGT
+      ? {
+        key: 'gt',
+        active: showGT,
+        onClick: onToggleGT,
+        label: showGT ? t('wsiViewer.hideGT') : t('wsiViewer.showGT'),
+        activeClassName: 'bg-amber-100 text-amber-700 border border-amber-300',
       }
       : null,
   ].filter((toggle): toggle is NonNullable<typeof toggle> => toggle !== null)

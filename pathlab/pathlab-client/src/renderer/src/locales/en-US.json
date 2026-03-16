@@ -902,8 +902,10 @@
     "heatmapOverlayAlt": "Heatmap Overlay",
     "showHeatmap": "Show Heatmap",
     "hideHeatmap": "Hide Heatmap",
-    "showPredictionMask": "Show Prediction Mask",
-    "hidePredictionMask": "Hide Prediction Mask",
+    "showPredictionMask": "Show Predicted Annotation",
+    "hidePredictionMask": "Hide Predicted Annotation",
+    "showGT": "Show GT Annotation",
+    "hideGT": "Hide GT Annotation",
     "opacity": "Opacity",
     "activation": "Activation",
     "lowToHigh": "Low → High",
@@ -2868,7 +2870,11 @@
       "patchHeatmap": "Patch Heatmap",
       "patches": "patches",
       "noClasses": "No classes",
-      "riskScore": "Risk Score"
+      "riskScore": "Risk Score",
+      "groundTruth": "Ground Truth",
+      "eventStatus": "Event Status",
+      "event": "Event",
+      "censored": "Censored"
     }
   },
   "backgroundTask": {

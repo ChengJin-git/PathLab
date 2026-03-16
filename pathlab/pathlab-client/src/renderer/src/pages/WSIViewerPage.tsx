@@ -239,6 +239,8 @@ export default function WSIViewerPage() {
 
   // Annotation state
   const [annotationMode, setAnnotationMode] = useState(false)
+  const [showGT, setShowGT] = useState(false)
+  const [gtRegions, setGtRegions] = useState<AnnotationRegion[]>([])
   const [drawingTool, setDrawingTool] = useState<'rect' | 'polygon'>('rect')
   const [currentLabel, setCurrentLabel] = useState('')
   const [labelColors, setLabelColors] = useState<Record<string, string>>({})
@@ -501,6 +503,19 @@ export default function WSIViewerPage() {
     }
   }, [canShowSegMaskOverlay, showSegMask])
 
+  useEffect(() => {
+    if (!showGT || !wsi_id) {
+      setGtRegions([])
+      return
+    }
+    let cancelled = false
+    getWSIGroundTruth(wsi_id).then(gt => {
+      if (cancelled) return
+      setGtRegions(gt.annotations[wsi_id] ?? [])
+    }).catch(err => console.error('Failed to load GT:', err))
+    return () => { cancelled = true }
+  }, [showGT, wsi_id])
+
   // Load patch CAM data when selecting a patch-level task
   useEffect(() => {
     if (hasPatchHeatmap && selectedTaskId) {
@@ -544,11 +559,33 @@ export default function WSIViewerPage() {
   }, [heatmapOpacity, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl, showHeatmap, showSegMask, t])
 
   const handleToggleHeatmap = useCallback(() => {
-    setShowHeatmap(prev => !prev)
+    setShowHeatmap(prev => {
+      if (!prev) {
+        setShowSegMask(false)
+        setShowGT(false)
+      }
+      return !prev
+    })
   }, [])
 
   const handleToggleSegMask = useCallback(() => {
-    setShowSegMask(prev => !prev)
+    setShowSegMask(prev => {
+      if (!prev) {
+        setShowHeatmap(false)
+        setShowGT(false)
+      }
+      return !prev
+    })
+  }, [])
+
+  const handleToggleGT = useCallback(() => {
+    setShowGT(prev => {
+      if (!prev) {
+        setShowHeatmap(false)
+        setShowSegMask(false)
+      }
+      return !prev
+    })
   }, [])
 
   useEffect(() => {
@@ -569,6 +606,21 @@ export default function WSIViewerPage() {
 
   // Annotation: computed values
   const currentRegions = useMemo(() => allAnnotations[wsi_id] || [], [allAnnotations, wsi_id])
+
+  const overlayRegions = useMemo(
+    () => (annotationMode ? currentRegions : showGT ? gtRegions : []),
+    [annotationMode, currentRegions, showGT, gtRegions]
+  )
+
+  const overlayLabelColors = useMemo(() => {
+    if (annotationMode) return labelColors
+    if (!showGT || gtRegions.length === 0) return {}
+    const colors: Record<string, string> = {}
+    for (const r of gtRegions) {
+      if (r.label && r.color && !colors[r.label]) colors[r.label] = r.color
+    }
+    return colors
+  }, [annotationMode, labelColors, showGT, gtRegions])
 
   useEffect(() => {
     setFocusedRegionId(prev => prev && currentRegions.some(region => region.id === prev) ? prev : null)
@@ -1302,19 +1354,19 @@ export default function WSIViewerPage() {
                   transformOrigin: 'center center'
                 }}
                 onBaseImageLoad={handlePatchImageLoad}
-                regions={currentRegions}
-                labelColors={labelColors}
-                highlightedRegionId={focusedRegionId}
-                slideWidth={slideWidth}
-                slideHeight={slideHeight}
-                annotationMode={annotationMode}
-                drawingTool={drawingTool}
-                currentLabel={currentLabel}
-                currentColor={currentColor}
-                onRegionCreated={handleRegionCreated}
-                onRegionTooLarge={handleRegionTooLarge}
-                isLabelDropdownOpen={isLabelDropdownOpen}
-              />
+                 regions={overlayRegions}
+                 labelColors={overlayLabelColors}
+                 highlightedRegionId={focusedRegionId}
+                 slideWidth={slideWidth}
+                 slideHeight={slideHeight}
+                 annotationMode={annotationMode}
+                 drawingTool={drawingTool}
+                 currentLabel={currentLabel}
+                 currentColor={currentColor}
+                 onRegionCreated={handleRegionCreated}
+                 onRegionTooLarge={handleRegionTooLarge}
+                 isLabelDropdownOpen={isLabelDropdownOpen}
+               />
             </div>
           ) : (
             // WSI-level viewer
@@ -1331,25 +1383,24 @@ export default function WSIViewerPage() {
                 onViewerReady={handleViewerReady}
                 onSlideInfo={handleSlideInfo}
               />
-              <AnnotationOverlay
-                viewer={osdViewer}
-                annotationMode={annotationMode}
-                drawingTool={drawingTool}
-                currentLabel={currentLabel}
-                currentColor={currentColor}
-                highlightedRegionId={focusedRegionId}
-                regions={currentRegions}
-                labelColors={labelColors}
-                slideWidth={slideWidth}
-                slideHeight={slideHeight}
-                onRegionCreated={handleRegionCreated}
-                onRegionTooLarge={handleRegionTooLarge}
-                isLabelDropdownOpen={isLabelDropdownOpen}
-              />
+               <AnnotationOverlay
+                 viewer={osdViewer}
+                 annotationMode={annotationMode}
+                 drawingTool={drawingTool}
+                 currentLabel={currentLabel}
+                 currentColor={currentColor}
+                 highlightedRegionId={focusedRegionId}
+                 regions={overlayRegions}
+                 labelColors={overlayLabelColors}
+                 slideWidth={slideWidth}
+                 slideHeight={slideHeight}
+                 onRegionCreated={handleRegionCreated}
+                 onRegionTooLarge={handleRegionTooLarge}
+                 isLabelDropdownOpen={isLabelDropdownOpen}
+               />
             </>
           )}
 
-          {/* Heatmap Controls Overlay */}
           {availableHeatmaps.length > 0 && shouldShowOverlayControls && (
             <ViewerOverlayControls
               canShowHeatmapOverlay={canShowHeatmapOverlay}
@@ -1361,6 +1412,9 @@ export default function WSIViewerPage() {
               showSegMask={showSegMask}
               onToggleSegMask={handleToggleSegMask}
               segmentationClasses={segmentationClasses}
+              canShowGT={isSegmentationTask}
+              showGT={showGT}
+              onToggleGT={handleToggleGT}
             />
           )}
         </div>
@@ -1439,6 +1493,8 @@ export default function WSIViewerPage() {
                   heatmapData={heatmapData}
                   patchCAMData={patchCAMData}
                   isPatchLevel={isPatchLevel}
+                  wsiLabel={detail?.meta?.label}
+                  wsiEventStatus={detail?.meta?.event_status}
                 />
 
                 {/* Multi-class Attention Selector - only for CLAM_MB and similar aggregators */}

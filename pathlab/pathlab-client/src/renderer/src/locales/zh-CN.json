@@ -904,6 +904,8 @@
     "hideHeatmap": "隐藏热图",
     "showPredictionMask": "显示预测标注",
     "hidePredictionMask": "隐藏预测标注",
+    "showGT": "显示实际标注",
+    "hideGT": "隐藏实际标注",
     "opacity": "不透明度",
     "activation": "激活值",
     "lowToHigh": "低 → 高",
@@ -2812,7 +2814,11 @@
       "patchHeatmap": "普通图像热力图",
       "patches": "图像块",
       "noClasses": "暂无类别",
-      "riskScore": "风险评分"
+      "riskScore": "风险评分",
+      "groundTruth": "真实标签",
+      "eventStatus": "事件状态",
+      "event": "事件",
+      "censored": "删失"
     }
   },
   "backgroundTask": {
