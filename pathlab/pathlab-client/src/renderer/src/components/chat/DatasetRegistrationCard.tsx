@@ -510,9 +510,9 @@ export function DatasetRegistrationCard({
                   <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
                     <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-xs text-orange-800 font-medium">Segmentation registration uses best-effort JSON matching.</p>
+                      <p className="text-xs text-orange-800 font-medium">{t('chatComponents.datasetRegistration.segBestEffortTitle')}</p>
                       <p className="text-xs text-orange-700 mt-1 leading-relaxed">
-                        New datasets still require image files. Duplicate image / JSON stems are rejected, matching JSON files are applied when available, and existing segmentation datasets also support JSON-only append by filename stem.
+                        {t('chatComponents.datasetRegistration.segBestEffortDesc')}
                       </p>
                     </div>
                   </div>

@@ -1425,7 +1425,7 @@
     "backToChat": "返回聊天",
     "backToDashboard": "返回",
     "back": "返回",
-    "appendingData": "正在追加資料至",
+    "appendingData": "追加資料",
     "patchCollection": "普通圖像",
     "wsiCollection": "WSI 集合",
     "dataset": "資料集",
@@ -1503,7 +1503,10 @@
     "addToDataset": "新增到資料集",
     "registerAll": "全部註冊",
     "genderM": "男",
-    "genderF": "女"
+    "genderF": "女",
+    "jsonOnlyAppendTitle": "需要追加的 JSON 分割標註就緒",
+    "jsonOnlyAppendDesc": "{{count}} 個 COCO JSON 檔案將通過檔案名稱配對此數據集中的現有圖像。",
+    "jsonOnlyAppendNote": "配對成功的標註將被追加或更新。未找到配對圖像的檔案將單獨報錯。"
   },
   "resultsPage": {
     "loadingTasks": "正在載入任務...",
@@ -2463,7 +2466,9 @@
       "downloadTemplateFailed": "下載範本失敗",
       "browserNotSupported": "瀏覽器不支援資料夾選擇",
       "noValidImages": "所選資料夾中未找到有效的圖像檔案",
-      "fileProcessingError": "處理檔案時出錯"
+      "fileProcessingError": "處理檔案時出錯",
+      "segBestEffortTitle": "分割任務註冊使用最優 JSON 配對策略。",
+      "segBestEffortDesc": "新建資料集仍需上傳圖像檔案。重複的圖像/JSON 檔名將被拒絕，配對的 JSON 檔案將自動應用，已有分割資料集亦支援透過檔名直接追加僅 JSON 檔案。"
     },
     "imageRecommendation": {
       "recommendedImages": "推薦圖像",

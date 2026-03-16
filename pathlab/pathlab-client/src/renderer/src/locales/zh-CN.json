@@ -1429,7 +1429,7 @@
     "backToChat": "返回聊天",
     "backToDashboard": "返回",
     "back": "返回",
-    "appendingData": "正在追加数据至",
+    "appendingData": "追加数据",
     "patchCollection": "普通图像数据",
     "wsiCollection": "全切片图像数据",
     "dataset": "数据集",
@@ -1507,7 +1507,10 @@
     "addToDataset": "添加到数据集",
     "registerAll": "全部注册",
     "genderM": "男",
-    "genderF": "女"
+    "genderF": "女",
+    "jsonOnlyAppendTitle": "需要追加的 JSON 分割标注就绪",
+    "jsonOnlyAppendDesc": "{{count}} 个 COCO JSON 文件将通过文件名匹配此数据集中的现有图像。",
+    "jsonOnlyAppendNote": "匹配成功的标注将被追加或更新。未找到匹配图像的文件将单独报错。"
   },
   "resultsPage": {
     "loadingTasks": "正在加载任务...",
@@ -2471,7 +2474,9 @@
       "downloadTemplateFailed": "下载模板失败",
       "browserNotSupported": "浏览器不支持文件夹选择",
       "noValidImages": "所选文件夹中未找到有效的图像文件",
-      "fileProcessingError": "处理文件时出错"
+      "fileProcessingError": "处理文件时出错",
+      "segBestEffortTitle": "分割任务注册使用最优 JSON 匹配策略。",
+      "segBestEffortDesc": "新建数据集仍需上传图像文件。重复的图像/JSON 文件名将被拒绝，匹配的 JSON 文件将自动应用，已有分割数据集也支持通过文件名直接追加仅 JSON 文件。"
     },
     "imageRecommendation": {
       "recommendedImages": "推荐图像",

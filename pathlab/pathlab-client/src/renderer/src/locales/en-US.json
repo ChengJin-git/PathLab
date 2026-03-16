@@ -1507,7 +1507,10 @@
     "addToDataset": "Add to Dataset",
     "registerAll": "Register All",
     "genderM": "M",
-    "genderF": "F"
+    "genderF": "F",
+    "jsonOnlyAppendTitle": "JSON-only segmentation append ready",
+    "jsonOnlyAppendDesc": "{{count}} COCO JSON file(s) will be matched to existing images in this dataset by filename stem.",
+    "jsonOnlyAppendNote": "Matched annotations will be appended or updated. Files without a matching existing image will fail individually."
   },
   "resultsPage": {
     "loadingTasks": "Loading tasks...",
@@ -2471,7 +2474,9 @@
       "downloadTemplateFailed": "Failed to download template",
       "browserNotSupported": "Browser does not support folder selection",
       "noValidImages": "No valid image files found in the selected folder",
-      "fileProcessingError": "Error processing files"
+      "fileProcessingError": "Error processing files",
+      "segBestEffortTitle": "Segmentation registration uses best-effort JSON matching.",
+      "segBestEffortDesc": "New datasets still require image files. Duplicate image / JSON stems are rejected, matching JSON files are applied when available, and existing segmentation datasets also support JSON-only append by filename stem."
     },
     "imageRecommendation": {
       "recommendedImages": "Recommended Images",

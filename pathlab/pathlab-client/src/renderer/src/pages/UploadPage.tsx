@@ -1169,12 +1169,12 @@ export default function RegisterPage() {
                       <div className="flex items-start gap-3">
                         <FileJson className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
                         <div>
-                          <h3 className="text-base sm:text-lg font-semibold text-amber-900">JSON-only segmentation append ready</h3>
+                          <h3 className="text-base sm:text-lg font-semibold text-amber-900">{t('uploadPage.jsonOnlyAppendTitle')}</h3>
                           <p className="text-sm text-amber-800 mt-2 leading-relaxed">
-                            {segmentationJsonFiles.size} COCO JSON file(s) will be matched to existing images in this dataset by filename stem.
+                            {t('uploadPage.jsonOnlyAppendDesc', { count: segmentationJsonFiles.size })}
                           </p>
                           <p className="text-xs text-amber-700 mt-2 leading-relaxed">
-                            Matched annotations will be appended or updated. Files without a matching existing image will fail individually.
+                            {t('uploadPage.jsonOnlyAppendNote')}
                           </p>
                         </div>
                       </div>
