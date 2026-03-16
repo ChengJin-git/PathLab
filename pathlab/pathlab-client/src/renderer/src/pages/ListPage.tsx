@@ -15,7 +15,7 @@ import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
-import { organSources } from '../components/upload/types'
+import { organSources, organSourceKeyMap } from '../components/upload/types'
 
 type DatasetTaskFilter = 'all' | 'classification' | 'survival' | 'segmentation'
 type DatasetTypeFilter = 'all' | 'wsi' | 'patch'
@@ -342,7 +342,11 @@ export default function ListPage() {
       { value: 'all', label: t('common.all') },
       ...sourceValues.map((value) => ({
         value,
-        label: value === UNKNOWN_SOURCE_ORGAN_FILTER ? t('listPage.filters.unknownSourceOrgan') : value,
+        label: value === UNKNOWN_SOURCE_ORGAN_FILTER
+          ? t('listPage.filters.unknownSourceOrgan')
+          : organSourceKeyMap[value]
+            ? t(`organSources.${organSourceKeyMap[value]}`)
+            : value,
       })),
     ]
   }, [availableDatasetSources, t])
@@ -1391,9 +1395,12 @@ export default function ListPage() {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
-                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                const rawSource = dataset.source_organ?.trim()
+                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER || !rawSource
                   ? t('listPage.filters.unknownSourceOrgan')
-                  : dataset.source_organ?.trim() || t('listPage.filters.unknownSourceOrgan')
+                  : organSourceKeyMap[rawSource]
+                    ? t(`organSources.${organSourceKeyMap[rawSource]}`)
+                    : rawSource
 
                 return (
                   <Card
@@ -1585,9 +1592,12 @@ export default function ListPage() {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
-                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                const rawSource = dataset.source_organ?.trim()
+                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER || !rawSource
                   ? t('listPage.filters.unknownSourceOrgan')
-                  : dataset.source_organ?.trim() || t('listPage.filters.unknownSourceOrgan')
+                  : organSourceKeyMap[rawSource]
+                    ? t(`organSources.${organSourceKeyMap[rawSource]}`)
+                    : rawSource
 
                 return (
                   <Card
@@ -2160,9 +2170,9 @@ export default function ListPage() {
                                     <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                   ) : (
                                     <>
-                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
+                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[it.source] ? t(`organSources.${organSourceKeyMap[it.source]}`) : it.source}</span></span>}
                                       {it.age && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
-                                      {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                      {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender)}</span>}
                                     </>
                                   )}
                                 </div>
@@ -2288,7 +2298,7 @@ export default function ListPage() {
                                       <>
                                         {sources.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                            {sources.length === 1 ? <><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : t('listPage.sourcesCount', { count: sources.length })}
+                                            {sources.length === 1 ? <><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[sources[0]] ? t(`organSources.${organSourceKeyMap[sources[0]]}`) : sources[0]}</span></> : t('listPage.sourcesCount', { count: sources.length })}
                                           </span>
                                         )}
                                         {ages.length > 0 && (
@@ -2298,7 +2308,7 @@ export default function ListPage() {
                                         )}
                                         {genders.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                            {genders.length === 1 ? genders[0] : t('listPage.mixed')}
+                                            {genders.length === 1 ? t(`listComponents.editModals.${genders[0].toLowerCase()}`, genders[0]) : t('listPage.mixed')}
                                           </span>
                                         )}
                                       </>
@@ -2384,9 +2394,9 @@ export default function ListPage() {
                                         <span className="text-gray-300 text-[10px] italic">-</span>
                                       ) : (
                                         <>
-                                          {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{it.source}</span>}
+                                          {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{organSourceKeyMap[it.source] ? t(`organSources.${organSourceKeyMap[it.source]}`) : it.source}</span>}
                                           {it.age && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
-                                          {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                          {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender)}</span>}
                                         </>
                                       )}
                                     </div>
@@ -2504,7 +2514,7 @@ export default function ListPage() {
                                   <>
                                     {it.source && (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                        <span className="hidden sm:inline">{t('listPage.sourcePrefix')} </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
+                                        <span className="hidden sm:inline">{t('listPage.sourcePrefix')} </span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[it.source] ? t(`organSources.${organSourceKeyMap[it.source]}`) : it.source}</span>
                                       </span>
                                     )}
                                     {it.age && (
@@ -2514,7 +2524,7 @@ export default function ListPage() {
                                     )}
                                     {it.gender && (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                        {it.gender}
+                                        {t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender)}
                                       </span>
                                     )}
                                   </>

@@ -5,7 +5,7 @@ import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import type { UploadMode, DataLevel } from './types'
-import { organSources } from './types'
+import { organSources, organSourceKeyMap } from './types'
 
 export interface DatasetConfigStepProps {
   datasetName: string
@@ -275,9 +275,9 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   >
                     <option value="">{t('uploadComponents.datasetConfig.selectDatasetSource')}</option>
                     {organSources.filter((source) => source !== 'Other').map((source) => (
-                      <option key={source} value={source}>{source}</option>
+                      <option key={source} value={source}>{t(`organSources.${organSourceKeyMap[source]}`)}</option>
                     ))}
-                    <option value="Other">{t('uploadComponents.datasetConfig.otherSource')}</option>
+                    <option value="Other">{t('organSources.other')}</option>
                   </select>
                   <input
                     type="text"

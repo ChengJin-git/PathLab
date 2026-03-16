@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Edit, X, Users, FileImage } from 'lucide-react'
 import { Button } from '../ui/button'
-import { organSources } from '../upload/types'
+import { organSources, organSourceKeyMap } from '../upload/types'
 
 // ─── EditMetadataModal ───────────────────────────────────────────────────────
 
@@ -410,9 +410,9 @@ export function EditDatasetModal({
             >
               <option value="">{t('listComponents.editModals.selectDatasetSource')}</option>
               {organSources.filter((source) => source !== 'Other').map((source) => (
-                <option key={source} value={source}>{source}</option>
+                <option key={source} value={source}>{t(`organSources.${organSourceKeyMap[source]}`)}</option>
               ))}
-              <option value="Other">{t('listComponents.editModals.otherSource')}</option>
+              <option value="Other">{t('organSources.other')}</option>
             </select>
             {isOtherSource && (
               <input
