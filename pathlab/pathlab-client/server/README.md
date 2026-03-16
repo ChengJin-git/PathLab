@@ -1,6 +1,6 @@
 # PathLab Python Backend
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.2`
 
 `server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI** 三个服务进程，并复用 `backend/` 下的共享模块。
 

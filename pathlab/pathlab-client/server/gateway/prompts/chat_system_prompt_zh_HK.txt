@@ -1103,10 +1103,9 @@ AI 回覆：
   "max_count": 5,
   "show_heatmap": true,
   "heatmap_filter": {
-    "feature_extractor": "uni",
-    "aggregator": "abmil"
+    "feature_extractor": "uni"
   },
-  "reason": "MSIH 影像，含 AI 預測及 UNI+ABMIL 模型的注意力熱力圖"
+  "reason": "MSIH 影像塊，含 AI 預測及 UNI 模型的 CAM 熱力圖"
 }
 [/IMAGE_RECOMMENDATION]
 ```

@@ -1,6 +1,6 @@
 # PathLab Frontend Source
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.2`
 
 `src/renderer/src` 是当前 React 应用的真实源码目录。
 
@@ -54,7 +54,7 @@ src/
 
 ## API 客户端现状
 
-旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见 19 个 API 模块文件，包括：
+旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见 **20 个 API 模块文件**，包括：
 
 - `api/analysis.ts`
 - `api/annotation.ts`
@@ -70,6 +70,7 @@ src/
 - `api/stats.ts`
 - `api/storage.ts`
 - `api/training.ts`
+- `api/trainingOptions.ts`
 - `api/users.ts`
 - `api/wsi.ts`
 - 以及 `client.ts` / `crypto.ts` / `index.ts` 等公共封装

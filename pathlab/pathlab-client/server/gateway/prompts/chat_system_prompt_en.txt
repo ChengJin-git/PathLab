@@ -1102,10 +1102,9 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
   "max_count": 5,
   "show_heatmap": true,
   "heatmap_filter": {
-    "feature_extractor": "uni",
-    "aggregator": "abmil"
+    "feature_extractor": "uni"
   },
-  "reason": "MSIH images with AI predictions showing attention heatmaps from UNI+ABMIL model"
+  "reason": "MSIH patches with AI predictions showing CAM heatmaps from UNI patch classifier"
 }
 [/IMAGE_RECOMMENDATION]
 ```

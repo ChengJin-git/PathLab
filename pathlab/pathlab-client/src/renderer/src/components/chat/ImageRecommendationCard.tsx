@@ -853,9 +853,8 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
                     return false
                   }
                 }
-                // Filter by aggregator if specified (WSI only)
-                if (aggregator) {
-                  // If user specified aggregator but heatmap doesn't have it, reject
+                // Filter by aggregator if specified (WSI-level overlays only; patch CAM overlays have no aggregator)
+                if (aggregator && h.data_type !== 'patch') {
                   if (!h.aggregator) {
                     return false
                   }

@@ -1,6 +1,6 @@
 # PathLab Gateway
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.2`
 
 Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
 
@@ -18,13 +18,14 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
   - 清理过期完成任务
   - 清理过期 PDF 缓存
   - 异步预热训练推荐所需的 embedding 模型与 bundled knowledge 源
+  - 异步预热所有非管理员用户的聊天上下文缓存（`_startup_prewarm_chat_context_cache`）
   - 注册所有顶层 router
   - 在存在前端构建产物时挂载静态资源
   - 始终挂载 `/avatars`
 
 ## 当前直接注册的 router
 
-`main.py` 里当前直接注册了 16 个顶层 router：
+`main.py` 里当前直接注册了 **17 个顶层 router**：
 
 1. `auth`
 2. `stats`
@@ -42,6 +43,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 14. `settings`
 15. `gpu`
 16. `annotation`
+17. `training_options`
 
 这些 router 覆盖了当前主要公开能力：
 
@@ -55,13 +57,14 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **32 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **34 个路由模块文件**（不含 `__init__.py`）。
 
-除了上面 16 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
+除了上面 17 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
 - 分析辅助：`analysis_helpers.py`、`analysis_metrics.py`、`analysis_state.py`
-- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`
+- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`、`chat_intent_policy.py`
+- 训练辅助：`training_options.py`（为 `training_options_router` 提供 `/training/options` 接口）
 - 运行时辅助：`transformers_runtime.py`
 - 存储辅助：`storage_scan.py`、`storage_tasks.py`
 - WSI 权限辅助：`wsi_permissions.py`

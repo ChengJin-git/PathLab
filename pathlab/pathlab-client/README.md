@@ -1,6 +1,6 @@
 # PathLab Client
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.2`
 
 `pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar，以及固定端口部署所需的运维脚本。
 
@@ -92,7 +92,7 @@ pathlab-client/
 
 ## 当前已确认的实现事实
 
-- Gateway 当前直接注册 16 个顶层 router；`server/gateway/routes/` 目录里实际共有 32 个路由模块文件，其中一部分作为分析 / 聊天 / 存储辅助模块被复用
+- Gateway 当前直接注册 17 个顶层 router；`server/gateway/routes/` 目录里实际共有 34 个路由模块文件，其中一部分作为分析 / 聊天 / 存储 / 训练辅助模块被复用
 - 数据库当前可见 ORM 表为 17 个，其中标注表为 `segmentation_annotations`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
 - 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口
@@ -109,7 +109,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前共 **345 个测试**，分布在 **14 个测试文件**：
+当前共 **23 个测试文件**：
 
 | 分类 | 文件 | 覆盖内容 |
 |------|------|---------|
@@ -123,12 +123,21 @@ npm run test:coverage # 生成覆盖率报告
 | 业务 API | `unit/api/chat.test.ts` | AI 对话会话 CRUD、SSE 流式请求、PDF 管理 |
 | 业务 API | `unit/api/heatmap.test.ts` | 热图列表、数据获取、URL 构建、缓存失效 |
 | 业务 API | `unit/api/users.test.ts` | 管理员用户 CRUD、权限、维护公告 |
+| 业务 API | `unit/api/analysis.test.ts` | 外部验证提交、分析触发、分析状态轮询 |
+| 业务 API | `unit/api/annotation.test.ts` | 分割标注 CRUD、ground-truth 读取、ROI 提取 |
+| 业务 API | `unit/api/export.test.ts` | 异步导出任务创建、状态轮询、文件下载 |
+| 业务 API | `unit/api/feedback.test.ts` | 消息反馈提交 / 删除、管理员查看、统计导出 |
+| 业务 API | `unit/api/permissions.test.ts` | 数据集临时提权授权 / 撤销、批量操作 |
+| 业务 API | `unit/api/queue.test.ts` | GPU 队列状态、配置读写、任务取消 |
+| 业务 API | `unit/api/settings.test.ts` | 公开设置读取、全局设置读写 |
+| 业务 API | `unit/api/storage.test.ts` | 存储配置、统计、孤立项、迁移、扫描、批量任务 |
+| 业务 API | `unit/api/trainingOptions.test.ts` | 训练选项读取（提取器、聚合器、分割架构等）|
 | 工具函数 | `unit/lib/cache.test.ts` | TTL 缓存、键值缓存、持久化缓存、并发去重 |
 | 工具函数 | `unit/lib/utils.test.ts` | cn()、formatBytes()、formatFileSize() |
 | 工具函数 | `unit/lib/chatMessageParser.test.ts` | AI 消息净化、PDF 上下文检测 |
 | React Context | `unit/contexts/AuthContext.test.tsx` | 认证状态机、角色判断、协议签署、维护公告 |
 
-详细说明见 [test/README.md](test/README.md)。
+新增的 9 个 API 测试文件均使用 `test/helpers/apiHelpers.ts` 中的工具函数（`ok` / `errResp` / `noContent` / `blobResp` / `createSSEStream`）构造 Response mock，详细说明见 [test/README.md](test/README.md)。
 
 ### 后端测试（pytest）
 
