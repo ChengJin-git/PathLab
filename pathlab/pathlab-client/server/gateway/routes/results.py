@@ -35,6 +35,7 @@ from backend.database.models import (
     TrainingTaskWSI,
     DataGroup,
     Dataset,
+    AnalysisRun,
 )
 from backend.database.repositories import (
     AIResultRepository,
@@ -4830,8 +4831,7 @@ async def _run_external_validation(
                     f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache..."
                 )
 
-            # Update status to EXTRACTING so frontend shows feature extraction stage
-            await update_task_progress(TaskStatus.EXTRACTING, 5)
+            await update_task_progress(TaskStatus.PATCHING, 5)
             await set_progress(task_id, 5)
 
             # Step 2a: Patch extraction via preprocessing service (with fallback logic)
@@ -4969,7 +4969,7 @@ async def _run_external_validation(
 
                 # Update progress (5-30% for patch extraction)
                 progress = 5 + int((idx / total_missing) * 25)
-                await update_task_progress(TaskStatus.EXTRACTING, progress)
+                await update_task_progress(TaskStatus.PATCHING, progress)
                 await set_progress(task_id, progress)
 
             # Log summary of coords extraction
@@ -6070,6 +6070,21 @@ async def run_task_analysis(
         analysis_type=analysis_type,
         task_category=task_category,
     )
+
+    # Persist internal analysis run to DB for usage statistics.
+    # External validation is already tracked via TrainingTask, so we only write here
+    # for internal analyses to avoid double-counting.
+    if not is_external:
+        try:
+            run_record = AnalysisRun(
+                analysis_id=analysis_id,
+                task_id=task_id,
+                user_id=str(user.id),
+            )
+            db.add(run_record)
+            await db.flush()
+        except Exception as _ar_err:
+            logger.warning(f"Failed to persist AnalysisRun record: {_ar_err}")
 
     # Check if GPU inference is needed (AI results missing)
     # External validation does not need GPU check here as it handles its own inference flow

@@ -49,6 +49,16 @@ const getDatasetSourceOrganFilterValue = (sourceOrgan?: string | null): string =
   return normalized || UNKNOWN_SOURCE_ORGAN_FILTER
 }
 
+const getVisiblePaginationPages = (currentPage: number, totalPages: number): number[] => {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  return Array.from(new Set([1, currentPage - 1, currentPage, currentPage + 1, totalPages]))
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((left, right) => left - right)
+}
+
 export default function ListPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -82,12 +92,20 @@ export default function ListPage() {
 
   // File list pagination state
   const [currentPage, setCurrentPage] = useState(1)
+  const [filePageInput, setFilePageInput] = useState('1')
   const itemsPerPage = 10
 
   // Upload functionality
   const [uploading, setUploading] = useState(false)
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const datasetSourceOptionsCacheRef = useRef<Map<string, string[]>>(new Map())
+  const datasetSourceOptionsRequestIdRef = useRef(0)
+
+  const invalidateDatasetSourceOptionsCache = useCallback(() => {
+    datasetSourceOptionsCacheRef.current.clear()
+    datasetSourceOptionsRequestIdRef.current += 1
+  }, [])
 
 
 
@@ -292,12 +310,6 @@ export default function ListPage() {
             : ('file' as const),
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
       }
-      if (datasetCurrentPage > 1) {
-        void prefetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
-          ...prefetchBase,
-          page: datasetCurrentPage - 1,
-        })
-      }
       if (datasetCurrentPage < totalPages) {
         void prefetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
           ...prefetchBase,
@@ -336,15 +348,6 @@ export default function ListPage() {
         (d.total_cases ?? 0) > 0 ? (d.total_cases ?? 0) : (d.total ?? d.items?.length ?? 0)
       const totalPages = Math.max(1, Math.ceil(totalUnits / itemsPerPage))
 
-      if (currentPage > 1) {
-        void prefetchWSIList(selectedDatasetId!, undefined, {
-          page: currentPage - 1,
-          page_size: itemsPerPage,
-          search: debouncedSearch || undefined,
-          sort_by: activeSortBy,
-          sort_order: activeSortOrder,
-        })
-      }
       if (currentPage < totalPages) {
         void prefetchWSIList(selectedDatasetId!, undefined, {
           page: currentPage + 1,
@@ -412,12 +415,37 @@ export default function ListPage() {
   }, [datasetCurrentPage])
 
   useEffect(() => {
+    setFilePageInput(String(currentPage))
+  }, [currentPage])
+
+  useEffect(() => {
     if (datasetSourceFilter !== 'all' && !availableDatasetSources.includes(datasetSourceFilter)) {
       setDatasetSourceFilter('all')
     }
   }, [availableDatasetSources, datasetSourceFilter])
 
+  const datasetSourceOptionsCacheKey = useMemo(() => {
+    const dataType = datasetTypeFilter === 'all' ? 'all' : datasetTypeFilter
+    const taskType = datasetTaskFilter === 'all' ? 'all' : datasetTaskFilter
+    const aggregationLevel =
+      datasetLevelFilter === 'all'
+        ? 'all'
+        : datasetLevelFilter === 'patient'
+        ? 'case'
+        : 'file'
+    return `${dataType}|${taskType}|${aggregationLevel}`
+  }, [datasetTypeFilter, datasetTaskFilter, datasetLevelFilter])
+
   const loadDatasetSourceOptions = useCallback(async () => {
+    const requestId = datasetSourceOptionsRequestIdRef.current + 1
+    datasetSourceOptionsRequestIdRef.current = requestId
+
+    const cachedSources = datasetSourceOptionsCacheRef.current.get(datasetSourceOptionsCacheKey)
+    if (cachedSources) {
+      setAvailableDatasetSources(cachedSources)
+      return
+    }
+
     try {
       const response = await fetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
         page_size: 0,
@@ -433,11 +461,18 @@ export default function ListPage() {
         (response.items || []).map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ))
       ))
 
+      datasetSourceOptionsCacheRef.current.set(datasetSourceOptionsCacheKey, nextSources)
+      if (datasetSourceOptionsRequestIdRef.current !== requestId) {
+        return
+      }
       setAvailableDatasetSources(nextSources)
     } catch {
+      if (datasetSourceOptionsRequestIdRef.current !== requestId) {
+        return
+      }
       setAvailableDatasetSources([])
     }
-  }, [datasetTypeFilter, datasetTaskFilter, datasetLevelFilter])
+  }, [datasetSourceOptionsCacheKey, datasetTypeFilter, datasetTaskFilter, datasetLevelFilter])
 
   useEffect(() => {
     if (!selectedDatasetId) {
@@ -463,6 +498,7 @@ export default function ListPage() {
   // Debounce search input → debouncedSearch (300ms)
   useEffect(() => {
     const timer = setTimeout(() => {
+      setCurrentPage((previousPage) => (previousPage === 1 ? previousPage : 1))
       setDebouncedSearch(searchQuery)
     }, 300)
     return () => clearTimeout(timer)
@@ -484,6 +520,29 @@ export default function ListPage() {
     const nextPage = Math.min(Math.max(parsedPage, 1), datasetTotalPages)
     setDatasetCurrentPage(nextPage)
     setDatasetPageInput(String(nextPage))
+  }
+
+  const commitFilePageInput = (rawValue: string, totalPages: number) => {
+    const trimmed = rawValue.trim()
+    if (!trimmed) {
+      setFilePageInput(String(currentPage))
+      return
+    }
+
+    if (!/^\d+$/.test(trimmed)) {
+      setFilePageInput(String(currentPage))
+      return
+    }
+
+    const parsedPage = Number.parseInt(trimmed, 10)
+    if (Number.isNaN(parsedPage)) {
+      setFilePageInput(String(currentPage))
+      return
+    }
+
+    const nextPage = Math.min(Math.max(parsedPage, 1), totalPages)
+    setCurrentPage(nextPage)
+    setFilePageInput(String(nextPage))
   }
 
   const handleBackToDatasets = () => {
@@ -611,6 +670,7 @@ export default function ListPage() {
         const currentSource = currentDataset?.source_organ?.trim() || ''
         if (resolvedDatasetSource !== currentSource) {
           await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
+          invalidateDatasetSourceOptionsCache()
         }
       }
 
@@ -752,6 +812,7 @@ export default function ListPage() {
         setDatasetToDeleteId(null)
         setDatasetToDeleteName('')
         setDatasetToDeleteFileCount(0)
+        invalidateDatasetSourceOptionsCache()
         await qc.invalidateQueries({ queryKey: ['page-datasets'] })
       } else {
         const idsToDelete = Array.from(selectedIds)
@@ -947,6 +1008,7 @@ export default function ListPage() {
         await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
       }
 
+      invalidateDatasetSourceOptionsCache()
       await qc.invalidateQueries({ queryKey: ['page-datasets'] })
       void loadDatasetSourceOptions()
 
@@ -1037,6 +1099,7 @@ export default function ListPage() {
 
     try {
       await renameDataset(renamingDatasetId, renameDatasetNewName)
+      invalidateDatasetSourceOptionsCache()
       await qc.invalidateQueries({ queryKey: ['page-datasets'] })
 
       // If the renamed dataset was selected, update the displayed name
@@ -1094,9 +1157,9 @@ export default function ListPage() {
   }, [selectedDatasetSummary, isPatchDataset])
 
   // Server-side pagination: dataset view is case-paginated for WSI datasets
-  const totalPages = useCaseGroupedView
+  const totalPages = Math.max(1, useCaseGroupedView
     ? Math.ceil((wsiListQuery.data?.total_cases ?? 0) / itemsPerPage)
-    : Math.ceil((wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) / itemsPerPage)
+    : Math.ceil((wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) / itemsPerPage))
   const startIndex = (currentPage - 1) * itemsPerPage
 
   // All current-page items are already the "paginated" items (server-side pagination)
@@ -1115,6 +1178,12 @@ export default function ListPage() {
 
   // Check if all items across all pages are selected (based on totalCount)
   const allFilteredSelected = selectedIds.size > 0 && selectedIds.size === (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0)
+
+  const visibleFilePages = useMemo(() => getVisiblePaginationPages(currentPage, totalPages), [currentPage, totalPages])
+
+  useEffect(() => {
+    setCurrentPage((previousPage) => Math.min(previousPage, totalPages))
+  }, [totalPages])
 
   const handleSelectPage = () => {
     if (allFilteredSelected) {
@@ -1980,7 +2049,6 @@ export default function ListPage() {
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
-                setCurrentPage(1) // Reset to first page on search
               }}
             />
             {searchQuery && (
@@ -1989,7 +2057,6 @@ export default function ListPage() {
                 className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 onClick={() => {
                   setSearchQuery('')
-                  setCurrentPage(1)
                 }}
               >
                 <X className="h-4 w-4 text-gray-400 hover:text-gray-600" />
@@ -2681,11 +2748,18 @@ export default function ListPage() {
                         type="number"
                         min={1}
                         max={totalPages}
-                        value={currentPage}
+                        value={filePageInput}
                         onChange={(e) => {
-                          const val = parseInt(e.target.value)
-                          if (!isNaN(val)) {
-                            setCurrentPage(Math.min(Math.max(1, val), totalPages))
+                          setFilePageInput(e.target.value)
+                        }}
+                        onBlur={() => commitFilePageInput(filePageInput, totalPages)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            commitFilePageInput(filePageInput, totalPages)
+                          }
+                          if (event.key === 'Escape') {
+                            setFilePageInput(String(currentPage))
                           }
                         }}
                         className="w-10 sm:w-16 h-7 sm:h-9 px-1 sm:px-2 border border-gray-200 rounded-lg text-xs sm:text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all font-semibold"
@@ -2705,8 +2779,7 @@ export default function ListPage() {
                       </Button>
 
                       <div className="flex items-center gap-1">
-                        {Array.from({ length: totalPages }, (_, i) => i + 1)
-                          .filter(p => p === 1 || p === totalPages || (p >= currentPage - 1 && p <= currentPage + 1))
+                        {visibleFilePages
                           .map((page, index, array) => (
                             <React.Fragment key={page}>
                               {index > 0 && array[index - 1] !== page - 1 && (

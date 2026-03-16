@@ -143,6 +143,7 @@ export interface UserUsageItem {
   role: string
   wsi_count: number
   ai_task_count: number
+  analysis_count: number
   training_count: number
   conversation_count: number
   message_count: number

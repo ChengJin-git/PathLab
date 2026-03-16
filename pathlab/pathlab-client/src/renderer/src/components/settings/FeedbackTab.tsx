@@ -52,7 +52,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
     return usageData.reduce(
       (acc, u) => ({
         wsi_count: acc.wsi_count + u.wsi_count,
-        ai_task_count: acc.ai_task_count + u.ai_task_count,
+        analysis_count: acc.analysis_count + u.analysis_count,
         training_count: acc.training_count + u.training_count,
         message_count: acc.message_count + u.message_count,
         annotation_count: acc.annotation_count + u.annotation_count,
@@ -60,7 +60,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
         thumbs_up: acc.thumbs_up + u.thumbs_up,
         thumbs_down: acc.thumbs_down + u.thumbs_down,
       }),
-      { wsi_count: 0, ai_task_count: 0, training_count: 0, message_count: 0, annotation_count: 0, feedback_count: 0, thumbs_up: 0, thumbs_down: 0 }
+      { wsi_count: 0, analysis_count: 0, training_count: 0, message_count: 0, annotation_count: 0, feedback_count: 0, thumbs_up: 0, thumbs_down: 0 }
     )
   }, [usageData])
 
@@ -227,7 +227,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
               </div>
               {([
                 { key: 'usageWsi', value: usageTotals.wsi_count, color: 'indigo' },
-                { key: 'usageAiTasks', value: usageTotals.ai_task_count, color: 'violet' },
+                { key: 'usageAiTasks', value: usageTotals.analysis_count, color: 'violet' },
                 { key: 'usageTraining', value: usageTotals.training_count, color: 'purple' },
                 { key: 'usageMessages', value: usageTotals.message_count, color: 'cyan' },
                 { key: 'usageAnnotations', value: usageTotals.annotation_count, color: 'teal' },
@@ -257,7 +257,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                       <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageWsi')}</div>
                     </div>
                     <div className="bg-gray-50 rounded-lg p-2">
-                      <div className="text-lg font-semibold text-gray-900">{u.ai_task_count}</div>
+                      <div className="text-lg font-semibold text-gray-900">{u.analysis_count}</div>
                       <div className="text-[10px] text-gray-500 uppercase">{t('settings.feedbackTab.usageAiTasks')}</div>
                     </div>
                     <div className="bg-gray-50 rounded-lg p-2">
@@ -309,7 +309,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-gray-100 text-gray-600">{u.role}</span>
                         </td>
                         <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.wsi_count}</td>
-                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.ai_task_count}</td>
+                        <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.analysis_count}</td>
                         <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.training_count}</td>
                         <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.message_count}</td>
                         <td className="px-3 py-3 text-center text-gray-700 font-mono text-xs">{u.annotation_count}</td>

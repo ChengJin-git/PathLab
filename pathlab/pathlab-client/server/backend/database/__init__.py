@@ -8,7 +8,15 @@ from .database import engine, async_session, get_db, init_db, close_db, safe_ses
 
 # Alias for compatibility with background tasks
 async_session_maker = async_session
-from .models import Base, WSISlide, AITask, AIResult, ChatConversation, ChatMessage
+from .models import (
+    Base,
+    WSISlide,
+    AITask,
+    AIResult,
+    ChatConversation,
+    ChatMessage,
+    AnalysisRun,
+)
 
 __all__ = [
     "engine",
@@ -24,5 +32,5 @@ __all__ = [
     "AIResult",
     "ChatConversation",
     "ChatMessage",
+    "AnalysisRun",
 ]
-

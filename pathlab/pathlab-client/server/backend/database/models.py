@@ -1117,3 +1117,31 @@ class SegmentationAnnotation(Base):
             if self.updated_at
             else None,
         }
+
+
+class AnalysisRun(Base):
+    """
+    Analysis Run table.
+    Tracks internal analysis runs (statistical analysis on training task results).
+    External validation runs are tracked via TrainingTask (task_type='external_validation'
+    in the linked DataGroup) and are NOT stored here to avoid double-counting.
+    """
+
+    __tablename__ = "analysis_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(String(255), unique=True, nullable=False, index=True)
+    # Training task whose results are being analyzed (no FK – avoids cross-table constraints)
+    task_id = Column(String(255), nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    def to_dict(self):
+        return {
+            "analysis_id": self.analysis_id,
+            "task_id": self.task_id,
+            "user_id": self.user_id,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+        }
