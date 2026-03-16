@@ -31,6 +31,7 @@ from ..utils import (
     ensure_segmentation_contract,
     ensure_dataset_segmentation_contract,
     find_matching_segmentation_annotation_path,
+    get_wsi_effective_file_size,
     load_coco_annotation_bytes,
     load_coco_annotation_file,
     resolve_file_data_type_and_properties,
@@ -468,6 +469,10 @@ async def upload_wsi_file(
                         associated_count += 1
 
                 logger.info(f"Saved {associated_count} TMAP DT files for: {wsi_id}")
+
+        # Recalculate file_size now that associated data is on disk
+        if file_extension in (".mrxs", ".tmap") and wsi_path is not None:
+            file_size = get_wsi_effective_file_size(str(wsi_path))
 
         # Resolve dataset_id: use provided dataset_id, or create new dataset from dataset_name
         resolved_dataset_id = None
