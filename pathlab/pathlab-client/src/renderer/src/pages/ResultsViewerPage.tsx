@@ -156,6 +156,9 @@ export default function ResultsViewerPage() {
   const [validationError, setValidationError] = useState<string | null>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const selectedTaskIdRef = useRef<string | null>(selectedTaskId)
+  const [extValidationPendingTaskId, setExtValidationPendingTaskId] = useState<string | null>(null)
+  // Track previous selectedModelId to detect user-initiated model changes (vs initial load)
+  const prevModelIdForDatasetRef = useRef<string | null>(null)
 
   interface CompletedExtValTask {
     task_id: string
@@ -320,6 +323,18 @@ export default function ResultsViewerPage() {
     }
   }, [pageMode, selectedModelId, trainedModels, tasks])
 
+  useEffect(() => {
+    if (pageMode !== 'external-validation') return
+    const prevModelId = prevModelIdForDatasetRef.current
+    prevModelIdForDatasetRef.current = selectedModelId
+    if (prevModelId !== null && prevModelId !== selectedModelId) {
+      setDatasetId(null)
+      setValidationProgress(null)
+      setExtValQueryTaskId(null)
+      setExtValidationPendingTaskId(null)
+    }
+  }, [pageMode, selectedModelId])
+
   // Auto-select most recent completed external validation task's model+dataset
   // when entering external validation mode with nothing selected
   useEffect(() => {
@@ -383,6 +398,7 @@ export default function ResultsViewerPage() {
         // Check if this is an external validation analysis
         if (task.analysisType === 'external' && task.trainingTaskId) {
           setExtValQueryTaskId(task.trainingTaskId)
+          setExtValidationPendingTaskId(null)
           void qc.invalidateQueries({ queryKey: ['completed-ext-val-tasks'] })
         } else {
           if (currentResult?._pending) {
@@ -420,12 +436,14 @@ export default function ResultsViewerPage() {
     if (!selectedModelId || !datasetId || selectedMetrics.length === 0) return
 
     const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
-    if (!selectedModel) return
+    if (!selectedModel) {
+      setValidationError(t('resultsPage.modelNoLongerAvailable'))
+      return
+    }
 
     setRunning(true)
     setValidationError(null)
     try {
-      // Pass metrics/charts/bootstrapCI so backend auto-triggers analysis after inference
       const result = await apiStartExternalValidation(
         selectedModelId,
         datasetId,
@@ -434,14 +452,9 @@ export default function ResultsViewerPage() {
         bootstrapCIMetrics.length > 0
       )
 
-      // Handle different response statuses from backend:
-      // 1. status === 'completed' — both inference and analysis already exist
-      // 2. status === 'analysis_started' — inference exists, analysis auto-triggered
-      // 3. status === 'pending' — new task queued for GPU inference
       const responseStatus = (result as unknown as Record<string, unknown>).status as string
 
       if (responseStatus === 'completed') {
-        // Both inference and analysis already exist — load results directly
         setValidationProgress({
           validation_id: result.task_id,
           status: 'completed',
@@ -449,13 +462,12 @@ export default function ResultsViewerPage() {
           total_wsi: result.total_wsi || 0,
           processed_wsi: result.total_wsi || 0,
           model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
+          model_task_id: selectedModel?.task_id || '',
           dataset_id: datasetId,
           error: null,
         })
         setExtValQueryTaskId(result.task_id)
       } else if (responseStatus === 'analysis_started') {
-        // Inference results exist, analysis auto-triggered — wait for SSE
         setValidationProgress({
           validation_id: result.task_id,
           status: 'completed',
@@ -463,25 +475,12 @@ export default function ResultsViewerPage() {
           total_wsi: result.total_wsi || 0,
           processed_wsi: result.total_wsi || 0,
           model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
+          model_task_id: selectedModel?.task_id || '',
           dataset_id: datasetId,
           error: null,
         })
-        // Analysis is running — SSE handler will pick it up
       } else {
-        // New task submitted — show pending status and start polling
-        setValidationProgress({
-          validation_id: result.task_id,
-          status: 'pending',
-          progress: 0,
-          total_wsi: result.total_wsi || 0,
-          processed_wsi: 0,
-          model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
-          dataset_id: datasetId,
-          error: null,
-        })
-        startPolling(result.task_id)
+        setExtValidationPendingTaskId(result.task_id)
       }
     } catch (error) {
       console.error('Failed to start external validation:', error)
@@ -1010,7 +1009,7 @@ export default function ResultsViewerPage() {
               {/* Submit Button */}
               <Button
                 onClick={startExternalValidation}
-                disabled={running || !selectedModelId || !datasetId || selectedMetrics.length === 0 || (validationProgress?.status === 'running') || (validationProgress?.status === 'pending')}
+                disabled={running || !selectedModelId || !datasetId || selectedMetrics.length === 0 || (validationProgress?.status === 'running') || !!extValidationPendingTaskId}
                 className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-orange-500/20 rounded-xl"
               >
                 {running ? (
@@ -1018,7 +1017,12 @@ export default function ResultsViewerPage() {
                     <Loader2 className="w-5 h-5 animate-spin" />
                     {t('resultsPage.submitting')}
                   </>
-                ) : validationProgress?.status === 'running' || validationProgress?.status === 'pending' ? (
+                ) : extValidationPendingTaskId ? (
+                  <>
+                    <CheckCircle className="w-5 h-5" />
+                    {t('resultsPage.extValidationSubmitted')}
+                  </>
+                ) : validationProgress?.status === 'running' ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
                     {t('resultsPage.validationInProgressBtn')}
@@ -1030,6 +1034,23 @@ export default function ResultsViewerPage() {
                   </>
                 )}
               </Button>
+
+              {extValidationPendingTaskId && (
+                <Card className="p-4 bg-blue-50 border-blue-200">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                    <p className="text-sm text-blue-700">
+                      {t('resultsPage.extValidationSubmittedInfo')}{' '}
+                      <button
+                        onClick={() => navigate(`/task/${extValidationPendingTaskId}`)}
+                        className="underline font-medium hover:text-blue-900"
+                      >
+                        {t('resultsPage.viewTaskDetail')}
+                      </button>
+                    </p>
+                  </div>
+                </Card>
+              )}
 
               {validationError && (
                 <Card className="p-4 bg-red-50 border-red-200">

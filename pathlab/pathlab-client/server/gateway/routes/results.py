@@ -6575,21 +6575,9 @@ async def get_analysis_file(
 async def delete_task_analysis(
     task_id: str,
     analysis_id: str,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Delete a specific analysis run for a task.
-    Requires pathologist or admin role. Users can only delete their own task's analysis.
-
-    Args:
-        task_id: Training task ID
-        analysis_id: Analysis run ID (timestamp directory name)
-
-    Returns:
-        Success message
-    """
-    # Check task ownership
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task is not None and not check_data_ownership(_coerce_str(task.user_id), user):
         raise HTTPException(
@@ -6610,8 +6598,24 @@ async def delete_task_analysis(
             status_code=400, detail=f"Invalid analysis ID: {analysis_id}"
         )
 
+    if not user.is_admin():
+        summary_file = analysis_dir / "summary.json"
+        if summary_file.exists():
+            try:
+                with open(summary_file, "r") as f:
+                    summary = json.load(f)
+                submitted_by = summary.get("submitted_by")
+                if submitted_by and submitted_by != str(user.id):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="You don't have permission to delete this analysis",
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
     try:
-        # Run in thread pool to avoid blocking event loop
         await asyncio.to_thread(shutil.rmtree, analysis_dir)
         logger.info(f"Deleted analysis {analysis_id} for task {task_id}")
         return {
