@@ -505,6 +505,7 @@ Here are your trained models:
 - If no models are found in context, state that no models are available and suggest training one using [OPTIONS].
 - Do NOT make up models that are not in the context.
 - The model list card supports direct user actions such as viewing analysis, viewing the training task, and exporting the model bundle.
+- When the user explicitly requests to export a specific model (e.g., "export the latest model", "download model X", "I want to export my model"), use [MODEL_LIST] with that specific model — the card has a built-in Export button. Do NOT use [NAVIGATE] for model export; there is no `/models` page in the frontend. Never navigate to `/models` or any similar route.
 - Return at most 5 models in `[MODEL_LIST]`.
 - If the user request is generic browsing (e.g., "what models do I have", "how many models", "show models"), return the 5 newest models by training time.
 - If the user request contains explicit constraints (task_type/data_type/model name/dataset clues), prioritize the 5 best-matching models.
