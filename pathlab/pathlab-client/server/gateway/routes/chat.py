@@ -1968,6 +1968,35 @@ def _semantic_top_k_models(
         return model_summaries[:k]
 
 
+def _should_use_semantic_model_ranking(
+    latest_user_text: str,
+    inferred_model_filters: dict[str, Any],
+    recent_user_texts: list[str],
+) -> bool:
+    if inferred_model_filters:
+        return True
+
+    normalized = (latest_user_text or "").strip().lower()
+    if not normalized:
+        return False
+
+    generic_patterns = [
+        "有多少模型",
+        "多少模型",
+        "看下模型",
+        "看看模型",
+        "列出模型",
+        "有哪些模型",
+        "show models",
+        "list models",
+        "how many models",
+    ]
+    if any(p in normalized for p in generic_patterns):
+        return False
+
+    return len(recent_user_texts) > 1
+
+
 def _extract_images_from_content(content: object) -> list[str]:
     """Extract image base64 URLs from multimodal message content.
 
@@ -4003,6 +4032,16 @@ async def chat_with_ai(
         if recent_user_texts
         else latest_user_text
     )
+    use_semantic_model_ranking = _should_use_semantic_model_ranking(
+        latest_user_text,
+        inferred_model_filters,
+        recent_user_texts,
+    )
+    models_selection_note = (
+        "semantic relevance to current request"
+        if use_semantic_model_ranking
+        else "most recent training time (newest first)"
+    )
 
     _ctx_cache_uid = str(user.id)
     _ctx_cached = None
@@ -4036,9 +4075,14 @@ async def chat_with_ai(
                 _cached_model_summaries.append({**item, "line": line, "id": model_id})
         _cached_trained_models_total = _ctx_cached.get("trained_models_total", 0)
         if _cached_model_summaries:
-            _relevant_summaries = _semantic_top_k_models(
-                semantic_query_text, _cached_model_summaries
-            )
+            if use_semantic_model_ranking:
+                _relevant_summaries = _semantic_top_k_models(
+                    semantic_query_text, _cached_model_summaries
+                )
+            else:
+                _relevant_summaries = _cached_model_summaries[
+                    :TOP_K_MODELS_IN_CHAT_CONTEXT
+                ]
             _cached_models_list = "\n".join(s["line"] for s in _relevant_summaries)
             _cached_models_count = _cached_trained_models_total
             _cached_models_shown = len(_relevant_summaries)
@@ -4644,7 +4688,11 @@ async def chat_with_ai(
                 }
             )
 
-        if model_summaries and len(model_summaries) > TOP_K_MODELS_IN_CHAT_CONTEXT:
+        if (
+            use_semantic_model_ranking
+            and model_summaries
+            and len(model_summaries) > TOP_K_MODELS_IN_CHAT_CONTEXT
+        ):
             try:
                 from .chat_pdf_vectorstore import _embed_texts as _emb
 
@@ -4653,9 +4701,12 @@ async def chat_with_ai(
                     _s["embedding"] = _emb_vecs[_i].tolist()
             except Exception:
                 pass
-        relevant_summaries = _semantic_top_k_models(
-            semantic_query_text, model_summaries
-        )
+        if use_semantic_model_ranking:
+            relevant_summaries = _semantic_top_k_models(
+                semantic_query_text, model_summaries
+            )
+        else:
+            relevant_summaries = model_summaries[:TOP_K_MODELS_IN_CHAT_CONTEXT]
         models_list = "\n".join(summary["line"] for summary in relevant_summaries)
         models_count = trained_models_total
         models_shown = len(relevant_summaries)
@@ -4812,6 +4863,7 @@ async def chat_with_ai(
         models_count=models_count,
         models_list=models_list,
         models_shown=models_shown,
+        models_selection_note=models_selection_note,
         training_tasks_total=training_tasks_total,
         training_tasks_completed=training_tasks_completed,
         training_tasks_running=training_tasks_running,
@@ -4877,6 +4929,7 @@ async def chat_with_ai(
             models_count=_cached_models_count,
             models_list=_cached_models_list,
             models_shown=_cached_models_shown,
+            models_selection_note=models_selection_note,
             training_tasks_total=_ctx_cached.get("training_tasks_total", 0),
             training_tasks_completed=_ctx_cached.get("training_tasks_completed", 0),
             training_tasks_running=_ctx_cached.get("training_tasks_running", 0),

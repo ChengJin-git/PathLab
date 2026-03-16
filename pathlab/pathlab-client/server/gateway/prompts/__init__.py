@@ -269,6 +269,7 @@ def format_user_data_context(
     models_count: int,
     models_list: str,
     models_shown: int,
+    models_selection_note: str,
     training_tasks_total: int,
     training_tasks_completed: int,
     training_tasks_running: int,
@@ -294,6 +295,8 @@ def format_user_data_context(
         datasets_list: Formatted list of datasets
         models_count: Number of trained models
         models_list: Formatted list of models
+        models_shown: Number of model entries shown in context
+        models_selection_note: Human-readable selection strategy note
         training_tasks_total: Total number of training tasks
         training_tasks_completed: Number of completed training tasks
         training_tasks_running: Number of running training tasks
@@ -334,6 +337,7 @@ def format_user_data_context(
         models_count=models_count,
         models_list=models_list,
         models_shown=models_shown,
+        models_selection_note=models_selection_note,
         training_tasks_total=training_tasks_total,
         training_tasks_completed=training_tasks_completed,
         training_tasks_running=training_tasks_running,
