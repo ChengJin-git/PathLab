@@ -1124,6 +1124,20 @@ class WSIRepository:
             return []
 
     @staticmethod
+    async def get_by_filename_in_dataset(
+        db: AsyncSession,
+        dataset_id: str,
+        original_filename: str,
+    ) -> Optional["WSISlide"]:
+        result = await db.execute(
+            select(WSISlide)
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.original_filename == original_filename)
+            .limit(1)
+        )
+        return result.scalars().first()
+
+    @staticmethod
     async def get_by_dataset(
         db: AsyncSession,
         dataset_id: str,

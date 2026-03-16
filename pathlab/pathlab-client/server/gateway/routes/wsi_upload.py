@@ -410,6 +410,16 @@ async def upload_wsi_file(
         file_data_type: Optional[str] = None
         props: dict[str, Any] = {}
 
+        if dataset_id and not is_json_annotation_upload:
+            existing_with_name = await WSIRepository.get_by_filename_in_dataset(
+                db, dataset_id, original_filename
+            )
+            if existing_with_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A file with filename '{original_filename}' already exists in this dataset",
+                )
+
         if is_json_annotation_upload:
             segmentation_annotation = load_coco_annotation_bytes(
                 await file.read(),
@@ -828,6 +838,16 @@ async def upload_wsi_by_path(
         wsi_props = None
         wsi_id = req.wsi_id
         case_id = req.case_id
+
+        if req.dataset_id and not is_json_annotation_path:
+            existing_with_name = await WSIRepository.get_by_filename_in_dataset(
+                db, req.dataset_id, original_filename
+            )
+            if existing_with_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A file with filename '{original_filename}' already exists in this dataset",
+                )
 
         if is_json_annotation_path:
             segmentation_annotation = load_coco_annotation_file(req.wsi_path)
