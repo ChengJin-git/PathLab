@@ -632,6 +632,8 @@ async def upload_wsi_file(
             "wsi_path": str(wsi_path),
             "age": age,
             "gender": gender,
+            "source": (existing_dataset.source_organ if dataset_id else source_organ)
+            or None,
             "event_time": event_time,
             "event_status": event_status,
             "mpp": props.get("mpp"),
@@ -992,6 +994,10 @@ async def upload_wsi_by_path(
             "file_size": file_size,
             "age": req.age,
             "gender": req.gender,
+            "source": (
+                existing_dataset.source_organ if req.dataset_id else req.source_organ
+            )
+            or None,
             "event_time": req.event_time,
             "event_status": req.event_status,
             "mpp": wsi_props["mpp"],

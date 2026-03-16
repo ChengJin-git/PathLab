@@ -1656,6 +1656,7 @@
     "complete": "Complete",
     "failed": "Failed",
     "errorLoadingDatasets": "Failed to load datasets",
+    "errorServiceUnavailable": "Service unavailable. Please check database connectivity.",
     "noDatasetsFound": "No Datasets Found",
     "noDatasetsDescription": "Register your first dataset to get started with WSI analysis.",
     "editDataset": "Edit Dataset",

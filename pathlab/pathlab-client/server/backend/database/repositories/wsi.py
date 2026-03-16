@@ -1438,6 +1438,27 @@ class WSIRepository:
         return results
 
     @staticmethod
+    async def backfill_source_from_dataset(db: AsyncSession) -> int:
+        subq = (
+            select(Dataset.source_organ)
+            .where(Dataset.dataset_id == WSISlide.dataset_id)
+            .scalar_subquery()
+        )
+        result = await db.execute(
+            update(WSISlide)
+            .where(WSISlide.source.is_(None))
+            .where(
+                WSISlide.dataset_id.in_(
+                    select(Dataset.dataset_id).where(Dataset.source_organ.isnot(None))
+                )
+            )
+            .values(source=subq)
+            .execution_options(synchronize_session=False)
+        )
+        await db.commit()
+        return result.rowcount
+
+    @staticmethod
     async def bulk_update_feature_extracted(
         db: AsyncSession, wsi_ids: List[str], extracted: bool = True
     ) -> int:

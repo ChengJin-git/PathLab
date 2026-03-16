@@ -266,6 +266,11 @@ async def lifespan(app: FastAPI):
     await init_redis()
     logger.info("✓ Redis initialized")
 
+    async with async_session() as db:
+        _backfilled = await WSIRepository.backfill_source_from_dataset(db)
+        if _backfilled:
+            logger.info(f"✓ Backfilled WSI source for {_backfilled} record(s)")
+
     # Detect GPU count and determine max_concurrent
     try:
         from backend.common.gpu_utils import get_gpu_count

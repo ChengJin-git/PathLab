@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
+import { ApiError } from '../api/client'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -1251,7 +1252,11 @@ export default function ListPage() {
           {(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && !showInitialDatasetLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
               <p className="font-medium">{t('listPage.errorLoadingDatasets')}</p>
-              <p className="text-sm">{datasetsQuery.error ? String(datasetsQuery.error) : undefined}</p>
+              <p className="text-sm">
+                {datasetsQuery.error instanceof ApiError && (datasetsQuery.error.isServerError() || datasetsQuery.error.isNetworkError())
+                  ? t('listPage.errorServiceUnavailable')
+                  : String(datasetsQuery.error)}
+              </p>
             </div>
           )}
 
@@ -1901,7 +1906,11 @@ export default function ListPage() {
           {(wsiListQuery.error ? String(wsiListQuery.error) : undefined) && !showInitialFilesLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
               <p className="font-medium">{t('listPage.errorLoadingFiles')}</p>
-              <p className="text-sm">{wsiListQuery.error ? String(wsiListQuery.error) : undefined}</p>
+              <p className="text-sm">
+                {wsiListQuery.error instanceof ApiError && (wsiListQuery.error.isServerError() || wsiListQuery.error.isNetworkError())
+                  ? t('listPage.errorServiceUnavailable')
+                  : String(wsiListQuery.error)}
+              </p>
             </div>
           )}
 

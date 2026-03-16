@@ -1650,6 +1650,7 @@
     "complete": "完成",
     "failed": "失敗",
     "errorLoadingDatasets": "載入資料集失敗",
+    "errorServiceUnavailable": "服務不可用，請檢查資料庫連線。",
     "noDatasetsFound": "未找到資料集",
     "noDatasetsDescription": "註冊您的第一個資料集以開始 WSI 分析。",
     "editDataset": "編輯資料集",
