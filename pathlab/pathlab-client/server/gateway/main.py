@@ -31,6 +31,8 @@ from backend.database.repositories import (
     StorageTaskRepository,
     WSIRepository,
 )
+from backend.database.models import TrainingTask
+from sqlalchemy.orm import selectinload
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
 from .task_queue import init_task_queue, shutdown_task_queue, get_task_queue, TaskType
@@ -106,20 +108,57 @@ async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, A
     else:
         datasets_list = "  None"
 
+    _task_ids = list({str(m.task_id) for m in trained_models if m.task_id})
+    _task_meta: dict[str, tuple[str, str, str]] = {}
+    if _task_ids:
+        async with async_session() as _db:
+            _stmt = (
+                select(TrainingTask)
+                .options(selectinload(TrainingTask.data_group))
+                .where(TrainingTask.task_id.in_(_task_ids))
+            )
+            _result = await _db.execute(_stmt)
+            for _task in _result.scalars().all():
+                _dg = _task.data_group
+                _task_meta[str(_task.task_id)] = (
+                    str((_dg.task_type if _dg else None) or "unknown"),
+                    str((_dg.data_type if _dg else None) or "unknown"),
+                    str(_task.task_name or ""),
+                )
+
     model_summaries = []
     for m in trained_models:
+        _tt, _dt, _tn = _task_meta.get(
+            str(m.task_id) if m.task_id else "", ("unknown", "unknown", "")
+        )
         model_summaries.append(
             {
                 "id": m.model_id,
-                "task_type": "unknown",
-                "data_type": "unknown",
+                "task_type": _tt,
+                "data_type": _dt,
                 "classes": [c.lower() for c in (m.classes or [])],
                 "dataset_names": [],
                 "dataset_sources": [],
-                "task_name": "",
-                "line": f"  - {m.model_name} (id={m.model_id}, trained_on_task={m.task_id})",
+                "task_name": _tn.lower(),
+                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, trained_on_task={m.task_id})",
+                # embedding field populated below (after batch encode)
+                "embedding": None,
             }
         )
+
+    # Batch-encode model descriptions for semantic retrieval at query time.
+    # We encode the full `line` string so the embedding captures model name,
+    # task_type, data_type and task_id — all the fields a user might ask about.
+    if model_summaries:
+        try:
+            from .routes.chat_pdf_vectorstore import _embed_texts
+
+            _lines = [s["line"] for s in model_summaries]
+            _vecs = _embed_texts(_lines)  # shape: (N, 384)
+            for _i, _s in enumerate(model_summaries):
+                _s["embedding"] = _vecs[_i].tolist()
+        except Exception as _emb_exc:
+            logger.warning(f"[ChatCtxCache] model embedding failed: {_emb_exc}")
 
     training_tasks_total = training_tasks_stats.get("total", 0)
     training_tasks_completed = training_tasks_stats.get("completed", 0)

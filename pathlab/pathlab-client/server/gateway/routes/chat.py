@@ -120,6 +120,10 @@ ACTIVE_TRAINING_STATUSES = {
 }
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 MAX_MODELS_IN_CHAT_CONTEXT = 5
+# Number of semantically-closest models to surface in the LLM context.
+# When a user's query is embedded and compared against cached model embeddings,
+# only the top-K matches are included — regardless of total model count.
+TOP_K_MODELS_IN_CHAT_CONTEXT = 10
 DEFAULT_MODEL_SCAN_LIMIT = 100
 FILTERED_MODEL_SCAN_LIMIT = 5000
 MODEL_SCAN_BATCH_SIZE = 200
@@ -300,6 +304,23 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
             "This turn is for in-app external evaluation, not literature search. "
             "Do NOT use `[WEB_SEARCH]`. Continue with the existing task/model/dataset context, "
             "prefer `[ANALYSIS_CONFIG]` (analysis_type: external) or `[METRIC_CONFIG]`."
+        )
+
+    if mode == ConversationMode.MODEL_CARD:
+        if detected_lang == "zh_CN":
+            return (
+                "当前这轮是查看已训练模型信息/模型卡片的回合，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
+                "请直接使用已有的模型上下文，回答用户关于模型架构、特征提取器、聚合器、类别标签和训练配置等信息的问题。"
+            )
+        if detected_lang == "zh_HK":
+            return (
+                "當前這輪是查看已訓練模型資訊/模型卡片的回合，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
+                "請直接使用已有的模型上下文，回答用戶關於模型架構、特徵提取器、聚合器、類別標籤和訓練配置等資訊的問題。"
+            )
+        return (
+            "This turn is about viewing a trained model's information or model card, not literature search. "
+            "Do NOT use `[WEB_SEARCH]`. Use the existing model context to answer questions about "
+            "the model's architecture, feature extractor, aggregator, class labels, and training configuration."
         )
 
     if detected_lang == "zh_CN":
@@ -1898,6 +1919,53 @@ def _format_model_filter_summary(filters: dict[str, Any]) -> str:
     if filters.get("text_keywords"):
         parts.append(f"keywords={','.join(filters['text_keywords'])}")
     return ", ".join(parts)
+
+
+def _semantic_top_k_models(
+    query_text: str,
+    model_summaries: list[dict[str, Any]],
+    k: int = TOP_K_MODELS_IN_CHAT_CONTEXT,
+) -> list[dict[str, Any]]:
+    if not model_summaries or len(model_summaries) <= k:
+        return model_summaries
+
+    has_embeddings = any(
+        isinstance(s.get("embedding"), list) and len(s["embedding"]) > 0
+        for s in model_summaries
+    )
+    if not has_embeddings or not query_text.strip():
+        return model_summaries[:k]
+
+    try:
+        import numpy as np
+        from .chat_pdf_vectorstore import _embed_texts
+
+        q_vec = _embed_texts([query_text])[0]
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm == 0:
+            return model_summaries[:k]
+        q_vec = q_vec / q_norm
+
+        scores: list[tuple[float, int]] = []
+        for idx, s in enumerate(model_summaries):
+            emb = s.get("embedding")
+            if not isinstance(emb, list):
+                scores.append((0.0, idx))
+                continue
+            v = np.array(emb, dtype=np.float32)
+            v_norm = np.linalg.norm(v)
+            if v_norm == 0:
+                scores.append((0.0, idx))
+                continue
+            sim = float(np.dot(q_vec, v / v_norm))
+            scores.append((sim, idx))
+
+        scores.sort(key=lambda x: x[0], reverse=True)
+        top_indices = [idx for _, idx in scores[:k]]
+        return [model_summaries[i] for i in top_indices]
+
+    except Exception:
+        return model_summaries[:k]
 
 
 def _extract_images_from_content(content: object) -> list[str]:
@@ -3919,15 +3987,28 @@ async def chat_with_ai(
             elevated_dataset_ids = [perm.dataset_id for perm in temp_permissions]
 
     latest_user_text = ""
+    recent_user_texts: list[str] = []
     for msg in reversed(req.messages):
         if msg.get("role") == "user":
-            latest_user_text = extract_text_from_content(msg.get("content", ""))
-            if latest_user_text.strip():
-                break
+            _msg_text = extract_text_from_content(msg.get("content", ""))
+            if _msg_text.strip():
+                if not latest_user_text:
+                    latest_user_text = _msg_text
+                recent_user_texts.append(_msg_text)
+                if len(recent_user_texts) >= 3:
+                    break
     inferred_model_filters = _infer_model_request_filters(latest_user_text)
+    semantic_query_text = (
+        "\n".join(reversed(recent_user_texts))
+        if recent_user_texts
+        else latest_user_text
+    )
 
     _ctx_cache_uid = str(user.id)
     _ctx_cached = None
+    _cached_models_list = "  None - user needs to train a model first"
+    _cached_models_count = 0
+    _cached_models_shown = 0
     if user.is_admin():
         _ctx_cached = await get_cached_context_kwargs_admin()
     elif elevated_dataset_ids is None:
@@ -3955,35 +4036,16 @@ async def chat_with_ai(
                 _cached_model_summaries.append({**item, "line": line, "id": model_id})
         _cached_trained_models_total = _ctx_cached.get("trained_models_total", 0)
         if _cached_model_summaries:
-            _recent = _cached_model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
-            _sections = []
-            if inferred_model_filters:
-                _matching = [
-                    s
-                    for s in _cached_model_summaries
-                    if _matches_model_request_filters(s, inferred_model_filters)
-                ][:MAX_MODELS_IN_CHAT_CONTEXT]
-                _filter_summary = _format_model_filter_summary(inferred_model_filters)
-                _sections.append(
-                    f"  MATCHING CURRENT REQUEST (preferred for this turn; filters={_filter_summary}):"
-                )
-                if _matching:
-                    _sections.extend(s["line"] for s in _matching)
-                else:
-                    _sections.append("  - None")
-                _matching_ids = {s["id"] for s in _matching}
-                _others = [s for s in _recent if s["id"] not in _matching_ids]
-                if _others:
-                    _sections.append("  ADDITIONAL CANDIDATE MODELS:")
-                    _sections.extend(s["line"] for s in _others)
-            else:
-                _sections.append("  CANDIDATE MODELS:")
-                _sections.extend(s["line"] for s in _recent)
-            _cached_models_list = "\n".join(_sections)
+            _relevant_summaries = _semantic_top_k_models(
+                semantic_query_text, _cached_model_summaries
+            )
+            _cached_models_list = "\n".join(s["line"] for s in _relevant_summaries)
             _cached_models_count = _cached_trained_models_total
+            _cached_models_shown = len(_relevant_summaries)
         else:
             _cached_models_list = "  None - user needs to train a model first"
             _cached_models_count = 0
+            _cached_models_shown = 0
 
     async def _with_new_session(coro_factory):
         async with async_session() as s:
@@ -4582,48 +4644,25 @@ async def chat_with_ai(
                 }
             )
 
-        recent_model_summaries = model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
-        models_sections = []
+        if model_summaries and len(model_summaries) > TOP_K_MODELS_IN_CHAT_CONTEXT:
+            try:
+                from .chat_pdf_vectorstore import _embed_texts as _emb
 
-        if inferred_model_filters:
-            matching_model_summaries = [
-                summary
-                for summary in model_summaries
-                if _matches_model_request_filters(summary, inferred_model_filters)
-            ][:MAX_MODELS_IN_CHAT_CONTEXT]
-            filter_summary = _format_model_filter_summary(inferred_model_filters)
-            models_sections.append(
-                f"  MATCHING CURRENT REQUEST (preferred for this turn; filters={filter_summary}):"
-            )
-            if matching_model_summaries:
-                models_sections.extend(
-                    summary["line"] for summary in matching_model_summaries
-                )
-            else:
-                models_sections.append("  - None")
-
-            matching_model_ids = {summary["id"] for summary in matching_model_summaries}
-            other_recent_models = [
-                summary
-                for summary in recent_model_summaries
-                if summary["id"] not in matching_model_ids
-            ]
-            if other_recent_models:
-                models_sections.append("  ADDITIONAL CANDIDATE MODELS:")
-                models_sections.extend(
-                    summary["line"] for summary in other_recent_models
-                )
-        else:
-            models_sections.append("  CANDIDATE MODELS:")
-            models_sections.extend(
-                summary["line"] for summary in recent_model_summaries
-            )
-
-        models_list = "\n".join(models_sections)
+                _emb_vecs = _emb([s["line"] for s in model_summaries])
+                for _i, _s in enumerate(model_summaries):
+                    _s["embedding"] = _emb_vecs[_i].tolist()
+            except Exception:
+                pass
+        relevant_summaries = _semantic_top_k_models(
+            semantic_query_text, model_summaries
+        )
+        models_list = "\n".join(summary["line"] for summary in relevant_summaries)
         models_count = trained_models_total
+        models_shown = len(relevant_summaries)
     else:
         models_list = "  None - user needs to train a model first"
         models_count = 0
+        models_shown = 0
 
     # Format user permissions info
     user_role = user.role
@@ -4772,6 +4811,7 @@ async def chat_with_ai(
         datasets_list=datasets_list,
         models_count=models_count,
         models_list=models_list,
+        models_shown=models_shown,
         training_tasks_total=training_tasks_total,
         training_tasks_completed=training_tasks_completed,
         training_tasks_running=training_tasks_running,
@@ -4836,6 +4876,7 @@ async def chat_with_ai(
             datasets_list=_ctx_cached.get("datasets_list", "  None"),
             models_count=_cached_models_count,
             models_list=_cached_models_list,
+            models_shown=_cached_models_shown,
             training_tasks_total=_ctx_cached.get("training_tasks_total", 0),
             training_tasks_completed=_ctx_cached.get("training_tasks_completed", 0),
             training_tasks_running=_ctx_cached.get("training_tasks_running", 0),
