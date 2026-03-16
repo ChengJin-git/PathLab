@@ -1078,12 +1078,17 @@ async def update_dataset_source(
         )
 
         from sqlalchemy import update as sql_update
-        from backend.database.models import WSISlide
+        from backend.database.models import WSISlide, Dataset
 
         normalized_source = req.source.strip() if isinstance(req.source, str) else None
         if normalized_source == "":
             normalized_source = None
 
+        await db.execute(
+            sql_update(Dataset)
+            .where(Dataset.dataset_id == dataset_id)
+            .values(source_organ=normalized_source)
+        )
         result = await db.execute(
             sql_update(WSISlide)
             .where(WSISlide.dataset_id == dataset_id)

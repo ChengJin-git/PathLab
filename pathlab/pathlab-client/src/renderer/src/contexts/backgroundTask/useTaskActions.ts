@@ -143,6 +143,7 @@ export function useTaskActions(params: TaskActionsParams) {
             await uploadWSIByPath(file.path, {
               dataset_id: file.metadata?.dataset_id,
               dataset_name: file.metadata?.dataset_name,
+              source_organ: file.metadata?.source_organ,
               aggregation_level: file.metadata?.aggregation_level,
               task_type: file.metadata?.task_type,
               label: file.metadata?.label,
@@ -157,6 +158,7 @@ export function useTaskActions(params: TaskActionsParams) {
             await uploadWSIFile(file.file, {
               dataset_id: file.metadata?.dataset_id,
               dataset_name: file.metadata?.dataset_name,
+              source_organ: file.metadata?.source_organ,
               aggregation_level: file.metadata?.aggregation_level,
               task_type: file.metadata?.task_type,
               label: file.metadata?.label,

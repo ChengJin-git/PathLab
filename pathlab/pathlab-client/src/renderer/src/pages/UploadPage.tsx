@@ -686,6 +686,7 @@ export default function RegisterPage() {
             // Use dataset_id for existing datasets, dataset_name for new datasets
             dataset_id: datasetId ?? undefined,
             dataset_name: datasetId ? undefined : datasetName.trim(),
+            source_organ: datasetId ? undefined : (resolvedDatasetSource || undefined),
             // Only pass aggregation_level for new datasets (when dataset_id is not set)
             aggregation_level: datasetId ? undefined : dataLevel,
             task_type: uploadMode,

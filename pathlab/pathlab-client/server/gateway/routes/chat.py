@@ -1711,6 +1711,25 @@ def _infer_model_request_filters(user_text: str) -> dict[str, Any]:
     if not normalized_text:
         return {}
 
+    generic_model_listing_patterns = [
+        "我有什么模型",
+        "我有哪些模型",
+        "有多少模型",
+        "多少模型",
+        "列出模型",
+        "看下模型",
+        "看看模型",
+        "show models",
+        "list models",
+        "how many models",
+        "latest model",
+        "newest model",
+        "最新模型",
+        "最新训练的模型",
+    ]
+    if any(p in normalized_text for p in generic_model_listing_patterns):
+        return {}
+
     task_type_keywords: dict[str, list[str]] = {
         "classification": ["classification", "classify", "classifier", "分类"],
         "survival": ["survival", "prognosis", "prognostic", "生存", "预后"],
@@ -1973,9 +1992,6 @@ def _should_use_semantic_model_ranking(
     inferred_model_filters: dict[str, Any],
     recent_user_texts: list[str],
 ) -> bool:
-    if inferred_model_filters:
-        return True
-
     normalized = (latest_user_text or "").strip().lower()
     if not normalized:
         return False
@@ -1990,9 +2006,16 @@ def _should_use_semantic_model_ranking(
         "show models",
         "list models",
         "how many models",
+        "latest model",
+        "newest model",
+        "最新模型",
+        "最新训练的模型",
     ]
     if any(p in normalized for p in generic_patterns):
         return False
+
+    if inferred_model_filters:
+        return True
 
     return len(recent_user_texts) > 1
 

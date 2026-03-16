@@ -594,6 +594,7 @@ export async function uploadWSIFile(
   options?: {
     dataset_id?: string
     dataset_name?: string
+    source_organ?: string
     aggregation_level?: 'case' | 'file'
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
@@ -613,6 +614,7 @@ export async function uploadWSIFile(
 
   if (options?.dataset_id) formData.append('dataset_id', options.dataset_id)
   if (options?.dataset_name) formData.append('dataset_name', options.dataset_name)
+  if (options?.source_organ) formData.append('source_organ', options.source_organ)
   if (options?.aggregation_level) formData.append('aggregation_level', options.aggregation_level)
   if (options?.task_type) formData.append('task_type', options.task_type)
   if (options?.label) formData.append('label', options.label)
@@ -698,6 +700,7 @@ export async function uploadWSIByPath(
   options?: {
     dataset_id?: string
     dataset_name?: string
+    source_organ?: string
     aggregation_level?: 'case' | 'file'
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
@@ -719,6 +722,7 @@ export async function uploadWSIByPath(
         wsi_path,
         dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
+        source_organ: options?.source_organ,
         aggregation_level: options?.aggregation_level,
         task_type: options?.task_type,
         label: options?.label,

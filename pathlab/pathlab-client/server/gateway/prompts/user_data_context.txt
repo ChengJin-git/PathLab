@@ -40,7 +40,7 @@ CRITICAL: When user asks "what data do I have" or similar questions, you MUST li
 The user has **{models_count}** trained model(s) in total. The entries below are selected by policy: {models_selection_note} (up to {models_shown} shown):
 {models_list}
 
-CRITICAL: The list above may not include all of the user's models — it is filtered to the most relevant ones for this turn. The user's **actual total** is {models_count}. If the user asks about a model not visible here, ask them to describe it more specifically so it can be surfaced.
+CRITICAL: The list above may not include all of the user's models — it is a policy-selected subset for this turn. The user's **actual total** is {models_count}. If the user asks about a model not visible here, offer to narrow by task_type/data_type or to browse another batch.
 
 **Model Information Format**: Each model shows:
 - model_id: Unique identifier for external validation

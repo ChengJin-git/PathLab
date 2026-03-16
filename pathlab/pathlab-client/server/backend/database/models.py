@@ -6,7 +6,19 @@ Following industry best practices from Cytomine and DSA platforms.
 
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import Column, Integer, BigInteger, String, Float, Text, DateTime, ForeignKey, JSON, Index, Boolean
+from sqlalchemy import (
+    Column,
+    Integer,
+    BigInteger,
+    String,
+    Float,
+    Text,
+    DateTime,
+    ForeignKey,
+    JSON,
+    Index,
+    Boolean,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from backend.database.utils.json_utils import sanitize_for_json
@@ -35,29 +47,46 @@ class DataGroup(Base):
     - WSI + case-level + survival
     - Patch + file-level + classification
     """
+
     __tablename__ = "data_groups"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    group_id = Column(String(255), unique=True, nullable=False, index=True)  # UUID for API
-    name = Column(String(255), nullable=False)  # Display name (e.g., "WSI Case-level Classification")
+    group_id = Column(
+        String(255), unique=True, nullable=False, index=True
+    )  # UUID for API
+    name = Column(
+        String(255), nullable=False
+    )  # Display name (e.g., "WSI Case-level Classification")
     description = Column(Text)  # Optional description
 
     # Core attributes that define the group
     data_type = Column(String(20), nullable=False)  # 'wsi' | 'patch'
     aggregation_level = Column(String(20), nullable=False)  # 'file' | 'case'
-    task_type = Column(String(50), nullable=False)  # 'classification' | 'survival' | ... (extensible)
+    task_type = Column(
+        String(50), nullable=False
+    )  # 'classification' | 'survival' | ... (extensible)
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
-    datasets = relationship("Dataset", back_populates="data_group", cascade="all, delete-orphan")
-    training_tasks = relationship("TrainingTask", back_populates="data_group", cascade="all, delete-orphan")
+    datasets = relationship(
+        "Dataset", back_populates="data_group", cascade="all, delete-orphan"
+    )
+    training_tasks = relationship(
+        "TrainingTask", back_populates="data_group", cascade="all, delete-orphan"
+    )
 
     # Unique constraint: only one group per combination
     __table_args__ = (
-        Index('idx_data_group_unique', 'data_type', 'aggregation_level', 'task_type', unique=True),
+        Index(
+            "idx_data_group_unique",
+            "data_type",
+            "aggregation_level",
+            "task_type",
+            unique=True,
+        ),
     )
 
     def to_dict(self):
@@ -69,8 +98,12 @@ class DataGroup(Base):
             "data_type": self.data_type,
             "aggregation_level": self.aggregation_level,
             "task_type": self.task_type,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
         }
 
 
@@ -79,18 +112,29 @@ class Dataset(Base):
     Dataset table.
     Stores dataset metadata with UUID for privacy (no plaintext names in API).
     """
+
     __tablename__ = "datasets"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    dataset_id = Column(String(255), unique=True, nullable=False, index=True)  # UUID for API
-    name = Column(String(255), nullable=False)  # Display name (stored only, never sent in URL/params)
+    dataset_id = Column(
+        String(255), unique=True, nullable=False, index=True
+    )  # UUID for API
+    name = Column(
+        String(255), nullable=False
+    )  # Display name (stored only, never sent in URL/params)
     description = Column(Text)  # Optional description
 
     # Owner - links to users table (UUID stored as string)
-    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+    user_id = Column(
+        String(255), index=True, nullable=True
+    )  # Nullable for migration of existing data
 
     # Reference to DataGroup - defines data_type, aggregation_level, task_type
-    group_id = Column(String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True)
+    group_id = Column(
+        String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True
+    )
+
+    source_organ = Column(String(100), nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -98,7 +142,9 @@ class Dataset(Base):
 
     # Relationships
     data_group = relationship("DataGroup", back_populates="datasets")
-    wsi_slides = relationship("WSISlide", back_populates="dataset", cascade="all, delete-orphan")
+    wsi_slides = relationship(
+        "WSISlide", back_populates="dataset", cascade="all, delete-orphan"
+    )
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
@@ -108,12 +154,18 @@ class Dataset(Base):
             "description": self.description,
             "user_id": self.user_id,
             "group_id": self.group_id,
-            # Include denormalized group info for convenience
+            "source_organ": self.source_organ,
             "data_type": self.data_group.data_type if self.data_group else None,
-            "aggregation_level": self.data_group.aggregation_level if self.data_group else None,
+            "aggregation_level": self.data_group.aggregation_level
+            if self.data_group
+            else None,
             "task_type": self.data_group.task_type if self.data_group else None,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
         }
 
 
@@ -122,21 +174,30 @@ class WSISlide(Base):
     WSI Slide metadata table.
     Stores metadata for whole slide images.
     """
+
     __tablename__ = "wsi_slides"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), unique=True, nullable=False, index=True)
-    original_filename = Column(String(500))  # Original filename for internal reference (not exposed to frontend)
-    dataset_id = Column(String(255), ForeignKey("datasets.dataset_id"), index=True)  # FK to datasets table (UUID)
+    original_filename = Column(
+        String(500)
+    )  # Original filename for internal reference (not exposed to frontend)
+    dataset_id = Column(
+        String(255), ForeignKey("datasets.dataset_id"), index=True
+    )  # FK to datasets table (UUID)
     case_id = Column(String(255), index=True)
     label = Column(String(100), index=True)
     wsi_path = Column(Text, nullable=False)
 
     # Owner - links to users table (UUID stored as string)
-    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+    user_id = Column(
+        String(255), index=True, nullable=True
+    )  # Nullable for migration of existing data
 
     # Parent WSI - self-referential FK for ROI-extracted images
-    parent_wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=True, index=True)
+    parent_wsi_id = Column(
+        String(255), ForeignKey("wsi_slides.wsi_id"), nullable=True, index=True
+    )
 
     # Patient metadata
     age = Column(Integer)  # Patient age
@@ -145,7 +206,9 @@ class WSISlide(Base):
     split = Column(String(20), nullable=True)  # train, val, test
 
     # Survival analysis fields
-    event_time = Column(Float)  # Time to event (days/months), used for survival prediction
+    event_time = Column(
+        Float
+    )  # Time to event (days/months), used for survival prediction
     event_status = Column(Integer)  # Event status: 1 = event occurred, 0 = censored
 
     # WSI properties
@@ -161,7 +224,9 @@ class WSISlide(Base):
     associated_files = Column(JSON, nullable=True)
 
     # Feature extraction status
-    feature_extracted = Column(Boolean, default=False, nullable=False, server_default="false", index=True)
+    feature_extracted = Column(
+        Boolean, default=False, nullable=False, server_default="false", index=True
+    )
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -169,28 +234,37 @@ class WSISlide(Base):
 
     # Relationships
     dataset = relationship("Dataset", back_populates="wsi_slides")
-    ai_tasks = relationship("AITask", back_populates="wsi_slide", cascade="all, delete-orphan")
-    ai_results = relationship("AIResult", back_populates="wsi_slide", cascade="all, delete-orphan")
-    training_task_associations = relationship("TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan")
+    ai_tasks = relationship(
+        "AITask", back_populates="wsi_slide", cascade="all, delete-orphan"
+    )
+    ai_results = relationship(
+        "AIResult", back_populates="wsi_slide", cascade="all, delete-orphan"
+    )
+    training_task_associations = relationship(
+        "TrainingTaskWSI", back_populates="wsi_slide", cascade="all, delete-orphan"
+    )
     # Self-referential relationship for ROI extraction origin
-    parent_wsi = relationship("WSISlide", remote_side=[wsi_id], foreign_keys=[parent_wsi_id])
+    parent_wsi = relationship(
+        "WSISlide", remote_side=[wsi_id], foreign_keys=[parent_wsi_id]
+    )
 
     # Composite indexes for common query patterns (PostgreSQL)
     __table_args__ = (
         # Speeds up get_datasets() filtered by user_id and grouped by dataset_id
-        Index('idx_wsi_user_dataset', 'user_id', 'dataset_id'),
+        Index("idx_wsi_user_dataset", "user_id", "dataset_id"),
         # Speeds up sorted dataset listings (e.g., newest first within dataset)
-        Index('idx_wsi_dataset_created', 'dataset_id', 'created_at'),
+        Index("idx_wsi_dataset_created", "dataset_id", "created_at"),
     )
 
     def _get_file_extension(self) -> str:
         """Extract file extension from wsi_path or original_filename."""
         import os
+
         if self.original_filename:
             return os.path.splitext(self.original_filename)[1].lower()
         if self.wsi_path:
             return os.path.splitext(self.wsi_path)[1].lower()
-        return ''
+        return ""
 
     def to_dict(self):
         """Convert to dictionary for API responses.
@@ -221,10 +295,13 @@ class WSISlide(Base):
             "file_size": self.file_size,
             "associated_files": self.associated_files,
             "parent_wsi_id": self.parent_wsi_id,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
         }
-
 
     def to_summary_dict(self):
         """Lightweight dict for list/pagination API responses.
@@ -248,7 +325,9 @@ class WSISlide(Base):
             "split": self.split,
             "file_size": self.file_size,
             "parent_wsi_id": self.parent_wsi_id,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
         }
 
 
@@ -257,17 +336,24 @@ class AITask(Base):
     AI Task table.
     Stores AI analysis task records and status.
     """
+
     __tablename__ = "ai_tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String(255), unique=True, nullable=False, index=True)
-    wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
+    wsi_id = Column(
+        String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True
+    )
     task_type = Column(String(50), nullable=False)  # e.g., "wsi_classification"
-    status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed
+    status = Column(
+        String(20), nullable=False, index=True
+    )  # pending, running, completed, failed
     progress = Column(Integer, default=0)  # 0-100
 
     # Owner - links to users table (UUID stored as string)
-    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+    user_id = Column(
+        String(255), index=True, nullable=True
+    )  # Nullable for migration of existing data
 
     # Task parameters (JSON)
     params = Column(JSON)
@@ -294,9 +380,15 @@ class AITask(Base):
             "user_id": self.user_id,
             "params": self.params,
             "error_message": self.error_message,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
-            "finished_at": self.finished_at.isoformat() + 'Z' if self.finished_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "started_at": self.started_at.isoformat() + "Z"
+            if self.started_at
+            else None,
+            "finished_at": self.finished_at.isoformat() + "Z"
+            if self.finished_at
+            else None,
         }
 
 
@@ -306,23 +398,30 @@ class AIResult(Base):
     Stores AI analysis results metadata (predictions, probabilities).
     Large data (attention weights) is stored in files.
     """
+
     __tablename__ = "ai_results"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
+    wsi_id = Column(
+        String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True
+    )
     # NOTE: No ForeignKey constraint - task_id can reference either ai_tasks.task_id
     # (for inference tasks) or training_tasks.task_id (for training tasks).
     task_id = Column(String(255), index=True)
 
     # Owner - links to users table (UUID stored as string)
-    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+    user_id = Column(
+        String(255), index=True, nullable=True
+    )  # Nullable for migration of existing data
 
     # Prediction results
     pred = Column(String(100))  # Predicted label
     probs = Column(JSON)  # Probability distribution {"HSIL": 0.85, "LSIL": 0.12, ...}
 
     # Additional metadata (file paths, model info, etc.)
-    extra_metadata = Column(JSON)  # {"attention_path": "ai_results/wsi_001/task_123_attention.npy", ...}
+    extra_metadata = Column(
+        JSON
+    )  # {"attention_path": "ai_results/wsi_001/task_123_attention.npy", ...}
 
     # Timestamp
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -339,7 +438,9 @@ class AIResult(Base):
             "pred": self.pred,
             "probs": self.probs,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
         }
 
 
@@ -348,6 +449,7 @@ class ChatConversation(Base):
     Chat Conversation table.
     Stores conversation sessions with AI assistant.
     """
+
     __tablename__ = "chat_conversations"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -360,21 +462,33 @@ class ChatConversation(Base):
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships (order_by ensures messages are always returned in chronological order)
-    messages = relationship("ChatMessage", back_populates="conversation", cascade="all, delete-orphan", order_by="ChatMessage.id")
+    messages = relationship(
+        "ChatMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="ChatMessage.id",
+    )
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
         # Avoid lazy loading of messages - only include count if already loaded
         from sqlalchemy import inspect
+
         insp = inspect(self)
-        message_count = len(self.messages) if 'messages' in insp.dict and self.messages else 0
+        message_count = (
+            len(self.messages) if "messages" in insp.dict and self.messages else 0
+        )
 
         return {
             "conversation_id": self.conversation_id,
             "user_id": self.user_id,
             "title": self.title,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
             "message_count": message_count,
         }
 
@@ -384,10 +498,16 @@ class ChatMessage(Base):
     Chat Message table.
     Stores individual messages in conversations.
     """
+
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    conversation_id = Column(String(255), ForeignKey("chat_conversations.conversation_id"), nullable=False, index=True)
+    conversation_id = Column(
+        String(255),
+        ForeignKey("chat_conversations.conversation_id"),
+        nullable=False,
+        index=True,
+    )
     role = Column(String(20), nullable=False)  # "user" or "assistant"
     content = Column(Text, nullable=False)
 
@@ -403,7 +523,7 @@ class ChatMessage(Base):
 
     # Index for efficient querying
     __table_args__ = (
-        Index('idx_conversation_created', 'conversation_id', 'created_at'),
+        Index("idx_conversation_created", "conversation_id", "created_at"),
     )
 
     def to_dict(self):
@@ -414,7 +534,9 @@ class ChatMessage(Base):
             "role": self.role,
             "content": self.content,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
         }
 
 
@@ -424,10 +546,16 @@ class MessageFeedback(Base):
     Stores user feedback for chat messages (thumbs up/down) and task helpfulness ratings.
     Preserves original message content and task info even if conversation is deleted.
     """
+
     __tablename__ = "message_feedbacks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    message_id = Column(Integer, ForeignKey("chat_messages.id", ondelete="CASCADE"), nullable=False, index=True)
+    message_id = Column(
+        Integer,
+        ForeignKey("chat_messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     user_id = Column(String(255), nullable=False, index=True)
 
     # Feedback type: 'thumbs_up', 'thumbs_down', or None for task helpfulness only
@@ -460,7 +588,7 @@ class MessageFeedback(Base):
 
     # Unique constraint: one feedback per user per message
     __table_args__ = (
-        Index('idx_feedback_message_user', 'message_id', 'user_id', unique=True),
+        Index("idx_feedback_message_user", "message_id", "user_id", unique=True),
     )
 
     def to_dict(self):
@@ -477,8 +605,12 @@ class MessageFeedback(Base):
             "context_messages": self.context_messages,
             "task_type": self.task_type,
             "task_title": self.task_title,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
         }
 
 
@@ -487,6 +619,7 @@ class ExportTask(Base):
     Export Task table.
     Tracks async export jobs for large data exports.
     """
+
     __tablename__ = "export_tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -497,7 +630,7 @@ class ExportTask(Base):
     export_type = Column(String(50), nullable=False)
 
     # Status: 'pending', 'processing', 'completed', 'failed'
-    status = Column(String(20), nullable=False, default='pending', index=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
     progress = Column(Integer, default=0)  # 0-100
     error_message = Column(Text, nullable=True)
 
@@ -526,9 +659,15 @@ class ExportTask(Base):
             "file_format": self.file_format,
             "total_records": self.total_records,
             "filter_params": self.filter_params,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
-            "completed_at": self.completed_at.isoformat() + 'Z' if self.completed_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "started_at": self.started_at.isoformat() + "Z"
+            if self.started_at
+            else None,
+            "completed_at": self.completed_at.isoformat() + "Z"
+            if self.completed_at
+            else None,
         }
 
 
@@ -537,6 +676,7 @@ class TrainingTask(Base):
     Training Task table.
     Stores training task configuration and status for no-code training platform.
     """
+
     __tablename__ = "training_tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -545,19 +685,29 @@ class TrainingTask(Base):
     task_description = Column(Text)
 
     # Reference to DataGroup - defines data_type, aggregation_level, task_type
-    group_id = Column(String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True)
+    group_id = Column(
+        String(255), ForeignKey("data_groups.group_id"), nullable=False, index=True
+    )
 
     # Owner - links to users table (UUID stored as string)
-    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+    user_id = Column(
+        String(255), index=True, nullable=True
+    )  # Nullable for migration of existing data
 
     # Status tracking
-    status = Column(String(20), nullable=False, index=True)  # pending, running, completed, failed, cancelled
+    status = Column(
+        String(20), nullable=False, index=True
+    )  # pending, running, completed, failed, cancelled
     progress = Column(Integer, default=0)  # 0-100
     error_message = Column(Text)
 
     # Training configuration (JSON)
-    preprocessing_config = Column(JSON)  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
-    model_config = Column(JSON)  # {aggregator, learning_rate, epochs, optimizer, batch_size}
+    preprocessing_config = Column(
+        JSON
+    )  # {tile_size, stride, feature_extractor, feature_batch_size, use_gpu}
+    model_config = Column(
+        JSON
+    )  # {aggregator, learning_rate, epochs, optimizer, batch_size}
 
     # Classes extracted from training data labels
     classes = Column(JSON)  # ["HSIL", "LSIL", "Normal", ...]
@@ -570,8 +720,12 @@ class TrainingTask(Base):
 
     # Relationships
     data_group = relationship("DataGroup", back_populates="training_tasks")
-    wsi_associations = relationship("TrainingTaskWSI", back_populates="training_task", cascade="all, delete-orphan")
-    trained_models = relationship("TrainedModel", back_populates="training_task", cascade="all, delete-orphan")
+    wsi_associations = relationship(
+        "TrainingTaskWSI", back_populates="training_task", cascade="all, delete-orphan"
+    )
+    trained_models = relationship(
+        "TrainedModel", back_populates="training_task", cascade="all, delete-orphan"
+    )
 
     def to_dict(self):
         """Convert to dictionary for API responses"""
@@ -582,7 +736,9 @@ class TrainingTask(Base):
             "group_id": self.group_id,
             # Include denormalized group info for convenience
             "data_type": self.data_group.data_type if self.data_group else None,
-            "aggregation_level": self.data_group.aggregation_level if self.data_group else None,
+            "aggregation_level": self.data_group.aggregation_level
+            if self.data_group
+            else None,
             "task_type": self.data_group.task_type if self.data_group else None,
             "user_id": self.user_id,
             "status": self.status,
@@ -591,10 +747,18 @@ class TrainingTask(Base):
             "preprocessing_config": self.preprocessing_config,
             "model_config": self.model_config,
             "classes": self.classes,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
-            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
-            "finished_at": self.finished_at.isoformat() + 'Z' if self.finished_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
+            "started_at": self.started_at.isoformat() + "Z"
+            if self.started_at
+            else None,
+            "finished_at": self.finished_at.isoformat() + "Z"
+            if self.finished_at
+            else None,
         }
 
 
@@ -603,11 +767,16 @@ class TrainingTaskWSI(Base):
     Training Task WSI Association table.
     Many-to-many relationship between training tasks and WSI slides.
     """
+
     __tablename__ = "training_task_wsi"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
-    wsi_id = Column(String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True)
+    task_id = Column(
+        String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True
+    )
+    wsi_id = Column(
+        String(255), ForeignKey("wsi_slides.wsi_id"), nullable=False, index=True
+    )
 
     # Split assignment (train/val/test)
     split = Column(String(20))  # "train", "val", "test"
@@ -620,9 +789,7 @@ class TrainingTaskWSI(Base):
     wsi_slide = relationship("WSISlide", back_populates="training_task_associations")
 
     # Unique constraint: one WSI can only be in one split per task
-    __table_args__ = (
-        Index('idx_task_wsi', 'task_id', 'wsi_id', unique=True),
-    )
+    __table_args__ = (Index("idx_task_wsi", "task_id", "wsi_id", unique=True),)
 
 
 class TrainedModel(Base):
@@ -630,15 +797,20 @@ class TrainedModel(Base):
     Trained Model table.
     Stores information about trained models from training tasks.
     """
+
     __tablename__ = "trained_models"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_id = Column(String(255), unique=True, nullable=False, index=True)
-    task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
+    task_id = Column(
+        String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True
+    )
     model_name = Column(String(500), nullable=False)
 
     # Owner - links to users table (UUID stored as string)
-    user_id = Column(String(255), index=True, nullable=True)  # Nullable for migration of existing data
+    user_id = Column(
+        String(255), index=True, nullable=True
+    )  # Nullable for migration of existing data
 
     # Model files
     model_path = Column(Text, nullable=False)  # Path to model weights (.pth)
@@ -654,8 +826,12 @@ class TrainedModel(Base):
     val_metrics = Column(JSON)  # Validation metrics
 
     # Management fields
-    is_default = Column(Boolean, default=False, nullable=False)  # Whether this is the default model for inference
-    is_active = Column(Boolean, default=True, nullable=False)  # Whether this model is available for use
+    is_default = Column(
+        Boolean, default=False, nullable=False
+    )  # Whether this is the default model for inference
+    is_active = Column(
+        Boolean, default=True, nullable=False
+    )  # Whether this model is available for use
 
     # Timestamp
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -680,11 +856,17 @@ class TrainedModel(Base):
             "feature_extractor": self.feature_extractor,
             "aggregator": self.aggregator,
             # Sanitize metrics for JSON safety (handles nan/inf in loss history)
-            "train_metrics": sanitize_for_json(self.train_metrics) if self.train_metrics else None,
-            "val_metrics": sanitize_for_json(self.val_metrics) if self.val_metrics else None,
+            "train_metrics": sanitize_for_json(self.train_metrics)
+            if self.train_metrics
+            else None,
+            "val_metrics": sanitize_for_json(self.val_metrics)
+            if self.val_metrics
+            else None,
             "is_default": self.is_default,
             "is_active": self.is_active,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
         }
 
 
@@ -699,15 +881,22 @@ class TrainingLog(Base):
     - Sequence number for ordering within same timestamp
     - Supports both real-time streaming and historical查询
     """
+
     __tablename__ = "training_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True)
+    task_id = Column(
+        String(255), ForeignKey("training_tasks.task_id"), nullable=False, index=True
+    )
 
     # Log metadata
-    level = Column(String(20), nullable=False, index=True)  # INFO, WARNING, ERROR, DEBUG
+    level = Column(
+        String(20), nullable=False, index=True
+    )  # INFO, WARNING, ERROR, DEBUG
     message = Column(Text, nullable=False)
-    sequence = Column(Integer, nullable=False)  # Sequence number within task for ordering
+    sequence = Column(
+        Integer, nullable=False
+    )  # Sequence number within task for ordering
 
     # Optional structured data (renamed from 'metadata' to avoid SQLAlchemy reserved word)
     extra_data = Column(JSON)  # {progress, epoch, batch, loss, etc.}
@@ -716,9 +905,7 @@ class TrainingLog(Base):
     created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
     # Composite index for efficient querying
-    __table_args__ = (
-        Index('idx_task_logs', 'task_id', 'created_at', 'sequence'),
-    )
+    __table_args__ = (Index("idx_task_logs", "task_id", "created_at", "sequence"),)
 
     def to_dict(self):
         """Convert to dictionary for API responses.
@@ -734,7 +921,9 @@ class TrainingLog(Base):
             "sequence": self.sequence,
             # Sanitize extra_data for JSON safety (handles nan/inf in historical data)
             "metadata": sanitize_for_json(self.extra_data) if self.extra_data else None,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
         }
 
 
@@ -745,12 +934,18 @@ class DatasetPermission(Base):
     Used for demo purposes - allows Guest users to have Pathologist-level access
     to specific datasets (e.g., for running AI analysis during demos).
     """
+
     __tablename__ = "dataset_permissions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
 
     # The dataset this permission applies to
-    dataset_id = Column(String(255), ForeignKey("datasets.dataset_id", ondelete="CASCADE"), nullable=False, index=True)
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
 
     # The user who is granted the permission
     user_id = Column(String(255), nullable=False, index=True)
@@ -769,7 +964,9 @@ class DatasetPermission(Base):
 
     # Unique constraint: one permission per user per dataset
     __table_args__ = (
-        Index('ix_dataset_permissions_user_dataset', 'user_id', 'dataset_id', unique=True),
+        Index(
+            "ix_dataset_permissions_user_dataset", "user_id", "dataset_id", unique=True
+        ),
     )
 
     def is_expired(self) -> bool:
@@ -793,8 +990,12 @@ class DatasetPermission(Base):
             "user_id": self.user_id,
             "granted_by": self.granted_by,
             "permission_level": self.permission_level,
-            "expires_at": self.expires_at.isoformat() + 'Z' if self.expires_at else None,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
+            "expires_at": self.expires_at.isoformat() + "Z"
+            if self.expires_at
+            else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
             "is_expired": self.is_expired(),
             "is_valid": self.is_valid(),
         }
@@ -805,6 +1006,7 @@ class StorageTask(Base):
     Storage Task table.
     Tracks async storage operations like batch import and delete external files.
     """
+
     __tablename__ = "storage_tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -815,7 +1017,7 @@ class StorageTask(Base):
     task_type = Column(String(50), nullable=False)
 
     # Status: 'pending', 'processing', 'completed', 'failed'
-    status = Column(String(20), nullable=False, default='pending', index=True)
+    status = Column(String(20), nullable=False, default="pending", index=True)
     progress = Column(Integer, default=0)  # 0-100
     error_message = Column(Text, nullable=True)
 
@@ -856,9 +1058,15 @@ class StorageTask(Base):
             "skipped_count": self.skipped_count,
             "params": self.params,
             "results": self.results,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "started_at": self.started_at.isoformat() + 'Z' if self.started_at else None,
-            "completed_at": self.completed_at.isoformat() + 'Z' if self.completed_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "started_at": self.started_at.isoformat() + "Z"
+            if self.started_at
+            else None,
+            "completed_at": self.completed_at.isoformat() + "Z"
+            if self.completed_at
+            else None,
         }
 
 
@@ -868,12 +1076,15 @@ class SegmentationAnnotation(Base):
     Stores COCO-format annotations for segmentation tasks.
     Annotations can come from viewer drawing, file import, upload, or ROI extraction.
     """
+
     __tablename__ = "segmentation_annotations"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     annotation_id = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String(255), nullable=False, index=True)
-    source_dataset_id = Column(String(255), ForeignKey("datasets.dataset_id"), nullable=True, index=True)
+    source_dataset_id = Column(
+        String(255), ForeignKey("datasets.dataset_id"), nullable=True, index=True
+    )
 
     # Unified COCO format: { "images": [...], "annotations": [...], "categories": [...] }
     annotations = Column(JSON, nullable=False, default=dict)
@@ -899,6 +1110,10 @@ class SegmentationAnnotation(Base):
             "annotations": self.annotations,
             "status": self.status,
             "source": self.source,
-            "created_at": self.created_at.isoformat() + 'Z' if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() + 'Z' if self.updated_at else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
         }

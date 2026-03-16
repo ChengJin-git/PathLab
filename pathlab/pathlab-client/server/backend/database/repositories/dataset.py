@@ -36,14 +36,15 @@ class DatasetRepository:
         group_id: str,
         description: str = None,
         user_id: str = None,
+        source_organ: str = None,
     ) -> Dataset:
-        """Create a new dataset record with data_group relationship loaded"""
         dataset = Dataset(
             dataset_id=dataset_id,
             name=name,
             group_id=group_id,
             description=description,
             user_id=user_id,
+            source_organ=source_organ or None,
         )
         db.add(dataset)
         await db.flush()
@@ -77,16 +78,12 @@ class DatasetRepository:
 
     @staticmethod
     async def get_or_create(
-        db: AsyncSession, name: str, group_id: str, user_id: str = None
+        db: AsyncSession,
+        name: str,
+        group_id: str,
+        user_id: str = None,
+        source_organ: str = None,
     ) -> Dataset:
-        """Get existing dataset by name or create new one with UUID.
-
-        Note: Dataset name does not have a UNIQUE constraint (different users may
-        share dataset names). Under PostgreSQL READ COMMITTED, concurrent calls with
-        the same name may create duplicate datasets. This is acceptable as
-        get_by_name returns the first match, and duplicates are rare in practice.
-        A SAVEPOINT is still used to handle any unexpected IntegrityError gracefully.
-        """
         import uuid
 
         existing = await DatasetRepository.get_by_name(db, name)
@@ -96,10 +93,14 @@ class DatasetRepository:
         try:
             async with db.begin_nested():
                 return await DatasetRepository.create(
-                    db, dataset_id, name, group_id=group_id, user_id=user_id
+                    db,
+                    dataset_id,
+                    name,
+                    group_id=group_id,
+                    user_id=user_id,
+                    source_organ=source_organ,
                 )
         except IntegrityError:
-            # Unlikely but handle gracefully — re-query
             logger.debug(
                 f"Dataset concurrent insert detected for name='{name}', re-querying"
             )
