@@ -40,7 +40,7 @@ pathlab-client/
 │   └── renderer/           # React + Vite 前端
 ├── test/                   # 前端单元测试（Vitest）
 │   ├── setup.ts            # 全局 mock 初始化
-│   ├── unit/api/           # API 客户端层测试（10 个文件）
+│   ├── unit/api/           # API 客户端层测试（19 个文件）
 │   ├── unit/lib/           # 工具函数测试（3 个文件）
 │   └── unit/contexts/      # React Context 测试（1 个文件）
 ├── scripts/                # 构建辅助脚本
