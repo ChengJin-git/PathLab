@@ -91,7 +91,7 @@ export function TaskSelectorCard({
                 {(() => {
                   const task = selectedTask;
                   if (!task) return t('wsiViewerComponents.taskSelector.selectATask');
-                  return formatClasses(task.classes) || task.task_name || task.task_type?.replace(/_/g, ' ');
+                  return task.task_name || formatClasses(task.classes) || task.task_type?.replace(/_/g, ' ');
                 })()}
               </span>
               {(() => {
@@ -148,7 +148,7 @@ export function TaskSelectorCard({
                           <div className="flex items-center gap-2">
                             <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 capitalize ${selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
                               }`}>
-                              {formatClasses(hm.classes) || hm.task_name || hm.task_type?.replace(/_/g, ' ')}
+                              {hm.task_name || formatClasses(hm.classes) || hm.task_type?.replace(/_/g, ' ')}
                             </span>
                             {hm.isKFold && (
                               <span className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')

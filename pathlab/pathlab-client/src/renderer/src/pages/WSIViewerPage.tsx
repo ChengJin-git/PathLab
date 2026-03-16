@@ -86,6 +86,7 @@ export default function WSIViewerPage() {
   const [showHeatmap, setShowHeatmap] = useState(false)
   const [showSegMask, setShowSegMask] = useState(false)
   const [heatmapOpacity, setHeatmapOpacity] = useState(0.5)
+  const [segMaskOpacity, setSegMaskOpacity] = useState(0.5)
 
   // Navigation state
   const [allWSIs, setAllWSIs] = useState<WSISummary[]>([])
@@ -552,11 +553,12 @@ export default function WSIViewerPage() {
         key: 'pred-mask',
         src: patchSegMaskPreviewUrl,
         alt: t('wsiViewer.showPredictionMask'),
+        opacity: segMaskOpacity,
       })
     }
 
     return layers
-  }, [heatmapOpacity, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl, showHeatmap, showSegMask, t])
+  }, [heatmapOpacity, segMaskOpacity, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl, showHeatmap, showSegMask, t])
 
   const handleToggleHeatmap = useCallback(() => {
     setShowHeatmap(prev => {
@@ -1411,6 +1413,8 @@ export default function WSIViewerPage() {
               canShowSegMaskOverlay={canShowSegMaskOverlay}
               showSegMask={showSegMask}
               onToggleSegMask={handleToggleSegMask}
+              segMaskOpacity={segMaskOpacity}
+              onSegMaskOpacityChange={setSegMaskOpacity}
               segmentationClasses={segmentationClasses}
               canShowGT={isSegmentationTask}
               showGT={showGT}

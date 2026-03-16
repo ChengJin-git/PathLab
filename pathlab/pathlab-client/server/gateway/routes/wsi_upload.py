@@ -6,6 +6,7 @@ Handles file upload, path registration, CSV batch upload, and CSV template downl
 import os
 import uuid
 import shutil
+import asyncio
 import csv
 import io
 from pathlib import Path
@@ -69,6 +70,16 @@ def _find_matching_uploaded_segmentation_annotation(
         if Path(associated_name).stem.lower() == target_stem:
             return associated_file
     return None
+
+
+async def _save_upload_file(upload_file, dest_path: Path) -> None:
+    chunk_size = 1024 * 1024
+    with open(dest_path, "wb") as f:
+        while True:
+            chunk = await upload_file.read(chunk_size)
+            if not chunk:
+                break
+            f.write(chunk)
 
 
 def _build_dataset_segmentation_wsi_lookup(
@@ -422,18 +433,19 @@ async def upload_wsi_file(
 
             wsi_path = wsi_files_dir / f"{wsi_id}{file_extension}"
 
-            # Save main WSI file
-            with open(wsi_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+            await _save_upload_file(file, wsi_path)
 
             file_size = wsi_path.stat().st_size
             logger.info(f"Saved WSI file: {wsi_path} ({file_size / (1024**2):.2f} MB)")
             logger.info(f"Original filename: {original_filename} -> UUID: {wsi_id}")
 
-            file_data_type, props = resolve_file_data_type_and_properties(
-                wsi_path,
-                cached_file_data_type=file_data_type,
-                file_size=file_size,
+            file_data_type, props = await asyncio.get_running_loop().run_in_executor(
+                None,
+                lambda: resolve_file_data_type_and_properties(
+                    wsi_path,
+                    cached_file_data_type=file_data_type,
+                    file_size=file_size,
+                ),
             )
             file_size = props.get("file_size", file_size)
 
@@ -447,10 +459,8 @@ async def upload_wsi_file(
 
                 for assoc_file in associated_files:
                     if assoc_file.filename:
-                        # Preserve relative path structure from original folder
                         assoc_path = data_folder / Path(assoc_file.filename).name
-                        with open(assoc_path, "wb") as buffer:
-                            shutil.copyfileobj(assoc_file.file, buffer)
+                        await _save_upload_file(assoc_file, assoc_path)
                         associated_count += 1
 
                 logger.info(
@@ -461,11 +471,9 @@ async def upload_wsi_file(
                 # TMAP: Save DT files with same UUID base name
                 for assoc_file in associated_files:
                     if assoc_file.filename:
-                        # Get the DT extension (e.g., .DT1, .DT2)
                         dt_ext = Path(assoc_file.filename).suffix
                         dt_path = wsi_files_dir / f"{wsi_id}{dt_ext}"
-                        with open(dt_path, "wb") as buffer:
-                            shutil.copyfileobj(assoc_file.file, buffer)
+                        await _save_upload_file(assoc_file, dt_path)
                         associated_count += 1
 
                 logger.info(f"Saved {associated_count} TMAP DT files for: {wsi_id}")
@@ -686,9 +694,19 @@ async def upload_wsi_file(
         }
 
     except HTTPException:
+        if wsi_path is not None and wsi_path.exists():
+            try:
+                wsi_path.unlink()
+            except OSError:
+                pass
         raise
     except Exception as e:
         logger.error(f"Failed to upload WSI file: {e}")
+        if wsi_path is not None and wsi_path.exists():
+            try:
+                wsi_path.unlink()
+            except OSError:
+                pass
         raise HTTPException(
             status_code=500, detail=f"Failed to upload WSI file: {str(e)}"
         )

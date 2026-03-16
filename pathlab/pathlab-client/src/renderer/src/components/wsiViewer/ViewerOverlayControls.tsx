@@ -11,6 +11,8 @@ interface ViewerOverlayControlsProps {
   canShowSegMaskOverlay: boolean
   showSegMask: boolean
   onToggleSegMask: () => void
+  segMaskOpacity: number
+  onSegMaskOpacityChange: (value: number) => void
   segmentationClasses: string[]
   canShowGT: boolean
   showGT: boolean
@@ -26,6 +28,8 @@ export function ViewerOverlayControls({
   canShowSegMaskOverlay,
   showSegMask,
   onToggleSegMask,
+  segMaskOpacity,
+  onSegMaskOpacityChange,
   segmentationClasses,
   canShowGT,
   showGT,
@@ -95,17 +99,23 @@ export function ViewerOverlayControls({
             <span className="text-[10px] sm:text-xs text-gray-600 w-8 text-right px-1">{Math.round(heatmapOpacity * 100)}%</span>
           </div>
         )}
-      </div>
 
-      {showHeatmap && (
-        <div className="mt-2 pt-2 border-t border-gray-100">
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] text-gray-400 uppercase tracking-wide">{t('wsiViewer.activation')}:</span>
-            <div className="flex-1 h-2 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-500 to-red-500" />
-            <span className="text-[10px] text-gray-500">{t('wsiViewer.lowToHigh')}</span>
+        {showSegMask && (
+          <div className="flex items-center gap-2 px-2 sm:px-0 sm:pl-3 border-t sm:border-t-0 sm:border-l border-gray-200 pt-2 sm:pt-0">
+            <span className="text-[10px] sm:text-xs text-gray-500 whitespace-nowrap">{t('wsiViewer.opacity')}:</span>
+            <input
+              type="range"
+              min="0.1"
+              max="0.9"
+              step="0.1"
+              value={segMaskOpacity}
+              onChange={(event) => onSegMaskOpacityChange(parseFloat(event.target.value))}
+              className="flex-1 sm:w-20 accent-emerald-600"
+            />
+            <span className="text-[10px] sm:text-xs text-gray-600 w-8 text-right px-1">{Math.round(segMaskOpacity * 100)}%</span>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {showSegMask && segmentationClasses.length > 0 && (
         <div className="mt-2 pt-2 border-t border-gray-100">

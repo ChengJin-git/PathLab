@@ -139,54 +139,67 @@ export function useTaskActions(params: TaskActionsParams) {
 
         updateTaskItem(taskId, file.key, { status: 'running' })
 
-        try {
-          if (file.path) {
-            await uploadWSIByPath(file.path, {
-              dataset_id: file.metadata?.dataset_id,
-              dataset_name: file.metadata?.dataset_name,
-              source_organ: file.metadata?.source_organ,
-              aggregation_level: file.metadata?.aggregation_level,
-              task_type: file.metadata?.task_type,
-              label: file.metadata?.label,
-              case_id: file.metadata?.case_id,
-              age: file.metadata?.age,
-              gender: file.metadata?.gender,
-              event_time: file.metadata?.event_time,
-              event_status: file.metadata?.event_status,
-              signal: abortController.signal
-            })
-          } else if (file.file) {
-            await uploadWSIFile(file.file, {
-              dataset_id: file.metadata?.dataset_id,
-              dataset_name: file.metadata?.dataset_name,
-              source_organ: file.metadata?.source_organ,
-              aggregation_level: file.metadata?.aggregation_level,
-              task_type: file.metadata?.task_type,
-              label: file.metadata?.label,
-              case_id: file.metadata?.case_id,
-              age: file.metadata?.age,
-              gender: file.metadata?.gender,
-              event_time: file.metadata?.event_time,
-              event_status: file.metadata?.event_status,
-              associatedFiles: file.associatedFiles,
-              onProgress: (progress) => {
-                updateTaskItem(taskId, file.key, { progress })
-              },
-              signal: abortController.signal
-            })
-          }
-          updateTaskItem(taskId, file.key, { status: 'success', progress: 100 })
-        } catch (err) {
-          // If aborted, mark as cancelled instead of error
-          const isAborted = err instanceof Error && (err.message.includes('aborted') || err.message.includes('abort'))
-          if (isAborted || cancelledTasksRef.current.has(taskId)) {
+        const MAX_RETRIES = 2
+        const RETRY_BASE_DELAY_MS = 1500
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          if (cancelledTasksRef.current.has(taskId) || abortController.signal.aborted) {
             updateTaskItem(taskId, file.key, { status: 'cancelled', progress: 0 })
-          } else {
-            updateTaskItem(taskId, file.key, {
-              status: 'error',
-              progress: 0,
-              error: err instanceof Error ? err.message : String(err)
-            })
+            break
+          }
+          try {
+            if (file.path) {
+              await uploadWSIByPath(file.path, {
+                dataset_id: file.metadata?.dataset_id,
+                dataset_name: file.metadata?.dataset_name,
+                source_organ: file.metadata?.source_organ,
+                aggregation_level: file.metadata?.aggregation_level,
+                task_type: file.metadata?.task_type,
+                label: file.metadata?.label,
+                case_id: file.metadata?.case_id,
+                age: file.metadata?.age,
+                gender: file.metadata?.gender,
+                event_time: file.metadata?.event_time,
+                event_status: file.metadata?.event_status,
+                signal: abortController.signal
+              })
+            } else if (file.file) {
+              await uploadWSIFile(file.file, {
+                dataset_id: file.metadata?.dataset_id,
+                dataset_name: file.metadata?.dataset_name,
+                source_organ: file.metadata?.source_organ,
+                aggregation_level: file.metadata?.aggregation_level,
+                task_type: file.metadata?.task_type,
+                label: file.metadata?.label,
+                case_id: file.metadata?.case_id,
+                age: file.metadata?.age,
+                gender: file.metadata?.gender,
+                event_time: file.metadata?.event_time,
+                event_status: file.metadata?.event_status,
+                associatedFiles: file.associatedFiles,
+                onProgress: (progress) => {
+                  updateTaskItem(taskId, file.key, { progress })
+                },
+                signal: abortController.signal
+              })
+            }
+            updateTaskItem(taskId, file.key, { status: 'success', progress: 100 })
+            break
+          } catch (err) {
+            const isAborted = err instanceof Error && (err.message.includes('aborted') || err.message.includes('abort'))
+            if (isAborted || cancelledTasksRef.current.has(taskId)) {
+              updateTaskItem(taskId, file.key, { status: 'cancelled', progress: 0 })
+              break
+            }
+            if (attempt < MAX_RETRIES) {
+              await new Promise(resolve => setTimeout(resolve, RETRY_BASE_DELAY_MS * (attempt + 1)))
+              updateTaskItem(taskId, file.key, { status: 'running', progress: 0 })
+            } else {
+              updateTaskItem(taskId, file.key, {
+                status: 'error',
+                progress: 0,
+                error: err instanceof Error ? err.message : String(err)
+              })
+            }
           }
         }
       }
