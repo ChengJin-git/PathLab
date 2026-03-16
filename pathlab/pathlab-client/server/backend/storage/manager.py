@@ -33,13 +33,13 @@ logger = logging.getLogger(__name__)
 class StorageManager(StorageStatsMixin, StorageOrphanMixin):
     """
     Centralized storage manager for all file resources.
-    
+
     Manages file lifecycle for:
     - WSI files and their derivatives (coordinates, features, AI results)
     - Training tasks (features, logs, models)
     - AI tasks and results
     """
-    
+
     def __init__(self, uploads_dir: str):
         """
         Initialize storage manager.
@@ -118,7 +118,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                         seen_paths.add(file_path)
                         yield file_path
 
-    def delete_wsi_files(self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard") -> Dict[str, Any]:
+    def delete_wsi_files(
+        self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard"
+    ) -> Dict[str, Any]:
         """
         Delete files associated with a WSI.
 
@@ -157,7 +159,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         deleted_dirs = []
         failed = []
         total_size = 0
-        
+
         # 1. Delete WSI file itself
         if wsi_path and os.path.exists(wsi_path):
             if wsi_path.startswith(str(self.uploads_dir)):
@@ -177,9 +179,10 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             file_extension = wsi_path_obj.suffix.lower()
             wsi_parent_dir = wsi_path_obj.parent
 
-            if file_extension == '.mrxs':
-                # MRXS: Delete data folder with same name as wsi_id
-                mrxs_data_folder = wsi_parent_dir / wsi_id
+            if file_extension == ".mrxs":
+                # MRXS: data folder has the same stem as the .mrxs file
+                # (uploaded: stem == wsi_id; external: stem == original filename)
+                mrxs_data_folder = wsi_parent_dir / wsi_path_obj.stem
                 if mrxs_data_folder.exists() and mrxs_data_folder.is_dir():
                     try:
                         size = self._get_dir_size(mrxs_data_folder)
@@ -189,12 +192,15 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                         logger.info(f"Deleted MRXS data folder: {mrxs_data_folder}")
                     except Exception as e:
                         failed.append((str(mrxs_data_folder), str(e)))
-                        logger.error(f"Failed to delete MRXS data folder {mrxs_data_folder}: {e}")
+                        logger.error(
+                            f"Failed to delete MRXS data folder {mrxs_data_folder}: {e}"
+                        )
 
-            elif file_extension == '.tmap':
-                # TMAP: Delete DT files with same wsi_id base name (e.g., {wsi_id}.DT1, {wsi_id}.DT2)
+            elif file_extension == ".tmap":
+                # TMAP: .DT<n> siblings share the same stem as the .tmap file
+                # (uploaded: stem == wsi_id; external: stem == original filename)
                 try:
-                    for dt_file in wsi_parent_dir.glob(f"{wsi_id}.DT*"):
+                    for dt_file in wsi_parent_dir.glob(f"{wsi_path_obj.stem}.DT*"):
                         if dt_file.is_file():
                             try:
                                 size = dt_file.stat().st_size
@@ -204,7 +210,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                                 logger.info(f"Deleted TMAP DT file: {dt_file}")
                             except Exception as e:
                                 failed.append((str(dt_file), str(e)))
-                                logger.error(f"Failed to delete TMAP DT file {dt_file}: {e}")
+                                logger.error(
+                                    f"Failed to delete TMAP DT file {dt_file}: {e}"
+                                )
                 except Exception as e:
                     logger.error(f"Failed to scan for TMAP DT files: {e}")
 
@@ -215,7 +223,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         total_size += coords_result["total_size"]
         failed.extend(coords_result["failed"])
         if coords_result["deleted_files"]:
-            logger.info(f"Deleted {len(coords_result['deleted_files'])} coordinates files for {wsi_id}")
+            logger.info(
+                f"Deleted {len(coords_result['deleted_files'])} coordinates files for {wsi_id}"
+            )
 
         # 3. Delete mask file
         mask_file = self.masks_dir / f"{wsi_id}_mask.png"
@@ -229,7 +239,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             except Exception as e:
                 failed.append((str(mask_file), str(e)))
                 logger.error(f"Failed to delete mask {mask_file}: {e}")
-        
+
         # 4. Delete AI results directory
         ai_results_wsi_dir = self.ai_results_dir / wsi_id
         if ai_results_wsi_dir.exists() and ai_results_wsi_dir.is_dir():
@@ -241,7 +251,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 logger.info(f"Deleted AI results directory: {ai_results_wsi_dir}")
             except Exception as e:
                 failed.append((str(ai_results_wsi_dir), str(e)))
-                logger.error(f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}")
+                logger.error(
+                    f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}"
+                )
 
         # 4.5 Delete metadata file (always deleted in both standard and complete mode)
         metadata_file = self.metadata_dir / f"{wsi_id}.json"
@@ -270,7 +282,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                                     # Just remove symlink
                                     feature_file.unlink()
                                     deleted_files.append(str(feature_file))
-                                    logger.info(f"Deleted feature symlink: {feature_file}")
+                                    logger.info(
+                                        f"Deleted feature symlink: {feature_file}"
+                                    )
                                 else:
                                     size = feature_file.stat().st_size
                                     feature_file.unlink()
@@ -279,7 +293,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                                     logger.info(f"Deleted feature file: {feature_file}")
                             except Exception as e:
                                 failed.append((str(feature_file), str(e)))
-                                logger.error(f"Failed to delete feature file {feature_file}: {e}")
+                                logger.error(
+                                    f"Failed to delete feature file {feature_file}: {e}"
+                                )
 
         # 6. Delete cached features from global cache (only in complete mode)
         # Structure: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
@@ -297,14 +313,20 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                                         feature_file.unlink()
                                         deleted_files.append(str(feature_file))
                                         total_size += size
-                                        logger.info(f"Deleted cached features: {feature_file}")
+                                        logger.info(
+                                            f"Deleted cached features: {feature_file}"
+                                        )
                                         # Clean up empty params_hash directory
                                         if not any(params_hash_dir.iterdir()):
                                             params_hash_dir.rmdir()
-                                            logger.info(f"Removed empty params_hash dir: {params_hash_dir}")
+                                            logger.info(
+                                                f"Removed empty params_hash dir: {params_hash_dir}"
+                                            )
                                     except Exception as e:
                                         failed.append((str(feature_file), str(e)))
-                                        logger.error(f"Failed to delete cached features {feature_file}: {e}")
+                                        logger.error(
+                                            f"Failed to delete cached features {feature_file}: {e}"
+                                        )
 
         summary = (
             f"WSI {wsi_id} storage cleanup ({mode} mode): "
@@ -318,10 +340,12 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "failed": failed,
             "total_size": total_size,
             "summary": summary,
-            "mode": mode
+            "mode": mode,
         }
 
-    def delete_wsi_ai_results(self, wsi_id: str, task_id: Optional[str] = None) -> Dict[str, Any]:
+    def delete_wsi_ai_results(
+        self, wsi_id: str, task_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Delete AI results for a specific WSI.
 
@@ -359,7 +383,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 "deleted_dirs": [],
                 "failed": [],
                 "total_size": 0,
-                "summary": f"No AI results found for WSI {wsi_id}"
+                "summary": f"No AI results found for WSI {wsi_id}",
             }
 
         if task_id:
@@ -376,16 +400,22 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                             logger.info(f"Deleted AI result file: {file_path}")
                         except Exception as e:
                             failed.append((str(file_path), str(e)))
-                            logger.error(f"Failed to delete AI result file {file_path}: {e}")
+                            logger.error(
+                                f"Failed to delete AI result file {file_path}: {e}"
+                            )
 
             # Clean up empty directory
             if ai_results_wsi_dir.exists() and not any(ai_results_wsi_dir.iterdir()):
                 try:
                     ai_results_wsi_dir.rmdir()
                     deleted_dirs.append(str(ai_results_wsi_dir))
-                    logger.info(f"Removed empty AI results directory: {ai_results_wsi_dir}")
+                    logger.info(
+                        f"Removed empty AI results directory: {ai_results_wsi_dir}"
+                    )
                 except Exception as e:
-                    logger.warning(f"Could not remove AI results directory {ai_results_wsi_dir}: {e}")
+                    logger.warning(
+                        f"Could not remove AI results directory {ai_results_wsi_dir}: {e}"
+                    )
 
             summary = (
                 f"WSI {wsi_id} AI results cleanup (task {task_id}): "
@@ -401,7 +431,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 logger.info(f"Deleted AI results directory: {ai_results_wsi_dir}")
             except Exception as e:
                 failed.append((str(ai_results_wsi_dir), str(e)))
-                logger.error(f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}")
+                logger.error(
+                    f"Failed to delete AI results directory {ai_results_wsi_dir}: {e}"
+                )
 
             summary = (
                 f"WSI {wsi_id} AI results cleanup: "
@@ -414,10 +446,15 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "deleted_dirs": deleted_dirs,
             "failed": failed,
             "total_size": total_size,
-            "summary": summary
+            "summary": summary,
         }
 
-    def delete_training_task_files(self, task_id: str, model_paths: Optional[List[str]] = None, mode: str = "standard") -> Dict[str, Any]:
+    def delete_training_task_files(
+        self,
+        task_id: str,
+        model_paths: Optional[List[str]] = None,
+        mode: str = "standard",
+    ) -> Dict[str, Any]:
         """
         Delete files associated with a training task.
 
@@ -466,7 +503,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                     deleted_dirs.append(str(result_dir))
                     logger.info(f"Removed empty AI results directory: {result_dir}")
                 except Exception as e:
-                    logger.warning(f"Could not remove AI results directory {result_dir}: {e}")
+                    logger.warning(
+                        f"Could not remove AI results directory {result_dir}: {e}"
+                    )
 
         # 2. Delete training directory (contains features - may be symlinks to cache)
         training_task_dir = self.training_dir / task_id
@@ -476,7 +515,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 features_dir = training_task_dir / "features"
                 symlink_count = 0
                 if features_dir.exists():
-                    symlink_count = sum(1 for f in features_dir.iterdir() if f.is_symlink())
+                    symlink_count = sum(
+                        1 for f in features_dir.iterdir() if f.is_symlink()
+                    )
 
                 size = self._get_dir_size(training_task_dir)
                 shutil.rmtree(training_task_dir)
@@ -492,7 +533,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                     logger.info(f"Deleted training directory: {training_task_dir}")
             except Exception as e:
                 failed.append((str(training_task_dir), str(e)))
-                logger.error(f"Failed to delete training directory {training_task_dir}: {e}")
+                logger.error(
+                    f"Failed to delete training directory {training_task_dir}: {e}"
+                )
 
         # 3. Delete log directory (new structure: logs/training/{task_id}/)
         training_log_dir = self.logs_dir / "training" / task_id
@@ -505,7 +548,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 logger.info(f"Deleted training log directory: {training_log_dir}")
             except Exception as e:
                 failed.append((str(training_log_dir), str(e)))
-                logger.error(f"Failed to delete training log directory {training_log_dir}: {e}")
+                logger.error(
+                    f"Failed to delete training log directory {training_log_dir}: {e}"
+                )
 
         # 4. Delete analysis log directory (logs/analysis/{task_id}/)
         analysis_log_dir = self.logs_dir / "analysis" / task_id
@@ -518,19 +563,25 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 logger.info(f"Deleted analysis log directory: {analysis_log_dir}")
             except Exception as e:
                 failed.append((str(analysis_log_dir), str(e)))
-                logger.error(f"Failed to delete analysis log directory {analysis_log_dir}: {e}")
+                logger.error(
+                    f"Failed to delete analysis log directory {analysis_log_dir}: {e}"
+                )
 
         # 5. Delete model directories (only in complete mode)
         # model_paths can be either model IDs (e.g., "abmil_train_xxx") or full paths
         if mode == "complete" and model_paths:
             for model_path in model_paths:
                 # Check if it's a model ID (no path separators) or a full path
-                if '/' not in str(model_path) and '\\' not in str(model_path):
+                if "/" not in str(model_path) and "\\" not in str(model_path):
                     # It's a model ID, construct the model directory path
                     model_dir = self.models_dir / model_path
                 else:
                     # It's a path, get the parent directory if it's a file
-                    model_dir = Path(model_path).parent if Path(model_path).is_file() else Path(model_path)
+                    model_dir = (
+                        Path(model_path).parent
+                        if Path(model_path).is_file()
+                        else Path(model_path)
+                    )
 
                 if model_dir.exists() and model_dir.is_dir():
                     # Safety check: only delete if in models directory
@@ -543,7 +594,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                             logger.info(f"Deleted model directory: {model_dir}")
                         except Exception as e:
                             failed.append((str(model_dir), str(e)))
-                            logger.error(f"Failed to delete model directory {model_dir}: {e}")
+                            logger.error(
+                                f"Failed to delete model directory {model_dir}: {e}"
+                            )
 
         summary = (
             f"Training task {task_id} storage cleanup ({mode} mode): "
@@ -557,10 +610,12 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "failed": failed,
             "total_size": total_size,
             "summary": summary,
-            "mode": mode
+            "mode": mode,
         }
 
-    def get_wsi_storage_info(self, wsi_id: str, wsi_path: Optional[str] = None) -> Dict[str, Any]:
+    def get_wsi_storage_info(
+        self, wsi_id: str, wsi_path: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
         Get storage information for a WSI.
 
@@ -589,7 +644,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "ai_results": {},
             "features": [],
             "total_size": 0,
-            "total_files": 0
+            "total_files": 0,
         }
 
         # WSI file
@@ -616,12 +671,17 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 "exists": True,
                 "paths": coords_paths,
                 "size": total_coords_size,
-                "file_count": len(coords_paths)
+                "file_count": len(coords_paths),
             }
             info["total_size"] += total_coords_size
             info["total_files"] += len(coords_paths)
         else:
-            info["coordinates"] = {"exists": False, "paths": [], "size": 0, "file_count": 0}
+            info["coordinates"] = {
+                "exists": False,
+                "paths": [],
+                "size": 0,
+                "file_count": 0,
+            }
 
         # Mask
         mask_file = self.masks_dir / f"{wsi_id}_mask.png"
@@ -634,12 +694,12 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         ai_results_dir = self.ai_results_dir / wsi_id
         if ai_results_dir.exists() and ai_results_dir.is_dir():
             size = self._get_dir_size(ai_results_dir)
-            file_count = sum(1 for _ in ai_results_dir.rglob('*') if _.is_file())
+            file_count = sum(1 for _ in ai_results_dir.rglob("*") if _.is_file())
             info["ai_results"] = {
                 "path": str(ai_results_dir),
                 "size": size,
                 "exists": True,
-                "file_count": file_count
+                "file_count": file_count,
             }
             info["total_size"] += size
             info["total_files"] += file_count
@@ -648,7 +708,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 "path": str(ai_results_dir),
                 "size": 0,
                 "exists": False,
-                "file_count": 0
+                "file_count": 0,
             }
 
         # Features from training tasks
@@ -663,17 +723,21 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                                 # For symlinks, get the target file size if it exists
                                 try:
                                     target = feature_file.resolve()
-                                    size = target.stat().st_size if target.exists() else 0
+                                    size = (
+                                        target.stat().st_size if target.exists() else 0
+                                    )
                                 except Exception:
                                     size = 0
                             else:
                                 size = feature_file.stat().st_size
-                            info["features"].append({
-                                "path": str(feature_file),
-                                "size": size,
-                                "task_id": task_dir.name,
-                                "is_symlink": feature_file.is_symlink()
-                            })
+                            info["features"].append(
+                                {
+                                    "path": str(feature_file),
+                                    "size": size,
+                                    "task_id": task_dir.name,
+                                    "is_symlink": feature_file.is_symlink(),
+                                }
+                            )
                             info["total_size"] += size
                             info["total_files"] += 1
 
@@ -686,19 +750,23 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                             feature_file = params_hash_dir / f"{wsi_id}.pt"
                             if feature_file.exists():
                                 size = feature_file.stat().st_size
-                                info["features"].append({
-                                    "path": str(feature_file),
-                                    "size": size,
-                                    "extractor": extractor_dir.name,
-                                    "params_hash": params_hash_dir.name,
-                                    "is_symlink": False
-                                })
+                                info["features"].append(
+                                    {
+                                        "path": str(feature_file),
+                                        "size": size,
+                                        "extractor": extractor_dir.name,
+                                        "params_hash": params_hash_dir.name,
+                                        "is_symlink": False,
+                                    }
+                                )
                                 info["total_size"] += size
                                 info["total_files"] += 1
 
         return info
 
-    def get_training_task_storage_info(self, task_id: str, model_paths: Optional[List[str]] = None) -> Dict[str, Any]:
+    def get_training_task_storage_info(
+        self, task_id: str, model_paths: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """
         Get storage information for a training task.
 
@@ -720,7 +788,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "analysis_logs": {},
             "models": [],
             "total_size": 0,
-            "total_files": 0
+            "total_files": 0,
         }
 
         # Task-scoped AI result files across ai_results/{wsi_id}/
@@ -740,7 +808,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "size": ai_result_size,
             "exists": ai_result_count > 0,
             "file_count": ai_result_count,
-            "wsi_dir_count": len(ai_result_wsi_dirs)
+            "wsi_dir_count": len(ai_result_wsi_dirs),
         }
         info["total_size"] += ai_result_size
         info["total_files"] += ai_result_count
@@ -752,7 +820,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "path": str(training_dir),
             "size": stats["size"],
             "exists": training_dir.exists() and training_dir.is_dir(),
-            "file_count": stats["file_count"]
+            "file_count": stats["file_count"],
         }
         info["total_size"] += stats["size"]
         info["total_files"] += stats["file_count"]
@@ -764,7 +832,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "path": str(training_log_dir),
             "size": stats["size"],
             "exists": training_log_dir.exists() and training_log_dir.is_dir(),
-            "file_count": stats["file_count"]
+            "file_count": stats["file_count"],
         }
         info["total_size"] += stats["size"]
         info["total_files"] += stats["file_count"]
@@ -776,7 +844,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "path": str(analysis_log_dir),
             "size": stats["size"],
             "exists": analysis_log_dir.exists() and analysis_log_dir.is_dir(),
-            "file_count": stats["file_count"]
+            "file_count": stats["file_count"],
         }
         info["total_size"] += stats["size"]
         info["total_files"] += stats["file_count"]
@@ -784,14 +852,20 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         # Model directories - use optimized single-pass stats
         if model_paths:
             for model_path in model_paths:
-                model_dir = Path(model_path).parent if Path(model_path).is_file() else Path(model_path)
+                model_dir = (
+                    Path(model_path).parent
+                    if Path(model_path).is_file()
+                    else Path(model_path)
+                )
                 if model_dir.exists() and model_dir.is_dir():
                     stats = self._get_directory_stats(model_dir)
-                    info["models"].append({
-                        "path": str(model_dir),
-                        "size": stats["size"],
-                        "file_count": stats["file_count"]
-                    })
+                    info["models"].append(
+                        {
+                            "path": str(model_dir),
+                            "size": stats["size"],
+                            "file_count": stats["file_count"],
+                        }
+                    )
                     info["total_size"] += stats["size"]
                     info["total_files"] += stats["file_count"]
 
@@ -800,7 +874,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
     # Stats calculation, orphan detection, and cleanup methods are provided by
     # StorageStatsMixin and StorageOrphanMixin via inheritance.
 
-    def reset_derived_data(self, progress_callback: Optional[Callable[[int], None]] = None) -> Dict[str, Any]:
+    def reset_derived_data(
+        self, progress_callback: Optional[Callable[[int], None]] = None
+    ) -> Dict[str, Any]:
         """
         Delete all derived data files, keeping only original WSI files.
         This is a destructive operation used for forcing a complete data reset.
@@ -847,7 +923,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             (self.metadata_dir, "metadata"),
         ]
 
-        logger.warning("Starting reset of all derived data - this will delete all processed files!")
+        logger.warning(
+            "Starting reset of all derived data - this will delete all processed files!"
+        )
 
         total_dirs = len(dirs_to_delete)
         for idx, (dir_path, dir_name) in enumerate(dirs_to_delete):
@@ -861,7 +939,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                     deleted_dirs.append(str(dir_path))
                     total_size += size
 
-                    logger.info(f"Deleted {dir_name} directory: {dir_path} ({size / (1024**2):.2f} MB)")
+                    logger.info(
+                        f"Deleted {dir_name} directory: {dir_path} ({size / (1024**2):.2f} MB)"
+                    )
 
                     # Recreate empty directory to maintain structure
                     dir_path.mkdir(parents=True, exist_ok=True)
@@ -869,7 +949,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
                 except Exception as e:
                     failed.append((str(dir_path), str(e)))
-                    logger.error(f"Failed to delete {dir_name} directory {dir_path}: {e}")
+                    logger.error(
+                        f"Failed to delete {dir_name} directory {dir_path}: {e}"
+                    )
 
             # Report progress after each directory (0-90% for directory deletion)
             if progress_callback:
@@ -917,7 +999,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "deleted_dirs": deleted_dirs,
             "failed": failed,
             "total_size": total_size,
-            "summary": summary
+            "summary": summary,
         }
 
     def cleanup_dangling_feature_symlinks(self) -> Dict[str, Any]:
@@ -966,11 +1048,12 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         # Add timestamp to metadata
         metadata_with_timestamp = {
             **metadata,
-            "saved_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + 'Z'
+            "saved_at": datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+            + "Z",
         }
 
         try:
-            with open(metadata_file, 'w', encoding='utf-8') as f:
+            with open(metadata_file, "w", encoding="utf-8") as f:
                 json.dump(metadata_with_timestamp, f, ensure_ascii=False, indent=2)
             logger.info(f"Saved WSI metadata to {metadata_file}")
             return str(metadata_file)
@@ -994,7 +1077,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             return None
 
         try:
-            with open(metadata_file, 'r', encoding='utf-8') as f:
+            with open(metadata_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.error(f"Failed to load WSI metadata for {wsi_id}: {e}")

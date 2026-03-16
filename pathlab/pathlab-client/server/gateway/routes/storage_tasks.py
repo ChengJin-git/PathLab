@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy import delete as sql_delete, select, or_, func
+from sqlalchemy import delete as sql_delete
 from backend.database import get_db, async_session, safe_session
 from backend.database.repositories import (
     WSIRepository,
@@ -29,7 +29,7 @@ from backend.database.repositories import (
     StorageTaskRepository,
     SegmentationAnnotationRepository,
 )
-from backend.database.models import TrainingTaskWSI, AIResult, AITask, WSISlide
+from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import get_dataset_with_access, require_admin
 from ..dependencies import logger, storage_manager
@@ -51,7 +51,6 @@ from ..utils import (
     resolve_segmentation_annotation_match,
     load_coco_annotation_file,
     SEGMENTATION_TASK_TYPE,
-    get_wsi_effective_file_size,
 )
 from backend.ai.schemas.base import TaskStatus
 from backend.common.annotation_summary_cache import (
@@ -1856,173 +1855,3 @@ async def cancel_storage_task(
     logger.info(f"Storage task {task_id} cancelled by user {user.id}")
 
     return {"cancelled": True, "message": f"Task {task_id} cancelled successfully"}
-
-
-# ---------------------------------------------------------------------------
-# Repair file sizes for .mrxs / .tmap slides
-# ---------------------------------------------------------------------------
-
-
-async def _run_repair_file_sizes_task(task_id: str, user_id: str) -> None:
-    """
-    Background task: recompute and persist the effective file_size for every
-    .mrxs and .tmap slide already registered in the database.
-
-    - .mrxs : main file + all files inside the same-stem data directory
-    - .tmap : main file + any same-stem .DT<n> sibling files
-    """
-    async with async_session() as db:
-        try:
-            await StorageTaskRepository.update_status(
-                db, task_id, "processing", progress=0
-            )
-            await db.commit()
-
-            stmt = select(WSISlide).where(
-                or_(
-                    WSISlide.original_filename.ilike("%.mrxs"),
-                    WSISlide.original_filename.ilike("%.tmap"),
-                )
-            )
-            result = await db.execute(stmt)
-            slides = result.scalars().all()
-
-            total_items = len(slides)
-            updated_count = 0
-            skipped_count = 0
-            failed_count = 0
-            results = []
-
-            for i, wsi in enumerate(slides):
-                if is_storage_task_cancelled(task_id):
-                    logger.info(
-                        f"Repair file sizes task {task_id} cancelled at {i}/{total_items}"
-                    )
-                    clear_storage_task_cancellation(task_id)
-                    await StorageTaskRepository.update_status(
-                        db,
-                        task_id,
-                        TaskStatus.CANCELLED,
-                        processed_items=i,
-                        success_count=updated_count,
-                        failed_count=failed_count,
-                        skipped_count=skipped_count,
-                        results=results,
-                    )
-                    await db.commit()
-                    return
-
-                try:
-                    effective_size = get_wsi_effective_file_size(str(wsi.wsi_path))
-                    if effective_size == (wsi.file_size or 0):
-                        results.append(
-                            {
-                                "wsi_id": wsi.wsi_id,
-                                "status": "skipped",
-                                "message": "Size unchanged",
-                            }
-                        )
-                        skipped_count += 1
-                    else:
-                        await WSIRepository.update(
-                            db, str(wsi.wsi_id), {"file_size": effective_size}
-                        )
-                        await db.commit()
-                        results.append(
-                            {
-                                "wsi_id": wsi.wsi_id,
-                                "status": "updated",
-                                "old_size": wsi.file_size,
-                                "new_size": effective_size,
-                            }
-                        )
-                        updated_count += 1
-                except Exception as e:
-                    logger.warning(f"repair_file_sizes: failed for {wsi.wsi_id}: {e}")
-                    results.append(
-                        {
-                            "wsi_id": wsi.wsi_id,
-                            "status": "failed",
-                            "message": str(e),
-                        }
-                    )
-                    failed_count += 1
-
-                progress = int((i + 1) / total_items * 100) if total_items > 0 else 100
-                await StorageTaskRepository.update_status(
-                    db,
-                    task_id,
-                    "processing",
-                    progress=progress,
-                    processed_items=i + 1,
-                    success_count=updated_count,
-                    failed_count=failed_count,
-                    skipped_count=skipped_count,
-                )
-                await db.commit()
-
-            await StorageTaskRepository.update_status(
-                db,
-                task_id,
-                "completed",
-                progress=100,
-                processed_items=total_items,
-                success_count=updated_count,
-                failed_count=failed_count,
-                skipped_count=skipped_count,
-                results=results,
-            )
-            await db.commit()
-
-        except Exception as e:
-            logger.error(f"Repair file sizes task {task_id} failed: {e}")
-            try:
-                await StorageTaskRepository.update_status(
-                    db, task_id, "failed", error_message=str(e)
-                )
-                await db.commit()
-            except Exception:
-                pass
-
-
-@router.post("/tasks/repair-file-sizes")
-async def start_repair_file_sizes_task(
-    background_tasks: BackgroundTasks,
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Admin-only: recompute file_size for all .mrxs and .tmap slides in the
-    database to include their associated data (data directory / .DT* files).
-
-    Returns a task_id immediately; progress is available via GET /tasks/stream.
-    """
-    count_result = await db.execute(
-        select(func.count())
-        .select_from(WSISlide)
-        .where(
-            or_(
-                WSISlide.original_filename.ilike("%.mrxs"),
-                WSISlide.original_filename.ilike("%.tmap"),
-            )
-        )
-    )
-    total_items = count_result.scalar() or 0
-
-    task_id = f"repair_{uuid.uuid4().hex[:16]}"
-    await StorageTaskRepository.create(
-        db,
-        task_id=task_id,
-        user_id=str(user.id),
-        task_type="repair_file_sizes",
-        total_items=total_items,
-    )
-    await db.commit()
-
-    background_tasks.add_task(_run_repair_file_sizes_task, task_id, str(user.id))
-
-    return {
-        "task_id": task_id,
-        "message": "Repair file sizes task started",
-        "total_items": total_items,
-    }
