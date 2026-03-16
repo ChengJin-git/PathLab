@@ -5,7 +5,7 @@ WSIRepository - Data Access Layer
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select, update, delete, func, desc, and_, or_
+from sqlalchemy import select, update, delete, func, asc, desc, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1138,6 +1138,33 @@ class WSIRepository:
         return result.scalars().first()
 
     @staticmethod
+    @staticmethod
+    def _file_sort_expr(sort_by: Optional[str] = None, sort_order: str = "asc"):
+        _COL_MAP = {
+            "original_filename": WSISlide.original_filename,
+            "label": WSISlide.label,
+            "event_time": WSISlide.event_time,
+            "event_status": WSISlide.event_status,
+        }
+        col = _COL_MAP.get(sort_by or "")
+        if col is None:
+            return desc(WSISlide.created_at)
+        return asc(col) if sort_order == "asc" else desc(col)
+
+    @staticmethod
+    def _case_sort_expr(sort_by: Optional[str] = None, sort_order: str = "asc"):
+        _AGG_MAP = {
+            "label": WSISlide.label,
+            "event_time": WSISlide.event_time,
+            "event_status": WSISlide.event_status,
+        }
+        agg_col = _AGG_MAP.get(sort_by or "")
+        if agg_col is not None:
+            agg_expr = func.min(agg_col)
+            return asc(agg_expr) if sort_order == "asc" else desc(agg_expr)
+        return asc(WSISlide.case_id) if sort_order == "asc" else desc(WSISlide.case_id)
+
+    @staticmethod
     async def get_by_dataset(
         db: AsyncSession,
         dataset_id: str,
@@ -1147,6 +1174,8 @@ class WSIRepository:
         data_type: Optional[str] = None,
         search: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
     ) -> List[WSISlide]:
         """
         Get all WSI slides in a specific dataset with pagination.
@@ -1176,7 +1205,9 @@ class WSIRepository:
         )
         query = query.where(*filters)
 
-        query = query.order_by(desc(WSISlide.created_at)).offset(skip)
+        query = query.order_by(
+            WSIRepository._file_sort_expr(sort_by, sort_order)
+        ).offset(skip)
         if limit > 0:
             query = query.limit(limit)
 
@@ -1373,6 +1404,8 @@ class WSIRepository:
         user_id: Optional[str] = None,
         data_type: Optional[str] = None,
         elevated_dataset_ids: Optional[List[str]] = None,
+        sort_by: Optional[str] = None,
+        sort_order: str = "asc",
     ) -> List[WSISlide]:
         """Fetch files for a *page* of case groups.
 
@@ -1399,7 +1432,7 @@ class WSIRepository:
             select(WSISlide.case_id)
             .where(WSISlide.case_id.isnot(None), *filters)
             .group_by(WSISlide.case_id)
-            .order_by(WSISlide.case_id)
+            .order_by(WSIRepository._case_sort_expr(sort_by, sort_order))
             .offset(offset)
             .limit(page_size)
         )
@@ -1442,7 +1475,7 @@ class WSIRepository:
                     select(WSISlide)
                     .options(_dataset_with_group_loader())
                     .where(WSISlide.case_id.is_(None), *filters)
-                    .order_by(desc(WSISlide.created_at))
+                    .order_by(WSIRepository._file_sort_expr(sort_by, sort_order))
                     .offset(no_case_offset)
                     .limit(no_case_limit)
                 )

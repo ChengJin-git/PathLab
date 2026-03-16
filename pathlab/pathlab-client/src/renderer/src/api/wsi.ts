@@ -157,6 +157,8 @@ export interface WSIListPaginationOptions {
   page_size: number
   search?: string
   forceRefresh?: boolean
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 function buildWSIListCacheKey(
@@ -170,6 +172,8 @@ function buildWSIListCacheKey(
     page: options?.page ?? null,
     page_size: options?.page_size ?? 0,
     search: options?.search ?? null,
+    sort_by: options?.sort_by ?? null,
+    sort_order: options?.sort_order ?? null,
   })
 }
 
@@ -198,6 +202,13 @@ export async function fetchWSIList(
   if (options) {
     if (options.search) {
       params.set('search', options.search)
+    }
+
+    if (options.sort_by) {
+      params.set('sort_by', options.sort_by)
+    }
+    if (options.sort_order) {
+      params.set('sort_order', options.sort_order)
     }
 
     if (options.page_size === 0) {

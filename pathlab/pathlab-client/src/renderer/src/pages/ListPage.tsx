@@ -5,7 +5,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
 import { ApiError } from '../api/client'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -140,6 +140,25 @@ export default function ListPage() {
 
   // Case grouping - tracks which case_ids are expanded
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
+
+  type SortColumn = 'filename' | 'label' | 'event_time' | 'event_status'
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = useCallback((col: SortColumn) => {
+    if (sortColumn === col) {
+      if (sortDirection === 'asc') {
+        setSortDirection('desc')
+      } else {
+        setSortColumn(null)
+        setSortDirection('asc')
+      }
+    } else {
+      setSortColumn(col)
+      setSortDirection('asc')
+    }
+    setCurrentPage(1)
+  }, [sortColumn, sortDirection])
 
   // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
@@ -293,13 +312,24 @@ export default function ListPage() {
     placeholderData: (prev) => prev,
   })
 
+  const SORT_FIELD_MAP: Record<SortColumn, string> = {
+    filename: 'original_filename',
+    label: 'label',
+    event_time: 'event_time',
+    event_status: 'event_status',
+  }
+  const activeSortBy = sortColumn ? SORT_FIELD_MAP[sortColumn] : undefined
+  const activeSortOrder = activeSortBy ? sortDirection : undefined
+
   const wsiListQuery = useQuery({
-    queryKey: ['wsi-list', selectedDatasetId, { page: currentPage, search: debouncedSearch }],
+    queryKey: ['wsi-list', selectedDatasetId, { page: currentPage, search: debouncedSearch, sort_by: activeSortBy, sort_order: activeSortOrder }],
     queryFn: async () => {
       const d = await fetchWSIList(selectedDatasetId!, undefined, {
         page: currentPage,
         page_size: itemsPerPage,
         search: debouncedSearch || undefined,
+        sort_by: activeSortBy,
+        sort_order: activeSortOrder,
       })
 
       const totalUnits =
@@ -311,6 +341,8 @@ export default function ListPage() {
           page: currentPage - 1,
           page_size: itemsPerPage,
           search: debouncedSearch || undefined,
+          sort_by: activeSortBy,
+          sort_order: activeSortOrder,
         })
       }
       if (currentPage < totalPages) {
@@ -318,6 +350,8 @@ export default function ListPage() {
           page: currentPage + 1,
           page_size: itemsPerPage,
           search: debouncedSearch || undefined,
+          sort_by: activeSortBy,
+          sort_order: activeSortOrder,
         })
       }
 
@@ -468,6 +502,8 @@ export default function ListPage() {
     setCurrentPage(1)
     setSelectedIds(new Set())
     setExpandedCases(new Set())
+    setSortColumn(null)
+    setSortDirection('asc')
   }
 
   const handleDatasetClick = (dataset: DatasetSummary) => {
@@ -479,6 +515,8 @@ export default function ListPage() {
     setSearchQuery('')
     setDebouncedSearch('')
     setExpandedCases(new Set())
+    setSortColumn(null)
+    setSortDirection('asc')
   }
 
   // Reload current dataset files (for use after edits/deletes)
@@ -1013,12 +1051,14 @@ export default function ListPage() {
     }
   }
 
+  const sortedItems = wsiListQuery.data?.items ?? []
+
   // Group items by case_id (for display within current page)
   const groupedByCaseId = React.useMemo(() => {
     const groups = new Map<string, { slides: any[]; isNoCase: boolean; order: number }>()
     const NO_CASE = '__no_case__'
 
-    ;(wsiListQuery.data?.items ?? []).forEach((item, index) => {
+    ;(sortedItems).forEach((item, index) => {
       const normalizedCaseId = item.case_id?.trim()
       const isNoCase = !normalizedCaseId
       const groupKey = isNoCase ? `${NO_CASE}:${item.wsi_id}` : normalizedCaseId
@@ -1033,21 +1073,16 @@ export default function ListPage() {
     return Array.from(groups.entries())
       .sort(([, left], [, right]) => {
         if (left.isNoCase !== right.isNoCase) return left.isNoCase ? 1 : -1
-        if (left.isNoCase) return left.order - right.order
-
-        const leftCaseId = left.slides[0]?.case_id || ''
-        const rightCaseId = right.slides[0]?.case_id || ''
-        return leftCaseId.localeCompare(rightCaseId)
+        return left.order - right.order
       })
       .map(([groupKey, group]) => [groupKey, group.slides] as const)
-  }, [wsiListQuery.data?.items])
+  }, [sortedItems])
 
-  // Check if this is a patch dataset (majority of files are patches)
   const isPatchDataset = React.useMemo(() => {
-    if ((wsiListQuery.data?.items ?? []).length === 0) return false
-    const patchCount = (wsiListQuery.data?.items ?? []).filter(item => getFileType(item.file_extension, item.file_size, item.data_type) === 'Patch').length
-    return patchCount > (wsiListQuery.data?.items ?? []).length / 2
-  }, [wsiListQuery.data?.items])
+    if (sortedItems.length === 0) return false
+    const patchCount = sortedItems.filter(item => getFileType(item.file_extension, item.file_size, item.data_type) === 'Patch').length
+    return patchCount > sortedItems.length / 2
+  }, [sortedItems])
 
   const useCaseGroupedView = Boolean(selectedDatasetId) && (
     selectedDatasetSummary?.data_type === 'wsi' || (!selectedDatasetSummary && !isPatchDataset)
@@ -1066,7 +1101,7 @@ export default function ListPage() {
 
   // All current-page items are already the "paginated" items (server-side pagination)
   const paginatedCases = useCaseGroupedView ? groupedByCaseId : null
-  const paginatedItems = useCaseGroupedView ? [] : (wsiListQuery.data?.items ?? [])
+  const paginatedItems = useCaseGroupedView ? [] : sortedItems
 
   // Batch selection logic — operates on current page items
   const pageSlides = useMemo(() => {
@@ -2041,16 +2076,36 @@ export default function ListPage() {
                         </th>
                       ) : (
                         <>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.slideId')}</th>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.type')}</th>
-                          {selectedDatasetType === 'survival' ? (
-                            <>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.timeMonths')}</th>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.status')}</th>
-                            </>
-                          ) : (
-                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{labelColumnTitle}</th>
-                          )}
+                          {([
+                            'filename',
+                            ...(selectedDatasetType === 'survival' ? ['event_time', 'event_status'] : ['label']),
+                          ] as SortColumn[]).map((col, i) => {
+                            const labels: Record<SortColumn, string> = {
+                              filename: t('listPage.slideId'),
+                              label: labelColumnTitle,
+                              event_time: t('listPage.timeMonths'),
+                              event_status: t('listPage.status'),
+                            }
+                            const isActive = sortColumn === col
+                            const Icon = isActive ? (sortDirection === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown
+                            return (
+                              <React.Fragment key={col}>
+                                <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSort(col)}
+                                    className={`inline-flex items-center gap-1 rounded hover:text-gray-800 transition-colors ${isActive ? 'text-primary-600' : ''}`}
+                                  >
+                                    {labels[col]}
+                                    <Icon className={`w-3 h-3 ${isActive ? 'text-primary-500' : 'text-gray-400'}`} />
+                                  </button>
+                                </th>
+                                {i === 0 && (
+                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.type')}</th>
+                                )}
+                              </React.Fragment>
+                            )
+                          })}
                           <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.patientInfo')}</th>
                           <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.action')}</th>
                         </>
@@ -2185,9 +2240,9 @@ export default function ListPage() {
                                     <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                   ) : (
                                     <>
-                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[it.source] ? t(`organSources.${organSourceKeyMap[it.source]}`) : it.source}</span></span>}
+                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[it.source] ? String(t(`organSources.${organSourceKeyMap[it.source]}`)) : it.source}</span></span>}
                                       {it.age && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
-                                      {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender)}</span>}
+                                      {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{String(t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender))}</span>}
                                     </>
                                   )}
                                 </div>
@@ -2409,9 +2464,9 @@ export default function ListPage() {
                                         <span className="text-gray-300 text-[10px] italic">-</span>
                                       ) : (
                                         <>
-                                          {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{organSourceKeyMap[it.source] ? t(`organSources.${organSourceKeyMap[it.source]}`) : it.source}</span>}
+                                          {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{organSourceKeyMap[it.source] ? String(t(`organSources.${organSourceKeyMap[it.source]}`)) : it.source}</span>}
                                           {it.age && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
-                                          {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender)}</span>}
+                                          {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{String(t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender))}</span>}
                                         </>
                                       )}
                                     </div>

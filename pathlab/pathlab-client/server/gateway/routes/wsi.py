@@ -447,6 +447,14 @@ async def list_wsi(
         le=10000,
         description="Number of case groups per page. 0 = return all (no pagination).",
     ),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Sort field: original_filename, label, event_time, event_status",
+    ),
+    sort_order: str = Query(
+        "asc",
+        description="Sort direction: asc or desc",
+    ),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db),
@@ -485,6 +493,8 @@ async def list_wsi(
                 data_type=data_type,
                 search=search,
                 elevated_dataset_ids=elevated_dataset_ids,
+                sort_by=sort_by,
+                sort_order=sort_order,
             )
             total = await WSIRepository.count_by_dataset(
                 db,
@@ -528,6 +538,8 @@ async def list_wsi(
             user_id=user_id_filter,
             data_type=data_type,
             elevated_dataset_ids=elevated_dataset_ids,
+            sort_by=sort_by,
+            sort_order=sort_order,
         )
 
         items = await _serialize_dataset_wsi_items(
