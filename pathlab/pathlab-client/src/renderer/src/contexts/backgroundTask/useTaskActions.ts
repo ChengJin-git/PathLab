@@ -126,6 +126,7 @@ export function useTaskActions(params: TaskActionsParams) {
     // Create AbortController for this task
     const abortController = new AbortController()
     abortControllersRef.current.set(taskId, abortController)
+    ;(window as any).__activeUploadCount = ((window as any).__activeUploadCount || 0) + 1
 
     // Process files sequentially (background)
     const processFiles = async () => {
@@ -198,6 +199,13 @@ export function useTaskActions(params: TaskActionsParams) {
 
       // Call completion callback
       options?.onComplete?.()
+
+      const remaining = Math.max(0, ((window as any).__activeUploadCount || 1) - 1)
+      ;(window as any).__activeUploadCount = remaining
+      if (remaining === 0 && (window as any).__pendingSWReload) {
+        ;(window as any).__pendingSWReload = false
+        window.location.reload()
+      }
     }
 
     processFiles()
