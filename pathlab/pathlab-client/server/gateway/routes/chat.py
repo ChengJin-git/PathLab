@@ -123,7 +123,7 @@ MAX_MODELS_IN_CHAT_CONTEXT = 5
 # Number of semantically-closest models to surface in the LLM context.
 # When a user's query is embedded and compared against cached model embeddings,
 # only the top-K matches are included — regardless of total model count.
-TOP_K_MODELS_IN_CHAT_CONTEXT = 10
+TOP_K_MODELS_IN_CHAT_CONTEXT = 5
 DEFAULT_MODEL_SCAN_LIMIT = 100
 FILTERED_MODEL_SCAN_LIMIT = 5000
 MODEL_SCAN_BATCH_SIZE = 200
