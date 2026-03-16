@@ -535,7 +535,7 @@ export default function RegisterPage() {
 
   const handleUpload = async () => {
     // Check if we have files OR a split file to upload
-    if (localItems.length === 0 && !splitFile) return
+    if (localItems.length === 0 && !splitFile && !segmentationJsonOnlyAppend) return
     setShowValidation(true)
     setSubmitError(null)
 
