@@ -1646,6 +1646,7 @@
     "loadingFiles": "Loading files...",
     "errorLoadingFiles": "Error loading files",
     "filesInDataset": "{{count}} files in this dataset",
+    "searchResultsInDataset": "{{count}} result(s) found",
     "description": "Browse and manage your datasets",
     "backToChat": "Back to Chat",
     "backToRepository": "Back to Repository",

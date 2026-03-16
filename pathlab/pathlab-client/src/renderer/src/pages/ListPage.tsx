@@ -1137,7 +1137,9 @@ export default function ListPage() {
                   (wsiListQuery.error ? String(wsiListQuery.error) : undefined) && !hasFileContent ? t('listPage.errorLoadingFiles') :
                     <span className="flex items-center gap-2">
                       <FolderOpen className="w-4 h-4" />
-                      {t('listPage.filesInDataset', { count: (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) })}
+                      {debouncedSearch
+                        ? t('listPage.searchResultsInDataset', { count: (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) })
+                        : t('listPage.filesInDataset', { count: (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) })}
                       {isFilesRefreshing && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
                     </span>
               ) : (
