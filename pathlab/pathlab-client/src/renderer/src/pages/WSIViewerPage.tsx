@@ -291,6 +291,7 @@ export default function WSIViewerPage() {
     hasUnsavedChanges: false,
     persistAnnotations: null as ((opts?: { showToast?: boolean }) => Promise<boolean>) | null,
     isPatchLevel: false,
+    handleManualSave: null as (() => Promise<boolean | undefined>) | null,
   })
   const patchKeysRef = useRef<Set<string>>(new Set())
   const patchRafRef = useRef<number | null>(null)
@@ -1272,7 +1273,20 @@ export default function WSIViewerPage() {
     slideNavRef.current.hasUnsavedChanges = hasUnsavedChanges
     slideNavRef.current.persistAnnotations = persistAnnotations
     slideNavRef.current.isPatchLevel = isPatchLevel
+    slideNavRef.current.handleManualSave = handleManualSave
   })
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.code !== 'KeyS') return
+      e.preventDefault()
+      if (slideNavRef.current.annotationMode) {
+        slideNavRef.current.handleManualSave?.()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
 
   useEffect(() => {
     const PAN_STEP = 5
