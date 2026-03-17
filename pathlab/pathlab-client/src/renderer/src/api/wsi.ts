@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
+import { createKeyedCache, ACTIVITY_CACHE_TTL } from '../lib/cache'
 import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken, type DownloadApiFileResult } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
@@ -143,8 +143,8 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
 }
 
 // Cache for fetchWSIList (keyed by datasetId + query params)
-const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
-const datasetsListCache = createKeyedCache<DatasetsListResponse>(DEFAULT_CACHE_TTL)
+const wsiListCache = createKeyedCache<WSIListResponse>(ACTIVITY_CACHE_TTL)
+const datasetsListCache = createKeyedCache<DatasetsListResponse>(ACTIVITY_CACHE_TTL)
 
 /**
  * Pagination options for fetchWSIList.

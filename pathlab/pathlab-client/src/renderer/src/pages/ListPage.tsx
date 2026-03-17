@@ -84,7 +84,6 @@ export default function ListPage() {
   const [datasetTypeFilter, setDatasetTypeFilter] = useState<DatasetTypeFilter>('all')
   const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
   const [datasetSourceFilter, setDatasetSourceFilter] = useState<string>('all')
-  const [availableDatasetSources, setAvailableDatasetSources] = useState<string[]>([])
   const [datasetViewMode, setDatasetViewMode] = useState<DatasetViewMode>('grid')
   const [datasetCurrentPage, setDatasetCurrentPage] = useState(1)
   const [datasetPageInput, setDatasetPageInput] = useState('1')
@@ -99,13 +98,6 @@ export default function ListPage() {
   const [uploading, setUploading] = useState(false)
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const datasetSourceOptionsCacheRef = useRef<Map<string, string[]>>(new Map())
-  const datasetSourceOptionsRequestIdRef = useRef(0)
-
-  const invalidateDatasetSourceOptionsCache = useCallback(() => {
-    datasetSourceOptionsCacheRef.current.clear()
-    datasetSourceOptionsRequestIdRef.current += 1
-  }, [])
 
 
 
@@ -365,12 +357,38 @@ export default function ListPage() {
     placeholderData: (prev) => prev,
   })
 
+  const sourceOptionsQuery = useQuery({
+    queryKey: ['dataset-source-options', datasetTypeFilter, datasetTaskFilter, datasetLevelFilter],
+    queryFn: async () => {
+      const response = await fetchDatasets(
+        datasetTypeFilter === 'all' ? undefined : datasetTypeFilter,
+        {
+          page_size: 0,
+          task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
+          aggregation_level:
+            datasetLevelFilter === 'all'
+              ? undefined
+              : datasetLevelFilter === 'patient'
+              ? 'case'
+              : 'file',
+        }
+      )
+      return Array.from(new Set(
+        (response.items ?? []).map(d => getDatasetSourceOrganFilterValue(d.source_organ))
+      ))
+    },
+    enabled: !selectedDatasetId,
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
+    placeholderData: (prev) => prev,
+  })
+
   const visibleDatasets = useMemo(() => {
     return (datasetsQuery.data?.items ?? []).filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
   }, [datasetsQuery.data?.items, optimisticallyDeletedDatasetIds])
 
   const datasetSourceOptions = useMemo(() => {
-    const sourceValues = [...availableDatasetSources].sort((left, right) => {
+    const sourceValues = [...(sourceOptionsQuery.data ?? [])].sort((left, right) => {
       if (left === UNKNOWN_SOURCE_ORGAN_FILTER) return 1
       if (right === UNKNOWN_SOURCE_ORGAN_FILTER) return -1
       return left.localeCompare(right)
@@ -387,7 +405,7 @@ export default function ListPage() {
             : value,
       })),
     ]
-  }, [availableDatasetSources, t])
+  }, [sourceOptionsQuery.data, t])
 
   const datasetTotalPages = Math.max(1, Math.ceil((datasetsQuery.data?.total ?? 0) / datasetItemsPerPage))
   const datasetStartIndex = (datasetCurrentPage - 1) * datasetItemsPerPage
@@ -419,66 +437,11 @@ export default function ListPage() {
   }, [currentPage])
 
   useEffect(() => {
-    if (datasetSourceFilter !== 'all' && !availableDatasetSources.includes(datasetSourceFilter)) {
+    const sources = sourceOptionsQuery.data ?? []
+    if (datasetSourceFilter !== 'all' && sources.length > 0 && !sources.includes(datasetSourceFilter)) {
       setDatasetSourceFilter('all')
     }
-  }, [availableDatasetSources, datasetSourceFilter])
-
-  const datasetSourceOptionsCacheKey = useMemo(() => {
-    const dataType = datasetTypeFilter === 'all' ? 'all' : datasetTypeFilter
-    const taskType = datasetTaskFilter === 'all' ? 'all' : datasetTaskFilter
-    const aggregationLevel =
-      datasetLevelFilter === 'all'
-        ? 'all'
-        : datasetLevelFilter === 'patient'
-        ? 'case'
-        : 'file'
-    return `${dataType}|${taskType}|${aggregationLevel}`
-  }, [datasetTypeFilter, datasetTaskFilter, datasetLevelFilter])
-
-  const loadDatasetSourceOptions = useCallback(async () => {
-    const requestId = datasetSourceOptionsRequestIdRef.current + 1
-    datasetSourceOptionsRequestIdRef.current = requestId
-
-    const cachedSources = datasetSourceOptionsCacheRef.current.get(datasetSourceOptionsCacheKey)
-    if (cachedSources) {
-      setAvailableDatasetSources(cachedSources)
-      return
-    }
-
-    try {
-      const response = await fetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
-        page_size: 0,
-        task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
-        aggregation_level: datasetLevelFilter === 'all'
-          ? undefined
-          : datasetLevelFilter === 'patient'
-            ? 'case'
-            : 'file',
-      })
-
-      const nextSources = Array.from(new Set(
-        (response.items || []).map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ))
-      ))
-
-      datasetSourceOptionsCacheRef.current.set(datasetSourceOptionsCacheKey, nextSources)
-      if (datasetSourceOptionsRequestIdRef.current !== requestId) {
-        return
-      }
-      setAvailableDatasetSources(nextSources)
-    } catch {
-      if (datasetSourceOptionsRequestIdRef.current !== requestId) {
-        return
-      }
-      setAvailableDatasetSources([])
-    }
-  }, [datasetSourceOptionsCacheKey, datasetTypeFilter, datasetTaskFilter, datasetLevelFilter])
-
-  useEffect(() => {
-    if (!selectedDatasetId) {
-      void loadDatasetSourceOptions()
-    }
-  }, [selectedDatasetId, loadDatasetSourceOptions])
+  }, [sourceOptionsQuery.data, datasetSourceFilter])
 
   useEffect(() => {
     if (selectedDatasetId && !selectedDatasetSummary) {
@@ -670,7 +633,7 @@ export default function ListPage() {
         const currentSource = currentDataset?.source_organ?.trim() || ''
         if (resolvedDatasetSource !== currentSource) {
           await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
-          invalidateDatasetSourceOptionsCache()
+          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
         }
       }
 
@@ -812,7 +775,7 @@ export default function ListPage() {
         setDatasetToDeleteId(null)
         setDatasetToDeleteName('')
         setDatasetToDeleteFileCount(0)
-        invalidateDatasetSourceOptionsCache()
+        void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
         await qc.invalidateQueries({ queryKey: ['page-datasets'] })
       } else {
         const idsToDelete = Array.from(selectedIds)
@@ -1008,9 +971,8 @@ export default function ListPage() {
         await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
       }
 
-      invalidateDatasetSourceOptionsCache()
+      void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
       await qc.invalidateQueries({ queryKey: ['page-datasets'] })
-      void loadDatasetSourceOptions()
 
       // If this dataset was selected, update the displayed info
       if (selectedDatasetId === editingDatasetId) {
@@ -1099,7 +1061,7 @@ export default function ListPage() {
 
     try {
       await renameDataset(renamingDatasetId, renameDatasetNewName)
-      invalidateDatasetSourceOptionsCache()
+      void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
       await qc.invalidateQueries({ queryKey: ['page-datasets'] })
 
       // If the renamed dataset was selected, update the displayed name
