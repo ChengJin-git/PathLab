@@ -241,19 +241,14 @@ export default function WSIViewerPage() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setShowShortcuts(true)
-    }
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setShowShortcuts(false)
+      if (e.key === 'Shift' && !e.repeat) setShowShortcuts(prev => !prev)
     }
     const handleBlur = () => setShowShortcuts(false)
 
     window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
     window.addEventListener('blur', handleBlur)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', handleBlur)
     }
   }, [])
