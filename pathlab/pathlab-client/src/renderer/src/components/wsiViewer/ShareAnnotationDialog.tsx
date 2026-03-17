@@ -8,6 +8,7 @@ import {
   CollaboratorMember
 } from '../../api/annotation'
 import { listUsersPaged, UserListItem } from '../../api/users'
+import { useToast } from '../../contexts/ToastContext'
 
 interface ShareAnnotationDialogProps {
   open: boolean
@@ -17,6 +18,7 @@ interface ShareAnnotationDialogProps {
 
 export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotationDialogProps) {
   const { t } = useTranslation()
+  const toast = useToast()
   const [loading, setLoading] = useState(false)
   const [members, setMembers] = useState<CollaboratorMember[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -25,7 +27,8 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
   const [searchResults, setSearchResults] = useState<UserListItem[]>([])
   const [searching, setSearching] = useState(false)
   const [addingUser, setAddingUser] = useState<string | null>(null)
-  
+
+  const [pendingRemoveUser, setPendingRemoveUser] = useState<string | null>(null)
   const [removingUser, setRemovingUser] = useState<string | null>(null)
 
   const loadCollaborators = useCallback(async () => {
@@ -48,6 +51,7 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
       loadCollaborators()
       setSearchTerm('')
       setSearchResults([])
+      setPendingRemoveUser(null)
     }
   }, [open, loadCollaborators])
 
@@ -93,19 +97,18 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
     }
   }
 
-  const handleRemoveClick = async (member: CollaboratorMember) => {
-    if (!confirm(t('annotation.collab.dialog.removeConfirm'))) return
-    
+  const handleRemoveConfirm = async (member: CollaboratorMember) => {
+    setPendingRemoveUser(null)
     setRemovingUser(member.user_id)
     try {
       const res = await removeCollaborator(datasetId, member.user_id)
       if (res.residual_region_count > 0) {
-        alert(t('annotation.collab.dialog.removedWithRegions', { count: res.residual_region_count }))
+        toast.success(t('annotation.collab.dialog.removedWithRegions', { count: res.residual_region_count }))
       }
       await loadCollaborators()
     } catch (err) {
       console.error(err)
-      alert(t('annotation.collab.dialog.removeFailed'))
+      toast.error(t('annotation.collab.dialog.removeFailed'))
     } finally {
       setRemovingUser(null)
     }
@@ -253,19 +256,36 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
                     </div>
 
                     {member.role === 'collaborator' && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveClick(member)}
-                        disabled={removingUser === member.user_id}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
-                        title={t('annotation.collab.dialog.removeCollaborator')}
-                      >
-                        {removingUser === member.user_id ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
+                      removingUser === member.user_id ? (
+                        <Loader2 className="w-4 h-4 animate-spin text-gray-400 flex-shrink-0" />
+                      ) : pendingRemoveUser === member.user_id ? (
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          <span className="text-xs text-gray-500">{t('annotation.collab.dialog.removeConfirm')}</span>
+                          <button
+                            type="button"
+                            onClick={() => setPendingRemoveUser(null)}
+                            className="px-2 py-1 text-xs text-gray-600 bg-white border border-gray-200 rounded-md hover:bg-gray-50 transition-colors"
+                          >
+                            {t('common.cancel')}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveConfirm(member)}
+                            className="px-2 py-1 text-xs text-white bg-red-600 rounded-md hover:bg-red-700 transition-colors"
+                          >
+                            {t('common.confirm')}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setPendingRemoveUser(member.user_id)}
+                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title={t('annotation.collab.dialog.removeCollaborator')}
+                        >
                           <Trash2 className="w-4 h-4" />
-                        )}
-                      </button>
+                        </button>
+                      )
                     )}
                   </div>
                 ))}
