@@ -697,7 +697,9 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
         recommendation.filters?.has_predictions ||
         recommendation.filters?.pred ||
         recommendation.filters?.correct_prediction !== undefined ||
-        recommendation.filters?.segmentation_class
+        recommendation.filters?.segmentation_class ||
+        recommendation.segmentation_mask?.source === 'model_pred' ||
+        recommendation.segmentation_mask?.source === 'both'
       )
 
       if (needsPredictionsPath) {

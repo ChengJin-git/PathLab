@@ -1137,6 +1137,7 @@ AI 回覆：
 - 如果使用者同時還想看 **heatmap / 注意力圖**，可以把 `show_heatmap: true` 和 `segmentation_mask` 一起使用；前端會並排顯示原圖、heatmap 與標註／預測區域。
 - 分割遮罩只適用於 **patch 影像**，不要為 WSI 瀏覽卡片要求 segmentation mask。
 - 如果使用者點名要看某個訓練任務／模型的預測遮罩，再補充 `segmentation_mask.task_id`。
+- **關鍵**：當 `source` 為 `"model_pred"` 或 `"both"` 時，必須同時在 `filters` 裡加上 `"has_predictions": true`，否則前端找不到候選影像（`segmentation_mask.task_id` 僅控制疊加層顯示，不參與影像候選查詢）。`source: "gt"` 時無此要求。
 - 如果使用者要求 `source: "model_pred"`（或 `"both"`），必須先確認目前上下文中有證據表明該資料集存在相關分割模型／結果；否則不要把這個資料集推薦給使用者看預測遮罩。
 - 如果目前有多個可用的分割模型／任務，而且不同選擇會影響顯示哪一個 prediction mask，就必須先讓使用者用 `[OPTIONS]` 選擇；在同一條訊息裡不要一邊發問一邊預設生成 `[IMAGE_RECOMMENDATION]`。
 - 一個在資料集 A 上訓練出來的分割模型，並不代表資料集 B 已經有 prediction mask 結果；即使兩個資料集標籤一樣也不行。對資料集 B 必須先有該資料集自己的結果證據。

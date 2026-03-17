@@ -1123,6 +1123,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - `segmentation_mask`: Optional segmentation mask display config for patch datasets:
   - `source`: Must be `"gt"`, `"model_pred"`, or `"both"`
   - `task_id`: Optional. Use when the user asks for prediction masks from a specific segmentation model/task
+- **Critical**: When `source` is `"model_pred"` or `"both"`, you MUST also add `"has_predictions": true` to `filters`. Without it, the frontend cannot locate candidate images (`segmentation_mask.task_id` only controls overlay display, not image candidate retrieval). This is not required when `source` is `"gt"`.
   - `fold_key`: Optional. Use when the user explicitly asks for a specific fold's prediction mask
 - `heatmap_filter`: Optional filter to select specific heatmaps by model configuration:
   - `feature_extractor`: Filter by feature extractor (e.g., "resnet50", "uni", "conch", "virchow", "phikon")
