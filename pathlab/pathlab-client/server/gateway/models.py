@@ -392,6 +392,21 @@ class AnnotationExtractRequest(BaseModel):
 
 
 class AnnotationDeleteByLabelsRequest(BaseModel):
-    """Delete annotations by label across an effective dataset annotation view."""
-
     labels: List[str]
+
+
+class SharedAnnotationSaveRequest(BaseModel):
+    annotations: Dict[str, Any]
+    version: int
+
+
+class SharedAnnotationFinalizeRequest(BaseModel):
+    force: bool = False
+
+
+class BulkDeleteRegionsByCreatorRequest(BaseModel):
+    user_id: str
+
+
+class AddCollaboratorRequest(BaseModel):
+    user_id: str

@@ -289,6 +289,7 @@ export async function detectOrphanedFiles(): Promise<OrphanedFilesInfo> {
 export interface CleanupResult {
   deleted_files: string[]
   deleted_dirs: string[]
+  deleted_empty_dirs: string[]
   failed: [string, string][]
   total_size: number
   summary: string

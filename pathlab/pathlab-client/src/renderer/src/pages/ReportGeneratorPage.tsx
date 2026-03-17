@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useDraftState } from '../lib/useDraftState'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -42,7 +43,7 @@ interface Stats {
 export default function ReportGeneratorPage() {
   const navigate = useNavigate()
   const { t } = useTranslation()
-  const [config, setConfig] = useState<ReportConfig>({
+  const [config, setConfig] = useDraftState<ReportConfig>('draft:report:config', {
     title: `PathLab Analysis Report - ${new Date().toLocaleDateString()}`,
     includeStats: true,
     includeResults: true,

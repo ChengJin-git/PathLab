@@ -19,7 +19,9 @@ from .training_log import TrainingLogRepository
 from .permissions import DatasetPermissionRepository
 from .storage_task import StorageTaskRepository
 from .orphaned import OrphanedRecordsRepository
-from .annotation import SegmentationAnnotationRepository
+from .annotation import SegmentationAnnotationRepository, VersionConflictError
+from .annotation_collaborator import AnnotationCollaboratorRepository
+from .annotation_audit import AnnotationAuditLogRepository
 
 __all__ = [
     "DataGroupRepository",
@@ -37,4 +39,7 @@ __all__ = [
     "StorageTaskRepository",
     "OrphanedRecordsRepository",
     "SegmentationAnnotationRepository",
+    "VersionConflictError",
+    "AnnotationCollaboratorRepository",
+    "AnnotationAuditLogRepository",
 ]

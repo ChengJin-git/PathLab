@@ -40,6 +40,7 @@ from ..utils import (
 from backend.common.annotation_summary_cache import (
     rebuild_dataset_annotation_summary_cache,
 )
+from backend.common.annotation_pubsub import publish as publish_annotation_event
 
 router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
 
@@ -606,6 +607,12 @@ async def upload_wsi_file(
                     logger.warning(
                         f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}"
                     )
+                try:
+                    await publish_annotation_event(
+                        resolved_dataset_id, {"type": "gt_updated"}
+                    )
+                except Exception:
+                    pass
 
             return {
                 "message": "Segmentation annotation appended successfully",
@@ -690,6 +697,13 @@ async def upload_wsi_file(
                 logger.warning(
                     f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}"
                 )
+            if segmentation_annotation is not None:
+                try:
+                    await publish_annotation_event(
+                        resolved_dataset_id, {"type": "gt_updated"}
+                    )
+                except Exception:
+                    pass
 
         # Save metadata to JSON file for persistence
         try:
@@ -982,6 +996,12 @@ async def upload_wsi_by_path(
                     logger.warning(
                         f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}"
                     )
+                try:
+                    await publish_annotation_event(
+                        resolved_dataset_id, {"type": "gt_updated"}
+                    )
+                except Exception:
+                    pass
 
             return {
                 "wsi_id": matched_wsi.wsi_id,
@@ -1061,6 +1081,13 @@ async def upload_wsi_by_path(
                 logger.warning(
                     f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}"
                 )
+            if segmentation_annotation is not None:
+                try:
+                    await publish_annotation_event(
+                        resolved_dataset_id, {"type": "gt_updated"}
+                    )
+                except Exception:
+                    pass
 
         # Save metadata to JSON file for persistence
         try:

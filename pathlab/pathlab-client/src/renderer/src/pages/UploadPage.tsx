@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { useDraftState, clearDraftKeys } from '../lib/useDraftState'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -54,16 +55,16 @@ export default function RegisterPage() {
   const { t } = useTranslation()
 
   // Upload mode state (classification or survival)
-  const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
+  const [uploadMode, setUploadMode] = useDraftState<UploadMode>('draft:upload:uploadMode', 'classification')
   // Aggregation level state (case-level or file-level)
-  const [dataLevel, setDataLevel] = useState<DataLevel>('file')
+  const [dataLevel, setDataLevel] = useDraftState<DataLevel>('draft:upload:dataLevel', 'file')
 
   // Dataset name (required for grouping files)
-  const [datasetName, setDatasetName] = useState('')
+  const [datasetName, setDatasetName] = useDraftState<string>('draft:upload:datasetName', '')
   // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
   const [datasetId, setDatasetId] = useState<string | null>(null)
-  const [datasetSourceSelection, setDatasetSourceSelection] = useState('')
-  const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
+  const [datasetSourceSelection, setDatasetSourceSelection] = useDraftState<string>('draft:upload:datasetSourceSelection', '')
+  const [datasetSourceCustom, setDatasetSourceCustom] = useDraftState<string>('draft:upload:datasetSourceCustom', '')
   // Source organ of the existing dataset (for auto-fill when appending)
   const [existingDatasetSource, setExistingDatasetSource] = useState<string | undefined>()
 
@@ -112,6 +113,7 @@ export default function RegisterPage() {
   // Checking for initial dataset from navigation state
   const location = useLocation()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setDatasetName/setUploadMode/setDataLevel are stable draft setters; location is the only meaningful trigger
   useEffect(() => {
     if (location.state) {
       if (location.state.datasetName) {
@@ -156,6 +158,7 @@ export default function RegisterPage() {
   }, [datasetName, existingDatasetDataTypes])
 
   // Auto-select analysis type, data level, and datasetId for existing datasets
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setUploadMode/setDataLevel are stable draft setters; datasetName and dataset maps are the actual triggers
   useEffect(() => {
     const trimmed = datasetName.trim()
     if (existingDatasetTypes.has(trimmed)) {
@@ -724,6 +727,7 @@ export default function RegisterPage() {
   }
 
   const resetUpload = () => {
+    clearDraftKeys('draft:upload:')
     setStep(1)
     setDatasetName('')
     setDatasetId(null)

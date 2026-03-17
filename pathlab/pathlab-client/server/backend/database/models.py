@@ -1075,6 +1075,16 @@ class SegmentationAnnotation(Base):
     Segmentation Annotation table.
     Stores COCO-format annotations for segmentation tasks.
     Annotations can come from viewer drawing, file import, upload, or ROI extraction.
+
+    Status values:
+      "draft"        – personal draft (viewer auto-save, scoped to user_id)
+      "shared_draft" – collaborative draft (one per dataset, annotation_id = "shared_{dataset_id}")
+      "finalized"    – ground-truth, immutable once written
+
+    For shared_draft records:
+      user_id       = dataset owner's user_id (stable ownership marker)
+      last_edited_by = user_id of whoever last saved this record
+      version       = optimistic-lock counter, incremented on every write
     """
 
     __tablename__ = "segmentation_annotations"
@@ -1089,10 +1099,16 @@ class SegmentationAnnotation(Base):
     # Unified COCO format: { "images": [...], "annotations": [...], "categories": [...] }
     annotations = Column(JSON, nullable=False, default=dict)
 
-    # Annotation lifecycle status: "draft" (in-progress from viewer) or "finalized" (imported/extracted)
+    # Annotation lifecycle status: "draft" | "shared_draft" | "finalized"
     status = Column(String(20), nullable=False, default="draft")
     # Provenance: "viewer" | "import" | "upload" | "extraction"
     source = Column(String(50), nullable=False, default="viewer")
+
+    # Optimistic-lock version counter (used by shared_draft; always 0 for personal drafts / finalized)
+    version = Column(Integer, nullable=False, default=0, server_default="0")
+
+    # Last editor for shared_draft (None for personal drafts and finalized records)
+    last_edited_by = Column(String(255), nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
@@ -1110,11 +1126,86 @@ class SegmentationAnnotation(Base):
             "annotations": self.annotations,
             "status": self.status,
             "source": self.source,
+            "version": self.version,
+            "last_edited_by": self.last_edited_by,
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,
             "updated_at": self.updated_at.isoformat() + "Z"
             if self.updated_at
+            else None,
+        }
+
+
+class AnnotationCollaborator(Base):
+    """
+    Annotation Collaborator table.
+    Tracks which users have explicit write access to a dataset's shared_draft annotation.
+
+    Implicit members (always have access, not stored here):
+      - Dataset owner  (dataset.user_id)
+      - All admin users (user.role == ROLE_ADMIN)
+    """
+
+    __tablename__ = "annotation_collaborators"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    user_id = Column(String(255), nullable=False, index=True)
+    added_by = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_annot_collab_dataset_user", "dataset_id", "user_id", unique=True),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "user_id": self.user_id,
+            "added_by": self.added_by,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+        }
+
+
+class AnnotationAuditLog(Base):
+    __tablename__ = "annotation_audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(String(255), nullable=True)
+    event_type = Column(String(50), nullable=False)
+    event_metadata = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_audit_log_dataset_created", "dataset_id", "created_at"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "user_id": self.user_id,
+            "event_type": self.event_type,
+            "event_metadata": self.event_metadata,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
             else None,
         }
 

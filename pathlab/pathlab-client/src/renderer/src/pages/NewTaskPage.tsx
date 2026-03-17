@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useMemo } from 'react'
+import { clearDraftKeys } from '../lib/useDraftState'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
@@ -194,6 +195,13 @@ export default function NewTaskPage() {
       trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
     }
   }, [wizard.taskType])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clearDraftKeys is a pure utility; currentStep is the only trigger
+  useEffect(() => {
+    if (wizard.currentStep === 6) {
+      clearDraftKeys('draft:wizard:')
+    }
+  }, [wizard.currentStep])
 
   // Poll for task status in Step 6
   useEffect(() => {

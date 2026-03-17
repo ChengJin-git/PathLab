@@ -255,7 +255,14 @@ export default function AIChatPage() {
 
 	// Chat state
 	const [messages, setMessages] = useState<Message[]>([]);
-	const [input, setInput] = useState("");
+	const draftInputKey = `draft:chat:input:${urlConversationId ?? 'new'}`
+	const [input, setInput] = useState(() => {
+		try {
+			const stored = sessionStorage.getItem(draftInputKey)
+			if (stored !== null) return stored
+		} catch {}
+		return ""
+	});
 
 	// Generation lifecycle: single enum replaces 3 independent booleans
 	// idle → thinking (waiting for first chunk) → streaming (receiving chunks) → idle
@@ -357,6 +364,10 @@ export default function AIChatPage() {
 	const inputRef = useRef("");
 	inputRef.current = input;
 	const pendingProgrammaticSubmitRef = useRef(false);
+
+	useEffect(() => {
+		try { sessionStorage.setItem(draftInputKey, input) } catch {}
+	}, [draftInputKey, input])
 
 	const formRef = useRef<HTMLFormElement>(null);
 

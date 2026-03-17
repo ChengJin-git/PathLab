@@ -16,7 +16,7 @@ import {
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
-import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X, Save, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X, Save, AlertTriangle, Keyboard, Move } from 'lucide-react'
 import { exportPatchesAsZip } from '../components/wsiViewer/utils'
 import { TaskSelectorCard } from '../components/wsiViewer/TaskSelectorCard'
 import { AttentionClassSelector } from '../components/wsiViewer/AttentionClassSelector'
@@ -27,6 +27,7 @@ import { AnnotationOverlay } from '../components/wsiViewer/AnnotationOverlay'
 import { PatchOverlayStack, type PatchOverlayLayer } from '../components/wsiViewer/PatchOverlayStack'
 import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel'
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
+import { ShareAnnotationDialog } from '../components/wsiViewer/ShareAnnotationDialog'
 import { ViewerOverlayControls } from '../components/wsiViewer/ViewerOverlayControls'
 import {
   AnnotationRegion,
@@ -39,10 +40,22 @@ import {
   getDatasetAnnotationSummary,
   deleteDatasetAnnotationsByLabels,
   extractRegions,
+  getSharedAnnotation,
+  saveSharedAnnotation,
+  getSharedAnnotationSSEUrl,
+  SharedAnnotationEvent,
+  finalizeSharedAnnotation,
+  deleteSharedAnnotation,
+  listCollaborators,
 } from '../api/annotation'
 import { useToast } from '../contexts/ToastContext'
+import { useAuth } from '../contexts/AuthContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { getFileType } from '../constants/fileTypes'
+import { ApiError } from '../api/client'
+
+import { usePresence } from '../lib/usePresence'
+import { PresenceCursorOverlay } from '../components/wsiViewer/PresenceCursorOverlay'
 
 const PATCH_OVERLAY_PREVIEW_SIZE = 768
 
@@ -67,6 +80,7 @@ interface ViewerNavigationState {
 
 export default function WSIViewerPage() {
   const { t } = useTranslation()
+  const { user } = useAuth()
   const toast = useToast()
   const { addExtractionTask } = useBackgroundTask()
   const { wsi_id = '' } = useParams()
@@ -277,7 +291,10 @@ export default function WSIViewerPage() {
     annotationMode: false,
     hasUnsavedChanges: false,
     persistAnnotations: null as ((opts?: { showToast?: boolean }) => Promise<boolean>) | null,
+    isPatchLevel: false,
   })
+  const patchKeysRef = useRef<Set<string>>(new Set())
+  const patchRafRef = useRef<number | null>(null)
   const effectiveDatasetId = datasetId ?? detail?.meta?.dataset_id
   const draftCacheKey = effectiveDatasetId ?? '__NO_DATASET__'
   const draftCacheRef = useRef<{
@@ -287,11 +304,23 @@ export default function WSIViewerPage() {
   const [datasetAnnotationSummary, setDatasetAnnotationSummary] = useState<DatasetAnnotationSummaryResponse | null>(null)
   const [loadingDatasetAnnotationSummary, setLoadingDatasetAnnotationSummary] = useState(false)
 
+  // Collaborative Annotation State
+  const [editingMode, setEditingMode] = useState<'personal' | 'shared'>('personal')
+  const [sharedVersion, setSharedVersion] = useState(0)
+  const [sharedSaving, setSharedSaving] = useState(false)
+  const sharedVersionRef = useRef(0)
+  const [isDatasetOwnerOrAdmin, setIsDatasetOwnerOrAdmin] = useState(false)
+  const [showShareDialog, setShowShareDialog] = useState(false)
+  // Sync ref
+  useEffect(() => { sharedVersionRef.current = sharedVersion }, [sharedVersion])
+
   // Manual save & unsaved-changes tracking
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [savingAnnotations, setSavingAnnotations] = useState(false)
   // Pending navigation when user tries to leave with unsaved changes
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
+
+  const { cursors, sendCursor } = usePresence(editingMode === 'shared' ? effectiveDatasetId : null)
 
   useEffect(() => {
     annotationIdRef.current = annotationId
@@ -809,6 +838,7 @@ export default function WSIViewerPage() {
     const newRegion: AnnotationRegion = {
       ...region,
       id: crypto.randomUUID(),
+      created_by: editingMode === 'shared' ? user?.id : undefined,
     }
     setAllAnnotations(prev => ({
       ...prev,
@@ -825,7 +855,7 @@ export default function WSIViewerPage() {
         }
       })
     }
-  }, [wsi_id])
+  }, [wsi_id, editingMode, user?.id])
 
   const handleRegionTooLarge = useCallback(() => {
     toast.warning(t('annotation.regionTooLarge'))
@@ -891,6 +921,48 @@ export default function WSIViewerPage() {
       saveTimerRef.current = null
     }
   }, [])
+
+  const saveShared = useCallback(async () => {
+    if (!effectiveDatasetId) return false
+    setSharedSaving(true)
+    try {
+      const response = await saveSharedAnnotation(effectiveDatasetId, {
+        annotations: allAnnotations,
+        version: sharedVersionRef.current,
+      })
+      setSharedVersion(response.version)
+      setHasUnsavedChanges(false)
+      refreshDatasetAnnotationSummary()
+      toast.success(t('annotation.saved'))
+      return true
+    } catch (err: any) {
+      // 409 Conflict
+      if (err instanceof ApiError && err.status === 409) {
+        toast.warning(t('annotation.collab.versionConflict'))
+        // Reload shared annotations
+        try {
+          const fresh = await getSharedAnnotation(effectiveDatasetId)
+          if (fresh.annotations) {
+            setAllAnnotations(fresh.annotations)
+            mergeLabelColorsFromAnnotations(fresh.annotations)
+          }
+          setSharedVersion(fresh.version)
+          // Conflict implies we lost our local changes unless we merge, but here we just reload for simplicity as per spec
+          // "reloading and showing toast, updates sharedVersion"
+          setHasUnsavedChanges(false)
+        } catch (reloadErr) {
+          console.error('Failed to reload after conflict:', reloadErr)
+          toast.error(t('annotation.collab.reloadFailed'))
+        }
+      } else {
+        console.error('Failed to save shared annotation:', err)
+        toast.error(t('annotation.saveFailed'))
+      }
+      return false
+    } finally {
+      setSharedSaving(false)
+    }
+  }, [allAnnotations, effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast, mergeLabelColorsFromAnnotations])
 
   const persistAnnotations = useCallback(async ({
     showToast = true,
@@ -980,8 +1052,37 @@ export default function WSIViewerPage() {
 
   // Manual save handler
   const handleManualSave = useCallback(async () => {
+    if (editingMode === 'shared') {
+      return await saveShared()
+    }
     return await persistAnnotations({ showToast: true })
-  }, [persistAnnotations])
+  }, [editingMode, persistAnnotations, saveShared])
+
+  const handleFinalizeShared = useCallback(async () => {
+    if (!effectiveDatasetId) return
+    try {
+      await finalizeSharedAnnotation(effectiveDatasetId)
+      toast.success(t('annotation.collab.submitted'))
+      setEditingMode('personal')
+      setShowGT(true)
+      await refreshDatasetAnnotationSummary()
+    } catch (err: any) {
+      toast.error(err?.message || t('annotation.collab.submitFailed'))
+    }
+  }, [effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast])
+
+  const handleDeleteShared = useCallback(async () => {
+    if (!effectiveDatasetId) return
+    try {
+      await deleteSharedAnnotation(effectiveDatasetId)
+      toast.success(t('annotation.collab.sharedDeleted'))
+      setEditingMode('personal')
+      setAllAnnotations({})
+      setHasUnsavedChanges(false)
+    } catch (err: any) {
+      toast.error(err?.message || t('annotation.collab.deleteFailed'))
+    }
+  }, [effectiveDatasetId, t, toast])
 
   const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
     const labelSet = new Set(labels)
@@ -1052,13 +1153,203 @@ export default function WSIViewerPage() {
     }
   }, [addExtractionTask, allAnnotations, annotationId, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
 
+  // Collaborative Mode: Enter shared mode (load initial state + determine ownership)
+  useEffect(() => {
+    if (editingMode !== 'shared' || !effectiveDatasetId) return
+
+    let cancelled = false
+    setSharedSaving(true)
+    const personalDraft = allAnnotations
+
+    Promise.all([
+      getSharedAnnotation(effectiveDatasetId),
+      listCollaborators(effectiveDatasetId).catch(() => null),
+    ]).then(([res, collabRes]) => {
+      if (cancelled) return
+
+      const hasPersonalDraft = Object.values(personalDraft).some(v => Array.isArray(v) && v.length > 0)
+      const shouldAutoSeed = res.version === 0 && !res.is_prepopulated && hasPersonalDraft
+
+      if (shouldAutoSeed) {
+        saveSharedAnnotation(effectiveDatasetId, { version: 0, annotations: personalDraft })
+          .then(saved => {
+            if (cancelled) return
+            setSharedVersion(saved.version)
+            toast.info(t('annotation.collab.autoSeeded'))
+          })
+          .catch(err => {
+            if (cancelled) return
+            if (err?.status === 409) {
+              getSharedAnnotation(effectiveDatasetId).then(fresh => {
+                if (cancelled) return
+                setAllAnnotations(fresh.annotations)
+                mergeLabelColorsFromAnnotations(fresh.annotations)
+                setSharedVersion(fresh.version)
+              }).catch(() => {})
+            }
+          })
+      } else {
+        if (res.is_prepopulated) {
+          toast.info(t('annotation.collab.sharedLoaded'))
+        }
+        if (res.annotations) {
+          setAllAnnotations(res.annotations)
+          mergeLabelColorsFromAnnotations(res.annotations)
+        }
+        setSharedVersion(res.version)
+      }
+
+      setHasUnsavedChanges(false)
+      if (collabRes) {
+        const isAdmin = user?.role === 'admin'
+        const isOwner = collabRes.members.some(m => m.role === 'owner' && m.user_id === user?.id)
+        setIsDatasetOwnerOrAdmin(isAdmin || isOwner)
+      } else {
+        setIsDatasetOwnerOrAdmin(user?.role === 'admin')
+      }
+    }).catch(err => {
+      if (cancelled) return
+      console.error('Failed to load shared annotations:', err)
+      toast.error(t('annotation.collab.sharedLoadFailed'))
+      setEditingMode('personal')
+    }).finally(() => {
+      if (!cancelled) setSharedSaving(false)
+    })
+
+    return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingMode, effectiveDatasetId, mergeLabelColorsFromAnnotations, t, toast, user?.id, user?.role])
+
+  // Collaborative Mode: SSE
+  useEffect(() => {
+    if (editingMode !== 'shared' || !effectiveDatasetId) return
+
+    const url = getSharedAnnotationSSEUrl(effectiveDatasetId)
+    if (!url) return
+
+    const es = new EventSource(url)
+
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data) as SharedAnnotationEvent
+        if (data.type === 'updated') {
+          if (data.version > sharedVersionRef.current) {
+            toast.info(t('annotation.collab.sharedUpdated', { version: data.version }))
+            // Reload
+            getSharedAnnotation(effectiveDatasetId).then(res => {
+              setAllAnnotations(res.annotations)
+              mergeLabelColorsFromAnnotations(res.annotations)
+              setSharedVersion(res.version)
+            })
+          }
+        } else if (data.type === 'finalized') {
+           toast.success(t('annotation.collab.submitted'))
+           setEditingMode('personal')
+           setShowGT(true)
+        } else if (data.type === 'collaborator_removed') {
+           if (data.user_id === user?.id) {
+             toast.warning(t('annotation.collab.removedFromCollaborators'))
+             setEditingMode('personal')
+           }
+        } else if (data.type === 'shared_deleted') {
+           toast.warning(t('annotation.collab.sharedDeletedRemote'))
+           setEditingMode('personal')
+        } else if (data.type === 'gt_updated') {
+           toast.info(t('annotation.collab.gtUpdated'))
+        } else if (data.type === 'gt_deleted') {
+           toast.info(t('annotation.collab.gtDeleted'))
+        }
+      } catch (e) {
+        console.error('SSE Parse Error', e)
+      }
+    }
+
+    return () => {
+      es.close()
+    }
+  }, [editingMode, effectiveDatasetId, user?.id, mergeLabelColorsFromAnnotations, t, toast])
+
   useEffect(() => {
     slideNavRef.current.prevWSI = prevWSI
     slideNavRef.current.nextWSI = nextWSI
     slideNavRef.current.annotationMode = annotationMode
     slideNavRef.current.hasUnsavedChanges = hasUnsavedChanges
     slideNavRef.current.persistAnnotations = persistAnnotations
+    slideNavRef.current.isPatchLevel = isPatchLevel
   })
+
+  useEffect(() => {
+    const PAN_STEP = 5
+
+    const animatePatchPan = () => {
+      const keys = patchKeysRef.current
+      let dx = 0, dy = 0
+      if (keys.has('KeyW')) dy -= PAN_STEP
+      if (keys.has('KeyS')) dy += PAN_STEP
+      if (keys.has('KeyA')) dx -= PAN_STEP
+      if (keys.has('KeyD')) dx += PAN_STEP
+      if (dx !== 0 || dy !== 0) {
+        setPatchPan(prev => ({ x: prev.x + dx, y: prev.y + dy }))
+        patchRafRef.current = requestAnimationFrame(animatePatchPan)
+      } else {
+        patchRafRef.current = null
+      }
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!slideNavRef.current.isPatchLevel) return
+      const el = document.activeElement as HTMLElement | null
+      if (!el) return
+      const tag = el.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      const wasdCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD'])
+      if (wasdCodes.has(e.code)) {
+        e.preventDefault()
+        patchKeysRef.current.add(e.code)
+        if (patchRafRef.current === null) {
+          patchRafRef.current = requestAnimationFrame(animatePatchPan)
+        }
+        return
+      }
+
+      if (e.code === 'Equal') {
+        e.preventDefault()
+        setPatchZoom(prev => Math.min(prev * 1.3, 10))
+      } else if (e.code === 'Minus') {
+        e.preventDefault()
+        setPatchZoom(prev => Math.max(prev / 1.3, 0.5))
+      } else if (e.code === 'KeyR') {
+        e.preventDefault()
+        setPatchZoom(1)
+        setPatchPan({ x: 0, y: 0 })
+      } else if (e.code === 'KeyF') {
+        e.preventDefault()
+        if (document.fullscreenElement) {
+          document.exitFullscreen()
+        } else {
+          patchContainerRef.current?.requestFullscreen()
+        }
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      patchKeysRef.current.delete(e.code)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      if (patchRafRef.current !== null) {
+        cancelAnimationFrame(patchRafRef.current)
+        patchRafRef.current = null
+      }
+      patchKeysRef.current.clear()
+    }
+  }, [])
 
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
@@ -1104,6 +1395,7 @@ export default function WSIViewerPage() {
   // Annotation: auto-save (debounced 2s)
   useEffect(() => {
     if (!annotationMode) return
+    if (editingMode === 'shared') return
     if (!hasUnsavedChanges) return
     if (savingAnnotations) return
     const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
@@ -1131,7 +1423,7 @@ export default function WSIViewerPage() {
     return () => {
       clearPendingSaveTimer()
     }
-  }, [allAnnotations, annotationMode, clearPendingSaveTimer, effectiveDatasetId, hasUnsavedChanges, persistAnnotations, savingAnnotations])
+  }, [allAnnotations, annotationMode, clearPendingSaveTimer, effectiveDatasetId, hasUnsavedChanges, persistAnnotations, savingAnnotations, editingMode])
 
   // Annotation: recovery when entering annotation mode
   useEffect(() => {
@@ -1317,6 +1609,14 @@ export default function WSIViewerPage() {
               labelColors={labelColors}
               allLabels={allLabels}
               onDropdownOpenChange={setIsLabelDropdownOpen}
+              editingMode={editingMode}
+              onToggleEditingMode={() => setEditingMode(m => m === 'personal' ? 'shared' : 'personal')}
+              sharedSaving={sharedSaving}
+              hasDatasetContext={!!effectiveDatasetId}
+              isDatasetOwnerOrAdmin={isDatasetOwnerOrAdmin}
+              onFinalize={handleFinalizeShared}
+              onDeleteShared={handleDeleteShared}
+              onShareManage={() => setShowShareDialog(true)}
             />
 
             {/* Save Annotations Button — visible only in annotation mode */}
@@ -1350,7 +1650,21 @@ export default function WSIViewerPage() {
             </button>
           </div>
         </div>
-        <div className="flex-1 relative bg-gray-100 overflow-hidden">
+        <div
+          className="flex-1 relative bg-gray-100 overflow-hidden"
+          role="presentation"
+          onMouseMove={(e) => {
+            if (editingMode !== 'shared' || !osdViewer?.viewport || !wsi_id) return
+            const canvas = osdViewer.canvas?.element || osdViewer.canvas
+            if (!canvas) return
+            const rect = (canvas as HTMLElement).getBoundingClientRect?.()
+            if (!rect) return
+            const pt = osdViewer.viewport.pointFromPixel(
+              new (window as any).OpenSeadragon.Point(e.clientX - rect.left, e.clientY - rect.top)
+            )
+            if (pt) sendCursor(wsi_id, pt.x, pt.y)
+          }}
+        >
           {/* Conditional Viewer: WSI Viewer for WSI-level, Patch Viewer for patch-level results */}
           {isPatchLevel ? (
             // Patch-level heatmap viewer with zoom/pan controls
@@ -1364,41 +1678,70 @@ export default function WSIViewerPage() {
               onMouseLeave={handlePatchMouseLeave}
               style={{ cursor: patchZoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
             >
-              {/* Zoom Controls - horizontal like WSI */}
               <div
-                className="absolute top-4 left-4 flex flex-row items-center gap-0.5 z-30 bg-white rounded-lg shadow-lg border border-gray-200 p-1"
+                className="absolute top-4 left-4 z-30 flex flex-col items-start gap-2"
                 onMouseDown={(e) => e.stopPropagation()}
                 onMouseUp={(e) => e.stopPropagation()}
               >
-                <button
-                  onClick={handlePatchZoomIn}
-                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title={t('wsiViewer.zoomIn')}
-                >
-                  <Plus className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handlePatchZoomOut}
-                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title={t('wsiViewer.zoomOut')}
-                >
-                  <Minus className="w-4 h-4" />
-                </button>
-                <div className="h-5 w-px bg-gray-200 mx-0.5" />
-                <button
-                  onClick={handlePatchReset}
-                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title={t('wsiViewer.resetView')}
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handlePatchFullscreen}
-                  className="p-2 hover:bg-gray-100 rounded transition-colors text-gray-600 hover:text-gray-900"
-                  title={t('wsiViewer.fullscreen')}
-                >
-                  <Maximize2 className="w-4 h-4" />
-                </button>
+                <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl p-1 flex items-center">
+                  <button
+                    type="button"
+                    onClick={handlePatchZoomIn}
+                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    title={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}
+                  >
+                    <Plus className="w-4 h-4" />
+                    {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">=</kbd>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePatchZoomOut}
+                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    title={`${t('wsiViewerComponents.viewer.zoomOut')} (-)`}
+                  >
+                    <Minus className="w-4 h-4" />
+                    {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">-</kbd>}
+                  </button>
+                  <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                  <button
+                    type="button"
+                    onClick={handlePatchReset}
+                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    title={`${t('wsiViewerComponents.viewer.resetView')} (R)`}
+                  >
+                    <RotateCcw className="w-4 h-4" />
+                    {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">R</kbd>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handlePatchFullscreen}
+                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    title={`${t('wsiViewerComponents.viewer.fullScreen')} (F)`}
+                  >
+                    <Maximize2 className="w-4 h-4" />
+                    {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">F</kbd>}
+                  </button>
+                  <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                  <div
+                    className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"
+                    title={t('wsiViewerComponents.viewer.holdShiftHint')}
+                  >
+                    <Keyboard className="w-4 h-4" />
+                    <span className="text-[10px] font-medium leading-none">Shift</span>
+                  </div>
+                </div>
+
+                {showShortcuts && (
+                  <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl px-2.5 py-1.5 flex items-center gap-2 select-none pointer-events-none animate-in fade-in zoom-in-95 duration-200">
+                    <Move className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                    <div className="flex items-center gap-1">
+                      {['W', 'A', 'S', 'D'].map(k => (
+                        <kbd key={k} className="flex items-center justify-center min-w-[20px] h-[20px] bg-white border border-gray-200 border-b-[2px] shadow-sm rounded text-[11px] font-mono font-bold text-gray-600">{k}</kbd>
+                      ))}
+                    </div>
+                    <span className="text-[11px] font-medium text-gray-500">{t('wsiViewerComponents.viewer.panHint')}</span>
+                  </div>
+                )}
               </div>
 
               <PatchOverlayStack
@@ -1453,6 +1796,12 @@ export default function WSIViewerPage() {
                  onRegionCreated={handleRegionCreated}
                  onRegionTooLarge={handleRegionTooLarge}
                  isLabelDropdownOpen={isLabelDropdownOpen}
+               />
+               <PresenceCursorOverlay
+                 viewer={osdViewer}
+                 wsiId={wsi_id}
+                 cursors={cursors}
+                 enabled={editingMode === 'shared'}
                />
             </>
           )}
@@ -1604,6 +1953,14 @@ export default function WSIViewerPage() {
         hasWsiSources={datasetAnnotationSummary?.has_wsi_sources ?? hasWsiSources}
         onSubmitCreateDataset={handleCreateDatasetFromAnnotations}
       />
+
+      {effectiveDatasetId && (
+        <ShareAnnotationDialog
+          open={showShareDialog}
+          onClose={() => setShowShareDialog(false)}
+          datasetId={effectiveDatasetId}
+        />
+      )}
 
       {/* Unsaved Annotations Confirmation Modal */}
       {pendingNavigation && (

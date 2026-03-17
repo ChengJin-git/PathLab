@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Optional
 
 """
 Annotation routes – segmentation annotation CRUD + ROI extraction proxy + SSE progress
@@ -13,7 +13,14 @@ import uuid
 import asyncio
 from copy import deepcopy
 from pathlib import Path
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Depends,
+    Query,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi.responses import FileResponse, StreamingResponse
 from PIL import Image, ImageColor, ImageDraw
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +28,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.database.repositories import (
     SegmentationAnnotationRepository,
+    AnnotationCollaboratorRepository,
+    AnnotationAuditLogRepository,
+    VersionConflictError,
     WSIRepository,
 )
 from backend.auth import current_active_user, User
@@ -28,6 +38,11 @@ from backend.auth.dependencies import (
     get_dataset_with_access,
     get_user_from_token_param,
     get_wsi_with_access,
+)
+from backend.auth.annotation_permissions import (
+    can_access_shared,
+    can_finalize,
+    is_annotation_owner,
 )
 from backend.common.config import Config
 from backend.common.coco_utils import coco_to_roi_annotations
@@ -40,11 +55,17 @@ from backend.common.annotation_summary_cache import (
     save_draft_annotation_summary_cache,
 )
 from backend.common.progress_store import get_progress
+from backend.common.annotation_pubsub import publish, subscribe_iter
+from backend.common.presence_pubsub import publish_presence, subscribe_presence_iter
 from ..dependencies import logger
 from ..models import (
     AnnotationSaveRequest,
     AnnotationExtractRequest,
     AnnotationDeleteByLabelsRequest,
+    SharedAnnotationSaveRequest,
+    SharedAnnotationFinalizeRequest,
+    BulkDeleteRegionsByCreatorRequest,
+    AddCollaboratorRequest,
 )
 from ..utils import request_preprocessing_service
 
@@ -561,6 +582,15 @@ async def _resolve_effective_dataset_annotations(
         dataset_id, db, wsis
     )
 
+    shared_draft = await SegmentationAnnotationRepository.get_shared_draft(
+        db, dataset_id
+    )
+    shared_annotations = (
+        shared_draft.annotations
+        if shared_draft and isinstance(shared_draft.annotations, dict)
+        else None
+    )
+
     draft_annotation = (
         await SegmentationAnnotationRepository.get_latest_draft_by_dataset_for_user(
             db, dataset_id, str(user.id)
@@ -577,7 +607,11 @@ async def _resolve_effective_dataset_annotations(
     }
     valid_wsi_ids = {wsi.wsi_id for wsi in wsis}
 
-    for wsi_id, regions in draft_annotations.items():
+    overlay = (
+        shared_annotations if shared_annotations is not None else draft_annotations
+    )
+
+    for wsi_id, regions in overlay.items():
         if wsi_id not in valid_wsi_ids:
             continue
         effective_annotations[wsi_id] = (
@@ -591,6 +625,7 @@ async def _resolve_effective_dataset_annotations(
         "draft_annotation": draft_annotation,
         "draft_annotations": draft_annotations,
         "gt_record_count": gt_record_count,
+        "shared_draft": shared_draft,
     }
 
 
@@ -1041,17 +1076,6 @@ async def stream_extract_progress(
     task_id: str,
     user: User = Depends(get_user_from_token_param),
 ):
-    """
-    SSE endpoint for streaming extraction progress.
-
-    Polls Redis progress_store and yields progress updates.
-    Progress values:
-      0-99  = in progress
-      100   = completed
-      -1    = error
-      None  = not started or already cleared
-    """
-
     async def event_generator():
         try:
             last_progress = None
@@ -1062,11 +1086,9 @@ async def stream_extract_progress(
                     yield f"data: {json.dumps({'task_id': task_id, 'progress': progress})}\n\n"
                     last_progress = progress
 
-                # Terminal states: completed or error
                 if progress is not None and (progress >= 100 or progress < 0):
                     break
 
-                # Also stop if progress was cleared (task finished and cleaned up)
                 if progress is None and last_progress is not None:
                     yield f"data: {json.dumps({'task_id': task_id, 'progress': None, 'done': True})}\n\n"
                     break
@@ -1085,3 +1107,769 @@ async def stream_extract_progress(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ── Shared Draft (collaborative annotation) ──────────────────────────────────
+
+
+def _preserve_created_by(
+    existing_annotations: dict[str, Any],
+    incoming_annotations: dict[str, Any],
+) -> dict[str, Any]:
+    existing_by_id: dict[str, Any] = {
+        r["id"]: r.get("created_by")
+        for regions in existing_annotations.values()
+        if isinstance(regions, list)
+        for r in regions
+        if isinstance(r, dict) and "id" in r
+    }
+    for regions in incoming_annotations.values():
+        if not isinstance(regions, list):
+            continue
+        for region in regions:
+            if isinstance(region, dict) and region.get("id") in existing_by_id:
+                region["created_by"] = existing_by_id[region["id"]]
+    return incoming_annotations
+
+
+@router.get("/datasets/{dataset_id}/shared")
+async def get_shared_annotation(
+    dataset_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not await can_access_shared(user, dataset, db):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    shared = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
+    if shared:
+        return {
+            "annotation_id": shared.annotation_id,
+            "annotations": shared.annotations,
+            "version": shared.version,
+            "last_edited_by": shared.last_edited_by,
+            "updated_at": shared.updated_at.isoformat() + "Z"
+            if shared.updated_at
+            else None,
+            "is_prepopulated": False,
+        }
+
+    gt_annotations, gt_record_count = await _get_dataset_ground_truth_roi_map(
+        dataset_id, db
+    )
+    if gt_record_count > 0:
+        return {
+            "annotation_id": None,
+            "annotations": gt_annotations,
+            "version": 0,
+            "last_edited_by": None,
+            "updated_at": None,
+            "is_prepopulated": True,
+        }
+
+    return {
+        "annotation_id": None,
+        "annotations": {},
+        "version": 0,
+        "last_edited_by": None,
+        "updated_at": None,
+        "is_prepopulated": False,
+    }
+
+
+@router.put("/datasets/{dataset_id}/shared")
+async def save_shared_annotation(
+    dataset_id: str,
+    req: SharedAnnotationSaveRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not await can_access_shared(user, dataset, db):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    existing = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
+    incoming = dict(req.annotations)
+    if existing and isinstance(existing.annotations, dict):
+        incoming = _preserve_created_by(existing.annotations, incoming)
+
+    force = is_annotation_owner(user, dataset)
+    owner_user_id = dataset.user_id or str(user.id)
+
+    try:
+        saved = await SegmentationAnnotationRepository.upsert_shared(
+            db=db,
+            dataset_id=dataset_id,
+            owner_user_id=owner_user_id,
+            last_edited_by=str(user.id),
+            annotations=incoming,
+            expected_version=req.version,
+            force=force,
+        )
+        await AnnotationAuditLogRepository.log(
+            db,
+            dataset_id,
+            str(user.id),
+            "shared_write",
+            {
+                "version": saved.version,
+                "region_count": sum(
+                    len(v) for v in saved.annotations.values() if isinstance(v, list)
+                )
+                if isinstance(saved.annotations, dict)
+                else 0,
+            },
+        )
+        await db.commit()
+    except VersionConflictError as e:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "version_conflict", "current_version": e.current_version},
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to save shared annotation for dataset {dataset_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    asyncio.create_task(
+        publish(
+            dataset_id,
+            {
+                "type": "updated",
+                "version": saved.version,
+                "changed_by": str(user.id),
+            },
+        )
+    )
+
+    return {
+        "annotation_id": saved.annotation_id,
+        "version": saved.version,
+        "updated_at": saved.updated_at.isoformat() + "Z" if saved.updated_at else None,
+    }
+
+
+@router.delete("/datasets/{dataset_id}/shared")
+async def delete_shared_annotation(
+    dataset_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not can_finalize(user, dataset):
+        raise HTTPException(
+            status_code=403, detail="Only owner or admin can delete shared annotation"
+        )
+
+    shared = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
+    region_count = (
+        sum(len(v) for v in shared.annotations.values() if isinstance(v, list))
+        if shared and isinstance(shared.annotations, dict)
+        else 0
+    )
+
+    deleted = await SegmentationAnnotationRepository.delete_shared(db, dataset_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Shared annotation not found")
+
+    await db.commit()
+    asyncio.create_task(publish(dataset_id, {"type": "shared_deleted"}))
+
+    return {"ok": True, "deleted_regions": region_count}
+
+
+@router.post("/datasets/{dataset_id}/shared/finalize")
+async def finalize_shared_annotation(
+    dataset_id: str,
+    req: SharedAnnotationFinalizeRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not can_finalize(user, dataset):
+        raise HTTPException(status_code=403, detail="Only owner or admin can finalize")
+
+    shared = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
+    annotations = (
+        shared.annotations if shared and isinstance(shared.annotations, dict) else {}
+    )
+
+    total_regions = sum(len(v) for v in annotations.values() if isinstance(v, list))
+    if total_regions == 0 and not req.force:
+        raise HTTPException(status_code=422, detail="empty_annotation")
+
+    gt_annotation_id = f"annot_{dataset_id}"
+    owner_user_id = dataset.user_id or str(user.id)
+
+    try:
+        gt = await SegmentationAnnotationRepository.upsert(
+            db,
+            annotation_id=gt_annotation_id,
+            user_id=owner_user_id,
+            annotations=annotations,
+            source_dataset_id=dataset_id,
+            status="finalized",
+            source="viewer",
+        )
+
+        await SegmentationAnnotationRepository.delete_shared(db, dataset_id)
+        await AnnotationAuditLogRepository.log(
+            db,
+            dataset_id,
+            str(user.id),
+            "finalize",
+            {
+                "version": shared.version if shared else 0,
+                "gt_annotation_id": gt_annotation_id,
+                "region_count": total_regions,
+            },
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error(
+            f"Failed to finalize shared annotation for dataset {dataset_id}: {e}"
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+    try:
+        await rebuild_draft_annotation_summary_cache(
+            db, gt_annotation_id, owner_user_id, dataset_id
+        )
+    except Exception as cache_err:
+        logger.warning(
+            f"Failed to rebuild annotation summary cache after finalize: {cache_err}"
+        )
+
+    asyncio.create_task(
+        publish(
+            dataset_id,
+            {
+                "type": "finalized",
+                "gt_annotation_id": gt_annotation_id,
+            },
+        )
+    )
+
+    return {
+        "gt_annotation_id": gt_annotation_id,
+        "version": gt.version if gt else 1,
+        "region_count": total_regions,
+    }
+
+
+@router.post("/datasets/{dataset_id}/shared/regions/bulk-delete")
+async def bulk_delete_shared_regions_by_creator(
+    dataset_id: str,
+    req: BulkDeleteRegionsByCreatorRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not can_finalize(user, dataset):
+        raise HTTPException(
+            status_code=403, detail="Only owner or admin can bulk-delete regions"
+        )
+
+    try:
+        deleted_count = (
+            await SegmentationAnnotationRepository.bulk_delete_regions_by_creator(
+                db, dataset_id, req.user_id
+            )
+        )
+        await AnnotationAuditLogRepository.log(
+            db,
+            dataset_id,
+            str(user.id),
+            "bulk_delete",
+            {"target_user_id": req.user_id, "deleted_count": deleted_count},
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if deleted_count > 0:
+        shared = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
+        await publish(
+            dataset_id,
+            {
+                "type": "updated",
+                "version": shared.version if shared else 0,
+                "changed_by": str(user.id),
+            },
+        )
+
+    return {"deleted_count": deleted_count}
+
+
+# ── Collaborator Management ───────────────────────────────────────────────────
+
+
+@router.get("/datasets/{dataset_id}/collaborators")
+async def list_collaborators(
+    dataset_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select as sa_select
+    from backend.auth.models import User as UserModel
+
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not can_finalize(user, dataset):
+        raise HTTPException(
+            status_code=403, detail="Only owner or admin can manage collaborators"
+        )
+
+    collabs = await AnnotationCollaboratorRepository.list_by_dataset(db, dataset_id)
+    collab_user_ids = [c.user_id for c in collabs]
+
+    admins = []
+    explicit_members = []
+
+    if collab_user_ids:
+        rows = await db.execute(
+            sa_select(
+                UserModel.id, UserModel.email, UserModel.nickname, UserModel.role
+            ).where(UserModel.id.in_([uuid.UUID(uid) for uid in collab_user_ids]))
+        )
+        user_map = {
+            str(r[0]): {"email": r[1], "nickname": r[2], "role": r[3]}
+            for r in rows.all()
+        }
+    else:
+        user_map = {}
+
+    admin_rows = await db.execute(
+        sa_select(
+            UserModel.id, UserModel.email, UserModel.nickname, UserModel.role
+        ).where(UserModel.role == UserModel.ROLE_ADMIN)
+    )
+    for row in admin_rows.all():
+        admins.append(
+            {
+                "user_id": str(row[0]),
+                "email": row[1],
+                "nickname": row[2],
+                "role": "implicit_admin",
+            }
+        )
+
+    owner_info = None
+    if dataset.user_id:
+        owner_row = await db.execute(
+            sa_select(UserModel.email, UserModel.nickname, UserModel.role).where(
+                UserModel.id == uuid.UUID(dataset.user_id)
+            )
+        )
+        owner_data = owner_row.first()
+        if owner_data:
+            owner_info = {
+                "user_id": dataset.user_id,
+                "email": owner_data[0],
+                "nickname": owner_data[1],
+                "role": "owner",
+            }
+
+    for c in collabs:
+        info = user_map.get(c.user_id, {})
+        explicit_members.append(
+            {
+                "user_id": c.user_id,
+                "email": info.get("email"),
+                "nickname": info.get("nickname"),
+                "role": "collaborator",
+                "added_by": c.added_by,
+                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+            }
+        )
+
+    members = []
+    if owner_info:
+        members.append(owner_info)
+    members.extend(admins)
+    members.extend(explicit_members)
+
+    return {"dataset_id": dataset_id, "members": members}
+
+
+@router.post("/datasets/{dataset_id}/collaborators")
+async def add_collaborator(
+    dataset_id: str,
+    req: AddCollaboratorRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select as sa_select
+    from backend.auth.models import User as UserModel
+
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not can_finalize(user, dataset):
+        raise HTTPException(
+            status_code=403, detail="Only owner or admin can add collaborators"
+        )
+
+    target_row = await db.execute(
+        sa_select(UserModel.role).where(UserModel.id == uuid.UUID(req.user_id))
+    )
+    target = target_row.first()
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if target[0] == UserModel.ROLE_ADMIN:
+        raise HTTPException(status_code=409, detail="admin users have implicit access")
+
+    if not user.is_admin() and target[0] == UserModel.ROLE_ADMIN:
+        raise HTTPException(
+            status_code=403, detail="Cannot add admin as explicit collaborator"
+        )
+
+    if await AnnotationCollaboratorRepository.exists(db, dataset_id, req.user_id):
+        raise HTTPException(status_code=409, detail="User is already a collaborator")
+
+    try:
+        collab = await AnnotationCollaboratorRepository.add(
+            db, dataset_id, req.user_id, str(user.id)
+        )
+        await AnnotationAuditLogRepository.log(
+            db,
+            dataset_id,
+            str(user.id),
+            "collaborator_add",
+            {"target_user_id": req.user_id},
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    return {"collaborator": collab.to_dict()}
+
+
+@router.delete("/datasets/{dataset_id}/collaborators/{target_user_id}")
+async def remove_collaborator(
+    dataset_id: str,
+    target_user_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not can_finalize(user, dataset):
+        raise HTTPException(
+            status_code=403, detail="Only owner or admin can remove collaborators"
+        )
+
+    if dataset.user_id and target_user_id == dataset.user_id:
+        raise HTTPException(status_code=400, detail="cannot remove dataset owner")
+
+    shared = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
+    residual_count = 0
+    if shared and isinstance(shared.annotations, dict):
+        for regions in shared.annotations.values():
+            if isinstance(regions, list):
+                residual_count += sum(
+                    1
+                    for r in regions
+                    if isinstance(r, dict) and r.get("created_by") == target_user_id
+                )
+
+    removed = await AnnotationCollaboratorRepository.remove(
+        db, dataset_id, target_user_id
+    )
+    if not removed:
+        raise HTTPException(status_code=404, detail="Collaborator not found")
+
+    await AnnotationAuditLogRepository.log(
+        db,
+        dataset_id,
+        str(user.id),
+        "collaborator_remove",
+        {"target_user_id": target_user_id, "residual_region_count": residual_count},
+    )
+    await db.commit()
+    await publish(
+        dataset_id, {"type": "collaborator_removed", "user_id": target_user_id}
+    )
+
+    return {"ok": True, "residual_region_count": residual_count}
+
+
+# ── Ground-Truth DELETE ───────────────────────────────────────────────────────
+
+
+@router.delete("/datasets/{dataset_id}/ground-truth")
+async def delete_dataset_ground_truth(
+    dataset_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from sqlalchemy import select as sa_select, delete as sa_delete
+    from backend.database.models import TrainingTask, SegmentationAnnotation as SAModel
+
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not can_finalize(user, dataset):
+        raise HTTPException(
+            status_code=403, detail="Only owner or admin can delete ground truth"
+        )
+
+    active_statuses = ["pending", "patching", "extracting", "training", "resuming"]
+    active_tasks = await db.execute(
+        sa_select(TrainingTask.task_id).where(TrainingTask.status.in_(active_statuses))
+    )
+    if active_tasks.first():
+        raise HTTPException(
+            status_code=400,
+            detail="active training tasks exist – wait for them to complete before deleting GT",
+        )
+
+    result = await db.execute(
+        sa_delete(SAModel).where(SAModel.annotation_id == f"annot_{dataset_id}")
+    )
+    await db.flush()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Ground truth not found")
+
+    await db.commit()
+
+    try:
+        await rebuild_draft_annotation_summary_cache(
+            db, f"annot_{dataset_id}", dataset.user_id or "", dataset_id
+        )
+    except Exception:
+        pass
+
+    await publish(dataset_id, {"type": "gt_deleted"})
+    return {"ok": True}
+
+
+# ── Annotation Audit Log ──────────────────────────────────────────────────────
+
+
+@router.get("/audit")
+async def list_annotation_audit(
+    dataset_id: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not user.is_admin():
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    entries = await AnnotationAuditLogRepository.list_entries(
+        db, dataset_id=dataset_id, event_type=event_type, limit=limit, offset=offset
+    )
+    return {"entries": [e.to_dict() for e in entries], "count": len(entries)}
+
+
+@router.get("/audit/export")
+async def export_annotation_audit_csv(
+    dataset_id: Optional[str] = Query(None),
+    event_type: Optional[str] = Query(None),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    if not user.is_admin():
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    entries = await AnnotationAuditLogRepository.list_entries(
+        db, dataset_id=dataset_id, event_type=event_type, limit=5000, offset=0
+    )
+
+    import io
+    import csv as _csv
+
+    buf = io.StringIO()
+    writer = _csv.writer(buf)
+    writer.writerow(
+        ["id", "dataset_id", "user_id", "event_type", "event_metadata", "created_at"]
+    )
+    for e in entries:
+        writer.writerow(
+            [
+                e.id,
+                e.dataset_id,
+                e.user_id or "",
+                e.event_type,
+                json.dumps(e.event_metadata, ensure_ascii=False),
+                e.created_at.isoformat() + "Z" if e.created_at else "",
+            ]
+        )
+
+    csv_bytes = buf.getvalue().encode("utf-8-sig")
+
+    from fastapi.responses import Response
+
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="annotation_audit.csv"'},
+    )
+
+
+# ── Shared Draft SSE Stream ───────────────────────────────────────────────────
+
+
+@router.get("/datasets/{dataset_id}/shared/stream")
+async def stream_shared_annotation(
+    dataset_id: str,
+    user: User = Depends(get_user_from_token_param),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await _get_dataset_with_access(dataset_id, user, db)
+    if not await can_access_shared(user, dataset, db):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    async def event_generator():
+        try:
+            async for raw in subscribe_iter(dataset_id):
+                yield f"data: {raw}\n\n"
+        except asyncio.CancelledError:
+            logger.info(f"SSE shared annotation client disconnected: {dataset_id}")
+        except Exception as exc:
+            logger.warning(f"SSE shared annotation error for {dataset_id}: {exc}")
+
+    async def keepalive_generator():
+        import json as _json
+
+        keepalive = _json.dumps({"type": "keepalive"})
+        while True:
+            await asyncio.sleep(30)
+            yield f"data: {keepalive}\n\n"
+
+    async def merged():
+        import asyncio as _asyncio
+
+        event_gen = event_generator().__aiter__()
+        keepalive_gen = keepalive_generator().__aiter__()
+
+        event_task = _asyncio.ensure_future(event_gen.__anext__())
+        keepalive_task = _asyncio.ensure_future(keepalive_gen.__anext__())
+
+        try:
+            while True:
+                done, _ = await _asyncio.wait(
+                    [event_task, keepalive_task],
+                    return_when=_asyncio.FIRST_COMPLETED,
+                )
+                for t in done:
+                    try:
+                        yield t.result()
+                        if t is event_task:
+                            event_task = _asyncio.ensure_future(event_gen.__anext__())
+                        else:
+                            keepalive_task = _asyncio.ensure_future(
+                                keepalive_gen.__anext__()
+                            )
+                    except StopAsyncIteration:
+                        return
+        except asyncio.CancelledError:
+            pass
+        finally:
+            event_task.cancel()
+            keepalive_task.cancel()
+
+    return StreamingResponse(
+        merged(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ── Cursor Presence WebSocket ─────────────────────────────────────────────────
+
+
+@router.websocket("/datasets/{dataset_id}/presence")
+async def presence_websocket(
+    websocket: WebSocket,
+    dataset_id: str,
+    token: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    from backend.auth.dependencies import _get_user_from_jwt
+
+    if not token:
+        await websocket.close(code=4001)
+        return
+
+    try:
+        user = await _get_user_from_jwt(token, db)
+    except Exception:
+        await websocket.close(code=4001)
+        return
+
+    try:
+        dataset = await _get_dataset_with_access(dataset_id, user, db)
+    except HTTPException:
+        await websocket.close(code=4003)
+        return
+
+    if not await can_access_shared(user, dataset, db):
+        await websocket.close(code=4003)
+        return
+
+    await websocket.accept()
+
+    user_id = str(user.id)
+    nickname = user.nickname or user.email or user_id
+
+    await publish_presence(
+        dataset_id, {"type": "join", "user_id": user_id, "nickname": nickname}
+    )
+
+    async def ws_to_redis():
+        try:
+            while True:
+                data = await websocket.receive_text()
+                try:
+                    msg = json.loads(data)
+                except Exception:
+                    continue
+                if msg.get("type") == "cursor":
+                    await publish_presence(
+                        dataset_id,
+                        {
+                            "type": "cursor",
+                            "user_id": user_id,
+                            "nickname": nickname,
+                            "wsi_id": msg.get("wsi_id", ""),
+                            "x": float(msg.get("x", 0)),
+                            "y": float(msg.get("y", 0)),
+                        },
+                    )
+        except (WebSocketDisconnect, Exception):
+            pass
+
+    async def redis_to_ws():
+        try:
+            async for raw in subscribe_presence_iter(dataset_id):
+                try:
+                    msg = json.loads(raw)
+                except Exception:
+                    continue
+                if msg.get("user_id") == user_id:
+                    continue
+                try:
+                    await websocket.send_text(raw)
+                except Exception:
+                    break
+        except Exception:
+            pass
+
+    ws_task = asyncio.ensure_future(ws_to_redis())
+    redis_task = asyncio.ensure_future(redis_to_ws())
+
+    try:
+        await asyncio.wait([ws_task, redis_task], return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        ws_task.cancel()
+        redis_task.cancel()
+        await publish_presence(
+            dataset_id, {"type": "leave", "user_id": user_id, "nickname": nickname}
+        )
