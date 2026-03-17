@@ -1,6 +1,6 @@
 # PathLab Database Layer
 
-> 适用版本：`PathLab v1.0.2`
+> 适用版本：`PathLab v1.0.3`
 
 `server/backend/database/` 是当前 SQLAlchemy 数据访问层，负责模型声明、异步 Session 管理、数据库初始化以及 Repository 封装。
 

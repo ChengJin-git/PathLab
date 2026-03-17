@@ -1,6 +1,6 @@
 # PathLab Client
 
-> 适用版本：`PathLab v1.0.2`
+> 适用版本：`PathLab v1.0.3`
 
 `pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar，以及固定端口部署所需的运维脚本。
 
