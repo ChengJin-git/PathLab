@@ -453,8 +453,13 @@ export default function ListPage() {
     datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
 
   useEffect(() => {
-    setDatasetCurrentPage(prev => Math.min(prev, datasetTotalPages))
-  }, [datasetTotalPages])
+    // Don't clamp page when query is in error state — a 500 response sets data to
+    // undefined, which makes datasetTotalPages briefly fall to 1 and would silently
+    // reset the user to page 1.  Keep the page as-is so the error UI stays visible.
+    if (!datasetsQuery.isError) {
+      setDatasetCurrentPage(prev => Math.min(prev, datasetTotalPages))
+    }
+  }, [datasetTotalPages, datasetsQuery.isError])
 
   useEffect(() => {
     setDatasetPageInput(String(datasetCurrentPage))
