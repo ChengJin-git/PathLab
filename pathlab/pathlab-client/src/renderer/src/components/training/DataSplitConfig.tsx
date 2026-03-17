@@ -26,7 +26,6 @@ export interface DataSplitConfigProps {
   selectedDatasetId: string | null
   selectedDatasetName: string
   isWholeDatasetSelected?: boolean
-  isPatchDataset?: boolean
 }
 
 export function DataSplitConfig({
@@ -42,7 +41,6 @@ export function DataSplitConfig({
   selectedDatasetId,
   selectedDatasetName,
   isWholeDatasetSelected = false,
-  isPatchDataset = false,
 }: DataSplitConfigProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -56,7 +54,7 @@ export function DataSplitConfig({
       </h3>
 
       <div className="space-y-4">
-        <div className={`grid grid-cols-1 gap-4 ${isSegmentation || isPatchDataset ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
+        <div className={`grid grid-cols-1 gap-4 ${isSegmentation ? 'md:grid-cols-2' : 'md:grid-cols-3'}`}>
           {/* Random Split */}
           <SplitOption
             selected={splitStrategy === 'random'}
@@ -74,7 +72,7 @@ export function DataSplitConfig({
             />
           )}
 
-          {!isPatchDataset && (hasPreDefinedSplits ? (
+          {hasPreDefinedSplits ? (
             <SplitOption
               selected={splitStrategy === 'manual'}
               onClick={() => setSplitStrategy('manual')}
@@ -92,7 +90,7 @@ export function DataSplitConfig({
               </div>
               <p className="text-xs text-blue-600">{t('training.dataSplit.noSplitsFound')}</p>
             </div>
-          ))}
+          )}
         </div>
 
         {/* Conditional Inputs */}
