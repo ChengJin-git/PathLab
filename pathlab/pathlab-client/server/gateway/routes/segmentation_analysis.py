@@ -7,6 +7,7 @@ provides bootstrap 95% CI at the image level, consistent with
 classification and survival analysis modules.
 Training curves (IoU, Dice, loss) are loaded from metrics.json.
 """
+
 import asyncio
 import functools
 import json
@@ -59,7 +60,9 @@ def _resolve_segmentation_class_names(
     if not class_names:
         for row in ai_rows:
             extra_metadata = row.extra_metadata or {}
-            class_names = _normalize_segmentation_class_names(extra_metadata.get("class_names"))
+            class_names = _normalize_segmentation_class_names(
+                extra_metadata.get("class_names")
+            )
             if class_names:
                 break
     if not class_names:
@@ -128,12 +131,14 @@ def _build_segmentation_class_metrics(
             for name in class_names:
                 class_metrics.setdefault(name, {})
 
-        for index, class_name in enumerate(class_names[:len(means)]):
-            class_metrics.setdefault(class_name, {})[metric_key] = round(float(means[index]), 4)
+        for index, class_name in enumerate(class_names[: len(means)]):
+            class_metrics.setdefault(class_name, {})[metric_key] = round(
+                float(means[index]), 4
+            )
 
         if chart_key:
             chart_payload: Dict[str, Any] = {
-                "classes": class_names[:len(means)],
+                "classes": class_names[: len(means)],
                 "means": [round(float(v), 4) for v in means.tolist()],
                 "metric_name": metric_name,
             }
@@ -143,34 +148,35 @@ def _build_segmentation_class_metrics(
 
     return {
         "classes": class_names,
-        "class_metrics": {name: metrics for name, metrics in class_metrics.items() if metrics},
+        "class_metrics": {
+            name: metrics for name, metrics in class_metrics.items() if metrics
+        },
         "chart_data": chart_payloads,
     }
 
 
-def _load_segmentation_metrics_sync(task_id: str) -> Optional[Dict[str, Any]]:
-    """Load segmentation training metrics from metrics.json.
-
-    Searches for metrics.json in the model's checkpoint directory.
-    The segmentation trainer saves checkpoints to {UPLOADS_DIR}/{task_id}/checkpoints/.
-    """
+def _load_segmentation_metrics_sync(
+    task_id: str, model_dir: Optional[Path] = None
+) -> Optional[Dict[str, Any]]:
     uploads_dir = Config.get_uploads_dir()
 
-    # Primary location: {UPLOADS_DIR}/{task_id}/checkpoints/metrics.json
-    metrics_file = uploads_dir / task_id / "checkpoints" / "metrics.json"
-    if metrics_file.exists():
-        with open(metrics_file, "r") as f:
-            return json.load(f)
+    candidates: list[Path] = []
 
-    # Fallback: search in models/ directory (in case model was moved)
+    if model_dir is not None:
+        candidates.append(model_dir / "metrics.json")
+
+    candidates.append(uploads_dir / task_id / "checkpoints" / "metrics.json")
+
     models_dir = uploads_dir / "models"
     if models_dir.exists():
-        for model_dir in models_dir.iterdir():
-            if model_dir.is_dir() and task_id in model_dir.name:
-                mf = model_dir / "metrics.json"
-                if mf.exists():
-                    with open(mf, "r") as f:
-                        return json.load(f)
+        for md in models_dir.iterdir():
+            if md.is_dir() and task_id in md.name:
+                candidates.append(md / "metrics.json")
+
+    for candidate in candidates:
+        if candidate.exists():
+            with open(candidate, "r") as f:
+                return json.load(f)
 
     return None
 
@@ -186,6 +192,7 @@ def _render_metric_curve_sync(
     """Render a metric curve chart (IoU, Dice, etc.) using matplotlib."""
     try:
         from .analysis_metrics import _setup_matplotlib_font
+
         plt = _setup_matplotlib_font()
 
         fig, ax = plt.subplots(figsize=(12, 10))
@@ -198,7 +205,9 @@ def _render_metric_curve_sync(
 
         ax.set_xlabel("Epoch", fontsize=24, fontweight="bold")
         ax.set_ylabel(y_label or metric_name, fontsize=24, fontweight="bold")
-        ax.set_title(title or f"{metric_name} Curve", fontsize=28, fontweight="bold", pad=20)
+        ax.set_title(
+            title or f"{metric_name} Curve", fontsize=28, fontweight="bold", pad=20
+        )
         ax.legend(fontsize=18)
         ax.grid(True, alpha=0.3)
         ax.tick_params(axis="both", labelsize=18)
@@ -237,7 +246,9 @@ def _is_multiclass_segmentation(
     return False
 
 
-def _resolve_segmentation_metric_value(metrics: Optional[Dict[str, Any]], metric_key: str) -> Optional[float]:
+def _resolve_segmentation_metric_value(
+    metrics: Optional[Dict[str, Any]], metric_key: str
+) -> Optional[float]:
     if not isinstance(metrics, dict):
         return None
 
@@ -268,10 +279,23 @@ def _calculate_segmentation_bootstrap_ci(
     n_samples = len(per_image_metrics)
     if n_samples < 2:
         logger.warning("Bootstrap CI requires at least 2 images")
-        return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
+        return {
+            "metrics_ci": {},
+            "n_bootstrap": n_bootstrap,
+            "confidence_level": confidence_level,
+        }
 
-    primary_metric_key = "miou" if _is_multiclass_segmentation(None, per_image_metrics) else "iou"
-    supported_metric_keys = [primary_metric_key, "dice", "accuracy", "precision", "recall", "f1"]
+    primary_metric_key = (
+        "miou" if _is_multiclass_segmentation(None, per_image_metrics) else "iou"
+    )
+    supported_metric_keys = [
+        primary_metric_key,
+        "dice",
+        "accuracy",
+        "precision",
+        "recall",
+        "f1",
+    ]
     requested_metric_keys = set(requested_metrics)
     if primary_metric_key == "miou" and "iou" in requested_metric_keys:
         requested_metric_keys.add("miou")
@@ -279,19 +303,32 @@ def _calculate_segmentation_bootstrap_ci(
         requested_metric_keys.add("iou")
 
     target_keys = [
-        key for key in supported_metric_keys
-        if key in requested_metric_keys and any(_resolve_segmentation_metric_value(m, key) is not None for m in per_image_metrics)
+        key
+        for key in supported_metric_keys
+        if key in requested_metric_keys
+        and any(
+            _resolve_segmentation_metric_value(m, key) is not None
+            for m in per_image_metrics
+        )
     ]
 
     if not target_keys:
-        return {"metrics_ci": {}, "n_bootstrap": n_bootstrap, "confidence_level": confidence_level}
+        return {
+            "metrics_ci": {},
+            "n_bootstrap": n_bootstrap,
+            "confidence_level": confidence_level,
+        }
 
     # Build arrays for fast vectorised bootstrap
     arrays: Dict[str, np.ndarray[Any, Any]] = {}
     for key in target_keys:
-        arrays[key] = np.array([
-            _resolve_segmentation_metric_value(m, key) or 0.0 for m in per_image_metrics
-        ], dtype=np.float64)
+        arrays[key] = np.array(
+            [
+                _resolve_segmentation_metric_value(m, key) or 0.0
+                for m in per_image_metrics
+            ],
+            dtype=np.float64,
+        )
 
     boot_results: Dict[str, List[float]] = {k: [] for k in target_keys}
 
@@ -354,19 +391,25 @@ async def _run_segmentation_analysis(
     task_id = task.task_id
     fallback_model_classes: List[Any] = []
 
+    trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)
+    trained_model = trained_models[0] if trained_models else None
+
+    model_dir: Optional[Path] = None
+    if trained_model is not None and trained_model.model_path is not None:
+        model_dir = Path(str(trained_model.model_path)).parent
+
     # Load training metrics from metrics.json
-    seg_metrics = await asyncio.to_thread(_load_segmentation_metrics_sync, task_id)
+    seg_metrics = await asyncio.to_thread(
+        _load_segmentation_metrics_sync, task_id, model_dir
+    )
 
     if not seg_metrics:
-        # Fallback: try to get metrics from TrainedModel DB record
-        models = await TrainedModelRepository.get_by_task_id(db, task_id)
-        if models:
-            model = models[0]
-            fallback_model_classes = model.classes or []
+        if trained_model:
+            fallback_model_classes = trained_model.classes or []
             seg_metrics = {
-                "best_val_metrics": model.val_metrics or {},
+                "best_val_metrics": trained_model.val_metrics or {},
                 "history": {
-                    "train_loss": (model.train_metrics or {}).get("loss", []),
+                    "train_loss": (trained_model.train_metrics or {}).get("loss", []),
                     "val_loss": [],
                     "train_metrics": [],
                     "val_metrics": [],
@@ -374,10 +417,11 @@ async def _run_segmentation_analysis(
             }
         else:
             from fastapi import HTTPException
+
             raise HTTPException(
                 status_code=400,
                 detail="No segmentation training metrics found for this task. "
-                       "Ensure the training has completed successfully."
+                "Ensure the training has completed successfully.",
             )
 
     if progress_callback:
@@ -422,9 +466,13 @@ async def _run_segmentation_analysis(
     )
     if test_wsi_ids:
         query = query.where(AIResult.wsi_id.in_(test_wsi_ids))
-        logger.info(f"Segmentation analysis for task {task_id}: using {len(test_wsi_ids)} test set images")
+        logger.info(
+            f"Segmentation analysis for task {task_id}: using {len(test_wsi_ids)} test set images"
+        )
     else:
-        logger.info(f"Segmentation analysis for task {task_id}: no test set found, using all images")
+        logger.info(
+            f"Segmentation analysis for task {task_id}: no test set found, using all images"
+        )
 
     ai_result = await db.execute(query)
     ai_rows = ai_result.scalars().all()
@@ -437,14 +485,24 @@ async def _run_segmentation_analysis(
         if metrics_dict and any(k in metrics_dict for k in ("iou", "dice", "accuracy")):
             per_image_metrics.append(metrics_dict)
 
-    logger.info(f"Segmentation analysis: loaded {len(per_image_metrics)} per-image metric records from AIResult")
+    logger.info(
+        f"Segmentation analysis: loaded {len(per_image_metrics)} per-image metric records from AIResult"
+    )
 
-    class_names = _resolve_segmentation_class_names(task, seg_metrics, final_metrics, ai_rows, fallback_model_classes)
-    primary_metric_key = "miou" if _is_multiclass_segmentation(class_names, [final_metrics, *per_image_metrics]) else "iou"
+    class_names = _resolve_segmentation_class_names(
+        task, seg_metrics, final_metrics, ai_rows, fallback_model_classes
+    )
+    primary_metric_key = (
+        "miou"
+        if _is_multiclass_segmentation(class_names, [final_metrics, *per_image_metrics])
+        else "iou"
+    )
     primary_metric_label = "mIoU" if primary_metric_key == "miou" else "IoU"
 
     summary_metrics = {}
-    primary_metric_value = _resolve_segmentation_metric_value(final_metrics, primary_metric_key)
+    primary_metric_value = _resolve_segmentation_metric_value(
+        final_metrics, primary_metric_key
+    )
     if primary_metric_value is not None:
         summary_metrics[primary_metric_key] = round(primary_metric_value, 4)
     for key in ("dice", "accuracy", "precision", "recall", "f1"):
@@ -462,8 +520,17 @@ async def _run_segmentation_analysis(
 
     # Override summary_metrics with mean of per-image metrics if available
     if per_image_metrics:
-        for key in (primary_metric_key, "dice", "accuracy", "precision", "recall", "f1"):
-            values = [_resolve_segmentation_metric_value(m, key) for m in per_image_metrics]
+        for key in (
+            primary_metric_key,
+            "dice",
+            "accuracy",
+            "precision",
+            "recall",
+            "f1",
+        ):
+            values = [
+                _resolve_segmentation_metric_value(m, key) for m in per_image_metrics
+            ]
             values = [value for value in values if value is not None]
             if values:
                 summary_metrics[key] = round(float(np.mean(values)), 4)
@@ -476,7 +543,9 @@ async def _run_segmentation_analysis(
     ci_metrics = (
         request.bootstrap_ci_metrics
         if request.bootstrap_ci_metrics
-        else (request.metrics if getattr(request, "compute_bootstrap_ci", False) else [])
+        else (
+            request.metrics if getattr(request, "compute_bootstrap_ci", False) else []
+        )
     )
 
     if ci_metrics and per_image_metrics:
@@ -487,6 +556,7 @@ async def _run_segmentation_analysis(
         loop = asyncio.get_event_loop()
 
         ci_range = p_ci_end - p_ci_start
+
         def bootstrap_progress_sync(fraction: float):
             if progress_callback:
                 overall_progress = int(p_ci_start + fraction * ci_range)
@@ -498,7 +568,8 @@ async def _run_segmentation_analysis(
             None,
             functools.partial(
                 _calculate_segmentation_bootstrap_ci,
-                per_image_metrics, ci_metrics,
+                per_image_metrics,
+                ci_metrics,
                 progress_callback=bootstrap_progress_sync,
             ),
         )
@@ -562,9 +633,14 @@ async def _run_segmentation_analysis(
             "epochs": list(range(1, len(train_loss) + 1)),
         }
         chart_data["loss_curve"] = loss_data
-        chart_gen_tasks.append(("loss_curve", run_chart_in_process(
-            _render_loss_chart_sync, loss_data, analysis_dir / "loss_curve.png"
-        )))
+        chart_gen_tasks.append(
+            (
+                "loss_curve",
+                run_chart_in_process(
+                    _render_loss_chart_sync, loss_data, analysis_dir / "loss_curve.png"
+                ),
+            )
+        )
 
     # IoU curve
     if "iou_curve" in request.charts and val_metrics_list:
@@ -581,12 +657,20 @@ async def _run_segmentation_analysis(
                 "val_values": val_iou,
                 "metric_name": primary_metric_label,
             }
-            chart_gen_tasks.append(("iou_curve", run_chart_in_process(
-                _render_metric_curve_sync,
-                primary_metric_label, train_iou, val_iou,
-                analysis_dir / "iou_curve.png",
-                f"{primary_metric_label} (Intersection over Union) Curve", primary_metric_label
-            )))
+            chart_gen_tasks.append(
+                (
+                    "iou_curve",
+                    run_chart_in_process(
+                        _render_metric_curve_sync,
+                        primary_metric_label,
+                        train_iou,
+                        val_iou,
+                        analysis_dir / "iou_curve.png",
+                        f"{primary_metric_label} (Intersection over Union) Curve",
+                        primary_metric_label,
+                    ),
+                )
+            )
 
     # Dice curve
     if "dice_curve" in request.charts and val_metrics_list:
@@ -599,17 +683,29 @@ async def _run_segmentation_analysis(
                 "val_values": val_dice,
                 "metric_name": "Dice",
             }
-            chart_gen_tasks.append(("dice_curve", run_chart_in_process(
-                _render_metric_curve_sync,
-                "Dice", train_dice, val_dice,
-                analysis_dir / "dice_curve.png",
-                "Dice Coefficient Curve", "Dice"
-            )))
+            chart_gen_tasks.append(
+                (
+                    "dice_curve",
+                    run_chart_in_process(
+                        _render_metric_curve_sync,
+                        "Dice",
+                        train_dice,
+                        val_dice,
+                        analysis_dir / "dice_curve.png",
+                        "Dice Coefficient Curve",
+                        "Dice",
+                    ),
+                )
+            )
 
-    if "per_class_iou" in request.charts and class_analysis["chart_data"].get("per_class_iou"):
+    if "per_class_iou" in request.charts and class_analysis["chart_data"].get(
+        "per_class_iou"
+    ):
         chart_data["per_class_iou"] = class_analysis["chart_data"]["per_class_iou"]
 
-    if "per_class_dice" in request.charts and class_analysis["chart_data"].get("per_class_dice"):
+    if "per_class_dice" in request.charts and class_analysis["chart_data"].get(
+        "per_class_dice"
+    ):
         chart_data["per_class_dice"] = class_analysis["chart_data"]["per_class_dice"]
 
     # Generate all charts in parallel
@@ -634,22 +730,24 @@ async def _run_segmentation_analysis(
         if not metrics_dict and extra_metadata:
             metrics_dict = extra_metadata.get("metrics", {})
 
-        row_class_names = _normalize_segmentation_class_names(extra_metadata.get("class_names"))
-        per_image_details.append({
-            "wsi_id": row.wsi_id,
-            "has_ground_truth": bool(extra_metadata.get("has_ground_truth", False)),
-            "metrics": metrics_dict,
-            "num_classes": extra_metadata.get("num_classes"),
-            "class_names": row_class_names or class_names,
-            "image_size": extra_metadata.get("image_size"),
-        })
+        row_class_names = _normalize_segmentation_class_names(
+            extra_metadata.get("class_names")
+        )
+        per_image_details.append(
+            {
+                "wsi_id": row.wsi_id,
+                "has_ground_truth": bool(extra_metadata.get("has_ground_truth", False)),
+                "metrics": metrics_dict,
+                "num_classes": extra_metadata.get("num_classes"),
+                "class_names": row_class_names or class_names,
+                "image_size": extra_metadata.get("image_size"),
+            }
+        )
 
     # Save summary with chart paths and data
     summary["chart_paths"] = chart_paths
     summary["chart_data"] = chart_data
-    await asyncio.to_thread(
-        _write_json_sync, analysis_dir / "summary.json", summary
-    )
+    await asyncio.to_thread(_write_json_sync, analysis_dir / "summary.json", summary)
 
     await asyncio.to_thread(
         _write_json_sync,
@@ -670,7 +768,9 @@ async def _run_segmentation_analysis(
         },
     )
 
-    logger.info(f"Segmentation analysis completed for task {task_id}, saved to {analysis_dir}")
+    logger.info(
+        f"Segmentation analysis completed for task {task_id}, saved to {analysis_dir}"
+    )
 
     return {
         "task_id": task_id,
@@ -679,4 +779,3 @@ async def _run_segmentation_analysis(
         "summary": summary,
         "chart_paths": chart_paths,
     }
-
