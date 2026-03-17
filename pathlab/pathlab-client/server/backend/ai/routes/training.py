@@ -616,9 +616,12 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
         preprocessing_config = task.preprocessing_config
         user_id = task.user_id
 
-        # Mark task as training and log start
+        # Mark task as training; preserve progress if resuming from checkpoint
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 66
+        )
         await TrainingTaskRepository.update_status(
-            db, req.task_id, TaskStatus.TRAINING, progress=66
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
         )
         split_strategy_desc = _get_split_strategy_description(
             splits_map, preprocessing_config
@@ -771,9 +774,12 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config
 
-        # Mark task as training and log start
+        # Mark task as training; preserve progress if resuming from checkpoint
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 66
+        )
         await TrainingTaskRepository.update_status(
-            db, req.task_id, TaskStatus.TRAINING, progress=66
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
         )
         split_strategy_desc = _get_split_strategy_description(
             splits_map, preprocessing_config
@@ -940,8 +946,11 @@ async def train_patch_classification(
         preprocessing_config = task.preprocessing_config
 
         # Mark task as training from 0% and let the trainer advance it to 100%.
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 0
+        )
         await TrainingTaskRepository.update_status(
-            db, req.task_id, TaskStatus.TRAINING, progress=0
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
         )
         split_strategy_desc = _get_split_strategy_description(
             splits_map, preprocessing_config
@@ -1103,8 +1112,11 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         preprocessing_config = task.preprocessing_config or {}
 
         # Mark task as training from 0% and let the trainer advance it through the training phase.
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 0
+        )
         await TrainingTaskRepository.update_status(
-            db, req.task_id, TaskStatus.TRAINING, progress=0
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
         )
         await training_logger.info(
             f"[Training] Starting Patch Segmentation ({req.architecture}/{req.backbone})",
