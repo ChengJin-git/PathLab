@@ -249,6 +249,7 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           selectedDatasetId={selectedDatasetId}
           selectedDatasetName={selectedDatasetName}
           isWholeDatasetSelected={isWholeDatasetSelected}
+          isPatchDataset={isPatchDataset}
         />
       )}
 

@@ -1181,17 +1181,6 @@ export default function WSIViewerPage() {
         } else {
           setAnnotationId(null)
         }
-
-        if (!wsi_id) return
-
-        const gt = await getWSIGroundTruth(wsi_id)
-        if (cancelled || Object.keys(gt.annotations).length === 0) return
-
-        setAllAnnotations(prev => ({
-          ...prev,
-          ...gt.annotations,
-        }))
-        mergeLabelColorsFromAnnotations(gt.annotations)
       } catch (err) {
         console.error('Failed to recover annotation:', err)
       }
