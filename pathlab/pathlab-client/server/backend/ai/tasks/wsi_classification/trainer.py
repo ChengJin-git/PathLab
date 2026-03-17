@@ -1746,8 +1746,6 @@ class WSIClassificationTrainer(BaseTrainer):
             resume_checkpoint_path=_resume_path,
         )
 
-        delete_resume_checkpoint(_resume_path)
-
         model = result["model"]
         in_dim = result["in_dim"]
         history = result["history"]
@@ -1852,6 +1850,7 @@ class WSIClassificationTrainer(BaseTrainer):
             test_sample_ids=test_ids if test_ids else None,
         )
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
@@ -2090,8 +2089,6 @@ class WSIClassificationTrainer(BaseTrainer):
                 metadata=fold_summary_metadata,
             )
 
-        delete_resume_checkpoint(_resume_path)
-
         aggregated = {
             "accuracy": {
                 "mean": round(float(np.mean(all_val_metrics["accuracy"])), 4),
@@ -2184,6 +2181,7 @@ class WSIClassificationTrainer(BaseTrainer):
         if aggregated.get("auc", {}).get("mean") is not None:
             val_metrics_dict["auc"] = aggregated["auc"]["mean"]
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),

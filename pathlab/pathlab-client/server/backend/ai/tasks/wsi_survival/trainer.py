@@ -932,7 +932,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 )
                 break
 
-        delete_resume_checkpoint(_resume_path)
         if best_state_dict:
             model.load_state_dict(best_state_dict)
 
@@ -1037,6 +1036,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             test_sample_ids=test_ids if test_ids else None,
         )
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
@@ -1866,8 +1866,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 },
             )
 
-        delete_resume_checkpoint(_resume_path)
-
         aggregated = {
             "c_index": {
                 "mean": round(float(np.mean(all_val_c_indices)), 4),
@@ -1933,6 +1931,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         ckpt_path = model_dir / "fold_0" / "aggregator.pth"
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),

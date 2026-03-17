@@ -728,7 +728,6 @@ class PatchClassificationTrainer(BaseTrainer):
                 )
                 break
 
-        delete_resume_checkpoint(_resume_path)
         self._save_final_metrics(history, best_val_metrics, best_test_metrics)
 
         # Save per-image inference results (like WSI classification)
@@ -748,6 +747,7 @@ class PatchClassificationTrainer(BaseTrainer):
         model_id = f"patch_cls_{self.task_id}"
         ckpt_path = self.uploads_root / "models" / model_id / "classifier_head.pth"
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
@@ -1231,8 +1231,6 @@ class PatchClassificationTrainer(BaseTrainer):
                 " | ".join(fold_summary_parts), metadata=fold_summary_metadata
             )
 
-        delete_resume_checkpoint(_resume_path)
-
         aggregated = {
             "accuracy": {
                 "mean": round(float(np.mean(all_val_metrics["accuracy"])), 4),
@@ -1325,6 +1323,7 @@ class PatchClassificationTrainer(BaseTrainer):
         if aggregated.get("auc", {}).get("mean") is not None:
             val_metrics_dict["auc"] = aggregated["auc"]["mean"]
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),

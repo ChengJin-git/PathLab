@@ -1196,7 +1196,6 @@ class SegmentationTrainer:
                     )
                     break
 
-            delete_resume_checkpoint(_resume_path)
             self._update_training_progress(92)
 
             # Restore best model
@@ -1264,6 +1263,7 @@ class SegmentationTrainer:
                 },
             )
             self._update_training_progress(99)
+            delete_resume_checkpoint(_resume_path)
 
             return results
         finally:
