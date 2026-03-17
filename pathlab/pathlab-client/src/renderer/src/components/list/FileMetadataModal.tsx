@@ -1,5 +1,6 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import { Select } from '../ui/select'
 import { organSources, organSourceKeyMap } from '../upload/types'
 
 export type FileMetadataMap = Map<string, { label: string; case_id: string; age: string; gender: string }>
@@ -37,17 +38,18 @@ export function FileMetadataModal({ selectedFiles, fileMetadata, datasetType = '
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   {t('listComponents.fileMetadata.sourceOrganTissue')}
                 </label>
-                <select
+               <Select
                   value={datasetSourceSelection}
-                  onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm bg-white"
-                >
-                  <option value="">{t('listComponents.editModals.selectDatasetSource')}</option>
-                  {organSources.filter((source) => source !== 'Other').map((source) => (
-                    <option key={source} value={source}>{t(`organSources.${organSourceKeyMap[source]}`)}</option>
-                  ))}
-                  <option value="Other">{t('organSources.other')}</option>
-                </select>
+                  onChange={onDatasetSourceSelectionChange}
+                  options={[
+                    ...organSources.filter((source) => source !== 'Other').map((source) => ({
+                      value: source,
+                      label: t(`organSources.${organSourceKeyMap[source]}`),
+                    })),
+                    { value: 'Other', label: t('organSources.other') },
+                  ]}
+                  placeholder={t('listComponents.editModals.selectDatasetSource')}
+                />
               </div>
               {isOtherSource && (
                 <div>
@@ -124,16 +126,16 @@ export function FileMetadataModal({ selectedFiles, fileMetadata, datasetType = '
                         <label className="block text-sm font-medium text-gray-700 mb-1">
                           {t('listComponents.fileMetadata.gender')}
                         </label>
-                        <select
+                        <Select
                           value={fileMetadata.get(file.name)?.gender || ''}
-                          onChange={(e) => onUpdateMetadata(file.name, 'gender', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                        >
-                          <option value="">{t('listComponents.fileMetadata.selectGender')}</option>
-                          <option value="Male">{t('listComponents.fileMetadata.male')}</option>
-                          <option value="Female">{t('listComponents.fileMetadata.female')}</option>
-                          <option value="Unspecified">{t('listComponents.fileMetadata.unspecified')}</option>
-                        </select>
+                          onChange={(v) => onUpdateMetadata(file.name, 'gender', v)}
+                          options={[
+                            { value: 'Male', label: t('listComponents.fileMetadata.male') },
+                            { value: 'Female', label: t('listComponents.fileMetadata.female') },
+                            { value: 'Unspecified', label: t('listComponents.fileMetadata.unspecified') },
+                          ]}
+                          placeholder={t('listComponents.fileMetadata.selectGender')}
+                        />
                       </div>
                     </div>
                   </div>

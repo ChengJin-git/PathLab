@@ -30,6 +30,7 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import { Select } from '../components/ui/select'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, updateDatasetSource } from '../api'
 import { useToast } from '../contexts/ToastContext'
@@ -1290,17 +1291,18 @@ export default function RegisterPage() {
                                     onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
                                   />
                                 </td>
-                                <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
-                                  <select
-                                    className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-emerald-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all ${hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
-                                    value={meta.event_status}
-                                    onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
-                                  >
-                                    <option value="">{t('uploadPage.statusDefault')}</option>
-                                    <option value="1">{t('uploadPage.eventOption')}</option>
-                                    <option value="0">{t('uploadPage.censoredOption')}</option>
-                                  </select>
-                                </td>
+                                 <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
+                                   <Select
+                                     value={meta.event_status}
+                                     onChange={(v) => handleMetadataChange(item.key, 'event_status', v)}
+                                     options={[
+                                       { value: '1', label: t('uploadPage.eventOption') },
+                                       { value: '0', label: t('uploadPage.censoredOption') },
+                                     ]}
+                                     placeholder={t('uploadPage.statusDefault')}
+                                     triggerClassName={hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : ''}
+                                   />
+                                 </td>
                               </>
                             ) : uploadMode === 'segmentation' ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
@@ -1333,16 +1335,16 @@ export default function RegisterPage() {
                               />
                             </td>
                             <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
-                              <select
-                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                              <Select
                                 value={meta.gender}
-                                onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
-                              >
-                                <option value="">-</option>
-                                <option value="Male">{t('uploadPage.genderM')}</option>
-                                <option value="Female">{t('uploadPage.genderF')}</option>
-                                <option value="Unspecified">?</option>
-                              </select>
+                                onChange={(v) => handleMetadataChange(item.key, 'gender', v)}
+                                options={[
+                                  { value: 'Male', label: t('uploadPage.genderM') },
+                                  { value: 'Female', label: t('uploadPage.genderF') },
+                                  { value: 'Unspecified', label: '?' },
+                                ]}
+                                placeholder="-"
+                              />
                             </td>
                             <td className="px-3 sm:px-4 py-3 align-middle text-right border-b border-slate-100">
                               <button

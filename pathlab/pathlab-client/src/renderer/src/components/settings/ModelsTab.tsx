@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
 import { Card } from '../ui/card'
+import { Select } from '../ui/select'
 import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
@@ -524,28 +525,26 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
 
           {/* Pagination Controls */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-4 border-t border-gray-100">
-            <div className="flex flex-col sm:flex-row items-center gap-2 text-sm text-gray-500">
-               <span>
-                  {t('settings.modelsTab.showing')} <span className="font-medium mx-1">{modelsTotal > 0 ? (page - 1) * pageSize + 1 : 0}</span> 
-                  {t('settings.modelsTab.to')} <span className="font-medium mx-1">{Math.min(page * pageSize, modelsTotal)}</span> 
-                  {t('settings.modelsTab.of')} <span className="font-medium mx-1">{modelsTotal}</span> {t('settings.modelsTab.entries')}
-               </span>
-               <div className="flex items-center mt-2 sm:mt-0">
-                  <span className="text-sm text-gray-500 mr-2">{t('settings.modelsTab.show')}:</span>
-                  <select
-                    value={pageSize}
-                    onChange={(e) => {
-                      setPageSize(Number(e.target.value))
-                      setPage(1)
-                    }}
-                    className="text-sm border border-gray-300 rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 bg-white"
-                  >
-                    <option value={5}>5</option>
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                  </select>
-               </div>
-            </div>
+             <div className="flex flex-col sm:flex-row items-center gap-2 text-sm text-gray-500">
+                <span>
+                   {t('settings.modelsTab.showing')} <span className="font-medium mx-1">{modelsTotal > 0 ? (page - 1) * pageSize + 1 : 0}</span> 
+                   {t('settings.modelsTab.to')} <span className="font-medium mx-1">{Math.min(page * pageSize, modelsTotal)}</span> 
+                   {t('settings.modelsTab.of')} <span className="font-medium mx-1">{modelsTotal}</span> {t('settings.modelsTab.entries')}
+                </span>
+                <div className="flex items-center mt-2 sm:mt-0">
+                   <span className="text-sm text-gray-500 mr-2">{t('settings.modelsTab.show')}:</span>
+                   <Select
+                     value={String(pageSize)}
+                     onChange={(v) => { setPageSize(Number(v)); setPage(1) }}
+                     options={[
+                       { value: '5', label: '5' },
+                       { value: '10', label: '10' },
+                       { value: '20', label: '20' },
+                     ]}
+                     triggerClassName="w-20"
+                   />
+                </div>
+             </div>
 
             <div className="flex items-center gap-1">
                 <button

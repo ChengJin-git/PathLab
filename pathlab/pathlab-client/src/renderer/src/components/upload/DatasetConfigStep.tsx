@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, 
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
+import { Select } from '../ui/select'
 import type { UploadMode, DataLevel } from './types'
 import { organSources, organSourceKeyMap } from './types'
 
@@ -264,21 +265,19 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   {t('uploadComponents.datasetConfig.sourceOrganTissue')}
                 </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
-                  <select
+                  <Select
                     value={datasetSourceSelection}
-                    onChange={(e) => onDatasetSourceSelectionChange(e.target.value)}
+                    onChange={onDatasetSourceSelectionChange}
+                    options={[
+                      ...organSources.filter((source) => source !== 'Other').map((source) => ({
+                        value: source,
+                        label: t(`organSources.${organSourceKeyMap[source]}`),
+                      })),
+                      { value: 'Other', label: t('organSources.other') },
+                    ]}
+                    placeholder={t('uploadComponents.datasetConfig.selectDatasetSource')}
                     disabled={!canEditSource}
-                    className={`w-full px-4 sm:px-5 py-3 border rounded-xl sm:rounded-2xl focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all ${!canEditSource
-                        ? 'bg-slate-100 border-slate-200 cursor-not-allowed opacity-60'
-                        : 'border-slate-200 bg-slate-50/50 hover:border-slate-300'
-                      }`}
-                  >
-                    <option value="">{t('uploadComponents.datasetConfig.selectDatasetSource')}</option>
-                    {organSources.filter((source) => source !== 'Other').map((source) => (
-                      <option key={source} value={source}>{t(`organSources.${organSourceKeyMap[source]}`)}</option>
-                    ))}
-                    <option value="Other">{t('organSources.other')}</option>
-                  </select>
+                  />
                   <input
                     type="text"
                     value={isOtherSource ? debouncedSourceCustom : ''}

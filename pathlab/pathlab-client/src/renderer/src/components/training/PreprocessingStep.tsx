@@ -13,6 +13,7 @@ import { useTranslation } from 'react-i18next'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Settings, Search, CheckCircle2 } from 'lucide-react'
+import { Select } from '../ui/select'
 import { ExtractorOption } from '../../constants/training'
 
 export interface PreprocessingStepProps {
@@ -86,15 +87,15 @@ export function PreprocessingStep({
             {/* Pyramid Level */}
             <div>
               <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{t('training.preprocessing.pyramidLevel')}</label>
-              <select
-                value={pyramidLevel}
-                onChange={(e) => setPyramidLevel(Number(e.target.value))}
-                className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm bg-gray-50 border-gray-100 rounded-xl focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all font-bold outline-none"
-              >
-                <option value={0}>{t('training.preprocessing.levelL0')}</option>
-                <option value={1}>{t('training.preprocessing.levelL1')}</option>
-                <option value={2}>{t('training.preprocessing.levelL2')}</option>
-              </select>
+              <Select
+                value={String(pyramidLevel)}
+                onChange={(v) => setPyramidLevel(Number(v))}
+                options={[
+                  { value: '0', label: t('training.preprocessing.levelL0') },
+                  { value: '1', label: t('training.preprocessing.levelL1') },
+                  { value: '2', label: t('training.preprocessing.levelL2') },
+                ]}
+              />
             </div>
 
             <div className="pt-2 border-t border-gray-50">

@@ -9,6 +9,7 @@ import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
 import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTaskContext'
 import { isSupportedName, isTmapDataFile, getBaseName } from '../../constants/fileTypes'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
+import { Select } from '../ui/select'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
   const match = content.match(/\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/)
@@ -610,23 +611,21 @@ export function DatasetRegistrationCard({
                         <div className="flex items-center gap-2 text-sm text-gray-500 py-2 h-[38px]">
                            <Loader2 className="w-4 h-4 animate-spin" /> {t('chatComponents.datasetRegistration.loading')}
                         </div>
-                      ) : (
-                        <select
-                          value={selectedDatasetId}
-                          onChange={(e) => setSelectedDatasetId(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 h-[38px]"
-                        >
-                          <option value="">{t('chatComponents.datasetRegistration.chooseDataset')}</option>
-                          {filteredDatasets.map(d => (
-                             <option key={d.dataset_id || 'uncoded'} value={d.dataset_id || ''}>
-                               {t('chatComponents.datasetRegistration.datasetWithSource', {
-                                 name: d.dataset_name,
-                                 source: getDatasetSource(d)
-                               })}
-                             </option>
-                          ))}
-                        </select>
-                      )}
+                       ) : (
+                         <Select
+                           value={selectedDatasetId}
+                           onChange={setSelectedDatasetId}
+                           options={filteredDatasets.map(d => ({
+                             value: d.dataset_id || '',
+                             label: t('chatComponents.datasetRegistration.datasetWithSource', {
+                               name: d.dataset_name,
+                               source: getDatasetSource(d),
+                             }),
+                           }))}
+                           placeholder={t('chatComponents.datasetRegistration.chooseDataset')}
+                         />
+                       )}
+
                       {!loadingDatasets && selectedDataset && (
                         <p className="mt-2 text-xs text-gray-500">
                           {t('chatComponents.datasetRegistration.sourceLabel', {

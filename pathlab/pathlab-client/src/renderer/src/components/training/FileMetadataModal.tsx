@@ -6,6 +6,7 @@
 
 import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
+import { Select } from '../ui/select'
 import { TaskType } from '../../constants/training'
 import { FileMetadata } from '../../types/training'
 
@@ -86,16 +87,16 @@ export function FileMetadataModal({
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">{t('training.fileMetadata.gender')}</label>
-                        <select
+                        <Select
                           value={fileMetadata.get(file.name)?.gender || ''}
-                          onChange={(e) => updateFileMetadata(file.name, 'gender', e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
-                        >
-                          <option value="">{t('training.fileMetadata.selectGender')}</option>
-                          <option value="Male">{t('training.fileMetadata.male')}</option>
-                          <option value="Female">{t('training.fileMetadata.female')}</option>
-                          <option value="Unspecified">{t('training.fileMetadata.unspecified')}</option>
-                        </select>
+                          onChange={(v) => updateFileMetadata(file.name, 'gender', v)}
+                          options={[
+                            { value: 'Male', label: t('training.fileMetadata.male') },
+                            { value: 'Female', label: t('training.fileMetadata.female') },
+                            { value: 'Unspecified', label: t('training.fileMetadata.unspecified') },
+                          ]}
+                          placeholder={t('training.fileMetadata.selectGender')}
+                        />
                       </div>
                     </div>
                   </div>

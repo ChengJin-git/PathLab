@@ -324,20 +324,21 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
             </div>
 
             {/* Pagination Controls */}
-            {usageTotalPages > 1 && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t border-gray-100">
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <span>{t('settings.feedbackTab.usageRowsPerPage')}</span>
-                  <select
-                    value={usagePageSize}
-                    onChange={(e) => { setUsagePageSize(Number(e.target.value)); setUsagePage(0) }}
-                    className="h-8 px-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                  >
-                    <option value={5}>5</option>
-                    <option value={10}>10</option>
-                    <option value={20}>20</option>
-                  </select>
-                </div>
+             {usageTotalPages > 1 && (
+               <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t border-gray-100">
+                 <div className="flex items-center gap-2 text-sm text-gray-500">
+                   <span>{t('settings.feedbackTab.usageRowsPerPage')}</span>
+                   <Select
+                     value={String(usagePageSize)}
+                     onChange={(v) => { setUsagePageSize(Number(v)); setUsagePage(0) }}
+                     options={[
+                       { value: '5', label: '5' },
+                       { value: '10', label: '10' },
+                       { value: '20', label: '20' },
+                     ]}
+                     triggerClassName="w-20"
+                   />
+                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-500">
                     {t('settings.feedbackTab.usagePageInfo', {

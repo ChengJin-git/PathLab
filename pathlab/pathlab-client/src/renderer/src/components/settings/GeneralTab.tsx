@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { Select } from '../ui/select'
 import { getGlobalSettings, updateGlobalSettings, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
@@ -253,22 +254,20 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       </div>
                       <div className="space-y-2">
                         <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
-                        <select
+                        <Select
                           value={model}
-                          onChange={(e) => setModel(e.target.value)}
-                          className="h-9 w-full px-2.5 border border-slate-300 rounded-md bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                        >
-                          <optgroup label={t('settings.general.multimodalModels')}>
-                            {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label={t('settings.general.textModels')}>
-                            {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                        </select>
+                          onChange={setModel}
+                          options={[
+                            {
+                              group: t('settings.general.multimodalModels'),
+                              options: MODEL_OPTIONS.filter(m => m.multimodal).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.textModels'),
+                              options: MODEL_OPTIONS.filter(m => !m.multimodal).map(m => ({ value: m.id, label: m.label })),
+                            },
+                          ]}
+                        />
                       </div>
                     </div>
                   </div>
