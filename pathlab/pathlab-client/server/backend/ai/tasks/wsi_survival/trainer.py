@@ -66,6 +66,7 @@ from backend.ai.tasks.wsi_survival.losses import NLLSurvivalLoss, calculate_c_in
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
+from backend.common.config import Config
 
 
 # Throttle WSI-survival result persistence to reduce end-of-training I/O spikes.
