@@ -2760,6 +2760,8 @@
       "resetView": "重置檢視",
       "exitFullScreen": "退出全螢幕",
       "fullScreen": "全螢幕",
+      "panHint": "移動",
+      "holdShiftHint": "按住 Shift 顯示快捷鍵",
       "loadingImage": "載入圖像中...",
       "loadingPreview": "載入預覽中...",
       "loadingHeatmap": "載入熱力圖中...",

@@ -2768,6 +2768,8 @@
       "resetView": "重置视图",
       "exitFullScreen": "退出全屏",
       "fullScreen": "全屏",
+      "panHint": "移动",
+      "holdShiftHint": "按住 Shift 显示快捷键",
       "loadingImage": "加载图像中...",
       "loadingPreview": "加载预览中...",
       "loadingHeatmap": "加载热力图中...",

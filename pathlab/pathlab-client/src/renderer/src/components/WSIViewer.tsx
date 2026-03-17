@@ -2,7 +2,14 @@ import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PREPROCESSING_BASE, API_BASE } from '../config'
 import { HeatmapData, buildSearchParams, getPatchFileImageUrl, withAuthTokenQuery } from '../api'
-import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2 } from 'lucide-react'
+import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2, Move, Keyboard } from 'lucide-react'
+
+function isInputFocused(): boolean {
+  const el = document.activeElement as HTMLElement | null
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable
+}
 
 interface WSIViewerProps {
   wsi_id: string
@@ -144,6 +151,11 @@ export default function WSIViewer({
   const [heatmapData, setHeatmapData] = useState<HeatmapData | null>(null)
   const [heatmapLoading, setHeatmapLoading] = useState(false)
   const [isFullScreen, setIsFullScreen] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+
+  const viewerInstanceRef = useRef<any>(null)
+  const keysRef = useRef<Set<string>>(new Set())
+  const rafRef = useRef<number | null>(null)
 
   useEffect(() => {
     if (!viewerRef.current || !wsi_id) return
@@ -231,7 +243,8 @@ export default function WSIViewer({
           showNavigationControl: false,
           defaultZoomLevel: 0,
           timeout: 60000,
-          crossOriginPolicy: 'Anonymous'
+          crossOriginPolicy: 'Anonymous',
+          keyboardShortcutsEnabled: false,
         })
 
         osdViewer.addHandler('open', () => {
@@ -443,9 +456,23 @@ export default function WSIViewer({
       setIsFullScreen(!!document.fullscreenElement)
     }
 
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShowShortcuts(true)
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShowShortcuts(false)
+    }
+    const handleBlur = () => setShowShortcuts(false)
+
     document.addEventListener('fullscreenchange', handleFullScreenChange)
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
     return () => {
       document.removeEventListener('fullscreenchange', handleFullScreenChange)
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
     }
   }, [])
 
@@ -458,6 +485,86 @@ export default function WSIViewer({
       document.exitFullscreen()
     }
   }
+
+  useEffect(() => {
+    viewerInstanceRef.current = viewer
+  }, [viewer])
+
+  useEffect(() => {
+    const PAN_STEP = 0.004
+
+    const animatePan = () => {
+      const v = viewerInstanceRef.current
+      if (!v?.viewport) { rafRef.current = null; return }
+      const keys = keysRef.current
+      let dx = 0, dy = 0
+      if (keys.has('KeyW')) dy -= PAN_STEP
+      if (keys.has('KeyS')) dy += PAN_STEP
+      if (keys.has('KeyA')) dx -= PAN_STEP
+      if (keys.has('KeyD')) dx += PAN_STEP
+      if (dx !== 0 || dy !== 0) {
+        v.viewport.panBy(new window.OpenSeadragon.Point(dx, dy), true)
+        rafRef.current = requestAnimationFrame(animatePan)
+      } else {
+        rafRef.current = null
+      }
+    }
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (isInputFocused()) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      const wasdCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD'])
+      if (wasdCodes.has(e.code)) {
+        e.preventDefault()
+        keysRef.current.add(e.code)
+        if (rafRef.current === null) {
+          rafRef.current = requestAnimationFrame(animatePan)
+        }
+        return
+      }
+
+      const v = viewerInstanceRef.current
+      if (!v?.viewport) return
+
+      if (e.code === 'Equal') {
+        e.preventDefault()
+        v.viewport.zoomBy(1.2)
+        v.viewport.applyConstraints()
+      } else if (e.code === 'Minus') {
+        e.preventDefault()
+        v.viewport.zoomBy(0.8)
+        v.viewport.applyConstraints()
+      } else if (e.code === 'KeyR') {
+        e.preventDefault()
+        v.viewport.goHome()
+      } else if (e.code === 'KeyF') {
+        e.preventDefault()
+        if (!document.fullscreenElement) {
+          containerRef.current?.requestFullscreen().catch(console.error)
+        } else {
+          document.exitFullscreen()
+        }
+      }
+    }
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      keysRef.current.delete(e.code)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
+      keysRef.current.clear()
+    }
+  }, [])
 
   // Render OpenSeadragon viewer (used for both WSI and patch images)
   return (
@@ -478,44 +585,73 @@ export default function WSIViewer({
       )}
 
       {/* Custom Control Bar (Apple Style) */}
-      <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 transition-opacity duration-200">
-        <div className="bg-white/90 backdrop-blur-xl border border-white/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-xl p-1.5 flex items-center gap-1">
+      <div className="absolute top-4 left-4 z-20 flex flex-col items-start gap-2 transition-opacity duration-200">
+        <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl p-1 flex items-center">
           <button
+            type="button"
             onClick={handleZoomIn}
-            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={t('wsiViewerComponents.viewer.zoomIn')}
+            className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+            title={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}
           >
             <Plus className="w-5 h-5" />
+            {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">=</kbd>}
           </button>
           <button
+            type="button"
             onClick={handleZoomOut}
-            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={t('wsiViewerComponents.viewer.zoomOut')}
+            className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+            title={`${t('wsiViewerComponents.viewer.zoomOut')} (-)`}
           >
             <Minus className="w-5 h-5" />
+            {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">-</kbd>}
           </button>
-          <div className="w-px h-4 bg-gray-200 mx-1"></div>
+          <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
           <button
+            type="button"
             onClick={handleReset}
-            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={t('wsiViewerComponents.viewer.resetView')}
+            className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+            title={`${t('wsiViewerComponents.viewer.resetView')} (R)`}
           >
             <RotateCcw className="w-4 h-4" />
+            {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">R</kbd>}
           </button>
           <button
+            type="button"
             onClick={handleFullScreen}
-            className="p-2 text-gray-700 hover:text-indigo-600 hover:bg-black/5 rounded-lg transition-all active:scale-95 outline-none"
-            title={isFullScreen ? t('wsiViewerComponents.viewer.exitFullScreen') : t('wsiViewerComponents.viewer.fullScreen')}
+            className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+            title={`${isFullScreen ? t('wsiViewerComponents.viewer.exitFullScreen') : t('wsiViewerComponents.viewer.fullScreen')} (F)`}
           >
             {isFullScreen ? (
               <Minimize className="w-4 h-4" />
             ) : (
               <Maximize className="w-4 h-4" />
             )}
+            {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">F</kbd>}
           </button>
+          <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
+          <div 
+            className="flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"
+            title={t('wsiViewerComponents.viewer.holdShiftHint')}
+          >
+            <Keyboard className="w-4 h-4" />
+            <span className="text-[10px] font-medium leading-none">Shift</span>
+          </div>
         </div>
 
-        {/* Heatmap Loading Indicator (Moved below controls) */}
+        {showShortcuts && (
+          <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl px-2.5 py-1.5 flex items-center gap-2 select-none pointer-events-none mt-0 animate-in fade-in zoom-in-95 duration-200">
+            <Move className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+            <div className="flex items-center gap-1">
+              {['W', 'A', 'S', 'D'].map(k => (
+                <kbd key={k} className="flex items-center justify-center min-w-[20px] h-[20px] bg-white border border-gray-200 border-b-[2px] shadow-sm rounded m-0 p-0 text-[11px] font-mono font-bold text-gray-600">
+                  {k}
+                </kbd>
+              ))}
+            </div>
+            <span className="text-[11px] font-medium text-gray-500">{t('wsiViewerComponents.viewer.panHint')}</span>
+          </div>
+        )}
+
         {heatmapLoading && showHeatmap && (
            <div className="bg-white/90 backdrop-blur-xl border border-indigo-100 shadow-lg rounded-xl px-4 py-2.5 flex items-center gap-3 animate-in fade-in slide-in-from-top-2">
              <Loader2 className="w-4 h-4 text-indigo-600 animate-spin" />

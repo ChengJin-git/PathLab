@@ -237,6 +237,26 @@ export default function WSIViewerPage() {
   }
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false)
+  const [showShortcuts, setShowShortcuts] = useState(false)
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShowShortcuts(true)
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'Shift') setShowShortcuts(false)
+    }
+    const handleBlur = () => setShowShortcuts(false)
+
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    window.addEventListener('blur', handleBlur)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+      window.removeEventListener('blur', handleBlur)
+    }
+  }, [])
 
   // Annotation state
   const [annotationMode, setAnnotationMode] = useState(false)
@@ -256,6 +276,13 @@ export default function WSIViewerPage() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const annotationIdRef = useRef<string | null>(null)
   const saveRequestRef = useRef<Promise<boolean> | null>(null)
+  const slideNavRef = useRef({
+    prevWSI: null as WSISummary | null,
+    nextWSI: null as WSISummary | null,
+    annotationMode: false,
+    hasUnsavedChanges: false,
+    persistAnnotations: null as ((opts?: { showToast?: boolean }) => Promise<boolean>) | null,
+  })
   const effectiveDatasetId = datasetId ?? detail?.meta?.dataset_id
   const draftCacheKey = effectiveDatasetId ?? '__NO_DATASET__'
   const draftCacheRef = useRef<{
@@ -1031,7 +1058,47 @@ export default function WSIViewerPage() {
     }
   }, [addExtractionTask, allAnnotations, annotationId, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
 
-  // Navigation guard: wrap navigation in unsaved-changes check
+  useEffect(() => {
+    slideNavRef.current.prevWSI = prevWSI
+    slideNavRef.current.nextWSI = nextWSI
+    slideNavRef.current.annotationMode = annotationMode
+    slideNavRef.current.hasUnsavedChanges = hasUnsavedChanges
+    slideNavRef.current.persistAnnotations = persistAnnotations
+  })
+
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      const el = document.activeElement as HTMLElement | null
+      if (!el) return
+      const tag = el.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) return
+      if (e.ctrlKey || e.metaKey || e.altKey) return
+
+      const { prevWSI: prev, nextWSI: next, annotationMode: inAnnotation, hasUnsavedChanges: unsaved, persistAnnotations: persist } = slideNavRef.current
+
+      if (e.code === 'KeyQ' && prev) {
+        e.preventDefault()
+        if (inAnnotation && unsaved && persist) {
+          await persist({ showToast: false })
+        }
+        navigate(`/wsi/${prev.wsi_id}`, {
+          state: { fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition },
+        })
+      } else if (e.code === 'KeyE' && next) {
+        e.preventDefault()
+        if (inAnnotation && unsaved && persist) {
+          await persist({ showToast: false })
+        }
+        navigate(`/wsi/${next.wsi_id}`, {
+          state: { fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition },
+        })
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [navigate, fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition])
+
   const guardedNavigate = useCallback((navigateFn: () => void) => {
     if (hasUnsavedChanges && annotationMode) {
       setPendingNavigation(() => navigateFn)
@@ -1207,6 +1274,7 @@ export default function WSIViewerPage() {
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
               <button
+                type="button"
                 onClick={() => prevWSI && guardedNavigate(() => navigate(`/wsi/${prevWSI.wsi_id}`, {
                   state: {
                     fromAIChat,
@@ -1218,13 +1286,15 @@ export default function WSIViewerPage() {
                   }
                 }))}
                 disabled={!prevWSI}
-                className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-                title={prevWSI ? t('common.previous') : t('wsiViewer.noPreviousSlide')}
+                className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
+                title={prevWSI ? `${t('common.previous')} (Q)` : t('wsiViewer.noPreviousSlide')}
               >
                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+                {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">Q</kbd>}
               </button>
-              <div className="w-px h-4 bg-gray-200"></div>
+              <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
               <button
+                type="button"
                 onClick={() => nextWSI && guardedNavigate(() => navigate(`/wsi/${nextWSI.wsi_id}`, {
                   state: {
                     fromAIChat,
@@ -1236,10 +1306,11 @@ export default function WSIViewerPage() {
                   }
                 }))}
                 disabled={!nextWSI}
-                className="p-1 sm:p-1.5 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all"
-                title={nextWSI ? t('common.next') : t('wsiViewer.noNextSlide')}
+                className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
+                title={nextWSI ? `${t('common.next')} (E)` : t('wsiViewer.noNextSlide')}
               >
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
+                {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">E</kbd>}
               </button>
             </div>
 

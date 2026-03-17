@@ -59,6 +59,15 @@ const getVisiblePaginationPages = (currentPage: number, totalPages: number): num
     .sort((left, right) => left - right)
 }
 
+type SortColumn = 'filename' | 'label' | 'event_time' | 'event_status'
+
+const SORT_FIELD_MAP: Record<SortColumn, string> = {
+  filename: 'original_filename',
+  label: 'label',
+  event_time: 'event_time',
+  event_status: 'event_status',
+}
+
 export default function ListPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -151,7 +160,6 @@ export default function ListPage() {
   // Case grouping - tracks which case_ids are expanded
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
 
-  type SortColumn = 'filename' | 'label' | 'event_time' | 'event_status'
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
 
@@ -169,6 +177,32 @@ export default function ListPage() {
     }
     setCurrentPage(1)
   }, [sortColumn, sortDirection])
+
+  const prefetchSort = useCallback((col: SortColumn) => {
+    if (!selectedDatasetId) return
+    const nextSortBy = SORT_FIELD_MAP[col]
+    let nextOrder: 'asc' | 'desc'
+    if (sortColumn === col) {
+      if (sortDirection === 'asc') {
+        nextOrder = 'desc'
+      } else {
+        return
+      }
+    } else {
+      nextOrder = 'asc'
+    }
+    void qc.prefetchQuery({
+      queryKey: ['wsi-list', selectedDatasetId, { page: 1, search: debouncedSearch, sort_by: nextSortBy, sort_order: nextOrder }],
+      queryFn: () => fetchWSIList(selectedDatasetId!, undefined, {
+        page: 1,
+        page_size: itemsPerPage,
+        search: debouncedSearch || undefined,
+        sort_by: nextSortBy,
+        sort_order: nextOrder,
+      }),
+      staleTime: 2 * 60 * 1000,
+    })
+  }, [qc, selectedDatasetId, sortColumn, sortDirection, debouncedSearch])
 
   // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
@@ -316,12 +350,6 @@ export default function ListPage() {
     placeholderData: (prev) => prev,
   })
 
-  const SORT_FIELD_MAP: Record<SortColumn, string> = {
-    filename: 'original_filename',
-    label: 'label',
-    event_time: 'event_time',
-    event_status: 'event_status',
-  }
   const activeSortBy = sortColumn ? SORT_FIELD_MAP[sortColumn] : undefined
   const activeSortOrder = activeSortBy ? sortDirection : undefined
 
@@ -556,11 +584,47 @@ export default function ListPage() {
     setDatasetCurrentPage(1)
   }
 
+  const prefetchFilteredDatasets = useCallback((overrides: {
+    taskType?: DatasetTaskFilter
+    dataType?: DatasetTypeFilter
+    level?: DatasetLevelFilter
+  }) => {
+    const taskType = overrides.taskType ?? datasetTaskFilter
+    const dataType = overrides.dataType ?? datasetTypeFilter
+    const level = overrides.level ?? datasetLevelFilter
+    const pageSize = datasetViewMode === 'grid' ? 8 : datasetListItemsPerPage
+
+    void qc.prefetchQuery({
+      queryKey: [
+        'page-datasets',
+        {
+          page: 1,
+          pageSize,
+          taskType,
+          dataType,
+          level,
+          source: datasetSourceFilter,
+        },
+      ],
+      queryFn: () =>
+        fetchDatasets(dataType === 'all' ? undefined : dataType, {
+          page: 1,
+          page_size: pageSize,
+          task_type: taskType === 'all' ? undefined : (taskType as 'classification' | 'survival' | 'segmentation'),
+          aggregation_level:
+            level === 'all' ? undefined : level === 'patient' ? 'case' : 'file',
+          source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+        }),
+      staleTime: 2 * 60 * 1000,
+    })
+  }, [qc, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter, datasetViewMode, datasetListItemsPerPage])
+
   const renderDatasetFilterGroup = (
     label: string,
     value: string,
     options: Array<{ value: string; label: string }>,
-    onChange: (value: string) => void
+    onChange: (value: string) => void,
+    onHover?: (value: string) => void
   ) => (
     <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
       <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
@@ -575,6 +639,7 @@ export default function ListPage() {
               key={option.value}
               type="button"
               onClick={() => onChange(option.value)}
+              onMouseEnter={!selected ? () => onHover?.(option.value) : undefined}
               className={`px-2.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap border ${selected
                 ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
                 : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-900 hover:bg-gray-50'
@@ -1356,7 +1421,8 @@ export default function ListPage() {
                         { value: 'survival', label: t('listPage.survival') },
                         { value: 'segmentation', label: t('listPage.segmentation') },
                       ],
-                      (nextValue) => { setDatasetTaskFilter(nextValue as DatasetTaskFilter); setDatasetCurrentPage(1) }
+                      (nextValue) => { setDatasetTaskFilter(nextValue as DatasetTaskFilter); setDatasetCurrentPage(1) },
+                      (v) => prefetchFilteredDatasets({ taskType: v as DatasetTaskFilter })
                     )}
 
                     {renderDatasetFilterGroup(
@@ -1367,7 +1433,8 @@ export default function ListPage() {
                         { value: 'wsi', label: t('listPage.wholeSlideImaging') },
                         { value: 'patch', label: t('listPage.patchCollection') },
                       ],
-                      (nextValue) => { setDatasetTypeFilter(nextValue as DatasetTypeFilter); setDatasetCurrentPage(1) }
+                      (nextValue) => { setDatasetTypeFilter(nextValue as DatasetTypeFilter); setDatasetCurrentPage(1) },
+                      (v) => prefetchFilteredDatasets({ dataType: v as DatasetTypeFilter })
                     )}
 
                     {renderDatasetFilterGroup(
@@ -1378,7 +1445,8 @@ export default function ListPage() {
                         { value: 'file', label: t('listPage.fileLevel') },
                         { value: 'patient', label: t('listPage.patientLevel') },
                       ],
-                      (nextValue) => { setDatasetLevelFilter(nextValue as DatasetLevelFilter); setDatasetCurrentPage(1) }
+                      (nextValue) => { setDatasetLevelFilter(nextValue as DatasetLevelFilter); setDatasetCurrentPage(1) },
+                      (v) => prefetchFilteredDatasets({ level: v as DatasetLevelFilter })
                     )}
 
                     <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
@@ -2123,6 +2191,7 @@ export default function ListPage() {
                                   <button
                                     type="button"
                                     onClick={() => handleSort(col)}
+                                    onMouseEnter={() => prefetchSort(col)}
                                     className={`inline-flex items-center gap-1 rounded hover:text-gray-800 transition-colors ${isActive ? 'text-primary-600' : ''}`}
                                   >
                                     {labels[col]}

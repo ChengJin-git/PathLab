@@ -1,4 +1,5 @@
 """WSI Survival Analysis Trainer - Discrete Time Survival."""
+
 from __future__ import annotations
 
 import json
@@ -25,7 +26,12 @@ from backend.ai.utils.vram_guard import (
     VRAMInsufficientError,
     VRAMExceededError,
 )
-from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
+from backend.ai.schemas import (
+    TaskType,
+    TaskStatus,
+    TrainResponse,
+    FeatureExtractionResponse,
+)
 from backend.ai.tasks.feature_cache import (
     compute_params_hash,
     find_cached_features,
@@ -34,18 +40,32 @@ from backend.ai.tasks.feature_cache import (
     read_params_from_coords_h5,
     safe_load_features,
 )
-from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer, MIN_PATCHES_THRESHOLD
+from backend.ai.tasks.wsi_classification.trainer import (
+    WSIClassificationTrainer,
+    MIN_PATCHES_THRESHOLD,
+)
 from backend.ai.tasks.training_utils import (
     scoped_db,
     safe_update_progress as _safe_update_progress,
     calculate_progress_update_interval,
     interpolate_progress,
+    save_resume_checkpoint_sync,
+    delete_resume_checkpoint,
 )
-from backend.database.repositories import WSIRepository, TrainingTaskRepository, AIResultRepository
+from backend.database.repositories import (
+    WSIRepository,
+    TrainingTaskRepository,
+    AIResultRepository,
+)
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
-from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
+from backend.ai.permission_revocation import (
+    is_permission_revoked,
+    PermissionRevokedException,
+)
 from backend.ai.tasks.wsi_survival.losses import NLLSurvivalLoss, calculate_c_index
-from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
+from backend.preprocessing.heatmap_preview_cache import (
+    ensure_recommendation_preview_cache,
+)
 
 
 # Throttle WSI-survival result persistence to reduce end-of-training I/O spikes.
@@ -89,7 +109,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         return times, statuses, valid_ids
 
-    def _compute_bin_edges(self, times: List[float], statuses: List[int], n_bins: int) -> np.ndarray[Any, Any]:
+    def _compute_bin_edges(
+        self, times: List[float], statuses: List[int], n_bins: int
+    ) -> np.ndarray[Any, Any]:
         """Compute bin edges from uncensored data quantiles."""
         uncensored_times = [t for t, s in zip(times, statuses) if s == 1]
 
@@ -104,7 +126,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         return bin_edges
 
-    def _discretize_times(self, times: List[float], bin_edges: np.ndarray[Any, Any]) -> List[int]:
+    def _discretize_times(
+        self, times: List[float], bin_edges: np.ndarray[Any, Any]
+    ) -> List[int]:
         """Discretize continuous times into bin indices."""
         class_bounds = bin_edges[1:]
         discretized_labels = []
@@ -169,15 +193,16 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             n = len(shuffled)
             n_train = int(n * train_ratio)
             n_val = int(n * val_ratio)
-            return shuffled[:n_train], shuffled[n_train:n_train + n_val], shuffled[n_train + n_val:]
+            return (
+                shuffled[:n_train],
+                shuffled[n_train : n_train + n_val],
+                shuffled[n_train + n_val :],
+            )
 
         try:
             # First split: separate test set
             train_val_ids, test_ids = train_test_split(
-                sample_ids,
-                test_size=test_ratio,
-                random_state=seed,
-                stratify=statuses
+                sample_ids, test_size=test_ratio, random_state=seed, stratify=statuses
             )
 
             # Get statuses for train_val
@@ -191,7 +216,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 train_val_ids,
                 test_size=relative_val_ratio,
                 random_state=seed,
-                stratify=train_val_statuses
+                stratify=train_val_statuses,
             )
 
             return list(train_ids), list(val_ids), list(test_ids)
@@ -204,7 +229,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             n = len(shuffled)
             n_train = int(n * train_ratio)
             n_val = int(n * val_ratio)
-            return shuffled[:n_train], shuffled[n_train:n_train + n_val], shuffled[n_train + n_val:]
+            return (
+                shuffled[:n_train],
+                shuffled[n_train : n_train + n_val],
+                shuffled[n_train + n_val :],
+            )
 
     async def train_model(
         self,
@@ -261,7 +290,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 if not feat_path.exists():
                     invalid.add(wsi_id)
                     continue
-                loaded_feats, _ = safe_load_features(feat_path, delete_if_corrupted=False)
+                loaded_feats, _ = safe_load_features(
+                    feat_path, delete_if_corrupted=False
+                )
                 if loaded_feats is None:
                     invalid.add(wsi_id)
                 elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
@@ -290,7 +321,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "remaining_count": len(all_wsi_ids),
                     "valid_ratio": round(valid_ratio, 4),
                     "filtered_ids": sorted(invalid_wsi_ids)[:20],
-                }
+                },
             )
 
             if valid_ratio < 0.30:
@@ -327,18 +358,26 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Filter splits_map to only include valid IDs
         filtered_splits = {}
         for split_name, ids in splits_map.items():
-            filtered_splits[split_name] = [wsi_id for wsi_id in ids if wsi_id in valid_ids]
+            filtered_splits[split_name] = [
+                wsi_id for wsi_id in ids if wsi_id in valid_ids
+            ]
 
         # Check if this is a case-level dataset - short-lived session
         async with scoped_db(session_maker) as db:
-            aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(db, self.task_id)
-        is_case_level = (aggregation_level == "case")
+            aggregation_level = (
+                await TrainingTaskRepository.get_dataset_aggregation_level(
+                    db, self.task_id
+                )
+            )
+        is_case_level = aggregation_level == "case"
 
         # Build case_level_ctx if case-level (without loading features into memory)
         case_level_ctx = None
         if is_case_level:
             async with scoped_db(session_maker) as db:
-                case_id_map = await TrainingTaskRepository.get_wsi_case_ids(db, self.task_id)
+                case_id_map = await TrainingTaskRepository.get_wsi_case_ids(
+                    db, self.task_id
+                )
             # Filter to only include valid_ids
             case_id_map = {k: v for k, v in case_id_map.items() if k in valid_ids}
 
@@ -360,7 +399,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     case_statuses[case_id] = statuses_map[first_wsi]
 
             # Convert splits to case-level
-            case_splits = self._convert_splits_to_case_level(filtered_splits, case_id_map)
+            case_splits = self._convert_splits_to_case_level(
+                filtered_splits, case_id_map
+            )
 
             case_level_ctx = {
                 "case_id_map": case_id_map,
@@ -374,7 +415,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             await logger.info(
                 f"Case-level survival training: {len(case_to_wsi)} cases from {len(valid_ids)} slides",
-                metadata={"aggregation_level": "case", "num_cases": len(case_to_wsi), "num_slides": len(valid_ids)}
+                metadata={
+                    "aggregation_level": "case",
+                    "num_cases": len(case_to_wsi),
+                    "num_slides": len(valid_ids),
+                },
             )
 
         model_id = f"{aggregator_name}_{self.task_id}"
@@ -387,15 +432,41 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         if is_kfold:
             return await self._train_survival_kfold(
-                filtered_splits, features_dir, times_map, statuses_map,
-                aggregator_name, num_classes, epochs, lr, logger, session_maker, model_id, model_dir,
-                optimizer, early_stopping_patience, case_level_ctx, seed=effective_seed,
+                filtered_splits,
+                features_dir,
+                times_map,
+                statuses_map,
+                aggregator_name,
+                num_classes,
+                epochs,
+                lr,
+                logger,
+                session_maker,
+                model_id,
+                model_dir,
+                optimizer,
+                early_stopping_patience,
+                case_level_ctx,
+                seed=effective_seed,
             )
         else:
             return await self._train_survival_regular(
-                filtered_splits, features_dir, times_map, statuses_map,
-                aggregator_name, num_classes, epochs, lr, logger, session_maker, model_id, model_dir,
-                optimizer, early_stopping_patience, case_level_ctx, seed=effective_seed,
+                filtered_splits,
+                features_dir,
+                times_map,
+                statuses_map,
+                aggregator_name,
+                num_classes,
+                epochs,
+                lr,
+                logger,
+                session_maker,
+                model_id,
+                model_dir,
+                optimizer,
+                early_stopping_patience,
+                case_level_ctx,
+                seed=effective_seed,
             )
 
     async def _train_survival_regular(
@@ -435,7 +506,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             training_statuses = statuses_map
             working_splits = splits_map
 
-        train_ids = list(working_splits.get("train", []))  # Make a copy to avoid modifying original
+        train_ids = list(
+            working_splits.get("train", [])
+        )  # Make a copy to avoid modifying original
         val_ids = list(working_splits.get("val", []))
         test_ids = list(working_splits.get("test", []))
 
@@ -450,45 +523,71 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         if not val_ids and not test_ids and len(train_ids) >= 3:
             # No val and no test provided: create full 7:1:2 split
             train_ids, val_ids, test_ids = self._stratified_survival_split(
-                train_ids, training_statuses,
-                train_ratio=0.7, val_ratio=0.1, test_ratio=0.2, seed=seed
+                train_ids,
+                training_statuses,
+                train_ratio=0.7,
+                val_ratio=0.1,
+                test_ratio=0.2,
+                seed=seed,
             )
             auto_split_created = True
             split_type = "train/val/test (7:1:2)"
         elif not val_ids and len(train_ids) >= 2:
             # Only val is missing (test exists): create val from train (90:10)
             train_ids, val_ids, _ = self._stratified_survival_split(
-                train_ids, training_statuses,
-                train_ratio=0.9, val_ratio=0.1, test_ratio=0.0, seed=seed
+                train_ids,
+                training_statuses,
+                train_ratio=0.9,
+                val_ratio=0.1,
+                test_ratio=0.0,
+                seed=seed,
             )
             auto_split_created = True
             split_type = "val (10% from train)"
         elif not test_ids and len(train_ids) >= 2:
             # Only test is missing (val exists): create test from train (80:20)
             train_ids, _, test_ids = self._stratified_survival_split(
-                train_ids, training_statuses,
-                train_ratio=0.8, val_ratio=0.0, test_ratio=0.2, seed=seed
+                train_ids,
+                training_statuses,
+                train_ratio=0.8,
+                val_ratio=0.0,
+                test_ratio=0.2,
+                seed=seed,
             )
             auto_split_created = True
             split_type = "test (20% from train)"
 
         if auto_split_created:
             # Log event distribution in splits
-            train_events = sum(1 for sid in train_ids if training_statuses.get(sid, 0) == 1)
+            train_events = sum(
+                1 for sid in train_ids if training_statuses.get(sid, 0) == 1
+            )
             val_events = sum(1 for sid in val_ids if training_statuses.get(sid, 0) == 1)
-            test_events = sum(1 for sid in test_ids if training_statuses.get(sid, 0) == 1)
+            test_events = sum(
+                1 for sid in test_ids if training_statuses.get(sid, 0) == 1
+            )
             await logger.info(
                 f"Auto-created {split_type} split (stratified by event_status)",
                 metadata={
-                    "train": len(train_ids), "val": len(val_ids), "test": len(test_ids),
-                    "train_events": train_events, "val_events": val_events, "test_events": test_events,
-                    "auto_split": True, "aggregation_level": "case" if is_case_level else "file"
-                }
+                    "train": len(train_ids),
+                    "val": len(val_ids),
+                    "test": len(test_ids),
+                    "train_events": train_events,
+                    "val_events": val_events,
+                    "test_events": test_events,
+                    "auto_split": True,
+                    "aggregation_level": "case" if is_case_level else "file",
+                },
             )
 
         await logger.info(
             f"Training survival model with splits: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)} {unit_name}",
-            metadata={"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "aggregation_level": "case" if is_case_level else "file"}
+            metadata={
+                "train": len(train_ids),
+                "val": len(val_ids),
+                "test": len(test_ids),
+                "aggregation_level": "case" if is_case_level else "file",
+            },
         )
 
         # Get training data
@@ -506,7 +605,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         discretized_labels = self._discretize_times(times, bin_edges)
 
         # Create label tensors indexed by sample_id (wsi_id or case_id)
-        y_bins_map = {sample_id: discretized_labels[i] for i, sample_id in enumerate(all_ids)}
+        y_bins_map = {
+            sample_id: discretized_labels[i] for i, sample_id in enumerate(all_ids)
+        }
         y_events_map = {sample_id: statuses[i] for i, sample_id in enumerate(all_ids)}
 
         # Create datasets based on data level
@@ -522,24 +623,32 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 task_type="survival",
                 device=self.device,
             )
-            val_dataset = CaseFeatureDataset(
-                features_dir=features_dir,
-                case_ids=val_ids,
-                case_to_wsi=case_to_wsi,
-                times=training_times,
-                statuses=training_statuses,
-                task_type="survival",
-                device=self.device,
-            ) if val_ids else None
-            test_dataset = CaseFeatureDataset(
-                features_dir=features_dir,
-                case_ids=test_ids,
-                case_to_wsi=case_to_wsi,
-                times=training_times,
-                statuses=training_statuses,
-                task_type="survival",
-                device=self.device,
-            ) if test_ids else None
+            val_dataset = (
+                CaseFeatureDataset(
+                    features_dir=features_dir,
+                    case_ids=val_ids,
+                    case_to_wsi=case_to_wsi,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
+                )
+                if val_ids
+                else None
+            )
+            test_dataset = (
+                CaseFeatureDataset(
+                    features_dir=features_dir,
+                    case_ids=test_ids,
+                    case_to_wsi=case_to_wsi,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
+                )
+                if test_ids
+                else None
+            )
         else:
             # Create WSIFeatureDataset for slide-level training
             train_dataset = WSIFeatureDataset(
@@ -550,34 +659,46 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 task_type="survival",
                 device=self.device,
             )
-            val_dataset = WSIFeatureDataset(
-                features_dir=features_dir,
-                wsi_ids=val_ids,
-                times=training_times,
-                statuses=training_statuses,
-                task_type="survival",
-                device=self.device,
-            ) if val_ids else None
-            test_dataset = WSIFeatureDataset(
-                features_dir=features_dir,
-                wsi_ids=test_ids,
-                times=training_times,
-                statuses=training_statuses,
-                task_type="survival",
-                device=self.device,
-            ) if test_ids else None
+            val_dataset = (
+                WSIFeatureDataset(
+                    features_dir=features_dir,
+                    wsi_ids=val_ids,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
+                )
+                if val_ids
+                else None
+            )
+            test_dataset = (
+                WSIFeatureDataset(
+                    features_dir=features_dir,
+                    wsi_ids=test_ids,
+                    times=training_times,
+                    statuses=training_statuses,
+                    task_type="survival",
+                    device=self.device,
+                )
+                if test_ids
+                else None
+            )
 
         # Determine feature dimension from dataset (works for both WSI and Case datasets)
         in_dim = train_dataset.get_feature_dim()
 
         # Build model
-        model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
+        model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(
+            self.device
+        )
         criterion = NLLSurvivalLoss()
 
         # Dynamic optimizer selection
         optimizer_type_lower = optimizer_type.lower()
         if optimizer_type_lower == "sgd":
-            optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+            optimizer = optim.SGD(
+                model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0
+            )
         elif optimizer_type_lower == "adamw":
             optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
         else:  # Default to adam
@@ -596,26 +717,61 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             num_workers=0,
         )
 
-        history = {"train_loss": [], "train_c_index": [], "val_loss": [], "val_c_index": []}
-        best_val_loss = float('inf')
+        history = {
+            "train_loss": [],
+            "train_c_index": [],
+            "val_loss": [],
+            "val_c_index": [],
+        }
+        best_val_loss = float("inf")
         best_val_c_index = 0.0
         best_state_dict = None
         epochs_without_improvement = 0
+        start_epoch = 1
+
+        _resume_path = model_dir / "resume_checkpoint.pth"
+        if _resume_path.exists():
+            try:
+                _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
+                model.load_state_dict(_ckpt["model_state_dict"])
+                optimizer.load_state_dict(_ckpt["optimizer_state_dict"])
+                scheduler.load_state_dict(_ckpt["scheduler_state_dict"])
+                history = _ckpt["history"]
+                best_val_loss = _ckpt["best_val_loss"]
+                best_val_c_index = _ckpt["best_val_c_index"]
+                best_state_dict = _ckpt["best_state_dict"]
+                epochs_without_improvement = _ckpt["epochs_without_improvement"]
+                start_epoch = _ckpt["epoch"] + 1
+                await logger.info(
+                    f"Resumed survival training from epoch {_ckpt['epoch']}",
+                    metadata={"resumed_from_epoch": _ckpt["epoch"]},
+                )
+            except Exception as _e:
+                await logger.info(
+                    f"Could not load resume checkpoint ({_e}), starting from epoch 1",
+                    metadata={"resume_error": str(_e)},
+                )
 
         model.train()
-        for epoch in range(1, epochs + 1):
+        for epoch in range(start_epoch, epochs + 1):
             # Check for cancellation or permission revocation at each epoch start
             if is_task_cancelled(self.task_id):
-                await logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
+                await logger.info(
+                    f"Training cancelled by user/timeout at epoch {epoch}"
+                )
                 # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
                 del model, optimizer, criterion
                 torch.cuda.empty_cache()  # Release cached GPU memory
                 raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
             if is_permission_revoked(self.task_id):
-                await logger.info(f"Training stopped: permission revoked at epoch {epoch}")
+                await logger.info(
+                    f"Training stopped: permission revoked at epoch {epoch}"
+                )
                 del model, optimizer, criterion
                 torch.cuda.empty_cache()  # Release cached GPU memory
-                raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
+                raise PermissionRevokedException(
+                    f"Training stopped at epoch {epoch}: permission revoked by admin"
+                )
 
             epoch_start_time = time.time()
 
@@ -623,19 +779,29 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # DataLoader iteration triggers torch.load() and GPU ops are blocking.
             running_loss, epoch_preds, count, stop_reason = await asyncio.to_thread(
                 self._run_one_epoch_survival,
-                train_loader, model, criterion, optimizer,
-                self.device, self.task_id,
-                y_bins_map, y_events_map, is_case_level,
+                train_loader,
+                model,
+                criterion,
+                optimizer,
+                self.device,
+                self.task_id,
+                y_bins_map,
+                y_events_map,
+                is_case_level,
             )
 
             if stop_reason == "cancelled":
                 del model, optimizer, criterion
                 torch.cuda.empty_cache()
-                raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                raise TrainingCancelledException(
+                    f"Training cancelled during epoch {epoch} loop"
+                )
             if stop_reason == "permission_revoked":
                 del model, optimizer, criterion
                 torch.cuda.empty_cache()
-                raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+                raise PermissionRevokedException(
+                    f"Training stopped during epoch {epoch}: permission revoked by admin"
+                )
 
             epoch_loss = running_loss / max(1, len(train_ids))
             train_c_index = calculate_c_index(train_times, epoch_preds, train_statuses)
@@ -647,7 +813,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             if val_dataset:
                 val_loss, val_c_index = await asyncio.to_thread(
                     self._evaluate_survival,
-                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
+                    model,
+                    val_dataset,
+                    training_times,
+                    training_statuses,
+                    y_bins_map,
+                    y_events_map,
+                    criterion,
+                    is_case_level,
                 )
                 history["val_loss"].append(val_loss)
                 history["val_c_index"].append(val_c_index)
@@ -674,7 +847,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     # best_val_c_index updated above if applicable
                     if val_loss < best_val_loss:
                         best_val_loss = val_loss
-                    best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    best_state_dict = {
+                        k: v.cpu().clone() for k, v in model.state_dict().items()
+                    }
                     epochs_without_improvement = 0
                     best_metadata = {
                         "epoch": epoch,
@@ -719,26 +894,52 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Update progress: training from 66% to 90%, saving from 90% to 100%
             progress = 66 + int(epoch / epochs * 24)
-            await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
+            await _safe_update_progress(
+                session_maker, self.task_id, TaskStatus.TRAINING, progress
+            )
+
+            await asyncio.to_thread(
+                save_resume_checkpoint_sync,
+                _resume_path,
+                {
+                    "epoch": epoch,
+                    "model_state_dict": {
+                        k: v.cpu() for k, v in model.state_dict().items()
+                    },
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "history": history,
+                    "best_val_loss": best_val_loss,
+                    "best_val_c_index": best_val_c_index,
+                    "best_state_dict": best_state_dict,
+                    "epochs_without_improvement": epochs_without_improvement,
+                },
+            )
 
             # Early stopping check
             if val_dataset and epochs_without_improvement >= early_stopping_patience:
                 await logger.info(
                     f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                    metadata={"epoch": epoch, "best_val_c_index": best_val_c_index}
+                    metadata={"epoch": epoch, "best_val_c_index": best_val_c_index},
                 )
                 break
 
-        # Restore best model
+        delete_resume_checkpoint(_resume_path)
         if best_state_dict:
             model.load_state_dict(best_state_dict)
 
-        # Test evaluation
         test_metrics = None
         if test_dataset:
             test_loss, test_c_index = await asyncio.to_thread(
                 self._evaluate_survival,
-                model, test_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
+                model,
+                test_dataset,
+                training_times,
+                training_statuses,
+                y_bins_map,
+                y_events_map,
+                criterion,
+                is_case_level,
             )
             test_metrics = {"loss": test_loss, "c_index": test_c_index}
             await logger.info(
@@ -749,36 +950,49 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         # Save checkpoint
         ckpt_path = model_dir / "aggregator.pth"
-        torch.save({
-            "state_dict": model.state_dict(),
-            "in_dim": in_dim,
-            "num_classes": n_bins,
-            "bin_edges": bin_edges,
-        }, ckpt_path)
+        torch.save(
+            {
+                "state_dict": model.state_dict(),
+                "in_dim": in_dim,
+                "num_classes": n_bins,
+                "bin_edges": bin_edges,
+            },
+            ckpt_path,
+        )
 
         # Save config
         # Note: aggregation_level uses 'file' instead of 'slide' for clarity
-        (model_dir / "config.json").write_text(json.dumps({
-            "task_id": self.task_id,
-            "task_type": str(self.task_type),
-            "model": aggregator_name,
-            "in_dim": in_dim,
-            "num_classes": n_bins,
-            "epochs": epochs,
-            "lr": lr,
-            "bin_edges": bin_edges.tolist(),
-            "split_type": "regular",
-            "aggregation_level": "case" if is_case_level else "file",
-        }, ensure_ascii=False, indent=2))
+        (model_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "task_id": self.task_id,
+                    "task_type": str(self.task_type),
+                    "model": aggregator_name,
+                    "in_dim": in_dim,
+                    "num_classes": n_bins,
+                    "epochs": epochs,
+                    "lr": lr,
+                    "bin_edges": bin_edges.tolist(),
+                    "split_type": "regular",
+                    "aggregation_level": "case" if is_case_level else "file",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
 
         # Save metrics
         metrics_data = {
             "is_kfold": False,
             "history": history,
-            "val_metrics": {"c_index": history["val_c_index"][-1]} if val_dataset and history["val_c_index"] else None,
+            "val_metrics": {"c_index": history["val_c_index"][-1]}
+            if val_dataset and history["val_c_index"]
+            else None,
             "test_metrics": test_metrics,
         }
-        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+        (model_dir / "metrics.json").write_text(
+            json.dumps(metrics_data, ensure_ascii=False, indent=2)
+        )
 
         # Create full dataset for saving results
         # Pass device for direct GPU loading
@@ -804,8 +1018,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         # Save survival results
         await self._save_survival_results(
-            model=model, dataset=full_dataset,
-            task_id=self.task_id, bin_edges=bin_edges, logger=logger, session_maker=session_maker,
+            model=model,
+            dataset=full_dataset,
+            task_id=self.task_id,
+            bin_edges=bin_edges,
+            logger=logger,
+            session_maker=session_maker,
             aggregator_name=aggregator_name,
             case_level_ctx=case_level_ctx,
             test_sample_ids=test_ids if test_ids else None,
@@ -815,9 +1033,13 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
             loss_history=history["train_loss"],
-            val_metrics=test_metrics or ({"c_index": best_val_c_index} if val_dataset and best_val_c_index else None),
+            val_metrics=test_metrics
+            or (
+                {"c_index": best_val_c_index}
+                if val_dataset and best_val_c_index
+                else None
+            ),
         )
-
 
     def _run_one_epoch_survival(
         self,
@@ -863,7 +1085,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Unpack batch based on data level
             if is_case_level:
-                features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                (
+                    features,
+                    sample_time,
+                    sample_status,
+                    sample_id,
+                    slide_wsi_ids,
+                    patch_counts,
+                ) = batch
                 sample_id = sample_id[0]
             else:
                 features, sample_time, sample_status, sample_id = batch
@@ -872,8 +1101,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             H = features.squeeze(0)  # Already on GPU
             logits, _ = model(H)
 
-            target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=device)
-            target_event = torch.tensor([y_events_map[sample_id]], dtype=torch.float32, device=device)
+            target_bin = torch.tensor(
+                [y_bins_map[sample_id]], dtype=torch.long, device=device
+            )
+            target_event = torch.tensor(
+                [y_events_map[sample_id]], dtype=torch.float32, device=device
+            )
 
             loss = criterion(logits, target_bin, target_event)
             loss.backward()
@@ -927,7 +1160,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 # Unpack batch based on data level
                 # Features are already on GPU if Dataset was created with device parameter
                 if is_case_level:
-                    features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                    (
+                        features,
+                        sample_time,
+                        sample_status,
+                        sample_id,
+                        slide_wsi_ids,
+                        patch_counts,
+                    ) = batch
                     sample_id = sample_id[0]
                 else:
                     features, sample_time, sample_status, sample_id = batch
@@ -936,8 +1176,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 H = features.squeeze(0)  # Already on GPU
                 logits, _ = model(H)
 
-                target_bin = torch.tensor([y_bins_map[sample_id]], dtype=torch.long, device=self.device)
-                target_event = torch.tensor([y_events_map[sample_id]], dtype=torch.float32, device=self.device)
+                target_bin = torch.tensor(
+                    [y_bins_map[sample_id]], dtype=torch.long, device=self.device
+                )
+                target_event = torch.tensor(
+                    [y_events_map[sample_id]], dtype=torch.float32, device=self.device
+                )
 
                 loss = criterion(logits, target_bin, target_event)
                 total_loss += float(loss.item())
@@ -996,10 +1240,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             if splits_map and fold_key in splits_map:
                 wsi_ids = splits_map[fold_key]
                 for wsi_id in wsi_ids:
-                    result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
+                    result_file = (
+                        ai_results_root
+                        / wsi_id
+                        / f"train_{task_id}_{fold_key}_result.json"
+                    )
                     if result_file.exists():
                         try:
-                            with open(result_file, 'r') as f:
+                            with open(result_file, "r") as f:
                                 data = json.load(f)
                                 risk_score = data.get("risk_score")
                                 event_time = data.get("event_time")
@@ -1007,7 +1255,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                                 surv_probs = data.get("surv_probs")
                                 bin_edges = data.get("bin_edges")
 
-                                if risk_score is not None and event_time is not None and event_status is not None:
+                                if (
+                                    risk_score is not None
+                                    and event_time is not None
+                                    and event_status is not None
+                                ):
                                     all_risks.append(risk_score)
                                     all_times.append(event_time)
                                     all_statuses.append(event_status)
@@ -1021,25 +1273,37 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             elif ai_results_root.exists():
                 for wsi_dir in ai_results_root.iterdir():
                     if wsi_dir.is_dir():
-                        result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
+                        result_file = (
+                            wsi_dir / f"train_{task_id}_{fold_key}_result.json"
+                        )
                         if result_file.exists():
                             try:
-                                with open(result_file, 'r') as f:
+                                with open(result_file, "r") as f:
                                     data = json.load(f)
-                                    if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
+                                    if (
+                                        data.get("task_id") == task_id
+                                        and data.get("fold_key") == fold_key
+                                    ):
                                         risk_score = data.get("risk_score")
                                         event_time = data.get("event_time")
                                         event_status = data.get("event_status")
                                         surv_probs = data.get("surv_probs")
                                         bin_edges = data.get("bin_edges")
 
-                                        if risk_score is not None and event_time is not None and event_status is not None:
+                                        if (
+                                            risk_score is not None
+                                            and event_time is not None
+                                            and event_status is not None
+                                        ):
                                             all_risks.append(risk_score)
                                             all_times.append(event_time)
                                             all_statuses.append(event_status)
                                             if surv_probs is not None:
                                                 all_surv_probs.append(surv_probs)
-                                            if bin_edges is not None and fold_bin_edges is None:
+                                            if (
+                                                bin_edges is not None
+                                                and fold_bin_edges is None
+                                            ):
                                                 fold_bin_edges = bin_edges
                             except Exception:
                                 continue
@@ -1052,7 +1316,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
                 # Calculate IBS if we have survival probabilities and bin edges
                 if len(all_surv_probs) >= 2 and fold_bin_edges is not None:
-                    ibs = self._calculate_ibs(all_times, all_statuses, all_surv_probs, fold_bin_edges)
+                    ibs = self._calculate_ibs(
+                        all_times, all_statuses, all_surv_probs, fold_bin_edges
+                    )
                     if ibs is not None and not np.isnan(ibs):
                         fold_ibs_scores.append(ibs)
                         per_fold_ibs[fold_key] = round(float(ibs), 4)
@@ -1112,7 +1378,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Create structured array for scikit-survival
             y_struct = np.array(
                 [(e, t) for e, t in zip(events_arr, times_arr)],
-                dtype=[('event', bool), ('time', float)]
+                dtype=[("event", bool), ("time", float)],
             )
 
             # Use bin edges (excluding first edge which is min time) as evaluation times
@@ -1136,7 +1402,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 return None
 
             # Calculate IBS using scikit-survival
-            ibs = integrated_brier_score(y_struct, y_struct, surv_probs_filtered, eval_times)
+            ibs = integrated_brier_score(
+                y_struct, y_struct, surv_probs_filtered, eval_times
+            )
 
             # Check for nan
             if np.isnan(ibs):
@@ -1189,14 +1457,42 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         unit_name = "cases" if is_case_level else "samples"
         await logger.info(
             f"Starting {num_folds}-fold cross-validation for Survival Analysis ({unit_name})",
-            metadata={"num_folds": num_folds, "epochs_per_fold": epochs, "aggregation_level": "case" if is_case_level else "file"}
+            metadata={
+                "num_folds": num_folds,
+                "epochs_per_fold": epochs,
+                "aggregation_level": "case" if is_case_level else "file",
+            },
         )
 
         fold_results = {}
         all_val_c_indices = []
         n_bins = max(2, num_classes)
 
+        _resume_path = model_dir / "resume_checkpoint.pth"
+        if _resume_path.exists():
+            try:
+                _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
+                if _ckpt.get("type") == "kfold":
+                    fold_results = _ckpt.get("completed_fold_results", {})
+                    all_val_c_indices = _ckpt.get("completed_val_c_indices", [])
+                    await logger.info(
+                        f"Resumed survival kfold: {len(fold_results)} folds already completed",
+                        metadata={"completed_folds": list(fold_results.keys())},
+                    )
+            except Exception as _e:
+                await logger.info(
+                    f"Could not load kfold resume checkpoint ({_e}), starting from fold 1",
+                    metadata={"resume_error": str(_e)},
+                )
+
         for fold_idx, val_fold_key in enumerate(fold_keys):
+            if val_fold_key in fold_results:
+                await logger.info(
+                    f"Fold {fold_idx + 1}/{num_folds}: already completed, skipping",
+                    metadata={"fold": fold_idx + 1},
+                )
+                continue
+
             val_ids = working_splits[val_fold_key]
             train_ids = []
             for key in fold_keys:
@@ -1205,7 +1501,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             await logger.info(
                 f"Fold {fold_idx + 1}/{num_folds}: train={len(train_ids)}, val={len(val_ids)} {unit_name}",
-                metadata={"fold": fold_idx + 1}
+                metadata={"fold": fold_idx + 1},
             )
 
             # Compute bin edges from this fold's training data
@@ -1217,8 +1513,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             all_ids = train_ids + val_ids
             times = [training_times[sample_id] for sample_id in all_ids]
             discretized_labels = self._discretize_times(times, bin_edges)
-            y_bins_map = {sample_id: discretized_labels[i] for i, sample_id in enumerate(all_ids)}
-            y_events_map = {sample_id: training_statuses[sample_id] for sample_id in all_ids}
+            y_bins_map = {
+                sample_id: discretized_labels[i] for i, sample_id in enumerate(all_ids)
+            }
+            y_events_map = {
+                sample_id: training_statuses[sample_id] for sample_id in all_ids
+            }
 
             # Create datasets for this fold
             # Pass device for direct GPU loading - avoids CPU->GPU transfer overhead
@@ -1261,13 +1561,17 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Build model - get feature dim from dataset
             in_dim = train_dataset.get_feature_dim()
-            model = get_aggregator(aggregator_name, in_dim=in_dim, num_classes=n_bins).to(self.device)
+            model = get_aggregator(
+                aggregator_name, in_dim=in_dim, num_classes=n_bins
+            ).to(self.device)
             criterion = NLLSurvivalLoss()
 
             # Dynamic optimizer selection
             optimizer_type_lower = optimizer_type.lower()
             if optimizer_type_lower == "sgd":
-                optimizer = optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+                optimizer = optim.SGD(
+                    model.parameters(), lr=lr, momentum=0.9, weight_decay=0.0
+                )
             elif optimizer_type_lower == "adamw":
                 optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
             else:  # Default to adam
@@ -1277,23 +1581,64 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
             history = {"loss": [], "c_index": [], "val_loss": []}
-            best_val_loss = float('inf')
+            best_val_loss = float("inf")
             best_state_dict = None
             epochs_without_improvement = 0
+            start_epoch_fold = 1
+
+            if _resume_path.exists():
+                try:
+                    _fold_ckpt = torch.load(
+                        _resume_path, map_location="cpu", weights_only=False
+                    )
+                    if (
+                        _fold_ckpt.get("type") == "kfold"
+                        and _fold_ckpt.get("fold_idx") == fold_idx
+                    ):
+                        model.load_state_dict(_fold_ckpt["model_state_dict"])
+                        optimizer.load_state_dict(_fold_ckpt["optimizer_state_dict"])
+                        scheduler.load_state_dict(_fold_ckpt["scheduler_state_dict"])
+                        history = _fold_ckpt["history"]
+                        best_val_loss = _fold_ckpt["best_val_loss"]
+                        best_state_dict = _fold_ckpt["best_state_dict"]
+                        epochs_without_improvement = _fold_ckpt[
+                            "epochs_without_improvement"
+                        ]
+                        start_epoch_fold = _fold_ckpt["epoch"] + 1
+                        await logger.info(
+                            f"[Fold {fold_idx + 1}] Resumed from epoch {_fold_ckpt['epoch']}",
+                            metadata={
+                                "fold": fold_idx + 1,
+                                "resumed_epoch": _fold_ckpt["epoch"],
+                            },
+                        )
+                except Exception as _e:
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Could not restore fold state ({_e}), restarting fold",
+                        metadata={"fold": fold_idx + 1, "resume_error": str(_e)},
+                    )
 
             model.train()
-            for epoch in range(1, epochs + 1):
+            for epoch in range(start_epoch_fold, epochs + 1):
                 # Check for cancellation or permission revocation at each epoch start
                 if is_task_cancelled(self.task_id):
-                    await logger.info(f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}")
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}"
+                    )
                     del model, optimizer, criterion
                     torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise TrainingCancelledException(f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}")
+                    raise TrainingCancelledException(
+                        f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}"
+                    )
                 if is_permission_revoked(self.task_id):
-                    await logger.info(f"[Fold {fold_idx + 1}] Training stopped: permission revoked at epoch {epoch}")
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Training stopped: permission revoked at epoch {epoch}"
+                    )
                     del model, optimizer, criterion
                     torch.cuda.empty_cache()  # Release cached GPU memory
-                    raise PermissionRevokedException(f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin")
+                    raise PermissionRevokedException(
+                        f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin"
+                    )
 
                 # Use DataLoader for training
                 # num_workers=0 for single-process loading - avoids IPC overhead for batch_size=1
@@ -1307,38 +1652,59 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 # Run training epoch in thread pool to avoid blocking the event loop.
                 running_loss, epoch_preds, count, stop_reason = await asyncio.to_thread(
                     self._run_one_epoch_survival,
-                    train_loader, model, criterion, optimizer,
-                    self.device, self.task_id,
-                    y_bins_map, y_events_map, is_case_level,
+                    train_loader,
+                    model,
+                    criterion,
+                    optimizer,
+                    self.device,
+                    self.task_id,
+                    y_bins_map,
+                    y_events_map,
+                    is_case_level,
                 )
 
                 if stop_reason == "cancelled":
                     del model, optimizer, criterion
                     torch.cuda.empty_cache()
-                    raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                    raise TrainingCancelledException(
+                        f"Training cancelled during fold {fold_idx + 1}, epoch {epoch} loop"
+                    )
                 if stop_reason == "permission_revoked":
                     del model, optimizer, criterion
                     torch.cuda.empty_cache()
-                    raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+                    raise PermissionRevokedException(
+                        f"Training stopped during fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin"
+                    )
 
                 epoch_start_time = time.time()
 
                 epoch_loss = running_loss / max(1, len(train_ids))
-                train_c_index = calculate_c_index(train_times, epoch_preds, train_statuses)
+                train_c_index = calculate_c_index(
+                    train_times, epoch_preds, train_statuses
+                )
                 history["loss"].append(epoch_loss)
                 history["c_index"].append(train_c_index)
 
                 # Validation - run in thread pool (DataLoader + GPU inference are blocking)
                 val_loss, val_c_index = await asyncio.to_thread(
                     self._evaluate_survival,
-                    model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
+                    model,
+                    val_dataset,
+                    training_times,
+                    training_statuses,
+                    y_bins_map,
+                    y_events_map,
+                    criterion,
+                    is_case_level,
                 )
                 history["val_loss"].append(val_loss)
 
                 # Select best model based on validation loss (lower is better)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                    best_state_dict = {
+                        k: v.cpu().clone() for k, v in model.state_dict().items()
+                    }
                     epochs_without_improvement = 0
                     await logger.info(
                         f"[Fold {fold_idx + 1}] Best validation model updated at epoch {epoch} | "
@@ -1386,14 +1752,43 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 fold_total_range = 34 / num_folds
                 fold_progress_base = 66 + int(fold_idx * fold_total_range)
                 fold_training_range = int(fold_total_range * 0.7)
-                progress = fold_progress_base + int(epoch / epochs * fold_training_range)
-                await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
+                progress = fold_progress_base + int(
+                    epoch / epochs * fold_training_range
+                )
+                await _safe_update_progress(
+                    session_maker, self.task_id, TaskStatus.TRAINING, progress
+                )
+
+                await asyncio.to_thread(
+                    save_resume_checkpoint_sync,
+                    _resume_path,
+                    {
+                        "type": "kfold",
+                        "fold_idx": fold_idx,
+                        "epoch": epoch,
+                        "model_state_dict": {
+                            k: v.cpu() for k, v in model.state_dict().items()
+                        },
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "history": history,
+                        "best_val_loss": best_val_loss,
+                        "best_state_dict": best_state_dict,
+                        "epochs_without_improvement": epochs_without_improvement,
+                        "completed_fold_results": fold_results,
+                        "completed_val_c_indices": all_val_c_indices,
+                    },
+                )
 
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:
                     await logger.info(
                         f"[Fold {fold_idx + 1}] Early stopping at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                        metadata={"fold": fold_idx + 1, "epoch": epoch, "best_val_loss": best_val_loss}
+                        metadata={
+                            "fold": fold_idx + 1,
+                            "epoch": epoch,
+                            "best_val_loss": best_val_loss,
+                        },
                     )
                     break
 
@@ -1402,7 +1797,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 model.load_state_dict(best_state_dict)
             final_val_loss, final_val_c_index = await asyncio.to_thread(
                 self._evaluate_survival,
-                model, val_dataset, training_times, training_statuses, y_bins_map, y_events_map, criterion, is_case_level,
+                model,
+                val_dataset,
+                training_times,
+                training_statuses,
+                y_bins_map,
+                y_events_map,
+                criterion,
+                is_case_level,
             )
 
             fold_results[val_fold_key] = {
@@ -1414,12 +1816,15 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             # Save fold checkpoint
             fold_dir = model_dir / val_fold_key
             fold_dir.mkdir(parents=True, exist_ok=True)
-            torch.save({
-                "state_dict": model.state_dict(),
-                "in_dim": in_dim,
-                "num_classes": n_bins,
-                "bin_edges": bin_edges,
-            }, fold_dir / "aggregator.pth")
+            torch.save(
+                {
+                    "state_dict": model.state_dict(),
+                    "in_dim": in_dim,
+                    "num_classes": n_bins,
+                    "bin_edges": bin_edges,
+                },
+                fold_dir / "aggregator.pth",
+            )
 
             # Calculate saving progress range for this fold
             fold_total_range = 34 / num_folds
@@ -1430,9 +1835,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Save per-WSI inference results for this fold's VALIDATION set only
             await self._save_survival_results(
-                model=model, dataset=val_dataset,
-                task_id=self.task_id, bin_edges=bin_edges, logger=logger, session_maker=session_maker,
-                aggregator_name=aggregator_name, fold_key=val_fold_key,
+                model=model,
+                dataset=val_dataset,
+                task_id=self.task_id,
+                bin_edges=bin_edges,
+                logger=logger,
+                session_maker=session_maker,
+                aggregator_name=aggregator_name,
+                fold_key=val_fold_key,
                 progress_base=fold_saving_base,
                 progress_range=fold_saving_range,
                 case_level_ctx=case_level_ctx,
@@ -1445,10 +1855,11 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     "fold": fold_idx + 1,
                     "val_loss": round(float(final_val_loss), 4),
                     "val_c_index": round(float(final_val_c_index), 4),
-                }
+                },
             )
 
-        # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
+        delete_resume_checkpoint(_resume_path)
+
         aggregated = {
             "c_index": {
                 "mean": round(float(np.mean(all_val_c_indices)), 4),
@@ -1456,14 +1867,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             },
         }
 
-        # Calculate comprehensive metrics by reading saved JSON files
-        # This recalculates c_index from saved risk scores and calculates IBS
-        # Pass splits_map to enable fast direct file access instead of slow directory scanning
-        # For case-level, we need to use the original splits_map (with wsi_ids) for file access
-        comprehensive_metrics, per_fold_ibs = self._calculate_kfold_comprehensive_metrics(
-            task_id=self.task_id,
-            fold_keys=fold_keys,
-            splits_map=splits_map,  # Always use original wsi_id splits for file access
+        comprehensive_metrics, per_fold_ibs = (
+            self._calculate_kfold_comprehensive_metrics(
+                task_id=self.task_id,
+                fold_keys=fold_keys,
+                splits_map=splits_map,  # Always use original wsi_id splits for file access
+            )
         )
         # Merge comprehensive metrics into aggregated (don't overwrite c_index already calculated)
         for metric_name, metric_stats in comprehensive_metrics.items():
@@ -1473,27 +1882,35 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Add per-fold IBS to fold_results
         for fold_key, ibs_value in per_fold_ibs.items():
             if fold_key in fold_results:
-                fold_results[fold_key]["val_metrics"]["integrated_brier_score"] = ibs_value
+                fold_results[fold_key]["val_metrics"]["integrated_brier_score"] = (
+                    ibs_value
+                )
 
         await logger.info(
             f"K-Fold complete: c_index={aggregated['c_index']['mean']:.4f}±{aggregated['c_index']['std']:.4f}",
-            metadata={"aggregated": aggregated}
+            metadata={"aggregated": aggregated},
         )
 
         # Save config
         # Note: aggregation_level uses 'file' instead of 'slide' for clarity
-        (model_dir / "config.json").write_text(json.dumps({
-            "task_id": self.task_id,
-            "task_type": str(self.task_type),
-            "model": aggregator_name,
-            "in_dim": in_dim,
-            "num_classes": n_bins,
-            "epochs": epochs,
-            "lr": lr,
-            "split_type": "kfold",
-            "num_folds": num_folds,
-            "aggregation_level": "case" if is_case_level else "file",
-        }, ensure_ascii=False, indent=2))
+        (model_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "task_id": self.task_id,
+                    "task_type": str(self.task_type),
+                    "model": aggregator_name,
+                    "in_dim": in_dim,
+                    "num_classes": n_bins,
+                    "epochs": epochs,
+                    "lr": lr,
+                    "split_type": "kfold",
+                    "num_folds": num_folds,
+                    "aggregation_level": "case" if is_case_level else "file",
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
 
         # Save aggregated metrics
         metrics_data = {
@@ -1502,7 +1919,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             "folds": fold_results,
             "aggregated": aggregated,
         }
-        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+        (model_dir / "metrics.json").write_text(
+            json.dumps(metrics_data, ensure_ascii=False, indent=2)
+        )
 
         ckpt_path = model_dir / "fold_0" / "aggregator.pth"
 
@@ -1631,7 +2050,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             original_times = case_level_ctx["original_times"]
             original_statuses = case_level_ctx["original_statuses"]
             # Count total slides
-            total_slides = sum(len(case_to_wsi.get(case_id, [])) for case_id in dataset.case_ids)
+            total_slides = sum(
+                len(case_to_wsi.get(case_id, [])) for case_id in dataset.case_ids
+            )
             total_wsi = total_slides
         else:
             total_wsi = len(dataset)
@@ -1662,16 +2083,24 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         )
         file_io_progress_range = progress_file_io_end - progress_file_io_start
 
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_inference
+        )
         unit_name = "slides" if is_case_level else "WSI slides"
         await logger.info(
             f"[Saving] Starting to save survival results{fold_desc} for {total_wsi} {unit_name}...",
-            {"task_id": task_id, "num_wsi": total_wsi, "fold_key": fold_key, "phase": "saving_results", "is_case_level": is_case_level}
+            {
+                "task_id": task_id,
+                "num_wsi": total_wsi,
+                "fold_key": fold_key,
+                "phase": "saving_results",
+                "is_case_level": is_case_level,
+            },
         )
 
         model.eval()
         ai_results_root = self.uploads_root / "ai_results"
-        has_raw_attention = hasattr(model, 'forward_with_raw_attention')
+        has_raw_attention = hasattr(model, "forward_with_raw_attention")
 
         file_save_items = []  # For parallel file saving
         db_records = []  # For batch database insert
@@ -1704,7 +2133,14 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     # Unpack batch based on data level
                     # Features are already on GPU if Dataset was created with device parameter
                     if is_case_level:
-                        features, sample_time, sample_status, sample_id, slide_wsi_ids, patch_counts = batch
+                        (
+                            features,
+                            sample_time,
+                            sample_status,
+                            sample_id,
+                            slide_wsi_ids,
+                            patch_counts,
+                        ) = batch
                         sample_id = sample_id[0]
                         # Convert from batch format
                         slide_wsi_ids = [wid[0] for wid in slide_wsi_ids]
@@ -1718,7 +2154,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     H = features.squeeze(0)  # Already on GPU
 
                     if has_raw_attention:
-                        logits, attention, raw_attention = model.forward_with_raw_attention(H)
+                        logits, attention, raw_attention = (
+                            model.forward_with_raw_attention(H)
+                        )
                     else:
                         logits, attention = model(H)
                         raw_attention = None
@@ -1727,11 +2165,26 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     hazards = torch.sigmoid(logits).cpu().numpy().flatten()
                     surv = np.cumprod(1 - hazards)
                     risk_score = np.sum(hazards)
-                    _all_risks.append((sample_id, risk_score, hazards, surv, attention, raw_attention,
-                                      float(sample_time), int(sample_status), slide_wsi_ids, patch_counts))
+                    _all_risks.append(
+                        (
+                            sample_id,
+                            risk_score,
+                            hazards,
+                            surv,
+                            attention,
+                            raw_attention,
+                            float(sample_time),
+                            int(sample_status),
+                            slide_wsi_ids,
+                            patch_counts,
+                        )
+                    )
 
                     processed_wsi += max(1, len(slide_wsi_ids)) if is_case_level else 1
-                    if processed_wsi % inference_update_interval == 0 or processed_wsi >= total_wsi:
+                    if (
+                        processed_wsi % inference_update_interval == 0
+                        or processed_wsi >= total_wsi
+                    ):
                         inference_progress = interpolate_progress(
                             progress_inference,
                             progress_build_results,
@@ -1739,7 +2192,12 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                             total_wsi,
                         )
                         asyncio.run_coroutine_threadsafe(
-                            _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, inference_progress),
+                            _safe_update_progress(
+                                session_maker,
+                                self.task_id,
+                                TaskStatus.TRAINING,
+                                inference_progress,
+                            ),
                             running_loop,
                         )
             return _all_risks
@@ -1747,7 +2205,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         all_risks = await asyncio.to_thread(_run_inference)
 
         # Calculate median risk score for risk stratification
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_build_results)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_build_results
+        )
         median_risk_score = float(np.median([r[1] for r in all_risks]))
 
         # Phase 2: Build results (split by case if case-level)
@@ -1757,25 +2217,47 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             max_interval=200,
         )
         built_wsi = 0
-        for i, (sample_id, risk_score, hazards, surv, attention, raw_attention,
-                sample_time, sample_status, batch_slide_wsi_ids, batch_patch_counts) in enumerate(all_risks):
+        for i, (
+            sample_id,
+            risk_score,
+            hazards,
+            surv,
+            attention,
+            raw_attention,
+            sample_time,
+            sample_status,
+            batch_slide_wsi_ids,
+            batch_patch_counts,
+        ) in enumerate(all_risks):
             attention_np = attention.cpu().numpy() if attention is not None else None
-            raw_attention_np = raw_attention.cpu().numpy() if raw_attention is not None else None
+            raw_attention_np = (
+                raw_attention.cpu().numpy() if raw_attention is not None else None
+            )
             risk_group = "High Risk" if risk_score >= median_risk_score else "Low Risk"
 
             if is_case_level:
                 # Case-level: split attention back to per-slide and save per WSI
                 case_id = sample_id
-                slide_wsi_ids_list = batch_slide_wsi_ids if batch_slide_wsi_ids else case_to_wsi.get(case_id, [])
+                slide_wsi_ids_list = (
+                    batch_slide_wsi_ids
+                    if batch_slide_wsi_ids
+                    else case_to_wsi.get(case_id, [])
+                )
                 # Build case_wsi_patch_counts for this case
-                case_wsi_patch_counts = {case_id: batch_patch_counts} if batch_patch_counts else {}
+                case_wsi_patch_counts = (
+                    {case_id: batch_patch_counts} if batch_patch_counts else {}
+                )
 
                 slide_attentions = self._split_case_attention_to_slides(
                     attention_np, case_id, case_wsi_patch_counts, case_to_wsi
                 )
-                slide_raw_attentions = self._split_case_attention_to_slides(
-                    raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
-                ) if raw_attention_np is not None else {wsi_id: None for wsi_id in slide_wsi_ids_list}
+                slide_raw_attentions = (
+                    self._split_case_attention_to_slides(
+                        raw_attention_np, case_id, case_wsi_patch_counts, case_to_wsi
+                    )
+                    if raw_attention_np is not None
+                    else {wsi_id: None for wsi_id in slide_wsi_ids_list}
+                )
 
                 for wsi_id in slide_wsi_ids_list:
                     wsi_result_dir = ai_results_root / wsi_id
@@ -1804,32 +2286,52 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     if fold_key:
                         result_data["fold_key"] = fold_key
 
-                    file_save_items.append((wsi_result_dir, result_data, slide_attn, slide_raw_attn, fold_suffix, task_id))
+                    file_save_items.append(
+                        (
+                            wsi_result_dir,
+                            result_data,
+                            slide_attn,
+                            slide_raw_attn,
+                            fold_suffix,
+                            task_id,
+                        )
+                    )
 
-                    result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                    attention_file_path = str(wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if slide_attn is not None else None
-                    db_records.append({
-                        "wsi_id": wsi_id,
-                        "task_id": task_id,
-                        "pred": risk_group,
-                        "probs": None,
-                        "extra_metadata": {
-                            "task_type": "survival",
-                            "case_id": case_id,
-                            "risk_score": float(risk_score),
-                            "risk_group": risk_group,
-                            "median_risk_score": median_risk_score,
-                            "hazards": hazards.tolist(),
-                            "surv_probs": surv.tolist(),
-                            "event_time": wsi_event_time,
-                            "event_status": wsi_event_status,
-                            "bin_edges": bin_edges.tolist(),
-                            "result_file": str(result_file),
-                            "attention_file": attention_file_path,
-                            "fold_key": fold_key,
-                            "aggregation_level": "case",
+                    result_file = (
+                        wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                    )
+                    attention_file_path = (
+                        str(
+                            wsi_result_dir
+                            / f"train_{task_id}{fold_suffix}_attention.npy"
+                        )
+                        if slide_attn is not None
+                        else None
+                    )
+                    db_records.append(
+                        {
+                            "wsi_id": wsi_id,
+                            "task_id": task_id,
+                            "pred": risk_group,
+                            "probs": None,
+                            "extra_metadata": {
+                                "task_type": "survival",
+                                "case_id": case_id,
+                                "risk_score": float(risk_score),
+                                "risk_group": risk_group,
+                                "median_risk_score": median_risk_score,
+                                "hazards": hazards.tolist(),
+                                "surv_probs": surv.tolist(),
+                                "event_time": wsi_event_time,
+                                "event_status": wsi_event_status,
+                                "bin_edges": bin_edges.tolist(),
+                                "result_file": str(result_file),
+                                "attention_file": attention_file_path,
+                                "fold_key": fold_key,
+                                "aggregation_level": "case",
+                            },
                         }
-                    })
+                    )
                 built_wsi += max(1, len(slide_wsi_ids_list))
             else:
                 # Slide-level: original behavior
@@ -1852,30 +2354,45 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 if fold_key:
                     result_data["fold_key"] = fold_key
 
-                file_save_items.append((result_dir, result_data, attention_np, raw_attention_np, fold_suffix, task_id))
+                file_save_items.append(
+                    (
+                        result_dir,
+                        result_data,
+                        attention_np,
+                        raw_attention_np,
+                        fold_suffix,
+                        task_id,
+                    )
+                )
 
                 result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                attention_file_path = str(result_dir / f"train_{task_id}{fold_suffix}_attention.npy") if attention_np is not None else None
-                db_records.append({
-                    "wsi_id": wsi_id,
-                    "task_id": task_id,
-                    "pred": risk_group,
-                    "probs": None,
-                    "extra_metadata": {
-                        "task_type": "survival",
-                        "risk_score": float(risk_score),
-                        "risk_group": risk_group,
-                        "median_risk_score": median_risk_score,
-                        "hazards": hazards.tolist(),
-                        "surv_probs": surv.tolist(),
-                        "event_time": sample_time,
-                        "event_status": sample_status,
-                        "bin_edges": bin_edges.tolist(),
-                        "result_file": str(result_file),
-                        "attention_file": attention_file_path,
-                        "fold_key": fold_key,
+                attention_file_path = (
+                    str(result_dir / f"train_{task_id}{fold_suffix}_attention.npy")
+                    if attention_np is not None
+                    else None
+                )
+                db_records.append(
+                    {
+                        "wsi_id": wsi_id,
+                        "task_id": task_id,
+                        "pred": risk_group,
+                        "probs": None,
+                        "extra_metadata": {
+                            "task_type": "survival",
+                            "risk_score": float(risk_score),
+                            "risk_group": risk_group,
+                            "median_risk_score": median_risk_score,
+                            "hazards": hazards.tolist(),
+                            "surv_probs": surv.tolist(),
+                            "event_time": sample_time,
+                            "event_status": sample_status,
+                            "bin_edges": bin_edges.tolist(),
+                            "result_file": str(result_file),
+                            "attention_file": attention_file_path,
+                            "fold_key": fold_key,
+                        },
                     }
-                })
+                )
                 built_wsi += 1
 
             if built_wsi % build_update_interval == 0 or built_wsi >= total_wsi:
@@ -1885,13 +2402,17 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     built_wsi,
                     total_wsi,
                 )
-                await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, build_progress)
+                await _safe_update_progress(
+                    session_maker, self.task_id, TaskStatus.TRAINING, build_progress
+                )
 
         # Phase 3: Parallel file I/O using thread pool with progress updates
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start
+        )
         await logger.info(
             f"[Saving] Writing {total_wsi} result files to disk...",
-            {"phase": "writing_files", "num_files": total_wsi}
+            {"phase": "writing_files", "num_files": total_wsi},
         )
         await logger.info(
             "[Saving] Using throttled file I/O to reduce disk pressure",
@@ -1899,7 +2420,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 "phase": "writing_files",
                 "max_workers": SAVE_FILE_IO_MAX_WORKERS,
                 "batch_size": SAVE_FILE_IO_BATCH_SIZE,
-            }
+            },
         )
 
         completed_count = [0]
@@ -1915,63 +2436,98 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
         def save_single_wsi_files(item):
             """Synchronous function to save files for a single WSI."""
-            result_dir, result_data, attention_np, raw_attention_np, fold_suffix, task_id = item
+            (
+                result_dir,
+                result_data,
+                attention_np,
+                raw_attention_np,
+                fold_suffix,
+                task_id,
+            ) = item
             result_dir.mkdir(parents=True, exist_ok=True)
 
             result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
-            with open(result_file, 'w') as f:
+            with open(result_file, "w") as f:
                 json.dump(result_data, f)
 
             if attention_np is not None:
-                attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
+                attention_file = (
+                    result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
+                )
                 np.save(attention_file, attention_np)
-                ensure_recommendation_preview_cache(result_data["wsi_id"], attention_file, Config.get_uploads_dir())
+                ensure_recommendation_preview_cache(
+                    result_data["wsi_id"], attention_file, Config.get_uploads_dir()
+                )
 
             if raw_attention_np is not None:
-                raw_attention_file = result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
+                raw_attention_file = (
+                    result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
+                )
                 np.save(raw_attention_file, raw_attention_np)
 
             return result_data["wsi_id"]
 
-        async def save_with_progress(executor, item, total,
-                                      file_io_start, file_io_range):
+        async def save_with_progress(
+            executor, item, total, file_io_start, file_io_range
+        ):
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(executor, save_single_wsi_files, item)
             async with progress_lock:
                 completed_count[0] += 1
-                if completed_count[0] % file_update_interval == 0 or completed_count[0] == total:
+                if (
+                    completed_count[0] % file_update_interval == 0
+                    or completed_count[0] == total
+                ):
                     file_progress = interpolate_progress(
                         file_io_start,
                         file_io_start + file_io_range,
                         completed_count[0],
                         total,
                     )
-                    await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
+                    await _safe_update_progress(
+                        session_maker_ref,
+                        task_id_for_update,
+                        TaskStatus.TRAINING,
+                        file_progress,
+                    )
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=SAVE_FILE_IO_MAX_WORKERS) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=SAVE_FILE_IO_MAX_WORKERS
+        ) as executor:
             for batch_start in range(0, total_wsi, SAVE_FILE_IO_BATCH_SIZE):
-                batch_items = file_save_items[batch_start:batch_start + SAVE_FILE_IO_BATCH_SIZE]
+                batch_items = file_save_items[
+                    batch_start : batch_start + SAVE_FILE_IO_BATCH_SIZE
+                ]
                 tasks = [
-                    save_with_progress(executor, item, total_wsi,
-                                       progress_file_io_start, file_io_progress_range)
+                    save_with_progress(
+                        executor,
+                        item,
+                        total_wsi,
+                        progress_file_io_start,
+                        file_io_progress_range,
+                    )
                     for item in batch_items
                 ]
                 await asyncio.gather(*tasks)
                 await asyncio.sleep(0)
 
         # Phase 4: Batch database insert
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_db
+        )
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
-            {"phase": "database_insert", "num_records": len(db_records)}
+            {"phase": "database_insert", "num_records": len(db_records)},
         )
 
         async with scoped_db(session_maker) as db:
             await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 5: Calculate and log final metrics
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_metrics)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_metrics
+        )
 
         # Extract risk scores from collected data (all_risks is list of tuples)
         # all_risks format: (sample_id, risk_score, hazards, surv, attention, raw_attention, time, status, ...)
@@ -1986,20 +2542,25 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 test_times = [r[6] for r in test_risks]
                 test_statuses = [r[7] for r in test_risks]
 
-                test_c_index = round(float(calculate_c_index(test_times, test_risk_scores, test_statuses)), 4)
+                test_c_index = round(
+                    float(
+                        calculate_c_index(test_times, test_risk_scores, test_statuses)
+                    ),
+                    4,
+                )
 
                 await logger.info(
                     f"[Saving] Complete - Test Set C-Index: {test_c_index:.4f} (n={len(test_risks)})",
-                    metadata={"c_index": test_c_index, "test_samples": len(test_risks)}
+                    metadata={"c_index": test_c_index, "test_samples": len(test_risks)},
                 )
             else:
                 await logger.info(
                     f"[Saving] Complete - No test samples found for metrics calculation",
-                    metadata={"task_id": task_id}
+                    metadata={"task_id": task_id},
                 )
         else:
             # No test set specified - log without metrics (for k-fold or when no test set)
             await logger.info(
                 f"[Saving] Complete - Inference results saved for {len(all_risks)} samples",
-                metadata={"task_id": task_id, "num_samples": len(all_risks)}
+                metadata={"task_id": task_id, "num_samples": len(all_risks)},
             )
