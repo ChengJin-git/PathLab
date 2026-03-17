@@ -9,14 +9,13 @@ interface CreateDatasetDialogProps {
   allAnnotations: AnnotationsMap
   summary?: DatasetAnnotationSummaryResponse | null
   labelColors: Record<string, string>
-  sourceDatasetId?: string
   /** True if any annotated source slide is a WSI (not a patch image) */
   hasWsiSources?: boolean
   onSubmitCreateDataset: (params: { datasetName: string; taskType: 'classification' | 'segmentation' }) => Promise<void>
 }
 
 export function CreateDatasetDialog({
-  show, onClose, allAnnotations, summary, labelColors, sourceDatasetId,
+  show, onClose, allAnnotations, summary, labelColors,
   hasWsiSources = false,
   onSubmitCreateDataset,
 }: CreateDatasetDialogProps) {
@@ -24,7 +23,6 @@ export function CreateDatasetDialog({
   const [datasetName, setDatasetName] = useState('')
   const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
   const [submitting, setSubmitting] = useState(false)
-
   const localSummary = useMemo(() => {
     const labelCounts: Record<string, number> = {}
     let totalRegions = 0
@@ -60,11 +58,8 @@ export function CreateDatasetDialog({
     }
   }, [show])
 
-  // Segmentation on existing dataset: reuse instead of creating new
-  const isSegReuse = taskType === 'segmentation' && !!sourceDatasetId
-
   const handleSubmit = async () => {
-    if ((!isSegReuse && !datasetName.trim()) || effectiveSummary.totalRegions === 0 || submitting) return
+    if (!datasetName.trim() || effectiveSummary.totalRegions === 0 || submitting) return
     setSubmitting(true)
 
     try {
@@ -88,25 +83,18 @@ export function CreateDatasetDialog({
             <h3 className="text-lg font-semibold text-gray-900">{t('annotation.createDatasetTitle')}</h3>
           </div>
 
-          {/* Dataset name input — hidden when reusing existing dataset */}
-          {isSegReuse ? (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-700">{t('annotation.reuseDatasetHint')}</p>
-            </div>
-          ) : (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.datasetName')}</label>
-              <input
-                type="text"
-                value={datasetName}
-                onChange={e => setDatasetName(e.target.value)}
-                placeholder={t('annotation.datasetNamePlaceholder')}
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
-                disabled={submitting}
-                autoFocus
-              />
-            </div>
-          )}
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.datasetName')}</label>
+            <input
+              type="text"
+              value={datasetName}
+              onChange={e => setDatasetName(e.target.value)}
+              placeholder={t('annotation.datasetNamePlaceholder')}
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+              disabled={submitting}
+              autoFocus
+            />
+          </div>
 
           {/* Task type selector */}
           <div className="mb-4">
@@ -168,7 +156,7 @@ export function CreateDatasetDialog({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={(!isSegReuse && !datasetName.trim()) || effectiveSummary.totalRegions === 0 || submitting}
+            disabled={!datasetName.trim() || effectiveSummary.totalRegions === 0 || submitting}
             className="flex-1 px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {submitting ? (

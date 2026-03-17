@@ -1036,16 +1036,15 @@ export default function WSIViewerPage() {
         if (!saved) return
       }
 
-      const isSegReuse = taskType === 'segmentation' && !!effectiveDatasetId
       const result = await extractRegions({
         annotation_id: annotationId || undefined,
         annotations: effectiveDatasetId ? undefined : allAnnotations,
-        dataset_name: isSegReuse ? '' : datasetName,
+        dataset_name: datasetName,
         task_type: taskType,
         ...(effectiveDatasetId ? { source_dataset_id: effectiveDatasetId, dataset_scope: true } : {}),
       })
 
-      addExtractionTask(result.task_id, isSegReuse ? t('annotation.reuseDataset') : datasetName)
+      addExtractionTask(result.task_id, datasetName)
       toast.success(t('annotation.extractSubmitted'))
     } catch (err: any) {
       toast.error(err?.message || t('annotation.extractFailed'))
@@ -1602,7 +1601,6 @@ export default function WSIViewerPage() {
         allAnnotations={allAnnotations}
         summary={effectiveDatasetId ? datasetAnnotationSummary : null}
         labelColors={labelColors}
-        sourceDatasetId={effectiveDatasetId}
         hasWsiSources={datasetAnnotationSummary?.has_wsi_sources ?? hasWsiSources}
         onSubmitCreateDataset={handleCreateDatasetFromAnnotations}
       />
