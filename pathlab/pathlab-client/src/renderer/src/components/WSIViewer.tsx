@@ -457,21 +457,16 @@ export default function WSIViewer({
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setShowShortcuts(true)
-    }
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'Shift') setShowShortcuts(false)
+      if (e.key === 'Shift' && !e.repeat) setShowShortcuts(prev => !prev)
     }
     const handleBlur = () => setShowShortcuts(false)
 
     document.addEventListener('fullscreenchange', handleFullScreenChange)
     window.addEventListener('keydown', handleKeyDown)
-    window.addEventListener('keyup', handleKeyUp)
     window.addEventListener('blur', handleBlur)
     return () => {
       document.removeEventListener('fullscreenchange', handleFullScreenChange)
       window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('keyup', handleKeyUp)
       window.removeEventListener('blur', handleBlur)
     }
   }, [])
@@ -630,7 +625,7 @@ export default function WSIViewer({
           </button>
           <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
           <div 
-            className="flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"
+            className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"
             title={t('wsiViewerComponents.viewer.holdShiftHint')}
           >
             <Keyboard className="w-4 h-4" />

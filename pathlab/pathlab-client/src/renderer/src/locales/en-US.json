@@ -2825,7 +2825,7 @@
       "exitFullScreen": "Exit Full Screen",
       "fullScreen": "Full Screen",
       "panHint": "Pan",
-      "holdShiftHint": "Hold Shift for shortcuts",
+      "holdShiftHint": "Press Shift for shortcuts",
       "loadingImage": "Loading Image...",
       "loadingPreview": "Loading Preview...",
       "loadingHeatmap": "Loading Heatmap...",
