@@ -164,9 +164,14 @@ class WSIClassificationTrainer(BaseTrainer):
             # Find coords_h5 from new cache structure: coordinates/{params_hash}/{wsi_id}_coords.h5
             coords_h5 = find_any_cached_coords_for_wsi(self.uploads_root, wsi_id)
             if not coords_h5:
-                raise FileNotFoundError(
-                    f"Coordinates not found for {wsi_id}. Please run preprocessing first."
+                await logger.warning(
+                    f"[{i}/{total}] Skipping {wsi_id}: no coordinate file found. "
+                    f"The slide likely produced 0 patches during preprocessing "
+                    f"(blank or no detectable tissue).",
+                    metadata={"wsi_id": wsi_id, "reason": "no_coords_file"},
                 )
+                skipped_wsi_ids.append(wsi_id)
+                continue
 
             # Compute params_hash from coords.h5 to ensure consistency
             # The coords.h5 file contains the actual preprocessing parameters used
@@ -328,9 +333,18 @@ class WSIClassificationTrainer(BaseTrainer):
                         wsi_path = wsi.wsi_path
 
                     if not coords_h5.exists():
-                        raise FileNotFoundError(
-                            f"Coordinates not found for {wsi_id}: {coords_h5}"
+                        await logger.warning(
+                            f"[{i}/{total}] Skipping {wsi_id}: coordinate file disappeared "
+                            f"before feature extraction ({coords_h5}). "
+                            f"The slide may have been deleted or had 0 patches.",
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "reason": "coords_file_missing",
+                                "coords_h5": str(coords_h5),
+                            },
                         )
+                        skipped_wsi_ids.append(wsi_id)
+                        continue
 
                     await logger.info(
                         f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
@@ -1374,12 +1388,14 @@ class WSIClassificationTrainer(BaseTrainer):
         # Layer 5: Final pre-training filter — runs in thread to avoid blocking event loop
         def _final_feature_filter_sync(wsi_ids, already_invalid, feat_dir):
             invalid = set(already_invalid)
+            blank_wsi_ids = []
             low_quality_details = []
             for wsi_id in wsi_ids:
                 if wsi_id in invalid:
                     continue
                 feat_path = feat_dir / f"{wsi_id}.pt"
                 if not feat_path.exists():
+                    blank_wsi_ids.append(wsi_id)
                     invalid.add(wsi_id)
                     continue
                 loaded_feats, _ = safe_load_features(
@@ -1390,11 +1406,17 @@ class WSIClassificationTrainer(BaseTrainer):
                 elif loaded_feats.shape[0] < MIN_PATCHES_THRESHOLD:
                     low_quality_details.append((wsi_id, loaded_feats.shape[0]))
                     invalid.add(wsi_id)
-            return invalid, low_quality_details
+            return invalid, blank_wsi_ids, low_quality_details
 
-        invalid_wsi_ids, low_quality_details = await asyncio.to_thread(
+        invalid_wsi_ids, blank_wsi_ids, low_quality_details = await asyncio.to_thread(
             _final_feature_filter_sync, all_wsi_ids, unrepaired_ids, features_dir
         )
+
+        for wsi_id in blank_wsi_ids:
+            await logger.warning(
+                f"Skipping {wsi_id}: no feature file (0 patches during preprocessing — blank or no detectable tissue).",
+                metadata={"wsi_id": wsi_id, "reason": "no_feature_file"},
+            )
 
         for wsi_id, patch_count in low_quality_details:
             await logger.warning(

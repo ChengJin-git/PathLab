@@ -16,7 +16,11 @@ from typing import Any, Dict, List, Optional, Set, TypedDict
 from fastapi import HTTPException
 
 from backend.common.config import Config
-from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
+from backend.database.repositories import (
+    TrainedModelRepository,
+    TrainingTaskRepository,
+    WSIRepository,
+)
 
 from .analysis_helpers import _get_random_seed_from_task
 from .analysis_metrics import (
@@ -488,6 +492,7 @@ async def _run_external_validation_survival_analysis(
                                         _wsi_results.append(
                                             {
                                                 "wsi_id": data.get("wsi_id"),
+                                                "filename": None,
                                                 "case_id": data.get(
                                                     "case_id", data.get("wsi_id")
                                                 ),
@@ -725,7 +730,18 @@ async def _run_external_validation_survival_analysis(
 
     await asyncio.to_thread(_write_json_sync, analysis_dir / "summary.json", summary)
 
-    # Save detailed results
+    extval_surv_ids = [
+        r["wsi_id"] for r in wsi_results if r.get("wsi_id") and not r.get("filename")
+    ]
+    if extval_surv_ids:
+        extval_surv_map = await WSIRepository.get_by_ids(db, extval_surv_ids)
+        for r in wsi_results:
+            if not r.get("filename") and r.get("wsi_id"):
+                wsi_obj = extval_surv_map.get(r["wsi_id"])
+                r["filename"] = (wsi_obj.original_filename if wsi_obj else None) or r[
+                    "wsi_id"
+                ]
+
     await asyncio.to_thread(
         _write_json_sync,
         analysis_dir / "results.json",
@@ -956,6 +972,7 @@ async def _run_external_validation_segmentation_analysis(
         per_image_details.append(
             {
                 "wsi_id": r.get("wsi_id"),
+                "filename": None,
                 "has_ground_truth": r.get("has_ground_truth", False),
                 "metrics": r.get("metrics", {}),
                 "num_classes": r.get("num_classes"),
@@ -963,6 +980,20 @@ async def _run_external_validation_segmentation_analysis(
                 "image_size": r.get("image_size"),
             }
         )
+
+    extval_seg_ids = [
+        r["wsi_id"]
+        for r in per_image_details
+        if r.get("wsi_id") and not r.get("filename")
+    ]
+    if extval_seg_ids:
+        extval_seg_map = await WSIRepository.get_by_ids(db, extval_seg_ids)
+        for r in per_image_details:
+            if not r.get("filename") and r.get("wsi_id"):
+                wsi_obj = extval_seg_map.get(r["wsi_id"])
+                r["filename"] = (wsi_obj.original_filename if wsi_obj else None) or r[
+                    "wsi_id"
+                ]
 
     await asyncio.to_thread(
         _write_json_sync,
@@ -1065,6 +1096,7 @@ async def _run_external_validation_classification_analysis(
                                     _wsi_results.append(
                                         {
                                             "wsi_id": data.get("wsi_id"),
+                                            "filename": None,
                                             "case_id": data.get(
                                                 "case_id", data.get("wsi_id")
                                             ),

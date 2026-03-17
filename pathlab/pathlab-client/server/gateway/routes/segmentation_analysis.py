@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from backend.common.config import Config
 from backend.database.models import AIResult, TrainingTaskWSI
-from backend.database.repositories import TrainedModelRepository
+from backend.database.repositories import TrainedModelRepository, WSIRepository
 
 from .analysis_helpers import _get_random_seed_from_task
 from .analysis_metrics import (
@@ -736,6 +736,7 @@ async def _run_segmentation_analysis(
         per_image_details.append(
             {
                 "wsi_id": row.wsi_id,
+                "filename": None,
                 "has_ground_truth": bool(extra_metadata.get("has_ground_truth", False)),
                 "metrics": metrics_dict,
                 "num_classes": extra_metadata.get("num_classes"),
@@ -748,6 +749,20 @@ async def _run_segmentation_analysis(
     summary["chart_paths"] = chart_paths
     summary["chart_data"] = chart_data
     await asyncio.to_thread(_write_json_sync, analysis_dir / "summary.json", summary)
+
+    seg_ids_for_lookup = [
+        r["wsi_id"]
+        for r in per_image_details
+        if r.get("wsi_id") and not r.get("filename")
+    ]
+    if seg_ids_for_lookup:
+        seg_wsi_map = await WSIRepository.get_by_ids(db, seg_ids_for_lookup)
+        for r in per_image_details:
+            if not r.get("filename") and r.get("wsi_id"):
+                wsi_obj = seg_wsi_map.get(r["wsi_id"])
+                r["filename"] = (wsi_obj.original_filename if wsi_obj else None) or r[
+                    "wsi_id"
+                ]
 
     await asyncio.to_thread(
         _write_json_sync,

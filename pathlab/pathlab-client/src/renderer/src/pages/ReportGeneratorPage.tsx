@@ -20,6 +20,7 @@ interface ReportConfig {
 
 interface WSIResult {
   wsi_id: string
+  original_filename: string
   case_id: string
   label: string
   pred: string | null
@@ -60,6 +61,7 @@ export default function ReportGeneratorPage() {
         const confidence = item.probs && item.pred ? item.probs[item.pred] : undefined
         return {
           wsi_id: item.wsi_id,
+          original_filename: item.original_filename || item.wsi_id,
           case_id: item.case_id || '',
           label: item.label || '',
           pred: item.pred || null,
@@ -139,9 +141,9 @@ export default function ReportGeneratorPage() {
     // Results
     if (config.includeResults) {
       csv += `# ${t('reportPage.analysisResults')}\n`
-      csv += `${t('reportPage.colWsiId')},${t('reportPage.colCaseId')},${t('reportPage.colTrueLabel')},${t('reportPage.colPrediction')},${t('reportPage.colConfidence')},${t('reportPage.colCorrect')}\n`
+      csv += `${t('reportPage.colFilename')},${t('reportPage.colCaseId')},${t('reportPage.colTrueLabel')},${t('reportPage.colPrediction')},${t('reportPage.colConfidence')},${t('reportPage.colCorrect')}\n`
       filteredData.forEach(r => {
-        csv += `${r.wsi_id},${r.case_id},${r.label},${r.pred || t('reportPage.na')},${
+        csv += `${r.original_filename},${r.case_id},${r.label},${r.pred || t('reportPage.na')},${
           r.confidence ? r.confidence.toFixed(4) : t('reportPage.na')
         },${r.is_correct === null ? t('reportPage.pending') : (r.is_correct ? t('reportPage.yes') : t('reportPage.no'))}\n`
       })
@@ -176,6 +178,7 @@ export default function ReportGeneratorPage() {
 
     if (config.includeResults) {
       report.results = filteredData.map(r => ({
+        filename: r.original_filename,
         wsi_id: r.wsi_id,
         case_id: r.case_id,
         true_label: r.label,
@@ -232,10 +235,10 @@ export default function ReportGeneratorPage() {
 
     if (config.includeResults) {
       md += `## ${t('reportPage.analysisResults')}\n\n`
-      md += `| ${t('reportPage.colWsiId')} | ${t('reportPage.colCaseId')} | ${t('reportPage.colTrueLabel')} | ${t('reportPage.colPrediction')} | ${t('reportPage.colConfidence')} | ${t('reportPage.colCorrect')} |\n`
+      md += `| ${t('reportPage.colFilename')} | ${t('reportPage.colCaseId')} | ${t('reportPage.colTrueLabel')} | ${t('reportPage.colPrediction')} | ${t('reportPage.colConfidence')} | ${t('reportPage.colCorrect')} |\n`
       md += `|--------|---------|------------|------------|------------|----------|\n`
       filteredData.forEach(r => {
-        md += `| ${r.wsi_id} | ${r.case_id} | ${r.label} | ${r.pred || t('reportPage.na')} | ${
+        md += `| ${r.original_filename} | ${r.case_id} | ${r.label} | ${r.pred || t('reportPage.na')} | ${
           r.confidence ? (r.confidence * 100).toFixed(1) + '%' : t('reportPage.na')
         } | ${r.is_correct === null ? t('reportPage.pending') : (r.is_correct ? t('reportPage.yes') : t('reportPage.no'))} |\n`
       })

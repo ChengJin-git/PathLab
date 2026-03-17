@@ -783,7 +783,18 @@ async def run_training_pipeline(
                 cached = result.get("cached", False)
 
                 async with logger_manager.session() as (logger, db):
-                    if cached:
+                    if num_patches == 0:
+                        await logger.warning(
+                            f"[{idx}/{total_wsi}] No tissue patches found for {wsi_id} — "
+                            f"the slide may be blank or contain no detectable tissue. "
+                            f"It will be skipped during feature extraction.",
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "num_patches": 0,
+                                "cached": cached,
+                            },
+                        )
+                    elif cached:
                         await logger.info(
                             f"[{idx}/{total_wsi}] Coords cache hit for {wsi_id}",
                             metadata={
