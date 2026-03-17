@@ -1225,7 +1225,11 @@
       "data": "資料",
       "extractor": "特徵提取器",
       "model": "模型",
-      "duration": "時長"
+      "duration": "時長",
+      "architecture": "架構",
+      "backbone": "骨幹網路",
+      "decoder": "解碼器",
+      "featureExtractorSeg": "特徵提取器"
     },
     "progress": {
       "creatingTask": "正在建立任務",
@@ -1598,7 +1602,8 @@
       "f1": "F1 分數",
       "auc": "AUC",
       "c_index": "C-Index",
-      "ibs": "IBS"
+      "ibs": "IBS",
+      "miou": "mIoU"
     },
     "metricDescriptions": {
       "accuracy": "整體預測準確率",
@@ -1612,7 +1617,8 @@
       "f1": "精確率與召回率的調和平均數",
       "auc": "ROC 曲線下面積",
       "c_index": "存活預測的一致性指數",
-      "ibs": "整合 Brier 分數（越低越好）"
+      "ibs": "整合 Brier 分數（越低越好）",
+      "miou": "分割類別間平均交並比"
     },
     "chartLabels": {
       "confusion_matrix": "混淆矩陣",
@@ -1924,7 +1930,8 @@
         "classMin2Samples": "每個類別至少需要 2 個樣本。當前最小值：{{count}}。",
         "bothEventCensoredRequired": "需要同時包含事件和刪失樣本。{{missingType}} 有 0 個樣本。",
         "randomMinPerEventStatus": "隨機拆分每種 event_status 至少需要 {{count}} 個樣本。",
-        "randomMinPerClass": "隨機拆分每個類別至少需要 {{count}} 個樣本。"
+        "randomMinPerClass": "隨機拆分每個類別至少需要 {{count}} 個樣本。",
+        "noCocoCategories": "未找到 COCO 類別。請確保資料集包含有效的 COCO 標註檔案。"
       }
     },
     "modelConfig": {
@@ -2001,6 +2008,7 @@
       "batch": "批次 {{size}}",
       "balanced": "均衡",
       "standard": "標準",
+      "segArchitecture": "架構",
       "segBackbone": "骨幹網絡",
       "segFeatureExtractor": "特徵提取器",
       "segDecoder": "解碼器",
@@ -3314,6 +3322,8 @@
     "rectangle": "矩形",
     "polygon": "多邊形",
     "noLabel": "無標籤",
+    "defaultLabel": "預設標籤",
+    "labelHint": "請先設定標籤再開始標註",
     "setLabel": "設定標籤",
     "newLabel": "新標籤...",
     "currentSlide": "當前檔案",
