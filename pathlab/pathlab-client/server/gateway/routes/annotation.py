@@ -1,4 +1,5 @@
 from typing import Any
+
 """
 Annotation routes – segmentation annotation CRUD + ROI extraction proxy + SSE progress
 
@@ -32,14 +33,10 @@ from backend.common.config import Config
 from backend.common.coco_utils import coco_to_roi_annotations
 from backend.common.file_types import is_patch_file
 from backend.common.annotation_summary_cache import (
-    build_effective_summary_from_cache,
     build_draft_annotation_summary_cache,
     is_draft_annotation_summary_cache_valid,
-    is_dataset_annotation_summary_cache_valid,
     load_draft_annotation_summary_cache,
-    load_dataset_annotation_summary_cache,
     rebuild_draft_annotation_summary_cache,
-    rebuild_dataset_annotation_summary_cache,
     save_draft_annotation_summary_cache,
 )
 from backend.common.progress_store import get_progress
@@ -55,7 +52,9 @@ router = APIRouter(prefix="/annotation", tags=["Annotation"])
 
 GROUND_TRUTH_PREVIEW_CACHE_VERSION = 1
 GROUND_TRUTH_PREVIEW_CACHE_HEADERS = {"Cache-Control": "private, max-age=600"}
-GROUND_TRUTH_PREVIEW_CACHE_DIR = Config.get_uploads_dir() / "metadata" / "ground_truth_previews"
+GROUND_TRUTH_PREVIEW_CACHE_DIR = (
+    Config.get_uploads_dir() / "metadata" / "ground_truth_previews"
+)
 
 
 def _normalize_polygon_points(points):
@@ -137,7 +136,11 @@ def _convert_gt_record_for_wsi(record, wsi):
 def _get_gt_image_dimensions_for_wsi(record, wsi):
     """Get the matched COCO image dimensions for a target WSI if available."""
     exact_lookup, stem_lookup = _build_single_wsi_gt_lookups(wsi, record.annotations)
-    images = record.annotations.get("images") if isinstance(record.annotations, dict) else None
+    images = (
+        record.annotations.get("images")
+        if isinstance(record.annotations, dict)
+        else None
+    )
 
     if not isinstance(images, list):
         return None, None
@@ -161,7 +164,12 @@ def _get_gt_image_dimensions_for_wsi(record, wsi):
 
         width = image.get("width")
         height = image.get("height")
-        if isinstance(width, (int, float)) and isinstance(height, (int, float)) and width > 0 and height > 0:
+        if (
+            isinstance(width, (int, float))
+            and isinstance(height, (int, float))
+            and width > 0
+            and height > 0
+        ):
             return int(width), int(height)
 
     return None, None
@@ -185,7 +193,9 @@ def _delete_preview_file_if_possible(path: Path) -> None:
         logger.warning("Failed to delete GT preview cache file %s: %s", path, exc)
 
 
-def _write_ground_truth_preview_metadata(metadata_path: Path, cache_key: dict[str, Any]) -> None:
+def _write_ground_truth_preview_metadata(
+    metadata_path: Path, cache_key: dict[str, Any]
+) -> None:
     metadata_path.parent.mkdir(parents=True, exist_ok=True)
     temp_metadata_path = metadata_path.with_name(f"{metadata_path.name}.tmp")
     _delete_preview_file_if_possible(temp_metadata_path)
@@ -216,7 +226,9 @@ def _save_ground_truth_preview_image(preview_image, preview_path: Path) -> None:
         raise
 
 
-def _is_ground_truth_preview_cache_valid(preview_path: Path, cache_key: dict[str, Any]) -> bool:
+def _is_ground_truth_preview_cache_valid(
+    preview_path: Path, cache_key: dict[str, Any]
+) -> bool:
     metadata_path = _ground_truth_preview_metadata_path(preview_path)
     if not preview_path.exists() or not metadata_path.exists():
         return False
@@ -229,7 +241,9 @@ def _is_ground_truth_preview_cache_valid(preview_path: Path, cache_key: dict[str
             preview.load()
         return True
     except Exception as exc:
-        logger.warning("Unreadable GT preview cache %s, will regenerate: %s", preview_path, exc)
+        logger.warning(
+            "Unreadable GT preview cache %s, will regenerate: %s", preview_path, exc
+        )
         _delete_preview_file_if_possible(preview_path)
         _delete_preview_file_if_possible(metadata_path)
         return False
@@ -261,7 +275,13 @@ def _color_to_rgba(color: str | None, alpha: int) -> tuple[int, int, int, int]:
     return (*rgb, alpha)
 
 
-def _render_ground_truth_preview(file_path: Path, size: int, regions: list[dict[str, Any]], render_width: int, render_height: int):
+def _render_ground_truth_preview(
+    file_path: Path,
+    size: int,
+    regions: list[dict[str, Any]],
+    render_width: int,
+    render_height: int,
+):
     thumbnail = _load_patch_thumbnail(file_path, size).convert("RGBA")
     overlay = Image.new("RGBA", thumbnail.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay, "RGBA")
@@ -290,16 +310,28 @@ def _render_ground_truth_preview(file_path: Path, size: int, regions: list[dict[
         y = float(region.get("y") or 0) * scale_y
         width = float(region.get("width") or 0) * scale_x
         height = float(region.get("height") or 0) * scale_y
-        draw.rectangle((x, y, x + width, y + height), fill=fill, outline=stroke, width=stroke_width)
+        draw.rectangle(
+            (x, y, x + width, y + height), fill=fill, outline=stroke, width=stroke_width
+        )
 
     return Image.alpha_composite(thumbnail, overlay).convert("RGB")
 
 
-def _build_ground_truth_preview_cache_key(wsi, record, file_path: Path, file_size: int, render_width: int, render_height: int, size: int) -> dict[str, Any]:
+def _build_ground_truth_preview_cache_key(
+    wsi,
+    record,
+    file_path: Path,
+    file_size: int,
+    render_width: int,
+    render_height: int,
+    size: int,
+) -> dict[str, Any]:
     return {
         "version": GROUND_TRUTH_PREVIEW_CACHE_VERSION,
         "annotation_id": record.annotation_id,
-        "annotation_updated_at": record.updated_at.isoformat() if getattr(record, "updated_at", None) else None,
+        "annotation_updated_at": record.updated_at.isoformat()
+        if getattr(record, "updated_at", None)
+        else None,
         "wsi_path": str(file_path),
         "file_size": int(file_size),
         "file_mtime_ns": file_path.stat().st_mtime_ns,
@@ -310,7 +342,14 @@ def _build_ground_truth_preview_cache_key(wsi, record, file_path: Path, file_siz
     }
 
 
-def _ensure_ground_truth_preview_cache(wsi, record, regions: list[dict[str, Any]], render_width: int, render_height: int, size: int) -> Path:
+def _ensure_ground_truth_preview_cache(
+    wsi,
+    record,
+    regions: list[dict[str, Any]],
+    render_width: int,
+    render_height: int,
+    size: int,
+) -> Path:
     file_path = Path(wsi.wsi_path)
     file_size = int(wsi.file_size or file_path.stat().st_size)
     preview_path = _ground_truth_preview_path(wsi.wsi_id, size)
@@ -373,7 +412,8 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
         if (
             dataset_record
             and dataset_record.status != "draft"
-            and dataset_record.annotation_id not in {record.annotation_id for record in record_candidates}
+            and dataset_record.annotation_id
+            not in {record.annotation_id for record in record_candidates}
         ):
             record_candidates.append(dataset_record)
 
@@ -391,14 +431,18 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
             }
             return wsi, record, payload
 
-    return wsi, None, {
-        "dataset_id": wsi.dataset_id,
-        "annotations": {},
-        "record_count": 0,
-        "source": "ground_truth",
-        "width": wsi.width,
-        "height": wsi.height,
-    }
+    return (
+        wsi,
+        None,
+        {
+            "dataset_id": wsi.dataset_id,
+            "annotations": {},
+            "record_count": 0,
+            "source": "ground_truth",
+            "width": wsi.width,
+            "height": wsi.height,
+        },
+    )
 
 
 async def _get_dataset_with_access(dataset_id: str, user: User, db: AsyncSession):
@@ -414,7 +458,9 @@ async def _get_dataset_wsis(dataset_id: str, db: AsyncSession):
     return await WSIRepository.get_by_dataset(db, dataset_id, skip=0, limit=0)
 
 
-async def _get_dataset_ground_truth_roi_map(dataset_id: str, db: AsyncSession, wsis=None):
+async def _get_dataset_ground_truth_roi_map(
+    dataset_id: str, db: AsyncSession, wsis=None
+):
     wsis = wsis if wsis is not None else await _get_dataset_wsis(dataset_id, db)
     if not wsis:
         return {}, 0
@@ -426,7 +472,11 @@ async def _get_dataset_ground_truth_roi_map(dataset_id: str, db: AsyncSession, w
         return {}, 0
 
     dataset_level_record = next(
-        (record for record in gt_records if record.annotation_id == f"annot_{dataset_id}"),
+        (
+            record
+            for record in gt_records
+            if record.annotation_id == f"annot_{dataset_id}"
+        ),
         None,
     )
     records_to_use = [dataset_level_record] if dataset_level_record else gt_records
@@ -470,11 +520,14 @@ def _build_annotation_summary(annotations, wsis):
         labels_on_slide = set()
         for region in regions:
             label = str(region.get("label") or "unlabeled")
-            entry = labels.setdefault(label, {
-                "total_regions": 0,
-                "slide_ids": set(),
-                "color": region.get("color"),
-            })
+            entry = labels.setdefault(
+                label,
+                {
+                    "total_regions": 0,
+                    "slide_ids": set(),
+                    "color": region.get("color"),
+                },
+            )
             entry["total_regions"] += 1
             total_regions += 1
             if not entry.get("color") and region.get("color"):
@@ -499,13 +552,19 @@ def _build_annotation_summary(annotations, wsis):
     }
 
 
-async def _resolve_effective_dataset_annotations(dataset_id: str, user: User, db: AsyncSession):
+async def _resolve_effective_dataset_annotations(
+    dataset_id: str, user: User, db: AsyncSession
+):
     await _get_dataset_with_access(dataset_id, user, db)
     wsis = await _get_dataset_wsis(dataset_id, db)
-    gt_annotations, gt_record_count = await _get_dataset_ground_truth_roi_map(dataset_id, db, wsis)
+    gt_annotations, gt_record_count = await _get_dataset_ground_truth_roi_map(
+        dataset_id, db, wsis
+    )
 
-    draft_annotation = await SegmentationAnnotationRepository.get_latest_draft_by_dataset_for_user(
-        db, dataset_id, str(user.id)
+    draft_annotation = (
+        await SegmentationAnnotationRepository.get_latest_draft_by_dataset_for_user(
+            db, dataset_id, str(user.id)
+        )
     )
     draft_annotations = (
         draft_annotation.annotations
@@ -514,15 +573,16 @@ async def _resolve_effective_dataset_annotations(dataset_id: str, user: User, db
     )
 
     effective_annotations = {
-        wsi_id: deepcopy(regions)
-        for wsi_id, regions in gt_annotations.items()
+        wsi_id: deepcopy(regions) for wsi_id, regions in gt_annotations.items()
     }
     valid_wsi_ids = {wsi.wsi_id for wsi in wsis}
 
     for wsi_id, regions in draft_annotations.items():
         if wsi_id not in valid_wsi_ids:
             continue
-        effective_annotations[wsi_id] = deepcopy(regions) if isinstance(regions, list) else []
+        effective_annotations[wsi_id] = (
+            deepcopy(regions) if isinstance(regions, list) else []
+        )
 
     return {
         "wsis": wsis,
@@ -564,13 +624,19 @@ async def save_annotation(
                     annotation_id=req.annotation_id,
                     dataset_id=req.source_dataset_id,
                     user_id=str(user.id),
-                    annotations=req.annotations if isinstance(req.annotations, dict) else {},
+                    annotations=req.annotations
+                    if isinstance(req.annotations, dict)
+                    else {},
                     wsis=wsis,
-                    draft_updated_at=annotation.updated_at.isoformat() if annotation.updated_at else None,
+                    draft_updated_at=annotation.updated_at.isoformat()
+                    if annotation.updated_at
+                    else None,
                 )
                 save_draft_annotation_summary_cache(req.annotation_id, draft_cache)
             except Exception as cache_err:
-                logger.warning(f"Failed to refresh draft annotation summary cache for {req.annotation_id}: {cache_err}")
+                logger.warning(
+                    f"Failed to refresh draft annotation summary cache for {req.annotation_id}: {cache_err}"
+                )
 
         return annotation.to_dict()
     except Exception as e:
@@ -610,7 +676,9 @@ async def get_dataset_ground_truth_annotations(
             "source": "ground_truth",
         }
 
-    merged_annotations, used_record_count = await _get_dataset_ground_truth_roi_map(dataset_id, db, wsis)
+    merged_annotations, used_record_count = await _get_dataset_ground_truth_roi_map(
+        dataset_id, db, wsis
+    )
     if not merged_annotations:
         return {
             "dataset_id": dataset_id,
@@ -633,7 +701,7 @@ async def get_dataset_annotation_summary(
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Return a lightweight whole-dataset annotation summary using GT + current user's draft overlay."""
+    """Return the current user's draft annotation summary for the dataset."""
     await _get_dataset_with_access(dataset_id, user, db)
 
     draft_meta = await SegmentationAnnotationRepository.get_latest_draft_meta_by_dataset_for_user(
@@ -641,22 +709,18 @@ async def get_dataset_annotation_summary(
     )
     annotation_id = draft_meta["annotation_id"] if draft_meta else None
 
-    finalized_annotations_key = await SegmentationAnnotationRepository.get_finalized_dataset_cache_key(
-        db, dataset_id
-    )
-    wsi_key = await WSIRepository.get_dataset_cache_key(db, dataset_id)
-    gt_cache = load_dataset_annotation_summary_cache(dataset_id)
-    if not is_dataset_annotation_summary_cache_valid(gt_cache, finalized_annotations_key, wsi_key):
-        gt_cache = await rebuild_dataset_annotation_summary_cache(db, dataset_id)
-
     if not draft_meta:
         return {
             "dataset_id": dataset_id,
-            **deepcopy(gt_cache.get("summary") or {}),
+            "total_regions": 0,
+            "total_slides": 0,
+            "labels": {},
+            "has_wsi_sources": False,
             "source": "effective_dataset",
-            "annotation_id": annotation_id,
+            "annotation_id": None,
         }
 
+    wsi_key = await WSIRepository.get_dataset_cache_key(db, dataset_id)
     draft_cache = load_draft_annotation_summary_cache(annotation_id)
     if not is_draft_annotation_summary_cache_valid(
         draft_cache,
@@ -671,12 +735,18 @@ async def get_dataset_annotation_summary(
             dataset_id,
         )
 
-    return build_effective_summary_from_cache(
-        dataset_id,
-        gt_cache,
-        (draft_cache or {}).get("slides") or {},
-        annotation_id=annotation_id,
-    )
+    draft_summary = (draft_cache or {}).get("summary") or {
+        "total_regions": 0,
+        "total_slides": 0,
+        "labels": {},
+        "has_wsi_sources": False,
+    }
+    return {
+        "dataset_id": dataset_id,
+        **draft_summary,
+        "source": "effective_dataset",
+        "annotation_id": annotation_id,
+    }
 
 
 @router.get("/wsi/{wsi_id}/ground-truth")
@@ -693,7 +763,9 @@ async def get_wsi_ground_truth_annotations(
 @router.get("/wsi/{wsi_id}/ground-truth-thumbnail")
 async def get_wsi_ground_truth_thumbnail(
     wsi_id: str,
-    size: int = Query(160, description="Max thumbnail size for GT recommendation previews"),
+    size: int = Query(
+        160, description="Max thumbnail size for GT recommendation previews"
+    ),
     user: User = Depends(get_user_from_token_param),
     db: AsyncSession = Depends(get_db),
 ):
@@ -705,11 +777,16 @@ async def get_wsi_ground_truth_thumbnail(
 
     file_size = int(wsi.file_size or file_path.stat().st_size)
     if not is_patch_file(str(file_path), file_size):
-        raise HTTPException(status_code=400, detail="GT thumbnail preview is currently only supported for patch files")
+        raise HTTPException(
+            status_code=400,
+            detail="GT thumbnail preview is currently only supported for patch files",
+        )
 
     regions = payload.get("annotations", {}).get(wsi.wsi_id) or []
     if record is None or not regions:
-        raise HTTPException(status_code=404, detail=f"Ground truth annotations not found for {wsi_id}")
+        raise HTTPException(
+            status_code=404, detail=f"Ground truth annotations not found for {wsi_id}"
+        )
 
     render_width = int(payload.get("width") or 0)
     render_height = int(payload.get("height") or 0)
@@ -728,7 +805,9 @@ async def get_wsi_ground_truth_thumbnail(
         )
     except Exception as exc:
         logger.warning("Failed to build GT preview cache for %s: %s", wsi_id, exc)
-        raise HTTPException(status_code=500, detail="Failed to render ground truth thumbnail") from exc
+        raise HTTPException(
+            status_code=500, detail="Failed to render ground truth thumbnail"
+        ) from exc
 
     return FileResponse(
         preview_path,
@@ -789,7 +868,9 @@ async def delete_dataset_annotations_by_labels(
 
     changed = False
     for wsi_id, regions in resolved["effective_annotations"].items():
-        filtered_regions = [region for region in regions if region.get("label") not in label_set]
+        filtered_regions = [
+            region for region in regions if region.get("label") not in label_set
+        ]
         if len(filtered_regions) != len(regions):
             next_draft_annotations[wsi_id] = filtered_regions
             changed = True
@@ -818,13 +899,18 @@ async def delete_dataset_annotations_by_labels(
                 user_id=str(user.id),
                 annotations=next_draft_annotations,
                 wsis=resolved["wsis"],
-                draft_updated_at=saved_annotation.updated_at.isoformat() if saved_annotation.updated_at else None,
+                draft_updated_at=saved_annotation.updated_at.isoformat()
+                if saved_annotation.updated_at
+                else None,
             )
             save_draft_annotation_summary_cache(annotation_id, draft_cache)
         except Exception as e:
             await db.rollback()
             logger.error(f"Failed to delete dataset annotations by labels: {e}")
-            raise HTTPException(status_code=500, detail=f"Failed to delete dataset annotations: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to delete dataset annotations: {str(e)}",
+            )
 
     updated_effective_annotations = {
         wsi_id: deepcopy(regions)
@@ -834,14 +920,18 @@ async def delete_dataset_annotations_by_labels(
     for wsi_id, regions in next_draft_annotations.items():
         if wsi_id not in valid_wsi_ids:
             continue
-        updated_effective_annotations[wsi_id] = deepcopy(regions) if isinstance(regions, list) else []
+        updated_effective_annotations[wsi_id] = (
+            deepcopy(regions) if isinstance(regions, list) else []
+        )
 
     return {
         "ok": True,
         "annotation_id": annotation_id,
         "summary": {
             "dataset_id": dataset_id,
-            **_build_annotation_summary(updated_effective_annotations, resolved["wsis"]),
+            **_build_annotation_summary(
+                updated_effective_annotations, resolved["wsis"]
+            ),
             "source": "effective_dataset",
             "annotation_id": annotation_id,
         },
@@ -873,8 +963,13 @@ async def extract_regions(
     annotations = req.annotations
     if req.dataset_scope:
         if not req.source_dataset_id:
-            raise HTTPException(status_code=400, detail="source_dataset_id is required when dataset_scope=true")
-        resolved = await _resolve_effective_dataset_annotations(req.source_dataset_id, user, db)
+            raise HTTPException(
+                status_code=400,
+                detail="source_dataset_id is required when dataset_scope=true",
+            )
+        resolved = await _resolve_effective_dataset_annotations(
+            req.source_dataset_id, user, db
+        )
         annotations = resolved["effective_annotations"]
     elif annotations is None and req.annotation_id:
         annotation = await SegmentationAnnotationRepository.get(

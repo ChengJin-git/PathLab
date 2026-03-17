@@ -65,7 +65,7 @@ export function DataSplitConfig({
             description={t('training.dataSplit.randomSplitDesc')}
           />
 
-          {!isSegmentation && !isPatchDataset && (
+          {!isSegmentation && (
             <SplitOption
               selected={splitStrategy === 'k_fold'}
               onClick={() => setSplitStrategy('k_fold')}
