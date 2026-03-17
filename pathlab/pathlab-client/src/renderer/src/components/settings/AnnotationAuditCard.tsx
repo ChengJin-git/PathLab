@@ -16,7 +16,6 @@ const PAGE_LIMIT = 50
 
 const EVENT_TYPE_OPTIONS = [
   'shared_write',
-  'finalize',
   'collaborator_add',
   'collaborator_remove',
   'bulk_delete',

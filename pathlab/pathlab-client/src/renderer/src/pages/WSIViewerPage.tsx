@@ -44,7 +44,6 @@ import {
   saveSharedAnnotation,
   getSharedAnnotationSSEUrl,
   SharedAnnotationEvent,
-  finalizeSharedAnnotation,
   deleteSharedAnnotation,
   listCollaborators,
 } from '../api/annotation'
@@ -1058,19 +1057,6 @@ export default function WSIViewerPage() {
     return await persistAnnotations({ showToast: true })
   }, [editingMode, persistAnnotations, saveShared])
 
-  const handleFinalizeShared = useCallback(async () => {
-    if (!effectiveDatasetId) return
-    try {
-      await finalizeSharedAnnotation(effectiveDatasetId)
-      toast.success(t('annotation.collab.submitted'))
-      setEditingMode('personal')
-      setShowGT(true)
-      await refreshDatasetAnnotationSummary()
-    } catch (err: any) {
-      toast.error(err?.message || t('annotation.collab.submitFailed'))
-    }
-  }, [effectiveDatasetId, refreshDatasetAnnotationSummary, t, toast])
-
   const handleDeleteShared = useCallback(async () => {
     if (!effectiveDatasetId) return
     try {
@@ -1624,7 +1610,6 @@ export default function WSIViewerPage() {
               sharedSaving={sharedSaving}
               hasDatasetContext={!!effectiveDatasetId}
               isDatasetOwnerOrAdmin={isDatasetOwnerOrAdmin}
-              onFinalize={handleFinalizeShared}
               onDeleteShared={handleDeleteShared}
               onShareManage={() => setShowShareDialog(true)}
             />

@@ -631,7 +631,6 @@
         "filterEventType": "事件類型",
         "allEvents": "全部事件",
         "event_shared_write": "寫入共享草稿",
-        "event_finalize": "定稿為 GT",
         "event_collaborator_add": "添加協作者",
         "event_collaborator_remove": "移除協作者",
         "event_bulk_delete": "批量刪除區域",

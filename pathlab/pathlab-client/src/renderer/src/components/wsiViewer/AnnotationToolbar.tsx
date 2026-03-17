@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Pencil, Square, Pentagon, Tag, ChevronDown, User, Users, UserPlus, Check, Loader2, Trash2 } from 'lucide-react'
+import { Pencil, Square, Pentagon, Tag, ChevronDown, User, Users, UserPlus, Loader2, Trash2 } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
 
 /** Preset label colors for auto-assignment */
@@ -32,7 +32,6 @@ interface AnnotationToolbarProps {
   onToggleEditingMode?: () => void
   hasDatasetContext?: boolean
   isDatasetOwnerOrAdmin?: boolean
-  onFinalize?: () => void
   onDeleteShared?: () => void
   onShareManage?: () => void
   sharedSaving?: boolean
@@ -48,7 +47,6 @@ export function AnnotationToolbar({
   onToggleEditingMode,
   hasDatasetContext,
   isDatasetOwnerOrAdmin,
-  onFinalize,
   onDeleteShared,
   onShareManage,
   sharedSaving,
@@ -228,17 +226,6 @@ export function AnnotationToolbar({
                         title={t('annotation.collab.manageCollaborators')}
                       >
                         <UserPlus className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {onFinalize && (
-                      <button
-                        type="button"
-                        onClick={onFinalize}
-                        className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-600 bg-green-50 hover:bg-green-100 rounded-lg border border-green-200 transition-colors"
-                        title={t('annotation.collab.submitAsGT')}
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>提交GT</span>
                       </button>
                     )}
                     {onDeleteShared && (

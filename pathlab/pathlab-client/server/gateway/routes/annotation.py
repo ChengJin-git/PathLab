@@ -1224,6 +1224,15 @@ async def save_shared_annotation(
                 else 0,
             },
         )
+        await SegmentationAnnotationRepository.upsert(
+            db,
+            annotation_id=f"annot_{dataset_id}",
+            user_id=owner_user_id,
+            annotations=incoming,
+            source_dataset_id=dataset_id,
+            status="finalized",
+            source="viewer",
+        )
         await db.commit()
     except VersionConflictError as e:
         raise HTTPException(

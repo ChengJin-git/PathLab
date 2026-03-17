@@ -416,7 +416,7 @@ export interface AnnotationAuditEntry {
   dataset_name: string | null
   user_id: string | null
   user_display: string | null
-  event_type: 'shared_write' | 'finalize' | 'collaborator_add' | 'collaborator_remove' | 'bulk_delete'
+  event_type: 'shared_write' | 'collaborator_add' | 'collaborator_remove' | 'bulk_delete'
   event_metadata: Record<string, unknown>
   created_at: string
 }
