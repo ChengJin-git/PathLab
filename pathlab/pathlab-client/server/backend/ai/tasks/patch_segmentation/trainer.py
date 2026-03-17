@@ -1198,6 +1198,26 @@ class SegmentationTrainer:
 
             self._update_training_progress(92)
 
+            # If no epoch ever improved beyond initial best_metric=0.0, best_model.pth was
+            # never written. Save the final epoch's weights as a fallback so that
+            # post-training inference (which unconditionally loads best_model.pth) does not
+            # crash with a FileNotFoundError.
+            if best_state_dict is None:
+                self._save_checkpoint(
+                    self.model,
+                    optimizer,
+                    scheduler,
+                    epoch,
+                    val_metrics,
+                    is_best=True,  # forces best_model.pth to be written
+                    filename=f"checkpoint_epoch_{epoch}.pth",
+                )
+                self._log_info(
+                    f"No improvement detected during training (all val metrics = 0). "
+                    f"Saving final epoch {epoch} model as best_model.pth fallback.",
+                    {"fallback_epoch": epoch},
+                )
+
             # Restore best model
             if best_state_dict is not None:
                 from backend.ai.segmentors.fm_segmentation_model import (

@@ -5,7 +5,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
 import { ApiError } from '../api/client'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -1686,16 +1686,26 @@ export default function ListPage() {
                             )}
                           </span>
                         )}
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                          sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
-                            ? 'bg-slate-50 text-slate-600 border border-slate-200/70'
-                            : 'bg-cyan-50 text-cyan-700 border border-cyan-100/70'
-                        }`}>
-                          {sourceOrganLabel}
-                        </span>
-                      </div>
+                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                           sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                             ? 'bg-slate-50 text-slate-600 border border-slate-200/70'
+                             : 'bg-cyan-50 text-cyan-700 border border-cyan-100/70'
+                         }`}>
+                           {sourceOrganLabel}
+                         </span>
+                       </div>
 
-                      <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
+                       {dataset.parent_dataset_name && (
+                         <div className="flex items-center gap-1.5 mb-3 sm:mb-4 text-[10px] sm:text-xs text-slate-500">
+                           <GitMerge className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                           <span className="truncate" title={dataset.parent_dataset_name}>
+                             <span className="text-slate-400">{t('listPage.derivedFrom')}</span>{' '}
+                             <span className="font-medium text-slate-600">{dataset.parent_dataset_name}</span>
+                           </span>
+                         </div>
+                       )}
+
+                       <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
                         <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
                           <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
                           {dataset.file_count}<span className="hidden sm:inline ml-1">{itemType}</span>
@@ -1804,6 +1814,14 @@ export default function ListPage() {
                                 }`}>
                                   {sourceOrganLabel}
                                 </span>
+                                {dataset.parent_dataset_name && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200/70">
+                                    <GitMerge className="w-2.5 h-2.5 text-slate-400 flex-shrink-0" />
+                                    <span className="text-slate-400">{t('listPage.derivedFrom')}</span>
+                                    {' '}
+                                    <span className="font-semibold text-slate-700 truncate max-w-[120px]" title={dataset.parent_dataset_name}>{dataset.parent_dataset_name}</span>
+                                  </span>
+                                )}
                               </div>
                             </div>
 

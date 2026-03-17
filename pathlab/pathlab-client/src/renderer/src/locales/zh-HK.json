@@ -1725,6 +1725,7 @@
       "iconView": "圖示視圖",
       "listView": "列表視圖"
     },
+    "derivedFrom": "匯出自",
     "newDataset": "新建資料集",
     "newDatasetDescription": "註冊切片以建立新資料集",
     "noFilteredDatasets": "沒有符合目前篩選條件的資料集",
@@ -3368,6 +3369,10 @@
     "totalRegions": "總區域數",
     "totalSlides": "總切片數",
     "labelDistribution": "標籤分布",
+     "datasetSource": "來源（器官／組織）",
+    "sourceInherited": "繼承自原資料集",
+    "sourceSelectPlaceholder": "選擇來源...",
+    "sourceCustomPlaceholder": "輸入自訂來源",
     "creating": "建立中...",
     "createConfirm": "建立",
     "extracting": "正在提取區域...",

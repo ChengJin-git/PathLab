@@ -1127,9 +1127,11 @@ export default function WSIViewerPage() {
   const handleCreateDatasetFromAnnotations = useCallback(async ({
     datasetName,
     taskType,
+    sourceOrgan,
   }: {
     datasetName: string
     taskType: 'classification' | 'segmentation'
+    sourceOrgan: string
   }) => {
     try {
       if (effectiveDatasetId && hasUnsavedChanges) {
@@ -1142,6 +1144,7 @@ export default function WSIViewerPage() {
         annotations: effectiveDatasetId ? undefined : allAnnotations,
         dataset_name: datasetName,
         task_type: taskType,
+        source_organ: sourceOrgan || undefined,
         ...(effectiveDatasetId ? { source_dataset_id: effectiveDatasetId, dataset_scope: true } : {}),
       })
 
@@ -1234,13 +1237,20 @@ export default function WSIViewerPage() {
         const data = JSON.parse(event.data) as SharedAnnotationEvent
         if (data.type === 'updated') {
           if (data.version > sharedVersionRef.current) {
-            toast.info(t('annotation.collab.sharedUpdated', { version: data.version }))
-            // Reload
-            getSharedAnnotation(effectiveDatasetId).then(res => {
-              setAllAnnotations(res.annotations)
-              mergeLabelColorsFromAnnotations(res.annotations)
-              setSharedVersion(res.version)
-            })
+            if (data.changed_by !== user?.id) {
+              toast.info(t('annotation.collab.sharedUpdated', { version: data.version }))
+            }
+            if (data.annotations) {
+              setAllAnnotations(data.annotations)
+              mergeLabelColorsFromAnnotations(data.annotations)
+              setSharedVersion(data.version)
+            } else {
+              getSharedAnnotation(effectiveDatasetId).then(res => {
+                setAllAnnotations(res.annotations)
+                mergeLabelColorsFromAnnotations(res.annotations)
+                setSharedVersion(res.version)
+              })
+            }
           }
         } else if (data.type === 'finalized') {
            toast.success(t('annotation.collab.submitted'))
@@ -1951,6 +1961,7 @@ export default function WSIViewerPage() {
         summary={effectiveDatasetId ? datasetAnnotationSummary : null}
         labelColors={labelColors}
         hasWsiSources={datasetAnnotationSummary?.has_wsi_sources ?? hasWsiSources}
+        defaultSource={detail?.meta?.source ?? null}
         onSubmitCreateDataset={handleCreateDatasetFromAnnotations}
       />
 

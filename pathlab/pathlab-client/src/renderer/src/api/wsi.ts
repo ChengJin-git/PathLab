@@ -281,6 +281,8 @@ export interface DatasetSummary {
   user_id: string | null  // Dataset owner
   username?: string | null  // Username of dataset owner (only for admin users)
   source_organ?: string | null
+  parent_dataset_id?: string | null
+  parent_dataset_name?: string | null
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection

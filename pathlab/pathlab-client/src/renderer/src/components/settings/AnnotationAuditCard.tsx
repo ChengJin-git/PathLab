@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Download, ClipboardList } from 'lucide-react'
+import { Download, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -22,6 +22,12 @@ const EVENT_TYPE_OPTIONS = [
   'bulk_delete',
 ] as const
 
+interface Query {
+  page: number
+  datasetFilter: string
+  eventTypeFilter: string
+}
+
 function formatDateTime(iso: string): string {
   const d = new Date(iso)
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -30,67 +36,55 @@ function formatDateTime(iso: string): string {
 
 function formatMetadata(meta: Record<string, unknown>): string {
   return Object.entries(meta)
-    .map(([k, v]) => `${k}: ${v}`)
+    .filter(([k]) => k !== 'target_user_id')
+    .map(([k, v]) => `${k === 'target_user_display' ? 'user' : k}: ${v}`)
     .join(', ')
 }
 
 export function AnnotationAuditCard() {
   const { t } = useTranslation()
 
+  const [query, setQuery] = useState<Query>({ page: 1, datasetFilter: '', eventTypeFilter: '' })
   const [entries, setEntries] = useState<AnnotationAuditEntry[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [offset, setOffset] = useState(0)
-  const [hasMore, setHasMore] = useState(false)
   const [exporting, setExporting] = useState(false)
 
-  const [datasetFilter, setDatasetFilter] = useState('')
-  const [eventTypeFilter, setEventTypeFilter] = useState('')
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_LIMIT))
 
-  const loadEntries = useCallback(
-    async (nextOffset: number, reset: boolean) => {
+  useEffect(() => {
+    let cancelled = false
+    const doLoad = async () => {
       setLoading(true)
       setError(null)
       try {
         const res = await listAnnotationAudit({
-          dataset_id: datasetFilter || undefined,
-          event_type: eventTypeFilter || undefined,
+          dataset_id: query.datasetFilter || undefined,
+          event_type: query.eventTypeFilter || undefined,
           limit: PAGE_LIMIT,
-          offset: nextOffset,
+          offset: (query.page - 1) * PAGE_LIMIT,
         })
-        if (reset) {
+        if (!cancelled) {
           setEntries(res.entries)
-        } else {
-          setEntries((prev) => [...prev, ...res.entries])
+          setTotalCount(res.count)
         }
-        setTotalCount(res.count)
-        setHasMore(nextOffset + res.entries.length < res.count)
-        setOffset(nextOffset + res.entries.length)
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
-    },
-    [datasetFilter, eventTypeFilter]
-  )
-
-  useEffect(() => {
-    setOffset(0)
-    loadEntries(0, true)
-  }, [loadEntries])
-
-  const handleLoadMore = () => {
-    loadEntries(offset, false)
-  }
+    }
+    doLoad()
+    return () => { cancelled = true }
+  }, [query])
 
   const handleExportCsv = async () => {
     setExporting(true)
     try {
       const url = exportAnnotationAuditUrl({
-        dataset_id: datasetFilter || undefined,
-        event_type: eventTypeFilter || undefined,
+        dataset_id: query.datasetFilter || undefined,
+        event_type: query.eventTypeFilter || undefined,
       })
       const token = getAuthToken()
       const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
@@ -131,8 +125,8 @@ export function AnnotationAuditCard() {
             {t('settings.usersTab.audit.filterDataset')}
           </Label>
           <Input
-            value={datasetFilter}
-            onChange={(e) => setDatasetFilter(e.target.value)}
+            value={query.datasetFilter}
+            onChange={(e) => setQuery(q => ({ ...q, page: 1, datasetFilter: e.target.value }))}
             placeholder={t('settings.usersTab.audit.filterDataset')}
             className="h-9 text-sm"
           />
@@ -142,8 +136,8 @@ export function AnnotationAuditCard() {
             {t('settings.usersTab.audit.filterEventType')}
           </Label>
           <Select
-            value={eventTypeFilter}
-            onChange={setEventTypeFilter}
+            value={query.eventTypeFilter}
+            onChange={(val) => setQuery(q => ({ ...q, page: 1, eventTypeFilter: val }))}
             options={[
               { value: '', label: t('settings.usersTab.audit.allEvents') },
               ...EVENT_TYPE_OPTIONS.map((et) => ({
@@ -201,11 +195,11 @@ export function AnnotationAuditCard() {
                       <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap align-top pt-3.5">
                         {formatDateTime(entry.created_at)}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-700 font-medium align-top pt-3.5 truncate max-w-[140px]">
-                        {entry.user_id ?? <span className="text-gray-400">—</span>}
+                      <td className="px-4 py-3 text-xs text-gray-700 font-medium align-top pt-3.5 truncate max-w-[140px]" title={entry.user_id ?? undefined}>
+                        {entry.user_display ?? entry.user_id ?? <span className="text-gray-400">—</span>}
                       </td>
-                      <td className="px-4 py-3 text-xs text-gray-700 font-mono align-top pt-3.5 truncate max-w-[160px]" title={entry.dataset_id}>
-                        {entry.dataset_id}
+                      <td className="px-4 py-3 text-xs text-gray-700 align-top pt-3.5 truncate max-w-[160px]" title={entry.dataset_id}>
+                        {entry.dataset_name ?? entry.dataset_id}
                       </td>
                       <td className="px-4 py-3 align-top pt-3.5">
                         <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wide bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
@@ -222,26 +216,32 @@ export function AnnotationAuditCard() {
             </div>
           </div>
 
-          <div className="mt-3 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-500">
-            <span>{entries.length} / {totalCount}</span>
-            {hasMore && (
+          <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-500">
+            <span>
+              {t('settings.usersTab.pageOf', { current: query.page, total: totalPages })}
+              {' · '}
+              {t('settings.usersTab.totalCount', { count: totalCount })}
+            </span>
+            <div className="flex items-center gap-1.5">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleLoadMore}
-                disabled={loading}
-                className="gap-1.5"
+                onClick={() => setQuery(q => ({ ...q, page: Math.max(1, q.page - 1) }))}
+                disabled={query.page === 1 || loading}
+                className="h-7 w-7 p-0"
               >
-                {loading ? (
-                  <span className="flex items-center gap-1.5">
-                    <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-gray-500" />
-                    {t('settings.usersTab.audit.loading')}
-                  </span>
-                ) : (
-                  t('settings.usersTab.audit.loadMore')
-                )}
+                <ChevronLeft className="w-3.5 h-3.5" />
               </Button>
-            )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setQuery(q => ({ ...q, page: Math.min(totalPages, q.page + 1) }))}
+                disabled={query.page >= totalPages || loading}
+                className="h-7 w-7 p-0"
+              >
+                <ChevronRight className="w-3.5 h-3.5" />
+              </Button>
+            </div>
           </div>
         </>
       )}

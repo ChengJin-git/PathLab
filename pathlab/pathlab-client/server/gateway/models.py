@@ -379,16 +379,13 @@ class AnnotationSaveRequest(BaseModel):
 
 
 class AnnotationExtractRequest(BaseModel):
-    """Request model for extracting annotated ROIs into a new dataset"""
-
-    annotation_id: Optional[str] = None  # Load annotations from saved annotation
-    annotations: Optional[Dict[str, Any]] = (
-        None  # Or provide directly (overrides saved)
-    )
+    annotation_id: Optional[str] = None
+    annotations: Optional[Dict[str, Any]] = None
     dataset_name: str
-    task_type: str = "classification"  # classification or segmentation
-    source_dataset_id: Optional[str] = None  # For segmentation: reuse existing dataset
-    dataset_scope: bool = False  # Build effective annotations from the whole dataset
+    task_type: str = "classification"
+    source_dataset_id: Optional[str] = None
+    dataset_scope: bool = False
+    source_organ: Optional[str] = None
 
 
 class AnnotationDeleteByLabelsRequest(BaseModel):

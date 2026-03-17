@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, asc, desc, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, aliased
 
 logger = logging.getLogger(__name__)
 
@@ -809,9 +809,8 @@ class WSIRepository:
     ):
         from sqlalchemy import case
 
-        # Dataset list should trust stored DataGroup data_type for grouped datasets.
-        # Only uncategorized/ungrouped files fall back to file-level heuristics.
         file_filter = WSIRepository._build_data_type_filter(data_type)
+        ParentDataset = aliased(Dataset, flat=True)
 
         query = (
             select(
@@ -825,6 +824,8 @@ class WSIRepository:
                 func.count(WSISlide.id).label("file_count"),
                 func.sum(WSISlide.file_size).label("total_size"),
                 Dataset.source_organ.label("source_organ"),
+                Dataset.parent_dataset_id.label("parent_dataset_id"),
+                ParentDataset.name.label("parent_dataset_name"),
                 func.count(
                     func.distinct(
                         case(
@@ -889,6 +890,9 @@ class WSIRepository:
             .select_from(WSISlide)
             .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
             .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
+            .outerjoin(
+                ParentDataset, Dataset.parent_dataset_id == ParentDataset.dataset_id
+            )
         )
 
         visibility_filter = WSIRepository._build_visibility_filter(
@@ -927,6 +931,8 @@ class WSIRepository:
             Dataset.user_id,
             Dataset.group_id,
             Dataset.source_organ,
+            Dataset.parent_dataset_id,
+            ParentDataset.name,
             DataGroup.data_type,
             DataGroup.aggregation_level,
             DataGroup.task_type,
@@ -1024,6 +1030,8 @@ class WSIRepository:
                 "task_type": row.task_type
                 or "classification",  # classification, survival
                 "source_organ": row.source_organ,
+                "parent_dataset_id": row.parent_dataset_id,
+                "parent_dataset_name": row.parent_dataset_name,
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "has_predefined_splits": has_predefined_splits,

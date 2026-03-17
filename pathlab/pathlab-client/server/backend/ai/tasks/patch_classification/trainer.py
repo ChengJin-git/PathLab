@@ -728,6 +728,28 @@ class PatchClassificationTrainer(BaseTrainer):
                 )
                 break
 
+        # Fallback: if no epoch ever triggered is_improvement (best_epoch stays 0),
+        # classifier_head.pth was never written. Save the final epoch's weights so that
+        # post-training inference (which loads classifier_head.pth) does not crash.
+        if best_epoch == 0:
+            self._save_checkpoint(
+                extractor_name=extractor_name,
+                classifier_head=classifier_head,
+                classifier_name=classifier_name,
+                extractor_dim=extractor.output_dim,
+                num_classes=num_classes,
+                epochs=epochs,
+                lr=lr,
+                history=history,
+                val_metrics=best_val_metrics,
+                test_metrics=best_test_metrics,
+                classes=classes,
+            )
+            await logger.info(
+                f"No improvement detected during training. Saving final epoch {epoch} model as classifier_head.pth fallback.",
+                {"fallback_epoch": epoch},
+            )
+
         self._save_final_metrics(history, best_val_metrics, best_test_metrics)
 
         # Save per-image inference results (like WSI classification)

@@ -1009,21 +1009,14 @@ class RegionSpec(BaseModel):
 
 
 class ExtractRegionsRequest(BaseModel):
-    """Request body for region extraction."""
-
-    regions: Dict[str, List[RegionSpec]] = Field(
-        ..., description="Map of wsi_id -> list of region specs"
-    )
-    dataset_name: str = Field(..., description="Name for the new dataset")
-    task_type: str = Field(
-        ..., description="Task type (classification, segmentation, etc.)"
-    )
-    user_id: str = Field(..., description="User ID who initiated the extraction")
-    task_id: str = Field(..., description="Task ID for progress tracking")
-    source_dataset_id: Optional[str] = Field(
-        None,
-        description="For segmentation: reuse existing dataset instead of creating a new one",
-    )
+    regions: Dict[str, List[RegionSpec]]
+    dataset_name: str
+    task_type: str
+    user_id: str
+    task_id: str
+    source_dataset_id: Optional[str] = None
+    source_organ: Optional[str] = None
+    parent_dataset_id: Optional[str] = None
 
 
 @app.post("/annotation/extract_regions")
@@ -1052,6 +1045,8 @@ async def extract_regions(
             user_id=req.user_id,
             task_id=req.task_id,
             source_dataset_id=req.source_dataset_id,
+            source_organ=req.source_organ,
+            parent_dataset_id=req.parent_dataset_id,
         )
     )
 
@@ -1065,6 +1060,8 @@ async def _extract_regions_background(
     user_id: str,
     task_id: str,
     source_dataset_id: Optional[str] = None,
+    source_organ: Optional[str] = None,
+    parent_dataset_id: Optional[str] = None,
 ):
     """
     Background task: extract ROI regions from WSI/patch files and create a new dataset.
@@ -1124,6 +1121,8 @@ async def _extract_regions_background(
                     name=dataset_name,
                     group_id=data_group.group_id,
                     user_id=user_id,
+                    source_organ=source_organ or None,
+                    parent_dataset_id=parent_dataset_id or None,
                 )
                 dataset_id = dataset.dataset_id
                 await db.commit()

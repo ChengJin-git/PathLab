@@ -37,6 +37,7 @@ class DatasetRepository:
         description: str = None,
         user_id: str = None,
         source_organ: str = None,
+        parent_dataset_id: str = None,
     ) -> Dataset:
         dataset = Dataset(
             dataset_id=dataset_id,
@@ -45,6 +46,7 @@ class DatasetRepository:
             description=description,
             user_id=user_id,
             source_organ=source_organ or None,
+            parent_dataset_id=parent_dataset_id or None,
         )
         db.add(dataset)
         await db.flush()
@@ -83,6 +85,7 @@ class DatasetRepository:
         group_id: str,
         user_id: str = None,
         source_organ: str = None,
+        parent_dataset_id: str = None,
     ) -> Dataset:
         import uuid
 
@@ -99,6 +102,7 @@ class DatasetRepository:
                     group_id=group_id,
                     user_id=user_id,
                     source_organ=source_organ,
+                    parent_dataset_id=parent_dataset_id,
                 )
         except IntegrityError:
             logger.debug(

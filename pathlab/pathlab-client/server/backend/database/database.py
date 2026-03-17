@@ -15,6 +15,7 @@ import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
+from sqlalchemy import text
 from backend.common.config import Config
 from .models import Base
 
@@ -143,6 +144,12 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         logger.info("All tables created/verified successfully")
+        await conn.execute(
+            text(
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
+            )
+        )
 
     # Create default admin user if no users exist
     await _create_default_admin()

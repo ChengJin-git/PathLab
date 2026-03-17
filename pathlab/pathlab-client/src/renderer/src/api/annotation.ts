@@ -82,10 +82,9 @@ export interface ExtractRegionsRequest {
   annotations?: AnnotationsMap
   dataset_name: string
   task_type: string
-  /** For segmentation: reuse existing dataset instead of creating a new one */
   source_dataset_id?: string
-  /** Resolve the whole dataset on the backend using GT + saved draft overlay */
   dataset_scope?: boolean
+  source_organ?: string
 }
 
 export interface DeleteDatasetAnnotationsByLabelsRequest {
@@ -145,7 +144,7 @@ export interface CollaboratorsResponse {
 }
 
 export type SharedAnnotationEvent =
-  | { type: 'updated'; version: number; changed_by: string }
+  | { type: 'updated'; version: number; changed_by: string; annotations?: AnnotationsMap }
   | { type: 'finalized'; version: number; gt_annotation_id: string }
   | { type: 'gt_updated' }
   | { type: 'gt_deleted' }
@@ -414,7 +413,9 @@ export async function deleteDatasetGroundTruth(datasetId: string): Promise<{ ok:
 export interface AnnotationAuditEntry {
   id: number
   dataset_id: string
+  dataset_name: string | null
   user_id: string | null
+  user_display: string | null
   event_type: 'shared_write' | 'finalize' | 'collaborator_add' | 'collaborator_remove' | 'bulk_delete'
   event_metadata: Record<string, unknown>
   created_at: string

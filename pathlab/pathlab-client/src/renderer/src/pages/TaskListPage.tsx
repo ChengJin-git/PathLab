@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { flushSync } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -212,14 +213,19 @@ export default function TaskListPage() {
 
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
-    setTaskToDelete(taskId)
-    setTaskStorageInfo(null)
-    setDeleteError(null)
-    setDeleteMode('standard')
-    setShowDeleteModal(true)
 
-    // Load storage info
-    setLoadingStorageInfo(true)
+    // flushSync: React 18 automatic batching would defer setShowDeleteModal until
+    // after the await below resolves, making the dialog appear frozen. Force flush
+    // so the modal renders immediately before the network request starts.
+    flushSync(() => {
+      setTaskToDelete(taskId)
+      setTaskStorageInfo(null)
+      setDeleteError(null)
+      setDeleteMode('standard')
+      setShowDeleteModal(true)
+      setLoadingStorageInfo(true)
+    })
+
     try {
       const info = await getTrainingTaskStorageInfo(taskId)
       setTaskStorageInfo(info)

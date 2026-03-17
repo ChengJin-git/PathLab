@@ -1725,6 +1725,7 @@
       "iconView": "Icon view",
       "listView": "List view"
     },
+    "derivedFrom": "Derived from",
     "newDataset": "New Dataset",
     "newDatasetDescription": "Register slides to create a new dataset",
     "noFilteredDatasets": "No datasets match the current filters",
@@ -3367,6 +3368,10 @@
     "totalRegions": "Total Regions",
     "totalSlides": "Total Slides",
     "labelDistribution": "Label Distribution",
+    "datasetSource": "Source (Organ/Tissue)",
+    "sourceInherited": "Inherited from dataset",
+    "sourceSelectPlaceholder": "Select source...",
+    "sourceCustomPlaceholder": "Enter custom source",
     "creating": "Creating...",
     "createConfirm": "Create",
     "extracting": "Extracting regions...",

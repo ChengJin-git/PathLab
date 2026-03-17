@@ -1,5 +1,5 @@
 from typing import Any, List, Optional
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import AnnotationAuditLog, utc_now
@@ -39,3 +39,17 @@ class AnnotationAuditLogRepository:
         q = q.limit(limit).offset(offset)
         result = await db.execute(q)
         return list(result.scalars().all())
+
+    @staticmethod
+    async def count_entries(
+        db: AsyncSession,
+        dataset_id: Optional[str] = None,
+        event_type: Optional[str] = None,
+    ) -> int:
+        q = select(func.count(AnnotationAuditLog.id))
+        if dataset_id:
+            q = q.where(AnnotationAuditLog.dataset_id == dataset_id)
+        if event_type:
+            q = q.where(AnnotationAuditLog.event_type == event_type)
+        result = await db.execute(q)
+        return result.scalar_one()

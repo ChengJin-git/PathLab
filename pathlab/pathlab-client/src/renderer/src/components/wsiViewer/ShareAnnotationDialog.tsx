@@ -9,6 +9,7 @@ import {
 } from '../../api/annotation'
 import { listUsersPaged, UserListItem } from '../../api/users'
 import { useToast } from '../../contexts/ToastContext'
+import { useAuth } from '../../contexts/AuthContext'
 
 interface ShareAnnotationDialogProps {
   open: boolean
@@ -19,6 +20,7 @@ interface ShareAnnotationDialogProps {
 export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotationDialogProps) {
   const { t } = useTranslation()
   const toast = useToast()
+  const { isAdmin } = useAuth()
   const [loading, setLoading] = useState(false)
   const [members, setMembers] = useState<CollaboratorMember[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -216,7 +218,7 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
               </div>
             ) : (
               <div className="space-y-3">
-                {members.map(member => (
+                {(isAdmin ? members : members.filter(m => m.role !== 'implicit_admin')).map(member => (
                   <div key={member.user_id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
                     <div className="flex items-center gap-3 overflow-hidden">
                       <div className="w-9 h-9 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 shadow-sm flex-shrink-0">

@@ -136,6 +136,13 @@ class Dataset(Base):
 
     source_organ = Column(String(100), nullable=True)
 
+    parent_dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)

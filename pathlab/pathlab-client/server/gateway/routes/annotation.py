@@ -1057,6 +1057,9 @@ async def extract_regions(
     }
     if req.source_dataset_id:
         payload["source_dataset_id"] = req.source_dataset_id
+        payload["parent_dataset_id"] = req.source_dataset_id
+    if req.source_organ:
+        payload["source_organ"] = req.source_organ
 
     await request_preprocessing_service(
         "POST",
@@ -1239,6 +1242,7 @@ async def save_shared_annotation(
                 "type": "updated",
                 "version": saved.version,
                 "changed_by": str(user.id),
+                "annotations": saved.annotations,
             },
         )
     )
@@ -1398,6 +1402,7 @@ async def bulk_delete_shared_regions_by_creator(
                 "type": "updated",
                 "version": shared.version if shared else 0,
                 "changed_by": str(user.id),
+                "annotations": shared.annotations if shared else {},
             },
         )
 
@@ -1658,10 +1663,66 @@ async def list_annotation_audit(
     if not user.is_admin():
         raise HTTPException(status_code=403, detail="Admin only")
 
-    entries = await AnnotationAuditLogRepository.list_entries(
-        db, dataset_id=dataset_id, event_type=event_type, limit=limit, offset=offset
+    from sqlalchemy import select as sa_select
+    from backend.auth.models import User as UserModel
+    from backend.database.models import Dataset
+
+    entries, total = await asyncio.gather(
+        AnnotationAuditLogRepository.list_entries(
+            db, dataset_id=dataset_id, event_type=event_type, limit=limit, offset=offset
+        ),
+        AnnotationAuditLogRepository.count_entries(
+            db, dataset_id=dataset_id, event_type=event_type
+        ),
     )
-    return {"entries": [e.to_dict() for e in entries], "count": len(entries)}
+
+    user_ids = set()
+    dataset_ids = set()
+    for e in entries:
+        if e.user_id:
+            user_ids.add(e.user_id)
+        if e.dataset_id:
+            dataset_ids.add(e.dataset_id)
+        if isinstance(e.event_metadata, dict):
+            if tid := e.event_metadata.get("target_user_id"):
+                user_ids.add(tid)
+
+    user_display: dict[str, str] = {}
+    if user_ids:
+        rows = await db.execute(
+            sa_select(UserModel.id, UserModel.nickname, UserModel.email).where(
+                UserModel.id.in_([uuid.UUID(uid) for uid in user_ids])
+            )
+        )
+        for row in rows.all():
+            user_display[str(row[0])] = row[1] or row[2] or str(row[0])
+
+    dataset_name: dict[str, str] = {}
+    if dataset_ids:
+        rows = await db.execute(
+            sa_select(Dataset.dataset_id, Dataset.name).where(
+                Dataset.dataset_id.in_(list(dataset_ids))
+            )
+        )
+        for row in rows.all():
+            dataset_name[row[0]] = row[1] or row[0]
+
+    def _enrich(e) -> dict:
+        d = e.to_dict()
+        d["user_display"] = user_display.get(e.user_id) if e.user_id else None
+        d["dataset_name"] = dataset_name.get(e.dataset_id)
+        if (
+            isinstance(d.get("event_metadata"), dict)
+            and "target_user_id" in d["event_metadata"]
+        ):
+            tid = d["event_metadata"]["target_user_id"]
+            d["event_metadata"] = {
+                **d["event_metadata"],
+                "target_user_display": user_display.get(tid, tid),
+            }
+        return d
+
+    return {"entries": [_enrich(e) for e in entries], "count": total}
 
 
 @router.get("/audit/export")
