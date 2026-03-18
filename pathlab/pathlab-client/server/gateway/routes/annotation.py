@@ -1036,7 +1036,30 @@ async def extract_regions(
         resolved = await _resolve_effective_dataset_annotations(
             req.source_dataset_id, user, db
         )
-        annotations = resolved["effective_annotations"]
+        valid_wsi_ids = {wsi.wsi_id for wsi in resolved["wsis"]}
+        if req.annotation_mode == "shared":
+            shared_draft = resolved["shared_draft"]
+            overlay: dict = (
+                shared_draft.annotations
+                if shared_draft and isinstance(shared_draft.annotations, dict)
+                else {}
+            )
+            if not overlay:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No shared annotation found for this dataset",
+                )
+        else:
+            overlay = resolved["draft_annotations"]
+        annotations = {
+            wsi_id: deepcopy(regions)
+            for wsi_id, regions in resolved["gt_annotations"].items()
+        }
+        for wsi_id, regions in overlay.items():
+            if wsi_id in valid_wsi_ids:
+                annotations[wsi_id] = (
+                    deepcopy(regions) if isinstance(regions, list) else []
+                )
     elif annotations is None and req.annotation_id:
         annotation = await SegmentationAnnotationRepository.get(
             db, req.annotation_id, user_id

@@ -386,6 +386,7 @@ class AnnotationExtractRequest(BaseModel):
     source_dataset_id: Optional[str] = None
     dataset_scope: bool = False
     source_organ: Optional[str] = None
+    annotation_mode: Literal["personal", "shared"] = "personal"
 
 
 class AnnotationDeleteByLabelsRequest(BaseModel):

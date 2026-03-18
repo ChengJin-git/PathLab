@@ -1236,7 +1236,7 @@ export default function WSIViewerPage() {
         dataset_name: datasetName,
         task_type: taskType,
         source_organ: sourceOrgan || undefined,
-        ...(effectiveDatasetId ? { source_dataset_id: effectiveDatasetId, dataset_scope: true } : {}),
+        ...(effectiveDatasetId ? { source_dataset_id: effectiveDatasetId, dataset_scope: true, annotation_mode: editingMode } : {}),
       })
 
       addExtractionTask(result.task_id, datasetName)
@@ -1245,7 +1245,7 @@ export default function WSIViewerPage() {
       toast.error(err?.message || t('annotation.extractFailed'))
       throw err
     }
-  }, [addExtractionTask, allAnnotations, annotationId, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
+  }, [addExtractionTask, allAnnotations, annotationId, editingMode, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
 
   // Collaborative Mode: Enter shared mode (load initial state + determine ownership)
   useEffect(() => {

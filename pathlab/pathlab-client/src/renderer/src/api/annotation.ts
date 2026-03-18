@@ -85,6 +85,7 @@ export interface ExtractRegionsRequest {
   source_dataset_id?: string
   dataset_scope?: boolean
   source_organ?: string
+  annotation_mode?: 'personal' | 'shared'
 }
 
 export interface DeleteDatasetAnnotationsByLabelsRequest {
