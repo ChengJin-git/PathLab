@@ -93,7 +93,7 @@ pathlab-client/
 ## 当前已确认的实现事实
 
 - Gateway 当前直接注册 17 个顶层 router；`server/gateway/routes/` 目录里实际共有 34 个路由模块文件，其中一部分作为分析 / 聊天 / 存储 / 训练辅助模块被复用
-- 数据库当前可见 ORM 表为 17 个，其中标注表为 `segmentation_annotations`
+- 数据库当前可见 ORM 表为 20 个，其中标注表为 `segmentation_annotations`，新增 `annotation_collaborators`、`annotation_audit_logs`、`analysis_runs`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
 - 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口
 
@@ -162,7 +162,7 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 | `server/tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm |
 | `server/tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id} |
 | `server/tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
-| `server/tests/test_ai_extractors_pretrained.py` | ~144 | 17 个 HuggingFace 预训练模型加载与推理验证 |
+| `server/tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载与推理验证 |
 
 详细说明见 [server/README.md](server/README.md)。
 

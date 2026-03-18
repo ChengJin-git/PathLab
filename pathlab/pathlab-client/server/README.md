@@ -108,7 +108,7 @@ pip install -r server/requirements-test.txt
 | `tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm（在线/离线/超时/无模型）|
 | `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
 | `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
-| `tests/test_ai_extractors_pretrained.py` | ~144 | 17 个 HuggingFace 预训练模型加载、forward 维度、transforms |
+| `tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
 
 **测试设计要点**
 

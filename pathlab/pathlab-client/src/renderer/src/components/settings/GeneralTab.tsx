@@ -61,14 +61,14 @@ export const MODEL_OPTIONS: ModelOption[] = [
   // Multimodal models (support image input)
   { id: 'qwen/qwen3.5-plus-02-15', label: 'Qwen3.5-Plus-02-15', multimodal: true },
   { id: 'moonshotai/kimi-k2.5', label: 'Kimi-K2.5', multimodal: true },
+  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
+  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
   // Text-only models
   { id: 'z-ai/glm-5', label: 'GLM-5', multimodal: false },
   { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
   { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
   { id: 'z-ai/glm-4.7-flash', label: 'GLM-4.7-Flash', multimodal: false },
   { id: 'moonshotai/kimi-k2-0905', label: 'Kimi-K2-Instruct-0905', multimodal: false },
-  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
-  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
 ]
 
 export const CUSTOM_MODEL_SENTINEL = '__custom__'

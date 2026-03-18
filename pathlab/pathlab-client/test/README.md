@@ -454,7 +454,7 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **`fetchExtractors()`**
 
-- 获取可用特征提取器列表（UNI、CONCH 等）
+- 获取可用特征提取器列表（UNI、CONCH、CytoFM 等）
 
 ---
 

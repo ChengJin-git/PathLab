@@ -91,14 +91,17 @@ src/
 
 `components/` 当前除了基础 UI 外，还拆出了这些主要分组：
 
+- `charts/`（分析图表组件）
 - `chat/`
+- `common/`（语言切换、音频可视化等公共 UI 组件）
+- `legal/`（隐私政策、免责声明等法律文本内联链接）
 - `list/`
 - `results/`
 - `settings/`
 - `taskDetail/`
 - `training/`
+- `ui/`
 - `upload/`
-- `workflow/`
 - `wsiViewer/`
 
 ## 相关文档
