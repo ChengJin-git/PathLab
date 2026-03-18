@@ -37,7 +37,7 @@ import PatchInferenceCard, { parsePatchInferenceConfig, removePatchInferenceBloc
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
-  SearchCompletedCard,
+  SearchResultsZone,
   SummarizingSearchStatus,
   SummarizingPdfStatus,
   PdfParsingStatus,
@@ -942,15 +942,12 @@ const AssistantMessage = React.memo(function AssistantMessage({
             <SearchingStatus query={activeSearchStatus?.query} reason={activeSearchStatus?.reason} />
           )}
 
-          {effectiveWebSearchResults?.map((result, index) => (
-            <div key={`${result.query}-${index}`} className={hasFunctionalCard && isStreaming ? 'opacity-60' : undefined}>
-              <SearchCompletedCard
-                query={result.query}
-                resultCount={result.results?.length || 0}
-                results={result.results}
-              />
-            </div>
-          ))}
+          {effectiveWebSearchResults && (
+            <SearchResultsZone
+              results={effectiveWebSearchResults}
+              isStreaming={isStreaming}
+            />
+          )}
 
           {showSummarizingSearch && <SummarizingSearchStatus />}
 

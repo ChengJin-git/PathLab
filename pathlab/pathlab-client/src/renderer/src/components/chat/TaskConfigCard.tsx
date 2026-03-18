@@ -284,6 +284,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     })
   }, [availableDatasets, config.task_type, normalizedDataType])
 
+
   const selectedDataset = useMemo(() => {
     return compatibleDatasets.find(d => d.dataset_id === selectedDatasetId) || null
   }, [compatibleDatasets, selectedDatasetId])
@@ -405,6 +406,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       if (initialConfig.dataset_id) {
         const found = result.items.find(d => d.dataset_id === initialConfig.dataset_id)
         if (found) {
+          if (
+            found.data_type &&
+            initialConfig.task_type === 'classification' &&
+            found.data_type !== initialConfig.data_type
+          ) {
+            const nextConfig = { ...config, data_type: found.data_type as 'wsi' | 'patch' }
+            setConfig(nextConfig)
+            onConfigChange?.(nextConfig)
+          }
           setSelectedDatasetId(initialConfig.dataset_id)
           // Set split info immediately from dataset summary
           const hasSplits = found.has_predefined_splits ?? false
