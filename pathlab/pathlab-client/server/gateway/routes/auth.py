@@ -824,6 +824,23 @@ class MaintenanceNoticeRequest(BaseModel):
     )
 
 
+@router.get("/auth/maintenance-notice/public", tags=["User Management"])
+async def get_maintenance_notice_public():
+    """
+    Get current maintenance notice without authentication.
+    Used to display announcements on the login page before users log in.
+    Also supports clients caching the notice for offline/unreachable scenarios.
+    """
+    notice = Config.get_maintenance_notice()
+    if not notice:
+        return {"active": False, "message": None}
+    return {
+        "active": True,
+        "message": notice.get("message"),
+        "updated_at": notice.get("updated_at"),
+    }
+
+
 @router.get("/auth/maintenance-notice", tags=["User Management"])
 async def get_maintenance_notice(
     user: User = Depends(current_active_user),

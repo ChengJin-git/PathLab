@@ -3447,7 +3447,8 @@
     "title": "Maintenance Notice",
     "pleaseAcknowledge": "Please read the above notice carefully and click \"Acknowledged\" to continue using the system.",
     "processing": "Processing...",
-    "acknowledge": "Acknowledged"
+    "acknowledge": "Acknowledged",
+    "close": "Close"
   },
   "organSources": {
     "adrenalGland": "Adrenal Gland",

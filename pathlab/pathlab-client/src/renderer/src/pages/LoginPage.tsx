@@ -15,7 +15,8 @@ import { Input } from '../components/ui/input'
 import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
 import { DisclaimerModal } from '../components/DisclaimerModal'
 import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal'
-import { getPublicSettings, ApiError } from '../api'
+import { getPublicSettings, getPublicMaintenanceNotice, ApiError } from '../api'
+import { MaintenanceNoticeModal } from '../components/MaintenanceNoticeModal'
 
 /**
  * Inner login page component.
@@ -377,10 +378,14 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
  * LoginPage wrapper that fetches Turnstile settings and passes them down.
  * Turnstile script is only loaded on the login page, not globally.
  */
+const NOTICE_CACHE_KEY = 'pathlab_notice_cache'
+
 export default function LoginPage() {
   const [turnstileSiteKey, setTurnstileSiteKey] = React.useState<string>('')
   const [settingsLoaded, setSettingsLoaded] = React.useState(false)
   const [backendUnavailable, setBackendUnavailable] = React.useState(false)
+  const [noticeMessage, setNoticeMessage] = React.useState<string | null>(null)
+  const [noticeOpen, setNoticeOpen] = React.useState(false)
 
   React.useEffect(() => {
     getPublicSettings()
@@ -391,14 +396,37 @@ export default function LoginPage() {
         setBackendUnavailable(false)
       })
       .catch((err) => {
-        // If backend is unreachable (network error or nginx 502/503), show maintenance banner
         if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
           setBackendUnavailable(true)
         }
-        // Continue without Turnstile either way
       })
       .finally(() => {
         setSettingsLoaded(true)
+      })
+
+    getPublicMaintenanceNotice()
+      .then((notice) => {
+        if (notice.active && notice.message) {
+          localStorage.setItem(NOTICE_CACHE_KEY, JSON.stringify({ message: notice.message }))
+          setNoticeMessage(notice.message)
+          setNoticeOpen(true)
+        } else {
+          localStorage.removeItem(NOTICE_CACHE_KEY)
+        }
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
+          try {
+            const cached = localStorage.getItem(NOTICE_CACHE_KEY)
+            if (cached) {
+              const { message } = JSON.parse(cached)
+              if (message) {
+                setNoticeMessage(message)
+                setNoticeOpen(true)
+              }
+            }
+          } catch { /* ignore */ }
+        }
       })
   }, [])
 
@@ -406,5 +434,14 @@ export default function LoginPage() {
     return null
   }
 
-  return <LoginPageInner backendUnavailable={backendUnavailable} turnstileSiteKey={turnstileSiteKey || undefined} />
+  return (
+    <>
+      <LoginPageInner backendUnavailable={backendUnavailable} turnstileSiteKey={turnstileSiteKey || undefined} />
+      <MaintenanceNoticeModal
+        isOpen={noticeOpen}
+        message={noticeMessage ?? ''}
+        onDismiss={() => setNoticeOpen(false)}
+      />
+    </>
+  )
 }

@@ -3446,7 +3446,8 @@
     "title": "維護公告",
     "pleaseAcknowledge": "請仔細閱讀以上公告，點擊「已知悉」後繼續使用系統。",
     "processing": "處理中...",
-    "acknowledge": "已知悉"
+    "acknowledge": "已知悉",
+    "close": "關閉"
   },
   "organSources": {
     "adrenalGland": "腎上腺",

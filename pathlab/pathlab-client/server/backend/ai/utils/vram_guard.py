@@ -21,6 +21,7 @@ Usage:
         safety_threshold=0.85,  # Use at most 85% of available VRAM
     )
 """
+
 from __future__ import annotations
 
 import torch
@@ -85,23 +86,27 @@ def check_vram_before_model_load(
     """
     Check if there's enough VRAM to load a model BEFORE actually loading it.
 
-    This prevents system crashes from attempting to load models that are
-    too large for the available GPU memory.
-
-    Args:
-        model_name: Name of the extractor model (e.g., "openmidnight", "uni2")
-        device: Target CUDA device
-        batch_size: Requested batch size for inference
+    Uses system-wide VRAM (pynvml) when available so that other users' GPU
+    allocations on a shared server are visible.  Falls back to per-process
+    PyTorch tracking when pynvml is not installed.
 
     Raises:
         VRAMInsufficientError: If GPU doesn't have enough VRAM for the model
     """
     if device.type != "cuda":
-        return  # No VRAM limits on CPU
+        return
 
-    # Get current VRAM state
-    allocated_mb, _, total_mb = get_vram_info(device)
-    available_mb = total_mb - allocated_mb
+    device_idx = device.index if device.index is not None else 0
+
+    try:
+        from backend.common.gpu_utils import get_gpu_memory_info as _get_system_vram
+
+        _used_mb, free_mb, total_mb = _get_system_vram(device_idx)
+        available_mb = free_mb
+    except Exception:
+        _, _, total_mb = get_vram_info(device)
+        allocated_mb, _, _ = get_vram_info(device)
+        available_mb = total_mb - allocated_mb
 
     # Get estimated model size (use default if unknown)
     model_size_mb = MODEL_SIZE_ESTIMATES_MB.get(model_name, 1000)
@@ -115,7 +120,8 @@ def check_vram_before_model_load(
     if required_mb > available_mb:
         # Find smaller models that might work
         suitable_models = [
-            name for name, size in MODEL_SIZE_ESTIMATES_MB.items()
+            name
+            for name, size in MODEL_SIZE_ESTIMATES_MB.items()
             if size + min_overhead + batch_buffer_mb <= available_mb
         ]
         suggestion = ""
@@ -170,9 +176,9 @@ def get_vram_info(device: torch.device) -> Tuple[float, float, float]:
 
     device_idx = device.index if device.index is not None else 0
     props = torch.cuda.get_device_properties(device_idx)
-    total_mb = props.total_memory / (1024 ** 2)
-    allocated_mb = torch.cuda.memory_allocated(device_idx) / (1024 ** 2)
-    reserved_mb = torch.cuda.memory_reserved(device_idx) / (1024 ** 2)
+    total_mb = props.total_memory / (1024**2)
+    allocated_mb = torch.cuda.memory_allocated(device_idx) / (1024**2)
+    reserved_mb = torch.cuda.memory_reserved(device_idx) / (1024**2)
 
     return (allocated_mb, reserved_mb, total_mb)
 
@@ -230,7 +236,7 @@ def measure_single_batch_vram(
     # Calculate per-sample consumption
     # Note: sample_input should have batch_size=1
     batch_size = sample_input.shape[0]
-    per_sample_mb = (mem_after - mem_before) / (1024 ** 2) / batch_size
+    per_sample_mb = (mem_after - mem_before) / (1024**2) / batch_size
 
     return per_sample_mb
 
@@ -291,7 +297,7 @@ def check_vram_before_batch_processing(
         message=(
             f"Requested batch_size={requested_batch_size} would exceed available VRAM. "
             f"Measured {per_sample_mb:.2f} MB per sample. "
-            f"Available: {available_mb:.2f} MB (total: {total_mb:.2f} MB, threshold: {safety_threshold*100:.0f}%). "
+            f"Available: {available_mb:.2f} MB (total: {total_mb:.2f} MB, threshold: {safety_threshold * 100:.0f}%). "
             f"Suggested safe batch_size: {max_safe_batch_size}"
         ),
         requested_batch_size=requested_batch_size,
@@ -300,4 +306,3 @@ def check_vram_before_batch_processing(
         available_vram_mb=available_mb,
         total_vram_mb=total_mb,
     )
-

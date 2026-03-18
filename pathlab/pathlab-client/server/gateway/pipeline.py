@@ -12,6 +12,7 @@ Synchronous HTTP Architecture:
 import asyncio
 import httpx
 import os
+import time
 import traceback
 from pathlib import Path
 from typing import Any, List, Dict, Set, Tuple
@@ -33,6 +34,68 @@ from backend.database.utils.training_logger import TrainingLogger
 from backend.common.config import Config
 from .dependencies import logger, AI_SERVICE_URL
 from .utils import cancel_ai_service_training, ensure_coords_ready
+
+
+_GPU_VRAM_REPROBE_TIMEOUT_SECS = float(
+    os.getenv("GPU_VRAM_REPROBE_TIMEOUT_SECS", "1800")
+)
+_GPU_VRAM_REPROBE_POLL_SECS = 10.0
+
+
+async def _ensure_gpu_vram_for_step(
+    assigned_device: str | None,
+    step_name: str,
+    logger_manager: "ScopedLogger",
+    min_vram_mb: float | None = None,
+) -> None:
+    if not assigned_device or not assigned_device.startswith("cuda"):
+        return
+
+    try:
+        from backend.common.gpu_utils import check_gpu_vram_available
+    except ImportError:
+        return
+
+    try:
+        gpu_index = int(assigned_device.split(":")[-1]) if ":" in assigned_device else 0
+    except (ValueError, IndexError):
+        return
+
+    if min_vram_mb is None:
+        min_vram_mb = Config.DEFAULT_MIN_VRAM_MB
+
+    deadline = time.monotonic() + _GPU_VRAM_REPROBE_TIMEOUT_SECS
+    warned = False
+
+    while True:
+        is_available, current_free_mb, message = check_gpu_vram_available(
+            gpu_index, min_vram_mb
+        )
+        if is_available:
+            if warned:
+                async with logger_manager.session() as (log, _db):
+                    await log.info(
+                        f"[{step_name}] {assigned_device} VRAM recovered — {current_free_mb:.0f} MB free"
+                    )
+            return
+
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"{assigned_device} still has insufficient VRAM after "
+                f"{_GPU_VRAM_REPROBE_TIMEOUT_SECS:.0f}s wait before {step_name}. "
+                f"Required: {min_vram_mb:.0f} MB, available: {current_free_mb:.0f} MB. "
+                "Another process may be occupying the GPU."
+            )
+
+        if not warned:
+            async with logger_manager.session() as (log, _db):
+                await log.warning(
+                    f"[{step_name}] {assigned_device} VRAM insufficient — waiting. {message}",
+                    metadata={"required_mb": min_vram_mb, "free_mb": current_free_mb},
+                )
+            warned = True
+
+        await asyncio.sleep(_GPU_VRAM_REPROBE_POLL_SECS)
 
 
 _UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS = frozenset(
@@ -585,7 +648,9 @@ async def run_training_pipeline(
                         db, task_id, TaskStatus.TRAINING, progress=50
                     )
 
-                # Call AI service for patch segmentation training
+                await _ensure_gpu_vram_for_step(
+                    assigned_device, "patch_segmentation", logger_manager
+                )
                 await _call_ai_service(
                     logger_manager=logger_manager,
                     task_id=task_id,
@@ -661,7 +726,9 @@ async def run_training_pipeline(
                     db, task_id, TaskStatus.TRAINING, progress=50
                 )
 
-            # Call AI service for patch classification training (synchronous, waits for completion)
+            await _ensure_gpu_vram_for_step(
+                assigned_device, "patch_classification", logger_manager
+            )
             await _call_ai_service(
                 logger_manager=logger_manager,
                 task_id=task_id,
@@ -859,7 +926,9 @@ async def run_training_pipeline(
                 f"Calling AI service for feature extraction (using {feature_extractor})"
             )
 
-        # Call AI Service (NO DB SESSION HELD)
+        await _ensure_gpu_vram_for_step(
+            assigned_device, "feature_extraction", logger_manager
+        )
         await _call_ai_service(
             logger_manager=logger_manager,
             task_id=task_id,
@@ -923,7 +992,7 @@ async def run_training_pipeline(
                 "seed": seed,
             }
 
-        # Send training request (synchronous, waits for completion) (NO DB SESSION HELD)
+        await _ensure_gpu_vram_for_step(assigned_device, "wsi_training", logger_manager)
         await _call_ai_service(
             logger_manager=logger_manager,
             task_id=task_id,

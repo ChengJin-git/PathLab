@@ -33,6 +33,10 @@ from sklearn.metrics import (
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.classifiers import get_classifier
+from backend.ai.utils.vram_guard import (
+    check_vram_before_model_load,
+    VRAMInsufficientError,
+)
 from backend.ai.utils.patch_resize import (
     build_patch_classification_transform,
     resolve_patch_resize_size,
@@ -400,7 +404,18 @@ class PatchClassificationTrainer(BaseTrainer):
             },
         )
 
-        # Build feature extractor (frozen)
+        device_obj = torch.device(self.device)
+        if device_obj.type == "cuda":
+            try:
+                await asyncio.to_thread(
+                    check_vram_before_model_load,
+                    model_name=extractor_name,
+                    device=device_obj,
+                    batch_size=self.batch_size,
+                )
+            except VRAMInsufficientError as e:
+                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
+
         extractor = (
             get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
             .to(self.device)
@@ -842,6 +857,18 @@ class PatchClassificationTrainer(BaseTrainer):
                     f"Could not load kfold resume checkpoint ({_e}), starting from fold 1",
                     {"resume_error": str(_e)},
                 )
+
+        device_obj = torch.device(self.device)
+        if device_obj.type == "cuda":
+            try:
+                await asyncio.to_thread(
+                    check_vram_before_model_load,
+                    model_name=extractor_name,
+                    device=device_obj,
+                    batch_size=self.batch_size,
+                )
+            except VRAMInsufficientError as e:
+                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
 
         extractor = (
             get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
