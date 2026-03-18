@@ -1412,35 +1412,42 @@ export default function WSIViewerPage() {
   // Annotation: auto-save (debounced 2s)
   useEffect(() => {
     if (!annotationMode) return
-    if (editingMode === 'shared') return
     if (!hasUnsavedChanges) return
-    if (savingAnnotations) return
-    const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+    if (editingMode === 'shared' ? sharedSaving : savingAnnotations) return
 
     clearPendingSaveTimer()
 
-    // For dataset-scoped annotations, persist empty drafts so intentional GT clearing
-    // does not resurrect the dataset GT on the next load.
-    if (totalRegions === 0) {
-      if (effectiveDatasetId) {
-        void persistAnnotations({ showToast: false })
-      } else if (annotationIdRef.current) {
-        void persistAnnotations({ showToast: false })
-      } else {
-        setHasUnsavedChanges(false)
-      }
-      return
-    }
+    if (editingMode === 'shared') {
+      saveTimerRef.current = setTimeout(async () => {
+        saveTimerRef.current = null
+        await saveShared()
+      }, 2000)
+    } else {
+      const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
 
-    saveTimerRef.current = setTimeout(async () => {
-      saveTimerRef.current = null
-      await persistAnnotations({ showToast: false })
-    }, 2000)
+      // For dataset-scoped annotations, persist empty drafts so intentional GT clearing
+      // does not resurrect the dataset GT on the next load.
+      if (totalRegions === 0) {
+        if (effectiveDatasetId) {
+          void persistAnnotations({ showToast: false })
+        } else if (annotationIdRef.current) {
+          void persistAnnotations({ showToast: false })
+        } else {
+          setHasUnsavedChanges(false)
+        }
+        return
+      }
+
+      saveTimerRef.current = setTimeout(async () => {
+        saveTimerRef.current = null
+        await persistAnnotations({ showToast: false })
+      }, 2000)
+    }
 
     return () => {
       clearPendingSaveTimer()
     }
-  }, [allAnnotations, annotationMode, clearPendingSaveTimer, effectiveDatasetId, hasUnsavedChanges, persistAnnotations, savingAnnotations, editingMode])
+  }, [allAnnotations, annotationMode, clearPendingSaveTimer, effectiveDatasetId, hasUnsavedChanges, persistAnnotations, savingAnnotations, editingMode, sharedSaving, saveShared])
 
   // Annotation: recovery when entering annotation mode
   useEffect(() => {
@@ -2018,10 +2025,10 @@ export default function WSIViewerPage() {
                   setPendingNavigation(null)
                   nav()
                 }}
-                disabled={savingAnnotations}
+                disabled={savingAnnotations || sharedSaving}
                 className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-1.5"
               >
-                {savingAnnotations && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                {(savingAnnotations || sharedSaving) && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 {t('annotation.saveAndLeave')}
               </button>
             </div>
