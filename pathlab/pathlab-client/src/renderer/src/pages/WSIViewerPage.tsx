@@ -284,10 +284,12 @@ export default function WSIViewerPage() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const immediateSharedSaveRef = useRef(false)
   const immediatePersonalSaveRef = useRef(false)
+  const pendingSeedDecisionRef = useRef<{ usePersonalDraft: boolean; draft: AnnotationsMap } | null>(null)
   const [autoSeedConfirm, setAutoSeedConfirm] = useState<{
     draft: AnnotationsMap
     emptyAnnotations: AnnotationsMap
     version: number
+    preDecision?: true
   } | null>(null)
   const [showSharedExitDialog, setShowSharedExitDialog] = useState(false)
   const annotationIdRef = useRef<string | null>(null)
@@ -1086,6 +1088,11 @@ export default function WSIViewerPage() {
         const saved = await persistAnnotations({ showToast: false })
         if (!saved) return
       }
+      const hasPersonalDraft = Object.values(allAnnotations).some(v => Array.isArray(v) && v.length > 0)
+      if (hasPersonalDraft && effectiveDatasetId) {
+        setAutoSeedConfirm({ draft: allAnnotations, emptyAnnotations: {}, version: 0, preDecision: true })
+        return
+      }
       setEditingMode('shared')
     } else {
       const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
@@ -1095,7 +1102,7 @@ export default function WSIViewerPage() {
         setShowSharedExitDialog(true)
       }
     }
-  }, [editingMode, hasUnsavedChanges, persistAnnotations, allAnnotations, exitSharedMode])
+  }, [editingMode, hasUnsavedChanges, persistAnnotations, allAnnotations, exitSharedMode, effectiveDatasetId])
 
   const handleDeleteShared = useCallback(async () => {
     if (!effectiveDatasetId) return
@@ -1110,8 +1117,14 @@ export default function WSIViewerPage() {
 
   const handleAutoSeedConfirm = useCallback(async (usePersonalDraft: boolean) => {
     if (!autoSeedConfirm || !effectiveDatasetId) { setAutoSeedConfirm(null); return }
-    const { draft, emptyAnnotations, version } = autoSeedConfirm
+    const { draft, emptyAnnotations, version, preDecision } = autoSeedConfirm
     setAutoSeedConfirm(null)
+
+    if (preDecision) {
+      pendingSeedDecisionRef.current = { usePersonalDraft, draft }
+      setEditingMode('shared')
+      return
+    }
 
     if (usePersonalDraft) {
       setSharedSaving(true)
@@ -1240,7 +1253,12 @@ export default function WSIViewerPage() {
 
     let cancelled = false
     setSharedSaving(true)
-    const personalDraft = allAnnotations
+
+    const seedDecision = pendingSeedDecisionRef.current
+    pendingSeedDecisionRef.current = null
+    const personalDraft = seedDecision?.draft ?? allAnnotations
+
+    let seedingStarted = false
 
     Promise.all([
       getSharedAnnotation(effectiveDatasetId),
@@ -1248,22 +1266,52 @@ export default function WSIViewerPage() {
     ]).then(([res, collabRes]) => {
       if (cancelled) return
 
-      const hasPersonalDraft = Object.values(personalDraft).some(v => Array.isArray(v) && v.length > 0)
       const sharedIsEmpty = !res.annotations || Object.values(res.annotations).every(v => !Array.isArray(v) || v.length === 0)
-      const shouldAutoSeed = sharedIsEmpty && !res.is_prepopulated && hasPersonalDraft
 
-      if (shouldAutoSeed) {
-        setSharedVersion(res.version)
-        setAutoSeedConfirm({ draft: personalDraft, emptyAnnotations: res.annotations || {}, version: res.version })
+      if (seedDecision !== null) {
+        if (seedDecision.usePersonalDraft && sharedIsEmpty && !res.is_prepopulated) {
+          seedingStarted = true
+          setSharedSaving(true)
+          saveSharedAnnotation(effectiveDatasetId, { version: res.version, annotations: seedDecision.draft })
+            .then(saved => {
+              if (!cancelled) {
+                setSharedVersion(saved.version)
+                toast.info(t('annotation.collab.autoSeeded'))
+              }
+            })
+            .catch(async err => {
+              if (cancelled) return
+              if (err instanceof ApiError && err.status === 409) {
+                const fresh = await getSharedAnnotation(effectiveDatasetId)
+                setAllAnnotations(fresh.annotations)
+                mergeLabelColorsFromAnnotations(fresh.annotations)
+                setSharedVersion(fresh.version)
+              }
+            })
+            .finally(() => { if (!cancelled) setSharedSaving(false) })
+        } else {
+          if (res.is_prepopulated) toast.info(t('annotation.collab.sharedLoaded'))
+          if (res.annotations) {
+            setAllAnnotations(res.annotations)
+            mergeLabelColorsFromAnnotations(res.annotations)
+          }
+          setSharedVersion(res.version)
+        }
       } else {
-        if (res.is_prepopulated) {
-          toast.info(t('annotation.collab.sharedLoaded'))
+        const hasPersonalDraft = Object.values(personalDraft).some(v => Array.isArray(v) && v.length > 0)
+        const shouldAutoSeed = sharedIsEmpty && !res.is_prepopulated && hasPersonalDraft
+
+        if (shouldAutoSeed) {
+          setSharedVersion(res.version)
+          setAutoSeedConfirm({ draft: personalDraft, emptyAnnotations: res.annotations || {}, version: res.version })
+        } else {
+          if (res.is_prepopulated) toast.info(t('annotation.collab.sharedLoaded'))
+          if (res.annotations) {
+            setAllAnnotations(res.annotations)
+            mergeLabelColorsFromAnnotations(res.annotations)
+          }
+          setSharedVersion(res.version)
         }
-        if (res.annotations) {
-          setAllAnnotations(res.annotations)
-          mergeLabelColorsFromAnnotations(res.annotations)
-        }
-        setSharedVersion(res.version)
       }
 
       setHasUnsavedChanges(false)
@@ -1284,7 +1332,7 @@ export default function WSIViewerPage() {
       }
       exitSharedMode()
     }).finally(() => {
-      if (!cancelled) setSharedSaving(false)
+      if (!cancelled && !seedingStarted) setSharedSaving(false)
     })
 
     return () => { cancelled = true }
