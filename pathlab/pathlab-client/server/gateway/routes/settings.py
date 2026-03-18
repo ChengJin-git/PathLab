@@ -46,6 +46,9 @@ class GlobalSettingsResponse(BaseModel):
     local_asr_base_url: str
     local_asr_model: str
     local_asr_api_key: str
+    # Kaggle credentials
+    kaggle_username: str
+    kaggle_key: str
     # Cloudflare Turnstile settings
     turnstile_enabled: bool
     turnstile_site_key: str
@@ -76,6 +79,9 @@ class GlobalSettingsUpdateRequest(BaseModel):
     local_asr_base_url: Optional[str] = None
     local_asr_model: Optional[str] = None
     local_asr_api_key: Optional[str] = None
+    # Kaggle credentials
+    kaggle_username: Optional[str] = None
+    kaggle_key: Optional[str] = None
     # Cloudflare Turnstile settings
     turnstile_enabled: Optional[bool] = None
     turnstile_site_key: Optional[str] = None

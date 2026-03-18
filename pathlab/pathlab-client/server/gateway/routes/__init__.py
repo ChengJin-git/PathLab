@@ -36,6 +36,7 @@ from .settings import router as settings_router
 from .gpu import router as gpu_router
 from .annotation import router as annotation_router
 from .research_chat import router as research_chat_router
+from .dataset_download import router as dataset_download_router
 
 __all__ = [
     "auth_router",
@@ -55,5 +56,6 @@ __all__ = [
     "gpu_router",
     "annotation_router",
     "research_chat_router",
+    "dataset_download_router",
 ]
 

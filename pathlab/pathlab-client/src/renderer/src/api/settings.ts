@@ -29,6 +29,9 @@ export interface GlobalSettings {
   local_asr_base_url: string
   local_asr_model: string
   local_asr_api_key: string
+  // Kaggle credentials
+  kaggle_username: string
+  kaggle_key: string
   // Cloudflare Turnstile settings
   turnstile_enabled: boolean
   turnstile_site_key: string

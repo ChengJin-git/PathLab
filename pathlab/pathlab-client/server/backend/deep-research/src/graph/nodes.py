@@ -41,8 +41,6 @@ from src.graph.research_validation import (
 from .types import State
 from .utils import (
     build_clarified_topic_from_history,
-    get_message_content,
-    is_user_message,
     reconstruct_clarification_history,
 )
 

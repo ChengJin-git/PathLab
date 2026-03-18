@@ -57,6 +57,7 @@ from .routes import (
     gpu_router,
     annotation_router,
     research_chat_router,
+    dataset_download_router,
 )
 from backend.common.config import Config
 
@@ -702,5 +703,6 @@ app.include_router(settings_router)
 app.include_router(gpu_router)
 app.include_router(annotation_router)
 app.include_router(research_chat_router)
+app.include_router(dataset_download_router)
 
 logger.info("Gateway service initialized with all route modules")

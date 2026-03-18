@@ -282,6 +282,8 @@ class Config:
             ),
             "local_asr_model": data.get("local_asr_model", ""),
             "local_asr_api_key": data.get("local_asr_api_key", ""),
+            "kaggle_username": data.get("kaggle_username", ""),
+            "kaggle_key": data.get("kaggle_key", ""),
             "turnstile_enabled": turnstile_enabled,
             "turnstile_site_key": turnstile_site_key,
             "turnstile_secret_key": turnstile_secret_key,
@@ -328,6 +330,9 @@ class Config:
             "local_asr_base_url",
             "local_asr_model",
             "local_asr_api_key",
+            # Kaggle credentials
+            "kaggle_username",
+            "kaggle_key",
             # Cloudflare Turnstile settings
             "turnstile_enabled",
             "turnstile_site_key",

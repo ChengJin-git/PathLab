@@ -23,4 +23,5 @@ export * from './heatmap'
 export * from './wsi'
 export * from './storage'
 export * from './annotation'
+export * from './dataset-download'
 

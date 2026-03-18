@@ -85,6 +85,9 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
+  // Kaggle credentials
+  const [kaggleUsername, setKaggleUsername] = useState('')
+  const [kaggleKey, setKaggleKey] = useState('')
   // Web Search
   const [exaApiKey, setExaApiKey] = useState('')
   const [tavilyApiKey, setTavilyApiKey] = useState('')
@@ -151,6 +154,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
+      setKaggleUsername(s.kaggle_username || ''); setKaggleKey(s.kaggle_key || '')
       setExaApiKey(s.exa_api_key || '')
       setTavilyApiKey(s.tavily_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
@@ -182,6 +186,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       await updateGlobalSettings({
         openrouter_api_key: apiKey, openrouter_base_url: baseUrl, openrouter_model: model,
         huggingface_token: huggingfaceToken, dashscope_api_key: dashscopeApiKey,
+        kaggle_username: kaggleUsername, kaggle_key: kaggleKey,
         exa_api_key: exaApiKey, tavily_api_key: tavilyApiKey,
         local_vllm_enabled: localVllmEnabled, local_vllm_base_url: localVllmBaseUrl,
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
@@ -389,6 +394,35 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                         <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
                           {t('common.getToken')}
                         </a>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">KAGGLE USERNAME</Label>
+                      <Input
+                        value={kaggleUsername}
+                        onChange={(e) => setKaggleUsername(e.target.value)}
+                        placeholder="your_username"
+                        className="h-9 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">KAGGLE KEY</Label>
+                      <div className="relative">
+                        <Input
+                          type="password"
+                          value={kaggleKey}
+                          onChange={(e) => setKaggleKey(e.target.value)}
+                          placeholder="xxxxxxxxxxxxxxxx"
+                          className="h-9 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500 pr-16"
+                        />
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                          <a href="https://www.kaggle.com/settings" target="_blank" rel="noopener noreferrer" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
+                            {t('common.getKey')}
+                          </a>
+                        </div>
                       </div>
                     </div>
                   </div>
