@@ -3414,6 +3414,7 @@
       "saveShared": "Save Shared",
       "sharedLoaded": "Prepopulated annotations loaded as collaborative draft",
       "sharedLoadFailed": "Failed to load collaborative annotations",
+      "sharedLoadFailedNoPermission": "Access denied. This account is not authorized to access collaborative annotations for this dataset.",
       "submitted": "Annotations submitted as GT",
       "submitFailed": "Submission failed",
       "sharedDeleted": "Shared draft deleted",

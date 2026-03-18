@@ -1203,7 +1203,11 @@ export default function WSIViewerPage() {
     }).catch(err => {
       if (cancelled) return
       console.error('Failed to load shared annotations:', err)
-      toast.error(t('annotation.collab.sharedLoadFailed'))
+      if (err instanceof ApiError && (err.status === 403 || err.status === 401)) {
+        toast.error(t('annotation.collab.sharedLoadFailedNoPermission'))
+      } else {
+        toast.error(t('annotation.collab.sharedLoadFailed'))
+      }
       setEditingMode('personal')
     }).finally(() => {
       if (!cancelled) setSharedSaving(false)

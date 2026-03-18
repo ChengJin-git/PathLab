@@ -3414,6 +3414,7 @@
       "saveShared": "保存共享",
       "sharedLoaded": "已加载预置标注作为协作草稿",
       "sharedLoadFailed": "加载协作标注失败",
+      "sharedLoadFailedNoPermission": "无访问权限，该账号未被授权访问此数据集的协作标注",
       "submitted": "标注已提交为 GT",
       "submitFailed": "提交失败",
       "sharedDeleted": "协作草稿已删除",
