@@ -1872,9 +1872,9 @@ export default function WSIViewerPage() {
             currentWsiId={wsi_id}
             regions={currentRegions}
             allAnnotations={allAnnotations}
-            preferRemoteCrossSlideSummary={!!effectiveDatasetId}
-            crossSlideSummary={effectiveDatasetId ? datasetAnnotationSummary : null}
-            loadingCrossSlideSummary={effectiveDatasetId ? loadingDatasetAnnotationSummary : false}
+            preferRemoteCrossSlideSummary={!!effectiveDatasetId && editingMode !== 'shared'}
+            crossSlideSummary={effectiveDatasetId && editingMode !== 'shared' ? datasetAnnotationSummary : null}
+            loadingCrossSlideSummary={effectiveDatasetId && editingMode !== 'shared' ? loadingDatasetAnnotationSummary : false}
             labelColors={labelColors}
             focusedRegionId={focusedRegionId}
             onFocusRegion={handleFocusRegion}
