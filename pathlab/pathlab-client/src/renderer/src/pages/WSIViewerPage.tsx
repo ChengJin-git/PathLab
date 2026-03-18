@@ -1418,9 +1418,6 @@ export default function WSIViewerPage() {
         const data = JSON.parse(event.data) as SharedAnnotationEvent
         if (data.type === 'updated') {
           if (data.version > sharedVersionRef.current) {
-            if (data.changed_by !== user?.id) {
-              toast.info(t('annotation.collab.sharedUpdated', { version: data.version }))
-            }
             if (data.annotations) {
               if (locallyModifiedWsiIdsRef.current.size > 0) {
                 const localModified = new Set(locallyModifiedWsiIdsRef.current)
