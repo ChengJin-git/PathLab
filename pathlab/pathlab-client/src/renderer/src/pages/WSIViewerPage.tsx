@@ -51,9 +51,10 @@ import { useToast } from '../contexts/ToastContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { getFileType } from '../constants/fileTypes'
-import { ApiError } from '../api/client'
+import { ApiError, getAuthToken } from '../api/client'
+import { API_BASE } from '../config'
 
-import { usePresence } from '../lib/usePresence'
+import { usePresence, type AnnotationPatchEvent } from '../lib/usePresence'
 import { PresenceCursorOverlay } from '../components/wsiViewer/PresenceCursorOverlay'
 
 const PATCH_OVERLAY_PREVIEW_SIZE = 768
@@ -284,6 +285,17 @@ export default function WSIViewerPage() {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const immediateSharedSaveRef = useRef(false)
   const immediatePersonalSaveRef = useRef(false)
+  const remoteAnnotationChangeRef = useRef(false)
+  const locallyModifiedWsiIdsRef = useRef<Set<string>>(new Set())
+  const keepaliveSaveRef = useRef({
+    annotationMode: false,
+    hasUnsavedChanges: false,
+    editingMode: 'personal' as 'personal' | 'shared',
+    allAnnotations: {} as AnnotationsMap,
+    effectiveDatasetId: null as string | null | undefined,
+    annotationId: null as string | null,
+    sharedVersion: 0,
+  })
   const pendingSeedDecisionRef = useRef<{ usePersonalDraft: boolean; draft: AnnotationsMap } | null>(null)
   const [autoSeedConfirm, setAutoSeedConfirm] = useState<{
     draft: AnnotationsMap
@@ -321,8 +333,19 @@ export default function WSIViewerPage() {
   const sharedVersionRef = useRef(0)
   const [isDatasetOwnerOrAdmin, setIsDatasetOwnerOrAdmin] = useState(false)
   const [showShareDialog, setShowShareDialog] = useState(false)
-  // Sync ref
   useEffect(() => { sharedVersionRef.current = sharedVersion }, [sharedVersion])
+
+  useEffect(() => {
+    keepaliveSaveRef.current = {
+      annotationMode,
+      hasUnsavedChanges,
+      editingMode,
+      allAnnotations,
+      effectiveDatasetId,
+      annotationId,
+      sharedVersion,
+    }
+  })
 
   // Manual save & unsaved-changes tracking
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
@@ -330,7 +353,27 @@ export default function WSIViewerPage() {
   // Pending navigation when user tries to leave with unsaved changes
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
 
-  const { cursors, sendCursor } = usePresence(editingMode === 'shared' ? effectiveDatasetId : null)
+  const handleRemoteAnnotationPatch = useCallback((event: AnnotationPatchEvent) => {
+    if (editingMode !== 'shared') return
+    remoteAnnotationChangeRef.current = true
+    setAllAnnotations(prev => {
+      const wsiRegions = prev[event.wsi_id] || []
+      if (event.op === 'add' && event.region) {
+        if (wsiRegions.some(r => r.id === event.region!.id)) return prev
+        return { ...prev, [event.wsi_id]: [...wsiRegions, event.region] }
+      } else if (event.op === 'update' && event.region_id && event.region_updates) {
+        return { ...prev, [event.wsi_id]: wsiRegions.map(r => r.id === event.region_id ? { ...r, ...event.region_updates! } : r) }
+      } else if (event.op === 'delete' && event.region_id) {
+        return { ...prev, [event.wsi_id]: wsiRegions.filter(r => r.id !== event.region_id) }
+      }
+      return prev
+    })
+  }, [editingMode])
+
+  const { cursors, sendCursor, sendAnnotationPatch } = usePresence(
+    editingMode === 'shared' ? effectiveDatasetId : null,
+    handleRemoteAnnotationPatch,
+  )
 
   useEffect(() => {
     annotationIdRef.current = annotationId
@@ -855,7 +898,10 @@ export default function WSIViewerPage() {
       [wsi_id]: [...(prev[wsi_id] || []), newRegion],
     }))
     setHasUnsavedChanges(true)
-    // Auto-assign color to label
+    if (editingMode === 'shared') {
+      locallyModifiedWsiIdsRef.current.add(wsi_id)
+      sendAnnotationPatch('add', wsi_id, { region: newRegion })
+    }
     if (region.label) {
       setLabelColors(prev => {
         if (prev[region.label]) return prev
@@ -865,7 +911,7 @@ export default function WSIViewerPage() {
         }
       })
     }
-  }, [wsi_id, editingMode, user?.id])
+  }, [wsi_id, editingMode, user?.id, sendAnnotationPatch])
 
   const handleRegionTooLarge = useCallback(() => {
     toast.warning(t('annotation.regionTooLarge'))
@@ -886,17 +932,25 @@ export default function WSIViewerPage() {
       })
     }
     setHasUnsavedChanges(true)
-  }, [wsi_id])
+    if (editingMode === 'shared') {
+      locallyModifiedWsiIdsRef.current.add(wsi_id)
+      sendAnnotationPatch('update', wsi_id, { region_id: regionId, region_updates: updates })
+    }
+  }, [wsi_id, editingMode, sendAnnotationPatch])
 
   const handleDeleteRegion = useCallback((regionId: string) => {
     setAllAnnotations(prev => ({
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).filter(r => r.id !== regionId),
     }))
-    if (editingMode === 'shared') immediateSharedSaveRef.current = true
-    else immediatePersonalSaveRef.current = true
+    if (editingMode === 'shared') {
+      locallyModifiedWsiIdsRef.current.add(wsi_id)
+      sendAnnotationPatch('delete', wsi_id, { region_id: regionId })
+    } else {
+      immediatePersonalSaveRef.current = true
+    }
     setHasUnsavedChanges(true)
-  }, [wsi_id, editingMode])
+  }, [wsi_id, editingMode, sendAnnotationPatch])
 
   const handleDeleteRegions = useCallback((regionIds: string[]) => {
     const idSet = new Set(regionIds)
@@ -904,10 +958,16 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).filter(r => !idSet.has(r.id)),
     }))
-    if (editingMode === 'shared') immediateSharedSaveRef.current = true
-    else immediatePersonalSaveRef.current = true
+    if (editingMode === 'shared') {
+      locallyModifiedWsiIdsRef.current.add(wsi_id)
+      for (const id of regionIds) {
+        sendAnnotationPatch('delete', wsi_id, { region_id: id })
+      }
+    } else {
+      immediatePersonalSaveRef.current = true
+    }
     setHasUnsavedChanges(true)
-  }, [wsi_id, editingMode])
+  }, [wsi_id, editingMode, sendAnnotationPatch])
 
   const handleLabelChange = useCallback((label: string) => {
     setCurrentLabel(label)
@@ -938,6 +998,7 @@ export default function WSIViewerPage() {
 
   const exitSharedMode = useCallback(() => {
     clearPendingSaveTimer()
+    locallyModifiedWsiIdsRef.current.clear()
     setEditingMode('personal')
     setAllAnnotations({})
     setHasUnsavedChanges(false)
@@ -953,6 +1014,7 @@ export default function WSIViewerPage() {
       })
       setSharedVersion(response.version)
       setHasUnsavedChanges(false)
+      locallyModifiedWsiIdsRef.current.clear()
       refreshDatasetAnnotationSummary()
       toast.success(t('annotation.saved'))
       return true
@@ -1165,6 +1227,9 @@ export default function WSIViewerPage() {
     const labelSet = new Set(labels)
 
     if (editingMode === 'shared') {
+      for (const slideId of Object.keys(allAnnotations)) {
+        locallyModifiedWsiIdsRef.current.add(slideId)
+      }
       setAllAnnotations(prev => {
         const next: typeof prev = {}
         for (const [key, regions] of Object.entries(prev)) {
@@ -1213,7 +1278,7 @@ export default function WSIViewerPage() {
       console.error('Failed to delete dataset annotations by labels:', err)
       toast.error(t('annotation.saveFailed'))
     }
-  }, [editingMode, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
+  }, [allAnnotations, editingMode, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
 
   const handleCreateDatasetFromAnnotations = useCallback(async ({
     datasetName,
@@ -1357,12 +1422,38 @@ export default function WSIViewerPage() {
               toast.info(t('annotation.collab.sharedUpdated', { version: data.version }))
             }
             if (data.annotations) {
-              setAllAnnotations(data.annotations)
+              if (locallyModifiedWsiIdsRef.current.size > 0) {
+                const localModified = new Set(locallyModifiedWsiIdsRef.current)
+                setAllAnnotations(prev => {
+                  const merged = { ...data.annotations }
+                  for (const wsiId of localModified) {
+                    if (Object.prototype.hasOwnProperty.call(prev, wsiId)) {
+                      merged[wsiId] = prev[wsiId]
+                    }
+                  }
+                  return merged
+                })
+              } else {
+                setAllAnnotations(data.annotations)
+              }
               mergeLabelColorsFromAnnotations(data.annotations)
               setSharedVersion(data.version)
             } else {
               getSharedAnnotation(effectiveDatasetId).then(res => {
-                setAllAnnotations(res.annotations)
+                if (locallyModifiedWsiIdsRef.current.size > 0) {
+                  const localModified = new Set(locallyModifiedWsiIdsRef.current)
+                  setAllAnnotations(prev => {
+                    const merged = { ...res.annotations }
+                    for (const wsiId of localModified) {
+                      if (Object.prototype.hasOwnProperty.call(prev, wsiId)) {
+                        merged[wsiId] = prev[wsiId]
+                      }
+                    }
+                    return merged
+                  })
+                } else {
+                  setAllAnnotations(res.annotations)
+                }
                 mergeLabelColorsFromAnnotations(res.annotations)
                 setSharedVersion(res.version)
               })
@@ -1535,11 +1626,14 @@ export default function WSIViewerPage() {
     }
   }, [hasUnsavedChanges, annotationMode])
 
-  // Annotation: auto-save (debounced 2s)
   useEffect(() => {
     if (!annotationMode) return
     if (!hasUnsavedChanges) return
     if (editingMode === 'shared' ? sharedSaving : savingAnnotations) return
+    if (remoteAnnotationChangeRef.current) {
+      remoteAnnotationChangeRef.current = false
+      return
+    }
 
     clearPendingSaveTimer()
 
@@ -1638,17 +1732,39 @@ export default function WSIViewerPage() {
     }
   }, [annotationMode, allAnnotations, datasetId, detail, draftCacheKey, effectiveDatasetId, mergeLabelColorsFromAnnotations, wsi_id])
 
-  // Annotation: beforeunload warning (only when there are unsaved changes)
   useEffect(() => {
-    if (!hasUnsavedChanges || !annotationMode) return
+    const handler = () => {
+      const s = keepaliveSaveRef.current
+      if (!s.annotationMode || !s.hasUnsavedChanges) return
+      const token = getAuthToken()
+      if (!token) return
 
-    const handler = (e: BeforeUnloadEvent) => {
-      e.preventDefault()
-      e.returnValue = ''
+      if (s.editingMode === 'shared' && s.effectiveDatasetId) {
+        fetch(`${API_BASE}/annotation/datasets/${encodeURIComponent(s.effectiveDatasetId)}/shared`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ annotations: s.allAnnotations, version: s.sharedVersion }),
+          keepalive: true,
+        }).catch(() => {})
+      } else {
+        const totalRegions = Object.values(s.allAnnotations).reduce((sum, r) => sum + r.length, 0)
+        if (totalRegions === 0) return
+        const id = s.annotationId || crypto.randomUUID()
+        fetch(`${API_BASE}/annotation/drafts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({
+            annotation_id: id,
+            annotations: s.allAnnotations,
+            ...(s.effectiveDatasetId ? { source_dataset_id: s.effectiveDatasetId } : {}),
+          }),
+          keepalive: true,
+        }).catch(() => {})
+      }
     }
     window.addEventListener('beforeunload', handler)
     return () => window.removeEventListener('beforeunload', handler)
-  }, [hasUnsavedChanges, annotationMode])
+  }, [])
 
   if (!detail) {
     return (

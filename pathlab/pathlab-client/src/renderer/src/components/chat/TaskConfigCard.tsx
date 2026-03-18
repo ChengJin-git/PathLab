@@ -303,6 +303,22 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     () => ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
     []
   )
+  const unifiedBackboneOptions = useMemo(
+    () => [
+      {
+        group: 'Foundation Models',
+        options: ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
+      },
+      ...BACKBONE_GROUPS.map(group => ({
+        group,
+        options: SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => ({
+          value: bb.id,
+          label: bb.name,
+        })),
+      })),
+    ],
+    []
+  )
 
   // Load available datasets on mount
   useEffect(() => {
@@ -444,6 +460,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     if (field === 'data_type') {
       if (config.task_type === 'segmentation') newConfig.data_type = 'patch'
       if (config.task_type === 'survival') newConfig.data_type = 'wsi'
+    }
+    if (field === 'seg_backbone') {
+      if (isSegFmEncoder(value as string)) {
+        newConfig.seg_architecture = FM_SEGMENTATION_ARCHITECTURE
+      } else if (!newConfig.seg_architecture || newConfig.seg_architecture === FM_SEGMENTATION_ARCHITECTURE) {
+        newConfig.seg_architecture = DEFAULT_SEG_ARCHITECTURE
+      }
     }
     setConfig(newConfig)
     onConfigChange?.(newConfig)
@@ -728,37 +751,29 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
              <div className="grid grid-cols-2 gap-4">
                <div>
                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segArchitecture')}</label>
-                 {isFmSegmentation ? (
-                   <div className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-700">
-                     Conv Decoder (FM)
-                   </div>
-                 ) : (
-                   <Select
-                     value={resolvedSegArchitecture}
-                     onChange={(v) => updateConfig('seg_architecture', v)}
-                     options={SEGMENTATION_ARCHITECTURES.map(arch => ({ value: arch.id, label: arch.name }))}
-                     disabled={isFormDisabled}
-                     triggerClassName={disabledSelectClass}
-                   />
-                 )}
-               </div>
-               <div>
-                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segBackbone')}</label>
-                 <Select
-                   value={resolvedSegBackbone}
-                   onChange={(v) => updateConfig('seg_backbone', v)}
-                   options={isFmSegmentation
-                     ? segmentationFmOptions
-                     : BACKBONE_GROUPS.map(group => ({
-                         group,
-                         options: SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => ({
-                           value: bb.id,
-                           label: bb.name,
-                         })),
-                       }))}
-                   disabled={isFormDisabled}
-                   triggerClassName={disabledSelectClass}
-                 />
+                {isFmSegmentation ? (
+                    <div className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500`}>
+                      Conv Decoder (FM)
+                    </div>
+                  ) : (
+                    <Select
+                      value={resolvedSegArchitecture}
+                      onChange={(v) => updateConfig('seg_architecture', v)}
+                      options={SEGMENTATION_ARCHITECTURES.map(arch => ({ value: arch.id, label: arch.name }))}
+                      disabled={isFormDisabled}
+                      triggerClassName={disabledSelectClass}
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segBackbone')}</label>
+                  <Select
+                    value={resolvedSegBackbone}
+                    onChange={(v) => updateConfig('seg_backbone', v)}
+                    options={unifiedBackboneOptions}
+                    disabled={isFormDisabled}
+                    triggerClassName={disabledSelectClass}
+                  />
                </div>
              </div>
              <div>
@@ -771,20 +786,21 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                        key={loss.id}
                        type="button"
                        disabled={isFormDisabled}
-                       onClick={() => {
-                         const current = config.seg_loss_names ?? [...DEFAULT_SEG_LOSS_NAMES]
-                         let newNames: string[]
-                         if (selected) {
-                           if (current.length <= 1) return
-                           newNames = current.filter(n => n !== loss.id)
-                         } else {
-                           newNames = [...current, loss.id]
-                         }
-                         const w = 1 / newNames.length
-                         const newWeights = newNames.map(() => Math.round(w * 100) / 100)
-                         updateConfig('seg_loss_names', newNames)
-                         updateConfig('seg_loss_weights', newWeights)
-                       }}
+                        onClick={() => {
+                          const current = config.seg_loss_names ?? [...DEFAULT_SEG_LOSS_NAMES]
+                          let newNames: string[]
+                          if (selected) {
+                            if (current.length <= 1) return
+                            newNames = current.filter(n => n !== loss.id)
+                          } else {
+                            newNames = [...current, loss.id]
+                          }
+                          const w = 1 / newNames.length
+                          const newWeights = newNames.map(() => Math.round(w * 100) / 100)
+                          const newConfig = { ...config, seg_loss_names: newNames, seg_loss_weights: newWeights }
+                          setConfig(newConfig)
+                          onConfigChange?.(newConfig)
+                        }}
                        className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
                          selected
                            ? 'bg-violet-100 border-violet-300 text-violet-700'

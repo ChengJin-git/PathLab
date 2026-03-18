@@ -1982,6 +1982,30 @@ async def presence_websocket(
                             "y": float(msg.get("y", 0)),
                         },
                     )
+                elif msg.get("type") == "annotation_patch":
+                    op = msg.get("op")
+                    if op not in ("add", "update", "delete"):
+                        continue
+                    patch: dict = {
+                        "type": "annotation_patch",
+                        "user_id": user_id,
+                        "wsi_id": msg.get("wsi_id", ""),
+                        "op": op,
+                    }
+                    if op == "add" and isinstance(msg.get("region"), dict):
+                        patch["region"] = msg["region"]
+                    elif (
+                        op == "update"
+                        and isinstance(msg.get("region_id"), str)
+                        and isinstance(msg.get("region_updates"), dict)
+                    ):
+                        patch["region_id"] = msg["region_id"]
+                        patch["region_updates"] = msg["region_updates"]
+                    elif op == "delete" and isinstance(msg.get("region_id"), str):
+                        patch["region_id"] = msg["region_id"]
+                    else:
+                        continue
+                    await publish_presence(dataset_id, patch)
         except (WebSocketDisconnect, Exception):
             pass
 
