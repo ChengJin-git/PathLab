@@ -296,6 +296,7 @@
       "clearSelection": "清除選擇",
       "selectingAll": "選擇中...",
       "alreadyGranted": "已授權",
+      "datasetOwner": "資料集所有者",
       "granting": "提交中...",
       "grantSelectedDatasets": "授予資料集 ({{count}})",
       "currentAccess": "目前存取權限",

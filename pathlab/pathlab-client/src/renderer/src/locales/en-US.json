@@ -296,6 +296,7 @@
       "clearSelection": "Clear selection",
       "selectingAll": "Selecting...",
       "alreadyGranted": "Already granted",
+      "datasetOwner": "Dataset Owner",
       "granting": "Submitting...",
       "grantSelectedDatasets": "Grant Datasets ({{count}})",
       "currentAccess": "Current Access",
