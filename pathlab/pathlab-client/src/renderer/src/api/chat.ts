@@ -89,10 +89,9 @@ export async function chatWithAI(
   onPdfParseResult?: (event: PdfParseResultEvent) => void,
   onSearchClear?: () => void
 ): Promise<void> {
-  // Get AI configuration from localStorage
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
-  const baseUrl = localStorage.getItem('openrouter_base_url') || 'https://openrouter.ai/api/v1'
-  const model = localStorage.getItem('openrouter_model') || 'qwen/qwen3.5-plus-02-15'
+  const baseUrl = localStorage.getItem('openrouter_base_url') || ''
+  const model = localStorage.getItem('openrouter_model') || ''
 
   // Pass the user's explicit i18n language preference so the backend selects the
   // correct system-prompt language instead of relying solely on message-content heuristics.
