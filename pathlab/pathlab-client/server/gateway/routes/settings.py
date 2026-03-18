@@ -4,6 +4,7 @@ Global Settings Routes
 Provides API endpoints for managing global application settings.
 These settings are shared across all users.
 """
+
 import httpx
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -18,12 +19,14 @@ router = APIRouter(prefix="/settings", tags=["Global Settings"])
 
 class PublicSettingsResponse(BaseModel):
     """Response model for public settings (no authentication required)"""
+
     turnstile_enabled: bool
     turnstile_site_key: str
 
 
 class GlobalSettingsResponse(BaseModel):
     """Response model for global settings"""
+
     openrouter_api_key: str
     openrouter_base_url: str
     openrouter_model: str
@@ -49,6 +52,7 @@ class GlobalSettingsResponse(BaseModel):
 
 class GlobalSettingsUpdateRequest(BaseModel):
     """Request model for updating global settings"""
+
     openrouter_api_key: Optional[str] = None
     openrouter_base_url: Optional[str] = None
     openrouter_model: Optional[str] = None
@@ -90,7 +94,7 @@ async def get_public_settings() -> PublicSettingsResponse:
 
 @router.get("")
 async def get_global_settings(
-    user: User = Depends(require_admin)
+    user: User = Depends(require_admin),
 ) -> GlobalSettingsResponse:
     """
     Get global settings. Admin only - contains sensitive API keys.
@@ -104,12 +108,11 @@ async def get_global_settings(
 
 @router.post("")
 async def update_global_settings(
-    request: GlobalSettingsUpdateRequest,
-    user: User = Depends(require_admin)
+    request: GlobalSettingsUpdateRequest, user: User = Depends(require_admin)
 ) -> GlobalSettingsResponse:
     """
     Update global settings. Admin only.
-    
+
     Only provided fields will be updated.
 
     Returns:
@@ -127,12 +130,14 @@ async def update_global_settings(
 
 class VllmCheckRequest(BaseModel):
     """Request model for checking vLLM server status"""
+
     base_url: str
     api_key: Optional[str] = None
 
 
 class VllmCheckResponse(BaseModel):
     """Response model for vLLM server status check"""
+
     online: bool
     model: Optional[str] = None
     error: Optional[str] = None
@@ -140,8 +145,7 @@ class VllmCheckResponse(BaseModel):
 
 @router.post("/check-vllm")
 async def check_vllm_status(
-    request: VllmCheckRequest,
-    user: User = Depends(current_active_user)
+    request: VllmCheckRequest, user: User = Depends(require_admin)
 ) -> VllmCheckResponse:
     """
     Check if a vLLM server is online and get available model.
@@ -166,7 +170,9 @@ async def check_vllm_status(
                     model_name = data["data"][0].get("id")
                 return VllmCheckResponse(online=True, model=model_name)
             else:
-                return VllmCheckResponse(online=False, error=f"HTTP {response.status_code}")
+                return VllmCheckResponse(
+                    online=False, error=f"HTTP {response.status_code}"
+                )
     except httpx.TimeoutException:
         return VllmCheckResponse(online=False, error="Connection timeout")
     except httpx.ConnectError:
@@ -177,6 +183,7 @@ async def check_vllm_status(
 
 class AsrCheckRequest(BaseModel):
     """Request model for checking ASR server status"""
+
     base_url: str  # Can be ws:// or http://
     model: Optional[str] = None
     api_key: Optional[str] = None
@@ -184,6 +191,7 @@ class AsrCheckRequest(BaseModel):
 
 class AsrCheckResponse(BaseModel):
     """Response model for ASR server status check"""
+
     online: bool
     model: Optional[str] = None
     error: Optional[str] = None
@@ -191,8 +199,7 @@ class AsrCheckResponse(BaseModel):
 
 @router.post("/check-asr")
 async def check_asr_status(
-    request: AsrCheckRequest,
-    user: User = Depends(current_active_user)
+    request: AsrCheckRequest, user: User = Depends(require_admin)
 ) -> AsrCheckResponse:
     """
     Check if an ASR server is online.
@@ -232,7 +239,9 @@ async def check_asr_status(
                     message = await asyncio.wait_for(ws.recv(), timeout=3.0)
                     data = json.loads(message)
                     if data.get("type") == "session.created":
-                        detected_model = data.get("session", {}).get("model", request.model)
+                        detected_model = data.get("session", {}).get(
+                            "model", request.model
+                        )
                         return AsrCheckResponse(online=True, model=detected_model)
                     return AsrCheckResponse(online=False, error="Unexpected response")
         except asyncio.TimeoutError:
@@ -256,7 +265,9 @@ async def check_asr_status(
                         model_name = data["data"][0].get("id")
                     return AsrCheckResponse(online=True, model=model_name)
                 else:
-                    return AsrCheckResponse(online=False, error=f"HTTP {response.status_code}")
+                    return AsrCheckResponse(
+                        online=False, error=f"HTTP {response.status_code}"
+                    )
         except httpx.TimeoutException:
             return AsrCheckResponse(online=False, error="Connection timeout")
         except httpx.ConnectError:

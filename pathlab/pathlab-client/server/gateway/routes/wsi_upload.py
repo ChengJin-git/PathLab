@@ -24,7 +24,7 @@ from backend.database.repositories import (
     SegmentationAnnotationRepository,
 )
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin
+from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, UPLOADS_DIR
 from ..models import UploadByPathRequest
 from ..utils import (
@@ -503,6 +503,11 @@ async def upload_wsi_file(
                 raise HTTPException(
                     status_code=400, detail=f"Dataset not found: {dataset_id}"
                 )
+            if not check_data_ownership(str(existing_dataset.user_id or ""), user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to upload to this dataset",
+                )
             data_group = existing_dataset.data_group
             if not data_group:
                 raise HTTPException(
@@ -891,6 +896,11 @@ async def upload_wsi_by_path(
             if not existing_dataset:
                 raise HTTPException(
                     status_code=400, detail=f"Dataset not found: {req.dataset_id}"
+                )
+            if not check_data_ownership(str(existing_dataset.user_id or ""), user):
+                raise HTTPException(
+                    status_code=403,
+                    detail="You don't have permission to upload to this dataset",
                 )
             data_group = existing_dataset.data_group
             if not data_group:

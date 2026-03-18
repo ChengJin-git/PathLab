@@ -85,7 +85,8 @@ export const FEATURE_EXTRACTORS: readonly ExtractorOption[] = [
   { id: 'mSTAR', name: 'mSTAR', description: 'DINOv2 ViT-L/16, 1024-dim', supports_spatial: true },
   { id: 'GPFM', name: 'GPFM', description: 'DINOv2 ViT-G/14, 1536-dim', supports_spatial: true },
   { id: 'SmartCCS', name: 'Smart-CCS', description: 'DINOv2 ViT-L/14, 1024-dim (Smartlab)', supports_spatial: true },
-  { id: 'SmartCyto', name: 'SmartCyto', description: 'DINOv3 ViT-B/16, 768-dim (Smartlab)', supports_spatial: true }
+  { id: 'SmartCyto', name: 'SmartCyto', description: 'DINOv3 ViT-B/16, 768-dim (Smartlab)', supports_spatial: true },
+  { id: 'CytoFM', name: 'CytoFM', description: 'DINOv2 ViT-L/14, 1024-dim, pure vision self-supervised (Smartlab)', supports_spatial: true }
 ] as const
 
 /** Default feature extractor ID */

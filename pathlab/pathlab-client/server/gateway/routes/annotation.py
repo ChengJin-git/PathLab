@@ -54,7 +54,7 @@ from backend.common.annotation_summary_cache import (
     rebuild_draft_annotation_summary_cache,
     save_draft_annotation_summary_cache,
 )
-from backend.common.progress_store import get_progress
+from backend.common.progress_store import get_progress, set_task_owner, get_task_owner
 from backend.common.annotation_pubsub import publish, subscribe_iter
 from backend.common.presence_pubsub import publish_presence, subscribe_presence_iter
 from ..dependencies import logger
@@ -1079,6 +1079,8 @@ async def extract_regions(
         timeout=30.0,
     )
 
+    await set_task_owner(task_id, user_id)
+
     return {"task_id": task_id, "status": "started"}
 
 
@@ -1090,6 +1092,12 @@ async def stream_extract_progress(
     task_id: str,
     user: User = Depends(get_user_from_token_param),
 ):
+    owner_id = await get_task_owner(task_id)
+    if owner_id is not None and owner_id != str(user.id) and not user.is_admin():
+        raise HTTPException(
+            status_code=403, detail="You don't have access to this task"
+        )
+
     async def event_generator():
         try:
             last_progress = None

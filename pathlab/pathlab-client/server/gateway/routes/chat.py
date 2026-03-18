@@ -395,6 +395,7 @@ def _looks_like_training_model_recommendation_output(text: str) -> bool:
         "phikon",
         "smartccs",
         "smartcyto",
+        "cytofm",
         "unet",
         "segformer",
         "conv_decoder",
@@ -433,19 +434,19 @@ def _build_training_recommendation_context_block(
             "histopathology": "本轮推荐应优先结合任务/器官匹配的 PathBench 结果，再联网查近期任务证据；不要把 UNI 或任何单一 encoder 视为普遍最优。",
             "segmentation": "本轮推荐应优先结合 PathBench / 病理分割相关证据，再联网查近期任务证据；不要默认任何单一 FM extractor。",
             "cervical_cytology": "本轮推荐对宫颈 / 妇科细胞学应优先考虑 Smart-CCS，再联网查近期任务证据。",
-            "general_cytology": "本轮推荐对非宫颈 / 非妇科或通用细胞学应优先考虑 SmartCyto，再联网查同任务公开证据；不要把缺少公开命中当成反证。",
+            "general_cytology": "本轮推荐对非宫颈 / 非妇科或通用细胞学，SmartCyto 和 CytoFM 均为优先候选（SmartCyto 是视觉-语言预训练模型，CytoFM 是纯视觉自监督模型），再联网查同任务公开证据；不要把缺少公开命中当成反证。",
         },
         "zh_HK": {
             "histopathology": "本輪推薦應優先結合任務/器官匹配的 PathBench 結果，再聯網查近期任務證據；不要把 UNI 或任何單一 encoder 視為普遍最優。",
             "segmentation": "本輪推薦應優先結合 PathBench / 病理分割相關證據，再聯網查近期任務證據；不要預設任何單一 FM extractor。",
             "cervical_cytology": "本輪推薦對宮頸 / 婦科細胞學應優先考慮 Smart-CCS，再聯網查近期任務證據。",
-            "general_cytology": "本輪推薦對非宮頸 / 非婦科或通用細胞學應優先考慮 SmartCyto，再聯網查同任務公開證據；不要把缺少公開命中當成反證。",
+            "general_cytology": "本輪推薦對非宮頸 / 非婦科或通用細胞學，SmartCyto 和 CytoFM 均為優先候選（SmartCyto 是視覺-語言預訓練模型，CytoFM 是純視覺自監督模型），再聯網查同任務公開證據；不要把缺少公開命中當成反證。",
         },
         "en": {
             "histopathology": "Prioritize task/organ-matched PathBench evidence, then verify with a fresh web search; do not treat UNI or any single encoder as universally best.",
             "segmentation": "Prioritize PathBench/pathology-segmentation evidence, then verify with a fresh web search; do not default to any single FM extractor.",
             "cervical_cytology": "For cervical / gynecologic cytology, prioritize Smart-CCS, then verify with a fresh web search.",
-            "general_cytology": "For non-cervical, non-gynecologic, or general cytology, prioritize SmartCyto, then verify with task-matched public evidence; do not treat missing public hits as counter-evidence.",
+            "general_cytology": "For non-cervical, non-gynecologic, or general cytology, both SmartCyto and CytoFM are preferred candidates (SmartCyto is a vision-language pretrained model; CytoFM is a pure vision self-supervised model); verify with task-matched public evidence and do not treat missing public hits as counter-evidence.",
         },
     }
     notes = profile_notes.get(detected_lang, profile_notes["en"])

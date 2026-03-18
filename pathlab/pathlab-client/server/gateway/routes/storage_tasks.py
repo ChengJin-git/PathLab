@@ -1627,6 +1627,20 @@ async def start_batch_update_metadata_task(
         if not request.wsi_ids:
             raise HTTPException(status_code=400, detail="No WSI IDs provided")
 
+        if not user.is_admin():
+            all_wsis = await WSIRepository.get_by_ids(db, request.wsi_ids)
+            request.wsi_ids = [
+                wsi_id
+                for wsi_id in request.wsi_ids
+                if all_wsis.get(wsi_id) is not None
+                and str(all_wsis[wsi_id].user_id or "") == str(user.id)
+            ]
+            if not request.wsi_ids:
+                raise HTTPException(
+                    status_code=403,
+                    detail="None of the provided WSI IDs belong to you",
+                )
+
         if request.label is not None:
             wsis = await WSIRepository.get_by_ids(db, request.wsi_ids)
             dataset_ids = sorted(
