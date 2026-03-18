@@ -768,66 +768,84 @@ export default function RegisterPage() {
   const [uploadingSplit, setUploadingSplit] = useState(false)
 
   const [splitFileError, setSplitFileError] = useState<string | null>(null)
+  const [isCsvDragging, setIsCsvDragging] = useState(false)
+
+  const processSplitFile = async (file: File) => {
+    setSplitFileError(null)
+    const fileName = file.name.toLowerCase()
+
+    // Client-side validation
+    try {
+      let csvContent: string
+      let finalFile: File = file
+
+      if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        const { sheetNames, csv } = await xlsxToCSV(await file.arrayBuffer())
+        if (sheetNames.length > 1) {
+          setSplitFileError(t('uploadPage.excelMultipleSheets'))
+          return
+        }
+        csvContent = csv
+        finalFile = new File([new Blob([csv], { type: 'text/csv' })], file.name, { type: 'text/csv' })
+      } else {
+        csvContent = await file.text()
+      }
+
+      const lines = csvContent.split('\n').filter(line => line.trim() !== '')
+
+      if (lines.length < 2) {
+        setSplitFileError(t('uploadPage.fileEmptyOrNoData'))
+        return
+      }
+
+      const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
+
+      // Validate required columns based on upload mode
+      if (!headers.includes('filename')) {
+        setSplitFileError(t('uploadPage.missingFilenameColumn'))
+        return
+      }
+
+      if (uploadMode === 'classification') {
+        if (!headers.includes('label')) {
+          setSplitFileError(t('uploadPage.missingLabelColumn'))
+          return
+        }
+      } else if (uploadMode === 'survival') {
+        // survival mode
+        if (!headers.includes('event_time')) {
+          setSplitFileError(t('uploadPage.missingEventTimeColumn'))
+          return
+        }
+        if (!headers.includes('event_status')) {
+          setSplitFileError(t('uploadPage.missingEventStatusColumn'))
+          return
+        }
+      }
+
+      setSplitFile(finalFile)
+    } catch (err) {
+      setSplitFileError(t('uploadPage.failedReadFile', { error: String(err) }))
+    }
+  }
 
   const handleSplitFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSplitFileError(null)
     if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0]
-      const fileName = file.name.toLowerCase()
+      await processSplitFile(e.target.files[0])
+    }
+  }
 
-      // Client-side validation
-      try {
-        let csvContent: string
-        let finalFile: File = file
-
-        if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-          const { sheetNames, csv } = await xlsxToCSV(await file.arrayBuffer())
-          if (sheetNames.length > 1) {
-            setSplitFileError(t('uploadPage.excelMultipleSheets'))
-            return
-          }
-          csvContent = csv
-          finalFile = new File([new Blob([csv], { type: 'text/csv' })], file.name, { type: 'text/csv' })
-        } else {
-          csvContent = await file.text()
-        }
-
-        const lines = csvContent.split('\n').filter(line => line.trim() !== '')
-
-        if (lines.length < 2) {
-          setSplitFileError(t('uploadPage.fileEmptyOrNoData'))
-          return
-        }
-
-        const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
-
-        // Validate required columns based on upload mode
-        if (!headers.includes('filename')) {
-          setSplitFileError(t('uploadPage.missingFilenameColumn'))
-          return
-        }
-
-        if (uploadMode === 'classification') {
-          if (!headers.includes('label')) {
-            setSplitFileError(t('uploadPage.missingLabelColumn'))
-            return
-          }
-        } else if (uploadMode === 'survival') {
-          // survival mode
-          if (!headers.includes('event_time')) {
-            setSplitFileError(t('uploadPage.missingEventTimeColumn'))
-            return
-          }
-          if (!headers.includes('event_status')) {
-            setSplitFileError(t('uploadPage.missingEventStatusColumn'))
-            return
-          }
-        }
-
-        setSplitFile(finalFile)
-      } catch (err) {
-        setSplitFileError(t('uploadPage.failedReadFile', { error: String(err) }))
-      }
+  const handleCsvDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsCsvDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    const csvFile = files.find(f => {
+      const name = f.name.toLowerCase()
+      return name.endsWith('.csv') || name.endsWith('.xlsx') || name.endsWith('.xls')
+    })
+    if (csvFile) {
+      await processSplitFile(csvFile)
     }
   }
 
@@ -1436,7 +1454,12 @@ export default function RegisterPage() {
                       </ul>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
+                    <div
+                      className={`flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-lg border border-dashed transition-all ${isCsvDragging ? 'border-blue-400 bg-blue-50/50' : 'bg-gray-50 border-gray-300 hover:border-blue-300'}`}
+                      onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsCsvDragging(true) }}
+                      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsCsvDragging(false) }}
+                      onDrop={handleCsvDrop}
+                    >
                       {splitFile ? (
                         // Show selected file info when we have a splitFile
                         <div className="flex-1 flex items-center gap-3">
