@@ -75,7 +75,7 @@ export default function ListPage() {
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const initialDatasetId = (location.state as { dataset_id?: string } | null)?.dataset_id
   const { error: toastError, success: toastSuccess } = useToast()
-  const { addDeleteWSITask } = useBackgroundTask()
+  const { addDeleteWSITask, tasks, subscribeStorageSSE } = useBackgroundTask()
   const { isAdmin } = useAuth()
   const qc = useQueryClient()
 
@@ -238,6 +238,7 @@ export default function ListPage() {
   const [deleting, setDeleting] = useState(false)
   // Optimistically hide datasets that are being deleted in background
   const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
+  const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
 
   // Export labels - stores dataset for export modal
   const [exportingDataset, setExportingDataset] = useState<DatasetSummary | null>(null)
@@ -463,6 +464,23 @@ export default function ListPage() {
       setDatasetSourceFilter('all')
     }
   }, [sourceOptionsQuery.data, datasetSourceFilter])
+
+  useEffect(() => {
+    if (selectedDatasetId) return
+    return subscribeStorageSSE()
+  }, [selectedDatasetId, subscribeStorageSSE])
+
+  useEffect(() => {
+    const justCompletedDeleteTasks = tasks.filter(
+      t => t.type === 'delete_dataset' && t.status === 'success' && !completedDeleteTaskIdsRef.current.has(t.id)
+    )
+    if (justCompletedDeleteTasks.length === 0) return
+    for (const task of justCompletedDeleteTasks) {
+      completedDeleteTaskIdsRef.current.add(task.id)
+    }
+    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
+    void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+  }, [tasks, qc])
 
   useEffect(() => {
     if (selectedDatasetId && !selectedDatasetSummary) {
