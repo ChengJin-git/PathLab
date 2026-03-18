@@ -25,7 +25,7 @@ import type { ShowConfirmDialog } from './ConfirmDialog'
 type PermissionMode = 'user' | 'dataset'
 type PermissionDataset = DatasetSummary & { dataset_id: string }
 
-const PAGE_SIZE_OPTIONS = ['6', '9', '18']
+const PAGE_SIZE_OPTIONS = ['4', '6', '9', '18']
 const SEARCH_DEBOUNCE_MS = 300
 
 export interface PermissionCenterModalProps {
@@ -137,7 +137,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [datasetPage, setDatasetPage] = useState(1)
   const [datasetPageSize, setDatasetPageSize] = useState(9)
   const [grantDatasetPage, setGrantDatasetPage] = useState(1)
-  const [grantDatasetPageSize, setGrantDatasetPageSize] = useState(6)
+  const [grantDatasetPageSize, setGrantDatasetPageSize] = useState(4)
   const [datasetItems, setDatasetItems] = useState<DatasetSummary[]>([])
   const [datasetTotal, setDatasetTotal] = useState(0)
   const [loadingDatasets, setLoadingDatasets] = useState(false)
