@@ -1,4 +1,5 @@
 import * as React from "react"
+import * as ReactDOM from "react-dom"
 import { ChevronDown, Check } from "lucide-react"
 import { cn } from "../../lib/utils"
 
@@ -41,7 +42,9 @@ export function Select({
     disabled = false,
 }: SelectProps) {
     const [isOpen, setIsOpen] = React.useState(false)
-    const containerRef = React.useRef<HTMLDivElement>(null)
+    const [dropdownStyle, setDropdownStyle] = React.useState<React.CSSProperties>({})
+    const triggerRef = React.useRef<HTMLButtonElement>(null)
+    const dropdownRef = React.useRef<HTMLDivElement>(null)
 
     const flatOptions: SelectOption[] = isGroupedOptions(options)
         ? options.flatMap((g) => [...g.options])
@@ -51,19 +54,33 @@ export function Select({
 
     React.useEffect(() => {
         const handleClickOutside = (event: MouseEvent) => {
+            const target = event.target as Node
             if (
-                containerRef.current &&
-                !containerRef.current.contains(event.target as Node)
+                triggerRef.current && !triggerRef.current.contains(target) &&
+                dropdownRef.current && !dropdownRef.current.contains(target)
             ) {
                 setIsOpen(false)
             }
         }
 
         document.addEventListener("mousedown", handleClickOutside)
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside)
-        }
+        return () => document.removeEventListener("mousedown", handleClickOutside)
     }, [])
+
+    const handleOpen = () => {
+        if (disabled) return
+        if (!isOpen && triggerRef.current) {
+            const rect = triggerRef.current.getBoundingClientRect()
+            setDropdownStyle({
+                position: "fixed",
+                top: rect.bottom + 4,
+                left: rect.left,
+                width: rect.width,
+                zIndex: 9999,
+            })
+        }
+        setIsOpen((prev) => !prev)
+    }
 
     const handleSelect = (optionValue: string) => {
         onChange(optionValue)
@@ -90,11 +107,41 @@ export function Select({
         </button>
     )
 
+    const dropdownContent = isOpen && ReactDOM.createPortal(
+        <div
+            ref={dropdownRef}
+            style={dropdownStyle}
+            className={cn(
+                "max-h-60 overflow-auto rounded-md border border-gray-200 bg-white p-1 shadow-lg animate-in fade-in-0 zoom-in-95",
+                dropdownClassName
+            )}
+        >
+            {flatOptions.length === 0 ? (
+                <div className="py-2 px-2 text-sm text-gray-500 text-center">
+                    No options
+                </div>
+            ) : isGroupedOptions(options) ? (
+                options.map((group) => (
+                    <div key={group.group}>
+                        <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider select-none">
+                            {group.group}
+                        </div>
+                        {group.options.map(renderOption)}
+                    </div>
+                ))
+            ) : (
+                options.map(renderOption)
+            )}
+        </div>,
+        document.body
+    )
+
     return (
-        <div className={cn("relative", className)} ref={containerRef}>
+        <div className={cn("relative", className)}>
             <button
+                ref={triggerRef}
                 type="button"
-                onClick={() => !disabled && setIsOpen(!isOpen)}
+                onClick={handleOpen}
                 disabled={disabled}
                 className={cn(
                     "flex h-9 w-full items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:cursor-not-allowed disabled:opacity-50 hover:bg-gray-50",
@@ -108,29 +155,7 @@ export function Select({
                 <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
             </button>
 
-            {isOpen && (
-                <div className={cn(
-                    "absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-md border border-gray-200 bg-white p-1 shadow-lg animate-in fade-in-0 zoom-in-95 data-[side=bottom]:slide-in-from-top-2",
-                    dropdownClassName
-                )}>
-                    {flatOptions.length === 0 ? (
-                        <div className="py-2 px-2 text-sm text-gray-500 text-center">
-                            No options
-                        </div>
-                    ) : isGroupedOptions(options) ? (
-                        options.map((group) => (
-                            <div key={group.group}>
-                                <div className="px-2 py-1 text-xs font-semibold text-gray-400 uppercase tracking-wider select-none">
-                                    {group.group}
-                                </div>
-                                {group.options.map(renderOption)}
-                            </div>
-                        ))
-                    ) : (
-                        options.map(renderOption)
-                    )}
-                </div>
-            )}
+            {dropdownContent}
         </div>
     )
 }
