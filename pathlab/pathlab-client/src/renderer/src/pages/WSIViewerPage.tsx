@@ -16,7 +16,7 @@ import {
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
-import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X, Save, AlertTriangle, Keyboard, Move } from 'lucide-react'
+import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X, Save, AlertTriangle, Keyboard, Move, Users } from 'lucide-react'
 import { exportPatchesAsZip } from '../components/wsiViewer/utils'
 import { TaskSelectorCard } from '../components/wsiViewer/TaskSelectorCard'
 import { AttentionClassSelector } from '../components/wsiViewer/AttentionClassSelector'
@@ -283,6 +283,11 @@ export default function WSIViewerPage() {
   const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const immediateSharedSaveRef = useRef(false)
+  const [autoSeedConfirm, setAutoSeedConfirm] = useState<{
+    draft: AnnotationsMap
+    emptyAnnotations: AnnotationsMap
+    version: number
+  } | null>(null)
   const annotationIdRef = useRef<string | null>(null)
   const saveRequestRef = useRef<Promise<boolean> | null>(null)
   const slideNavRef = useRef({
@@ -925,6 +930,13 @@ export default function WSIViewerPage() {
     }
   }, [])
 
+  const exitSharedMode = useCallback(() => {
+    clearPendingSaveTimer()
+    setEditingMode('personal')
+    setAllAnnotations({})
+    setHasUnsavedChanges(false)
+  }, [clearPendingSaveTimer])
+
   const saveShared = useCallback(async () => {
     if (!effectiveDatasetId) return false
     setSharedSaving(true)
@@ -1064,21 +1076,73 @@ export default function WSIViewerPage() {
     return await persistAnnotations({ showToast: true })
   }, [editingMode, persistAnnotations, saveShared])
 
+  const handleToggleEditingMode = useCallback(async () => {
+    if (editingMode === 'personal') {
+      if (hasUnsavedChanges) {
+        const saved = await persistAnnotations({ showToast: false })
+        if (!saved) return
+      }
+      setEditingMode('shared')
+    } else {
+      exitSharedMode()
+    }
+  }, [editingMode, exitSharedMode, hasUnsavedChanges, persistAnnotations])
+
   const handleDeleteShared = useCallback(async () => {
     if (!effectiveDatasetId) return
     try {
       await deleteSharedAnnotation(effectiveDatasetId)
       toast.success(t('annotation.collab.sharedDeleted'))
-      setEditingMode('personal')
-      setAllAnnotations({})
-      setHasUnsavedChanges(false)
+      exitSharedMode()
     } catch (err: any) {
       toast.error(err?.message || t('annotation.collab.deleteFailed'))
     }
-  }, [effectiveDatasetId, t, toast])
+  }, [effectiveDatasetId, exitSharedMode, t, toast])
+
+  const handleAutoSeedConfirm = useCallback(async (usePersonalDraft: boolean) => {
+    if (!autoSeedConfirm || !effectiveDatasetId) { setAutoSeedConfirm(null); return }
+    const { draft, emptyAnnotations, version } = autoSeedConfirm
+    setAutoSeedConfirm(null)
+
+    if (usePersonalDraft) {
+      setSharedSaving(true)
+      try {
+        const saved = await saveSharedAnnotation(effectiveDatasetId, { version, annotations: draft })
+        setSharedVersion(saved.version)
+        toast.info(t('annotation.collab.autoSeeded'))
+      } catch (err: any) {
+        if (err instanceof ApiError && err.status === 409) {
+          const fresh = await getSharedAnnotation(effectiveDatasetId)
+          setAllAnnotations(fresh.annotations)
+          mergeLabelColorsFromAnnotations(fresh.annotations)
+          setSharedVersion(fresh.version)
+        }
+      } finally {
+        setSharedSaving(false)
+      }
+    } else {
+      setAllAnnotations(emptyAnnotations)
+      if (Object.keys(emptyAnnotations).length > 0) {
+        mergeLabelColorsFromAnnotations(emptyAnnotations)
+      }
+    }
+  }, [autoSeedConfirm, effectiveDatasetId, mergeLabelColorsFromAnnotations, t, toast])
 
   const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
     const labelSet = new Set(labels)
+
+    if (editingMode === 'shared') {
+      setAllAnnotations(prev => {
+        const next: typeof prev = {}
+        for (const [key, regions] of Object.entries(prev)) {
+          next[key] = regions.filter(r => !labelSet.has(r.label))
+        }
+        return next
+      })
+      immediateSharedSaveRef.current = true
+      setHasUnsavedChanges(true)
+      return
+    }
 
     if (!effectiveDatasetId) {
       setAllAnnotations(prev => {
@@ -1115,7 +1179,7 @@ export default function WSIViewerPage() {
       console.error('Failed to delete dataset annotations by labels:', err)
       toast.error(t('annotation.saveFailed'))
     }
-  }, [effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
+  }, [editingMode, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
 
   const handleCreateDatasetFromAnnotations = useCallback(async ({
     datasetName,
@@ -1167,23 +1231,8 @@ export default function WSIViewerPage() {
       const shouldAutoSeed = res.version === 0 && !res.is_prepopulated && hasPersonalDraft
 
       if (shouldAutoSeed) {
-        saveSharedAnnotation(effectiveDatasetId, { version: 0, annotations: personalDraft })
-          .then(saved => {
-            if (cancelled) return
-            setSharedVersion(saved.version)
-            toast.info(t('annotation.collab.autoSeeded'))
-          })
-          .catch(err => {
-            if (cancelled) return
-            if (err?.status === 409) {
-              getSharedAnnotation(effectiveDatasetId).then(fresh => {
-                if (cancelled) return
-                setAllAnnotations(fresh.annotations)
-                mergeLabelColorsFromAnnotations(fresh.annotations)
-                setSharedVersion(fresh.version)
-              }).catch(() => {})
-            }
-          })
+        setSharedVersion(res.version)
+        setAutoSeedConfirm({ draft: personalDraft, emptyAnnotations: res.annotations || {}, version: res.version })
       } else {
         if (res.is_prepopulated) {
           toast.info(t('annotation.collab.sharedLoaded'))
@@ -1211,14 +1260,14 @@ export default function WSIViewerPage() {
       } else {
         toast.error(t('annotation.collab.sharedLoadFailed'))
       }
-      setEditingMode('personal')
+      exitSharedMode()
     }).finally(() => {
       if (!cancelled) setSharedSaving(false)
     })
 
     return () => { cancelled = true }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editingMode, effectiveDatasetId, mergeLabelColorsFromAnnotations, t, toast, user?.id, user?.role])
+  }, [editingMode, effectiveDatasetId, exitSharedMode, mergeLabelColorsFromAnnotations, t, toast, user?.id, user?.role])
 
   // Collaborative Mode: SSE
   useEffect(() => {
@@ -1251,16 +1300,20 @@ export default function WSIViewerPage() {
           }
         } else if (data.type === 'finalized') {
            toast.success(t('annotation.collab.submitted'))
-           setEditingMode('personal')
+           exitSharedMode()
            setShowGT(true)
         } else if (data.type === 'collaborator_removed') {
            if (data.user_id === user?.id) {
-             toast.warning(t('annotation.collab.removedFromCollaborators'))
-             setEditingMode('personal')
+             if (hasUnsavedChanges) {
+               toast.warning(t('annotation.collab.removedUnsavedLost'))
+             } else {
+               toast.warning(t('annotation.collab.removedFromCollaborators'))
+             }
+             exitSharedMode()
            }
         } else if (data.type === 'shared_deleted') {
            toast.warning(t('annotation.collab.sharedDeletedRemote'))
-           setEditingMode('personal')
+           exitSharedMode()
         } else if (data.type === 'gt_updated') {
            toast.info(t('annotation.collab.gtUpdated'))
         } else if (data.type === 'gt_deleted') {
@@ -1274,7 +1327,7 @@ export default function WSIViewerPage() {
     return () => {
       es.close()
     }
-  }, [editingMode, effectiveDatasetId, user?.id, mergeLabelColorsFromAnnotations, t, toast])
+  }, [editingMode, effectiveDatasetId, exitSharedMode, hasUnsavedChanges, user?.id, mergeLabelColorsFromAnnotations, t, toast])
 
   useEffect(() => {
     slideNavRef.current.prevWSI = prevWSI
@@ -1639,7 +1692,7 @@ export default function WSIViewerPage() {
               allLabels={allLabels}
               onDropdownOpenChange={setIsLabelDropdownOpen}
               editingMode={editingMode}
-              onToggleEditingMode={() => setEditingMode(m => m === 'personal' ? 'shared' : 'personal')}
+              onToggleEditingMode={handleToggleEditingMode}
               sharedSaving={sharedSaving}
               hasDatasetContext={!!effectiveDatasetId}
               isDatasetOwnerOrAdmin={isDatasetOwnerOrAdmin}
@@ -1875,6 +1928,7 @@ export default function WSIViewerPage() {
             preferRemoteCrossSlideSummary={!!effectiveDatasetId && editingMode !== 'shared'}
             crossSlideSummary={effectiveDatasetId && editingMode !== 'shared' ? datasetAnnotationSummary : null}
             loadingCrossSlideSummary={effectiveDatasetId && editingMode !== 'shared' ? loadingDatasetAnnotationSummary : false}
+            canCreateDataset={editingMode !== 'shared' || isDatasetOwnerOrAdmin}
             labelColors={labelColors}
             focusedRegionId={focusedRegionId}
             onFocusRegion={handleFocusRegion}
@@ -1970,6 +2024,28 @@ export default function WSIViewerPage() {
         availableHeatmaps={availableHeatmaps}
         selectedTaskId={selectedTaskId}
       />
+
+      {autoSeedConfirm && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 px-6 pt-6 pb-2">
+              <div className="p-2 bg-indigo-100 rounded-full">
+                <Users className="w-5 h-5 text-indigo-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">{t('annotation.collab.autoSeedConfirmTitle')}</h3>
+            </div>
+            <p className="px-6 py-3 text-sm text-gray-600 leading-relaxed">{t('annotation.collab.autoSeedConfirmMessage')}</p>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button type="button" onClick={() => handleAutoSeedConfirm(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                {t('annotation.collab.autoSeedConfirmSkip')}
+              </button>
+              <button type="button" onClick={() => handleAutoSeedConfirm(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
+                {t('annotation.collab.autoSeedConfirmUse')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Create Dataset from Annotations Dialog */}
       <CreateDatasetDialog

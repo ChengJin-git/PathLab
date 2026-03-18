@@ -13,6 +13,7 @@ interface AnnotationListPanelProps {
   loadingCrossSlideSummary?: boolean
   labelColors: Record<string, string>
   focusedRegionId?: string | null
+  canCreateDataset?: boolean
   onFocusRegion?: (regionId: string) => void
   onUpdateRegion: (regionId: string, updates: Partial<AnnotationRegion>) => void
   onDeleteRegion: (regionId: string) => void
@@ -30,6 +31,7 @@ export function AnnotationListPanel({
   loadingCrossSlideSummary = false,
   labelColors,
   focusedRegionId = null,
+  canCreateDataset = true,
   onFocusRegion,
   onUpdateRegion,
   onDeleteRegion,
@@ -333,7 +335,7 @@ export function AnnotationListPanel({
               </div>
             )}
             {/* Create Dataset button */}
-            {effectiveSummary.totalRegions > 0 && !isRemoteSummaryPending && (
+            {effectiveSummary.totalRegions > 0 && !isRemoteSummaryPending && canCreateDataset && (
               <button
                 onClick={onCreateDataset}
                 className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"

@@ -3427,6 +3427,11 @@
       "gtUpdated": "GT updated",
       "gtDeleted": "GT deleted",
       "autoSeeded": "Your personal draft has been imported into the collaborative draft",
+      "autoSeedConfirmTitle": "Use personal draft as collaboration starting point?",
+      "autoSeedConfirmMessage": "You have personal annotations. Use them as the initial content for the collaborative draft? Collaborators will be able to see and edit them.",
+      "autoSeedConfirmUse": "Use personal draft",
+      "autoSeedConfirmSkip": "Start blank",
+      "removedUnsavedLost": "You have been removed from the collaboration. Unsaved changes were lost.",
       "dialog": {
         "title": "Manage Collaborators",
         "ownerRole": "Owner",

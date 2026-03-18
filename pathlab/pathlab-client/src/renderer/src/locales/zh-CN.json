@@ -3427,6 +3427,11 @@
       "gtUpdated": "GT 已更新",
       "gtDeleted": "GT 已删除",
       "autoSeeded": "已将您的个人草稿导入到协作草稿",
+      "autoSeedConfirmTitle": "是否为协作共享标注导入个人草稿？",
+      "autoSeedConfirmMessage": "你有个人标注，是否将它们作为协作共享的初始内容？协作者将能看到并编辑这些标注。",
+      "autoSeedConfirmUse": "使用个人草稿",
+      "autoSeedConfirmSkip": "从空白开始",
+      "removedUnsavedLost": "你已被移出协作，未保存的修改已丢失",
       "dialog": {
         "title": "管理协作者",
         "ownerRole": "所有者",

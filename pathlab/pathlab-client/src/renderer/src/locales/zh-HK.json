@@ -3426,6 +3426,11 @@
       "gtUpdated": "GT 已更新",
       "gtDeleted": "GT 已刪除",
       "autoSeeded": "已將您的個人草稿匯入協作草稿",
+      "autoSeedConfirmTitle": "是否為協作共享標注導入個人草稿？",
+      "autoSeedConfirmMessage": "你有個人標註，是否將它們作為協作共享的初始內容？協作者將能看到並編輯這些標註。",
+      "autoSeedConfirmUse": "使用個人草稿",
+      "autoSeedConfirmSkip": "從空白開始",
+      "removedUnsavedLost": "你已被移出協作，未儲存的修改已丟失",
       "dialog": {
         "title": "管理協作者",
         "ownerRole": "擁有者",
