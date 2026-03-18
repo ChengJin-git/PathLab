@@ -219,8 +219,8 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
             ) : (
               <div className="space-y-3">
                 {(isAdmin ? members : members.filter(m => m.role !== 'implicit_admin')).map(member => (
-                  <div key={member.user_id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
-                    <div className="flex items-center gap-3 overflow-hidden">
+                  <div key={member.user_id} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-3 overflow-hidden flex-1 min-w-0">
                       <div className="w-9 h-9 rounded-full bg-white border border-gray-200 flex items-center justify-center text-gray-500 shadow-sm flex-shrink-0">
                         {member.role === 'owner' ? (
                           <ShieldCheck className="w-4 h-4 text-blue-500" />
@@ -259,9 +259,9 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
 
                     {member.role === 'collaborator' && (
                       removingUser === member.user_id ? (
-                        <Loader2 className="w-4 h-4 animate-spin text-gray-400 flex-shrink-0" />
+                        <Loader2 className="w-4 h-4 animate-spin text-gray-400 ml-auto flex-shrink-0" />
                       ) : pendingRemoveUser === member.user_id ? (
-                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                        <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
                           <span className="text-xs text-gray-500">{t('annotation.collab.dialog.removeConfirm')}</span>
                           <button
                             type="button"

@@ -3420,6 +3420,8 @@
       "deleteFailed": "删除失败",
       "versionConflict": "版本冲突，正在重新加载...",
       "reloadFailed": "重新加载失败",
+      "saveFailed": "保存协作标注失败",
+      "saveFailedNoPermission": "无操作权限，请确认您已被授权为该数据集的协作者",
       "sharedUpdated": "协作标注已被更新 (v{{version}})",
       "removedFromCollaborators": "你已被移出协作列表",
       "sharedDeletedRemote": "协作草稿已被删除",

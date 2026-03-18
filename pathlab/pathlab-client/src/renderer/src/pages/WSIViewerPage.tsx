@@ -954,9 +954,12 @@ export default function WSIViewerPage() {
           console.error('Failed to reload after conflict:', reloadErr)
           toast.error(t('annotation.collab.reloadFailed'))
         }
+      } else if (err instanceof ApiError && (err.status === 403 || err.status === 401)) {
+        console.error('Failed to save shared annotation (no permission):', err)
+        toast.error(t('annotation.collab.saveFailedNoPermission'))
       } else {
         console.error('Failed to save shared annotation:', err)
-        toast.error(t('annotation.saveFailed'))
+        toast.error(t('annotation.collab.saveFailed'))
       }
       return false
     } finally {

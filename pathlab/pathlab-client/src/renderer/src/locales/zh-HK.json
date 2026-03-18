@@ -3419,6 +3419,8 @@
       "deleteFailed": "刪除失敗",
       "versionConflict": "版本衝突，正在重新載入...",
       "reloadFailed": "重新載入失敗",
+      "saveFailed": "儲存協作標註失敗",
+      "saveFailedNoPermission": "無操作權限，請確認您已被授權為該數據集的協作者",
       "sharedUpdated": "協作標註已被更新 (v{{version}})",
       "removedFromCollaborators": "您已被移出協作列表",
       "sharedDeletedRemote": "協作草稿已被刪除",

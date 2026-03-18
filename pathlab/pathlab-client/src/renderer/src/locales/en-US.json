@@ -3420,6 +3420,8 @@
       "deleteFailed": "Deletion failed",
       "versionConflict": "Version conflict, reloading...",
       "reloadFailed": "Reload failed",
+      "saveFailed": "Failed to save collaborative annotations",
+      "saveFailedNoPermission": "Permission denied. Please confirm you are authorized as a collaborator for this dataset.",
       "sharedUpdated": "Collaborative annotations updated (v{{version}})",
       "removedFromCollaborators": "You have been removed from the collaborators list",
       "sharedDeletedRemote": "Shared draft has been deleted",
