@@ -151,6 +151,7 @@ export default function ResultsViewerPage() {
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [datasetId, setDatasetId] = useState<string | null>(null)
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
+  const [modelSearchQuery, setModelSearchQuery] = useState('')
   const [isDataDropdownOpen, setIsDataDropdownOpen] = useState(false)
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -183,7 +184,7 @@ export default function ResultsViewerPage() {
       const data = await response.json()
       return (data.items || []) as TrainingTask[]
     },
-    staleTime: 30 * 1000,
+    staleTime: 2 * 60 * 1000,
   })
 
   const { data: trainedModels = [] as TrainedModel[] } = useQuery({
@@ -193,6 +194,7 @@ export default function ResultsViewerPage() {
       return data.items.filter(m => m.is_active) as TrainedModel[]
     },
     staleTime: 2 * 60 * 1000,
+    enabled: pageMode === 'external-validation',
   })
 
   const { data: validationDatasets = [] as ValidationDataset[] } = useQuery({
@@ -771,7 +773,7 @@ export default function ResultsViewerPage() {
               <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.selectModel')}</h3>
               <div className="relative">
                 <button
-                  onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); setIsDataDropdownOpen(false); }}
+                  onClick={() => { setIsModelDropdownOpen(prev => { if (prev) setModelSearchQuery(''); return !prev }); setIsDataDropdownOpen(false); }}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
                     isModelDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
                   }`}
@@ -791,55 +793,77 @@ export default function ResultsViewerPage() {
 
                 {isModelDropdownOpen && (
                   <>
-                    <div className="fixed inset-0 z-10" onClick={() => setIsModelDropdownOpen(false)} />
-                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
-                      {trainedModels.map(model => {
-                        const trainTask = tasks.find(t => t.task_id === model.task_id)
-                        const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
-                        const isSegmentation = isSegmentationTask(trainTask?.task_type)
-                        const metrics = model.val_metrics as Record<string, number> | undefined
-                        const metricValue = isSurvival
-                          ? metrics?.c_index
-                          : isSegmentation
-                            ? (metrics?.miou ?? metrics?.iou ?? metrics?.dice)
-                            : (metrics?.macro_auc || metrics?.auc)
-                        const metricLabel = isSurvival
-                          ? t('resultsPage.cIndex')
-                          : isSegmentation
-                            ? (metrics?.miou != null ? 'mIoU' : 'IoU')
-                            : t('resultsPage.auc')
+                    <div className="fixed inset-0 z-10" onClick={() => { setIsModelDropdownOpen(false); setModelSearchQuery('') }} />
+                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+                      <div className="px-3 py-2 border-b border-gray-100">
+                        <input
+                          type="text"
+                          value={modelSearchQuery}
+                          onChange={e => setModelSearchQuery(e.target.value)}
+                          placeholder={t('resultsPage.searchModels', { defaultValue: 'Search models...' })}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400"
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
+                      <div className="max-h-72 overflow-y-auto">
+                        {(() => {
+                          const q = modelSearchQuery.trim().toLowerCase()
+                          const filtered = q
+                            ? trainedModels.filter(m => m.model_name.toLowerCase().includes(q))
+                            : trainedModels
+                          if (filtered.length === 0) {
+                            return (
+                              <div className="px-4 py-8 text-center text-gray-500">
+                                {trainedModels.length === 0 ? t('resultsPage.noActiveModels') : t('resultsPage.noMatchingModels', { defaultValue: 'No models match your search' })}
+                              </div>
+                            )
+                          }
+                          return filtered.map(model => {
+                            const trainTask = tasks.find(t => t.task_id === model.task_id)
+                            const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
+                            const isSegmentation = isSegmentationTask(trainTask?.task_type)
+                            const metrics = model.val_metrics as Record<string, number> | undefined
+                            const metricValue = isSurvival
+                              ? metrics?.c_index
+                              : isSegmentation
+                                ? (metrics?.miou ?? metrics?.iou ?? metrics?.dice)
+                                : (metrics?.macro_auc || metrics?.auc)
+                            const metricLabel = isSurvival
+                              ? t('resultsPage.cIndex')
+                              : isSegmentation
+                                ? (metrics?.miou != null ? 'mIoU' : 'IoU')
+                                : t('resultsPage.auc')
 
-                        return (
-                          <button
-                            key={model.model_id}
-                            onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); }}
-                            className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                              selectedModelId === model.model_id ? 'bg-orange-50' : ''
-                            }`}
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-gray-900 flex items-center gap-2">
-                                {model.model_name}
-                                {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
-                              </div>
-                              <div className="text-xs text-gray-500 truncate">
-                                {t('resultsPage.trainedOn', { name: trainTask?.name || t('resultsPage.unknown') })}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3 ml-2">
-                              {metricValue !== undefined && (
-                                <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
-                                  {metricLabel}: {(metricValue * 100).toFixed(1)}%
-                                </span>
-                              )}
-                              {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-orange-600 flex-shrink-0" />}
-                            </div>
-                          </button>
-                        )
-                      })}
-                      {trainedModels.length === 0 && (
-                        <div className="px-4 py-8 text-center text-gray-500">{t('resultsPage.noActiveModels')}</div>
-                      )}
+                            return (
+                              <button
+                                key={model.model_id}
+                                onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); setModelSearchQuery('') }}
+                                className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                                  selectedModelId === model.model_id ? 'bg-orange-50' : ''
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-gray-900 flex items-center gap-2">
+                                    {model.model_name}
+                                    {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+                                  </div>
+                                  <div className="text-xs text-gray-500 truncate">
+                                    {t('resultsPage.trainedOn', { name: trainTask?.name || t('resultsPage.unknown') })}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3 ml-2">
+                                  {metricValue !== undefined && (
+                                    <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
+                                      {metricLabel}: {(metricValue * 100).toFixed(1)}%
+                                    </span>
+                                  )}
+                                  {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-orange-600 flex-shrink-0" />}
+                                </div>
+                              </button>
+                            )
+                          })
+                        })()}
+                      </div>
                     </div>
                   </>
                 )}

@@ -771,6 +771,8 @@
       "multimodalModels": "Multimodal Models",
       "textModels": "Text Models",
       "closedSourceModels": "Closed Source Models",
+      "customModel": "Custom Model",
+      "customModelPlaceholder": "e.g. deepseek-chat, llama-3.1-8b-instant",
       "asrDashScope": "ASR (DashScope)",
       "dashScopeApiKey": "DashScope API Key",
       "dashScopeHint": "For Qwen3-ASR realtime.",

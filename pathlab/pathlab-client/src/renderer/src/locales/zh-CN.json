@@ -771,6 +771,8 @@
       "multimodalModels": "多模态模型",
       "textModels": "文本模型",
       "closedSourceModels": "闭源模型",
+      "customModel": "自定义模型",
+      "customModelPlaceholder": "例：deepseek-chat、llama-3.1-8b-instant",
       "asrDashScope": "ASR (DashScope)",
       "dashScopeApiKey": "DashScope API 密钥",
       "dashScopeHint": "用于 Qwen3-ASR 实时语音识别。",

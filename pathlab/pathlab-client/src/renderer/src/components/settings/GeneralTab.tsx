@@ -71,10 +71,15 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
 ]
 
-/** Quick lookup: is a given model ID multimodal? */
+export const CUSTOM_MODEL_SENTINEL = '__custom__'
+
 export const MULTIMODAL_MODELS = new Set(
   MODEL_OPTIONS.filter(m => m.multimodal).map(m => m.id)
 )
+
+function isCustomModelId(id: string): boolean {
+  return !!id && id !== CUSTOM_MODEL_SENTINEL && !MODEL_OPTIONS.some(m => m.id === id)
+}
 
 export interface GeneralTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -87,6 +92,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
+  const [isCustomMode, setIsCustomMode] = useState(false)
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   // Exa Search API key for web search
@@ -153,6 +159,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
     try {
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
+      setIsCustomMode(isCustomModelId(s.openrouter_model))
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
       setExaApiKey(s.exa_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
@@ -258,8 +265,16 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       <div className="space-y-2">
                         <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
                         <Select
-                          value={model}
-                          onChange={setModel}
+                          value={isCustomMode ? CUSTOM_MODEL_SENTINEL : model}
+                          onChange={(val) => {
+                            if (val === CUSTOM_MODEL_SENTINEL) {
+                              setIsCustomMode(true)
+                              if (!isCustomMode) setModel('')
+                            } else {
+                              setIsCustomMode(false)
+                              setModel(val)
+                            }
+                          }}
                           options={[
                             {
                               group: t('settings.general.multimodalModels'),
@@ -273,8 +288,21 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                               group: t('settings.general.closedSourceModels'),
                               options: MODEL_OPTIONS.filter(m => m.closedSource).map(m => ({ value: m.id, label: m.label })),
                             },
+                            {
+                              group: t('settings.general.customModel'),
+                              options: [{ value: CUSTOM_MODEL_SENTINEL, label: `${t('settings.general.customModel')}...` }],
+                            },
                           ]}
                         />
+                        {isCustomMode && (
+                          <Input
+                            value={model}
+                            onChange={(e) => setModel(e.target.value)}
+                            placeholder={t('settings.general.customModelPlaceholder')}
+                            className="h-9 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                            autoFocus
+                          />
+                        )}
                       </div>
                     </div>
                   </div>

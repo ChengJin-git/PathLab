@@ -47,6 +47,7 @@ from backend.database.repositories import (
     DatasetPermissionRepository,
 )
 from backend.common.config import Config
+from backend.common.redis_client import get_redis, make_key
 from backend.storage import StorageManager
 from backend.auth import (
     current_active_user,
@@ -885,13 +886,21 @@ async def _check_task_resources_batch(
         data_type = task_data_types.get(task_id, "wsi")
         is_patch_task = data_type == "patch"
 
-        # Check features (not needed for patch classification/segmentation)
         if is_patch_task:
-            # Patch tasks don't store pre-extracted features
-            has_features = True  # Mark as True since it's not required
+            has_features = True
         else:
             features_dir = uploads_dir / "training" / task_id / "features"
-            has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+            sentinel = features_dir / ".done"
+            if sentinel.exists():
+                has_features = True
+            elif features_dir.exists() and any(features_dir.glob("*.pt")):
+                has_features = True
+                try:
+                    sentinel.touch()
+                except OSError:
+                    pass
+            else:
+                has_features = False
 
         # Check model (use cached directory list)
         # Support both regular training (aggregator.pth in model_dir) and
@@ -983,19 +992,22 @@ async def _check_task_resources(task_id: str, db: AsyncSession) -> dict[str, Any
     return await _enrich_single_task_resources(task_id, db, base_resources)
 
 
+_RESULTS_TASKS_CACHE_TTL = 60
+
+
 @router.get("/tasks")
 async def get_analysis_tasks(
     user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get list of tasks available for analysis.
-    Users see only their own tasks, admin sees all.
+    cache_key = make_key("results_tasks", "admin" if user.is_admin() else str(user.id))
+    try:
+        r = get_redis()
+        cached = await r.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
 
-    Only returns tasks that have both features and model available.
-    Also indicates whether ai_results exist (needed before running analysis).
-
-    OPTIMIZED: Uses batch query for AI results count instead of per-task file scanning.
-    """
     task_list = []
 
     # Get completed tasks from database
@@ -1122,7 +1134,13 @@ async def get_analysis_tasks(
             }
         )
 
-    return {"items": task_list, "total": len(task_list)}
+    response = {"items": task_list, "total": len(task_list)}
+    try:
+        r = get_redis()
+        await r.set(cache_key, json.dumps(response), ex=_RESULTS_TASKS_CACHE_TTL)
+    except Exception:
+        pass
+    return response
 
 
 def _split_case_attention_to_slides_static(
