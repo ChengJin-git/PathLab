@@ -1,6 +1,7 @@
 import {
 	Bot,
 	Brain,
+	ChevronDown,
 	ChevronRight,
 	Clock,
 	Database,
@@ -376,6 +377,7 @@ export default function AIChatPage() {
 	// When true we suppress auto-scroll so the user can read earlier content
 	// while new chunks keep streaming in.
 	const userScrolledAwayRef = useRef(false);
+	const [hasScrolledAway, setHasScrolledAway] = useState(false);
 	const scrollRafRef = useRef<number | null>(null);
 
 	// Helper: is the scroll container "near bottom"? (within 150px)
@@ -405,8 +407,10 @@ export default function AIChatPage() {
 		const handleUserScroll = () => {
 			if (isNearBottom()) {
 				userScrolledAwayRef.current = false;
+				setHasScrolledAway(false);
 			} else {
 				userScrolledAwayRef.current = true;
+				setHasScrolledAway(true);
 			}
 		};
 
@@ -2109,6 +2113,7 @@ export default function AIChatPage() {
 		setShowWelcomeHero(false);
 		// Reset scroll lock so auto-scroll follows the new response
 		userScrolledAwayRef.current = false;
+		setHasScrolledAway(false);
 		setMessages((prev) => [...prev, userMessage]);
 		setInput("");
 		setImageAttachments([]); // Clear attachments after sending
@@ -2618,6 +2623,7 @@ export default function AIChatPage() {
 			const messagesToSend = [...newMessages, resentUserMessage];
 			setShowWelcomeHero(false);
 			userScrolledAwayRef.current = false;
+			setHasScrolledAway(false);
 			setMessages(messagesToSend);
 
 			const chatMessages = buildChatMessages(messagesToSend);
@@ -3817,7 +3823,34 @@ export default function AIChatPage() {
 				<div
 					className={`fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? "lg:left-72" : "lg:left-14"}`}
 				>
-					<div className="max-w-4xl mx-auto pointer-events-auto">
+					<div className="max-w-4xl mx-auto pointer-events-auto relative">
+						{/* Jump to bottom button */}
+						<div
+							className={`absolute -top-16 left-1/2 -translate-x-1/2 transition-all duration-300 pointer-events-auto z-40 ${
+								hasScrolledAway ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
+							}`}
+						>
+							<button
+								type="button"
+								onClick={() => {
+									userScrolledAwayRef.current = false;
+									setHasScrolledAway(false);
+									scrollToBottom();
+								}}
+								className="w-10 h-10 bg-white/95 backdrop-blur shadow-[0_4px_16px_rgba(0,0,0,0.12)] border border-gray-100/50 rounded-full flex items-center justify-center text-gray-500 hover:text-gray-900 hover:shadow-md transition-all duration-200"
+								aria-label={t("aiChat.jumpToBottom")}
+								title={t("aiChat.jumpToBottom")}
+							>
+								<ChevronDown className="w-5 h-5" />
+								{isGenerating && (
+									<span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
+										<span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-75"></span>
+										<span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary-500 border-2 border-white"></span>
+									</span>
+								)}
+							</button>
+						</div>
+
 						<form
 							ref={formRef}
 							id="chat-form"

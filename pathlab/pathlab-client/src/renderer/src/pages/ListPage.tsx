@@ -386,28 +386,16 @@ export default function ListPage() {
   })
 
   const sourceOptionsQuery = useQuery({
-    queryKey: ['dataset-source-options', datasetTypeFilter, datasetTaskFilter, datasetLevelFilter],
+    queryKey: ['dataset-source-options'],
     queryFn: async () => {
-      const response = await fetchDatasets(
-        datasetTypeFilter === 'all' ? undefined : datasetTypeFilter,
-        {
-          page_size: 0,
-          task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
-          aggregation_level:
-            datasetLevelFilter === 'all'
-              ? undefined
-              : datasetLevelFilter === 'patient'
-              ? 'case'
-              : 'file',
-        }
-      )
+      const response = await fetchDatasets(undefined, { page_size: 0 })
       return Array.from(new Set(
         (response.items ?? []).map(d => getDatasetSourceOrganFilterValue(d.source_organ))
       ))
     },
     enabled: !selectedDatasetId,
-    staleTime: 5 * 60 * 1000,
-    gcTime: 10 * 60 * 1000,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
     placeholderData: (prev) => prev,
   })
 

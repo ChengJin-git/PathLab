@@ -951,19 +951,41 @@ class WSIRepository:
         source_organ: Optional[str] = None,
     ) -> int:
         """Count datasets visible under the current filter set."""
-        grouped_query = WSIRepository._build_dataset_summary_query(
-            data_type=data_type,
-            user_id=user_id,
-            elevated_dataset_ids=elevated_dataset_ids,
-            search=search,
-            dataset_id=dataset_id,
-            task_type=task_type,
-            aggregation_level=aggregation_level,
-            source_organ=source_organ,
+        file_filter = WSIRepository._build_data_type_filter(data_type)
+        visibility_filter = WSIRepository._build_visibility_filter(
+            user_id, elevated_dataset_ids
         )
-        result = await db.execute(
-            select(func.count()).select_from(grouped_query.subquery())
+
+        query = (
+            select(func.count(func.distinct(Dataset.dataset_id)))
+            .select_from(WSISlide)
+            .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
+            .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
         )
+
+        if visibility_filter is not None:
+            query = query.where(visibility_filter)
+        if file_filter is not None:
+            query = query.where(file_filter)
+
+        normalized_search = search.strip() if search else None
+        if normalized_search:
+            query = query.where(Dataset.name.ilike(f"%{normalized_search}%"))
+        if dataset_id:
+            query = query.where(Dataset.dataset_id == dataset_id)
+        if task_type:
+            query = query.where(DataGroup.task_type == task_type)
+        if aggregation_level:
+            query = query.where(DataGroup.aggregation_level == aggregation_level)
+        if source_organ:
+            normalized_source = source_organ.strip()
+            if normalized_source:
+                source_expr = func.coalesce(
+                    func.nullif(func.trim(Dataset.source_organ), ""), "__unknown__"
+                )
+                query = query.where(source_expr == normalized_source)
+
+        result = await db.execute(query)
         return result.scalar() or 0
 
     @staticmethod
@@ -1355,8 +1377,6 @@ class WSIRepository:
             total_files       – total matching file count
             has_multi_slide_cases – whether any case_id has more than one file
         """
-        from sqlalchemy import case, literal_column
-
         filters = WSIRepository._build_dataset_filters(
             dataset_id,
             user_id=user_id,
@@ -1365,39 +1385,31 @@ class WSIRepository:
             elevated_dataset_ids=elevated_dataset_ids,
         )
 
-        # named_case_count
-        q_named = select(func.count(func.distinct(WSISlide.case_id))).where(
-            WSISlide.case_id.isnot(None), *filters
-        )
-        named_case_count = (await db.execute(q_named)).scalar_one()
+        # Single query: use COUNT(*) FILTER(...) (PostgreSQL native, via SQLAlchemy .filter())
+        q = select(
+            func.count(func.distinct(WSISlide.case_id))
+            .filter(WSISlide.case_id.isnot(None))
+            .label("named_case_count"),
+            func.count(WSISlide.id)
+            .filter(WSISlide.case_id.is_(None))
+            .label("no_case_count"),
+            func.count(WSISlide.id).label("total_files"),
+            # named_files_count > named_case_count  ⟹  at least one case has > 1 file
+            func.count(WSISlide.id)
+            .filter(WSISlide.case_id.isnot(None))
+            .label("named_files_count"),
+        ).where(*filters)
 
-        # no_case_count (files without case_id)
-        q_no_case = select(func.count(WSISlide.id)).where(
-            WSISlide.case_id.is_(None), *filters
-        )
-        no_case_count = (await db.execute(q_no_case)).scalar_one()
-
-        # total files
-        q_total = select(func.count(WSISlide.id)).where(*filters)
-        total_files = (await db.execute(q_total)).scalar_one()
-
-        total_cases = named_case_count + no_case_count
-
-        # has_multi_slide_cases: any non-NULL case_id with count > 1
-        q_multi = select(func.count()).select_from(
-            select(WSISlide.case_id)
-            .where(WSISlide.case_id.isnot(None), *filters)
-            .group_by(WSISlide.case_id)
-            .having(func.count(WSISlide.id) > 1)
-            .subquery()
-        )
-        multi_count = (await db.execute(q_multi)).scalar_one()
-        has_multi_slide_cases = multi_count > 0
+        row = (await db.execute(q)).one()
+        named_case_count = row.named_case_count
+        no_case_count = row.no_case_count
+        total_files = row.total_files
+        has_multi_slide_cases = row.named_files_count > named_case_count
 
         return {
             "named_case_count": named_case_count,
             "no_case_count": no_case_count,
-            "total_cases": total_cases,
+            "total_cases": named_case_count + no_case_count,
             "total_files": total_files,
             "has_multi_slide_cases": has_multi_slide_cases,
         }
@@ -1414,6 +1426,7 @@ class WSIRepository:
         elevated_dataset_ids: Optional[List[str]] = None,
         sort_by: Optional[str] = None,
         sort_order: str = "asc",
+        named_count: Optional[int] = None,
     ) -> List[WSISlide]:
         """Fetch files for a *page* of case groups.
 
@@ -1463,10 +1476,11 @@ class WSIRepository:
         # Step 3: Check if __no_case__ files fall on this page
         # __no_case__ files are individually paginated after all named cases.
         # Compute offset into uncased files based on how many page slots remain.
-        q_named_count = select(func.count(func.distinct(WSISlide.case_id))).where(
-            WSISlide.case_id.isnot(None), *filters
-        )
-        named_count = (await db.execute(q_named_count)).scalar_one()
+        if named_count is None:
+            q_named_count = select(func.count(func.distinct(WSISlide.case_id))).where(
+                WSISlide.case_id.isnot(None), *filters
+            )
+            named_count = (await db.execute(q_named_count)).scalar_one()
 
         # __no_case__ files start at virtual index = named_count (0-based)
         no_case_index = named_count

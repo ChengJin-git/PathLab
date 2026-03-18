@@ -540,6 +540,7 @@ async def list_wsi(
             elevated_dataset_ids=elevated_dataset_ids,
             sort_by=sort_by,
             sort_order=sort_order,
+            named_count=case_meta["named_case_count"],
         )
 
         items = await _serialize_dataset_wsi_items(

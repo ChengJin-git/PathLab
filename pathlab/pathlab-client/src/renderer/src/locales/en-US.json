@@ -979,6 +979,7 @@
     "no": "No"
   },
   "taskDetail": {
+    "viewAnalysis": "View Analysis",
     "creatingTask": "Creating Task...",
     "creatingTaskDescription": "Your task is being set up. This may take a moment for large datasets.",
     "creatingTaskSlow": "Still creating your task...",
@@ -1382,6 +1383,7 @@
     "removeAttachment": "Remove attachment",
     "closeNotification": "Close notification",
     "chatMessages": "Chat messages",
+    "jumpToBottom": "Jump to bottom",
     "messageInput": "Message input area",
     "deleteConfirmation": "Delete confirmation",
     "conversationLoadFailed": "Failed to load conversation. Please try again.",

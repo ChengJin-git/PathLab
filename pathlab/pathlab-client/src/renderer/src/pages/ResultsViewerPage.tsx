@@ -418,8 +418,15 @@ export default function ResultsViewerPage() {
   }, [selectedTaskId])
 
   useEffect(() => {
-    if (tasks.length > 0 && !selectedTaskIdRef.current) {
-      setSelectedTaskId(tasks[0].task_id)
+    if (tasks.length > 0) {
+      if (!selectedTaskIdRef.current) {
+        setSelectedTaskId(tasks[0].task_id)
+      } else {
+        const taskExists = tasks.some(t => t.task_id === selectedTaskIdRef.current)
+        if (!taskExists) {
+          setSelectedTaskId(tasks[0].task_id)
+        }
+      }
     }
   }, [tasks])
 

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User } from 'lucide-react'
+import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3 } from 'lucide-react'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
@@ -386,9 +386,9 @@ export default function TaskDetailPage() {
         const result = await startExternalValidation(
           modelId,
           datasetId,
-          task.model_config?.analysis_metrics,
-          task.model_config?.analysis_charts,
-          (task.model_config?.bootstrap_ci_metrics?.length ?? 0) > 0,
+          (task.model_config as any)?.analysis_metrics,
+          (task.model_config as any)?.analysis_charts,
+          ((task.model_config as any)?.bootstrap_ci_metrics?.length ?? 0) > 0,
           isAdmin ? task.task_id : undefined
         )
         navigate(`/task/${result.task_id}`)
@@ -584,6 +584,19 @@ export default function TaskDetailPage() {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {getStatusBadge(displayTask.status, displayTask.task_type)}
+            {displayTask.status === 'completed' && (
+              <Button
+                variant="default"
+                onClick={() => {
+                  const mode = isExternalValidation ? 'external-validation' : 'internal-analysis'
+                  navigate('/results', { state: { pageMode: mode, selectedTaskId: displayTask.task_id } })
+                }}
+                className="flex items-center gap-2 h-9 px-4 rounded-full font-bold shadow-sm transition-all"
+              >
+                <BarChart3 className="w-4 h-4" />
+                {t('taskDetail.viewAnalysis')}
+              </Button>
+            )}
             {!waitingForCreation && task?.status === 'failed' && (
               <Button
                 variant="outline"

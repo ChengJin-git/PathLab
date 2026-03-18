@@ -979,6 +979,7 @@
     "no": "否"
   },
   "taskDetail": {
+    "viewAnalysis": "查看分析",
     "creatingTask": "正在建立任務...",
     "creatingTaskDescription": "正在設定您的任務，大型資料集可能需要一些時間。",
     "creatingTaskSlow": "任務仍在建立中...",

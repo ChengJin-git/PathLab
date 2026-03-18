@@ -467,11 +467,22 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
 
 
 async def _get_dataset_with_access(dataset_id: str, user: User, db: AsyncSession):
-    return await get_dataset_with_access(
-        dataset_id,
-        user,
-        db,
-        forbidden_detail="You don't have permission to access this dataset",
+    from backend.database.repositories import DatasetRepository
+    from backend.auth.dependencies import check_dataset_access_permission
+
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail="Dataset not found")
+
+    if await check_dataset_access_permission(user, dataset_id, dataset.user_id, db):
+        return dataset
+
+    if await AnnotationCollaboratorRepository.exists(db, dataset_id, str(user.id)):
+        return dataset
+
+    raise HTTPException(
+        status_code=403,
+        detail="You don't have permission to access this dataset",
     )
 
 
@@ -1224,15 +1235,6 @@ async def save_shared_annotation(
                 else 0,
             },
         )
-        await SegmentationAnnotationRepository.upsert(
-            db,
-            annotation_id=f"annot_{dataset_id}",
-            user_id=owner_user_id,
-            annotations=incoming,
-            source_dataset_id=dataset_id,
-            status="finalized",
-            source="viewer",
-        )
         await db.commit()
     except VersionConflictError as e:
         raise HTTPException(
@@ -1602,8 +1604,16 @@ async def remove_collaborator(
         {"target_user_id": target_user_id, "residual_region_count": residual_count},
     )
     await db.commit()
-    await publish(
-        dataset_id, {"type": "collaborator_removed", "user_id": target_user_id}
+    asyncio.create_task(
+        publish(dataset_id, {"type": "collaborator_removed", "user_id": target_user_id})
+    )
+    asyncio.create_task(
+        publish(dataset_id, {"type": "access_revoked", "user_id": target_user_id})
+    )
+    asyncio.create_task(
+        publish_presence(
+            dataset_id, {"type": "force_disconnect", "user_id": target_user_id}
+        )
     )
 
     return {"ok": True, "residual_region_count": residual_count}
@@ -1795,6 +1805,16 @@ async def stream_shared_annotation(
     async def event_generator():
         try:
             async for raw in subscribe_iter(dataset_id):
+                try:
+                    msg_data = json.loads(raw)
+                except Exception:
+                    yield f"data: {raw}\n\n"
+                    continue
+                if msg_data.get("type") == "access_revoked" and msg_data.get(
+                    "user_id"
+                ) == str(user.id):
+                    yield f"data: {raw}\n\n"
+                    return
                 yield f"data: {raw}\n\n"
         except asyncio.CancelledError:
             logger.info(f"SSE shared annotation client disconnected: {dataset_id}")
@@ -1923,6 +1943,12 @@ async def presence_websocket(
                     msg = json.loads(raw)
                 except Exception:
                     continue
+                if (
+                    msg.get("type") == "force_disconnect"
+                    and msg.get("user_id") == user_id
+                ):
+                    await websocket.close(code=4003)
+                    return
                 if msg.get("user_id") == user_id:
                     continue
                 try:

@@ -979,6 +979,7 @@
     "no": "否"
   },
   "taskDetail": {
+    "viewAnalysis": "查看分析",
     "creatingTask": "正在创建任务...",
     "creatingTaskDescription": "正在设置您的任务，大型数据集可能需要一些时间。",
     "creatingTaskSlow": "任务仍在创建中...",
@@ -1382,6 +1383,7 @@
     "removeAttachment": "移除附件",
     "closeNotification": "关闭通知",
     "chatMessages": "聊天消息",
+    "jumpToBottom": "跳转到底部",
     "messageInput": "消息输入区域",
     "deleteConfirmation": "删除确认",
     "conversationLoadFailed": "加载对话失败，请重试。",
