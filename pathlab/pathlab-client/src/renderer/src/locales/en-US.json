@@ -770,6 +770,7 @@
       "model": "Model",
       "multimodalModels": "Multimodal Models",
       "textModels": "Text Models",
+      "closedSourceModels": "Closed Source Models",
       "asrDashScope": "ASR (DashScope)",
       "dashScopeApiKey": "DashScope API Key",
       "dashScopeHint": "For Qwen3-ASR realtime.",

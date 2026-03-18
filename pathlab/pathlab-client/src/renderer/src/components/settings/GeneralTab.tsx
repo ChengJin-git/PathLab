@@ -54,6 +54,7 @@ export interface ModelOption {
   id: string
   label: string
   multimodal: boolean
+  closedSource?: boolean
 }
 
 export const MODEL_OPTIONS: ModelOption[] = [
@@ -66,6 +67,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
   { id: 'z-ai/glm-4.7-flash', label: 'GLM-4.7-Flash', multimodal: false },
   { id: 'moonshotai/kimi-k2-0905', label: 'Kimi-K2-Instruct-0905', multimodal: false },
+  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
+  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
 ]
 
 /** Quick lookup: is a given model ID multimodal? */
@@ -260,11 +263,15 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                           options={[
                             {
                               group: t('settings.general.multimodalModels'),
-                              options: MODEL_OPTIONS.filter(m => m.multimodal).map(m => ({ value: m.id, label: m.label })),
+                              options: MODEL_OPTIONS.filter(m => m.multimodal && !m.closedSource).map(m => ({ value: m.id, label: m.label })),
                             },
                             {
                               group: t('settings.general.textModels'),
-                              options: MODEL_OPTIONS.filter(m => !m.multimodal).map(m => ({ value: m.id, label: m.label })),
+                              options: MODEL_OPTIONS.filter(m => !m.multimodal && !m.closedSource).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.closedSourceModels'),
+                              options: MODEL_OPTIONS.filter(m => m.closedSource).map(m => ({ value: m.id, label: m.label })),
                             },
                           ]}
                         />

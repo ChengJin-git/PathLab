@@ -770,6 +770,7 @@
       "model": "模型",
       "multimodalModels": "多模態模型",
       "textModels": "文字模型",
+      "closedSourceModels": "閉源模型",
       "asrDashScope": "ASR (DashScope)",
       "dashScopeApiKey": "DashScope API 密鑰",
       "dashScopeHint": "用於 Qwen3-ASR 即時語音識別。",
