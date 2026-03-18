@@ -3431,6 +3431,10 @@
       "autoSeedConfirmUse": "使用個人草稿",
       "autoSeedConfirmSkip": "從空白開始",
       "removedUnsavedLost": "你已被移出協作，未儲存的修改已丟失",
+      "exitSharedTitle": "退出協作共享",
+      "exitSharedMessage": "是否將當前共享標註導入你的個人草稿？",
+      "exitSharedImport": "導入個人草稿",
+      "exitSharedDiscard": "放棄",
       "dialog": {
         "title": "管理協作者",
         "ownerRole": "擁有者",

@@ -3432,6 +3432,10 @@
       "autoSeedConfirmUse": "使用个人草稿",
       "autoSeedConfirmSkip": "从空白开始",
       "removedUnsavedLost": "你已被移出协作，未保存的修改已丢失",
+      "exitSharedTitle": "退出协作共享",
+      "exitSharedMessage": "是否将当前共享标注导入你的个人草稿？",
+      "exitSharedImport": "导入个人草稿",
+      "exitSharedDiscard": "放弃",
       "dialog": {
         "title": "管理协作者",
         "ownerRole": "所有者",

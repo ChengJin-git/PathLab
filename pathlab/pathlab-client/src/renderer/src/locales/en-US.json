@@ -3432,6 +3432,10 @@
       "autoSeedConfirmUse": "Use personal draft",
       "autoSeedConfirmSkip": "Start blank",
       "removedUnsavedLost": "You have been removed from the collaboration. Unsaved changes were lost.",
+      "exitSharedTitle": "Exit collaborative mode",
+      "exitSharedMessage": "Do you want to import the current shared annotations into your personal draft?",
+      "exitSharedImport": "Import to personal draft",
+      "exitSharedDiscard": "Discard",
       "dialog": {
         "title": "Manage Collaborators",
         "ownerRole": "Owner",

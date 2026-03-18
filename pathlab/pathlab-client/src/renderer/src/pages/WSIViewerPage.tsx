@@ -288,6 +288,7 @@ export default function WSIViewerPage() {
     emptyAnnotations: AnnotationsMap
     version: number
   } | null>(null)
+  const [showSharedExitDialog, setShowSharedExitDialog] = useState(false)
   const annotationIdRef = useRef<string | null>(null)
   const saveRequestRef = useRef<Promise<boolean> | null>(null)
   const slideNavRef = useRef({
@@ -1084,9 +1085,9 @@ export default function WSIViewerPage() {
       }
       setEditingMode('shared')
     } else {
-      exitSharedMode()
+      setShowSharedExitDialog(true)
     }
-  }, [editingMode, exitSharedMode, hasUnsavedChanges, persistAnnotations])
+  }, [editingMode, hasUnsavedChanges, persistAnnotations])
 
   const handleDeleteShared = useCallback(async () => {
     if (!effectiveDatasetId) return
@@ -1127,6 +1128,17 @@ export default function WSIViewerPage() {
       }
     }
   }, [autoSeedConfirm, effectiveDatasetId, mergeLabelColorsFromAnnotations, t, toast])
+
+  const handleSharedExitChoice = useCallback((importToPersonal: boolean) => {
+    setShowSharedExitDialog(false)
+    if (importToPersonal) {
+      clearPendingSaveTimer()
+      setEditingMode('personal')
+      setHasUnsavedChanges(true)
+    } else {
+      exitSharedMode()
+    }
+  }, [clearPendingSaveTimer, exitSharedMode])
 
   const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
     const labelSet = new Set(labels)
@@ -2041,6 +2053,28 @@ export default function WSIViewerPage() {
               </button>
               <button type="button" onClick={() => handleAutoSeedConfirm(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
                 {t('annotation.collab.autoSeedConfirmUse')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSharedExitDialog && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 px-6 pt-6 pb-2">
+              <div className="p-2 bg-indigo-100 rounded-full">
+                <Users className="w-5 h-5 text-indigo-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">{t('annotation.collab.exitSharedTitle')}</h3>
+            </div>
+            <p className="px-6 py-3 text-sm text-gray-600 leading-relaxed">{t('annotation.collab.exitSharedMessage')}</p>
+            <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
+              <button type="button" onClick={() => handleSharedExitChoice(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+                {t('annotation.collab.exitSharedDiscard')}
+              </button>
+              <button type="button" onClick={() => handleSharedExitChoice(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
+                {t('annotation.collab.exitSharedImport')}
               </button>
             </div>
           </div>
