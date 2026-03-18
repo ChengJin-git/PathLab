@@ -9,6 +9,7 @@ from backend.ai.segmentors.specs import (
     SUPPORT_ARCHITECTURES,
     SUPPORT_FEATURE_EXTRACTORS,
 )
+from gateway.utils import PREPROCESSING_COMPUTE_PATCHES_DEFAULTS
 
 router = APIRouter(prefix="/training", tags=["Training Options"])
 
@@ -509,6 +510,16 @@ async def get_training_options():
         )
         segmentation_backbones.append({"id": backbone_id, **meta})
 
+    preprocessing_defaults = {
+        "a_t": PREPROCESSING_COMPUTE_PATCHES_DEFAULTS["a_t"],
+        "a_h": PREPROCESSING_COMPUTE_PATCHES_DEFAULTS["a_h"],
+        "max_n_holes": PREPROCESSING_COMPUTE_PATCHES_DEFAULTS["max_n_holes"],
+        "sthresh": PREPROCESSING_COMPUTE_PATCHES_DEFAULTS["sthresh"],
+        "mthresh": PREPROCESSING_COMPUTE_PATCHES_DEFAULTS["mthresh"],
+        "close": PREPROCESSING_COMPUTE_PATCHES_DEFAULTS["close"],
+        "use_otsu": PREPROCESSING_COMPUTE_PATCHES_DEFAULTS["use_otsu"],
+    }
+
     return {
         "feature_extractors": feature_extractors,
         "aggregators": aggregators,
@@ -516,4 +527,5 @@ async def get_training_options():
         "segmentation_backbones": segmentation_backbones,
         "segmentation_losses": _SEGMENTATION_LOSSES,
         "optimizers": _OPTIMIZERS,
+        "preprocessing_defaults": preprocessing_defaults,
     }

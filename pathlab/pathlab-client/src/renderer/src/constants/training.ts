@@ -352,8 +352,6 @@ export const SEGMENTATION_LOSSES: readonly LossOption[] = [
   { id: 'MCCLoss', name: 'MCC Loss', description: 'Matthews Correlation Coefficient loss' },
 ] as const
 
-const SUPPORTED_SEGMENTATION_LOSS_NAMES = new Set(SEGMENTATION_LOSSES.map((loss) => loss.id))
-
 const normalizeSegmentationLossToken = (name: string): string => (
   name.trim().replace(/[\s_-]+/g, '').toLowerCase()
 )
@@ -382,13 +380,14 @@ export function normalizeSegmentationLossConfig(
     }
   }
 
+  const supportedLossNames = new Set((SEGMENTATION_LOSSES as LossOption[]).map((loss) => loss.id))
   const hasAlignedWeights = Array.isArray(lossWeights) && lossWeights.length === names.length
   const mergedWeights = new Map<string, number>()
   const normalizedNames: string[] = []
 
   names.forEach((rawName, index) => {
     const normalizedName = normalizeSegmentationLossName(rawName)
-    if (!SUPPORTED_SEGMENTATION_LOSS_NAMES.has(normalizedName)) {
+    if (!supportedLossNames.has(normalizedName)) {
       return
     }
 
@@ -507,13 +506,10 @@ export interface FilterDefaults {
   maxHoles: number
 }
 
-/**
- * Default filter parameters for patch filtering.
- */
 export const FILTER_DEFAULTS: FilterDefaults = {
-  areaThresh: 1,     // Minimum tissue area threshold
-  holeArea: 256,     // Minimum hole area to filter
-  maxHoles: 100,     // Maximum number of holes per contour
+  areaThresh: 100,
+  holeArea: 16,
+  maxHoles: 8,
 }
 
 // ============================================================================

@@ -34,6 +34,16 @@ export interface TrainingOptimizerOption {
   label: string
 }
 
+export interface TrainingPreprocessingDefaults {
+  a_t: number
+  a_h: number
+  max_n_holes: number
+  sthresh: number
+  mthresh: number
+  close: number
+  use_otsu: boolean
+}
+
 export interface TrainingOptionsResponse {
   feature_extractors: TrainingExtractorOption[]
   aggregators: TrainingAggregatorOption[]
@@ -41,6 +51,7 @@ export interface TrainingOptionsResponse {
   segmentation_backbones: TrainingSegmentationBackboneOption[]
   segmentation_losses: TrainingSegmentationLossOption[]
   optimizers: TrainingOptimizerOption[]
+  preprocessing_defaults?: TrainingPreprocessingDefaults
 }
 
 const trainingOptionsCache = createPersistentCache<TrainingOptionsResponse>(

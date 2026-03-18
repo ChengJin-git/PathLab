@@ -4,9 +4,11 @@ import {
   BACKBONE_GROUPS,
   ENCODER_OPTIONS,
   FEATURE_EXTRACTORS,
+  FILTER_DEFAULTS,
   OPTIMIZERS,
   SEGMENTATION_ARCHITECTURES,
   SEGMENTATION_BACKBONES,
+  SEGMENTATION_DEFAULTS,
   SEGMENTATION_LOSSES,
   SelectOption,
 } from './training'
@@ -15,6 +17,7 @@ import {
   TrainingAggregatorOption,
   TrainingExtractorOption,
   TrainingOptimizerOption,
+  TrainingPreprocessingDefaults,
   TrainingSegmentationBackboneOption,
   TrainingSegmentationLossOption,
 } from '../api/trainingOptions'
@@ -85,6 +88,21 @@ export async function bootstrapTrainingOptions(): Promise<void> {
 
     replaceArray(SEGMENTATION_LOSSES, toSegmentationLosses(options.segmentation_losses))
     replaceArray(OPTIMIZERS, toOptimizerSelectOptions(options.optimizers))
+
+    if (options.preprocessing_defaults) {
+      applyPreprocessingDefaults(options.preprocessing_defaults)
+    }
   } catch {
   }
+}
+
+function applyPreprocessingDefaults(pd: TrainingPreprocessingDefaults): void {
+  FILTER_DEFAULTS.areaThresh = pd.a_t
+  FILTER_DEFAULTS.holeArea = pd.a_h
+  FILTER_DEFAULTS.maxHoles = pd.max_n_holes
+
+  SEGMENTATION_DEFAULTS.sthresh = pd.sthresh
+  SEGMENTATION_DEFAULTS.mthresh = pd.mthresh
+  SEGMENTATION_DEFAULTS.close = pd.close
+  SEGMENTATION_DEFAULTS.useOtsu = pd.use_otsu
 }
