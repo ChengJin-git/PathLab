@@ -39,7 +39,7 @@ _AGGREGATOR_METADATA: dict[str, OptionMap] = {
         "detail": "Single-branch Instance-level clustering with attention",
     },
     "clam_mb": {
-        "name": "Multi Branch CLAM",
+        "name": "CLAM-MB",
         "description": "Multi-branch Instance-level clustering with attention",
         "detail": "Multi-branch Instance-level clustering with attention",
     },

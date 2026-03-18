@@ -1,4 +1,6 @@
 import logging
+import math
+
 import torch
 from torchvision import transforms
 
@@ -50,6 +52,15 @@ class CytoFMExtractor(BaseExtractor):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.backbone(x)
+
+    def forward_spatial(self, x: torch.Tensor) -> torch.Tensor:
+        patch_tokens = self.backbone.forward_features(x)["x_norm_patchtokens"]
+        B, N, D = patch_tokens.shape
+        H = W = int(math.isqrt(N))
+        assert H * W == N, (
+            f"CytoFM: cannot reshape {N} patch tokens into square grid (H={H}, W={W})"
+        )
+        return patch_tokens.permute(0, 2, 1).reshape(B, D, H, W)
 
     def get_transforms(self, mode="eval"):
         return transforms.Compose(
