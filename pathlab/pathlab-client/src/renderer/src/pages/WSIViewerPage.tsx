@@ -282,6 +282,7 @@ export default function WSIViewerPage() {
   const [showCreateDatasetDialog, setShowCreateDatasetDialog] = useState(false)
   const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const immediateSharedSaveRef = useRef(false)
   const annotationIdRef = useRef<string | null>(null)
   const saveRequestRef = useRef<Promise<boolean> | null>(null)
   const slideNavRef = useRef({
@@ -883,8 +884,9 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).filter(r => r.id !== regionId),
     }))
+    if (editingMode === 'shared') immediateSharedSaveRef.current = true
     setHasUnsavedChanges(true)
-  }, [wsi_id])
+  }, [wsi_id, editingMode])
 
   const handleDeleteRegions = useCallback((regionIds: string[]) => {
     const idSet = new Set(regionIds)
@@ -892,8 +894,9 @@ export default function WSIViewerPage() {
       ...prev,
       [wsi_id]: (prev[wsi_id] || []).filter(r => !idSet.has(r.id)),
     }))
+    if (editingMode === 'shared') immediateSharedSaveRef.current = true
     setHasUnsavedChanges(true)
-  }, [wsi_id])
+  }, [wsi_id, editingMode])
 
   const handleLabelChange = useCallback((label: string) => {
     setCurrentLabel(label)
@@ -1418,10 +1421,12 @@ export default function WSIViewerPage() {
     clearPendingSaveTimer()
 
     if (editingMode === 'shared') {
+      const isImmediate = immediateSharedSaveRef.current
+      immediateSharedSaveRef.current = false
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
         await saveShared()
-      }, 2000)
+      }, isImmediate ? 0 : 2000)
     } else {
       const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
 
