@@ -60,18 +60,16 @@ export function AnnotationListPanel({
     return counts
   }, [allAnnotations])
 
-  const isRemoteSummaryPending = preferRemoteCrossSlideSummary && (!crossSlideSummary || loadingCrossSlideSummary)
+  const hasLoadedAnnotations = Object.keys(allAnnotations).length > 0
+
+  const isRemoteSummaryPending = preferRemoteCrossSlideSummary && !hasLoadedAnnotations && (!crossSlideSummary || loadingCrossSlideSummary)
 
   const effectiveSummary = useMemo(() => {
-    if (preferRemoteCrossSlideSummary && !crossSlideSummary) {
-      return {
-        counts: {},
-        totalRegions: 0,
-        totalSlides: 0,
-      }
+    if (preferRemoteCrossSlideSummary && !hasLoadedAnnotations && !crossSlideSummary) {
+      return { counts: {}, totalRegions: 0, totalSlides: 0 }
     }
 
-    if (!crossSlideSummary) {
+    if (hasLoadedAnnotations) {
       return {
         counts: localSummary,
         totalRegions: Object.values(allAnnotations).reduce((sum, regs) => sum + regs.length, 0),
@@ -79,17 +77,21 @@ export function AnnotationListPanel({
       }
     }
 
-    return {
-      counts: Object.fromEntries(
-        Object.entries(crossSlideSummary.labels).map(([label, data]) => [
-          label,
-          { total: data.total_regions, slides: new Set<string>(Array.from({ length: data.total_slides }, (_, idx) => `${label}:${idx}`)) },
-        ])
-      ) as Record<string, { total: number; slides: Set<string> }>,
-      totalRegions: crossSlideSummary.total_regions,
-      totalSlides: crossSlideSummary.total_slides,
+    if (crossSlideSummary) {
+      return {
+        counts: Object.fromEntries(
+          Object.entries(crossSlideSummary.labels).map(([label, data]) => [
+            label,
+            { total: data.total_regions, slides: new Set<string>(Array.from({ length: data.total_slides }, (_, idx) => `${label}:${idx}`)) },
+          ])
+        ) as Record<string, { total: number; slides: Set<string> }>,
+        totalRegions: crossSlideSummary.total_regions,
+        totalSlides: crossSlideSummary.total_slides,
+      }
     }
-  }, [allAnnotations, crossSlideSummary, localSummary, preferRemoteCrossSlideSummary])
+
+    return { counts: {}, totalRegions: 0, totalSlides: 0 }
+  }, [allAnnotations, crossSlideSummary, hasLoadedAnnotations, localSummary, preferRemoteCrossSlideSummary])
 
   const handleStartEdit = (region: AnnotationRegion) => {
     setEditingId(region.id)
