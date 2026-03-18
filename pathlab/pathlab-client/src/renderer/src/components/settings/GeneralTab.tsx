@@ -160,6 +160,9 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
       setIsCustomMode(isCustomModelId(s.openrouter_model))
+      localStorage.setItem('openrouter_api_key', s.openrouter_api_key)
+      localStorage.setItem('openrouter_base_url', s.openrouter_base_url)
+      localStorage.setItem('openrouter_model', s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
       setExaApiKey(s.exa_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
@@ -197,6 +200,9 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
       })
+      localStorage.setItem('openrouter_api_key', apiKey)
+      localStorage.setItem('openrouter_base_url', baseUrl)
+      localStorage.setItem('openrouter_model', model)
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
     } catch (err) {
