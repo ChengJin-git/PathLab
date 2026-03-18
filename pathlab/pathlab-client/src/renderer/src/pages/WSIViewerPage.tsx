@@ -1088,9 +1088,14 @@ export default function WSIViewerPage() {
       }
       setEditingMode('shared')
     } else {
-      setShowSharedExitDialog(true)
+      const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
+      if (totalRegions === 0) {
+        exitSharedMode()
+      } else {
+        setShowSharedExitDialog(true)
+      }
     }
-  }, [editingMode, hasUnsavedChanges, persistAnnotations])
+  }, [editingMode, hasUnsavedChanges, persistAnnotations, allAnnotations, exitSharedMode])
 
   const handleDeleteShared = useCallback(async () => {
     if (!effectiveDatasetId) return
