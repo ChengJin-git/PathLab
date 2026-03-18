@@ -283,6 +283,7 @@ export default function WSIViewerPage() {
   const [focusedRegionId, setFocusedRegionId] = useState<string | null>(null)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const immediateSharedSaveRef = useRef(false)
+  const immediatePersonalSaveRef = useRef(false)
   const [autoSeedConfirm, setAutoSeedConfirm] = useState<{
     draft: AnnotationsMap
     emptyAnnotations: AnnotationsMap
@@ -891,6 +892,7 @@ export default function WSIViewerPage() {
       [wsi_id]: (prev[wsi_id] || []).filter(r => r.id !== regionId),
     }))
     if (editingMode === 'shared') immediateSharedSaveRef.current = true
+    else immediatePersonalSaveRef.current = true
     setHasUnsavedChanges(true)
   }, [wsi_id, editingMode])
 
@@ -901,6 +903,7 @@ export default function WSIViewerPage() {
       [wsi_id]: (prev[wsi_id] || []).filter(r => !idSet.has(r.id)),
     }))
     if (editingMode === 'shared') immediateSharedSaveRef.current = true
+    else immediatePersonalSaveRef.current = true
     setHasUnsavedChanges(true)
   }, [wsi_id, editingMode])
 
@@ -1047,7 +1050,7 @@ export default function WSIViewerPage() {
 
         setHasUnsavedChanges(false)
         if (effectiveDatasetId) {
-          await refreshDatasetAnnotationSummary()
+          void refreshDatasetAnnotationSummary()
         }
         if (showToast) {
           toast.success(t('annotation.saved'))
@@ -1164,6 +1167,7 @@ export default function WSIViewerPage() {
         }
         return next
       })
+      immediatePersonalSaveRef.current = true
       setHasUnsavedChanges(true)
       return
     }
@@ -1508,10 +1512,12 @@ export default function WSIViewerPage() {
         return
       }
 
+      const isImmediatePersonal = immediatePersonalSaveRef.current
+      immediatePersonalSaveRef.current = false
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
         await persistAnnotations({ showToast: false })
-      }, 2000)
+      }, isImmediatePersonal ? 0 : 2000)
     }
 
     return () => {

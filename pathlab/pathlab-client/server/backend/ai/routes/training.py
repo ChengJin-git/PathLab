@@ -1093,7 +1093,6 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
     The SegmentationTrainer is synchronous, so it runs in a thread pool.
     """
     import asyncio
-    import uuid as uuid_mod
     from backend.ai.tasks import SegmentationTrainer
 
     _validate_patch_segmentation_loss_names(req.loss_names)
@@ -1134,7 +1133,10 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
 
     try:
         # Phase 2: Build config and run training in thread pool
-        model_id = str(uuid_mod.uuid4())
+        # Use a deterministic model_id derived from task_id so that
+        # resume_checkpoint.pth written in a previous run can be found
+        # when the task is restarted after a crash/disconnect.
+        model_id = f"seg_{req.task_id}"
         model_dir = UPLOADS_DIR / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
         save_dir = str(model_dir)

@@ -15,6 +15,7 @@ from copy import deepcopy
 from pathlib import Path
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     HTTPException,
     Depends,
     Query,
@@ -26,6 +27,7 @@ from PIL import Image, ImageColor, ImageDraw
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db
+from backend.database.database import async_session as _async_session
 from backend.database.repositories import (
     SegmentationAnnotationRepository,
     AnnotationCollaboratorRepository,
@@ -643,9 +645,36 @@ async def _resolve_effective_dataset_annotations(
 # ── Annotation CRUD ──────────────────────────────────────────────────────────
 
 
+async def _refresh_draft_cache_bg(
+    annotation_id: str,
+    dataset_id: str,
+    user_id: str,
+    annotations: Any,
+    updated_at: Optional[str],
+) -> None:
+    """Background task: rebuild draft annotation summary cache with its own DB session."""
+    try:
+        async with _async_session() as db:
+            wsis = await _get_dataset_wsis(dataset_id, db)
+            draft_cache = build_draft_annotation_summary_cache(
+                annotation_id=annotation_id,
+                dataset_id=dataset_id,
+                user_id=user_id,
+                annotations=annotations if isinstance(annotations, dict) else {},
+                wsis=wsis,
+                draft_updated_at=updated_at,
+            )
+            save_draft_annotation_summary_cache(annotation_id, draft_cache)
+    except Exception as cache_err:
+        logger.warning(
+            f"Failed to refresh draft annotation summary cache (bg) for {annotation_id}: {cache_err}"
+        )
+
+
 @router.post("/drafts")
 async def save_annotation(
     req: AnnotationSaveRequest,
+    background_tasks: BackgroundTasks,
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -664,25 +693,16 @@ async def save_annotation(
         await db.commit()
 
         if req.source_dataset_id:
-            try:
-                wsis = await _get_dataset_wsis(req.source_dataset_id, db)
-                draft_cache = build_draft_annotation_summary_cache(
-                    annotation_id=req.annotation_id,
-                    dataset_id=req.source_dataset_id,
-                    user_id=str(user.id),
-                    annotations=req.annotations
-                    if isinstance(req.annotations, dict)
-                    else {},
-                    wsis=wsis,
-                    draft_updated_at=annotation.updated_at.isoformat()
-                    if annotation.updated_at
-                    else None,
-                )
-                save_draft_annotation_summary_cache(req.annotation_id, draft_cache)
-            except Exception as cache_err:
-                logger.warning(
-                    f"Failed to refresh draft annotation summary cache for {req.annotation_id}: {cache_err}"
-                )
+            background_tasks.add_task(
+                _refresh_draft_cache_bg,
+                annotation_id=req.annotation_id,
+                dataset_id=req.source_dataset_id,
+                user_id=str(user.id),
+                annotations=req.annotations,
+                updated_at=annotation.updated_at.isoformat()
+                if annotation.updated_at
+                else None,
+            )
 
         return annotation.to_dict()
     except Exception as e:
