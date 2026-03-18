@@ -25,7 +25,7 @@ import type { ShowConfirmDialog } from './ConfirmDialog'
 type PermissionMode = 'user' | 'dataset'
 type PermissionDataset = DatasetSummary & { dataset_id: string }
 
-const PAGE_SIZE_OPTIONS = ['5', '10', '20']
+const PAGE_SIZE_OPTIONS = ['6', '9', '18']
 const SEARCH_DEBOUNCE_MS = 300
 
 export interface PermissionCenterModalProps {
@@ -135,7 +135,9 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [datasetSearchQuery, setDatasetSearchQuery] = useState('')
   const [debouncedDatasetSearchQuery, setDebouncedDatasetSearchQuery] = useState('')
   const [datasetPage, setDatasetPage] = useState(1)
-  const [datasetPageSize, setDatasetPageSize] = useState(10)
+  const [datasetPageSize, setDatasetPageSize] = useState(9)
+  const [grantDatasetPage, setGrantDatasetPage] = useState(1)
+  const [grantDatasetPageSize, setGrantDatasetPageSize] = useState(6)
   const [datasetItems, setDatasetItems] = useState<DatasetSummary[]>([])
   const [datasetTotal, setDatasetTotal] = useState(0)
   const [loadingDatasets, setLoadingDatasets] = useState(false)
@@ -143,7 +145,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [userSearchQuery, setUserSearchQuery] = useState('')
   const [debouncedUserSearchQuery, setDebouncedUserSearchQuery] = useState('')
   const [userPage, setUserPage] = useState(1)
-  const [userPageSize, setUserPageSize] = useState(10)
+  const [userPageSize, setUserPageSize] = useState(9)
   const [userItems, setUserItems] = useState<UserListItem[]>([])
   const [userTotal, setUserTotal] = useState(0)
   const [loadingUsers, setLoadingUsers] = useState(false)
@@ -151,7 +153,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [grantUserSearchQuery, setGrantUserSearchQuery] = useState('')
   const [debouncedGrantUserSearchQuery, setDebouncedGrantUserSearchQuery] = useState('')
   const [grantUserPage, setGrantUserPage] = useState(1)
-  const [grantUserPageSize, setGrantUserPageSize] = useState(10)
+  const [grantUserPageSize, setGrantUserPageSize] = useState(9)
   const [grantUserItems, setGrantUserItems] = useState<UserListItem[]>([])
   const [grantUserTotal, setGrantUserTotal] = useState(0)
   const [loadingGrantUsers, setLoadingGrantUsers] = useState(false)
@@ -231,7 +233,9 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const loadDatasets = useCallback(async () => {
     setLoadingDatasets(true)
     try {
-      const response = await fetchDatasets(undefined, { page: datasetPage, page_size: datasetPageSize, search: debouncedDatasetSearchQuery.trim() || undefined })
+      const page = mode === 'dataset' ? datasetPage : grantDatasetPage
+      const pageSize = mode === 'dataset' ? datasetPageSize : grantDatasetPageSize
+      const response = await fetchDatasets(undefined, { page, page_size: pageSize, search: debouncedDatasetSearchQuery.trim() || undefined })
       setDatasetItems(response.items)
       setDatasetTotal(response.total)
     } catch (err) {
@@ -239,7 +243,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     } finally {
       setLoadingDatasets(false)
     }
-  }, [datasetPage, datasetPageSize, debouncedDatasetSearchQuery, t])
+  }, [mode, datasetPage, datasetPageSize, grantDatasetPage, grantDatasetPageSize, debouncedDatasetSearchQuery, t])
 
   const loadUsers = useCallback(async () => {
     setLoadingUsers(true)
@@ -565,7 +569,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
               </div>
               <div className="rounded-2xl border border-gray-200 bg-white p-4">
                 <div className="mb-3 flex items-center justify-between gap-3"><div><h4 className="text-sm font-medium text-gray-900">{t('settings.permissionCenterModal.grantDatasets')}</h4><p className="mt-1 text-xs text-gray-500">{selectedUser ? t('settings.permissionCenterModal.selectedUserName', { name: getUserDisplayName(selectedUser) }) : t('settings.permissionCenterModal.selectUserHint')}</p></div><div className="text-xs text-gray-500">{t('settings.permissionCenterModal.datasetCount', { count: datasetTotal })}</div></div>
-                <div className="relative mb-3"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={submitting} /></div>
+                <div className="relative mb-3"><Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" /><Input value={datasetSearchQuery} onChange={(e) => { setDatasetSearchQuery(e.target.value); setGrantDatasetPage(1) }} placeholder={t('settings.permissionCenterModal.searchDatasets')} className="pl-9" disabled={submitting} /></div>
                 <div className="mb-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3"><Checkbox checked={allVisibleDatasetsSelected} onCheckedChange={handleToggleAllDatasets} /><span className="text-sm text-gray-700">{t('settings.permissionCenterModal.selectVisibleDatasets', { count: selectableDatasetIdsOnPage.length })}</span></div>
                 <BulkSelectionBanner
                   allPageSelected={allVisibleDatasetsSelected}
@@ -581,7 +585,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
                   const isDatasetOwner = dataset.user_id !== null && dataset.user_id === selectedUser?.id
                   return <div key={dataset.dataset_id} className="rounded-xl border border-gray-200 bg-gray-50 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-gray-900">{dataset.dataset_name}</div><div className="mt-1 text-xs text-gray-500">{t('settings.permissionCenterModal.datasetMeta', { count: dataset.file_count })}</div></div><Checkbox checked={selectedDatasetIds.includes(dataset.dataset_id)} disabled={alreadyGranted || isDatasetOwner || submitting || !selectedUser} onCheckedChange={(checked) => handleToggleDataset(dataset.dataset_id, checked)} /></div>{isDatasetOwner && <div className="mt-3 inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">{t('settings.permissionCenterModal.datasetOwner')}</div>}{!isDatasetOwner && alreadyGranted && <div className="mt-3 inline-flex rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700">{t('settings.permissionCenterModal.alreadyGranted')}</div>}</div>
                 })}</div>
-                <div className="mt-4"><PaginationFooter page={datasetPage} pageSize={datasetPageSize} total={datasetTotal} disabled={loadingDatasets || submitting} onPageChange={setDatasetPage} onPageSizeChange={(pageSize) => { setDatasetPageSize(pageSize); setDatasetPage(1) }} t={t} /></div>
+                <div className="mt-4"><PaginationFooter page={grantDatasetPage} pageSize={grantDatasetPageSize} total={datasetTotal} disabled={loadingDatasets || submitting} onPageChange={setGrantDatasetPage} onPageSizeChange={(pageSize) => { setGrantDatasetPageSize(pageSize); setGrantDatasetPage(1) }} t={t} /></div>
                 <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4"><div className="flex flex-col gap-3 sm:flex-row sm:items-end"><div className="sm:w-48"><Label className="mb-1.5 block text-xs text-gray-500">{t('settings.permissionModal.expirationHours')}</Label><Input type="number" min="1" value={expiresInHours} onChange={(e) => setExpiresInHours(e.target.value)} placeholder={t('settings.permissionModal.forever')} disabled={submitting || !selectedUser} /></div><div className="flex-1 text-xs text-gray-400">{t('settings.permissionModal.leaveEmptyForPermanent')}</div><Button type="button" onClick={handleGrantToUser} disabled={selectedDatasetIds.length === 0 || !selectedUser || submitting} className="bg-purple-600 hover:bg-purple-700">{submitting ? t('settings.permissionCenterModal.granting') : t('settings.permissionCenterModal.grantSelectedDatasets', { count: selectedDatasetIds.length })}</Button></div></div>
               </div>
             </div>
