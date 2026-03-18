@@ -643,9 +643,15 @@ async def run_training_pipeline(
                         },
                     )
 
-                    # Update status to training
+                    # Update status to training; preserve progress if resuming from checkpoint
+                    _seg_task = await TrainingTaskRepository.get_by_id(db, task_id)
+                    _seg_start_progress = (
+                        _seg_task.progress
+                        if _seg_task and _seg_task.status == TaskStatus.RESUMING
+                        else 50
+                    )
                     await TrainingTaskRepository.update_status(
-                        db, task_id, TaskStatus.TRAINING, progress=50
+                        db, task_id, TaskStatus.TRAINING, progress=_seg_start_progress
                     )
 
                 await _ensure_gpu_vram_for_step(
@@ -721,9 +727,15 @@ async def run_training_pipeline(
                     },
                 )
 
-                # Update status to training
+                # Update status to training; preserve progress if resuming from checkpoint
+                _patch_task = await TrainingTaskRepository.get_by_id(db, task_id)
+                _patch_start_progress = (
+                    _patch_task.progress
+                    if _patch_task and _patch_task.status == TaskStatus.RESUMING
+                    else 50
+                )
                 await TrainingTaskRepository.update_status(
-                    db, task_id, TaskStatus.TRAINING, progress=50
+                    db, task_id, TaskStatus.TRAINING, progress=_patch_start_progress
                 )
 
             await _ensure_gpu_vram_for_step(
