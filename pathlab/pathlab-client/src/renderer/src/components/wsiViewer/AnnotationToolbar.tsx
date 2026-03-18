@@ -243,15 +243,12 @@ export function AnnotationToolbar({
               )}
               
               {/* Shared Saving Indicator */}
-              <div className="w-px h-5 bg-gray-200 mx-1" />
-              <button
-                type="button"
-                disabled
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium text-gray-500 bg-gray-50 border border-gray-200"
-              >
-                 {sharedSaving ? <Loader2 className="w-3 h-3 animate-spin text-indigo-500" /> : <div className="w-3 h-3" />}
-                 <span>{t('annotation.collab.saveShared')}</span>
-              </button>
+              {sharedSaving && (
+                <>
+                  <div className="w-px h-5 bg-gray-200 mx-1" />
+                  <Loader2 className="w-3 h-3 animate-spin text-indigo-500" />
+                </>
+              )}
             </>
           )}
         </>
