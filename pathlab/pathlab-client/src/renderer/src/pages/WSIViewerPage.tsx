@@ -2146,7 +2146,7 @@ export default function WSIViewerPage() {
         show={showCreateDatasetDialog}
         onClose={() => setShowCreateDatasetDialog(false)}
         allAnnotations={allAnnotations}
-        summary={effectiveDatasetId ? datasetAnnotationSummary : null}
+        summary={effectiveDatasetId && editingMode !== 'shared' ? datasetAnnotationSummary : null}
         labelColors={labelColors}
         hasWsiSources={datasetAnnotationSummary?.has_wsi_sources ?? hasWsiSources}
         defaultSource={detail?.meta?.source ?? null}
