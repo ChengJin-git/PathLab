@@ -1441,10 +1441,8 @@ async def list_collaborators(
     from backend.auth.models import User as UserModel
 
     dataset = await _get_dataset_with_access(dataset_id, user, db)
-    if not can_finalize(user, dataset):
-        raise HTTPException(
-            status_code=403, detail="Only owner or admin can manage collaborators"
-        )
+    if not await can_access_shared(user, dataset, db):
+        raise HTTPException(status_code=403, detail="Access denied")
 
     collabs = await AnnotationCollaboratorRepository.list_by_dataset(db, dataset_id)
     collab_user_ids = [c.user_id for c in collabs]

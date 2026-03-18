@@ -395,14 +395,15 @@ class SegmentationAnnotationRepository:
             .returning(SegmentationAnnotation)
         )
         upd_result = await db.execute(upd)
-        if upd_result.rowcount == 0:
+        updated = upd_result.scalar_one_or_none()
+        if updated is None:
             current = await SegmentationAnnotationRepository.get_shared_draft(
                 db, dataset_id
             )
             raise VersionConflictError(
                 current_version=current.version if current else 0
             )
-        return upd_result.scalar_one()
+        return updated
 
     @staticmethod
     async def delete_shared(
