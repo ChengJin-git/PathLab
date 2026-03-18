@@ -1249,7 +1249,8 @@ export default function WSIViewerPage() {
       if (cancelled) return
 
       const hasPersonalDraft = Object.values(personalDraft).some(v => Array.isArray(v) && v.length > 0)
-      const shouldAutoSeed = res.version === 0 && !res.is_prepopulated && hasPersonalDraft
+      const sharedIsEmpty = !res.annotations || Object.values(res.annotations).every(v => !Array.isArray(v) || v.length === 0)
+      const shouldAutoSeed = sharedIsEmpty && !res.is_prepopulated && hasPersonalDraft
 
       if (shouldAutoSeed) {
         setSharedVersion(res.version)
