@@ -2193,6 +2193,7 @@
       "classifierHead": "分類頭",
       "segArchitecture": "架構",
       "segBackbone": "骨幹網絡",
+      "segFoundationModels": "基礎模型",
       "segLoss": "損失函數",
       "advancedSettings": "進階設定",
       "learningRate": "學習率",

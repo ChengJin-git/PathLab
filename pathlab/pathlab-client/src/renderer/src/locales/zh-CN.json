@@ -2194,6 +2194,7 @@
       "classifierHead": "分类头",
       "segArchitecture": "架构",
       "segBackbone": "骨干网络",
+      "segFoundationModels": "基础模型",
       "segLoss": "损失函数",
       "advancedSettings": "高级设置",
       "learningRate": "学习率",

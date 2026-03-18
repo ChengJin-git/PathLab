@@ -306,7 +306,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const unifiedBackboneOptions = useMemo(
     () => [
       {
-        group: 'Foundation Models',
+        group: t('chatComponents.taskConfig.segFoundationModels'),
         options: ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
       },
       ...BACKBONE_GROUPS.map(group => ({
@@ -317,7 +317,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
         })),
       })),
     ],
-    []
+    [t]
   )
 
   // Load available datasets on mount

@@ -2194,6 +2194,7 @@
       "classifierHead": "Classifier Head",
       "segArchitecture": "Architecture",
       "segBackbone": "Backbone",
+      "segFoundationModels": "Foundation Models",
       "segLoss": "Loss Functions",
       "advancedSettings": "Advanced Settings",
       "learningRate": "Learning Rate",
