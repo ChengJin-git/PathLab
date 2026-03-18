@@ -150,6 +150,18 @@ async def init_db():
                 "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
             )
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
+            )
+        )
 
     # Create default admin user if no users exist
     await _create_default_admin()

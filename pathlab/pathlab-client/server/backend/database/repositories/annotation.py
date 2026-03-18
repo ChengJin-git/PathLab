@@ -369,18 +369,18 @@ class SegmentationAnnotationRepository:
                     created_at=timestamp,
                     updated_at=timestamp,
                 )
-                .on_conflict_do_update(
-                    index_elements=[SegmentationAnnotation.annotation_id],
-                    set_={
-                        "annotations": annotations,
-                        "version": SegmentationAnnotation.version + 1,
-                        "last_edited_by": last_edited_by,
-                        "updated_at": timestamp,
-                    },
-                )
+                .on_conflict_do_nothing()
                 .returning(SegmentationAnnotation)
             )
-            return (await db.execute(stmt)).scalar_one()
+            row = (await db.execute(stmt)).scalar_one_or_none()
+            if row is not None:
+                return row
+            current = await SegmentationAnnotationRepository.get_shared_draft(
+                db, dataset_id
+            )
+            raise VersionConflictError(
+                current_version=current.version if current else 0
+            )
 
         upd = (
             update(SegmentationAnnotation)
