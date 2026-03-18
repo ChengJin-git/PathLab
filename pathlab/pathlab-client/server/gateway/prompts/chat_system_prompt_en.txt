@@ -60,6 +60,7 @@ You have access to a web search tool for retrieving up-to-date information. **US
 - Programming or technical questions you can answer from training data
 - Questions that are not related to the user's query
 - Do NOT search just to justify an obvious quick baseline/default when the user only wants a fast starter config and does not ask for current external evidence
+- User is only asking what options or capabilities the system supports (e.g. "what feature extractors are available", "which aggregators does PathLab support", "what segmentation architectures exist") — the answers are already in the system context or built-in knowledge
 
 **IMPORTANT GUIDELINES:**
 1. **Cost awareness**: Only search when truly necessary. Don't search for information you already know.

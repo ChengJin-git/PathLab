@@ -713,6 +713,80 @@ _MODEL_CARD_LOCAL_KEYWORDS = (
     "选中的模型",
     "選中的模型",
 )
+_SYSTEM_CAPABILITY_QUERY_VERBS = (
+    # English
+    "what",
+    "which",
+    "list",
+    "show all",
+    "available",
+    "supported",
+    "support",
+    "options",
+    # Chinese simplified
+    "有哪些",
+    "有什么",
+    "支持哪些",
+    "支持什么",
+    "列出",
+    "可以用哪些",
+    "能用哪些",
+    "可用的",
+    "都有哪些",
+    "有什么样的",
+    # Chinese traditional
+    "有什麼",
+    "支持什麼",
+    "支援哪些",
+    "支援什麼",
+    "可用的",
+    "都有哪些",
+)
+_SYSTEM_CAPABILITY_NOUNS = (
+    # English
+    "extractor",
+    "extractors",
+    "feature extractor",
+    "feature extractors",
+    "aggregator",
+    "aggregators",
+    "classifier",
+    "classifiers",
+    "architecture",
+    "architectures",
+    "seg architecture",
+    "backbone",
+    "backbones",
+    "optimizer",
+    "optimizers",
+    "loss function",
+    "loss functions",
+    "task type",
+    "task types",
+    "model type",
+    "model types",
+    # Chinese simplified
+    "特征提取器",
+    "提取器",
+    "聚合器",
+    "分类头",
+    "分割架构",
+    "骨干",
+    "优化器",
+    "损失函数",
+    "任务类型",
+    "模型类型",
+    # Chinese traditional
+    "特徵提取器",
+    "聚合器",
+    "分類頭",
+    "分割架構",
+    "骨幹",
+    "優化器",
+    "損失函數",
+    "任務類型",
+    "模型類型",
+)
 
 
 def looks_like_model_card_query(text: str) -> bool:
@@ -724,6 +798,28 @@ def looks_like_model_card_query(text: str) -> bool:
     has_info = _contains_any_keyword(normalized, _MODEL_CARD_INFO_KEYWORDS)
     has_local = _contains_any_keyword(normalized, _MODEL_CARD_LOCAL_KEYWORDS)
     return bool(has_info and has_local)
+
+
+def looks_like_system_capability_query(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    has_query_verb = _contains_any_keyword(normalized, _SYSTEM_CAPABILITY_QUERY_VERBS)
+    has_capability_noun = _contains_any_keyword(normalized, _SYSTEM_CAPABILITY_NOUNS)
+    if not (has_query_verb and has_capability_noun):
+        return False
+
+    has_recommendation = _contains_any_keyword(normalized, _RECOMMENDATION_KEYWORDS)
+    has_training_action = _contains_any_keyword(normalized, _TRAINING_ACTION_KEYWORDS)
+    if has_recommendation and has_training_action:
+        return False
+
+    has_local_model = _contains_any_keyword(normalized, _MODEL_CARD_LOCAL_KEYWORDS)
+    if has_local_model:
+        return False
+
+    return True
 
 
 def _message_content_to_text(content: Any) -> str:

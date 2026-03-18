@@ -32,6 +32,7 @@ from .chat_training_recommendation import (
     looks_like_image_visualization_prompt,
     is_heatmap_visualization_followup,
     looks_like_model_card_query,
+    looks_like_system_capability_query,
 )
 
 
@@ -45,6 +46,7 @@ class ConversationMode(str, Enum):
     ANALYSIS_RESULTS = "analysis_results"
     LITERATURE_RESEARCH = "literature_research"
     MODEL_CARD = "model_card"
+    SYSTEM_INQUIRY = "system_inquiry"
 
 
 class SearchPolicy(str, Enum):
@@ -63,6 +65,7 @@ SEARCH_POLICY: Dict[ConversationMode, SearchPolicy] = {
     ConversationMode.ANALYSIS_RESULTS: SearchPolicy.DENY,
     ConversationMode.LITERATURE_RESEARCH: SearchPolicy.ALLOW_IF_MODEL_REQUESTS,
     ConversationMode.MODEL_CARD: SearchPolicy.DENY,
+    ConversationMode.SYSTEM_INQUIRY: SearchPolicy.DENY,
 }
 
 _ANALYSIS_CONFIG_RE = re.compile(r"\[ANALYSIS_CONFIG\]([\s\S]*?)\[/ANALYSIS_CONFIG\]")
@@ -162,6 +165,9 @@ def detect_conversation_mode(messages: List[Dict[str, Any]]) -> ConversationMode
 
     if looks_like_model_card_query(latest_user_text):
         return ConversationMode.MODEL_CARD
+
+    if looks_like_system_capability_query(latest_user_text):
+        return ConversationMode.SYSTEM_INQUIRY
 
     if previous_assistant_text:
         if looks_like_image_visualization_prompt(
