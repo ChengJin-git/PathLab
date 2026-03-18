@@ -4740,6 +4740,7 @@ async def chat_with_ai(
         models_count = trained_models_total
         models_shown = len(relevant_summaries)
     else:
+        model_summaries = []
         models_list = "  None - user needs to train a model first"
         models_count = 0
         models_shown = 0
