@@ -141,7 +141,10 @@ async def get_recent_activity(
 
     # Get recent uploads (WSI slides)
     # User can see: their own uploads OR uploads in datasets they have permission for
-    uploads_query = select(WSISlide).options(selectinload(WSISlide.dataset))
+    uploads_query = select(WSISlide).options(
+        selectinload(WSISlide.dataset),
+        selectinload(WSISlide.parent_wsi).selectinload(WSISlide.dataset),
+    )
     if not is_admin:
         if permitted_dataset_ids:
             # User's own uploads OR uploads in permitted datasets
