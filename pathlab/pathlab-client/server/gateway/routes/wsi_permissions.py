@@ -198,12 +198,16 @@ async def _revoke_dataset_permission_with_side_effects(
 async def update_dataset_visibility(
     dataset_id: str,
     request: DatasetUpdateVisibilityRequest,
-    user: User = Depends(require_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+    if not user.is_admin() and dataset.user_id != str(user.id):
+        raise HTTPException(
+            status_code=403, detail="Not authorized to change dataset visibility"
+        )
     await DatasetRepository.update(db, dataset_id, {"is_public": request.is_public})
     await db.commit()
     return {"dataset_id": dataset_id, "is_public": request.is_public}

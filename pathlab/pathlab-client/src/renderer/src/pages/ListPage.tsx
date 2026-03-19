@@ -3,9 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
 import { ApiError } from '../api/client'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -236,6 +236,7 @@ export default function ListPage() {
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
   const [deleting, setDeleting] = useState(false)
+  const [togglingVisibilityId, setTogglingVisibilityId] = useState<string | null>(null)
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
   const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
 
@@ -1083,6 +1084,22 @@ export default function ListPage() {
     }
   }
 
+  const handleToggleVisibilityClick = async (e: React.MouseEvent, dataset: DatasetSummary) => {
+    e.stopPropagation()
+    e.preventDefault()
+    if (!dataset.dataset_id) return
+    setTogglingVisibilityId(dataset.dataset_id)
+    try {
+      await updateDatasetVisibility(dataset.dataset_id, !dataset.is_public)
+      await qc.invalidateQueries({ queryKey: ['page-datasets'] })
+      toastSuccess(t(dataset.is_public ? 'listPage.makePrivateSuccess' : 'listPage.makePublicSuccess'))
+    } catch {
+      toastError(t('listPage.failedUpdateVisibility'))
+    } finally {
+      setTogglingVisibilityId(null)
+    }
+  }
+
   // Export labels handlers
   const handleExportLabelsClick = async (e: React.MouseEvent, dataset: DatasetSummary) => {
     e.stopPropagation()
@@ -1677,17 +1694,32 @@ export default function ListPage() {
                                   onClick={(e) => handleEditDatasetClick(e, dataset)}
                   title={t('listPage.editDataset')}
                                 >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                  title={t('listPage.deleteDataset')}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
+                                   <Pencil className="w-3.5 h-3.5" />
+                                 </Button>
+                                 <Button
+                                   variant="ghost"
+                                   size="icon"
+                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
+                                   onClick={(e) => handleToggleVisibilityClick(e, dataset)}
+                                   title={dataset.is_public ? t('listPage.makePrivate') : t('listPage.makePublic')}
+                                   disabled={togglingVisibilityId === dataset.dataset_id}
+                                 >
+                                   {togglingVisibilityId === dataset.dataset_id
+                                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                     : dataset.is_public
+                                       ? <Lock className="w-3.5 h-3.5" />
+                                       : <Globe className="w-3.5 h-3.5" />
+                                   }
+                                 </Button>
+                                 <Button
+                                   variant="ghost"
+                                   size="icon"
+                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
+                                   onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                   title={t('listPage.deleteDataset')}
+                                 >
+                                   <Trash2 className="w-3.5 h-3.5" />
+                                 </Button>
                               </div>
                             )}
                           </div>
@@ -1903,20 +1935,35 @@ export default function ListPage() {
                                      onClick={(e) => handleEditDatasetClick(e, dataset)}
                                      title={t('listPage.editDataset')}
                                    >
-                                     <Pencil className="w-4 h-4" />
-                                   </Button>
-                                   <Button
-                                     variant="ghost"
-                                     size="icon"
-                                     className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                     onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                     title={t('listPage.deleteDataset')}
-                                   >
-                                     <Trash2 className="w-4 h-4" />
-                                   </Button>
-                                 </>
-                               )}
-                              <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                                      <Pencil className="w-4 h-4" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                      onClick={(e) => handleToggleVisibilityClick(e, dataset)}
+                                      title={dataset.is_public ? t('listPage.makePrivate') : t('listPage.makePublic')}
+                                      disabled={togglingVisibilityId === dataset.dataset_id}
+                                    >
+                                      {togglingVisibilityId === dataset.dataset_id
+                                        ? <Loader2 className="w-4 h-4 animate-spin" />
+                                        : dataset.is_public
+                                          ? <Lock className="w-4 h-4" />
+                                          : <Globe className="w-4 h-4" />
+                                      }
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                      onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                      title={t('listPage.deleteDataset')}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                  </>
+                                )}
+                               <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
                             </div>
                           </div>
 
@@ -1964,21 +2011,36 @@ export default function ListPage() {
                                  onClick={(e) => handleEditDatasetClick(e, dataset)}
                                  title={t('listPage.editDataset')}
                                >
-                                 <Pencil className="w-4 h-4" />
-                               </Button>
-                               <Button
-                                 variant="ghost"
-                                 size="icon"
-                                 className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                 onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                 title={t('listPage.deleteDataset')}
-                               >
-                                 <Trash2 className="w-4 h-4" />
-                               </Button>
-                             </>
-                           )}
-                        </div>
-                        <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                                  <Pencil className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                  onClick={(e) => handleToggleVisibilityClick(e, dataset)}
+                                  title={dataset.is_public ? t('listPage.makePrivate') : t('listPage.makePublic')}
+                                  disabled={togglingVisibilityId === dataset.dataset_id}
+                                >
+                                  {togglingVisibilityId === dataset.dataset_id
+                                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                                    : dataset.is_public
+                                      ? <Lock className="w-4 h-4" />
+                                      : <Globe className="w-4 h-4" />
+                                  }
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                  title={t('listPage.deleteDataset')}
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </>
+                            )}
+                         </div>
+                         <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
                       </div>
                     </div>
                   </Card>

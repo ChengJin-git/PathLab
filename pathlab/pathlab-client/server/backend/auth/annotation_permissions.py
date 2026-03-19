@@ -8,6 +8,8 @@ from backend.database.repositories import AnnotationCollaboratorRepository
 async def can_access_shared(user: User, dataset: Dataset, db: AsyncSession) -> bool:
     if user.is_admin() or dataset.user_id == str(user.id):
         return True
+    if dataset.is_public:
+        return True
     return await AnnotationCollaboratorRepository.exists(
         db, dataset.dataset_id, str(user.id)
     )
