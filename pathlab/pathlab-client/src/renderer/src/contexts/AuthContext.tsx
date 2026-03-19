@@ -165,6 +165,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       } else if (errorLower.includes('maintenance_mode')) {
         // System is in maintenance mode - non-admin users cannot log in
         errorMessage = 'System is under maintenance. Please try again later or contact administrator.'
+      } else if (errorLower.includes('login_user_pending_approval')) {
+        errorMessage = i18n.t('auth.accountPendingApproval')
       } else if (errorLower.includes('login_user_not_active') ||
           errorLower.includes('inactive') ||
           errorLower.includes('not active') ||
@@ -182,7 +184,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setIsLoading(false)
       return false
     }
-  }, [refreshUser])
+  }, [refreshUser, i18n])
 
   // Logout
   const logout = useCallback(async () => {

@@ -109,6 +109,9 @@ class AccessRequest(BaseModel):
         description="Educational email for identity verification"
     )
     nickname: Optional[str] = Field(default=None, description="Display name")
+    turnstile_token: Optional[str] = Field(
+        default=None, description="Cloudflare Turnstile token"
+    )
 
 
 _LEGAL_FOOTER_HTML = (
@@ -132,7 +135,9 @@ _LEGAL_FOOTER_HTML = (
 
 
 async def _send_activation_email(user: "User") -> None:
-    logger.info(f"[activation_email] triggered for user={user.email!r} reg_email={user.registration_email!r}")
+    logger.info(
+        f"[activation_email] triggered for user={user.email!r} reg_email={user.registration_email!r}"
+    )
     settings = Config.get_global_settings()
     if not settings.get("resend_enabled") or not settings.get("resend_api_key"):
         logger.info(
@@ -141,7 +146,9 @@ async def _send_activation_email(user: "User") -> None:
         )
         return
     if not user.registration_email:
-        logger.info(f"[activation_email] skipped: no registration_email for user={user.email!r}")
+        logger.info(
+            f"[activation_email] skipped: no registration_email for user={user.email!r}"
+        )
         return
 
     try:
@@ -176,6 +183,7 @@ async def _send_activation_email(user: "User") -> None:
         logger.warning(
             f"Failed to send activation email to {user.registration_email}: {exc}"
         )
+
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:
     """
@@ -334,6 +342,25 @@ async def request_access(
             detail="REGISTRATION_EMAIL_NOT_EDUCATIONAL",
         )
 
+    # Verify Cloudflare Turnstile if enabled
+    _reg_settings = Config.get_global_settings()
+    if _reg_settings.get("turnstile_enabled") and _reg_settings.get(
+        "turnstile_secret_key"
+    ):
+        if not request.turnstile_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="TURNSTILE_TOKEN_REQUIRED",
+            )
+        _turnstile_valid = await verify_turnstile(
+            request.turnstile_token, _reg_settings["turnstile_secret_key"]
+        )
+        if not _turnstile_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="TURNSTILE_VERIFICATION_FAILED",
+            )
+
     # Normalise inputs
     username = request.username.strip()
     reg_email = request.registration_email.strip().lower()
@@ -479,6 +506,11 @@ async def secure_login(
     # Check if user is active
     if not user.is_active:
         logger.warning(f"Login attempt for inactive user: {request.username}")
+        if user.registration_email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="LOGIN_USER_PENDING_APPROVAL",
+            )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_USER_NOT_ACTIVE"
         )

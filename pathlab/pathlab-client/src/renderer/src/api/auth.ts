@@ -79,6 +79,7 @@ export interface AccessRequest {
   password: string
   registration_email: string
   nickname?: string
+  turnstile_token?: string
 }
 
 export interface CurrentUserUpdateRequest {
