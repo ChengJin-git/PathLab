@@ -1156,6 +1156,11 @@ async def _extract_regions_background(
                         source_is_patch = is_patch_file(
                             str(source_path), source_wsi.file_size or 0
                         )
+                        source_name_stem = (
+                            Path(source_wsi.original_filename).stem
+                            if source_wsi.original_filename
+                            else source_wsi_id
+                        )
 
                         for region in region_list:
                             try:
@@ -1167,6 +1172,7 @@ async def _extract_regions_background(
                                     region=region,
                                     dataset_id=dataset_id,
                                     user_id=user_id,
+                                    source_name_stem=source_name_stem,
                                 )
                             except Exception as e:
                                 logger.error(
@@ -1206,6 +1212,7 @@ async def _extract_single_region(
     region: RegionSpec,
     dataset_id: str,
     user_id: str,
+    source_name_stem: str | None = None,
 ):
     """
     Extract a single annotation region from a WSI or patch image.
@@ -1260,7 +1267,7 @@ async def _extract_single_region(
     # Create WSI record for the extracted patch
     wsi_data = {
         "wsi_id": new_wsi_id,
-        "original_filename": f"{source_wsi_id}_roi_{region.label}.jpg",
+        "original_filename": f"{source_name_stem or source_wsi_id}_roi_{region.label}.jpg",
         "dataset_id": dataset_id,
         "label": region.label,
         "wsi_path": str(output_path),
