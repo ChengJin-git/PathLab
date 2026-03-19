@@ -57,33 +57,42 @@ APP_SALT: str = os.getenv("APP_SALT", "PathLab2024SecureSalt")
 # ============================================================================
 
 import re as _re
+import json as _json
+from pathlib import Path as _Path
+from functools import lru_cache as _lru_cache
+
+
+@_lru_cache(maxsize=1)
+def _load_university_domains() -> frozenset:
+    data_file = _Path(__file__).parent.parent.parent / "backend" / "auth" / "university_domains.json"
+    if data_file.exists():
+        return frozenset(_json.loads(data_file.read_text()))
+    return frozenset()
+
 
 def is_educational_email(email: str) -> bool:
-    """
-    Validate that an email belongs to an educational institution.
-
-    Covered patterns (best-effort — admin review compensates for edge cases):
-      - *.edu          — US universities and other .edu TLD holders
-      - *.edu.XX       — Country-code .edu domains (edu.cn, edu.au, edu.hk,
-                         edu.sg, edu.tw, edu.my, edu.ph, edu.vn, etc.)
-      - *.ac.XX        — Academic domains with country code (ac.uk, ac.jp,
-                         ac.nz, ac.za, ac.kr, ac.in, ac.il, ac.id, etc.)
-
-    Known limitation: some institutional addresses that use non-standard TLDs
-    (e.g. ust.hk, hku.hk) will not match here; admins should use their
-    discretion when activating those accounts.
-    """
     if not email or "@" not in email:
         return False
     domain = email.strip().lower().rsplit("@", 1)[-1]
     if not domain or "." not in domain:
         return False
-    patterns = [
-        r"\.edu$",               # *.edu
-        r"\.edu\.[a-z]{2,6}$",  # *.edu.XX
-        r"\.ac\.[a-z]{2,6}$",   # *.ac.XX
+
+    known = _load_university_domains()
+
+    if known:
+        if domain in known:
+            return True
+        parts = domain.split(".")
+        for i in range(1, len(parts) - 1):
+            if ".".join(parts[i:]) in known:
+                return True
+
+    _FALLBACK = [
+        r"\.edu$",
+        r"\.edu\.[a-z]{2,6}$",
+        r"\.ac\.[a-z]{2,6}$",
     ]
-    return any(_re.search(pat, domain) for pat in patterns)
+    return any(_re.search(pat, domain) for pat in _FALLBACK)
 
 
 class AccessRequest(BaseModel):
