@@ -2361,13 +2361,32 @@ export default function ListPage() {
                                      <Link
                                        to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
                                        state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                       className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                       className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
                                        title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
                                        onClick={(e) => e.stopPropagation()}
                                      >
-                                       {it.parent_wsi_name && it.parent_dataset_name
-                                         ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name })
-                                         : `${t('annotation.croppedFrom')} ${it.parent_wsi_id.slice(0, 8)}…`}
+                                       <div className="flex items-center gap-1 flex-wrap">
+                                         <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
+                                           {t('annotation.croppedFrom')}
+                                         </span>
+                                         {it.parent_wsi_name && it.parent_dataset_name ? (
+                                           <>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
+                                               <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_dataset_name}</span>
+                                             </span>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
+                                               <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_wsi_name}</span>
+                                             </span>
+                                           </>
+                                         ) : (
+                                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
+                                             <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
+                                             {it.parent_wsi_id.slice(0, 8)}…
+                                           </span>
+                                         )}
+                                       </div>
                                      </Link>
                                    )}
                                   </div>
@@ -2588,13 +2607,32 @@ export default function ListPage() {
                                          <Link
                                            to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
                                            state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                           className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                           className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
                                            title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
                                            onClick={(e) => e.stopPropagation()}
                                          >
-                                           {it.parent_wsi_name && it.parent_dataset_name
-                                             ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name })
-                                             : `${t('annotation.croppedFrom')} ${it.parent_wsi_id.slice(0, 8)}…`}
+                                           <div className="flex items-center gap-1 flex-wrap">
+                                             <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
+                                               {t('annotation.croppedFrom')}
+                                             </span>
+                                             {it.parent_wsi_name && it.parent_dataset_name ? (
+                                               <>
+                                                 <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
+                                                   <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                                   <span className="truncate">{it.parent_dataset_name}</span>
+                                                 </span>
+                                                 <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
+                                                   <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                                   <span className="truncate">{it.parent_wsi_name}</span>
+                                                 </span>
+                                               </>
+                                             ) : (
+                                               <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
+                                                 <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
+                                                 {it.parent_wsi_id.slice(0, 8)}…
+                                               </span>
+                                             )}
+                                           </div>
                                          </Link>
                                        )}
                                     </div>
@@ -2691,18 +2729,37 @@ export default function ListPage() {
                                 <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                 <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                                    {it.parent_wsi_id && (
-                                   <Link
-                                     to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                     state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                     className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
-                                     title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
-                                     onClick={(e) => e.stopPropagation()}
-                                   >
-                                     {it.parent_wsi_name && it.parent_dataset_name
-                                       ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name })
-                                       : `${t('annotation.croppedFrom')} ${it.parent_wsi_id.slice(0, 8)}…`}
-                                   </Link>
-                                 )}
+                                     <Link
+                                       to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                       state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                       className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
+                                       title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
+                                       onClick={(e) => e.stopPropagation()}
+                                     >
+                                       <div className="flex items-center gap-1 flex-wrap">
+                                         <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
+                                           {t('annotation.croppedFrom')}
+                                         </span>
+                                         {it.parent_wsi_name && it.parent_dataset_name ? (
+                                           <>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
+                                               <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_dataset_name}</span>
+                                             </span>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
+                                               <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_wsi_name}</span>
+                                             </span>
+                                           </>
+                                         ) : (
+                                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
+                                             <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
+                                             {it.parent_wsi_id.slice(0, 8)}…
+                                           </span>
+                                         )}
+                                       </div>
+                                     </Link>
+                                   )}
                                 {it.case_id && !isPatchDataset && (
                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
                                      {t('listPage.caseLabel', { caseId: it.case_id })}
