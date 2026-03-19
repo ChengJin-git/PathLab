@@ -43,6 +43,25 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Ref to store AbortController for each running upload task (key: taskId)
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
 
+  const [deletingDatasetNames, setDeletingDatasetNames] = useState<Set<string>>(new Set())
+  const deletingTaskNameMapRef = useRef<Map<string, string>>(new Map())
+
+  const addDeletingDatasetName = useCallback((taskId: string, name: string) => {
+    deletingTaskNameMapRef.current.set(taskId, name)
+    setDeletingDatasetNames(prev => new Set([...prev, name]))
+  }, [])
+
+  const removeDeletingDatasetByTaskId = useCallback((taskId: string) => {
+    const name = deletingTaskNameMapRef.current.get(taskId)
+    if (!name) return
+    deletingTaskNameMapRef.current.delete(taskId)
+    setDeletingDatasetNames(prev => {
+      const next = new Set(prev)
+      next.delete(name)
+      return next
+    })
+  }, [])
+
   // SSE on-demand subscription: subscriber ref counts + enabled states
   const trainingSubCount = useRef(0)
   const analysisSubCount = useRef(0)
@@ -356,7 +375,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     subscribeTrainingSSE,
     subscribeAnalysisSSE,
     subscribeStorageSSE,
-    hasUploadingTasks
+    hasUploadingTasks,
+    deletingDatasetNames,
+    addDeletingDatasetName,
+    removeDeletingDatasetByTaskId,
   }
 
   return (

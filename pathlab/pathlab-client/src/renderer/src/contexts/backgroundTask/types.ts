@@ -133,6 +133,11 @@ export interface BackgroundTaskContextType {
 
   // Validation
   hasUploadingTasks: () => boolean  // Check if there are any uploading tasks (upload or batch_import)
+
+  // Dataset deletion overlay state (context-level, persists across navigation)
+  deletingDatasetNames: Set<string>
+  addDeletingDatasetName: (taskId: string, name: string) => void
+  removeDeletingDatasetByTaskId: (taskId: string) => void
 }
 
 export interface BackgroundTaskProviderProps {

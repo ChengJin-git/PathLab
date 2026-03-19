@@ -75,7 +75,7 @@ export default function ListPage() {
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const initialDatasetId = (location.state as { dataset_id?: string } | null)?.dataset_id
   const { error: toastError, success: toastSuccess } = useToast()
-  const { addDeleteWSITask, tasks, subscribeStorageSSE } = useBackgroundTask()
+  const { addDeleteWSITask, tasks, subscribeStorageSSE, deletingDatasetNames, addDeletingDatasetName, removeDeletingDatasetByTaskId } = useBackgroundTask()
   const { isAdmin } = useAuth()
   const qc = useQueryClient()
 
@@ -403,14 +403,6 @@ export default function ListPage() {
     return datasetsQuery.data?.items ?? []
   }, [datasetsQuery.data?.items])
 
-  const deletingDatasetNames = useMemo(() => {
-    return new Set(
-      tasks
-        .filter(t => t.type === 'delete_dataset' && (t.status === 'pending' || t.status === 'running') && t.datasetName)
-        .map(t => t.datasetName!)
-    )
-  }, [tasks])
-
   const datasetSourceOptions = useMemo(() => {
     const sourceValues = [...(sourceOptionsQuery.data ?? [])].sort((left, right) => {
       if (left === UNKNOWN_SOURCE_ORGAN_FILTER) return 1
@@ -484,13 +476,14 @@ export default function ListPage() {
     if (justCompletedDeleteTasks.length === 0) return
     for (const task of justCompletedDeleteTasks) {
       completedDeleteTaskIdsRef.current.add(task.id)
+      removeDeletingDatasetByTaskId(task.id.replace(/^delete_dataset_/, ''))
     }
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
     const t1 = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
     const t2 = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
     return () => { clearTimeout(t1); clearTimeout(t2) }
-  }, [tasks, qc])
+  }, [tasks, qc, removeDeletingDatasetByTaskId])
 
   useEffect(() => {
     if (selectedDatasetId) return
@@ -503,8 +496,8 @@ export default function ListPage() {
     for (const task of justCompleted) {
       completedUploadTaskIdsRef.current.add(task.id)
     }
+    qc.removeQueries({ queryKey: ['page-datasets'] })
     setDatasetCurrentPage(1)
-    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
   }, [tasks, qc, selectedDatasetId])
 
@@ -864,10 +857,13 @@ export default function ListPage() {
 
     try {
       if (datasetToDeleteId) {
-        await startDeleteDatasetTask({
+        const deleteResponse = await startDeleteDatasetTask({
           dataset_id: datasetToDeleteId,
           mode: deleteMode
         })
+        addDeletingDatasetName(deleteResponse.task_id, deleteResponse.dataset_name)
+        setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
+        setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 15000)
 
         setShowBatchDeleteModal(false)
         setSelectedIds(new Set())
