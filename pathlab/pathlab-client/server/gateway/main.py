@@ -41,6 +41,7 @@ from .routes.chat_training_recommendation import (
     prewarm_training_recommendation_sources,
 )
 from .routes.chat_pdf_vectorstore import prewarm_embedding_model
+from .routes.asr import startup_prewarm_local_asr
 from .routes import (
     auth_router,
     stats_router,
@@ -370,6 +371,7 @@ async def lifespan(app: FastAPI):
     chat_context_prewarm_task = asyncio.create_task(
         _startup_prewarm_chat_context_cache()
     )
+    startup_prewarm_local_asr()
 
     try:
         yield  # Application runs here

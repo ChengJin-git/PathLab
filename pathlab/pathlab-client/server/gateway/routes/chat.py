@@ -4100,8 +4100,8 @@ async def chat_with_ai(
         _cached_trained_models_total = _ctx_cached.get("trained_models_total", 0)
         if _cached_model_summaries:
             if use_semantic_model_ranking:
-                _relevant_summaries = _semantic_top_k_models(
-                    semantic_query_text, _cached_model_summaries
+                _relevant_summaries = await asyncio.to_thread(
+                    _semantic_top_k_models, semantic_query_text, _cached_model_summaries
                 )
             else:
                 _relevant_summaries = _cached_model_summaries[
@@ -4726,14 +4726,16 @@ async def chat_with_ai(
             try:
                 from .chat_pdf_vectorstore import _embed_texts as _emb
 
-                _emb_vecs = _emb([s["line"] for s in model_summaries])
+                _emb_vecs = await asyncio.to_thread(
+                    _emb, [s["line"] for s in model_summaries]
+                )
                 for _i, _s in enumerate(model_summaries):
                     _s["embedding"] = _emb_vecs[_i].tolist()
             except Exception:
                 pass
         if use_semantic_model_ranking:
-            relevant_summaries = _semantic_top_k_models(
-                semantic_query_text, model_summaries
+            relevant_summaries = await asyncio.to_thread(
+                _semantic_top_k_models, semantic_query_text, model_summaries
             )
         else:
             relevant_summaries = model_summaries[:TOP_K_MODELS_IN_CHAT_CONTEXT]

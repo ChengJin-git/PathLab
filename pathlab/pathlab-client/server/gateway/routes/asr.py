@@ -99,6 +99,33 @@ class _LocalASRWarmup:
 _asr_warmup = _LocalASRWarmup()
 
 
+def startup_prewarm_local_asr() -> None:
+    global_settings = Config.get_global_settings()
+    if not global_settings.get("local_asr_enabled", False):
+        return
+    base_url: str = global_settings.get(
+        "local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"
+    )
+    if not base_url or not _is_websocket_url(base_url):
+        return
+    model: str = global_settings.get("local_asr_model", "") or "Qwen/Qwen3-ASR-1.7B"
+    api_key: str = global_settings.get("local_asr_api_key", "") or ""
+    ws_url = base_url.rstrip("/")
+    if "model=" not in ws_url and model:
+        url = (
+            f"{ws_url}?model={model}"
+            if "?" not in ws_url
+            else f"{ws_url}&model={model}"
+        )
+    else:
+        url = ws_url
+    headers: dict[str, str] = {"OpenAI-Beta": "realtime=v1"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    _asr_warmup.ensure_warm(url, headers)
+    logger.info(f"Local ASR startup pre-warm initiated: {url}")
+
+
 # ============================================================================
 # Local ASR Server Detection
 # ============================================================================
