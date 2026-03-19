@@ -31,6 +31,7 @@ export interface GlobalSettings {
   resend_enabled: boolean
   resend_api_key: string
   resend_from_email: string
+  site_url?: string
 }
 
 /**

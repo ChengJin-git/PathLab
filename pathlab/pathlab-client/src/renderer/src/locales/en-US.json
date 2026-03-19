@@ -784,6 +784,7 @@
        "resendEmailCard": "Email Notifications",
        "resendApiKey": "Resend API Key",
        "resendFromEmail": "From Address",
+       "siteUrl": "Site URL",
       "huggingFaceToken": "HuggingFace Token",
       "huggingFaceHint": "For downloading gated models.",
       "llmVllm": "LLM (vLLM)",

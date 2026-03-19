@@ -1,4 +1,5 @@
 from typing import Any
+
 """
 Centralized configuration for PathLab backend services
 """
@@ -285,6 +286,7 @@ class Config:
             "resend_enabled": data.get("resend_enabled", False),
             "resend_api_key": data.get("resend_api_key", ""),
             "resend_from_email": data.get("resend_from_email", ""),
+            "site_url": data.get("site_url", ""),
         }
 
     @classmethod
@@ -324,6 +326,7 @@ class Config:
             "resend_enabled",
             "resend_api_key",
             "resend_from_email",
+            "site_url",
         }
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}
         if filtered:

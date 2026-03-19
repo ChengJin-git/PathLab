@@ -157,12 +157,22 @@ async def _send_activation_email(user: "User") -> None:
         _resend.api_key = settings["resend_api_key"]
         from_addr = settings.get("resend_from_email") or "PathLab <noreply@resend.dev>"
         display_name = user.nickname or user.email
+        site_url = settings.get("site_url", "").rstrip("/")
+        logo_html = (
+            (
+                f"<img src='{site_url}/images/pathlab-logo.png' "
+                "alt='PathLab' style='height:40px;width:auto;margin-bottom:24px;' /><br>"
+            )
+            if site_url
+            else ""
+        )
         html_body = (
             "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>"
-            f"<p>Dear {display_name},</p>"
+            + logo_html
+            + f"<p>Dear {display_name},</p>"
             f"<p>Your PathLab account <strong>{user.email}</strong> has been activated "
             "by an administrator. You can now log in to the platform.</p>"
-            "<p>If you have any questions, please contact your system administrator.</p>"
+            "<p>If you have any questions, please contact our system administrator.</p>"
             "<p style='color:#555;'>\u2014 PathLab \u00b7 "
             "<a href='https://smartlab.cse.ust.hk/' style='color:#555;'>SmartLab</a>, HKUST</p>"
             + _LEGAL_FOOTER_HTML

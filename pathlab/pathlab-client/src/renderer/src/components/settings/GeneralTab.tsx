@@ -111,6 +111,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [resendEnabled, setResendEnabled] = useState(false)
   const [resendApiKey, setResendApiKey] = useState('')
   const [resendFromEmail, setResendFromEmail] = useState('')
+  const [siteUrl, setSiteUrl] = useState('')
 
   const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
   const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('http://127.0.0.1:8001/v1')
@@ -173,6 +174,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setResendEnabled(s.resend_enabled || false)
       setResendApiKey(s.resend_api_key || '')
       setResendFromEmail(s.resend_from_email || '')
+      setSiteUrl(s.site_url || '')
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
       setLocalAsrModel(s.local_asr_model); setLocalAsrApiKey(s.local_asr_api_key)
       if (s.local_vllm_enabled && s.local_vllm_base_url) {
@@ -207,6 +209,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
         resend_enabled: resendEnabled, resend_api_key: resendApiKey,
         resend_from_email: resendFromEmail,
+        site_url: siteUrl,
       })
       localStorage.setItem('openrouter_api_key', apiKey)
       localStorage.setItem('openrouter_base_url', baseUrl)
@@ -458,6 +461,16 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                           value={resendFromEmail}
                           onChange={(e) => setResendFromEmail(e.target.value)}
                           placeholder="PathLab <noreply@yourdomain.com>"
+                          className="h-9 text-sm border-slate-300 focus:border-violet-500 focus:ring-violet-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.siteUrl')}</Label>
+                        <Input
+                          type="text"
+                          value={siteUrl}
+                          onChange={(e) => setSiteUrl(e.target.value)}
+                          placeholder="https://pathhub.org"
                           className="h-9 text-sm border-slate-300 focus:border-violet-500 focus:ring-violet-500"
                         />
                       </div>

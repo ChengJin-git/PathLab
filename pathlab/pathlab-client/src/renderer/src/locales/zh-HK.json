@@ -784,6 +784,7 @@
       "resendEmailCard": "郵件通知",
       "resendApiKey": "Resend API 密鑰",
       "resendFromEmail": "發件地址",
+      "siteUrl": "站點地址",
       "huggingFaceToken": "HuggingFace 權杖",
       "huggingFaceHint": "用於下載受限模型。",
       "llmVllm": "LLM (vLLM)",
