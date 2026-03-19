@@ -8,6 +8,10 @@ from typing import Optional, Dict, List, Any, Literal
 from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
 
+class DatasetUpdateVisibilityRequest(BaseModel):
+    is_public: bool
+
+
 class DatasetRenameRequest(BaseModel):
     """Request model for renaming a dataset"""
 
@@ -140,6 +144,7 @@ class UploadByPathRequest(BaseModel):
         None  # Aggregation level for new dataset: "case" or "file"
     )
     task_type: Optional[str] = None  # classification | survival | segmentation
+    is_public: bool = False
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None
@@ -289,6 +294,7 @@ class BatchRegisterRequest(BaseModel):
         None  # Directory used during external scan (for segmentation annotation matching)
     )
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
+    is_public: bool = False
     # Classification fields
     default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
@@ -332,6 +338,7 @@ class StartBatchImportRequest(BaseModel):
     )  # Paths excluded when select_all_valid=True
     aggregation_level: str = "file"  # "case" or "file" - aggregation level
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
+    is_public: bool = False
     # Classification fields
     default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")

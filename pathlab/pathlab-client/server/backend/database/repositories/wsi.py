@@ -807,6 +807,7 @@ class WSIRepository:
                 DatasetStats.file_count,
                 DatasetStats.total_size,
                 Dataset.source_organ.label("source_organ"),
+                Dataset.is_public.label("is_public"),
                 Dataset.parent_dataset_id.label("parent_dataset_id"),
                 ParentDataset.name.label("parent_dataset_name"),
                 DatasetStats.split_train_count,
@@ -822,15 +823,10 @@ class WSIRepository:
         )
 
         if user_id is not None:
+            conditions = [Dataset.user_id == user_id, Dataset.is_public.is_(True)]
             if elevated_dataset_ids:
-                query = query.where(
-                    or_(
-                        Dataset.user_id == user_id,
-                        Dataset.dataset_id.in_(elevated_dataset_ids),
-                    )
-                )
-            else:
-                query = query.where(Dataset.user_id == user_id)
+                conditions.append(Dataset.dataset_id.in_(elevated_dataset_ids))
+            query = query.where(or_(*conditions))
 
         if data_type in {"wsi", "patch"}:
             query = query.where(DataGroup.data_type == data_type)

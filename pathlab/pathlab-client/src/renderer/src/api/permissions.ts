@@ -168,3 +168,27 @@ export async function batchRevokeDatasetPermissions(
   )
 }
 
+// ============================================================================
+// Dataset Visibility APIs
+// ============================================================================
+
+/**
+ * Update the public/private visibility of a dataset (admin only)
+ * @param datasetId - Dataset ID
+ * @param isPublic - Whether the dataset should be publicly accessible
+ */
+export async function updateDatasetVisibility(
+  datasetId: string,
+  isPublic: boolean
+): Promise<{ dataset_id: string; is_public: boolean }> {
+  return apiFetch(
+    `${API_BASE}/wsi/datasets/${datasetId}/visibility`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ is_public: isPublic })
+    },
+    'Failed to update dataset visibility'
+  )
+}
+

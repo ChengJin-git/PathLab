@@ -1112,6 +1112,11 @@ async def extract_regions(
     if req.source_dataset_id:
         payload["source_dataset_id"] = req.source_dataset_id
         payload["parent_dataset_id"] = req.source_dataset_id
+        from backend.database.repositories import DatasetRepository
+
+        parent_dataset = await DatasetRepository.get_by_id(db, req.source_dataset_id)
+        if parent_dataset:
+            payload["is_public"] = bool(parent_dataset.is_public)
     if req.source_organ:
         payload["source_organ"] = req.source_organ
 

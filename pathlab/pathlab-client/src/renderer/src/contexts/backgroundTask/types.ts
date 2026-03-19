@@ -84,6 +84,7 @@ export interface UploadTaskFile {
     dataset_name?: string  // Dataset display name (for creating new dataset)
     source_organ?: string  // Source organ/tissue for new dataset
     aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
+    is_public?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string

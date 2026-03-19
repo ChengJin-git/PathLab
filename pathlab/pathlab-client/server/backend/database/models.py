@@ -136,6 +136,10 @@ class Dataset(Base):
 
     source_organ = Column(String(100), nullable=True)
 
+    # Visibility: True = all authenticated users can see/access this dataset
+    #             False (default) = only owner + explicitly authorized users
+    is_public = Column(Boolean, default=False, nullable=False, server_default="false")
+
     parent_dataset_id = Column(
         String(255),
         ForeignKey("datasets.dataset_id", ondelete="SET NULL"),
@@ -162,6 +166,7 @@ class Dataset(Base):
             "user_id": self.user_id,
             "group_id": self.group_id,
             "source_organ": self.source_organ,
+            "is_public": self.is_public,
             "data_type": self.data_group.data_type if self.data_group else None,
             "aggregation_level": self.data_group.aggregation_level
             if self.data_group

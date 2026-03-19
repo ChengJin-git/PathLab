@@ -38,6 +38,7 @@ class DatasetRepository:
         user_id: str = None,
         source_organ: str = None,
         parent_dataset_id: str = None,
+        is_public: bool = False,
     ) -> Dataset:
         dataset = Dataset(
             dataset_id=dataset_id,
@@ -47,6 +48,7 @@ class DatasetRepository:
             user_id=user_id,
             source_organ=source_organ or None,
             parent_dataset_id=parent_dataset_id or None,
+            is_public=is_public,
         )
         db.add(dataset)
         await db.flush()
@@ -86,6 +88,7 @@ class DatasetRepository:
         user_id: str = None,
         source_organ: str = None,
         parent_dataset_id: str = None,
+        is_public: bool = False,
     ) -> Dataset:
         import uuid
 
@@ -103,6 +106,7 @@ class DatasetRepository:
                     user_id=user_id,
                     source_organ=source_organ,
                     parent_dataset_id=parent_dataset_id,
+                    is_public=is_public,
                 )
         except IntegrityError:
             logger.debug(
@@ -297,3 +301,10 @@ class DatasetRepository:
             .where(WSISlide.feature_extracted == True)  # noqa: E712
         )
         return result.scalar() or 0
+
+    @staticmethod
+    async def get_public_dataset_ids(db: AsyncSession) -> List[str]:
+        result = await db.execute(
+            select(Dataset.dataset_id).where(Dataset.is_public.is_(True))
+        )
+        return [row[0] for row in result.all()]

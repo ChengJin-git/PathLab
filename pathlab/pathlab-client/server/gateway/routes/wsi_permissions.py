@@ -27,6 +27,7 @@ from backend.auth.dependencies import require_admin
 from backend.common.annotation_pubsub import publish as publish_annotation
 from backend.common.presence_pubsub import publish_presence
 from ..dependencies import logger, AI_SERVICE_URL
+from ..models import DatasetUpdateVisibilityRequest
 
 router = APIRouter(tags=["WSI Permissions"])
 
@@ -191,6 +192,21 @@ async def _revoke_dataset_permission_with_side_effects(
             f"Permission revoked. {len(revoked_tasks)} running task(s) will be stopped."
         )
     return result
+
+
+@router.patch("/datasets/{dataset_id}/visibility")
+async def update_dataset_visibility(
+    dataset_id: str,
+    request: DatasetUpdateVisibilityRequest,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    dataset = await DatasetRepository.get_by_id(db, dataset_id)
+    if not dataset:
+        raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+    await DatasetRepository.update(db, dataset_id, {"is_public": request.is_public})
+    await db.commit()
+    return {"dataset_id": dataset_id, "is_public": request.is_public}
 
 
 # NOTE: These routes must be defined BEFORE /{wsi_id} to avoid path parameter conflicts

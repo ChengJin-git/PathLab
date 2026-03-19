@@ -1,5 +1,5 @@
 from typing import List, Optional
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import AnnotationCollaborator, utc_now
@@ -60,5 +60,17 @@ class AnnotationCollaboratorRepository:
             select(AnnotationCollaborator)
             .where(AnnotationCollaborator.dataset_id == dataset_id)
             .order_by(AnnotationCollaborator.created_at)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def list_dataset_ids_for_user(
+        db: AsyncSession,
+        user_id: str,
+    ) -> List[str]:
+        result = await db.execute(
+            select(distinct(AnnotationCollaborator.dataset_id)).where(
+                AnnotationCollaborator.user_id == user_id
+            )
         )
         return list(result.scalars().all())

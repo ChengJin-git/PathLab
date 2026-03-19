@@ -30,6 +30,8 @@ interface BatchRegisterCardProps {
   setBatchTaskType: (type: 'classification' | 'survival' | 'segmentation') => void
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
+  batchIsPublic: boolean
+  setBatchIsPublic: (value: boolean) => void
   handleSelectBatchScanDir: () => Promise<void>
   handleBatchScan: () => Promise<void>
   handleBatchScanPageChange: (page: number) => Promise<void>
@@ -73,6 +75,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   setBatchTaskType,
   batchDataLevel,
   setBatchDataLevel,
+  batchIsPublic,
+  setBatchIsPublic,
   handleSelectBatchScanDir,
   handleBatchScan,
   handleBatchScanPageChange,
@@ -166,6 +170,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
           setBatchTaskType={setBatchTaskType}
           batchDataLevel={batchDataLevel}
           setBatchDataLevel={setBatchDataLevel}
+          batchIsPublic={batchIsPublic}
+          setBatchIsPublic={setBatchIsPublic}
           handleBatchScanPageChange={handleBatchScanPageChange}
           isBatchFileSelected={isBatchFileSelected}
           handleBatchFileToggle={handleBatchFileToggle}

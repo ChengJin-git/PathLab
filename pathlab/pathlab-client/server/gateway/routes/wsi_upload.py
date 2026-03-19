@@ -359,6 +359,7 @@ async def upload_wsi_file(
         None
     ),  # Aggregation level for new dataset: "case" or "file"
     task_type: Optional[str] = Form(None),
+    is_public: bool = Form(False),
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -574,6 +575,7 @@ async def upload_wsi_file(
                 group_id=data_group.group_id,
                 user_id=str(user.id),
                 source_organ=source_organ or None,
+                is_public=is_public,
             )
             dataset = await align_dataset_data_type_for_file(
                 db,
@@ -971,6 +973,7 @@ async def upload_wsi_by_path(
                 group_id=data_group.group_id,
                 user_id=str(user.id),
                 source_organ=req.source_organ or None,
+                is_public=req.is_public,
             )
             dataset = await align_dataset_data_type_for_file(
                 db,

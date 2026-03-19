@@ -505,11 +505,12 @@ export interface BatchRegisterRequest {
   select_all_valid?: boolean
   selected_paths?: string[]
   excluded_paths?: string[]
-  aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
-  task_type?: 'classification' | 'survival' | 'segmentation'  // Default: 'classification'
-  default_label?: string  // Optional default label for classification
-  default_event_time?: number  // For survival
-  default_event_status?: number  // For survival (1 = event occurred, 0 = censored)
+  aggregation_level?: 'case' | 'file'
+  task_type?: 'classification' | 'survival' | 'segmentation'
+  is_public?: boolean
+  default_label?: string
+  default_event_time?: number
+  default_event_status?: number
 }
 
 /**

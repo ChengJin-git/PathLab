@@ -63,6 +63,7 @@ export default function RegisterPage() {
   const [datasetName, setDatasetName] = useDraftState<string>('draft:upload:datasetName', '')
   // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
   const [datasetId, setDatasetId] = useState<string | null>(null)
+  const [isPublic, setIsPublic] = useState(false)
   const [datasetSourceSelection, setDatasetSourceSelection] = useDraftState<string>('draft:upload:datasetSourceSelection', '')
   const [datasetSourceCustom, setDatasetSourceCustom] = useDraftState<string>('draft:upload:datasetSourceCustom', '')
   // Source organ of the existing dataset (for auto-fill when appending)
@@ -687,12 +688,11 @@ export default function RegisterPage() {
           file: item.file,
           path: item.path,
           metadata: {
-            // Use dataset_id for existing datasets, dataset_name for new datasets
             dataset_id: datasetId ?? undefined,
             dataset_name: datasetId ? undefined : datasetName.trim(),
             source_organ: datasetId ? undefined : (resolvedDatasetSource || undefined),
-            // Only pass aggregation_level for new datasets (when dataset_id is not set)
             aggregation_level: datasetId ? undefined : dataLevel,
+            is_public: datasetId ? undefined : isPublic,
             task_type: uploadMode,
             label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
             case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
@@ -731,6 +731,7 @@ export default function RegisterPage() {
     setStep(1)
     setDatasetName('')
     setDatasetId(null)
+    setIsPublic(false)
     setLocalItems([])
     setLocalMetadata(new Map())
     setShowValidation(false)
@@ -931,6 +932,8 @@ export default function RegisterPage() {
           existingDatasetSource={existingDatasetSource}
           showValidation={showValidation}
           fromAIChat={fromAIChat}
+          isPublic={isPublic}
+          onIsPublicChange={setIsPublic}
           onNext={async () => {
             if (isExistingDataset && datasetId) {
               const resolvedSource = getResolvedDatasetSource()

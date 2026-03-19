@@ -1017,6 +1017,7 @@ class ExtractRegionsRequest(BaseModel):
     source_dataset_id: Optional[str] = None
     source_organ: Optional[str] = None
     parent_dataset_id: Optional[str] = None
+    is_public: bool = False
 
 
 @app.post("/annotation/extract_regions")
@@ -1047,6 +1048,7 @@ async def extract_regions(
             source_dataset_id=req.source_dataset_id,
             source_organ=req.source_organ,
             parent_dataset_id=req.parent_dataset_id,
+            is_public=req.is_public,
         )
     )
 
@@ -1062,6 +1064,7 @@ async def _extract_regions_background(
     source_dataset_id: Optional[str] = None,
     source_organ: Optional[str] = None,
     parent_dataset_id: Optional[str] = None,
+    is_public: bool = False,
 ):
     """
     Background task: extract ROI regions from WSI/patch files and create a new dataset.
@@ -1124,6 +1127,7 @@ async def _extract_regions_background(
                     user_id=user_id,
                     source_organ=source_organ or None,
                     parent_dataset_id=parent_dataset_id or None,
+                    is_public=is_public,
                 )
                 dataset_id = dataset.dataset_id
                 await db.commit()

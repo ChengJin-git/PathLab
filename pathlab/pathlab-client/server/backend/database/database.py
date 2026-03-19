@@ -227,6 +227,14 @@ async def init_db():
         )
         logger.info("users.registration_email column ensured")
 
+        await conn.execute(
+            text(
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                "is_public BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        logger.info("datasets.is_public column ensured")
+
     # Create default admin user if no users exist
     await _create_default_admin()
 

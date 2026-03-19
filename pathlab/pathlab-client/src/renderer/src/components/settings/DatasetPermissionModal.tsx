@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Database, Search, Clock, Trash2, X } from 'lucide-react'
+import { Database, Search, Clock, Trash2, X, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Checkbox } from '../ui/checkbox'
 import { Input } from '../ui/input'
@@ -11,7 +11,8 @@ import {
   grantDatasetPermission,
   listDatasetPermissions,
   listUsers,
-  revokeDatasetPermission
+  revokeDatasetPermission,
+  updateDatasetVisibility
 } from '../../api'
 import type { DatasetPermission, UserListItem } from '../../api'
 import type { ShowConfirmDialog } from './ConfirmDialog'
@@ -22,7 +23,7 @@ export interface DatasetPermissionModalProps {
   onClose: () => void
 }
 
-type PermissionDataset = { dataset_id: string; dataset_name: string }
+type PermissionDataset = { dataset_id: string; dataset_name: string; is_public: boolean }
 
 function getRoleBadgeColor(role: string) {
   switch (role) {
@@ -39,6 +40,8 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
   const [datasets, setDatasets] = useState<PermissionDataset[]>([])
   const [permissions, setPermissions] = useState<DatasetPermission[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
+  const [selectedDatasetIsPublic, setSelectedDatasetIsPublic] = useState(false)
+  const [togglingVisibility, setTogglingVisibility] = useState(false)
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [userSearchQuery, setUserSearchQuery] = useState('')
   const [expiresInHours, setExpiresInHours] = useState('')
@@ -71,7 +74,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
       const [userList, datasetResponse] = await Promise.all([listUsers(), fetchDatasets()])
       const permissionDatasets = datasetResponse.items
         .filter((dataset) => dataset.dataset_id !== null)
-        .map((dataset) => ({ dataset_id: dataset.dataset_id!, dataset_name: dataset.dataset_name }))
+        .map((dataset) => ({ dataset_id: dataset.dataset_id!, dataset_name: dataset.dataset_name, is_public: dataset.is_public ?? false }))
         .sort((a, b) => a.dataset_name.localeCompare(b.dataset_name))
 
       setUsers(userList)
@@ -79,6 +82,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
 
       const initialDatasetId = permissionDatasets[0]?.dataset_id ?? ''
       setSelectedDatasetId(initialDatasetId)
+      setSelectedDatasetIsPublic(permissionDatasets[0]?.is_public ?? false)
       setSelectedUserIds([])
       setUserSearchQuery('')
       setExpiresInHours('')
@@ -123,10 +127,27 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
 
   const handleDatasetChange = (datasetId: string) => {
     setSelectedDatasetId(datasetId)
+    setSelectedDatasetIsPublic(datasets.find(d => d.dataset_id === datasetId)?.is_public ?? false)
     setSelectedUserIds([])
     setUserSearchQuery('')
     setExpiresInHours('')
     void loadDatasetPermissionList(datasetId)
+  }
+
+  const handleToggleVisibility = async () => {
+    if (!selectedDatasetId) return
+    setTogglingVisibility(true)
+    setError(null)
+    try {
+      const newValue = !selectedDatasetIsPublic
+      await updateDatasetVisibility(selectedDatasetId, newValue)
+      setSelectedDatasetIsPublic(newValue)
+      setDatasets(prev => prev.map(d => d.dataset_id === selectedDatasetId ? { ...d, is_public: newValue } : d))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToUpdateVisibility'))
+    } finally {
+      setTogglingVisibility(false)
+    }
   }
 
   const handleToggleSelectAll = (checked: boolean) => {
@@ -256,6 +277,38 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
                 options={datasets.map((dataset) => ({ value: dataset.dataset_id, label: dataset.dataset_name }))}
                 placeholder={t('settings.datasetPermissionModal.selectDataset')}
               />
+              {selectedDatasetId && (
+                <div className="flex items-center justify-between pt-1">
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    {selectedDatasetIsPublic ? (
+                      <Globe className="w-4 h-4 text-blue-500" />
+                    ) : (
+                      <Lock className="w-4 h-4 text-gray-400" />
+                    )}
+                    <span>
+                      {selectedDatasetIsPublic
+                        ? t('settings.datasetPermissionModal.visibilityPublic')
+                        : t('settings.datasetPermissionModal.visibilityPrivate')}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleToggleVisibility}
+                    disabled={togglingVisibility}
+                    className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors ${
+                      selectedDatasetIsPublic
+                        ? 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                        : 'border-blue-200 text-blue-600 hover:bg-blue-50'
+                    }`}
+                  >
+                    {togglingVisibility
+                      ? t('settings.datasetPermissionModal.updating')
+                      : selectedDatasetIsPublic
+                        ? t('settings.datasetPermissionModal.makePrivate')
+                        : t('settings.datasetPermissionModal.makePublic')}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">

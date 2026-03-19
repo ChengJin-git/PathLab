@@ -122,21 +122,30 @@ async def get_permitted_dataset_ids(
     user: User, db: AsyncSession
 ) -> Optional[list[str]]:
     """
-    Get dataset IDs the user can access via temporary elevated permissions.
+    Get dataset IDs the user can access beyond their own data.
 
     Returns:
         - None for admin users (no restriction needed)
-        - List of permitted dataset IDs for non-admin users
+        - List of dataset IDs for non-admin users, combining:
+          (a) public datasets (is_public=True)
+          (b) datasets with valid temporary elevated permission
     """
     if user.is_admin():
         return None
 
-    from backend.database.repositories import DatasetPermissionRepository
+    from backend.database.repositories import (
+        DatasetPermissionRepository,
+        DatasetRepository,
+        AnnotationCollaboratorRepository,
+    )
 
     permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-    return [
-        permission.dataset_id for permission in permissions if permission.is_valid()
-    ]
+    permitted_ids = [p.dataset_id for p in permissions if p.is_valid()]
+    public_ids = await DatasetRepository.get_public_dataset_ids(db)
+    collab_ids = await AnnotationCollaboratorRepository.list_dataset_ids_for_user(
+        db, str(user.id)
+    )
+    return list(set(permitted_ids + public_ids + collab_ids))
 
 
 def check_data_ownership(resource_user_id: Optional[str], current_user: User) -> bool:
@@ -171,29 +180,35 @@ async def check_wsi_access_permission(
     wsi_dataset_id: Optional[str],
     wsi_user_id: Optional[str],
     db: AsyncSession,
+    *,
+    dataset_is_public: bool = False,
 ) -> bool:
     """
     Check if a user can access a specific WSI.
 
     Returns True if:
     - User is admin (can access all)
+    - Dataset is public (is_public=True)
     - User owns the WSI (wsi_user_id matches)
     - User has valid temporary elevated permission for the WSI's dataset
+    - User is an annotation collaborator for the WSI's dataset
 
     Args:
         user: Current user
         wsi_dataset_id: Dataset UUID the WSI belongs to (can be None)
         wsi_user_id: User ID of the WSI owner (can be None for legacy data)
         db: Database session
+        dataset_is_public: Whether the dataset is marked as public
 
     Returns:
         True if user can access the WSI
     """
-    # Admin can access everything
     if user.is_admin():
         return True
 
-    # Check if user owns the WSI
+    if dataset_is_public:
+        return True
+
     if wsi_user_id == str(user.id):
         return True
 
@@ -216,24 +231,42 @@ async def check_wsi_access_permission(
 
 
 async def check_dataset_access_permission(
-    user: User, dataset_id: str, dataset_user_id: Optional[str], db: AsyncSession
+    user: User,
+    dataset_id: str,
+    dataset_user_id: Optional[str],
+    db: AsyncSession,
+    *,
+    is_public: bool = False,
 ) -> bool:
     """
     Check if a user can access a specific dataset.
 
     Returns True if:
     - User is admin
+    - Dataset is public (is_public=True)
     - User owns the dataset
     - User has valid temporary elevated permission for the dataset
     """
+    if user.is_admin():
+        return True
+
+    if is_public:
+        return True
+
     if check_data_ownership(dataset_user_id, user):
         return True
 
-    from backend.database.repositories import DatasetPermissionRepository
-
-    return await DatasetPermissionRepository.has_valid_permission(
-        db, dataset_id, str(user.id), "pathologist"
+    from backend.database.repositories import (
+        DatasetPermissionRepository,
+        AnnotationCollaboratorRepository,
     )
+
+    if await DatasetPermissionRepository.has_valid_permission(
+        db, dataset_id, str(user.id), "pathologist"
+    ):
+        return True
+
+    return await AnnotationCollaboratorRepository.exists(db, dataset_id, str(user.id))
 
 
 async def get_dataset_with_access(
@@ -259,7 +292,7 @@ async def get_dataset_with_access(
         has_access = check_data_ownership(dataset.user_id, user)
     else:
         has_access = await check_dataset_access_permission(
-            user, dataset_id, dataset.user_id, db
+            user, dataset_id, dataset.user_id, db, is_public=dataset.is_public
         )
 
     if not has_access:
@@ -298,8 +331,15 @@ async def get_wsi_with_access(
     if require_owner:
         has_access = check_data_ownership(wsi.user_id, user)
     else:
+        dataset_is_public = bool(
+            wsi.dataset and getattr(wsi.dataset, "is_public", False)
+        )
         has_access = await check_wsi_access_permission(
-            user, wsi.dataset_id, wsi.user_id, db
+            user,
+            wsi.dataset_id,
+            wsi.user_id,
+            db,
+            dataset_is_public=dataset_is_public,
         )
 
     if not has_access:

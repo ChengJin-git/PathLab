@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info, Database } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info, Database, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -24,6 +24,8 @@ export interface DatasetConfigStepProps {
   showValidation: boolean
   fromAIChat: boolean
   existingDatasetSource?: string
+  isPublic: boolean
+  onIsPublicChange: (value: boolean) => void
   onNext: () => void
   onBack: () => void
 }
@@ -32,7 +34,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   datasetName, onDatasetNameChange, uploadMode, onUploadModeChange,
   dataLevel, onDataLevelChange, datasetSourceSelection, datasetSourceCustom,
   onDatasetSourceSelectionChange, onDatasetSourceCustomChange, isExistingDataset, existingDatasets,
-  showValidation, fromAIChat, existingDatasetSource, onNext, onBack
+  showValidation, fromAIChat, existingDatasetSource, isPublic, onIsPublicChange, onNext, onBack
 }) => {
   const { t } = useTranslation()
   const debounceTimerRef = useRef<NodeJS.Timeout>()
@@ -294,6 +296,48 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                   {t('uploadComponents.datasetConfig.datasetSourceDescription')}
                 </p>
               </div>
+
+              {!isExistingDataset && (
+                <div>
+                  <label className="block text-xs sm:text-sm font-semibold text-slate-700 mb-2 sm:mb-3 uppercase tracking-wider">
+                    {t('uploadComponents.datasetConfig.datasetVisibility')}
+                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button
+                      type="button"
+                      onClick={() => onIsPublicChange(false)}
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${!isPublic
+                        ? 'border-slate-500 bg-slate-50/50'
+                        : 'border-slate-100 bg-white hover:border-slate-200'
+                        }`}
+                    >
+                      <div className={`p-2 rounded-lg mr-4 ${!isPublic ? 'bg-slate-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <Lock className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className={`font-bold block ${!isPublic ? 'text-slate-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.private')}</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.privateDesc')}</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onIsPublicChange(true)}
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${isPublic
+                        ? 'border-blue-500 bg-blue-50/50'
+                        : 'border-slate-100 bg-white hover:border-slate-200'
+                        }`}
+                    >
+                      <div className={`p-2 rounded-lg mr-4 ${isPublic ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                        <Globe className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <span className={`font-bold block ${isPublic ? 'text-blue-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.public')}</span>
+                        <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.publicDesc')}</span>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <Button
                 size="lg"

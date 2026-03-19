@@ -290,6 +290,7 @@ export interface DatasetSummary {
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
   task_type: 'classification' | 'survival' | 'segmentation' // Task type: classification, survival, or segmentation
   aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
+  is_public?: boolean
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
   // Pre-defined split information (from CSV upload)
@@ -611,6 +612,7 @@ export async function uploadWSIFile(
     dataset_name?: string
     source_organ?: string
     aggregation_level?: 'case' | 'file'
+    is_public?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
@@ -631,6 +633,7 @@ export async function uploadWSIFile(
   if (options?.dataset_name) formData.append('dataset_name', options.dataset_name)
   if (options?.source_organ) formData.append('source_organ', options.source_organ)
   if (options?.aggregation_level) formData.append('aggregation_level', options.aggregation_level)
+  if (options?.is_public !== undefined) formData.append('is_public', options.is_public.toString())
   if (options?.task_type) formData.append('task_type', options.task_type)
   if (options?.label) formData.append('label', options.label)
   if (options?.case_id) formData.append('case_id', options.case_id)
@@ -717,6 +720,7 @@ export async function uploadWSIByPath(
     dataset_name?: string
     source_organ?: string
     aggregation_level?: 'case' | 'file'
+    is_public?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
@@ -739,6 +743,7 @@ export async function uploadWSIByPath(
         dataset_name: options?.dataset_name,
         source_organ: options?.source_organ,
         aggregation_level: options?.aggregation_level,
+        is_public: options?.is_public,
         task_type: options?.task_type,
         label: options?.label,
         case_id: options?.case_id,
