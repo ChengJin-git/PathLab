@@ -114,7 +114,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [siteUrl, setSiteUrl] = useState('')
 
   const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
-  const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('http://127.0.0.1:8001/v1')
+  const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('ws://127.0.0.1:8001/api-ws/v1/realtime')
   const [localAsrModel, setLocalAsrModel] = useState('')
   const [localAsrApiKey, setLocalAsrApiKey] = useState('')
   const [localAsrStatus, setLocalAsrStatus] = useState<'checking' | 'online' | 'offline'>('offline')

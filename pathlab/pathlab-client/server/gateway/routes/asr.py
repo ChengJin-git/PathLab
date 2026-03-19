@@ -6,6 +6,7 @@ Priority: Local ASR (if enabled and online) > Remote DashScope (fallback)
 
 Provides realtime streaming ASR via WebSocket with server-side VAD (Voice Activity Detection).
 """
+
 import os
 import json
 import base64
@@ -29,15 +30,87 @@ router = APIRouter(tags=["ASR"])
 
 
 # ============================================================================
+# Local ASR Connection Pre-Warming
+# ============================================================================
+
+
+class _LocalASRWarmup:
+    """Keeps one pre-warmed WebSocket to local ASR (session.created already received)."""
+
+    def __init__(self) -> None:
+        self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._session_created_msg: Optional[str] = None
+        self._url: Optional[str] = None
+        self._lock: asyncio.Lock = asyncio.Lock()
+        self._warming: bool = False
+
+    async def _do_warm(self, url: str, headers: dict) -> None:
+        ws = None
+        try:
+            ws = await websockets.connect(
+                url, additional_headers=headers, open_timeout=10
+            )
+            msg = await asyncio.wait_for(ws.recv(), timeout=30)
+            data = json.loads(msg)
+            if data.get("type") == "session.created":
+                async with self._lock:
+                    if self._ws is not None:
+                        try:
+                            await self._ws.close()
+                        except Exception:
+                            pass
+                    self._ws = ws
+                    self._session_created_msg = msg
+                    self._url = url
+                logger.info("Local ASR pre-warm ready (session.created buffered)")
+                ws = None  # ownership transferred; don't close in finally
+        except Exception as e:
+            logger.debug(f"Local ASR pre-warm failed: {e}")
+        finally:
+            self._warming = False
+            if ws is not None:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+
+    def ensure_warm(self, url: str, headers: dict) -> None:
+        if self._warming or (self._ws is not None and self._url == url):
+            return
+        self._warming = True
+        asyncio.create_task(self._do_warm(url, headers))
+
+    async def claim(
+        self, url: str, headers: dict
+    ) -> Tuple[Optional["websockets.WebSocketClientProtocol"], Optional[str]]:
+        async with self._lock:
+            if self._ws is not None and self._url == url and not self._ws.closed:
+                ws, msg = self._ws, self._session_created_msg
+                self._ws = None
+                self._session_created_msg = None
+                # Re-warm immediately so the next caller doesn't wait
+                self._warming = True
+                asyncio.create_task(self._do_warm(url, headers))
+                return ws, msg
+        return None, None
+
+
+_asr_warmup = _LocalASRWarmup()
+
+
+# ============================================================================
 # Local ASR Server Detection
 # ============================================================================
+
 
 def _is_websocket_url(url: str) -> bool:
     """Check if the URL is a WebSocket URL (ws:// or wss://)."""
     return url.startswith("ws://") or url.startswith("wss://")
 
 
-async def _check_local_asr_available(base_url: str, api_key: str = None) -> Tuple[bool, Optional[str]]:
+async def _check_local_asr_available(
+    base_url: str, api_key: str = None
+) -> Tuple[bool, Optional[str]]:
     """
     Check if local ASR server (OpenAI-compatible HTTP) is available and get the first available model.
 
@@ -66,10 +139,10 @@ async def _check_local_asr_available(base_url: str, api_key: str = None) -> Tupl
 # Realtime ASR WebSocket Proxy
 # ============================================================================
 
+
 @router.websocket("/asr/realtime")
 async def asr_realtime_websocket(
-    websocket: WebSocket,
-    token: Optional[str] = Query(None)
+    websocket: WebSocket, token: Optional[str] = Query(None)
 ):
     """
     Realtime ASR WebSocket proxy for qwen3-asr-realtime.
@@ -97,20 +170,19 @@ async def asr_realtime_websocket(
 
     # Authenticate user from token (passed as query param for WebSocket)
     if not token:
-        await websocket.send_json({
-            "type": "error",
-            "error": {"message": "Authentication required: no token provided"}
-        })
+        await websocket.send_json(
+            {
+                "type": "error",
+                "error": {"message": "Authentication required: no token provided"},
+            }
+        )
         await websocket.close(code=4001)
         return
 
     # Validate JWT token and get user
     try:
         payload = jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=["HS256"],
-            audience="fastapi-users:auth"
+            token, JWT_SECRET, algorithms=["HS256"], audience="fastapi-users:auth"
         )
         user_id_str = payload.get("sub")
         if not user_id_str:
@@ -128,10 +200,9 @@ async def asr_realtime_websocket(
 
     except (JWTError, ValueError) as e:
         logger.warning(f"WebSocket auth failed: {e}")
-        await websocket.send_json({
-            "type": "error",
-            "error": {"message": f"Authentication failed: {e}"}
-        })
+        await websocket.send_json(
+            {"type": "error", "error": {"message": f"Authentication failed: {e}"}}
+        )
         await websocket.close(code=4001)
         return
 
@@ -145,15 +216,21 @@ async def asr_realtime_websocket(
 
     # Local ASR settings
     local_asr_enabled = global_settings.get("local_asr_enabled", False)
-    local_asr_base_url = global_settings.get("local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime")
+    local_asr_base_url = global_settings.get(
+        "local_asr_base_url", "ws://127.0.0.1:8001/api-ws/v1/realtime"
+    )
     local_asr_model = global_settings.get("local_asr_model", "")
     local_asr_api_key = global_settings.get("local_asr_api_key", "")
 
     # Remote DashScope settings (fallback)
-    dashscope_api_key = global_settings.get("dashscope_api_key") or os.environ.get("DASHSCOPE_API_KEY")
+    dashscope_api_key = global_settings.get("dashscope_api_key") or os.environ.get(
+        "DASHSCOPE_API_KEY"
+    )
 
     # Check if local ASR URL is a WebSocket URL (ws:// or wss://)
-    local_is_websocket = _is_websocket_url(local_asr_base_url) if local_asr_base_url else False
+    local_is_websocket = (
+        _is_websocket_url(local_asr_base_url) if local_asr_base_url else False
+    )
 
     # Determine which service to use
     use_local = False
@@ -162,31 +239,46 @@ async def asr_realtime_websocket(
     if local_asr_enabled and local_asr_base_url:
         if local_is_websocket:
             # WebSocket URL - will try to connect directly
-            logger.info(f"Local ASR configured with WebSocket URL: {local_asr_base_url}")
+            logger.info(
+                f"Local ASR configured with WebSocket URL: {local_asr_base_url}"
+            )
             use_local = True
             detected_model = local_asr_model
         else:
             # HTTP URL - check availability via HTTP API
             logger.info(f"Checking local ASR server at {local_asr_base_url}...")
-            await websocket.send_json({"type": "session.progress", "step": "checking_local_asr"})
-            is_available, detected_model = await _check_local_asr_available(local_asr_base_url, local_asr_api_key)
+            await websocket.send_json(
+                {"type": "session.progress", "step": "checking_local_asr"}
+            )
+            is_available, detected_model = await _check_local_asr_available(
+                local_asr_base_url, local_asr_api_key
+            )
             if is_available:
                 use_local = True
                 logger.info("Local ASR server is online, using local server")
             else:
-                logger.warning("Local ASR server is offline, falling back to remote DashScope")
+                logger.warning(
+                    "Local ASR server is offline, falling back to remote DashScope"
+                )
 
     # If not using local and no remote API key, fail
     if not use_local and not dashscope_api_key:
-        await websocket.send_json({
-            "type": "error",
-            "error": {"message": "ASR not configured: Local ASR is offline and DashScope API key not set"}
-        })
+        await websocket.send_json(
+            {
+                "type": "error",
+                "error": {
+                    "message": "ASR not configured: Local ASR is offline and DashScope API key not set"
+                },
+            }
+        )
         await websocket.close(code=4002)
         return
 
     upstream_ws = None
     source_name = "DashScope"  # Will be updated if local succeeds
+    stored_session_created: Optional[str] = None
+    _warm_url: Optional[str] = None
+    _warm_headers: Optional[dict] = None
 
     # Helper function to connect to DashScope with retry
     async def connect_to_dashscope():
@@ -195,39 +287,51 @@ async def asr_realtime_websocket(
         url = f"{base_url}?model={model}"
         headers = {
             "Authorization": f"Bearer {dashscope_api_key}",
-            "OpenAI-Beta": "realtime=v1"
+            "OpenAI-Beta": "realtime=v1",
         }
 
         max_retries = 2
         last_error = None
         for attempt in range(1, max_retries + 1):
             try:
-                logger.info(f"Connecting to DashScope ASR (attempt {attempt}/{max_retries}): {url}")
-                await websocket.send_json({
-                    "type": "session.progress",
-                    "step": "connecting_upstream",
-                    "provider": "DashScope",
-                    "attempt": attempt,
-                    "max_attempts": max_retries
-                })
-                ws = await websockets.connect(url, additional_headers=headers, open_timeout=10)
+                logger.info(
+                    f"Connecting to DashScope ASR (attempt {attempt}/{max_retries}): {url}"
+                )
+                await websocket.send_json(
+                    {
+                        "type": "session.progress",
+                        "step": "connecting_upstream",
+                        "provider": "DashScope",
+                        "attempt": attempt,
+                        "max_attempts": max_retries,
+                    }
+                )
+                ws = await websockets.connect(
+                    url, additional_headers=headers, open_timeout=10
+                )
                 logger.info("Connected to DashScope realtime ASR")
                 return ws
             except Exception as e:
                 last_error = e
-                logger.warning(f"DashScope connection attempt {attempt}/{max_retries} failed: {e}")
+                logger.warning(
+                    f"DashScope connection attempt {attempt}/{max_retries} failed: {e}"
+                )
                 if attempt < max_retries:
                     wait_time = attempt * 1.0
                     logger.info(f"Retrying in {wait_time}s...")
                     await asyncio.sleep(wait_time)
 
-        raise Exception(f"Failed to connect to DashScope after {max_retries} attempts: {last_error}")
+        raise Exception(
+            f"Failed to connect to DashScope after {max_retries} attempts: {last_error}"
+        )
 
     try:
         if use_local:
             # Try to connect to local ASR first
             try:
-                effective_model = local_asr_model or detected_model or "Qwen/Qwen3-ASR-1.7B"
+                effective_model = (
+                    local_asr_model or detected_model or "Qwen/Qwen3-ASR-1.7B"
+                )
 
                 if local_is_websocket:
                     # User provided a WebSocket URL directly - use it as-is
@@ -242,7 +346,9 @@ async def asr_realtime_websocket(
                         url = ws_url
                 else:
                     # HTTP URL - convert to WebSocket URL
-                    ws_base_url = local_asr_base_url.replace("http://", "ws://").replace("https://", "wss://")
+                    ws_base_url = local_asr_base_url.replace(
+                        "http://", "ws://"
+                    ).replace("https://", "wss://")
                     # Remove /v1 suffix if present and add /realtime
                     ws_base_url = ws_base_url.rstrip("/")
                     if ws_base_url.endswith("/v1"):
@@ -254,12 +360,16 @@ async def asr_realtime_websocket(
                     headers["Authorization"] = f"Bearer {local_asr_api_key}"
 
                 logger.info(f"Connecting to local ASR: {url}")
-                await websocket.send_json({
-                    "type": "session.progress",
-                    "step": "connecting_upstream",
-                    "provider": "Local ASR"
-                })
-                upstream_ws = await websockets.connect(url, additional_headers=headers, open_timeout=10)
+                await websocket.send_json(
+                    {
+                        "type": "session.progress",
+                        "step": "connecting_upstream",
+                        "provider": "Local ASR",
+                    }
+                )
+                upstream_ws = await websockets.connect(
+                    url, additional_headers=headers, open_timeout=10
+                )
                 source_name = "Local ASR"
                 logger.info(f"Connected to local ASR with model: {effective_model}")
             except Exception as local_err:
@@ -271,7 +381,9 @@ async def asr_realtime_websocket(
                     source_name = "DashScope"
                 else:
                     # No fallback available, re-raise the error
-                    raise Exception(f"Local ASR failed and no DashScope API key configured: {local_err}")
+                    raise Exception(
+                        f"Local ASR failed and no DashScope API key configured: {local_err}"
+                    )
         else:
             # Use DashScope directly
             upstream_ws = await connect_to_dashscope()
@@ -287,16 +399,20 @@ async def asr_realtime_websocket(
                     # Log all events with their full content for debugging
                     # This helps identify format differences between Local ASR and DashScope
                     if event_type in [
-                        "session.created", "session.updated",
+                        "session.created",
+                        "session.updated",
                         "input_audio_buffer.speech_started",
                         "input_audio_buffer.speech_stopped",
                         "conversation.item.input_audio_transcription.completed",
                         "conversation.item.input_audio_transcription.text",
-                        "session.finished", "error"
+                        "session.finished",
+                        "error",
                     ]:
                         # Log full message for transcript events to debug format issues
                         if "transcription" in event_type:
-                            logger.info(f"{source_name} -> Client: {event_type} | Full: {json.dumps(data, ensure_ascii=False)}")
+                            logger.info(
+                                f"{source_name} -> Client: {event_type} | Full: {json.dumps(data, ensure_ascii=False)}"
+                            )
                         else:
                             logger.info(f"{source_name} -> Client: {event_type}")
 
@@ -315,10 +431,9 @@ async def asr_realtime_websocket(
                 if str(e):
                     logger.error(f"Error forwarding from {source_name}: {e}")
                     try:
-                        await websocket.send_json({
-                            "type": "error",
-                            "error": {"message": str(e)}
-                        })
+                        await websocket.send_json(
+                            {"type": "error", "error": {"message": str(e)}}
+                        )
                     except Exception:
                         pass  # Client may have already disconnected
 
@@ -348,11 +463,11 @@ async def asr_realtime_websocket(
                     elif "bytes" in message:
                         # Binary audio data - wrap in append event
                         audio_data = message["bytes"]
-                        encoded = base64.b64encode(audio_data).decode('utf-8')
+                        encoded = base64.b64encode(audio_data).decode("utf-8")
                         append_event = {
                             "event_id": f"event_audio_{id(audio_data)}",
                             "type": "input_audio_buffer.append",
-                            "audio": encoded
+                            "audio": encoded,
                         }
                         await upstream_ws.send(json.dumps(append_event))
 
@@ -363,23 +478,20 @@ async def asr_realtime_websocket(
 
         # Run both directions concurrently
         await asyncio.gather(
-            forward_from_upstream(),
-            forward_from_client(),
-            return_exceptions=True
+            forward_from_upstream(), forward_from_client(), return_exceptions=True
         )
 
     except websockets.exceptions.ConnectionClosed as e:
         logger.error(f"{source_name} WebSocket closed: {e}")
-        await websocket.send_json({
-            "type": "error",
-            "error": {"message": f"{source_name} connection closed: {e}"}
-        })
+        await websocket.send_json(
+            {
+                "type": "error",
+                "error": {"message": f"{source_name} connection closed: {e}"},
+            }
+        )
     except Exception as e:
         logger.error(f"Realtime ASR error ({source_name}): {e}")
-        await websocket.send_json({
-            "type": "error",
-            "error": {"message": str(e)}
-        })
+        await websocket.send_json({"type": "error", "error": {"message": str(e)}})
     finally:
         if upstream_ws:
             try:
