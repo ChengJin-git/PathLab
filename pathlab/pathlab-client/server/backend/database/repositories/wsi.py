@@ -121,7 +121,7 @@ class WSIRepository:
         """Get WSI by wsi_id with dataset relationship loaded"""
         result = await db.execute(
             select(WSISlide)
-            .options(_dataset_with_group_loader())
+            .options(_dataset_with_group_loader(), _parent_wsi_loader())
             .where(WSISlide.wsi_id == wsi_id)
         )
         return result.scalar_one_or_none()
