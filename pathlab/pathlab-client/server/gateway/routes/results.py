@@ -992,7 +992,7 @@ async def _check_task_resources(task_id: str, db: AsyncSession) -> dict[str, Any
     return await _enrich_single_task_resources(task_id, db, base_resources)
 
 
-_RESULTS_TASKS_CACHE_TTL = 60
+_RESULTS_TASKS_CACHE_TTL = 5 * 60
 
 
 @router.get("/tasks")
@@ -1027,12 +1027,8 @@ async def get_analysis_tasks(
     if not tasks:
         return {"items": [], "total": 0}
 
-    # Batch check resources for all tasks at once
     task_ids = [_coerce_str(task.task_id) for task in tasks]
     all_resources = await _check_task_resources_batch(task_ids, db)
-
-    # Batch get WSI IDs for all tasks (for frontend WSI overlap detection)
-    all_wsi_ids_by_task = await TrainingTaskRepository.get_wsi_ids_batch(db, task_ids)
     source_dataset_ids = await TrainingTaskRepository.get_source_dataset_ids_batch(
         db, task_ids
     )
@@ -1123,9 +1119,7 @@ async def get_analysis_tasks(
                 "test_case_count": resources["test_case_count"],
                 "test_display_count": resources["test_display_count"],
                 "display_count": display_count,  # Count based on aggregation level
-                "wsi_ids": all_wsi_ids_by_task.get(
-                    task_id, []
-                ),  # For WSI overlap detection
+                "wsi_ids": [],
                 "classes": task.classes,
                 "model_config": task.model_config,
                 "source_dataset_id": source_dataset_ids.get(task_id),
@@ -5899,6 +5893,24 @@ async def _auto_trigger_external_validation_analysis(
         logger.error(
             f"Failed to auto-trigger analysis for external validation {task_id}: {e}"
         )
+
+
+@router.get("/tasks/{task_id}/wsi-ids")
+async def get_task_wsi_ids(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task:
+        await _require_task_access(
+            user,
+            task,
+            db,
+            forbidden_detail="You don't have permission to view this task",
+        )
+    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+    return {"wsi_ids": wsi_ids}
 
 
 @router.get("/tasks/{task_id}/analysis")

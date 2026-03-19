@@ -1690,6 +1690,7 @@
     "editDataset": "编辑数据集",
     "deleteDataset": "删除数据集",
     "datasetDeleteStarted": "已在后台开始删除数据集“{{name}}”",
+    "datasetDeleting": "正在删除...",
     "exportLabels": "导出标签",
     "exportLabelsWithSplit": "导出标签并划分数据集",
     "exportSuccess": "标签导出成功",

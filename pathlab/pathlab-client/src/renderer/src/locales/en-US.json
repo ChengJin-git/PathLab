@@ -1690,6 +1690,7 @@
     "editDataset": "Edit Dataset",
     "deleteDataset": "Delete Dataset",
     "datasetDeleteStarted": "Started deleting dataset \"{{name}}\" in the background",
+    "datasetDeleting": "Deleting...",
     "exportLabels": "Export Labels",
     "exportLabelsWithSplit": "Export Labels with Split",
     "exportSuccess": "Labels exported successfully",

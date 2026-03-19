@@ -15,10 +15,13 @@ from typing import Any, Optional
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from sqlalchemy import select, desc
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.background import BackgroundTask
 
 from backend.database import get_db
+from backend.database.models import TrainedModel as TrainedModelORM, TrainingTask
 from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
@@ -214,13 +217,48 @@ async def list_trained_models(
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """List all trained models. Users see only their own models, admin sees all."""
+    """List all trained models with task info inline.
+
+    Users see only their own models, admin sees all.
+    Task name/type/classes are eager-loaded so the frontend needs
+    no separate /results/tasks call.
+    """
     user_id_filter = None if user.is_admin() else str(user.id)
-    models = await TrainedModelRepository.get_all(
-        db, limit, skip, user_id=user_id_filter
+
+    # Eager-load training_task → data_group in one round-trip to avoid
+    # a separate /results/tasks fetch on the frontend.
+    query = select(TrainedModelORM).options(
+        selectinload(TrainedModelORM.training_task).selectinload(
+            TrainingTask.data_group
+        )
     )
+    if user_id_filter is not None:
+        query = query.where(TrainedModelORM.user_id == user_id_filter)
+    query = query.order_by(desc(TrainedModelORM.created_at)).limit(limit).offset(skip)
+
+    result = await db.execute(query)
+    models = result.scalars().all()
+
+    # Count query (kept separate to avoid COUNT + JOIN overhead)
     total = await TrainedModelRepository.count(db, user_id=user_id_filter)
-    return {"items": [model.to_dict() for model in models], "total": total}
+
+    items = []
+    for model in models:
+        model_dict = model.to_dict()
+        task = model.training_task
+        if task:
+            model_dict["task_name"] = task.task_name
+            model_dict["task_type"] = (
+                task.data_group.task_type if task.data_group else None
+            )
+            model_dict["task_classes"] = task.classes
+        else:
+            model_dict["task_name"] = None
+            model_dict["task_type"] = None
+            model_dict["task_classes"] = None
+        items.append(model_dict)
+
+    return {"items": items, "total": total}
 
 
 @router.get("/{model_id}")

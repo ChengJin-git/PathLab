@@ -1689,6 +1689,7 @@
     "editDataset": "編輯資料集",
     "deleteDataset": "刪除資料集",
     "datasetDeleteStarted": "已在背景開始刪除資料集「{{name}}」",
+    "datasetDeleting": "正在刪除...",
     "exportLabels": "匯出標籤",
     "exportLabelsWithSplit": "匯出標籤並劃分資料集",
     "exportSuccess": "標籤匯出成功",

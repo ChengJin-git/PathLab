@@ -236,9 +236,9 @@ export default function ListPage() {
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
   const [deleting, setDeleting] = useState(false)
-  // Optimistically hide datasets that are being deleted in background
-  const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
+  const [deletingDatasetIds, setDeletingDatasetIds] = useState<Set<string>>(new Set())
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
+  const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
 
   // Export labels - stores dataset for export modal
   const [exportingDataset, setExportingDataset] = useState<DatasetSummary | null>(null)
@@ -401,8 +401,8 @@ export default function ListPage() {
   })
 
   const visibleDatasets = useMemo(() => {
-    return (datasetsQuery.data?.items ?? []).filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
-  }, [datasetsQuery.data?.items, optimisticallyDeletedDatasetIds])
+    return datasetsQuery.data?.items ?? []
+  }, [datasetsQuery.data?.items])
 
   const datasetSourceOptions = useMemo(() => {
     const sourceValues = [...(sourceOptionsQuery.data ?? [])].sort((left, right) => {
@@ -481,6 +481,32 @@ export default function ListPage() {
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
   }, [tasks, qc])
+
+  useEffect(() => {
+    if (deletingDatasetIds.size === 0) return
+    const currentIds = new Set(
+      (datasetsQuery.data?.items ?? []).map(d => d.dataset_id).filter((id): id is string => Boolean(id))
+    )
+    setDeletingDatasetIds(prev => {
+      const next = new Set([...prev].filter(id => currentIds.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+  }, [datasetsQuery.data, deletingDatasetIds.size])
+
+  useEffect(() => {
+    if (selectedDatasetId) return
+    const justCompleted = tasks.filter(
+      t => (t.type === 'upload' || t.type === 'batch_import') &&
+        t.status === 'success' &&
+        !completedUploadTaskIdsRef.current.has(t.id)
+    )
+    if (justCompleted.length === 0) return
+    for (const task of justCompleted) {
+      completedUploadTaskIdsRef.current.add(task.id)
+    }
+    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
+    void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+  }, [tasks, qc, selectedDatasetId])
 
   useEffect(() => {
     if (selectedDatasetId && !selectedDatasetSummary) {
@@ -843,8 +869,7 @@ export default function ListPage() {
           mode: deleteMode
         })
 
-        // Optimistically hide from UI immediately
-        setOptimisticallyDeletedDatasetIds(prev => new Set(prev).add(datasetToDeleteId))
+        setDeletingDatasetIds(prev => new Set(prev).add(datasetToDeleteId))
         setShowBatchDeleteModal(false)
         setSelectedIds(new Set())
         toastSuccess(t('listPage.datasetDeleteStarted', { name: datasetToDeleteName }))
@@ -852,7 +877,6 @@ export default function ListPage() {
         setDatasetToDeleteName('')
         setDatasetToDeleteFileCount(0)
         void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-        await qc.invalidateQueries({ queryKey: ['page-datasets'] })
       } else {
         const idsToDelete = Array.from(selectedIds)
         await addDeleteWSITask(idsToDelete, deleteMode)
@@ -1558,12 +1582,22 @@ export default function ListPage() {
                     ? t(`organSources.${organSourceKeyMap[rawSource]}`)
                     : rawSource
 
+                const isDeleting = deletingDatasetIds.has(dataset.dataset_id ?? '')
+
                 return (
                   <Card
                     key={dataset.dataset_id ?? dataset.dataset_name}
-                    className="group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border-slate-200 bg-white"
-                    onClick={() => handleDatasetClick(dataset)}
+                    className={`group relative overflow-hidden transition-all duration-300 border-slate-200 bg-white ${isDeleting ? 'pointer-events-none' : 'hover:shadow-xl hover:-translate-y-1'}`}
+                    onClick={isDeleting ? undefined : () => handleDatasetClick(dataset)}
                   >
+                    {isDeleting && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[2px] rounded-xl">
+                        <div className="flex flex-col items-center gap-2">
+                          <Loader2 className="w-6 h-6 animate-spin text-red-400" />
+                          <span className="text-xs font-medium text-red-500">{t('listPage.datasetDeleting')}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
                       }`} />
                     <div className="p-4 sm:p-6">
@@ -1765,12 +1799,22 @@ export default function ListPage() {
                     ? t(`organSources.${organSourceKeyMap[rawSource]}`)
                     : rawSource
 
+                const isDeleting = deletingDatasetIds.has(dataset.dataset_id ?? '')
+
                 return (
                   <Card
                     key={dataset.dataset_id ?? dataset.dataset_name}
-                    className="group border-slate-200 bg-white transition-all duration-200 hover:shadow-md"
-                    onClick={() => handleDatasetClick(dataset)}
+                    className={`group border-slate-200 bg-white transition-all duration-200 relative overflow-hidden ${isDeleting ? 'pointer-events-none' : 'hover:shadow-md'}`}
+                    onClick={isDeleting ? undefined : () => handleDatasetClick(dataset)}
                   >
+                    {isDeleting && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[2px] rounded-xl">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="w-5 h-5 animate-spin text-red-400" />
+                          <span className="text-sm font-medium text-red-500">{t('listPage.datasetDeleting')}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="p-4 sm:p-5 flex flex-col gap-4">
                       <div className="flex items-start gap-4 min-w-0">
                         <div className={`p-3 rounded-2xl ${itemType === 'slides' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>

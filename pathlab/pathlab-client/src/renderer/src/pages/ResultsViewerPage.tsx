@@ -204,6 +204,7 @@ export default function ResultsViewerPage() {
       return (data.items || []) as ValidationDataset[]
     },
     staleTime: 5 * 60 * 1000,
+    enabled: pageMode === 'external-validation',
   })
 
   const { data: completedExtValTasks = [] as CompletedExtValTask[] } = useQuery({
@@ -215,6 +216,7 @@ export default function ResultsViewerPage() {
       return (data.items || []) as CompletedExtValTask[]
     },
     staleTime: 30 * 1000,
+    enabled: pageMode === 'external-validation',
   })
 
   const { data: analyses = [] as AnalysisSummary[] } = useQuery({
@@ -561,7 +563,21 @@ export default function ResultsViewerPage() {
   }, [])
 
   const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
-  const modelTask = selectedModel ? tasks.find(t => t.task_id === selectedModel.task_id) : null
+  const rawModelTask = selectedModel ? tasks.find(t => t.task_id === selectedModel.task_id) : null
+
+  const { data: modelTaskWsiIds = [] } = useQuery({
+    queryKey: ['task-wsi-ids', selectedModel?.task_id],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedModel!.task_id}/wsi-ids`, buildAuthRequestInit())
+      if (!response.ok) return []
+      const data = await response.json()
+      return (data.wsi_ids || []) as string[]
+    },
+    enabled: pageMode === 'external-validation' && !!selectedModel,
+    staleTime: 10 * 60 * 1000,
+  })
+
+  const modelTask = rawModelTask ? { ...rawModelTask, wsi_ids: modelTaskWsiIds } : null
   const selectedDataset = validationDatasets.find(ds => ds.dataset_id === datasetId)
 
   const runAnalysis = async () => {
@@ -710,10 +726,30 @@ export default function ResultsViewerPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mx-auto mb-4" />
-          <p className="text-gray-600">{t('resultsPage.loadingTasks')}</p>
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
+        <PageHeader
+          title={t('resultsPage.title')}
+          description={t('resultsPage.description')}
+        >
+          <Button variant="outline" onClick={() => navigate('/dashboard')} className="gap-2">
+            <ArrowLeft className="w-4 h-4" />
+            {t('resultsPage.backToDashboard')}
+          </Button>
+        </PageHeader>
+        <div className="flex flex-wrap gap-2 mb-6">
+          <div className="h-10 w-40 bg-gray-100 rounded-lg animate-pulse" />
+          <div className="h-10 w-40 bg-gray-100 rounded-lg animate-pulse" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="lg:col-span-1 space-y-4">
+            <div className="h-40 bg-gray-100 rounded-xl animate-pulse" />
+            <div className="h-56 bg-gray-100 rounded-xl animate-pulse" />
+            <div className="h-32 bg-gray-100 rounded-xl animate-pulse" />
+          </div>
+          <div className="lg:col-span-3 space-y-4">
+            <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
+            <div className="h-96 bg-gray-100 rounded-xl animate-pulse" />
+          </div>
         </div>
       </div>
     )

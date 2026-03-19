@@ -4,18 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Select } from '../ui/select'
-import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel, buildAuthRequestInit } from '../../api'
-import { API_BASE } from '../../config'
+import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { isSegmentationTask } from '../../lib/externalValidationUtils'
-
-interface TaskItem {
-  task_id: string
-  task_name?: string
-  name?: string
-  task_type?: string
-  classes?: string[] | null
-}
 
 export interface ModelsTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -34,23 +25,9 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
   const [loadingModels, setLoadingModels] = useState(false)
   const [modelsError, setModelsError] = useState<string | null>(null)
   const [modelsTotal, setModelsTotal] = useState(0)
-  const [tasks, setTasks] = useState<TaskItem[]>([])
-  
-  // Pagination
+
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(5)
-
-  const loadTasks = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_BASE}/results/tasks`, buildAuthRequestInit())
-      if (response.ok) {
-        const data = await response.json()
-        setTasks(data.items || [])
-      }
-    } catch (error) {
-      console.error('Failed to load tasks:', error)
-    }
-  }, [])
 
   const loadTrainedModels = useCallback(async () => {
     setLoadingModels(true)
@@ -73,11 +50,11 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
   }
 
   const handleExternalValidation = (model: TrainedModel) => {
-    navigate('/results', { 
-      state: { 
-        pageMode: 'external-validation', 
-        selectedModelId: model.model_id 
-      } 
+    navigate('/results', {
+      state: {
+        pageMode: 'external-validation',
+        selectedModelId: model.model_id
+      }
     })
   }
 
@@ -109,7 +86,6 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
         closeConfirmDialog()
         try {
           await deleteTrainedModel(model.model_id)
-          // If deleting the last item on a page (and not on first page), go back one page
           if (trainedModels.length === 1 && page > 1) {
             setPage(p => p - 1)
           } else {
@@ -124,8 +100,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
 
   useEffect(() => {
     loadTrainedModels()
-    loadTasks()
-  }, [loadTrainedModels, loadTasks])
+  }, [loadTrainedModels])
 
   const formatValue = (v: unknown) => {
     if (typeof v === 'number') return v.toFixed(3)
@@ -133,25 +108,25 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
     return '—'
   }
 
-  const getDisplayClasses = (model: TrainedModel, task?: TaskItem) => {
-    const taskClasses = Array.isArray(task?.classes)
-      ? task.classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
+  const getDisplayClasses = (model: TrainedModel) => {
+    const taskClasses = Array.isArray(model.task_classes)
+      ? model.task_classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
       : []
     const modelClasses = Array.isArray(model.classes)
       ? model.classes.filter((cls): cls is string => typeof cls === 'string' && cls.trim().length > 0)
       : []
 
-    if (task?.task_type === 'segmentation' && taskClasses.length > 0) {
+    if (model.task_type === 'segmentation' && taskClasses.length > 0) {
       return taskClasses
     }
 
     return modelClasses
   }
 
-  const getMetricDisplay = (task: TaskItem | undefined, model: TrainedModel, displayClasses: string[]) => {
+  const getMetricDisplay = (model: TrainedModel, displayClasses: string[]) => {
     const metrics = (model.val_metrics || {}) as Record<string, unknown>
     const isSurvival = metrics.c_index !== undefined
-    const isSegmentation = isSegmentationTask(task?.task_type)
+    const isSegmentation = isSegmentationTask(model.task_type ?? undefined)
 
     let primaryMetric: MetricDisplay = { label: 'Loss', value: metrics.loss }
     let secondaryMetric: MetricDisplay = { label: 'Accuracy', value: metrics.accuracy }
@@ -231,18 +206,17 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
           {/* Mobile Card View */}
           <div className="block sm:hidden space-y-4">
             {trainedModels.map((model) => {
-              const task = tasks.find(item => item.task_id === model.task_id)
-              const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
-              const displayClasses = getDisplayClasses(model, task)
-              const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(task, model, displayClasses)
+              const taskName = model.task_name || t('settings.modelsTab.unknownTask')
+              const displayClasses = getDisplayClasses(model)
+              const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(model, displayClasses)
 
               return (
                 <div key={model.model_id} className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
                    {/* Card Header: Name and Status */}
                    <div className="flex justify-between items-start mb-3">
                       <div className="min-w-0 pr-2">
-                        <div 
-                           className="text-base font-bold text-gray-900 truncate cursor-pointer hover:text-primary-600" 
+                        <div
+                           className="text-base font-bold text-gray-900 truncate cursor-pointer hover:text-primary-600"
                            title={model.model_name}
                            onClick={() => handleViewAnalysis(model)}
                         >
@@ -265,7 +239,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                          {model.is_active ? t('settings.modelsTab.active') : t('settings.modelsTab.inactive')}
                       </div>
                    </div>
-                   
+
                    {/* Task & Architecture Info */}
                    <div className="flex flex-wrap gap-2 mb-3">
                      <div className="inline-flex items-center gap-1 bg-gray-100 px-2 py-0.5 rounded text-xs font-semibold text-gray-600">
@@ -369,10 +343,9 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {trainedModels.map((model) => {
-                  const task = tasks.find(item => item.task_id === model.task_id)
-                  const taskName = task?.name || task?.task_name || t('settings.modelsTab.unknownTask')
-                  const displayClasses = getDisplayClasses(model, task)
-                  const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(task, model, displayClasses)
+                  const taskName = model.task_name || t('settings.modelsTab.unknownTask')
+                  const displayClasses = getDisplayClasses(model)
+                  const { metrics, isSurvival, primaryMetric, secondaryMetric } = getMetricDisplay(model, displayClasses)
 
                   return (
                     <tr key={model.model_id} className="hover:bg-gray-50 transition-colors group border-b last:border-0 border-gray-100">
@@ -389,7 +362,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                               {model.created_at && new Date(model.created_at).toLocaleDateString()}
                             </span>
                           </div>
-                        <div 
+                        <div
                           className="text-lg font-bold text-gray-900 truncate max-w-[200px] sm:max-w-[320px] cursor-pointer hover:text-primary-600 hover:underline"
                           title={t('settings.modelsTab.viewResultsFor', { name: model.model_name })}
                           onClick={() => handleViewAnalysis(model)}
@@ -527,8 +500,8 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-4 border-t border-gray-100">
              <div className="flex flex-col sm:flex-row items-center gap-2 text-sm text-gray-500">
                 <span>
-                   {t('settings.modelsTab.showing')} <span className="font-medium mx-1">{modelsTotal > 0 ? (page - 1) * pageSize + 1 : 0}</span> 
-                   {t('settings.modelsTab.to')} <span className="font-medium mx-1">{Math.min(page * pageSize, modelsTotal)}</span> 
+                   {t('settings.modelsTab.showing')} <span className="font-medium mx-1">{modelsTotal > 0 ? (page - 1) * pageSize + 1 : 0}</span>
+                   {t('settings.modelsTab.to')} <span className="font-medium mx-1">{Math.min(page * pageSize, modelsTotal)}</span>
                    {t('settings.modelsTab.of')} <span className="font-medium mx-1">{modelsTotal}</span> {t('settings.modelsTab.entries')}
                 </span>
                 <div className="flex items-center mt-2 sm:mt-0">
@@ -563,7 +536,7 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                 >
                   <ChevronLeft className="w-5 h-5" />
                 </button>
-                
+
                 <div className="flex items-center px-2 min-w-[60px] justify-center">
                   <span className="text-sm font-medium text-gray-900">
                     {page}
