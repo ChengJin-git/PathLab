@@ -143,7 +143,10 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               successCount: task.success_count || 0,
               failedCount: task.failed_count || 0,
               skippedCount: task.skipped_count || 0,
-              isServerTask: true
+              isServerTask: true,
+              datasetName: (task.task_type === 'delete_dataset' || task.task_type === 'batch_import')
+                ? task.params?.dataset_name
+                : undefined,
             }
           })
 

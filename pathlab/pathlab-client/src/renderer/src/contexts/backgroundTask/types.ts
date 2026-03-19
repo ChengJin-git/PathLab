@@ -43,6 +43,7 @@ export interface BackgroundTask {
   isServerTask?: boolean
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
   taskName?: string  // Task name for training tasks
+  datasetName?: string  // Dataset name for delete_dataset / batch_import storage tasks
   dataLevel?: 'wsi' | 'patch' // For progress calculation
   // For analysis tasks
   analysisType?: 'internal' | 'external'  // Type of analysis

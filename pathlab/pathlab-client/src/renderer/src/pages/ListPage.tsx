@@ -236,7 +236,6 @@ export default function ListPage() {
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
   const [deleting, setDeleting] = useState(false)
-  const [deletingDatasetIds, setDeletingDatasetIds] = useState<Set<string>>(new Set())
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
   const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
 
@@ -404,6 +403,14 @@ export default function ListPage() {
     return datasetsQuery.data?.items ?? []
   }, [datasetsQuery.data?.items])
 
+  const deletingDatasetNames = useMemo(() => {
+    return new Set(
+      tasks
+        .filter(t => t.type === 'delete_dataset' && (t.status === 'pending' || t.status === 'running') && t.datasetName)
+        .map(t => t.datasetName!)
+    )
+  }, [tasks])
+
   const datasetSourceOptions = useMemo(() => {
     const sourceValues = [...(sourceOptionsQuery.data ?? [])].sort((left, right) => {
       if (left === UNKNOWN_SOURCE_ORGAN_FILTER) return 1
@@ -480,18 +487,10 @@ export default function ListPage() {
     }
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+    const t1 = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
+    const t2 = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
   }, [tasks, qc])
-
-  useEffect(() => {
-    if (deletingDatasetIds.size === 0) return
-    const currentIds = new Set(
-      (datasetsQuery.data?.items ?? []).map(d => d.dataset_id).filter((id): id is string => Boolean(id))
-    )
-    setDeletingDatasetIds(prev => {
-      const next = new Set([...prev].filter(id => currentIds.has(id)))
-      return next.size === prev.size ? prev : next
-    })
-  }, [datasetsQuery.data, deletingDatasetIds.size])
 
   useEffect(() => {
     if (selectedDatasetId) return
@@ -504,6 +503,7 @@ export default function ListPage() {
     for (const task of justCompleted) {
       completedUploadTaskIdsRef.current.add(task.id)
     }
+    setDatasetCurrentPage(1)
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
   }, [tasks, qc, selectedDatasetId])
@@ -869,7 +869,6 @@ export default function ListPage() {
           mode: deleteMode
         })
 
-        setDeletingDatasetIds(prev => new Set(prev).add(datasetToDeleteId))
         setShowBatchDeleteModal(false)
         setSelectedIds(new Set())
         toastSuccess(t('listPage.datasetDeleteStarted', { name: datasetToDeleteName }))
@@ -1582,7 +1581,7 @@ export default function ListPage() {
                     ? t(`organSources.${organSourceKeyMap[rawSource]}`)
                     : rawSource
 
-                const isDeleting = deletingDatasetIds.has(dataset.dataset_id ?? '')
+                const isDeleting = deletingDatasetNames.has(dataset.dataset_name)
 
                 return (
                   <Card
@@ -1799,7 +1798,7 @@ export default function ListPage() {
                     ? t(`organSources.${organSourceKeyMap[rawSource]}`)
                     : rawSource
 
-                const isDeleting = deletingDatasetIds.has(dataset.dataset_id ?? '')
+                const isDeleting = deletingDatasetNames.has(dataset.dataset_name)
 
                 return (
                   <Card
