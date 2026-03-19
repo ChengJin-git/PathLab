@@ -24,6 +24,10 @@ def _dataset_with_group_loader():
     return selectinload(WSISlide.dataset).selectinload(Dataset.data_group)
 
 
+def _parent_wsi_loader():
+    return selectinload(WSISlide.parent_wsi).selectinload(WSISlide.dataset)
+
+
 class WSIRepository:
     """Repository for WSI Slide operations"""
 
@@ -215,7 +219,9 @@ class WSIRepository:
             elevated_dataset_ids: Optional list of dataset IDs that the user has temporary elevated permissions for.
                                   WSI slides in these datasets will be included even if user doesn't own them.
         """
-        query = select(WSISlide).options(_dataset_with_group_loader())
+        query = select(WSISlide).options(
+            _dataset_with_group_loader(), _parent_wsi_loader()
+        )
 
         visibility_filter = WSIRepository._build_visibility_filter(
             user_id, elevated_dataset_ids
@@ -1211,7 +1217,9 @@ class WSIRepository:
         Returns:
             List of WSISlide objects with dataset relationship loaded
         """
-        query = select(WSISlide).options(_dataset_with_group_loader())
+        query = select(WSISlide).options(
+            _dataset_with_group_loader(), _parent_wsi_loader()
+        )
         filters = WSIRepository._build_dataset_filters(
             dataset_id,
             user_id=user_id,
@@ -1452,7 +1460,7 @@ class WSIRepository:
         if page_case_ids:
             q_files = (
                 select(WSISlide)
-                .options(_dataset_with_group_loader())
+                .options(_dataset_with_group_loader(), _parent_wsi_loader())
                 .where(WSISlide.case_id.in_(page_case_ids), *filters)
                 .order_by(WSISlide.case_id, desc(WSISlide.created_at))
             )
@@ -1481,7 +1489,7 @@ class WSIRepository:
             if no_case_limit > 0:
                 q_no_case = (
                     select(WSISlide)
-                    .options(_dataset_with_group_loader())
+                    .options(_dataset_with_group_loader(), _parent_wsi_loader())
                     .where(WSISlide.case_id.is_(None), *filters)
                     .order_by(WSIRepository._file_sort_expr(sort_by, sort_order))
                     .offset(no_case_offset)

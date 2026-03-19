@@ -2313,17 +2313,19 @@ export default function ListPage() {
                                     </div>
                                     <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                                     <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.wsi_id}>{it.wsi_id}</span>
-                                  {it.parent_wsi_id && (
-                                    <Link
-                                      to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                      state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                      className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
-                                      title={t('annotation.viewSource')}
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
-                                    </Link>
-                                  )}
+                                   {it.parent_wsi_id && (
+                                     <Link
+                                       to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                       state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                       className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                       title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
+                                       onClick={(e) => e.stopPropagation()}
+                                     >
+                                       {it.parent_wsi_name && it.parent_dataset_name
+                                         ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name })
+                                         : `${t('annotation.croppedFrom')} ${it.parent_wsi_id.slice(0, 8)}…`}
+                                     </Link>
+                                   )}
                                   </div>
                                 </div>
                               </td>
@@ -2538,17 +2540,19 @@ export default function ListPage() {
                                     <div className="flex flex-col min-w-[120px] sm:min-w-[150px] pl-4 sm:pl-6 min-h-[3rem] justify-center">
                                       <span className="text-xs sm:text-sm font-medium text-gray-700 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                       <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
-                                      {it.parent_wsi_id && (
-                                        <Link
-                                          to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                          state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                          className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
-                                          title={t('annotation.viewSource')}
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
-                                        </Link>
-                                      )}
+                                       {it.parent_wsi_id && (
+                                         <Link
+                                           to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                           state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                           className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                           title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
+                                           onClick={(e) => e.stopPropagation()}
+                                         >
+                                           {it.parent_wsi_name && it.parent_dataset_name
+                                             ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name })
+                                             : `${t('annotation.croppedFrom')} ${it.parent_wsi_id.slice(0, 8)}…`}
+                                         </Link>
+                                       )}
                                     </div>
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4">
@@ -2642,17 +2646,19 @@ export default function ListPage() {
                               <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
                                 <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                 <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
-                                {it.parent_wsi_id && (
-                                  <Link
-                                    to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                    state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                    className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
-                                    title={t('annotation.viewSource')}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
-                                  </Link>
-                                )}
+                                   {it.parent_wsi_id && (
+                                   <Link
+                                     to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                     state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                     className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
+                                     title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
+                                     onClick={(e) => e.stopPropagation()}
+                                   >
+                                     {it.parent_wsi_name && it.parent_dataset_name
+                                       ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name })
+                                       : `${t('annotation.croppedFrom')} ${it.parent_wsi_id.slice(0, 8)}…`}
+                                   </Link>
+                                 )}
                                 {it.case_id && !isPatchDataset && (
                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
                                      {t('listPage.caseLabel', { caseId: it.case_id })}

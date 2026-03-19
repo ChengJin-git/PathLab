@@ -3391,6 +3391,7 @@
     "draftRecovered": "Draft recovered",
     "unsavedChanges": "You have unsaved annotation changes. Are you sure you want to leave?",
     "croppedFrom": "Cropped from",
+    "croppedFromDataset": "Cropped from {{datasetName}} / {{slideName}}",
     "viewSource": "View source slide",
     "regionTooLarge": "Region too large. Please make the region smaller or zoom in and re-annotate the region.",
     "selectAll": "Select all",

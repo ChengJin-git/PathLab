@@ -3391,6 +3391,7 @@
     "draftRecovered": "草稿已恢复",
     "unsavedChanges": "您有未保存的标注更改，确定要离开吗？",
     "croppedFrom": "裁剪自",
+    "croppedFromDataset": "裁剪自 {{datasetName}} 数据集 {{slideName}}",
     "viewSource": "查看源切片",
     "regionTooLarge": "区域过大，请缩小标注区域或滑动鼠标滚轮放大区域后重新标注。",
     "selectAll": "全选",

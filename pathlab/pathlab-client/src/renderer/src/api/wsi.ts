@@ -39,6 +39,8 @@ export interface WSISummary {
   updated_at?: string | null
   // Parent WSI reference (cropped region source)
   parent_wsi_id?: string | null
+  parent_wsi_name?: string | null
+  parent_dataset_name?: string | null
   // Permission flag - whether user can delete this WSI
   can_delete?: boolean
 }

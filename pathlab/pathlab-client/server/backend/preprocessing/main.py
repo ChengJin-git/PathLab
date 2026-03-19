@@ -1161,8 +1161,12 @@ async def _extract_regions_background(
                             if source_wsi.original_filename
                             else source_wsi_id
                         )
+                        label_counters: dict[str, int] = {}
 
                         for region in region_list:
+                            label_counters[region.label] = (
+                                label_counters.get(region.label, 0) + 1
+                            )
                             try:
                                 await _extract_single_region(
                                     db=db,
@@ -1173,6 +1177,7 @@ async def _extract_regions_background(
                                     dataset_id=dataset_id,
                                     user_id=user_id,
                                     source_name_stem=source_name_stem,
+                                    roi_index=label_counters[region.label],
                                 )
                             except Exception as e:
                                 logger.error(
@@ -1213,6 +1218,7 @@ async def _extract_single_region(
     dataset_id: str,
     user_id: str,
     source_name_stem: str | None = None,
+    roi_index: int = 1,
 ):
     """
     Extract a single annotation region from a WSI or patch image.
@@ -1267,7 +1273,7 @@ async def _extract_single_region(
     # Create WSI record for the extracted patch
     wsi_data = {
         "wsi_id": new_wsi_id,
-        "original_filename": f"{source_name_stem or source_wsi_id}_roi_{region.label}.jpg",
+        "original_filename": f"{source_name_stem or source_wsi_id}_roi_{region.label}_{roi_index}.jpg",
         "dataset_id": dataset_id,
         "label": region.label,
         "wsi_path": str(output_path),

@@ -306,6 +306,14 @@ class WSISlide(Base):
             "file_size": self.file_size,
             "associated_files": self.associated_files,
             "parent_wsi_id": self.parent_wsi_id,
+            "parent_wsi_name": self.parent_wsi.original_filename
+            if self.parent_wsi
+            else None,
+            "parent_dataset_name": (
+                self.parent_wsi.dataset.name
+                if self.parent_wsi and self.parent_wsi.dataset
+                else None
+            ),
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,
@@ -336,6 +344,14 @@ class WSISlide(Base):
             "split": self.split,
             "file_size": self.file_size,
             "parent_wsi_id": self.parent_wsi_id,
+            "parent_wsi_name": self.parent_wsi.original_filename
+            if self.parent_wsi
+            else None,
+            "parent_dataset_name": (
+                self.parent_wsi.dataset.name
+                if self.parent_wsi and self.parent_wsi.dataset
+                else None
+            ),
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,
