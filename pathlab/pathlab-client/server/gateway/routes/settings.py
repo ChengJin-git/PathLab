@@ -48,6 +48,9 @@ class GlobalSettingsResponse(BaseModel):
     turnstile_enabled: bool
     turnstile_site_key: str
     turnstile_secret_key: str
+    resend_enabled: bool
+    resend_api_key: str
+    resend_from_email: str
 
 
 class GlobalSettingsUpdateRequest(BaseModel):
@@ -74,6 +77,9 @@ class GlobalSettingsUpdateRequest(BaseModel):
     turnstile_enabled: Optional[bool] = None
     turnstile_site_key: Optional[str] = None
     turnstile_secret_key: Optional[str] = None
+    resend_enabled: Optional[bool] = None
+    resend_api_key: Optional[str] = None
+    resend_from_email: Optional[str] = None
 
 
 @router.get("/public")
