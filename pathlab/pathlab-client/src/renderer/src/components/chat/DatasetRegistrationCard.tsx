@@ -7,8 +7,9 @@ import {
 } from 'lucide-react'
 import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
 import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTaskContext'
-import { isSupportedName } from '../../constants/fileTypes'
+import { isSupportedName, isTmapDataFile, getBaseName } from '../../constants/fileTypes'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
+import { Select } from '../ui/select'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
   const match = content.match(/\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/)
@@ -239,40 +240,121 @@ export function DatasetRegistrationCard({
       }
 
       const entries = items.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
-      
-      const hasDirectory = entries.some(e => e.isDirectory)
-      
-      const allFiles: File[] = []
-      
+
+      // Collect top-level file entries and directory entries separately
+      // so we can later match .mrxs data directories and .tmap .DT* siblings
+      const topLevelFileEntries: { entry: any; file: File }[] = []
+      const topLevelDirEntries: { entry: any; name: string }[] = []
+
       for (const entry of entries) {
         if (entry.isFile) {
-             const file = await new Promise<File | null>(resolve => {
-                entry.file((f: File) => resolve(f), () => resolve(null))
-             })
-             if (file) allFiles.push(file)
+          const file = await new Promise<File | null>(resolve => {
+            entry.file((f: File) => resolve(f), () => resolve(null))
+          })
+          if (file) topLevelFileEntries.push({ entry, file })
         } else if (entry.isDirectory) {
-             const files = await collectAllFilesFromDirectory(entry)
-             allFiles.push(...files)
+          topLevelDirEntries.push({ entry, name: entry.name as string })
         }
       }
 
-      // Separate JSON files for segmentation mask matching
-      const jsonFiles = isSegmentation ? allFiles.filter(f => f.name.toLowerCase().endsWith('.json')) : []
-      const validFiles = allFiles.filter(f => isSupportedName(f.name))
+      // Build a map: lower-case directory name → entry (for mrxs data dir lookup)
+      const dirByName = new Map<string, any>()
+      for (const { entry, name } of topLevelDirEntries) {
+        dirByName.set(name.toLowerCase(), entry)
+      }
 
-      if (validFiles.length === 0 && !(isSegmentation && mode === 'existing' && jsonFiles.length > 0)) {
+      // Build new LocalItems for WSI files, detecting mrxs/tmap types
+      const newItems: LocalItem[] = []
+      const consumedFileKeys = new Set<string>()  // track tmap DT files so we skip them as main files
+
+      // First pass: identify mrxs / tmap main files and collect their associated data
+      for (const { file } of topLevelFileEntries) {
+        const lowerName = file.name.toLowerCase()
+        if (lowerName.endsWith('.mrxs')) {
+          const stem = getBaseName(file.name)
+          const stemLower = stem.toLowerCase()
+          // Look for a dropped directory with the same stem
+          const dataDirEntry = dirByName.get(stemLower)
+          let associatedFiles: File[] | undefined
+          if (dataDirEntry) {
+            associatedFiles = await collectAllFilesFromDirectory(dataDirEntry)
+          }
+          newItems.push({
+            key: `${file.name}-${file.size}`,
+            name: file.name,
+            file,
+            type: 'mrxs',
+            associatedFiles
+          })
+        } else if (lowerName.endsWith('.tmap')) {
+          const stem = getBaseName(file.name)
+          // DT files are collected from the same set of top-level file entries
+          const dtFiles: File[] = []
+          for (const { file: sibling } of topLevelFileEntries) {
+            if (sibling === file) continue
+            if (isTmapDataFile(sibling.name) && getBaseName(sibling.name).toLowerCase() === stem.toLowerCase()) {
+              dtFiles.push(sibling)
+              consumedFileKeys.add(`${sibling.name}-${sibling.size}`)
+            }
+          }
+          newItems.push({
+            key: `${file.name}-${file.size}`,
+            name: file.name,
+            file,
+            type: 'tmap',
+            associatedFiles: dtFiles.length > 0 ? dtFiles : undefined
+          })
+        }
+      }
+
+      // Second pass: collect remaining supported files (standard WSI / patch / tif)
+      // Skip tmap DT files that were already consumed as associated data
+      for (const { file } of topLevelFileEntries) {
+        const key = `${file.name}-${file.size}`
+        if (consumedFileKeys.has(key)) continue  // already used as tmap DT data
+        const lowerName = file.name.toLowerCase()
+        if (lowerName.endsWith('.mrxs') || lowerName.endsWith('.tmap')) continue  // already handled above
+        if (!isSupportedName(file.name)) continue
+        newItems.push({
+          key,
+          name: file.name,
+          file,
+          type: 'standard'
+        })
+      }
+
+      // Also flatten directories for non-mrxs directory drops (e.g. user drops a folder of patches)
+      // Only include directories that were NOT consumed as mrxs data dirs
+      for (const { entry, name } of topLevelDirEntries) {
+        // Skip if this directory name matches an mrxs stem we already handled
+        const matchedAsMrxsData = newItems.some(
+          item => item.type === 'mrxs' && item.associatedFiles && item.associatedFiles.length > 0
+            && getBaseName(item.name).toLowerCase() === name.toLowerCase()
+        )
+        if (matchedAsMrxsData) continue
+        const dirFiles = await collectAllFilesFromDirectory(entry)
+        for (const file of dirFiles) {
+          if (!isSupportedName(file.name)) continue
+          newItems.push({
+            key: `${file.name}-${file.size}`,
+            name: file.name,
+            file,
+            type: 'standard'
+          })
+        }
+      }
+
+      // Separate JSON files for segmentation mask matching (from all collected standard files)
+      const allCollectedFiles = newItems.filter(i => i.type === 'standard').map(i => i.file!)
+      const jsonFiles = isSegmentation ? allCollectedFiles.filter(f => f.name.toLowerCase().endsWith('.json')) : []
+      const validItems = newItems.filter(item => isSupportedName(item.name))
+
+      if (validItems.length === 0 && !(isSegmentation && mode === 'existing' && jsonFiles.length > 0)) {
         setValidationErrors([t('chatComponents.datasetRegistration.noValidImages')])
         return
       }
 
-      const newItems = validFiles.map(f => ({
-        key: `${f.name}-${f.size}`,
-        name: f.name,
-        file: f,
-        type: 'standard' as const
-      }))
-
-      setLocalItems(prev => [...prev, ...newItems])
+      setLocalItems(prev => [...prev, ...validItems])
 
       if (isSegmentation) {
         let duplicateJsonStems: string[] = []
@@ -361,7 +443,11 @@ export function DatasetRegistrationCard({
               event_time: undefined,
               event_status: undefined
             },
-            associatedFiles: matchedSegmentationJson ? [matchedSegmentationJson] : undefined
+            associatedFiles: matchedSegmentationJson
+              ? [matchedSegmentationJson]
+              : (item.type === 'mrxs' || item.type === 'tmap')
+                ? item.associatedFiles
+                : undefined
           }
         })
 
@@ -425,9 +511,9 @@ export function DatasetRegistrationCard({
                   <div className="flex items-start gap-3 bg-orange-50 border border-orange-200 rounded-lg p-3">
                     <AlertTriangle className="w-5 h-5 text-orange-600 flex-shrink-0 mt-0.5" />
                     <div>
-                      <p className="text-xs text-orange-800 font-medium">Segmentation registration uses best-effort JSON matching.</p>
+                      <p className="text-xs text-orange-800 font-medium">{t('chatComponents.datasetRegistration.segBestEffortTitle')}</p>
                       <p className="text-xs text-orange-700 mt-1 leading-relaxed">
-                        New datasets still require image files. Duplicate image / JSON stems are rejected, matching JSON files are applied when available, and existing segmentation datasets also support JSON-only append by filename stem.
+                        {t('chatComponents.datasetRegistration.segBestEffortDesc')}
                       </p>
                     </div>
                   </div>
@@ -525,23 +611,21 @@ export function DatasetRegistrationCard({
                         <div className="flex items-center gap-2 text-sm text-gray-500 py-2 h-[38px]">
                            <Loader2 className="w-4 h-4 animate-spin" /> {t('chatComponents.datasetRegistration.loading')}
                         </div>
-                      ) : (
-                        <select
-                          value={selectedDatasetId}
-                          onChange={(e) => setSelectedDatasetId(e.target.value)}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 h-[38px]"
-                        >
-                          <option value="">{t('chatComponents.datasetRegistration.chooseDataset')}</option>
-                          {filteredDatasets.map(d => (
-                             <option key={d.dataset_id || 'uncoded'} value={d.dataset_id || ''}>
-                               {t('chatComponents.datasetRegistration.datasetWithSource', {
-                                 name: d.dataset_name,
-                                 source: getDatasetSource(d)
-                               })}
-                             </option>
-                          ))}
-                        </select>
-                      )}
+                       ) : (
+                         <Select
+                           value={selectedDatasetId}
+                           onChange={setSelectedDatasetId}
+                           options={filteredDatasets.map(d => ({
+                             value: d.dataset_id || '',
+                             label: t('chatComponents.datasetRegistration.datasetWithSource', {
+                               name: d.dataset_name,
+                               source: getDatasetSource(d),
+                             }),
+                           }))}
+                           placeholder={t('chatComponents.datasetRegistration.chooseDataset')}
+                         />
+                       )}
+
                       {!loadingDatasets && selectedDataset && (
                         <p className="mt-2 text-xs text-gray-500">
                           {t('chatComponents.datasetRegistration.sourceLabel', {

@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { Select } from '../ui/select'
 import type { UserListItem } from '../../api/users'
 
 export interface EditUserModalProps {
@@ -50,18 +51,18 @@ export function EditUserModal({ user, editForm, onEditFormChange, onSave, onClos
             />
             <p className="text-xs text-gray-400 mt-1">{t('settings.editUserModal.passwordHint')}</p>
           </div>
-          <div>
-            <Label className="text-sm text-gray-600">{t('settings.editUserModal.role')}</Label>
-            <select
-              value={editForm.role}
-              onChange={(e) => onEditFormChange({ ...editForm, role: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
-            >
-              <option value="admin">{t('settings.editUserModal.roleAdmin')}</option>
-              <option value="pathologist">{t('settings.editUserModal.rolePathologist')}</option>
-              <option value="guest">{t('settings.editUserModal.roleGuest')}</option>
-            </select>
-          </div>
+           <div>
+             <Label className="text-sm text-gray-600">{t('settings.editUserModal.role')}</Label>
+             <Select
+               value={editForm.role}
+               onChange={(v) => onEditFormChange({ ...editForm, role: v })}
+               options={[
+                 { value: 'admin', label: t('settings.editUserModal.roleAdmin') },
+                 { value: 'pathologist', label: t('settings.editUserModal.rolePathologist') },
+                 { value: 'guest', label: t('settings.editUserModal.roleGuest') },
+               ]}
+             />
+           </div>
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <Button variant="outline" onClick={onClose}>

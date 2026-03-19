@@ -24,6 +24,9 @@ import {
   DEFAULT_SEG_LOSS_WEIGHTS,
   SplitStrategy,
 } from '../constants/training'
+import { useDraftState } from './useDraftState'
+
+const D = 'draft:wizard:tc:'
 
 export interface UseTrainingConfigReturn {
   // Preprocessing (Step 3) - tileSize and stride removed, auto-determined by PrePATH-style
@@ -92,10 +95,9 @@ export interface UseTrainingConfigReturn {
 }
 
 export function useTrainingConfig(): UseTrainingConfigReturn {
-  // Preprocessing (Step 3) - tileSize and stride removed, auto-determined by PrePATH-style
-  const [pyramidLevel, setPyramidLevel] = useState(DEFAULT_PYRAMID_LEVEL)
-  const [featureExtractor, setFeatureExtractor] = useState(DEFAULT_EXTRACTOR)
-  const [featureBatchSize, setFeatureBatchSize] = useState(DEFAULT_FEATURE_BATCH_SIZE)
+  const [pyramidLevel, setPyramidLevel] = useDraftState(`${D}pyramidLevel`, DEFAULT_PYRAMID_LEVEL)
+  const [featureExtractor, setFeatureExtractor] = useDraftState(`${D}featureExtractor`, DEFAULT_EXTRACTOR)
+  const [featureBatchSize, setFeatureBatchSize] = useDraftState(`${D}featureBatchSize`, DEFAULT_FEATURE_BATCH_SIZE)
 
   // Segmentation params (from localStorage or defaults)
   const [segSthresh, setSegSthresh] = useState(
@@ -122,26 +124,23 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
     Number(localStorage.getItem('filter_max_n_holes') || FILTER_DEFAULTS.maxHoles)
   )
 
-  // Model config (Step 4)
-  const [classifier, setClassifier] = useState(DEFAULT_PATCH_CLASSIFIER)
-  const [aggregator, setAggregator] = useState(DEFAULT_AGGREGATOR)
+  const [classifier, setClassifier] = useDraftState(`${D}classifier`, DEFAULT_PATCH_CLASSIFIER)
+  const [aggregator, setAggregator] = useDraftState(`${D}aggregator`, DEFAULT_AGGREGATOR)
   const [learningRate, setLearningRate] = useState(TRAINING_DEFAULTS.learningRate)
   const [epochs, setEpochs] = useState(TRAINING_DEFAULTS.epochs)
   const [trainBatchSize, setTrainBatchSize] = useState(TRAINING_DEFAULTS.batchSize)
-  const [optimizer, setOptimizer] = useState(TRAINING_DEFAULTS.optimizer)
-  const [earlyStoppingPatience, setEarlyStoppingPatience] = useState(TRAINING_DEFAULTS.earlyStoppingPatience)
-  const [autoBalance, setAutoBalance] = useState(TRAINING_DEFAULTS.autoBalance)
+  const [optimizer, setOptimizer] = useDraftState(`${D}optimizer`, TRAINING_DEFAULTS.optimizer)
+  const [earlyStoppingPatience, setEarlyStoppingPatience] = useDraftState(`${D}earlyStoppingPatience`, TRAINING_DEFAULTS.earlyStoppingPatience)
+  const [autoBalance, setAutoBalance] = useDraftState(`${D}autoBalance`, TRAINING_DEFAULTS.autoBalance)
 
-  // Segmentation training config (architecture, backbone, loss)
-  const [segArchitecture, setSegArchitecture] = useState(DEFAULT_SEG_ARCHITECTURE)
-  const [segBackbone, setSegBackbone] = useState(DEFAULT_SEG_BACKBONE)
-  const [segLossNames, setSegLossNames] = useState<string[]>(DEFAULT_SEG_LOSS_NAMES)
-  const [segLossWeights, setSegLossWeights] = useState<number[]>(DEFAULT_SEG_LOSS_WEIGHTS)
+  const [segArchitecture, setSegArchitecture] = useDraftState(`${D}segArchitecture`, DEFAULT_SEG_ARCHITECTURE)
+  const [segBackbone, setSegBackbone] = useDraftState(`${D}segBackbone`, DEFAULT_SEG_BACKBONE)
+  const [segLossNames, setSegLossNames] = useDraftState<string[]>(`${D}segLossNames`, DEFAULT_SEG_LOSS_NAMES)
+  const [segLossWeights, setSegLossWeights] = useDraftState<number[]>(`${D}segLossWeights`, DEFAULT_SEG_LOSS_WEIGHTS)
 
-  // Split config
-  const [splitStrategy, setSplitStrategy] = useState<SplitStrategy>(SPLIT_DEFAULTS.strategy)
-  const [kFoldSplits, setKFoldSplits] = useState(SPLIT_DEFAULTS.kFoldSplits)
-  const [randomSeed, setRandomSeed] = useState(SPLIT_DEFAULTS.randomSeed)
+  const [splitStrategy, setSplitStrategy] = useDraftState<SplitStrategy>(`${D}splitStrategy`, SPLIT_DEFAULTS.strategy)
+  const [kFoldSplits, setKFoldSplits] = useDraftState(`${D}kFoldSplits`, SPLIT_DEFAULTS.kFoldSplits)
+  const [randomSeed, setRandomSeed] = useDraftState(`${D}randomSeed`, SPLIT_DEFAULTS.randomSeed)
 
   return {
     // Preprocessing (tileSize and stride removed - auto-determined by PrePATH-style)

@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { Select } from '../ui/select'
 import { getGlobalSettings, updateGlobalSettings, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
@@ -53,12 +54,15 @@ export interface ModelOption {
   id: string
   label: string
   multimodal: boolean
+  closedSource?: boolean
 }
 
 export const MODEL_OPTIONS: ModelOption[] = [
   // Multimodal models (support image input)
   { id: 'qwen/qwen3.5-plus-02-15', label: 'Qwen3.5-Plus-02-15', multimodal: true },
   { id: 'moonshotai/kimi-k2.5', label: 'Kimi-K2.5', multimodal: true },
+  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
+  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
   // Text-only models
   { id: 'z-ai/glm-5', label: 'GLM-5', multimodal: false },
   { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
@@ -67,10 +71,15 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { id: 'moonshotai/kimi-k2-0905', label: 'Kimi-K2-Instruct-0905', multimodal: false },
 ]
 
-/** Quick lookup: is a given model ID multimodal? */
+export const CUSTOM_MODEL_SENTINEL = '__custom__'
+
 export const MULTIMODAL_MODELS = new Set(
   MODEL_OPTIONS.filter(m => m.multimodal).map(m => m.id)
 )
+
+function isCustomModelId(id: string): boolean {
+  return !!id && id !== CUSTOM_MODEL_SENTINEL && !MODEL_OPTIONS.some(m => m.id === id)
+}
 
 export interface GeneralTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -83,6 +92,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
+  const [isCustomMode, setIsCustomMode] = useState(false)
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   // Kaggle credentials
@@ -153,6 +163,10 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
     try {
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
+      setIsCustomMode(isCustomModelId(s.openrouter_model))
+      localStorage.setItem('openrouter_api_key', s.openrouter_api_key)
+      localStorage.setItem('openrouter_base_url', s.openrouter_base_url)
+      localStorage.setItem('openrouter_model', s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
       setKaggleUsername(s.kaggle_username || ''); setKaggleKey(s.kaggle_key || '')
       setExaApiKey(s.exa_api_key || '')
@@ -193,6 +207,9 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
       })
+      localStorage.setItem('openrouter_api_key', apiKey)
+      localStorage.setItem('openrouter_base_url', baseUrl)
+      localStorage.setItem('openrouter_model', model)
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
     } catch (err) {
@@ -260,22 +277,45 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       </div>
                       <div className="space-y-2">
                         <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
-                        <select
-                          value={model}
-                          onChange={(e) => setModel(e.target.value)}
-                          className="h-9 w-full px-2.5 border border-slate-300 rounded-md bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                        >
-                          <optgroup label={t('settings.general.multimodalModels')}>
-                            {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label={t('settings.general.textModels')}>
-                            {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                        </select>
+                        <Select
+                          value={isCustomMode ? CUSTOM_MODEL_SENTINEL : model}
+                          onChange={(val) => {
+                            if (val === CUSTOM_MODEL_SENTINEL) {
+                              setIsCustomMode(true)
+                              if (!isCustomMode) setModel('')
+                            } else {
+                              setIsCustomMode(false)
+                              setModel(val)
+                            }
+                          }}
+                          options={[
+                            {
+                              group: t('settings.general.multimodalModels'),
+                              options: MODEL_OPTIONS.filter(m => m.multimodal && !m.closedSource).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.textModels'),
+                              options: MODEL_OPTIONS.filter(m => !m.multimodal && !m.closedSource).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.closedSourceModels'),
+                              options: MODEL_OPTIONS.filter(m => m.closedSource).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.customModel'),
+                              options: [{ value: CUSTOM_MODEL_SENTINEL, label: `${t('settings.general.customModel')}...` }],
+                            },
+                          ]}
+                        />
+                        {isCustomMode && (
+                          <Input
+                            value={model}
+                            onChange={(e) => setModel(e.target.value)}
+                            placeholder={t('settings.general.customModelPlaceholder')}
+                            className="h-9 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                            autoFocus
+                          />
+                        )}
                       </div>
                     </div>
                   </div>

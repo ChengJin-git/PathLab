@@ -4,6 +4,7 @@ import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import { useAuth } from '../../contexts/AuthContext'
+import { Select, SelectOptionGroup } from '../ui/select'
 import {
   markTrainingSubmissionCreated,
   markTrainingSubmissionFailed,
@@ -283,6 +284,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     })
   }, [availableDatasets, config.task_type, normalizedDataType])
 
+
   const selectedDataset = useMemo(() => {
     return compatibleDatasets.find(d => d.dataset_id === selectedDatasetId) || null
   }, [compatibleDatasets, selectedDatasetId])
@@ -300,6 +302,22 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   const segmentationFmOptions = useMemo(
     () => ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
     []
+  )
+  const unifiedBackboneOptions = useMemo(
+    () => [
+      {
+        group: t('chatComponents.taskConfig.segFoundationModels'),
+        options: ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
+      },
+      ...BACKBONE_GROUPS.map(group => ({
+        group,
+        options: SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => ({
+          value: bb.id,
+          label: bb.name,
+        })),
+      })),
+    ],
+    [t]
   )
 
   // Load available datasets on mount
@@ -404,6 +422,15 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       if (initialConfig.dataset_id) {
         const found = result.items.find(d => d.dataset_id === initialConfig.dataset_id)
         if (found) {
+          if (
+            found.data_type &&
+            initialConfig.task_type === 'classification' &&
+            found.data_type !== initialConfig.data_type
+          ) {
+            const nextConfig = { ...config, data_type: found.data_type as 'wsi' | 'patch' }
+            setConfig(nextConfig)
+            onConfigChange?.(nextConfig)
+          }
           setSelectedDatasetId(initialConfig.dataset_id)
           // Set split info immediately from dataset summary
           const hasSplits = found.has_predefined_splits ?? false
@@ -433,6 +460,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     if (field === 'data_type') {
       if (config.task_type === 'segmentation') newConfig.data_type = 'patch'
       if (config.task_type === 'survival') newConfig.data_type = 'wsi'
+    }
+    if (field === 'seg_backbone') {
+      if (isSegFmEncoder(value as string)) {
+        newConfig.seg_architecture = FM_SEGMENTATION_ARCHITECTURE
+      } else if (!newConfig.seg_architecture || newConfig.seg_architecture === FM_SEGMENTATION_ARCHITECTURE) {
+        newConfig.seg_architecture = DEFAULT_SEG_ARCHITECTURE
+      }
     }
     setConfig(newConfig)
     onConfigChange?.(newConfig)
@@ -630,32 +664,26 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
 
         {/* Task Type & Data Level - Locked when AI recommends */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.taskType')}</label>
-            <select
-              value={config.task_type}
-              onChange={(e) => updateConfig('task_type', e.target.value)}
-              disabled={isCoreFieldLocked}
-              className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${lockedSelectClass}`}
-            >
-              {FIELD_OPTIONS.task_type.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.dataLevel')}</label>
-            <select
-              value={normalizedDataType}
-              onChange={(e) => updateConfig('data_type', e.target.value)}
-              disabled={isCoreFieldLocked || config.task_type === 'segmentation' || config.task_type === 'survival'}
-              className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${lockedSelectClass}`}
-            >
-              {FIELD_OPTIONS.data_type.map(opt => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </select>
-          </div>
+           <div>
+             <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.taskType')}</label>
+             <Select
+               value={config.task_type}
+               onChange={(v) => updateConfig('task_type', v)}
+               options={FIELD_OPTIONS.task_type}
+               disabled={isCoreFieldLocked}
+               triggerClassName={lockedSelectClass}
+             />
+           </div>
+           <div>
+             <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.dataLevel')}</label>
+             <Select
+               value={normalizedDataType}
+               onChange={(v) => updateConfig('data_type', v)}
+               options={FIELD_OPTIONS.data_type}
+               disabled={isCoreFieldLocked || config.task_type === 'segmentation' || config.task_type === 'survival'}
+               triggerClassName={lockedSelectClass}
+             />
+           </div>
         </div>
 
         {/* Dataset Selection - Locked when AI recommends */}
@@ -672,315 +700,160 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
               <Loader2 className="w-4 h-4 animate-spin" />
               {t('chatComponents.taskConfig.loadingDatasets')}
             </div>
-          ) : compatibleDatasets.length === 0 ? (
-            <p className="text-sm text-amber-600 py-2">{t('chatComponents.taskConfig.noDatasetsAvailable')}</p>
-          ) : (
-            <select
-              value={selectedDatasetId || ''}
-              onChange={(e) => {
-                const newDatasetId = e.target.value || null
-                setSelectedDatasetId(newDatasetId)
-                setValidationErrors(prev => prev.filter(err => err.field !== 'dataset_id'))
+           ) : compatibleDatasets.length === 0 ? (
+             <p className="text-sm text-amber-600 py-2">{t('chatComponents.taskConfig.noDatasetsAvailable')}</p>
+           ) : (
+             <Select
+               value={selectedDatasetId || ''}
+               onChange={(newVal) => {
+                 const newDatasetId = newVal || null
+                 setSelectedDatasetId(newDatasetId)
+                 setValidationErrors(prev => prev.filter(err => err.field !== 'dataset_id'))
 
-                // Immediately update split info from dataset summary
-                if (newDatasetId) {
-                  const selectedDataset = compatibleDatasets.find(d => d.dataset_id === newDatasetId)
-                  if (selectedDataset) {
-                    const hasSplits = selectedDataset.has_predefined_splits ?? false
-                    const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
-                    setHasPreDefinedSplits(hasSplits)
-                    setPredefinedSplitCounts(counts)
-                    // Auto-select manual split if CSV splits are available
-                    if (hasSplits) {
-                      setSplitStrategy('manual')
-                    } else if (splitStrategy === 'manual') {
-                      // No predefined splits — fall back from manual
-                      setSplitStrategy('random')
-                    }
-                  }
-                } else {
-                  setHasPreDefinedSplits(false)
-                  setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
-                }
-              }}
-              disabled={isCoreFieldLocked}
-              className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : 'border-gray-200'
-                } ${lockedSelectClass}`}
-            >
-              <option value="">{t('chatComponents.taskConfig.selectDatasetPlaceholder')}</option>
-              {compatibleDatasets.map(dataset => (
-                <option key={dataset.dataset_id || 'uncategorized'} value={dataset.dataset_id || ''}>
-                  {dataset.dataset_name} ({t('chatComponents.taskConfig.filesCount', { count: dataset.file_count })})
-                </option>
-              ))}
-            </select>
-          )}
-          {getFieldError('dataset_id') && (
-            <p className="text-xs text-red-500 mt-1">{getFieldError('dataset_id')}</p>
-          )}
-        </div>
-
-        {/* Split Strategy Configuration */}
-        {selectedDatasetId && (
-          <div className={`border border-gray-100 rounded-lg p-4 bg-gray-50 ${isFormDisabled ? 'opacity-70' : ''}`}>
-            <div className="flex items-center gap-2 mb-3">
-              <Layers className="w-4 h-4 text-gray-500" />
-              <span className="text-sm font-medium text-gray-700">{t('chatComponents.taskConfig.splitStrategy')}</span>
-            </div>
-
-            <div className={`grid grid-cols-1 gap-2 ${supportsKFold ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
-              {/* Random Split */}
-              <button
-                type="button"
-                onClick={() => !isFormDisabled && setSplitStrategy('random')}
-                disabled={isFormDisabled}
-                className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'random'
-                  ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                  : 'bg-white border-gray-200 hover:border-primary-300'
-                  } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'random' ? 'border-primary-600' : 'border-gray-400'
-                    }`}>
-                    {splitStrategy === 'random' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                  </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitRandom')}</span>
-                </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitRandomDesc')}</p>
-              </button>
-
-              {supportsKFold && (
-                <button
-                  type="button"
-                  onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
-                  disabled={isFormDisabled}
-                  className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'k_fold'
-                    ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                    : 'bg-white border-gray-200 hover:border-primary-300'
-                    } ${isFormDisabled ? 'cursor-not-allowed' : ''}`}
-                >
-                  <div className="flex items-center gap-1.5 mb-1">
-                    <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'k_fold' ? 'border-primary-600' : 'border-gray-400'
-                      }`}>
-                      {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                    </div>
-                    <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitKFold')}</span>
-                  </div>
-                  <p className="text-[10px] text-gray-500 ml-4.5">{t('chatComponents.taskConfig.splitKFoldDesc')}</p>
-                </button>
-              )}
-
-              {/* Manual Split (CSV) */}
-              <button
-                type="button"
-                onClick={() => !isFormDisabled && hasPreDefinedSplits && setSplitStrategy('manual')}
-                disabled={isFormDisabled || !hasPreDefinedSplits}
-                className={`p-3 rounded-lg border text-left transition-all ${splitStrategy === 'manual'
-                  ? 'bg-primary-50 border-primary-500 ring-1 ring-primary-500'
-                  : hasPreDefinedSplits && !isFormDisabled
-                    ? 'bg-white border-gray-200 hover:border-primary-300'
-                    : 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-60'
-                  }`}
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <div className={`w-3 h-3 rounded-full border flex items-center justify-center ${splitStrategy === 'manual' ? 'border-primary-600' : 'border-gray-400'
-                    }`}>
-                    {splitStrategy === 'manual' && <div className="w-1.5 h-1.5 rounded-full bg-primary-600" />}
-                  </div>
-                  <span className={`font-medium text-xs ${isFormDisabled ? 'text-gray-500' : 'text-gray-900'}`}>{t('chatComponents.taskConfig.splitCustom')}</span>
-                </div>
-                <p className="text-[10px] text-gray-500 ml-4.5">
-                  {hasPreDefinedSplits ? t('chatComponents.taskConfig.splitFromCSV') : t('chatComponents.taskConfig.splitNoSplitsFound')}
-                </p>
-              </button>
-            </div>
-
-            {/* Split Strategy Details */}
-            <div className="mt-3">
-              {splitStrategy === 'random' && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-3 text-xs p-2 rounded border bg-white border-gray-100 text-gray-600">
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500"></span>{t('chatComponents.taskConfig.trainPercent')}</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500"></span>{t('chatComponents.taskConfig.valPercent')}</span>
-                    <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500"></span>{t('chatComponents.taskConfig.testPercent')}</span>
-                  </div>
-                  {selectedDataset && (
-                    <div className="text-[10px] text-gray-500">
-                      {t('chatComponents.taskConfig.sampleCount', { count: selectedDataset.file_count })}
-                    </div>
-                  )}
-                </div>
-              )}
-              {splitStrategy === 'k_fold' && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 bg-white p-2 rounded border border-gray-100">
-                    <label className="text-xs text-gray-600">{t('chatComponents.taskConfig.foldsK')}:</label>
-                    <input
-                      type="number"
-                      min={2}
-                      max={10}
-                      value={kFoldSplits}
-                      onChange={(e) => {
-                        setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))
-                      }}
-                      disabled={isFormDisabled}
-                      className={`w-14 px-2 py-1 text-xs border border-gray-200 rounded focus:ring-1 focus:ring-primary-500 ${disabledInputClass}`}
-                    />
-                  </div>
-                  {selectedDataset && (
-                    <div className="text-[10px] text-blue-600">
-                      {t('chatComponents.taskConfig.kFoldInfo', { k: kFoldSplits, count: selectedDataset.file_count })}
-                    </div>
-                  )}
-                </div>
-              )}
-              {splitStrategy === 'manual' && hasPreDefinedSplits && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded border border-green-100">
-                    <CheckCircle className="w-3.5 h-3.5 text-green-600 shrink-0" />
-                    <span className="font-medium">{t('chatComponents.taskConfig.readyToUseSplits')}</span>
-                  </div>
-                  <div className="flex items-center gap-3 text-xs text-gray-600 bg-white p-2 rounded border border-gray-100">
-                    <span>{t('chatComponents.taskConfig.trainLabel')}: {predefinedSplitCounts.train}</span>
-                    <span>{t('chatComponents.taskConfig.valLabel')}: {predefinedSplitCounts.val}</span>
-                    <span>{t('chatComponents.taskConfig.testLabel')}: {predefinedSplitCounts.test}</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Segmentation: Architecture & Backbone | Others: Encoder & Model */}
-        {config.task_type === 'segmentation' ? (
-          <>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segArchitecture')}</label>
-                {isFmSegmentation ? (
-                  <div className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-50 text-gray-700">
-                    Conv Decoder (FM)
-                  </div>
-                ) : (
-                  <select
-                    value={resolvedSegArchitecture}
-                    onChange={(e) => updateConfig('seg_architecture', e.target.value)}
-                    disabled={isFormDisabled}
-                    className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
-                  >
-                    {SEGMENTATION_ARCHITECTURES.map(arch => (
-                      <option key={arch.id} value={arch.id}>{arch.name}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segBackbone')}</label>
-                <select
-                  value={resolvedSegBackbone}
-                  onChange={(e) => updateConfig('seg_backbone', e.target.value)}
-                  disabled={isFormDisabled}
-                  className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
-                >
-                  {isFmSegmentation
-                    ? segmentationFmOptions.map(option => (
-                      <option key={option.value} value={option.value}>{option.label}</option>
-                    ))
-                    : BACKBONE_GROUPS.map(group => (
-                      <optgroup key={group} label={group}>
-                        {SEGMENTATION_BACKBONES.filter(bb => bb.group === group).map(bb => (
-                          <option key={bb.id} value={bb.id}>{bb.name}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segLoss')}</label>
-              <div className="flex flex-wrap gap-2">
-                {SEGMENTATION_LOSSES.map(loss => {
-                  const selected = (config.seg_loss_names ?? DEFAULT_SEG_LOSS_NAMES).includes(loss.id)
-                  return (
-                    <button
-                      key={loss.id}
-                      type="button"
-                      disabled={isFormDisabled}
-                      onClick={() => {
-                        const current = config.seg_loss_names ?? [...DEFAULT_SEG_LOSS_NAMES]
-                        let newNames: string[]
-                        if (selected) {
-                          if (current.length <= 1) return
-                          newNames = current.filter(n => n !== loss.id)
-                        } else {
-                          newNames = [...current, loss.id]
-                        }
-                        const w = 1 / newNames.length
-                        const newWeights = newNames.map(() => Math.round(w * 100) / 100)
-                        updateConfig('seg_loss_names', newNames)
-                        updateConfig('seg_loss_weights', newWeights)
-                      }}
-                      className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
-                        selected
-                          ? 'bg-violet-100 border-violet-300 text-violet-700'
-                          : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-300'
-                      } ${isFormDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      title={loss.description}
-                    >
-                      {loss.name}
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-          </>
-        ) : (
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {config.data_type === 'patch' ? t('chatComponents.taskConfig.featureExtractor') : t('chatComponents.taskConfig.encoder')}
-              </label>
-              <select
-                value={config.encoder || 'resnet50'}
-                onChange={(e) => updateConfig('encoder', e.target.value)}
-                disabled={isFormDisabled}
-                className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
-              >
-                {FIELD_OPTIONS.encoder.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
-            </div>
-            {config.data_type === 'wsi' ? (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.aggregator')}</label>
-                <select
-                  value={config.aggregator || 'abmil'}
-                  onChange={(e) => updateConfig('aggregator', e.target.value)}
-                  disabled={isFormDisabled}
-                  className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
-                >
-                  {FIELD_OPTIONS.aggregator.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.classifierHead', 'Classifier Head')}</label>
-                <select
-                  value={config.classifier || DEFAULT_PATCH_CLASSIFIER}
-                  onChange={(e) => updateConfig('classifier', e.target.value)}
-                  disabled={isFormDisabled}
-                  className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-primary-100 ${disabledSelectClass}`}
-                >
-                  {FIELD_OPTIONS.classifier.map(opt => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
+                 // Immediately update split info from dataset summary
+                 if (newDatasetId) {
+                   const selectedDataset = compatibleDatasets.find(d => d.dataset_id === newDatasetId)
+                   if (selectedDataset) {
+                     const hasSplits = selectedDataset.has_predefined_splits ?? false
+                     const counts = selectedDataset.predefined_split_counts ?? { train: 0, val: 0, test: 0 }
+                     setHasPreDefinedSplits(hasSplits)
+                     setPredefinedSplitCounts(counts)
+                     // Auto-select manual split if CSV splits are available
+                     if (hasSplits) {
+                       setSplitStrategy('manual')
+                     } else if (splitStrategy === 'manual') {
+                       // No predefined splits — fall back from manual
+                       setSplitStrategy('random')
+                     }
+                   }
+                 } else {
+                   setHasPreDefinedSplits(false)
+                   setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
+                 }
+               }}
+               options={compatibleDatasets.map(dataset => ({
+                 value: dataset.dataset_id || '',
+                 label: `${dataset.dataset_name} (${t('chatComponents.taskConfig.filesCount', { count: dataset.file_count })})`,
+               }))}
+               placeholder={t('chatComponents.taskConfig.selectDatasetPlaceholder')}
+               disabled={isCoreFieldLocked}
+               triggerClassName={`${getFieldError('dataset_id') ? 'border-red-300 bg-red-50' : ''} ${lockedSelectClass}`}
+             />
             )}
-          </div>
+           {getFieldError('dataset_id') && (
+             <p className="text-xs text-red-500 mt-1">{getFieldError('dataset_id')}</p>
+           )}
+         </div>
+
+         {/* Segmentation: Architecture & Backbone | Others: Encoder & Model */}
+         {config.task_type === 'segmentation' ? (
+           <>
+             <div className="grid grid-cols-2 gap-4">
+               <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segArchitecture')}</label>
+                {isFmSegmentation ? (
+                    <div className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500`}>
+                      Conv Decoder (FM)
+                    </div>
+                  ) : (
+                    <Select
+                      value={resolvedSegArchitecture}
+                      onChange={(v) => updateConfig('seg_architecture', v)}
+                      options={SEGMENTATION_ARCHITECTURES.map(arch => ({ value: arch.id, label: arch.name }))}
+                      disabled={isFormDisabled}
+                      triggerClassName={disabledSelectClass}
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segBackbone')}</label>
+                  <Select
+                    value={resolvedSegBackbone}
+                    onChange={(v) => updateConfig('seg_backbone', v)}
+                    options={unifiedBackboneOptions}
+                    disabled={isFormDisabled}
+                    triggerClassName={disabledSelectClass}
+                  />
+               </div>
+             </div>
+             <div>
+               <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segLoss')}</label>
+               <div className="flex flex-wrap gap-2">
+                 {SEGMENTATION_LOSSES.map(loss => {
+                   const selected = (config.seg_loss_names ?? DEFAULT_SEG_LOSS_NAMES).includes(loss.id)
+                   return (
+                     <button
+                       key={loss.id}
+                       type="button"
+                       disabled={isFormDisabled}
+                        onClick={() => {
+                          const current = config.seg_loss_names ?? [...DEFAULT_SEG_LOSS_NAMES]
+                          let newNames: string[]
+                          if (selected) {
+                            if (current.length <= 1) return
+                            newNames = current.filter(n => n !== loss.id)
+                          } else {
+                            newNames = [...current, loss.id]
+                          }
+                          const w = 1 / newNames.length
+                          const newWeights = newNames.map(() => Math.round(w * 100) / 100)
+                          const newConfig = { ...config, seg_loss_names: newNames, seg_loss_weights: newWeights }
+                          setConfig(newConfig)
+                          onConfigChange?.(newConfig)
+                        }}
+                       className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${
+                         selected
+                           ? 'bg-violet-100 border-violet-300 text-violet-700'
+                           : 'bg-gray-50 border-gray-200 text-gray-500 hover:border-gray-300'
+                       } ${isFormDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+                       title={loss.description}
+                     >
+                       {loss.name}
+                     </button>
+                   )
+                 })}
+               </div>
+             </div>
+           </>
+         ) : (
+           <div className="grid grid-cols-2 gap-4">
+             <div>
+               <label className="block text-sm font-medium text-gray-700 mb-1">
+                 {config.data_type === 'patch' ? t('chatComponents.taskConfig.featureExtractor') : t('chatComponents.taskConfig.encoder')}
+               </label>
+               <Select
+                 value={config.encoder || 'resnet50'}
+                 onChange={(v) => updateConfig('encoder', v)}
+                 options={FIELD_OPTIONS.encoder}
+                 disabled={isFormDisabled}
+                 triggerClassName={disabledSelectClass}
+               />
+             </div>
+             {config.data_type === 'wsi' ? (
+               <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.aggregator')}</label>
+                 <Select
+                   value={config.aggregator || 'abmil'}
+                   onChange={(v) => updateConfig('aggregator', v)}
+                   options={FIELD_OPTIONS.aggregator}
+                   disabled={isFormDisabled}
+                   triggerClassName={disabledSelectClass}
+                 />
+               </div>
+             ) : (
+               <div>
+                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.classifierHead', 'Classifier Head')}</label>
+                 <Select
+                   value={config.classifier || DEFAULT_PATCH_CLASSIFIER}
+                   onChange={(v) => updateConfig('classifier', v)}
+                   options={FIELD_OPTIONS.classifier}
+                   disabled={isFormDisabled}
+                   triggerClassName={disabledSelectClass}
+                 />
+               </div>
+             )}
+           </div>
+
         )}
 
         {/* Advanced Settings Toggle */}

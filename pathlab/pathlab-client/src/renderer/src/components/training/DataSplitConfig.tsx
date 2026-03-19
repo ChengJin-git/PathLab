@@ -66,7 +66,6 @@ export function DataSplitConfig({
             description={t('training.dataSplit.randomSplitDesc')}
           />
 
-          {/* K-Fold */}
           {!isSegmentation && (
             <SplitOption
               selected={splitStrategy === 'k_fold'}
@@ -76,7 +75,6 @@ export function DataSplitConfig({
             />
           )}
 
-          {/* Manual Split */}
           {hasPreDefinedSplits ? (
             <SplitOption
               selected={splitStrategy === 'manual'}

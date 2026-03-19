@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User } from 'lucide-react'
+import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3 } from 'lucide-react'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery, startExternalValidation } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
@@ -375,6 +375,39 @@ export default function TaskDetailPage() {
 
   const handleRerun = async () => {
     setRerunError(null)
+
+    if (task?.task_type === 'external_validation') {
+      const modelId = task.model_config?.model_id
+      const datasetId = task.model_config?.dataset_id
+      if (!modelId || !datasetId) {
+        setRerunError(t('taskDetail.rerunErrorMissingConfig'))
+        return
+      }
+      setRerunning(true)
+      try {
+        const result = await startExternalValidation(
+          modelId,
+          datasetId,
+          (task.model_config as any)?.analysis_metrics,
+          (task.model_config as any)?.analysis_charts,
+          ((task.model_config as any)?.bootstrap_ci_metrics?.length ?? 0) > 0,
+          isAdmin ? task.task_id : undefined
+        )
+        navigate(`/task/${result.task_id}`)
+      } catch (error: any) {
+        const errMsg = error?.message || error?.detail || String(error)
+        const parsed = parseTaskError(errMsg)
+        if (parsed.isStorageError) {
+          setRerunError(parsed.userFriendlyMessage + ' ' + (parsed.suggestion || ''))
+        } else {
+          setRerunError(t('taskDetail.rerunErrorGeneric'))
+        }
+      } finally {
+        setRerunning(false)
+      }
+      return
+    }
+
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
       setRerunError(t('taskDetail.rerunErrorMissingWsi'))
       return
@@ -576,6 +609,19 @@ export default function TaskDetailPage() {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {getStatusBadge(displayTask.status, displayTask.task_type)}
+            {displayTask.status === 'completed' && (
+              <Button
+                variant="default"
+                onClick={() => {
+                  const mode = isExternalValidation ? 'external-validation' : 'internal-analysis'
+                  navigate('/results', { state: { pageMode: mode, selectedTaskId: displayTask.task_id } })
+                }}
+                className="flex items-center gap-2 h-9 px-4 rounded-full font-bold shadow-sm transition-all"
+              >
+                <BarChart3 className="w-4 h-4" />
+                {t('taskDetail.viewAnalysis')}
+              </Button>
+            )}
             {!waitingForCreation && task?.status === 'failed' && (
               <Button
                 variant="outline"

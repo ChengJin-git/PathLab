@@ -1,4 +1,5 @@
 from typing import Any
+
 """
 PathLab Gateway Service
 
@@ -31,6 +32,8 @@ from backend.database.repositories import (
     StorageTaskRepository,
     WSIRepository,
 )
+from backend.database.models import TrainingTask
+from sqlalchemy.orm import selectinload
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 from .pipeline import run_training_pipeline
 from .task_queue import init_task_queue, shutdown_task_queue, get_task_queue, TaskType
@@ -58,6 +61,7 @@ from .routes import (
     annotation_router,
     research_chat_router,
     dataset_download_router,
+    training_options_router,
 )
 from backend.common.config import Config
 
@@ -107,20 +111,57 @@ async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, A
     else:
         datasets_list = "  None"
 
+    _task_ids = list({str(m.task_id) for m in trained_models if m.task_id})
+    _task_meta: dict[str, tuple[str, str, str]] = {}
+    if _task_ids:
+        async with async_session() as _db:
+            _stmt = (
+                select(TrainingTask)
+                .options(selectinload(TrainingTask.data_group))
+                .where(TrainingTask.task_id.in_(_task_ids))
+            )
+            _result = await _db.execute(_stmt)
+            for _task in _result.scalars().all():
+                _dg = _task.data_group
+                _task_meta[str(_task.task_id)] = (
+                    str((_dg.task_type if _dg else None) or "unknown"),
+                    str((_dg.data_type if _dg else None) or "unknown"),
+                    str(_task.task_name or ""),
+                )
+
     model_summaries = []
     for m in trained_models:
+        _tt, _dt, _tn = _task_meta.get(
+            str(m.task_id) if m.task_id else "", ("unknown", "unknown", "")
+        )
         model_summaries.append(
             {
                 "id": m.model_id,
-                "task_type": "unknown",
-                "data_type": "unknown",
+                "task_type": _tt,
+                "data_type": _dt,
                 "classes": [c.lower() for c in (m.classes or [])],
                 "dataset_names": [],
                 "dataset_sources": [],
-                "task_name": "",
-                "line": f"  - {m.model_name} (id={m.model_id}, trained_on_task={m.task_id})",
+                "task_name": _tn.lower(),
+                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, trained_on_task={m.task_id}, task_name={_tn or 'unknown'})",
+                # embedding field populated below (after batch encode)
+                "embedding": None,
             }
         )
+
+    # Batch-encode model descriptions for semantic retrieval at query time.
+    # We encode the full `line` string so the embedding captures model name,
+    # task_type, data_type and task_id — all the fields a user might ask about.
+    if model_summaries:
+        try:
+            from .routes.chat_pdf_vectorstore import _embed_texts
+
+            _lines = [s["line"] for s in model_summaries]
+            _vecs = _embed_texts(_lines)  # shape: (N, 384)
+            for _i, _s in enumerate(model_summaries):
+                _s["embedding"] = _vecs[_i].tolist()
+        except Exception as _emb_exc:
+            logger.warning(f"[ChatCtxCache] model embedding failed: {_emb_exc}")
 
     training_tasks_total = training_tasks_stats.get("total", 0)
     training_tasks_completed = training_tasks_stats.get("completed", 0)
@@ -227,6 +268,11 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing Redis...")
     await init_redis()
     logger.info("✓ Redis initialized")
+
+    async with async_session() as db:
+        _backfilled = await WSIRepository.backfill_source_from_dataset(db)
+        if _backfilled:
+            logger.info(f"✓ Backfilled WSI source for {_backfilled} record(s)")
 
     # Detect GPU count and determine max_concurrent
     try:
@@ -637,25 +683,78 @@ async def resume_interrupted_tasks():
                         if task.data_group
                         else "classification"
                     )
-                    pipeline_kwargs = {
-                        "data_type": data_type,
-                        "wsi_ids": wsi_ids,
-                        "preprocessing_config": task.preprocessing_config or {},
-                        "model_config": task.model_config or {},
-                        # Token is not persisted for security. During resume:
-                        # - If features are already cached: no model loading needed, works fine
-                        # - If model checkpoint already downloaded: no token needed, works fine
-                        # - If model needs downloading (first use of a private HF model): will fail
-                        #   with auth error — user must re-submit the task with their HF token
-                        "huggingface_token": None,
-                        "training_task_type": task_type,  # Use same param name as pipeline
-                    }
-                    await task_queue.submit(
-                        task_id=task.task_id,
-                        task_type=TaskType.TRAINING,
-                        coro_func=run_training_pipeline,
-                        **pipeline_kwargs,
-                    )
+
+                    if task_type == "external_validation":
+                        # External validation tasks use a dedicated pipeline, not run_training_pipeline.
+                        # All necessary params were persisted in model_config at submission time.
+                        from gateway.routes.results import _run_external_validation
+
+                        model_config = task.model_config or {}
+
+                        # model_task_type / model_data_type were added to model_config after the
+                        # resume fix. For tasks submitted before that change, fall back to a DB
+                        # lookup via the original training task so that survival and segmentation
+                        # models are also recovered correctly.
+                        resolved_model_task_type = model_config.get("model_task_type")
+                        resolved_model_data_type = model_config.get("model_data_type")
+
+                        if not resolved_model_task_type or not resolved_model_data_type:
+                            src_task_id = model_config.get("model_task_id", "")
+                            if src_task_id:
+                                src_task = await TrainingTaskRepository.get_by_id(
+                                    db, src_task_id
+                                )
+                                if src_task and src_task.data_group:
+                                    if not resolved_model_task_type:
+                                        resolved_model_task_type = (
+                                            src_task.data_group.task_type
+                                        )
+                                    if not resolved_model_data_type:
+                                        resolved_model_data_type = (
+                                            src_task.data_group.data_type
+                                        )
+
+                        # Final safe defaults
+                        resolved_model_task_type = (
+                            resolved_model_task_type or "classification"
+                        )
+                        resolved_model_data_type = resolved_model_data_type or data_type
+
+                        ext_pipeline_kwargs = {
+                            "model_task_id": model_config.get("model_task_id", ""),
+                            "model_id": model_config.get("model_id", ""),
+                            "model_classes": task.classes,
+                            "model_task_type": resolved_model_task_type,
+                            "model_data_type": resolved_model_data_type,
+                            "dataset_id": model_config.get("dataset_id", ""),
+                            "wsi_ids": wsi_ids,
+                        }
+                        await task_queue.submit(
+                            task_id=task.task_id,
+                            task_type=TaskType.EXTERNAL_VALIDATION,
+                            coro_func=_run_external_validation,
+                            **ext_pipeline_kwargs,
+                        )
+                    else:
+                        pipeline_kwargs = {
+                            "data_type": data_type,
+                            "wsi_ids": wsi_ids,
+                            "preprocessing_config": task.preprocessing_config or {},
+                            "model_config": task.model_config or {},
+                            # Token is not persisted for security. During resume:
+                            # - If features are already cached: no model loading needed, works fine
+                            # - If model checkpoint already downloaded: no token needed, works fine
+                            # - If model needs downloading (first use of a private HF model): will fail
+                            #   with auth error — user must re-submit the task with their HF token
+                            "huggingface_token": None,
+                            "training_task_type": task_type,  # Use same param name as pipeline
+                        }
+                        await task_queue.submit(
+                            task_id=task.task_id,
+                            task_type=TaskType.TRAINING,
+                            coro_func=run_training_pipeline,
+                            **pipeline_kwargs,
+                        )
 
                     logger.info(
                         f"✓ Task {task.task_id} queued for resume (claimed by this instance)"
@@ -704,5 +803,6 @@ app.include_router(gpu_router)
 app.include_router(annotation_router)
 app.include_router(research_chat_router)
 app.include_router(dataset_download_router)
+app.include_router(training_options_router)
 
 logger.info("Gateway service initialized with all route modules")

@@ -19,34 +19,15 @@ describe('cn (class name merger)', () => {
   })
 })
 
-describe('formatBytes', () => {
-  it('returns "0 B" for falsy values', () => {
-    expect(formatBytes(0)).toBe('0 B')
-    expect(formatBytes(null)).toBe('0 B')
-    expect(formatBytes(undefined)).toBe('0 B')
-  })
-
-  it('formats bytes', () => {
-    expect(formatBytes(512)).toBe('512.00 B')
-  })
-
-  it('formats kilobytes', () => {
-    expect(formatBytes(1024)).toBe('1.00 KB')
-    expect(formatBytes(1536)).toBe('1.50 KB')
-  })
-
-  it('formats megabytes', () => {
-    expect(formatBytes(1024 * 1024)).toBe('1.00 MB')
-  })
-
-  it('formats gigabytes', () => {
-    expect(formatBytes(1024 * 1024 * 1024)).toBe('1.00 GB')
-  })
-})
-
 describe('formatFileSize', () => {
+  it('returns "0 B" for falsy values', () => {
+    expect(formatFileSize(0)).toBe('0 B')
+    expect(formatFileSize(null)).toBe('0 B')
+    expect(formatFileSize(undefined)).toBe('0 B')
+  })
+
   it('formats bytes without decimals', () => {
-    expect(formatFileSize(500)).toBe('500 B')
+    expect(formatFileSize(512)).toBe('512 B')
     expect(formatFileSize(1023)).toBe('1023 B')
   })
 
@@ -63,5 +44,24 @@ describe('formatFileSize', () => {
   it('formats gigabytes with 2 decimals', () => {
     expect(formatFileSize(1024 * 1024 * 1024)).toBe('1.00 GB')
     expect(formatFileSize(1024 * 1024 * 1024 * 2.5)).toBe('2.50 GB')
+  })
+})
+
+describe('formatBytes (deprecated alias for formatFileSize)', () => {
+  it('is identical to formatFileSize', () => {
+    expect(formatBytes).toBe(formatFileSize)
+  })
+
+  it('handles null/undefined/0', () => {
+    expect(formatBytes(0)).toBe('0 B')
+    expect(formatBytes(null)).toBe('0 B')
+    expect(formatBytes(undefined)).toBe('0 B')
+  })
+
+  it('formats sizes with adaptive precision', () => {
+    expect(formatBytes(512)).toBe('512 B')
+    expect(formatBytes(1024)).toBe('1.0 KB')
+    expect(formatBytes(1024 * 1024)).toBe('1.0 MB')
+    expect(formatBytes(1024 * 1024 * 1024)).toBe('1.00 GB')
   })
 })

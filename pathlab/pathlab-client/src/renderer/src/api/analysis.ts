@@ -59,7 +59,8 @@ export async function startExternalValidation(
   datasetId: string,
   metrics?: string[],
   charts?: string[],
-  computeBootstrapCI?: boolean
+  computeBootstrapCI?: boolean,
+  rerunFromTaskId?: string
 ): Promise<InferenceTaskResponse> {
   return apiFetch<InferenceTaskResponse>(
     `${API_BASE}/results/external-validation`,
@@ -69,6 +70,7 @@ export async function startExternalValidation(
       body: JSON.stringify({
         model_id: modelId,
         dataset_id: datasetId,
+        rerun_from_task_id: rerunFromTaskId,
         metrics: metrics,
         charts: charts,
         compute_bootstrap_ci: computeBootstrapCI
@@ -285,4 +287,3 @@ export async function getAnalysisStatus(analysisId: string): Promise<AnalysisSta
   const url = `${API_BASE}/results/analysis/${analysisId}/status`
   return apiFetch<AnalysisStatusResponse>(url, undefined, 'Failed to get analysis status')
 }
-

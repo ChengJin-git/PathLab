@@ -5,12 +5,12 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { AuthProvider } from './contexts/AuthContext'
 import { BackgroundTaskProvider } from './contexts/BackgroundTaskContext'
 import { ToastProvider } from './contexts/ToastContext'
-import { BackgroundTaskPanel } from './components/BackgroundTaskPanel'
 import App from './App'
 import './index.css'
 import { initializeApiConfig, updateApiBase } from './config'
 import './i18n'
 import { queryClient } from './lib/queryClient'
+import { bootstrapTrainingOptions } from './constants/trainingOptionsBootstrap'
 
 // Use the base URL from Vite config
 const basename = import.meta.env.BASE_URL
@@ -36,9 +36,16 @@ if ('serviceWorker' in navigator && !isElectron && !import.meta.env.DEV) {
           if (newWorker) {
             newWorker.addEventListener('statechange', () => {
               if (newWorker.state === 'activated' && navigator.serviceWorker.controller) {
-                // New version activated, reload to use updated resources
-                console.log('[SW] New version available, reloading...')
-                window.location.reload()
+                // Defer reload if uploads are in progress.
+                // window.__activeUploadCount is managed by useTaskActions and will
+                // trigger reload when it reaches 0 (if __pendingSWReload is set).
+                if ((window as any).__activeUploadCount > 0) {
+                  console.log('[SW] New version available, deferring reload until uploads complete...')
+                  ;(window as any).__pendingSWReload = true
+                } else {
+                  console.log('[SW] New version available, reloading...')
+                  window.location.reload()
+                }
               }
             })
           }
@@ -60,6 +67,7 @@ async function bootstrap(): Promise<void> {
   }
 
   updateApiBase()
+  await bootstrapTrainingOptions()
   console.log('[Main] API configuration initialized')
 
   createRoot(document.getElementById('root')!).render(
@@ -79,4 +87,3 @@ async function bootstrap(): Promise<void> {
 }
 
 void bootstrap()
-

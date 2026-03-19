@@ -1,25 +1,48 @@
 """
 TrainingTaskRepository - Data Access Layer
 """
+
 import asyncio
 from functools import partial
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Set, Tuple, Any
-from sqlalchemy import select, update, delete, func, desc, asc, insert, or_, cast, String
+from sqlalchemy import (
+    select,
+    update,
+    delete,
+    func,
+    desc,
+    asc,
+    insert,
+    or_,
+    cast,
+    String,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
-from ..models import DataGroup, Dataset, WSISlide, TrainingTask, TrainingTaskWSI, TrainedModel, TrainingLog, utc_now
+from ..models import (
+    DataGroup,
+    Dataset,
+    WSISlide,
+    TrainingTask,
+    TrainingTaskWSI,
+    TrainedModel,
+    TrainingLog,
+    utc_now,
+)
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
 from backend.ai.schemas.base import TaskStatus
 from backend.common.coco_utils import merge_coco_datasets, extract_coco_wsi_label_sets
 
 
-def _build_segmentation_wsi_lookups(wsis: List[WSISlide]) -> Tuple[Dict[str, str], Dict[str, str]]:
+def _build_segmentation_wsi_lookups(
+    wsis: List[WSISlide],
+) -> Tuple[Dict[str, str], Dict[str, str]]:
     exact_lookup: Dict[str, str] = {}
     stem_candidates: Dict[str, Set[str]] = {}
 
@@ -52,7 +75,9 @@ def _extract_segmentation_multilabels_from_payloads(
     merged_coco = merge_coco_datasets(payloads)
     exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
     multilabels = extract_coco_wsi_label_sets(merged_coco, exact_lookup, stem_lookup)
-    classes = sorted({label for label_set in multilabels.values() for label in label_set})
+    classes = sorted(
+        {label for label_set in multilabels.values() for label in label_set}
+    )
     return classes, multilabels
 
 
@@ -64,17 +89,19 @@ def _build_training_task_wsi_batches(
 ) -> List[List[Dict[str, object]]]:
     batches: List[List[Dict[str, object]]] = []
     for i in range(0, len(wsi_ids), insert_batch_size):
-        batch_wsi_ids = wsi_ids[i:i + insert_batch_size]
+        batch_wsi_ids = wsi_ids[i : i + insert_batch_size]
         batch_created_at = utc_now()
-        batches.append([
-            {
-                "task_id": task_id,
-                "wsi_id": wsi_id,
-                "split": wsi_splits.get(wsi_id, "train"),
-                "created_at": batch_created_at,
-            }
-            for wsi_id in batch_wsi_ids
-        ])
+        batches.append(
+            [
+                {
+                    "task_id": task_id,
+                    "wsi_id": wsi_id,
+                    "split": wsi_splits.get(wsi_id, "train"),
+                    "created_at": batch_created_at,
+                }
+                for wsi_id in batch_wsi_ids
+            ]
+        )
     return batches
 
 
@@ -101,10 +128,18 @@ async def _load_segmentation_multilabels(
         (record for record in records if record.annotation_id == f"annot_{dataset_id}"),
         None,
     )
-    payloads = [dataset_level_record.annotations] if dataset_level_record else [
-        record.annotations for record in records if isinstance(record.annotations, dict)
-    ]
-    return await asyncio.to_thread(_extract_segmentation_multilabels_from_payloads, payloads, wsis)
+    payloads = (
+        [dataset_level_record.annotations]
+        if dataset_level_record
+        else [
+            record.annotations
+            for record in records
+            if isinstance(record.annotations, dict)
+        ]
+    )
+    return await asyncio.to_thread(
+        _extract_segmentation_multilabels_from_payloads, payloads, wsis
+    )
 
 
 class TrainingTaskRepository:
@@ -116,7 +151,7 @@ class TrainingTaskRepository:
         task_data: Dict[str, Any],
         wsi_ids: List[str],
         split_config: Optional[Dict[str, Any]] = None,
-        prefetched_wsis: Optional[List[Any]] = None
+        prefetched_wsis: Optional[List[Any]] = None,
     ) -> TrainingTask:
         """
         Create a new training task with associated WSI slides.
@@ -137,7 +172,7 @@ class TrainingTaskRepository:
             wsis = []
             batch_size = 500
             for i in range(0, len(wsi_ids), batch_size):
-                batch_ids = wsi_ids[i:i + batch_size]
+                batch_ids = wsi_ids[i : i + batch_size]
                 wsi_list = await db.execute(
                     select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
                 )
@@ -149,7 +184,9 @@ class TrainingTaskRepository:
         segmentation_multilabels: Dict[str, Set[str]] = {}
 
         if task_type == "segmentation":
-            classes, segmentation_multilabels = await _load_segmentation_multilabels(db, wsis)
+            classes, segmentation_multilabels = await _load_segmentation_multilabels(
+                db, wsis
+            )
             if not classes:
                 raise ValueError(
                     "Segmentation tasks require at least one COCO category in the selected dataset."
@@ -165,11 +202,25 @@ class TrainingTaskRepository:
                 )
         elif task_type == "survival":
             # Survival tasks require both event (status=1) and censored (status=0) samples
-            event_statuses = set(wsi.event_status for wsi in wsis if wsi.event_status is not None and wsi.event_time is not None)
+            event_statuses = set(
+                wsi.event_status
+                for wsi in wsis
+                if wsi.event_status is not None and wsi.event_time is not None
+            )
             if len(event_statuses) < 2:
-                event_count = sum(1 for wsi in wsis if wsi.event_status == 1 and wsi.event_time is not None)
-                censored_count = sum(1 for wsi in wsis if wsi.event_status == 0 and wsi.event_time is not None)
-                missing_type = "Event (status=1)" if event_count == 0 else "Censored (status=0)"
+                event_count = sum(
+                    1
+                    for wsi in wsis
+                    if wsi.event_status == 1 and wsi.event_time is not None
+                )
+                censored_count = sum(
+                    1
+                    for wsi in wsis
+                    if wsi.event_status == 0 and wsi.event_time is not None
+                )
+                missing_type = (
+                    "Event (status=1)" if event_count == 0 else "Censored (status=0)"
+                )
                 raise ValueError(
                     f"Survival prediction tasks require both Event and Censored samples. "
                     f"{missing_type} has 0 samples. "
@@ -209,12 +260,12 @@ class TrainingTaskRepository:
                         )
                         group_row = group_result.first()
                         if group_row:
-                            is_case_level = (group_row[0] == "case")
+                            is_case_level = group_row[0] == "case"
                             task_type_from_group = group_row[1]
 
                 # Determine task type from DataGroup for split behavior
-                is_survival = (task_type_from_group == "survival")
-                is_segmentation = (task_type_from_group == "segmentation")
+                is_survival = task_type_from_group == "survival"
+                is_segmentation = task_type_from_group == "segmentation"
 
                 if is_case_level:
                     # Build case_id_map and case-level labels
@@ -247,7 +298,9 @@ class TrainingTaskRepository:
                             wsi_ids,
                             case_id_map,
                             labels=case_labels,
-                            multilabels=segmentation_multilabels if is_segmentation else None,
+                            multilabels=segmentation_multilabels
+                            if is_segmentation
+                            else None,
                             **split_config_copy,
                         )
                     )
@@ -271,7 +324,9 @@ class TrainingTaskRepository:
                             split_wsi_dataset,
                             wsi_ids,
                             labels=None if is_segmentation else wsi_labels,
-                            multilabels=segmentation_multilabels if is_segmentation else None,
+                            multilabels=segmentation_multilabels
+                            if is_segmentation
+                            else None,
                             **split_config,
                         )
                     )
@@ -294,10 +349,7 @@ class TrainingTaskRepository:
         # Create training task only after the expensive preparation work is done,
         # to minimize how long we hold the database write transaction.
         task = TrainingTask(
-            **task_data_cleaned,
-            classes=classes,
-            status=TaskStatus.PENDING,
-            progress=0
+            **task_data_cleaned, classes=classes, status=TaskStatus.PENDING, progress=0
         )
         db.add(task)
         await db.flush()
@@ -367,7 +419,9 @@ class TrainingTaskRepository:
             return task_dict
 
     @staticmethod
-    async def get_by_ids(db: AsyncSession, task_ids: List[str]) -> Dict[str, TrainingTask]:
+    async def get_by_ids(
+        db: AsyncSession, task_ids: List[str]
+    ) -> Dict[str, TrainingTask]:
         """Get multiple training tasks by IDs in a single query (batch operation).
 
         Returns:
@@ -384,7 +438,12 @@ class TrainingTaskRepository:
         return {task.task_id: task for task in tasks}
 
     @staticmethod
-    def _apply_task_list_filters(query, user_id: Optional[str] = None, search: Optional[str] = None, status_filter: str = "all"):
+    def _apply_task_list_filters(
+        query,
+        user_id: Optional[str] = None,
+        search: Optional[str] = None,
+        status_filter: str = "all",
+    ):
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
 
@@ -400,13 +459,15 @@ class TrainingTaskRepository:
 
         if status_filter == "running":
             query = query.where(
-                TrainingTask.status.in_([
-                    TaskStatus.PATCHING,
-                    TaskStatus.TRAINING,
-                    TaskStatus.PENDING,
-                    TaskStatus.QUEUED,
-                    TaskStatus.EXTRACTING,
-                ])
+                TrainingTask.status.in_(
+                    [
+                        TaskStatus.PATCHING,
+                        TaskStatus.TRAINING,
+                        TaskStatus.PENDING,
+                        TaskStatus.QUEUED,
+                        TaskStatus.EXTRACTING,
+                    ]
+                )
             )
         elif status_filter == "completed":
             query = query.where(TrainingTask.status == TaskStatus.COMPLETED)
@@ -422,8 +483,12 @@ class TrainingTaskRepository:
         if sort_by == "created":
             return query.order_by(desc(TrainingTask.created_at))
         if sort_by == "name":
-            return query.order_by(asc(TrainingTask.task_name), desc(TrainingTask.created_at))
-        return query.order_by(desc(TrainingTask.updated_at), desc(TrainingTask.created_at))
+            return query.order_by(
+                asc(TrainingTask.task_name), desc(TrainingTask.created_at)
+            )
+        return query.order_by(
+            desc(TrainingTask.updated_at), desc(TrainingTask.created_at)
+        )
 
     @staticmethod
     async def get_all(
@@ -460,7 +525,11 @@ class TrainingTaskRepository:
                 search=search,
                 status_filter=status_filter,
             )
-            query = TrainingTaskRepository._apply_task_list_sort(query, sort_by).limit(limit).offset(offset)
+            query = (
+                TrainingTaskRepository._apply_task_list_sort(query, sort_by)
+                .limit(limit)
+                .offset(offset)
+            )
             result = await db.execute(query)
             return result.scalars().all()
         else:
@@ -479,7 +548,11 @@ class TrainingTaskRepository:
                 search=search,
                 status_filter=status_filter,
             )
-            query = TrainingTaskRepository._apply_task_list_sort(query, sort_by).limit(limit).offset(offset)
+            query = (
+                TrainingTaskRepository._apply_task_list_sort(query, sort_by)
+                .limit(limit)
+                .offset(offset)
+            )
             result = await db.execute(query)
             rows = result.all()
 
@@ -522,7 +595,9 @@ class TrainingTaskRepository:
         return result.scalar()
 
     @staticmethod
-    async def get_status_counts(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+    async def get_status_counts(
+        db: AsyncSession, user_id: Optional[str] = None
+    ) -> Dict[str, int]:
         """Get counts of training tasks by status.
 
         Args:
@@ -537,16 +612,27 @@ class TrainingTaskRepository:
 
         # Define in-progress statuses (tasks that are actively running or waiting to run)
         in_progress_statuses = [
-            TaskStatus.PATCHING, TaskStatus.TRAINING, TaskStatus.PENDING,
-            TaskStatus.QUEUED, TaskStatus.EXTRACTING,
+            TaskStatus.PATCHING,
+            TaskStatus.TRAINING,
+            TaskStatus.PENDING,
+            TaskStatus.QUEUED,
+            TaskStatus.EXTRACTING,
         ]
 
         query = select(
             func.count(TrainingTask.id).label("total"),
-            func.sum(case((TrainingTask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
-            func.sum(case((TrainingTask.status.in_(in_progress_statuses), 1), else_=0)).label("running"),
-            func.sum(case((TrainingTask.status == TaskStatus.FAILED, 1), else_=0)).label("failed"),
-            func.sum(case((TrainingTask.status == TaskStatus.CANCELLED, 1), else_=0)).label("cancelled"),
+            func.sum(
+                case((TrainingTask.status == TaskStatus.COMPLETED, 1), else_=0)
+            ).label("completed"),
+            func.sum(
+                case((TrainingTask.status.in_(in_progress_statuses), 1), else_=0)
+            ).label("running"),
+            func.sum(
+                case((TrainingTask.status == TaskStatus.FAILED, 1), else_=0)
+            ).label("failed"),
+            func.sum(
+                case((TrainingTask.status == TaskStatus.CANCELLED, 1), else_=0)
+            ).label("cancelled"),
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
@@ -564,13 +650,14 @@ class TrainingTaskRepository:
     async def get_wsi_ids(db: AsyncSession, task_id: str) -> List[str]:
         """Get all WSI IDs associated with a training task"""
         result = await db.execute(
-            select(TrainingTaskWSI.wsi_id)
-            .where(TrainingTaskWSI.task_id == task_id)
+            select(TrainingTaskWSI.wsi_id).where(TrainingTaskWSI.task_id == task_id)
         )
         return [row[0] for row in result.all()]
 
     @staticmethod
-    async def get_wsi_ids_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, List[str]]:
+    async def get_wsi_ids_batch(
+        db: AsyncSession, task_ids: List[str]
+    ) -> Dict[str, List[str]]:
         """Get all WSI IDs for multiple tasks in a single query (batch operation).
 
         Args:
@@ -583,8 +670,9 @@ class TrainingTaskRepository:
         if not task_ids:
             return {}
         result = await db.execute(
-            select(TrainingTaskWSI.task_id, TrainingTaskWSI.wsi_id)
-            .where(TrainingTaskWSI.task_id.in_(task_ids))
+            select(TrainingTaskWSI.task_id, TrainingTaskWSI.wsi_id).where(
+                TrainingTaskWSI.task_id.in_(task_ids)
+            )
         )
         wsi_ids_by_task: Dict[str, List[str]] = {tid: [] for tid in task_ids}
         for row in result.all():
@@ -592,7 +680,9 @@ class TrainingTaskRepository:
         return wsi_ids_by_task
 
     @staticmethod
-    async def get_source_dataset_ids_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, Optional[str]]:
+    async def get_source_dataset_ids_batch(
+        db: AsyncSession, task_ids: List[str]
+    ) -> Dict[str, Optional[str]]:
         """Return the source dataset_id for each task when all WSIs come from one dataset."""
         if not task_ids:
             return {}
@@ -608,13 +698,19 @@ class TrainingTaskRepository:
             .group_by(TrainingTaskWSI.task_id)
         )
 
-        source_dataset_ids: Dict[str, Optional[str]] = {task_id: None for task_id in task_ids}
+        source_dataset_ids: Dict[str, Optional[str]] = {
+            task_id: None for task_id in task_ids
+        }
         for row in result.all():
-            source_dataset_ids[row.task_id] = row.dataset_id if row.dataset_count == 1 else None
+            source_dataset_ids[row.task_id] = (
+                row.dataset_id if row.dataset_count == 1 else None
+            )
         return source_dataset_ids
 
     @staticmethod
-    async def get_wsi_counts_batch(db: AsyncSession, task_ids: List[str]) -> Dict[str, int]:
+    async def get_wsi_counts_batch(
+        db: AsyncSession, task_ids: List[str]
+    ) -> Dict[str, int]:
         """
         Get WSI count for multiple tasks in a single query (batch operation).
 
@@ -632,7 +728,7 @@ class TrainingTaskRepository:
         result = await db.execute(
             select(
                 TrainingTaskWSI.task_id,
-                func.count(TrainingTaskWSI.wsi_id).label("wsi_count")
+                func.count(TrainingTaskWSI.wsi_id).label("wsi_count"),
             )
             .where(TrainingTaskWSI.task_id.in_(task_ids))
             .group_by(TrainingTaskWSI.task_id)
@@ -642,7 +738,9 @@ class TrainingTaskRepository:
         return {task_id: counts.get(task_id, 0) for task_id in task_ids}
 
     @staticmethod
-    async def get_wsi_with_labels(db: AsyncSession, task_id: str) -> List[Dict[str, Any]]:
+    async def get_wsi_with_labels(
+        db: AsyncSession, task_id: str
+    ) -> List[Dict[str, Any]]:
         """
         Get all WSI slides associated with a training task, including their labels and splits.
 
@@ -654,23 +752,20 @@ class TrainingTaskRepository:
                 WSISlide.wsi_id,
                 WSISlide.wsi_path,
                 WSISlide.label,
-                TrainingTaskWSI.split
+                TrainingTaskWSI.split,
             )
             .join(TrainingTaskWSI, WSISlide.wsi_id == TrainingTaskWSI.wsi_id)
             .where(TrainingTaskWSI.task_id == task_id)
         )
         return [
-            {
-                "wsi_id": row[0],
-                "wsi_path": row[1],
-                "label": row[2],
-                "split": row[3]
-            }
+            {"wsi_id": row[0], "wsi_path": row[1], "label": row[2], "split": row[3]}
             for row in result.all()
         ]
 
     @staticmethod
-    async def get_wsi_ids_by_split(db: AsyncSession, task_id: str) -> Dict[str, List[str]]:
+    async def get_wsi_ids_by_split(
+        db: AsyncSession, task_id: str
+    ) -> Dict[str, List[str]]:
         """
         Get WSI IDs grouped by their split assignment.
 
@@ -680,8 +775,9 @@ class TrainingTaskRepository:
             For k-fold: {'fold_0': [...], 'fold_1': [...], ...}
         """
         result = await db.execute(
-            select(TrainingTaskWSI.wsi_id, TrainingTaskWSI.split)
-            .where(TrainingTaskWSI.task_id == task_id)
+            select(TrainingTaskWSI.wsi_id, TrainingTaskWSI.split).where(
+                TrainingTaskWSI.task_id == task_id
+            )
         )
 
         splits_map: Dict[str, List[str]] = {}
@@ -716,7 +812,9 @@ class TrainingTaskRepository:
         return case_id_map
 
     @staticmethod
-    async def get_dataset_aggregation_level(db: AsyncSession, task_id: str) -> Optional[str]:
+    async def get_dataset_aggregation_level(
+        db: AsyncSession, task_id: str
+    ) -> Optional[str]:
         """
         Get the aggregation_level of the dataset associated with a training task via DataGroup.
 
@@ -744,7 +842,7 @@ class TrainingTaskRepository:
         task_id: str,
         status: str,
         progress: Optional[int] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
     ) -> Optional[TrainingTask]:
         """Update training task status"""
         update_data = {"status": status}
@@ -773,9 +871,7 @@ class TrainingTaskRepository:
 
     @staticmethod
     async def update_task_name(
-        db: AsyncSession,
-        task_id: str,
-        task_name: str
+        db: AsyncSession, task_id: str, task_name: str
     ) -> Optional[TrainingTask]:
         """
         Update training task name.
@@ -788,10 +884,7 @@ class TrainingTaskRepository:
         Returns:
             Updated TrainingTask object or None if not found
         """
-        update_data = {
-            "task_name": task_name,
-            "updated_at": utc_now()
-        }
+        update_data = {"task_name": task_name, "updated_at": utc_now()}
 
         await db.execute(
             update(TrainingTask)
@@ -854,7 +947,9 @@ class TrainingTaskRepository:
         """
         result = await db.execute(
             select(TrainingTask)
-            .options(selectinload(TrainingTask.data_group))  # Eagerly load data_group for resume
+            .options(
+                selectinload(TrainingTask.data_group)
+            )  # Eagerly load data_group for resume
             .where(TrainingTask.status.in_(TrainingTaskRepository.RECOVERABLE_STATUSES))
             .order_by(TrainingTask.created_at)
         )
@@ -884,10 +979,9 @@ class TrainingTaskRepository:
             .where(TrainingTask.task_id == task_id)
             .where(TrainingTask.status.in_(TrainingTaskRepository.INTERRUPTED_STATUSES))
             .values(
-                status='resuming',  # Temporary until pipeline starts (different from 'pending' for CAS)
-                progress=0,
+                status="resuming",  # Temporary until pipeline starts (different from 'pending' for CAS)
                 error_message=None,  # Clear previous error if any
-                updated_at=utc_now()
+                updated_at=utc_now(),
             )
         )
         await db.flush()
@@ -907,14 +1001,10 @@ class TrainingTaskRepository:
         )
 
         # Delete associated trained models
-        await db.execute(
-            delete(TrainedModel).where(TrainedModel.task_id == task_id)
-        )
+        await db.execute(delete(TrainedModel).where(TrainedModel.task_id == task_id))
 
         # Delete associated training logs
-        await db.execute(
-            delete(TrainingLog).where(TrainingLog.task_id == task_id)
-        )
+        await db.execute(delete(TrainingLog).where(TrainingLog.task_id == task_id))
 
         # Delete the training task itself
         result = await db.execute(
@@ -941,16 +1031,17 @@ class TrainingTaskRepository:
             Number of deleted tasks
         """
         from datetime import timedelta
+
         cutoff = utc_now() - timedelta(days=days)
 
         # Only delete failed/cancelled tasks older than cutoff (keep completed tasks permanently)
-        finished_statuses = ['failed', 'cancelled']
+        finished_statuses = ["failed", "cancelled"]
 
         # First get task_ids to delete (for cascade cleanup)
         result = await db.execute(
             select(TrainingTask.task_id).where(
                 TrainingTask.status.in_(finished_statuses),
-                TrainingTask.finished_at < cutoff
+                TrainingTask.finished_at < cutoff,
             )
         )
         task_ids_to_delete = [row[0] for row in result.all()]
@@ -960,7 +1051,9 @@ class TrainingTaskRepository:
 
         # Delete associated WSI records
         await db.execute(
-            delete(TrainingTaskWSI).where(TrainingTaskWSI.task_id.in_(task_ids_to_delete))
+            delete(TrainingTaskWSI).where(
+                TrainingTaskWSI.task_id.in_(task_ids_to_delete)
+            )
         )
 
         # Delete associated trained models
@@ -980,4 +1073,3 @@ class TrainingTaskRepository:
 
         await db.flush()
         return result.rowcount
-

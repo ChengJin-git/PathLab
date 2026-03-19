@@ -5,11 +5,7 @@
  * Uses Web Crypto API when available, falls back to pure JS implementation.
  */
 
-/**
- * Application-level salt for client-side password hashing.
- * MUST match the backend APP_SALT in auth_local.py
- */
-export const APP_SALT = 'PathLab2024SecureSalt'
+export const APP_SALT: string = import.meta.env.VITE_APP_SALT ?? 'PathLab2024SecureSalt'
 
 /**
  * Pure JavaScript SHA-256 implementation for non-secure contexts.

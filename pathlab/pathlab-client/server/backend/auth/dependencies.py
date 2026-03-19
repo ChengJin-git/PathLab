@@ -44,13 +44,14 @@ async def require_admin(user: User = Depends(current_active_user)) -> User:
     """
     if not user.is_admin():
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required"
         )
     return user
 
 
-async def require_pathologist_or_admin(user: User = Depends(current_active_user)) -> User:
+async def require_pathologist_or_admin(
+    user: User = Depends(current_active_user),
+) -> User:
     """
     Dependency that requires the current user to be a pathologist or admin.
 
@@ -60,7 +61,7 @@ async def require_pathologist_or_admin(user: User = Depends(current_active_user)
     if user.role not in {User.ROLE_ADMIN, User.ROLE_PATHOLOGIST}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Pathologist or admin access required"
+            detail="Pathologist or admin access required",
         )
     return user
 
@@ -82,7 +83,7 @@ async def require_can_use_gpu(user: User = Depends(current_active_user)) -> User
     if not user.can_use_gpu():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="GPU operations not available for guest users. Please contact admin for access."
+            detail="GPU operations not available for guest users. Please contact admin for access.",
         )
     return user
 
@@ -96,7 +97,9 @@ async def get_current_user_id(user: User = Depends(current_active_user)) -> str:
     return str(user.id)
 
 
-async def get_user_id_filter(user: User = Depends(current_active_user)) -> Optional[str]:
+async def get_user_id_filter(
+    user: User = Depends(current_active_user),
+) -> Optional[str]:
     """
     Get user_id filter for data queries based on user role.
 
@@ -115,7 +118,9 @@ async def get_user_id_filter(user: User = Depends(current_active_user)) -> Optio
     return None if user.is_admin() else str(user.id)
 
 
-async def get_permitted_dataset_ids(user: User, db: AsyncSession) -> Optional[list[str]]:
+async def get_permitted_dataset_ids(
+    user: User, db: AsyncSession
+) -> Optional[list[str]]:
     """
     Get dataset IDs the user can access via temporary elevated permissions.
 
@@ -129,7 +134,9 @@ async def get_permitted_dataset_ids(user: User, db: AsyncSession) -> Optional[li
     from backend.database.repositories import DatasetPermissionRepository
 
     permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-    return [permission.dataset_id for permission in permissions if permission.is_valid()]
+    return [
+        permission.dataset_id for permission in permissions if permission.is_valid()
+    ]
 
 
 def check_data_ownership(resource_user_id: Optional[str], current_user: User) -> bool:
@@ -163,7 +170,7 @@ async def check_wsi_access_permission(
     user: User,
     wsi_dataset_id: Optional[str],
     wsi_user_id: Optional[str],
-    db: AsyncSession
+    db: AsyncSession,
 ) -> bool:
     """
     Check if a user can access a specific WSI.
@@ -190,23 +197,26 @@ async def check_wsi_access_permission(
     if wsi_user_id == str(user.id):
         return True
 
-    # Check for temporary elevated permission on the dataset
     if wsi_dataset_id:
-        from backend.database.repositories import DatasetPermissionRepository
-        has_permission = await DatasetPermissionRepository.has_valid_permission(
-            db, wsi_dataset_id, str(user.id), "pathologist"
+        from backend.database.repositories import (
+            DatasetPermissionRepository,
+            AnnotationCollaboratorRepository,
         )
-        if has_permission:
+
+        if await DatasetPermissionRepository.has_valid_permission(
+            db, wsi_dataset_id, str(user.id), "pathologist"
+        ):
+            return True
+        if await AnnotationCollaboratorRepository.exists(
+            db, wsi_dataset_id, str(user.id)
+        ):
             return True
 
     return False
 
 
 async def check_dataset_access_permission(
-    user: User,
-    dataset_id: str,
-    dataset_user_id: Optional[str],
-    db: AsyncSession
+    user: User, dataset_id: str, dataset_user_id: Optional[str], db: AsyncSession
 ) -> bool:
     """
     Check if a user can access a specific dataset.
@@ -248,7 +258,9 @@ async def get_dataset_with_access(
     if require_owner:
         has_access = check_data_ownership(dataset.user_id, user)
     else:
-        has_access = await check_dataset_access_permission(user, dataset_id, dataset.user_id, db)
+        has_access = await check_dataset_access_permission(
+            user, dataset_id, dataset.user_id, db
+        )
 
     if not has_access:
         raise HTTPException(
@@ -286,7 +298,9 @@ async def get_wsi_with_access(
     if require_owner:
         has_access = check_data_ownership(wsi.user_id, user)
     else:
-        has_access = await check_wsi_access_permission(user, wsi.dataset_id, wsi.user_id, db)
+        has_access = await check_wsi_access_permission(
+            user, wsi.dataset_id, wsi.user_id, db
+        )
 
     if not has_access:
         raise HTTPException(
@@ -301,7 +315,7 @@ async def check_task_access_permission(
     user: User,
     task_user_id: Optional[str],
     task_dataset_id: Optional[str],
-    db: AsyncSession
+    db: AsyncSession,
 ) -> bool:
     """
     Check if a user can access a specific training task (READ operations).
@@ -331,9 +345,7 @@ async def check_task_access_permission(
 
 
 async def check_dataset_gpu_permission(
-    user: User,
-    dataset_id: str,
-    db: AsyncSession
+    user: User, dataset_id: str, db: AsyncSession
 ) -> bool:
     """
     Check if a user can perform GPU operations on a specific dataset.
@@ -359,15 +371,14 @@ async def check_dataset_gpu_permission(
 
     # Check for temporary elevated permission
     from backend.database.repositories import DatasetPermissionRepository
+
     return await DatasetPermissionRepository.has_valid_permission(
         db, dataset_id, str(user.id), "pathologist"
     )
 
 
 async def require_dataset_gpu_permission(
-    user: User,
-    dataset_id: str,
-    db: AsyncSession
+    user: User, dataset_id: str, db: AsyncSession
 ) -> None:
     """
     Require that a user has GPU permission for a specific dataset.
@@ -390,9 +401,8 @@ async def require_dataset_gpu_permission(
     if not has_permission:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="GPU operations not available. You need pathologist access or temporary elevated permission for this dataset."
+            detail="GPU operations not available. You need pathologist access or temporary elevated permission for this dataset.",
         )
-
 
 
 async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
@@ -412,35 +422,28 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
     try:
         # Decode JWT token
         payload = jwt.decode(
-            token,
-            JWT_SECRET,
-            algorithms=["HS256"],
-            audience="fastapi-users:auth"
+            token, JWT_SECRET, algorithms=["HS256"], audience="fastapi-users:auth"
         )
         user_id = payload.get("sub")
 
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token: no user ID"
+                detail="Invalid token: no user ID",
             )
 
         # Get user from database
-        result = await db.execute(
-            select(User).where(User.id == uuid.UUID(user_id))
-        )
+        result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
         user = result.scalar_one_or_none()
 
         if not user:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found"
             )
 
         if not user.is_active:
             raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User is inactive"
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive"
             )
 
         # Single-device login enforcement: check session_nonce
@@ -448,33 +451,34 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
         if not jwt_nonce:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session expired. Please login again."
+                detail="Session expired. Please login again.",
             )
-        db_nonce = getattr(user, 'session_nonce', None)
+        db_nonce = getattr(user, "session_nonce", None)
         if jwt_nonce != db_nonce:
-            logger.info(f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch")
+            logger.info(
+                f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch"
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Session expired. Please login again."
+                detail="Session expired. Please login again.",
             )
 
         return user
 
     except JWTError as e:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid token: {str(e)}"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Invalid token: {str(e)}"
         )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid user ID format: {str(e)}"
+            detail=f"Invalid user ID format: {str(e)}",
         )
 
 
 async def get_user_from_token_param(
     token: Optional[str] = Query(None, description="JWT token for SSE authentication"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     """
     Validate JWT token from query parameter (for SSE streams).
@@ -494,16 +498,17 @@ async def get_user_from_token_param(
     """
     if not token:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
     return await _get_user_from_jwt(token, db)
 
 
 async def get_user_from_header_or_param(
-    token: Optional[str] = Query(None, alias="token", description="JWT token for image authentication"),
+    token: Optional[str] = Query(
+        None, alias="token", description="JWT token for image authentication"
+    ),
     authorization: Optional[str] = Header(None, alias="Authorization"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> User:
     """
     Validate JWT token from Authorization header OR query parameter.
@@ -534,8 +539,7 @@ async def get_user_from_header_or_param(
 
     if not jwt_token:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required"
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
 
     return await _get_user_from_jwt(jwt_token, db)

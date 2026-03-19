@@ -131,7 +131,9 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
               <Activity className="w-3.5 h-3.5 text-blue-600" />
               {isSegmentation
                 ? (segIsFm ? t('taskDetail.configuration.featureExtractor') : t('taskDetail.configuration.architecture'))
-                : t('taskDetail.configuration.preprocessing')}
+                : task.data_type === 'patch'
+                  ? t('taskDetail.configuration.featureExtractor')
+                  : t('taskDetail.configuration.preprocessing')}
             </h4>
             <div className="space-y-3">
               {isSegmentation ? (
@@ -173,6 +175,22 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                     weights={task.model_config.loss_weights}
                     weightLabel={t('taskDetail.configuration.lossWeight')}
                   />
+                </>
+              ) : task.data_type === 'patch' ? (
+                <>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.extractor')}</span>
+                    <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                      {task.preprocessing_config.feature_extractor || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureBatchSize')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.preprocessing_config.feature_batch_size ?? 'N/A'}
+                    </span>
+                  </div>
+
                 </>
               ) : (
                 <>

@@ -3,6 +3,7 @@
 Uses lazy imports so that a broken dependency in one extractor does not
 prevent the rest of the system from loading.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -17,50 +18,132 @@ logger = logging.getLogger(__name__)
 # Lazy registry: maps extractor id -> (module_path_relative_to_package, class_name)
 # The module is only imported when the extractor is actually requested.
 _EXTRACTOR_LAZY_REGISTRY: Dict[str, Tuple[str, str]] = {
-    "resnet50":       (".resnet50",             "ResNet50Extractor"),
-    "vit_l_16":       (".vit_l_16",             "ViTL16Extractor"),
-    "conch":          (".conch_model",           "CONCHExtractor"),
-    "uni":            (".uni_model",             "UNIExtractor"),
-    "uni2":           (".uni2_model",            "UNI2Extractor"),
-    "virchow":        (".virchow_model",         "VirchowExtractor"),
-    "virchow2":       (".virchow2_model",        "Virchow2Extractor"),
-    "plip":           (".plip_model",             "PLIPExtractor"),
-    "phikon":         (".phikon_model",           "PhikonExtractor"),
-    "phikon2":        (".phikon2_model",          "Phikon2Extractor"),
-    "patho_clip":     (".patho_clip_model",       "PathoCLIPExtractor"),
-    "openmidnight":   (".openmidnight_model",     "OpenMidnightExtractor"),
-    "conch15":        (".conch15_model",          "CONCH15Extractor"),
-    "H-Optimus-1":    (".h_optimus_1_model",      "H_Optimus_1Extractor"),
-    "H-Optimus-0":    (".h_optimus_0_model",      "H_Optimus_0Extractor"),
-    "mSTAR":          (".mSTAR_model",            "mSTARExtractor"),
-    "GPFM":           (".gpfm_model",             "GPFMExtractor"),
-    "SmartCCS":       (".smartccs_model",          "SmartCCSExtractor"),
-    "SmartCyto":      (".smartcyto_model",         "SmartCytoExtractor"),
+    "resnet50": (".resnet50", "ResNet50Extractor"),
+    "vit_l_16": (".vit_l_16", "ViTL16Extractor"),
+    "conch": (".conch_model", "CONCHExtractor"),
+    "uni": (".uni_model", "UNIExtractor"),
+    "uni2": (".uni2_model", "UNI2Extractor"),
+    "virchow": (".virchow_model", "VirchowExtractor"),
+    "virchow2": (".virchow2_model", "Virchow2Extractor"),
+    "plip": (".plip_model", "PLIPExtractor"),
+    "phikon": (".phikon_model", "PhikonExtractor"),
+    "phikon2": (".phikon2_model", "Phikon2Extractor"),
+    "patho_clip": (".patho_clip_model", "PathoCLIPExtractor"),
+    "openmidnight": (".openmidnight_model", "OpenMidnightExtractor"),
+    "conch15": (".conch15_model", "CONCH15Extractor"),
+    "H-Optimus-1": (".h_optimus_1_model", "H_Optimus_1Extractor"),
+    "H-Optimus-0": (".h_optimus_0_model", "H_Optimus_0Extractor"),
+    "mSTAR": (".mSTAR_model", "mSTARExtractor"),
+    "GPFM": (".gpfm_model", "GPFMExtractor"),
+    "SmartCCS": (".smartccs_model", "SmartCCSExtractor"),
+    "SmartCyto": (".smartcyto_model", "SmartCytoExtractor"),
+    "CytoFM": (".cytofm_model", "CytoFMExtractor"),
 }
 
 # Cache for already-imported extractor classes
 _EXTRACTOR_CLASS_CACHE: Dict[str, Type[BaseExtractor]] = {}
 
 _EXTRACTOR_METADATA: Dict[str, Dict[str, Any]] = {
-    "resnet50": {"name": "ResNet50", "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline", "supports_spatial": False},
-    "vit_l_16": {"name": "ViT-Large", "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline", "supports_spatial": False},
-    "conch": {"name": "CONCH", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
-    "uni": {"name": "UNI", "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
-    "uni2": {"name": "UNI2", "description": "ViT-G/14, 1536-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
-    "virchow": {"name": "Virchow", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology", "supports_spatial": True},
-    "virchow2": {"name": "Virchow2", "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology", "supports_spatial": True},
-    "plip": {"name": "PLIP", "description": "CLIP ViT-B/16, 512-dim (James Zou Group), recommended for histopathology", "supports_spatial": True},
-    "phikon": {"name": "Phikon", "description": "iBOT ViT-L/16, 1024-dim (Owkin), recommended for histopathology", "supports_spatial": True},
-    "phikon2": {"name": "Phikon2", "description": "DINOv2 ViT-L/16, 1024-dim (Owkin), recommended for histopathology", "supports_spatial": True},
-    "patho_clip": {"name": "PathoCLIP", "description": "CLIP fine-tuned, 512-dim (Hong Bu Lab), recommended for histopathology", "supports_spatial": True},
-    "openmidnight": {"name": "OpenMidnight", "description": "ViT 1.1B, 1536-dim (SophontAI), recommended for histopathology", "supports_spatial": True},
-    "conch15": {"name": "CONCH 1.5", "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology", "supports_spatial": True},
-    "H-Optimus-1": {"name": "H-Optimus-1", "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology", "supports_spatial": True},
-    "H-Optimus-0": {"name": "H-Optimus-0", "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology", "supports_spatial": True},
-    "mSTAR": {"name": "mSTAR", "description": "ViT-L/16, 1024-dim (HKUST Smart Lab), recommended for histopathology", "supports_spatial": True},
-    "GPFM": {"name": "GPFM", "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), recommended for histopathology", "supports_spatial": True},
-    "SmartCCS": {"name": "Smart-CCS", "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), recommended for cytopathology", "supports_spatial": True},
-    "SmartCyto": {"name": "SmartCyto", "description": "DINOv3 ViT-B/16, 768-dim (HKUST Smart Lab), recommended for cytopathology", "supports_spatial": True},
+    "resnet50": {
+        "name": "ResNet50",
+        "description": "ImageNet pretrained CNN, 2048-dim, general-purpose baseline",
+        "supports_spatial": False,
+    },
+    "vit_l_16": {
+        "name": "ViT-Large",
+        "description": "ImageNet pretrained ViT-L/16, 1024-dim, general-purpose baseline",
+        "supports_spatial": False,
+    },
+    "conch": {
+        "name": "CONCH",
+        "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "uni": {
+        "name": "UNI",
+        "description": "DINOv2 ViT-L/16, 1024-dim (Mahmood Lab), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "uni2": {
+        "name": "UNI2",
+        "description": "ViT-G/14, 1536-dim (Mahmood Lab), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "virchow": {
+        "name": "Virchow",
+        "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "virchow2": {
+        "name": "Virchow2",
+        "description": "DINOv2 ViT-H/14, 1280-dim (Paige AI), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "plip": {
+        "name": "PLIP",
+        "description": "CLIP ViT-B/16, 512-dim (James Zou Group), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "phikon": {
+        "name": "Phikon",
+        "description": "iBOT ViT-L/16, 1024-dim (Owkin), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "phikon2": {
+        "name": "Phikon2",
+        "description": "DINOv2 ViT-L/16, 1024-dim (Owkin), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "patho_clip": {
+        "name": "PathoCLIP",
+        "description": "CLIP fine-tuned, 512-dim (Hong Bu Lab), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "openmidnight": {
+        "name": "OpenMidnight",
+        "description": "ViT 1.1B, 1536-dim (SophontAI), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "conch15": {
+        "name": "CONCH 1.5",
+        "description": "CLIP ViT-B/16, 512-dim (Mahmood Lab), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "H-Optimus-1": {
+        "name": "H-Optimus-1",
+        "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "H-Optimus-0": {
+        "name": "H-Optimus-0",
+        "description": "ViT 1.1B, 1536-dim (Bioptimus), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "mSTAR": {
+        "name": "mSTAR",
+        "description": "ViT-L/16, 1024-dim (HKUST Smart Lab), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "GPFM": {
+        "name": "GPFM",
+        "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), recommended for histopathology",
+        "supports_spatial": True,
+    },
+    "SmartCCS": {
+        "name": "Smart-CCS",
+        "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), pure vision self-supervised, recommended for cytopathology",
+        "supports_spatial": True,
+    },
+    "SmartCyto": {
+        "name": "SmartCyto",
+        "description": "DINOv3 ViT-B/16, 768-dim (HKUST Smart Lab), recommended for cytopathology",
+        "supports_spatial": True,
+    },
+    "CytoFM": {
+        "name": "CytoFM",
+        "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), pure vision self-supervised, recommended for cytopathology",
+        "supports_spatial": True,
+    },
 }
 
 
@@ -122,10 +205,7 @@ def get_extractor(name: str, pretrained: bool = True, **kwargs) -> BaseExtractor
 
 
 def get_extractor_transforms(
-    name: str,
-    mode: str = "eval",
-    pretrained: bool = True,
-    **kwargs
+    name: str, mode: str = "eval", pretrained: bool = True, **kwargs
 ) -> Callable[..., Any]:
     """
     Get preprocessing transforms for an extractor without loading the full model.
@@ -162,13 +242,12 @@ def get_available_extractors() -> List[Dict[str, Any]]:
     """Return detailed metadata for all registered extractors."""
     results = []
     for extractor_id in _EXTRACTOR_LAZY_REGISTRY.keys():
-        metadata = _EXTRACTOR_METADATA.get(extractor_id, {
-            "name": extractor_id.capitalize(),
-            "description": f"Feature extractor: {extractor_id}"
-        })
-        results.append({
-            "id": extractor_id,
-            **metadata
-        })
+        metadata = _EXTRACTOR_METADATA.get(
+            extractor_id,
+            {
+                "name": extractor_id.capitalize(),
+                "description": f"Feature extractor: {extractor_id}",
+            },
+        )
+        results.append({"id": extractor_id, **metadata})
     return results
-

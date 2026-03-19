@@ -32,6 +32,7 @@ def _force_release_memory():
         except Exception:
             pass
 
+
 from .tiling import (
     get_or_compute_coordinates,
     check_coords_cache_valid,
@@ -42,6 +43,7 @@ from .tiling import (
 
 # Database imports
 import sys
+
 ROOT_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT_DIR))
 
@@ -52,6 +54,7 @@ from backend.common.file_types import is_patch_file
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
 from contextlib import asynccontextmanager
+
 
 @asynccontextmanager
 async def lifespan(_app):
@@ -68,6 +71,7 @@ async def lifespan(_app):
     dzg_cache.clear()
     logger.info("All cached slides closed")
 
+
 app = FastAPI(title="PathLab Preprocessing Service", lifespan=lifespan)
 
 # Configure logging
@@ -76,6 +80,7 @@ logger = logging.getLogger(__name__)
 
 # Enable CORS for dev and on-prem SPA - MUST be before routers
 from fastapi.middleware.cors import CORSMiddleware
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -99,18 +104,22 @@ dzg_cache = OrderedDict()
 # Lazy import ASlide
 _ADeepZoomGenerator = None
 
+
 def _get_deepzoom_generator():
     """Lazy import ADeepZoomGenerator"""
     global _ADeepZoomGenerator
     if _ADeepZoomGenerator is None:
         from Aslide.deepzoom import ADeepZoomGenerator
+
         _ADeepZoomGenerator = ADeepZoomGenerator
     return _ADeepZoomGenerator
+
 
 def _load_slide(file_path: str):
     """Load WSI file using Aslide (delegates to shared slide_utils)"""
     try:
         from backend.common.slide_utils import load_slide
+
         slide = load_slide(file_path)
         logger.info(f"Opened WSI with Aslide: {file_path}")
         return slide
@@ -119,7 +128,9 @@ def _load_slide(file_path: str):
         raise
 
 
-def _mask_visualization_worker(wsi_file_path: str, tissue_contours, hole_contours, mask_save_path: str):
+def _mask_visualization_worker(
+    wsi_file_path: str, tissue_contours, hole_contours, mask_save_path: str
+):
     """
     Worker function for mask visualization subprocess.
 
@@ -129,17 +140,18 @@ def _mask_visualization_worker(wsi_file_path: str, tissue_contours, hole_contour
     """
     try:
         from backend.common.slide_utils import load_slide
+
         slide = load_slide(wsi_file_path)
         mask_img = visualize_segmentation(
             slide,
             tissue_contours,
             hole_contours,
             -1,  # vis_level: Auto-select ~64x downsample
-            3,   # line_thickness
+            3,  # line_thickness
             (0, 255, 0),  # color: Green for tissue
             (255, 0, 0),  # hole_color: Red for holes
         )
-        mask_img.save(mask_save_path, format='PNG', optimize=True)
+        mask_img.save(mask_save_path, format="PNG", optimize=True)
         del mask_img
         try:
             slide.close()
@@ -148,6 +160,7 @@ def _mask_visualization_worker(wsi_file_path: str, tissue_contours, hole_contour
     except Exception as e:
         # Log to stderr (subprocess stdout/stderr is not captured by parent logger)
         import sys
+
         print(f"[mask_worker] Failed to generate mask: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -166,7 +179,10 @@ def _run_mask_visualization_subprocess(
         Exit code: 0 = success, non-zero = failure (including segfault = -11)
     """
     import multiprocessing
-    ctx = multiprocessing.get_context('fork')  # fork is fastest on Linux (COW for contour arrays)
+
+    ctx = multiprocessing.get_context(
+        "fork"
+    )  # fork is fastest on Linux (COW for contour arrays)
     p = ctx.Process(
         target=_mask_visualization_worker,
         args=(wsi_file_path, tissue_contours, hole_contours, mask_save_path),
@@ -176,7 +192,9 @@ def _run_mask_visualization_subprocess(
 
     if p.is_alive():
         # Timeout: kill the subprocess
-        logger.warning(f"Mask visualization subprocess timed out after {timeout}s, killing it")
+        logger.warning(
+            f"Mask visualization subprocess timed out after {timeout}s, killing it"
+        )
         p.kill()
         p.join(timeout=5)
         return -1
@@ -185,6 +203,7 @@ def _run_mask_visualization_subprocess(
     if exit_code != 0:
         logger.warning(f"Mask visualization subprocess exited with code {exit_code}")
     return exit_code
+
 
 async def get_wsi_path_from_db(wsi_id: str, db: AsyncSession) -> Optional[Path]:
     """Get WSI file path from database"""
@@ -200,6 +219,7 @@ async def get_wsi_path_from_db(wsi_id: str, db: AsyncSession) -> Optional[Path]:
         logger.error(f"Failed to get WSI from database: {e}")
     return None
 
+
 async def get_slide(wsi_id: str, db: AsyncSession):
     """Get slide object with LRU cache"""
     if wsi_id in slide_cache:
@@ -211,7 +231,9 @@ async def get_slide(wsi_id: str, db: AsyncSession):
         # Get file path from database
         file_path = await get_wsi_path_from_db(wsi_id, db)
         if not file_path:
-            raise HTTPException(status_code=404, detail=f"WSI not found in database: {wsi_id}")
+            raise HTTPException(
+                status_code=404, detail=f"WSI not found in database: {wsi_id}"
+            )
 
         slide = _load_slide(str(file_path))
         slide_cache[wsi_id] = slide
@@ -234,7 +256,10 @@ async def get_slide(wsi_id: str, db: AsyncSession):
         logger.error(f"Failed to open slide: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to open slide: {str(e)}")
 
-async def get_deepzoom_generator(wsi_id: str, db: AsyncSession, tile_size: int = 254, overlap: int = 1):
+
+async def get_deepzoom_generator(
+    wsi_id: str, db: AsyncSession, tile_size: int = 254, overlap: int = 1
+):
     """Get DeepZoom generator with LRU cache"""
     cache_key = f"{wsi_id}_{tile_size}_{overlap}"
     if cache_key in dzg_cache:
@@ -260,7 +285,10 @@ async def get_deepzoom_generator(wsi_id: str, db: AsyncSession, tile_size: int =
         raise
     except Exception as e:
         logger.error(f"Failed to create DeepZoom generator: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to create DeepZoom generator: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to create DeepZoom generator: {str(e)}"
+        )
+
 
 @app.get("/health")
 def health():
@@ -296,7 +324,7 @@ async def get_wsi_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
             "file_path": file_path,
             "file_size": file_size,
             "width": wsi.width,
-            "height": wsi.height
+            "height": wsi.height,
         }
     except HTTPException:
         raise
@@ -318,13 +346,18 @@ async def get_patch_image(wsi_id: str, db: AsyncSession = Depends(get_db)):
 
         file_path = Path(wsi.wsi_path)
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File not found: {wsi.wsi_path}")
+            raise HTTPException(
+                status_code=404, detail=f"File not found: {wsi.wsi_path}"
+            )
 
         file_size = wsi.file_size or file_path.stat().st_size
 
         # Only allow patch files
         if not is_patch_file(str(file_path), file_size):
-            raise HTTPException(status_code=400, detail="This endpoint is only for patch images, use DZI for WSI files")
+            raise HTTPException(
+                status_code=400,
+                detail="This endpoint is only for patch images, use DZI for WSI files",
+            )
 
         # Read and return the image
         with open(file_path, "rb") as f:
@@ -333,29 +366,33 @@ async def get_patch_image(wsi_id: str, db: AsyncSession = Depends(get_db)):
         # Determine content type
         ext = file_path.suffix.lower()
         content_type_map = {
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.png': 'image/png',
-            '.bmp': 'image/bmp',
-            '.tif': 'image/tiff',
-            '.tiff': 'image/tiff'
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".bmp": "image/bmp",
+            ".tif": "image/tiff",
+            ".tiff": "image/tiff",
         }
-        content_type = content_type_map.get(ext, 'application/octet-stream')
+        content_type = content_type_map.get(ext, "application/octet-stream")
 
         return Response(content=image_data, media_type=content_type)
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get patch image: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get patch image: {str(e)}"
+        )
 
 
 @app.get("/wsi/{wsi_id}/thumbnail")
 async def get_thumbnail(
     wsi_id: str,
     size: int = Query(256, description="Max thumbnail size (width or height)"),
-    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
-    db: AsyncSession = Depends(get_db)
+    preset: Optional[str] = Query(
+        None, description="Optional rendering preset for lightweight previews"
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get thumbnail image for a WSI or patch file.
@@ -366,14 +403,20 @@ async def get_thumbnail(
     from PIL import Image
 
     try:
-        cache_headers = {"Cache-Control": "private, max-age=600"} if preset == "recommendation" else {}
+        cache_headers = (
+            {"Cache-Control": "private, max-age=600"}
+            if preset == "recommendation"
+            else {}
+        )
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
         file_path = Path(wsi.wsi_path)
         if not file_path.exists():
-            raise HTTPException(status_code=404, detail=f"File not found: {wsi.wsi_path}")
+            raise HTTPException(
+                status_code=404, detail=f"File not found: {wsi.wsi_path}"
+            )
 
         file_size = wsi.file_size or file_path.stat().st_size
 
@@ -382,19 +425,23 @@ async def get_thumbnail(
             # Patch file: load directly with PIL and resize
             with Image.open(file_path) as img:
                 try:
-                    img.draft('RGB', (size, size))
+                    img.draft("RGB", (size, size))
                 except Exception:
                     pass
 
                 # Resize to fit within size while maintaining aspect ratio
                 img.thumbnail((size, size), Image.Resampling.LANCZOS)
-                img = img.convert('RGB')
+                img = img.convert("RGB")
 
                 img_bytes = io.BytesIO()
-                img.save(img_bytes, format='JPEG', quality=85)
+                img.save(img_bytes, format="JPEG", quality=85)
                 img_bytes.seek(0)
 
-                return Response(content=img_bytes.getvalue(), media_type='image/jpeg', headers=cache_headers)
+                return Response(
+                    content=img_bytes.getvalue(),
+                    media_type="image/jpeg",
+                    headers=cache_headers,
+                )
         else:
             # WSI file: use ASlide to get thumbnail
             slide = None
@@ -404,29 +451,39 @@ async def get_thumbnail(
 
                 # Get the thumbnail from the lowest resolution level
                 # ASlide's Slide object should have get_thumbnail or similar
-                if hasattr(slide, 'get_thumbnail'):
+                if hasattr(slide, "get_thumbnail"):
                     thumbnail = slide.get_thumbnail((size, size))
                 else:
                     # Fallback: read from the highest level (lowest resolution)
-                    levels = slide.level_count if hasattr(slide, 'level_count') else len(slide.level_dimensions)
+                    levels = (
+                        slide.level_count
+                        if hasattr(slide, "level_count")
+                        else len(slide.level_dimensions)
+                    )
                     lowest_level = levels - 1
                     level_dims = slide.level_dimensions[lowest_level]
 
                     # Read the entire lowest level
                     region = slide.read_region((0, 0), lowest_level, level_dims)
-                    thumbnail = region.convert('RGB')
+                    thumbnail = region.convert("RGB")
 
                     # Resize to fit within size
                     thumbnail.thumbnail((size, size), Image.Resampling.LANCZOS)
 
                 img_bytes = io.BytesIO()
-                thumbnail.save(img_bytes, format='JPEG', quality=85)
+                thumbnail.save(img_bytes, format="JPEG", quality=85)
                 img_bytes.seek(0)
 
-                return Response(content=img_bytes.getvalue(), media_type='image/jpeg', headers=cache_headers)
+                return Response(
+                    content=img_bytes.getvalue(),
+                    media_type="image/jpeg",
+                    headers=cache_headers,
+                )
             except Exception as e:
                 logger.error(f"Failed to generate WSI thumbnail: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to generate thumbnail: {str(e)}")
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to generate thumbnail: {str(e)}"
+                )
             finally:
                 if slide is not None:
                     try:
@@ -437,7 +494,9 @@ async def get_thumbnail(
         raise
     except Exception as e:
         logger.error(f"Failed to get thumbnail: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get thumbnail: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get thumbnail: {str(e)}"
+        )
 
 
 @app.get("/api/wsi")
@@ -446,17 +505,14 @@ async def list_wsi(db: AsyncSession = Depends(get_db)):
     try:
         wsi_list = await WSIRepository.get_all(db)
         items = [
-            {
-                "wsi_id": wsi.wsi_id,
-                "label": wsi.label,
-                "wsi_path": wsi.wsi_path
-            }
+            {"wsi_id": wsi.wsi_id, "label": wsi.label, "wsi_path": wsi.wsi_path}
             for wsi in wsi_list
         ]
         return {"items": items}
     except Exception as e:
         logger.error(f"Failed to list WSI: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to list WSI: {str(e)}")
+
 
 @app.get("/wsi/{wsi_id}/dzi")
 async def get_dzi(wsi_id: str, request: Request, db: AsyncSession = Depends(get_db)):
@@ -472,18 +528,23 @@ async def get_dzi(wsi_id: str, request: Request, db: AsyncSession = Depends(get_
         tile_root = f"{base_url}/wsi/{wsi_id}/tiles/"
 
         try:
-            xml_str = dzi_xml.decode("utf-8") if isinstance(dzi_xml, (bytes, bytearray)) else str(dzi_xml)
+            xml_str = (
+                dzi_xml.decode("utf-8")
+                if isinstance(dzi_xml, (bytes, bytearray))
+                else str(dzi_xml)
+            )
         except Exception:
             xml_str = str(dzi_xml)
 
         # Always ensure absolute URL in DZI - replace existing Url or add new one
         import re
-        if ' Url=' in xml_str:
+
+        if " Url=" in xml_str:
             # Replace existing Url attribute with absolute URL
             xml_str = re.sub(r' Url="[^"]*"', f' Url="{tile_root}"', xml_str)
-        elif '<Image ' in xml_str:
+        elif "<Image " in xml_str:
             # Add Url attribute if not present
-            xml_str = xml_str.replace('<Image ', f'<Image Url="{tile_root}" ', 1)
+            xml_str = xml_str.replace("<Image ", f'<Image Url="{tile_root}" ', 1)
 
         return Response(content=xml_str, media_type="application/xml")
     except HTTPException:
@@ -492,6 +553,7 @@ async def get_dzi(wsi_id: str, request: Request, db: AsyncSession = Depends(get_
         logger.error(f"Failed to get DZI: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to get DZI: {str(e)}")
 
+
 @app.get("/wsi/{wsi_id}/tiles/{level}/{col}_{row}.{format}")
 async def get_tile(
     wsi_id: str,
@@ -499,10 +561,12 @@ async def get_tile(
     col: int = PathParam(..., description="Tile column"),
     row: int = PathParam(..., description="Tile row"),
     format: str = PathParam(..., description="Tile format (jpeg or png)"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Return WSI tile image"""
-    logger.debug(f"Requesting tile: {wsi_id}, level={level}, col={col}, row={row}, format={format}")
+    logger.debug(
+        f"Requesting tile: {wsi_id}, level={level}, col={col}, row={row}, format={format}"
+    )
 
     try:
         dzg = await get_deepzoom_generator(wsi_id, db)
@@ -511,14 +575,14 @@ async def get_tile(
         if level < 0 or level >= dzg.level_count:
             raise HTTPException(
                 status_code=404,
-                detail=f"Invalid level: {level}, valid range: 0-{dzg.level_count-1}"
+                detail=f"Invalid level: {level}, valid range: 0-{dzg.level_count - 1}",
             )
 
         level_tiles = dzg.level_tiles[level]
         if col < 0 or col >= level_tiles[0] or row < 0 or row >= level_tiles[1]:
             raise HTTPException(
                 status_code=404,
-                detail=f"Invalid tile coordinates: ({col}, {row}), valid range: x: 0-{level_tiles[0]-1}, y: 0-{level_tiles[1]-1}"
+                detail=f"Invalid tile coordinates: ({col}, {row}), valid range: x: 0-{level_tiles[0] - 1}, y: 0-{level_tiles[1] - 1}",
             )
 
         # Run blocking tile I/O in thread pool to avoid blocking the event loop
@@ -552,20 +616,29 @@ async def compute_patches(
     level: int = Query(0, description="Pyramid level"),
     force_recompute: bool = Query(False, description="Force recomputation"),
     # Tissue segmentation parameters
-    seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
-    sthresh: int = Query(8, description="Saturation threshold (0-255, low threshold for maximum tissue detection)"),
+    seg_level: int = Query(
+        -1, description="Pyramid level for tissue segmentation (-1 = auto)"
+    ),
+    sthresh: int = Query(
+        8,
+        description="Saturation threshold (0-255, low threshold for maximum tissue detection)",
+    ),
     mthresh: int = Query(7, description="Median filter kernel size"),
     close: int = Query(4, description="Morphological closing kernel size"),
     use_otsu: bool = Query(False, description="Use Otsu auto-thresholding"),
-    contour_fn: str = Query('four_pt', description="Contour check function (four_pt, center, basic)"),
+    contour_fn: str = Query(
+        "four_pt", description="Contour check function (four_pt, center, basic)"
+    ),
     use_padding: bool = Query(True, description="Allow patches at tissue boundary"),
     # Filter parameters
     a_t: int = Query(100, description="Minimum tissue area (in 512x512 patches)"),
     a_h: int = Query(16, description="Minimum hole area"),
     max_n_holes: int = Query(8, description="Maximum number of holes per contour"),
     # Visualization
-    save_mask: bool = Query(True, description="Save tissue segmentation mask visualization"),
-    db: AsyncSession = Depends(get_db)
+    save_mask: bool = Query(
+        True, description="Save tissue segmentation mask visualization"
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Compute patch coordinates with tissue detection (PrePATH-style)
@@ -591,18 +664,14 @@ async def compute_patches(
     try:
         # Prepare segmentation parameters
         seg_params = {
-            'sthresh': sthresh,
-            'mthresh': mthresh,
-            'close': close,
-            'use_otsu': use_otsu
+            "sthresh": sthresh,
+            "mthresh": mthresh,
+            "close": close,
+            "use_otsu": use_otsu,
         }
 
         # Prepare filter parameters
-        filter_params = {
-            'a_t': a_t,
-            'a_h': a_h,
-            'max_n_holes': max_n_holes
-        }
+        filter_params = {"a_t": a_t, "a_h": a_h, "max_n_holes": max_n_holes}
 
         # Load slide to get native MPP (needed for cache validation and coordinate computation)
         # Check if valid cache exists (skip tissue segmentation if not needed)
@@ -624,7 +693,9 @@ async def compute_patches(
 
             if cache_result is not None:
                 coordinates, coords_file = cache_result
-                logger.info(f"[Coords cache hit] {wsi_id}: {len(coordinates)} patches from {coords_file}")
+                logger.info(
+                    f"[Coords cache hit] {wsi_id}: {len(coordinates)} patches from {coords_file}"
+                )
 
                 # Return cached result (mask already exists or not needed)
                 response_data = {
@@ -651,8 +722,12 @@ async def compute_patches(
         # Perform tissue segmentation to get contours
         # NOTE: segment_tissue() is CPU-intensive (OpenCV operations).
         # Run in thread pool to avoid blocking the event loop (which also serves tiles).
-        logger.info(f"Segmenting tissue with params: {seg_params}, filter: {filter_params}, seg_level: {seg_level}")
-        segmenter = TissueSegmenter(**seg_params, seg_level=seg_level, filter_params=filter_params)
+        logger.info(
+            f"Segmenting tissue with params: {seg_params}, filter: {filter_params}, seg_level: {seg_level}"
+        )
+        segmenter = TissueSegmenter(
+            **seg_params, seg_level=seg_level, filter_params=filter_params
+        )
         tissue_contours, hole_contours = await asyncio.to_thread(
             segmenter.segment_tissue, slide
         )
@@ -715,7 +790,9 @@ async def compute_patches(
                         f"Skipping mask - this does not affect patch coordinates."
                     )
             except Exception as e:
-                logger.warning(f"Failed to generate mask visualization: {e}. Skipping mask.")
+                logger.warning(
+                    f"Failed to generate mask visualization: {e}. Skipping mask."
+                )
 
         # Prepare response before releasing resources
         num_patches = len(coordinates)
@@ -743,7 +820,7 @@ async def compute_patches(
             "num_contours": num_contours,
             "level": level,
             "coords_file": str(coords_file),
-            "cached": False
+            "cached": False,
         }
 
         if mask_file:
@@ -756,17 +833,24 @@ async def compute_patches(
     except Exception as e:
         logger.error(f"Failed to compute patches: {e}")
         import traceback
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to compute patches: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to compute patches: {str(e)}"
+        )
 
 
 @app.get("/wsi/{wsi_id}/patches")
 async def get_patches(
     wsi_id: str,
     level: int = Query(0, description="Pyramid level"),
-    seg_level: int = Query(-1, description="Pyramid level for tissue segmentation (-1 = auto)"),
-    max_patches: Optional[int] = Query(None, description="Maximum number of patches to return"),
-    db: AsyncSession = Depends(get_db)
+    seg_level: int = Query(
+        -1, description="Pyramid level for tissue segmentation (-1 = auto)"
+    ),
+    max_patches: Optional[int] = Query(
+        None, description="Maximum number of patches to return"
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get patch coordinates (compute if not cached)
@@ -803,12 +887,14 @@ async def get_patches(
         if max_patches and len(coordinates) > max_patches:
             coordinates = coordinates[:max_patches]
 
-        return JSONResponse({
-            "wsi_id": wsi_id,
-            "num_patches": len(coordinates),
-            "level": level,
-            "coordinates": coordinates
-        })
+        return JSONResponse(
+            {
+                "wsi_id": wsi_id,
+                "num_patches": len(coordinates),
+                "level": level,
+                "coordinates": coordinates,
+            }
+        )
 
     except HTTPException:
         raise
@@ -833,11 +919,11 @@ def get_mask(wsi_id: str):
         if not mask_path.exists():
             raise HTTPException(
                 status_code=404,
-                detail=f"Mask not found for {wsi_id}. Run compute_patches first with save_mask=true"
+                detail=f"Mask not found for {wsi_id}. Run compute_patches first with save_mask=true",
             )
 
         # Read and return image
-        with open(mask_path, 'rb') as f:
+        with open(mask_path, "rb") as f:
             img_bytes = f.read()
 
         return Response(content=img_bytes, media_type="image/png")
@@ -851,6 +937,7 @@ def get_mask(wsi_id: str):
 
 # --- Heatmap & CAM routes (extracted to heatmap_routes.py) ---
 from .heatmap_routes import router as heatmap_router
+
 app.include_router(heatmap_router)
 
 
@@ -861,7 +948,7 @@ async def get_patch_image(
     y: int = Query(..., description="Y coordinate of patch"),
     size: int = Query(256, description="Patch size"),
     level: int = Query(0, description="Pyramid level"),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get a patch image at the specified coordinates.
@@ -869,7 +956,9 @@ async def get_patch_image(
     Returns:
         JPEG image of the patch
     """
-    logger.debug(f"Getting patch image for {wsi_id} at ({x}, {y}), size={size}, level={level}")
+    logger.debug(
+        f"Getting patch image for {wsi_id} at ({x}, {y}), size={size}, level={level}"
+    )
 
     try:
         slide = await get_slide(wsi_id, db)
@@ -878,14 +967,14 @@ async def get_patch_image(
         region = slide.read_region((x, y), level, (size, size))
 
         # Convert RGBA to RGB
-        if region.mode == 'RGBA':
-            background = Image.new('RGB', region.size, (255, 255, 255))
+        if region.mode == "RGBA":
+            background = Image.new("RGB", region.size, (255, 255, 255))
             background.paste(region, mask=region.split()[3])
             region = background
 
         # Convert to JPEG bytes
         buf = io.BytesIO()
-        region.save(buf, format='JPEG', quality=90)
+        region.save(buf, format="JPEG", quality=90)
         buf.seek(0)
 
         return Response(content=buf.getvalue(), media_type="image/jpeg")
@@ -894,8 +983,9 @@ async def get_patch_image(
         raise
     except Exception as e:
         logger.error(f"Failed to get patch image: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get patch image: {str(e)}")
-
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get patch image: {str(e)}"
+        )
 
 
 # --- Annotation Region Extraction ---
@@ -905,6 +995,7 @@ from typing import Any
 
 class RegionSpec(BaseModel):
     """Specification for a single annotation region."""
+
     type: str = Field(..., description="Region type: 'rect' or 'polygon'")
     x: int = Field(..., description="Bounding box x (level-0 pixel)")
     y: int = Field(..., description="Bounding box y (level-0 pixel)")
@@ -912,23 +1003,26 @@ class RegionSpec(BaseModel):
     height: int = Field(..., description="Bounding box height (level-0 pixel)")
     label: str = Field(..., description="Region label")
     # Polygon-only: original polygon points stored as metadata
-    points: Optional[List[List[int]]] = Field(None, description="Polygon vertices [[x,y], ...]")
+    points: Optional[List[List[int]]] = Field(
+        None, description="Polygon vertices [[x,y], ...]"
+    )
 
 
 class ExtractRegionsRequest(BaseModel):
-    """Request body for region extraction."""
-    regions: Dict[str, List[RegionSpec]] = Field(
-        ..., description="Map of wsi_id -> list of region specs"
-    )
-    dataset_name: str = Field(..., description="Name for the new dataset")
-    task_type: str = Field(..., description="Task type (classification, segmentation, etc.)")
-    user_id: str = Field(..., description="User ID who initiated the extraction")
-    task_id: str = Field(..., description="Task ID for progress tracking")
-    source_dataset_id: Optional[str] = Field(None, description="For segmentation: reuse existing dataset instead of creating a new one")
+    regions: Dict[str, List[RegionSpec]]
+    dataset_name: str
+    task_type: str
+    user_id: str
+    task_id: str
+    source_dataset_id: Optional[str] = None
+    source_organ: Optional[str] = None
+    parent_dataset_id: Optional[str] = None
 
 
 @app.post("/annotation/extract_regions")
-async def extract_regions(req: ExtractRegionsRequest, db: AsyncSession = Depends(get_db)):
+async def extract_regions(
+    req: ExtractRegionsRequest, db: AsyncSession = Depends(get_db)
+):
     """
     Extract annotation regions from WSI/patch images and create a new dataset.
 
@@ -951,6 +1045,8 @@ async def extract_regions(req: ExtractRegionsRequest, db: AsyncSession = Depends
             user_id=req.user_id,
             task_id=req.task_id,
             source_dataset_id=req.source_dataset_id,
+            source_organ=req.source_organ,
+            parent_dataset_id=req.parent_dataset_id,
         )
     )
 
@@ -964,6 +1060,8 @@ async def _extract_regions_background(
     user_id: str,
     task_id: str,
     source_dataset_id: Optional[str] = None,
+    source_organ: Optional[str] = None,
+    parent_dataset_id: Optional[str] = None,
 ):
     """
     Background task: extract ROI regions from WSI/patch files and create a new dataset.
@@ -994,8 +1092,8 @@ async def _extract_regions_background(
         await set_progress(task_id, 0)
 
         async with async_session_maker() as db:
-            # Segmentation + source_dataset_id: reuse existing dataset, only generate COCO JSON
-            if task_type == "segmentation" and source_dataset_id:
+            # Segmentation + source_dataset_id and no new name: legacy reuse path (writes COCO JSON to existing dataset)
+            if task_type == "segmentation" and source_dataset_id and not dataset_name:
                 logger.info(
                     f"Segmentation reuse mode: adding COCO JSON to existing dataset {source_dataset_id}"
                 )
@@ -1023,6 +1121,8 @@ async def _extract_regions_background(
                     name=dataset_name,
                     group_id=data_group.group_id,
                     user_id=user_id,
+                    source_organ=source_organ or None,
+                    parent_dataset_id=parent_dataset_id or None,
                 )
                 dataset_id = dataset.dataset_id
                 await db.commit()
@@ -1045,12 +1145,16 @@ async def _extract_regions_background(
                         # Load source WSI info
                         source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
                         if not source_wsi:
-                            logger.warning(f"Source WSI not found during extraction: {source_wsi_id}")
+                            logger.warning(
+                                f"Source WSI not found during extraction: {source_wsi_id}"
+                            )
                             completed += len(region_list)
                             continue
 
                         source_path = Path(source_wsi.wsi_path)
-                        source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
+                        source_is_patch = is_patch_file(
+                            str(source_path), source_wsi.file_size or 0
+                        )
 
                         for region in region_list:
                             try:
@@ -1075,11 +1179,15 @@ async def _extract_regions_background(
 
                 await db.commit()
 
-        logger.info(f"Annotation extraction completed: task_id={task_id}, {completed}/{total_regions} regions")
+        logger.info(
+            f"Annotation extraction completed: task_id={task_id}, {completed}/{total_regions} regions"
+        )
         await set_progress(task_id, 100)
 
     except Exception as e:
-        logger.error(f"Annotation extraction failed: task_id={task_id}, error={e}", exc_info=True)
+        logger.error(
+            f"Annotation extraction failed: task_id={task_id}, error={e}", exc_info=True
+        )
         await set_progress(task_id, -1)  # -1 signals error
 
     finally:
@@ -1119,7 +1227,12 @@ async def _extract_single_region(
     if source_is_patch:
         # Patch file: crop with PIL
         cropped = await asyncio.to_thread(
-            _crop_patch_image, source_path, region.x, region.y, region.width, region.height
+            _crop_patch_image,
+            source_path,
+            region.x,
+            region.y,
+            region.width,
+            region.height,
         )
     else:
         # WSI file: read_region via ASlide
@@ -1217,7 +1330,6 @@ def _save_image_jpeg(img: Image.Image, output_path: Path):
     img.save(output_path, format="JPEG", quality=90)
 
 
-
 async def _extract_segmentation_dataset(
     db,
     regions: Dict[str, List["RegionSpec"]],
@@ -1309,12 +1421,14 @@ async def _extract_segmentation_dataset(
 
         # Add COCO image entry
         image_id_counter += 1
-        coco_images.append({
-            "id": image_id_counter,
-            "width": img_width,
-            "height": img_height,
-            "file_name": file_name,
-        })
+        coco_images.append(
+            {
+                "id": image_id_counter,
+                "width": img_width,
+                "height": img_height,
+                "file_name": file_name,
+            }
+        )
 
         # Convert each annotation region to COCO annotation
         for region in region_list:
@@ -1340,15 +1454,17 @@ async def _extract_segmentation_dataset(
             # Compute area
             area = region.width * region.height
 
-            coco_annotations.append({
-                "id": annotation_id_counter,
-                "image_id": image_id_counter,
-                "category_id": cat_id,
-                "segmentation": segmentation,
-                "bbox": [region.x, region.y, region.width, region.height],
-                "area": area,
-                "iscrowd": 0,
-            })
+            coco_annotations.append(
+                {
+                    "id": annotation_id_counter,
+                    "image_id": image_id_counter,
+                    "category_id": cat_id,
+                    "segmentation": segmentation,
+                    "bbox": [region.x, region.y, region.width, region.height],
+                    "area": area,
+                    "iscrowd": 0,
+                }
+            )
 
             completed += 1
             progress = int(completed / total_regions * 100)
@@ -1386,8 +1502,11 @@ async def _extract_segmentation_dataset(
 
     # Also save to DB as source of truth
     try:
-        from backend.common.annotation_summary_cache import rebuild_dataset_annotation_summary_cache
+        from backend.common.annotation_summary_cache import (
+            rebuild_dataset_annotation_summary_cache,
+        )
         from backend.database.repositories import SegmentationAnnotationRepository
+
         await SegmentationAnnotationRepository.upsert(
             db,
             annotation_id=f"annot_{dataset_id}",
@@ -1400,7 +1519,9 @@ async def _extract_segmentation_dataset(
         await db.commit()
         await rebuild_dataset_annotation_summary_cache(db, dataset_id)
     except Exception as e:
-        logger.warning(f"Failed to save COCO annotation to DB for dataset {dataset_id}: {e}")
+        logger.warning(
+            f"Failed to save COCO annotation to DB for dataset {dataset_id}: {e}"
+        )
 
     logger.info(
         f"Segmentation dataset created: dataset_id={dataset_id}, "
@@ -1414,5 +1535,6 @@ async def _extract_segmentation_dataset(
 def _save_coco_json(coco_data: dict[str, Any], output_path: Path):
     """Save COCO JSON to file (runs in thread)."""
     import json
+
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(coco_data, f, indent=2, ensure_ascii=False)

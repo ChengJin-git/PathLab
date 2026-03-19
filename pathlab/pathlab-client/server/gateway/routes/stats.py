@@ -3,6 +3,7 @@ System Statistics API Routes
 
 Provides system-wide statistics including WSI counts, task counts, and label distributions.
 """
+
 import asyncio
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,8 +12,15 @@ from sqlalchemy.orm import selectinload
 
 from backend.database import get_db, async_session
 from backend.database.models import (
-    WSISlide, AITask, TrainingTask,
-    ChatConversation, ChatMessage, SegmentationAnnotation, MessageFeedback,
+    WSISlide,
+    AITask,
+    TrainingTask,
+    DataGroup,
+    AnalysisRun,
+    ChatConversation,
+    ChatMessage,
+    SegmentationAnnotation,
+    MessageFeedback,
 )
 from backend.database.repositories import (
     WSIRepository,
@@ -67,14 +75,24 @@ async def get_stats(
 
     async def _get_labels():
         async with async_session() as db:
-            return await WSIRepository.get_label_distribution(db, user_id=user_id_filter)
+            return await WSIRepository.get_label_distribution(
+                db, user_id=user_id_filter
+            )
 
     async def _get_event_status():
         async with async_session() as db:
-            return await WSIRepository.get_event_status_distribution(db, user_id=user_id_filter)
+            return await WSIRepository.get_event_status_distribution(
+                db, user_id=user_id_filter
+            )
 
-    (wsi_count, task_count, completed_count, results_count,
-     labels_count, event_status_count) = await asyncio.gather(
+    (
+        wsi_count,
+        task_count,
+        completed_count,
+        results_count,
+        labels_count,
+        event_status_count,
+    ) = await asyncio.gather(
         _count_wsi(),
         _count_tasks(),
         _count_completed(),
@@ -89,16 +107,20 @@ async def get_stats(
         "completed_count": completed_count,
         "results_count": results_count,
         "labels": labels_count,
-        "event_status": event_status_count
+        "event_status": event_status_count,
     }
 
 
 @router.get("/recent-activity")
 async def get_recent_activity(
-    upload_limit: int = Query(5, ge=1, le=20, description="Number of recent uploads to return"),
-    task_limit: int = Query(5, ge=1, le=20, description="Number of recent tasks to return"),
+    upload_limit: int = Query(
+        5, ge=1, le=20, description="Number of recent uploads to return"
+    ),
+    task_limit: int = Query(
+        5, ge=1, le=20, description="Number of recent tasks to return"
+    ),
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get recent activity for the current user.
@@ -126,13 +148,15 @@ async def get_recent_activity(
             uploads_query = uploads_query.where(
                 or_(
                     WSISlide.user_id == user_id,
-                    WSISlide.dataset_id.in_(permitted_dataset_ids)
+                    WSISlide.dataset_id.in_(permitted_dataset_ids),
                 )
             )
         else:
             # Only user's own uploads
             uploads_query = uploads_query.where(WSISlide.user_id == user_id)
-    uploads_query = uploads_query.order_by(desc(WSISlide.created_at)).limit(upload_limit)
+    uploads_query = uploads_query.order_by(desc(WSISlide.created_at)).limit(
+        upload_limit
+    )
     uploads_result = await db.execute(uploads_query)
     recent_uploads = uploads_result.scalars().all()
 
@@ -148,10 +172,16 @@ async def get_recent_activity(
     # Get recent training tasks
     # User can see: their own tasks only
     # Note: must load data_group relationship for to_dict() to work
-    training_tasks_query = select(TrainingTask).options(selectinload(TrainingTask.data_group))
+    training_tasks_query = select(TrainingTask).options(
+        selectinload(TrainingTask.data_group)
+    )
     if not is_admin:
-        training_tasks_query = training_tasks_query.where(TrainingTask.user_id == user_id)
-    training_tasks_query = training_tasks_query.order_by(desc(TrainingTask.created_at)).limit(task_limit)
+        training_tasks_query = training_tasks_query.where(
+            TrainingTask.user_id == user_id
+        )
+    training_tasks_query = training_tasks_query.order_by(
+        desc(TrainingTask.created_at)
+    ).limit(task_limit)
     training_tasks_result = await db.execute(training_tasks_query)
     recent_training_tasks = training_tasks_result.scalars().all()
 
@@ -172,7 +202,7 @@ async def get_recent_activity(
 
     return {
         "recent_uploads": [wsi.to_dict() for wsi in recent_uploads],
-        "recent_tasks": recent_tasks
+        "recent_tasks": recent_tasks,
     }
 
 
@@ -202,12 +232,37 @@ async def get_user_usage_stats(
             .subquery()
         )
         training_sq = (
-            select(TrainingTask.user_id, func.count(TrainingTask.id).label("training_count"))
+            select(
+                TrainingTask.user_id,
+                func.count(TrainingTask.id).label("training_count"),
+            )
+            .join(DataGroup, DataGroup.group_id == TrainingTask.group_id)
+            .where(DataGroup.task_type != "external_validation")
+            .group_by(TrainingTask.user_id)
+            .subquery()
+        )
+        internal_analysis_sq = (
+            select(
+                AnalysisRun.user_id, func.count(AnalysisRun.id).label("internal_count")
+            )
+            .group_by(AnalysisRun.user_id)
+            .subquery()
+        )
+        external_analysis_sq = (
+            select(
+                TrainingTask.user_id,
+                func.count(TrainingTask.id).label("external_count"),
+            )
+            .join(DataGroup, DataGroup.group_id == TrainingTask.group_id)
+            .where(DataGroup.task_type == "external_validation")
             .group_by(TrainingTask.user_id)
             .subquery()
         )
         conv_sq = (
-            select(ChatConversation.user_id, func.count(ChatConversation.id).label("conversation_count"))
+            select(
+                ChatConversation.user_id,
+                func.count(ChatConversation.id).label("conversation_count"),
+            )
             .group_by(ChatConversation.user_id)
             .subquery()
         )
@@ -216,13 +271,19 @@ async def get_user_usage_stats(
                 ChatConversation.user_id,
                 func.count(ChatMessage.id).label("message_count"),
             )
-            .join(ChatMessage, ChatMessage.conversation_id == ChatConversation.conversation_id)
+            .join(
+                ChatMessage,
+                ChatMessage.conversation_id == ChatConversation.conversation_id,
+            )
             .where(ChatMessage.role == "user")
             .group_by(ChatConversation.user_id)
             .subquery()
         )
         annotation_sq = (
-            select(SegmentationAnnotation.user_id, func.count(SegmentationAnnotation.id).label("annotation_count"))
+            select(
+                SegmentationAnnotation.user_id,
+                func.count(SegmentationAnnotation.id).label("annotation_count"),
+            )
             .group_by(SegmentationAnnotation.user_id)
             .subquery()
         )
@@ -230,8 +291,12 @@ async def get_user_usage_stats(
             select(
                 MessageFeedback.user_id,
                 func.count(MessageFeedback.id).label("feedback_count"),
-                func.sum(case((MessageFeedback.feedback_type == "thumbs_up", 1), else_=0)).label("thumbs_up"),
-                func.sum(case((MessageFeedback.feedback_type == "thumbs_down", 1), else_=0)).label("thumbs_down"),
+                func.sum(
+                    case((MessageFeedback.feedback_type == "thumbs_up", 1), else_=0)
+                ).label("thumbs_up"),
+                func.sum(
+                    case((MessageFeedback.feedback_type == "thumbs_down", 1), else_=0)
+                ).label("thumbs_down"),
             )
             .group_by(MessageFeedback.user_id)
             .subquery()
@@ -239,6 +304,7 @@ async def get_user_usage_stats(
 
         # Cast user id to string for joining
         from sqlalchemy import cast, String
+
         user_id_str = func.cast(UserModel.id, String)
 
         query = (
@@ -250,9 +316,17 @@ async def get_user_usage_stats(
                 func.coalesce(wsi_sq.c.wsi_count, 0).label("wsi_count"),
                 func.coalesce(ai_task_sq.c.ai_task_count, 0).label("ai_task_count"),
                 func.coalesce(training_sq.c.training_count, 0).label("training_count"),
-                func.coalesce(conv_sq.c.conversation_count, 0).label("conversation_count"),
+                (
+                    func.coalesce(internal_analysis_sq.c.internal_count, 0)
+                    + func.coalesce(external_analysis_sq.c.external_count, 0)
+                ).label("analysis_count"),
+                func.coalesce(conv_sq.c.conversation_count, 0).label(
+                    "conversation_count"
+                ),
                 func.coalesce(msg_sq.c.message_count, 0).label("message_count"),
-                func.coalesce(annotation_sq.c.annotation_count, 0).label("annotation_count"),
+                func.coalesce(annotation_sq.c.annotation_count, 0).label(
+                    "annotation_count"
+                ),
                 func.coalesce(feedback_sq.c.feedback_count, 0).label("feedback_count"),
                 func.coalesce(feedback_sq.c.thumbs_up, 0).label("thumbs_up"),
                 func.coalesce(feedback_sq.c.thumbs_down, 0).label("thumbs_down"),
@@ -260,6 +334,12 @@ async def get_user_usage_stats(
             .outerjoin(wsi_sq, wsi_sq.c.user_id == user_id_str)
             .outerjoin(ai_task_sq, ai_task_sq.c.user_id == user_id_str)
             .outerjoin(training_sq, training_sq.c.user_id == user_id_str)
+            .outerjoin(
+                internal_analysis_sq, internal_analysis_sq.c.user_id == user_id_str
+            )
+            .outerjoin(
+                external_analysis_sq, external_analysis_sq.c.user_id == user_id_str
+            )
             .outerjoin(conv_sq, conv_sq.c.user_id == user_id_str)
             .outerjoin(msg_sq, msg_sq.c.user_id == user_id_str)
             .outerjoin(annotation_sq, annotation_sq.c.user_id == user_id_str)
@@ -274,20 +354,23 @@ async def get_user_usage_stats(
 
     users = []
     for row in rows:
-        users.append({
-            "user_id": row.user_id,
-            "email": row.email,
-            "nickname": row.nickname,
-            "role": row.role,
-            "wsi_count": row.wsi_count,
-            "ai_task_count": row.ai_task_count,
-            "training_count": row.training_count,
-            "conversation_count": row.conversation_count,
-            "message_count": row.message_count,
-            "annotation_count": row.annotation_count,
-            "feedback_count": row.feedback_count,
-            "thumbs_up": row.thumbs_up,
-            "thumbs_down": row.thumbs_down,
-        })
+        users.append(
+            {
+                "user_id": row.user_id,
+                "email": row.email,
+                "nickname": row.nickname,
+                "role": row.role,
+                "wsi_count": row.wsi_count,
+                "ai_task_count": row.ai_task_count,
+                "analysis_count": row.analysis_count,
+                "training_count": row.training_count,
+                "conversation_count": row.conversation_count,
+                "message_count": row.message_count,
+                "annotation_count": row.annotation_count,
+                "feedback_count": row.feedback_count,
+                "thumbs_up": row.thumbs_up,
+                "thumbs_down": row.thumbs_down,
+            }
+        )
 
     return {"users": users}

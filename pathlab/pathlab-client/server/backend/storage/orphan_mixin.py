@@ -160,20 +160,72 @@ class StorageOrphanMixin:
 
     def _scan_wsi_files(self, directory: Path, existing_wsi_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for WSI files."""
-        if directory.exists():
-            for item in directory.iterdir():
-                if item.is_file() and item.suffix.lower() in ALL_IMAGE_EXTENSIONS:
-                    wsi_id = item.stem
-                    if wsi_id not in existing_wsi_set:
-                        size = item.stat().st_size
-                        result["orphaned_wsi_files"].append({
-                            "path": str(item),
-                            "size": size,
-                            "wsi_id": wsi_id
-                        })
-                        result["total_orphaned_size"] += size
-                        result["total_orphaned_count"] += 1
-                        result["total_orphaned_file_count"] += 1
+        if not directory.exists():
+            return
+        for item in directory.iterdir():
+            if not (item.is_file() and item.suffix.lower() in ALL_IMAGE_EXTENSIONS):
+                continue
+            wsi_id = item.stem
+            if wsi_id in existing_wsi_set:
+                continue
+
+            ext = item.suffix.lower()
+            main_size = item.stat().st_size
+
+            # Main file entry
+            result["orphaned_wsi_files"].append({
+                "path": str(item),
+                "size": main_size,
+                "wsi_id": wsi_id,
+            })
+            result["total_orphaned_size"] += main_size
+            result["total_orphaned_count"] += 1
+            result["total_orphaned_file_count"] += 1
+
+            # .mrxs: also queue associated data directory (same stem)
+            if ext == ".mrxs":
+                data_folder = directory / item.stem
+                if data_folder.is_dir():
+                    folder_size = 0
+                    try:
+                        for root, _, files in os.walk(data_folder):
+                            for f in files:
+                                try:
+                                    folder_size += os.path.getsize(os.path.join(root, f))
+                                except OSError:
+                                    pass
+                    except OSError:
+                        pass
+                    result["orphaned_wsi_files"].append({
+                        "path": str(data_folder),
+                        "size": folder_size,
+                        "wsi_id": wsi_id,
+                    })
+                    result["total_orphaned_size"] += folder_size
+                    result["total_orphaned_count"] += 1
+
+            # .tmap: also queue same-stem .DT<n> sibling files
+            elif ext == ".tmap":
+                try:
+                    for sibling in directory.iterdir():
+                        if not sibling.is_file() or sibling.stem != item.stem:
+                            continue
+                        sext = sibling.suffix.lower()
+                        if sext.startswith(".dt") and len(sext) > 3 and sext[3:].isdigit():
+                            try:
+                                dt_size = sibling.stat().st_size
+                            except OSError:
+                                dt_size = 0
+                            result["orphaned_wsi_files"].append({
+                                "path": str(sibling),
+                                "size": dt_size,
+                                "wsi_id": wsi_id,
+                            })
+                            result["total_orphaned_size"] += dt_size
+                            result["total_orphaned_count"] += 1
+                            result["total_orphaned_file_count"] += 1
+                except OSError:
+                    pass
 
     def _scan_coordinates(self, directory: Path, existing_wsi_set: set[Any], result: Dict[str, Any]) -> None:
         """Scanner for coordinate files."""

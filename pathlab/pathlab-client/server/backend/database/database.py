@@ -15,6 +15,7 @@ import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
+from sqlalchemy import text
 from backend.common.config import Config
 from .migrate_chat_conversations_schema import ensure_chat_conversations_schema
 from .models import Base
@@ -135,26 +136,34 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db():
-    """
-    Initialize database: create all tables.
-
-    This should be called on application startup.
-    PostgreSQL tables are created automatically if they don't exist.
-    """
-    # Mask password in URL for logging
     import re
-    safe_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:***@', DATABASE_URL)
+
+    safe_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", DATABASE_URL)
     logger.info(f"Using PostgreSQL: {safe_url}")
-    # Import all models to register them in Base.metadata BEFORE create_all.
-    # User model lives in backend.auth.models but shares the same Base.
-    # Without this import, the "users" table won't be created.
     import backend.auth.models  # noqa: F401
 
     async with engine.begin() as conn:
-        # Create all tables
         await conn.run_sync(Base.metadata.create_all)
         await ensure_chat_conversations_schema(conn)
         logger.info("All tables created/verified successfully")
+        await conn.execute(
+            text(
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
+            )
+        )
 
     # Create default admin user if no users exist
     await _create_default_admin()
@@ -179,15 +188,19 @@ async def _create_default_admin():
 
                 # Create password hash - use environment variable or fallback
                 password_helper = PasswordHelper()
-                default_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "pathlab_default_password123")
+                default_password = os.getenv(
+                    "DEFAULT_ADMIN_PASSWORD", "pathlab_default_password123"
+                )
                 hashed_password = password_helper.hash(default_password)
 
                 # Create SHA256 hash for secure login
                 import hashlib
+
                 password_sha256 = hashlib.sha256(default_password.encode()).hexdigest()
 
                 # Create admin user with simple username (not email format)
                 import uuid
+
                 admin_user = User(
                     id=uuid.uuid4(),
                     email="admin",  # Using simple username, not email format
@@ -202,9 +215,13 @@ async def _create_default_admin():
 
                 session.add(admin_user)
                 await session.commit()
-                logger.warning("Default admin user created (username: admin). Please change the default password after first login!")
+                logger.warning(
+                    "Default admin user created (username: admin). Please change the default password after first login!"
+                )
             else:
-                logger.info(f"Found {user_count} existing user(s), skipping default admin creation")
+                logger.info(
+                    f"Found {user_count} existing user(s), skipping default admin creation"
+                )
     except Exception as e:
         logger.error(f"Could not create default admin user: {e}")
 
@@ -226,4 +243,3 @@ async def close_db():
     """
     await engine.dispose()
     print("[Database] Database connections closed")
-

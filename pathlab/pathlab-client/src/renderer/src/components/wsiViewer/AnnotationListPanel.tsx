@@ -13,6 +13,7 @@ interface AnnotationListPanelProps {
   loadingCrossSlideSummary?: boolean
   labelColors: Record<string, string>
   focusedRegionId?: string | null
+  canCreateDataset?: boolean
   onFocusRegion?: (regionId: string) => void
   onUpdateRegion: (regionId: string, updates: Partial<AnnotationRegion>) => void
   onDeleteRegion: (regionId: string) => void
@@ -30,6 +31,7 @@ export function AnnotationListPanel({
   loadingCrossSlideSummary = false,
   labelColors,
   focusedRegionId = null,
+  canCreateDataset = true,
   onFocusRegion,
   onUpdateRegion,
   onDeleteRegion,
@@ -58,18 +60,16 @@ export function AnnotationListPanel({
     return counts
   }, [allAnnotations])
 
-  const isRemoteSummaryPending = preferRemoteCrossSlideSummary && (!crossSlideSummary || loadingCrossSlideSummary)
+  const hasLoadedAnnotations = Object.keys(allAnnotations).length > 0
+
+  const isRemoteSummaryPending = preferRemoteCrossSlideSummary && !hasLoadedAnnotations && (!crossSlideSummary || loadingCrossSlideSummary)
 
   const effectiveSummary = useMemo(() => {
-    if (preferRemoteCrossSlideSummary && !crossSlideSummary) {
-      return {
-        counts: {},
-        totalRegions: 0,
-        totalSlides: 0,
-      }
+    if (preferRemoteCrossSlideSummary && !hasLoadedAnnotations && !crossSlideSummary) {
+      return { counts: {}, totalRegions: 0, totalSlides: 0 }
     }
 
-    if (!crossSlideSummary) {
+    if (hasLoadedAnnotations) {
       return {
         counts: localSummary,
         totalRegions: Object.values(allAnnotations).reduce((sum, regs) => sum + regs.length, 0),
@@ -77,17 +77,21 @@ export function AnnotationListPanel({
       }
     }
 
-    return {
-      counts: Object.fromEntries(
-        Object.entries(crossSlideSummary.labels).map(([label, data]) => [
-          label,
-          { total: data.total_regions, slides: new Set<string>(Array.from({ length: data.total_slides }, (_, idx) => `${label}:${idx}`)) },
-        ])
-      ) as Record<string, { total: number; slides: Set<string> }>,
-      totalRegions: crossSlideSummary.total_regions,
-      totalSlides: crossSlideSummary.total_slides,
+    if (crossSlideSummary) {
+      return {
+        counts: Object.fromEntries(
+          Object.entries(crossSlideSummary.labels).map(([label, data]) => [
+            label,
+            { total: data.total_regions, slides: new Set<string>(Array.from({ length: data.total_slides }, (_, idx) => `${label}:${idx}`)) },
+          ])
+        ) as Record<string, { total: number; slides: Set<string> }>,
+        totalRegions: crossSlideSummary.total_regions,
+        totalSlides: crossSlideSummary.total_slides,
+      }
     }
-  }, [allAnnotations, crossSlideSummary, localSummary, preferRemoteCrossSlideSummary])
+
+    return { counts: {}, totalRegions: 0, totalSlides: 0 }
+  }, [allAnnotations, crossSlideSummary, hasLoadedAnnotations, localSummary, preferRemoteCrossSlideSummary])
 
   const handleStartEdit = (region: AnnotationRegion) => {
     setEditingId(region.id)
@@ -333,7 +337,7 @@ export function AnnotationListPanel({
               </div>
             )}
             {/* Create Dataset button */}
-            {effectiveSummary.totalRegions > 0 && !isRemoteSummaryPending && (
+            {effectiveSummary.totalRegions > 0 && !isRemoteSummaryPending && canCreateDataset && (
               <button
                 onClick={onCreateDataset}
                 className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 transition-colors shadow-sm"

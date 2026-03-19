@@ -100,6 +100,12 @@ from .chat_intent_policy import (
     detect_conversation_mode,
     resolve_search_policy,
 )
+from .external_validation_analysis import (
+    check_extval_compatibility,
+    ExtvalModelInfo,
+    ExtvalDatasetInfo,
+    EXTRACTOR_EMBED_DIM,
+)
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -114,6 +120,10 @@ ACTIVE_TRAINING_STATUSES = {
 }
 _EPOCH_PROGRESS_RE = re.compile(r"epoch\s+(\d+)\s*/\s*(\d+)", re.IGNORECASE)
 MAX_MODELS_IN_CHAT_CONTEXT = 5
+# Number of semantically-closest models to surface in the LLM context.
+# When a user's query is embedded and compared against cached model embeddings,
+# only the top-K matches are included — regardless of total model count.
+TOP_K_MODELS_IN_CHAT_CONTEXT = 5
 DEFAULT_MODEL_SCAN_LIMIT = 100
 FILTERED_MODEL_SCAN_LIMIT = 5000
 MODEL_SCAN_BATCH_SIZE = 200
@@ -296,6 +306,23 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
             "prefer `[ANALYSIS_CONFIG]` (analysis_type: external) or `[METRIC_CONFIG]`."
         )
 
+    if mode == ConversationMode.MODEL_CARD:
+        if detected_lang == "zh_CN":
+            return (
+                "当前这轮是查看已训练模型信息/模型卡片的回合，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
+                "请直接使用已有的模型上下文，回答用户关于模型架构、特征提取器、聚合器、类别标签和训练配置等信息的问题。"
+            )
+        if detected_lang == "zh_HK":
+            return (
+                "當前這輪是查看已訓練模型資訊/模型卡片的回合，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
+                "請直接使用已有的模型上下文，回答用戶關於模型架構、特徵提取器、聚合器、類別標籤和訓練配置等資訊的問題。"
+            )
+        return (
+            "This turn is about viewing a trained model's information or model card, not literature search. "
+            "Do NOT use `[WEB_SEARCH]`. Use the existing model context to answer questions about "
+            "the model's architecture, feature extractor, aggregator, class labels, and training configuration."
+        )
+
     if detected_lang == "zh_CN":
         return (
             "当前这轮是站内分析/验证/结果展示流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
@@ -368,6 +395,7 @@ def _looks_like_training_model_recommendation_output(text: str) -> bool:
         "phikon",
         "smartccs",
         "smartcyto",
+        "cytofm",
         "unet",
         "segformer",
         "conv_decoder",
@@ -406,19 +434,19 @@ def _build_training_recommendation_context_block(
             "histopathology": "本轮推荐应优先结合任务/器官匹配的 PathBench 结果，再联网查近期任务证据；不要把 UNI 或任何单一 encoder 视为普遍最优。",
             "segmentation": "本轮推荐应优先结合 PathBench / 病理分割相关证据，再联网查近期任务证据；不要默认任何单一 FM extractor。",
             "cervical_cytology": "本轮推荐对宫颈 / 妇科细胞学应优先考虑 Smart-CCS，再联网查近期任务证据。",
-            "general_cytology": "本轮推荐对非宫颈 / 非妇科或通用细胞学应优先考虑 SmartCyto，再联网查同任务公开证据；不要把缺少公开命中当成反证。",
+            "general_cytology": "本轮推荐对非宫颈 / 非妇科或通用细胞学，SmartCyto 和 CytoFM 均为优先候选（SmartCyto 是视觉-语言预训练模型，CytoFM 是纯视觉自监督模型），再联网查同任务公开证据；不要把缺少公开命中当成反证。",
         },
         "zh_HK": {
             "histopathology": "本輪推薦應優先結合任務/器官匹配的 PathBench 結果，再聯網查近期任務證據；不要把 UNI 或任何單一 encoder 視為普遍最優。",
             "segmentation": "本輪推薦應優先結合 PathBench / 病理分割相關證據，再聯網查近期任務證據；不要預設任何單一 FM extractor。",
             "cervical_cytology": "本輪推薦對宮頸 / 婦科細胞學應優先考慮 Smart-CCS，再聯網查近期任務證據。",
-            "general_cytology": "本輪推薦對非宮頸 / 非婦科或通用細胞學應優先考慮 SmartCyto，再聯網查同任務公開證據；不要把缺少公開命中當成反證。",
+            "general_cytology": "本輪推薦對非宮頸 / 非婦科或通用細胞學，SmartCyto 和 CytoFM 均為優先候選（SmartCyto 是視覺-語言預訓練模型，CytoFM 是純視覺自監督模型），再聯網查同任務公開證據；不要把缺少公開命中當成反證。",
         },
         "en": {
             "histopathology": "Prioritize task/organ-matched PathBench evidence, then verify with a fresh web search; do not treat UNI or any single encoder as universally best.",
             "segmentation": "Prioritize PathBench/pathology-segmentation evidence, then verify with a fresh web search; do not default to any single FM extractor.",
             "cervical_cytology": "For cervical / gynecologic cytology, prioritize Smart-CCS, then verify with a fresh web search.",
-            "general_cytology": "For non-cervical, non-gynecologic, or general cytology, prioritize SmartCyto, then verify with task-matched public evidence; do not treat missing public hits as counter-evidence.",
+            "general_cytology": "For non-cervical, non-gynecologic, or general cytology, both SmartCyto and CytoFM are preferred candidates (SmartCyto is a vision-language pretrained model; CytoFM is a pure vision self-supervised model); verify with task-matched public evidence and do not treat missing public hits as counter-evidence.",
         },
     }
     notes = profile_notes.get(detected_lang, profile_notes["en"])
@@ -1069,117 +1097,6 @@ def _get_segmentation_model_spec(
     }
 
 
-def _get_external_validation_compatibility_error(
-    *,
-    model: Any,
-    training_task: TrainingTask | None,
-    model_data_type: str,
-    model_task_type: str,
-    source_dataset_id: str | None,
-    training_dataset_ids: set[str],
-    model_wsi_ids: set[str],
-    dataset_meta: dict[str, Any],
-    extractor_embed_dim: dict[str, int],
-) -> str | None:
-    model_is_survival = model_task_type == "survival"
-    model_is_segmentation = _is_segmentation_task(model_task_type)
-    model_classes = set(
-        _normalize_label_names(
-            list(
-                (
-                    training_task.classes
-                    if isinstance(training_task, TrainingTask)
-                    else None
-                )
-                or model.classes
-                or []
-            )
-        )
-    )
-    model_extractor = str(getattr(model, "feature_extractor", "") or "").strip()
-    model_embed_dim = extractor_embed_dim.get(model_extractor, 0)
-
-    dataset_data_type = dataset_meta.get("data_type", "unknown")
-    dataset_task_type = dataset_meta.get("task_type", "unknown")
-    dataset_is_survival = dataset_task_type == "survival"
-    dataset_is_segmentation = _is_segmentation_task(dataset_task_type)
-
-    if dataset_data_type != model_data_type:
-        return "data_type mismatch"
-
-    if model_is_survival != dataset_is_survival:
-        return "task_type mismatch"
-
-    if model_is_segmentation != dataset_is_segmentation:
-        return "task_type mismatch"
-
-    if model_is_segmentation:
-        if dataset_data_type != "patch":
-            return "segmentation requires patch dataset"
-        if dataset_meta.get("aggregation_level") != "file":
-            return "segmentation requires file-level dataset"
-
-        segmentation_spec = _get_segmentation_model_spec(model, training_task)
-        if not segmentation_spec["is_complete"]:
-            return "segmentation model metadata incomplete"
-        if not segmentation_spec["is_consistent"]:
-            return "segmentation architecture/backbone mismatch"
-
-        if not source_dataset_id:
-            return "source training dataset cannot be determined"
-        if dataset_meta.get("dataset_id") == source_dataset_id:
-            return "target dataset is the source training dataset"
-
-        model_segmentation_labels = _normalize_label_names(
-            list(
-                (
-                    training_task.classes
-                    if isinstance(training_task, TrainingTask)
-                    else None
-                )
-                or model.classes
-                or []
-            )
-        )
-        dataset_segmentation_labels = _normalize_label_names(
-            dataset_meta.get("segmentation_labels", [])
-        )
-        if not model_segmentation_labels or not dataset_segmentation_labels:
-            return "segmentation labels missing"
-        if model_segmentation_labels != dataset_segmentation_labels:
-            return "segmentation labels mismatch"
-
-        dataset_wsi_ids = set(dataset_meta.get("wsi_ids", []))
-        if model_wsi_ids and dataset_wsi_ids and (model_wsi_ids & dataset_wsi_ids):
-            return "training data overlap"
-        return None
-
-    if not model_is_survival:
-        dataset_labels = set(
-            _normalize_label_names(list((dataset_meta.get("labels") or {}).keys()))
-        )
-        if model_classes != dataset_labels:
-            return "classification labels mismatch"
-
-    if model_data_type == "wsi" and model_extractor and model_embed_dim > 0:
-        dataset_extractors = dataset_meta.get("available_feature_extractors", []) or []
-        has_same_dim = any(
-            (extractor_embed_dim.get(extractor, 0) == model_embed_dim)
-            for extractor in dataset_extractors
-        )
-        if not has_same_dim:
-            return "feature extractor embedding dimension mismatch"
-
-    dataset_wsi_ids = set(dataset_meta.get("wsi_ids", []))
-    if model_wsi_ids and dataset_wsi_ids and (model_wsi_ids & dataset_wsi_ids):
-        return "training data overlap"
-
-    if dataset_meta.get("dataset_id") in training_dataset_ids:
-        return "target dataset is part of training data"
-
-    return None
-
-
 # Maximum PDF papers to include in the AI supplement response (awaited tasks).
 # ALL PDFs found in search results are started as background tasks (so they get
 # cached for follow-up questions), but only the first _MAX_PDFS_SUPPLEMENT are
@@ -1795,6 +1712,25 @@ def _infer_model_request_filters(user_text: str) -> dict[str, Any]:
     if not normalized_text:
         return {}
 
+    generic_model_listing_patterns = [
+        "我有什么模型",
+        "我有哪些模型",
+        "有多少模型",
+        "多少模型",
+        "列出模型",
+        "看下模型",
+        "看看模型",
+        "show models",
+        "list models",
+        "how many models",
+        "latest model",
+        "newest model",
+        "最新模型",
+        "最新训练的模型",
+    ]
+    if any(p in normalized_text for p in generic_model_listing_patterns):
+        return {}
+
     task_type_keywords: dict[str, list[str]] = {
         "classification": ["classification", "classify", "classifier", "分类"],
         "survival": ["survival", "prognosis", "prognostic", "生存", "预后"],
@@ -2003,6 +1939,86 @@ def _format_model_filter_summary(filters: dict[str, Any]) -> str:
     if filters.get("text_keywords"):
         parts.append(f"keywords={','.join(filters['text_keywords'])}")
     return ", ".join(parts)
+
+
+def _semantic_top_k_models(
+    query_text: str,
+    model_summaries: list[dict[str, Any]],
+    k: int = TOP_K_MODELS_IN_CHAT_CONTEXT,
+) -> list[dict[str, Any]]:
+    if not model_summaries or len(model_summaries) <= k:
+        return model_summaries
+
+    has_embeddings = any(
+        isinstance(s.get("embedding"), list) and len(s["embedding"]) > 0
+        for s in model_summaries
+    )
+    if not has_embeddings or not query_text.strip():
+        return model_summaries[:k]
+
+    try:
+        import numpy as np
+        from .chat_pdf_vectorstore import _embed_texts
+
+        q_vec = _embed_texts([query_text])[0]
+        q_norm = np.linalg.norm(q_vec)
+        if q_norm == 0:
+            return model_summaries[:k]
+        q_vec = q_vec / q_norm
+
+        scores: list[tuple[float, int]] = []
+        for idx, s in enumerate(model_summaries):
+            emb = s.get("embedding")
+            if not isinstance(emb, list):
+                scores.append((0.0, idx))
+                continue
+            v = np.array(emb, dtype=np.float32)
+            v_norm = np.linalg.norm(v)
+            if v_norm == 0:
+                scores.append((0.0, idx))
+                continue
+            sim = float(np.dot(q_vec, v / v_norm))
+            scores.append((sim, idx))
+
+        scores.sort(key=lambda x: x[0], reverse=True)
+        top_indices = [idx for _, idx in scores[:k]]
+        return [model_summaries[i] for i in top_indices]
+
+    except Exception:
+        return model_summaries[:k]
+
+
+def _should_use_semantic_model_ranking(
+    latest_user_text: str,
+    inferred_model_filters: dict[str, Any],
+    recent_user_texts: list[str],
+) -> bool:
+    normalized = (latest_user_text or "").strip().lower()
+    if not normalized:
+        return False
+
+    generic_patterns = [
+        "有多少模型",
+        "多少模型",
+        "看下模型",
+        "看看模型",
+        "列出模型",
+        "有哪些模型",
+        "show models",
+        "list models",
+        "how many models",
+        "latest model",
+        "newest model",
+        "最新模型",
+        "最新训练的模型",
+    ]
+    if any(p in normalized for p in generic_patterns):
+        return False
+
+    if inferred_model_filters:
+        return True
+
+    return len(recent_user_texts) > 1
 
 
 def _extract_images_from_content(content: object) -> list[str]:
@@ -4030,15 +4046,38 @@ async def chat_with_ai(
             elevated_dataset_ids = [perm.dataset_id for perm in temp_permissions]
 
     latest_user_text = ""
+    recent_user_texts: list[str] = []
     for msg in reversed(req.messages):
         if msg.get("role") == "user":
-            latest_user_text = extract_text_from_content(msg.get("content", ""))
-            if latest_user_text.strip():
-                break
+            _msg_text = extract_text_from_content(msg.get("content", ""))
+            if _msg_text.strip():
+                if not latest_user_text:
+                    latest_user_text = _msg_text
+                recent_user_texts.append(_msg_text)
+                if len(recent_user_texts) >= 3:
+                    break
     inferred_model_filters = _infer_model_request_filters(latest_user_text)
+    semantic_query_text = (
+        "\n".join(reversed(recent_user_texts))
+        if recent_user_texts
+        else latest_user_text
+    )
+    use_semantic_model_ranking = _should_use_semantic_model_ranking(
+        latest_user_text,
+        inferred_model_filters,
+        recent_user_texts,
+    )
+    models_selection_note = (
+        "semantic relevance to current request"
+        if use_semantic_model_ranking
+        else "most recent training time (newest first)"
+    )
 
     _ctx_cache_uid = str(user.id)
     _ctx_cached = None
+    _cached_models_list = "  None - user needs to train a model first"
+    _cached_models_count = 0
+    _cached_models_shown = 0
     if user.is_admin():
         _ctx_cached = await get_cached_context_kwargs_admin()
     elif elevated_dataset_ids is None:
@@ -4066,35 +4105,21 @@ async def chat_with_ai(
                 _cached_model_summaries.append({**item, "line": line, "id": model_id})
         _cached_trained_models_total = _ctx_cached.get("trained_models_total", 0)
         if _cached_model_summaries:
-            _recent = _cached_model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
-            _sections = []
-            if inferred_model_filters:
-                _matching = [
-                    s
-                    for s in _cached_model_summaries
-                    if _matches_model_request_filters(s, inferred_model_filters)
-                ][:MAX_MODELS_IN_CHAT_CONTEXT]
-                _filter_summary = _format_model_filter_summary(inferred_model_filters)
-                _sections.append(
-                    f"  MATCHING CURRENT REQUEST (preferred for this turn; filters={_filter_summary}):"
+            if use_semantic_model_ranking:
+                _relevant_summaries = _semantic_top_k_models(
+                    semantic_query_text, _cached_model_summaries
                 )
-                if _matching:
-                    _sections.extend(s["line"] for s in _matching)
-                else:
-                    _sections.append("  - None")
-                _matching_ids = {s["id"] for s in _matching}
-                _others = [s for s in _recent if s["id"] not in _matching_ids]
-                if _others:
-                    _sections.append("  ADDITIONAL CANDIDATE MODELS:")
-                    _sections.extend(s["line"] for s in _others)
             else:
-                _sections.append("  CANDIDATE MODELS:")
-                _sections.extend(s["line"] for s in _recent)
-            _cached_models_list = "\n".join(_sections)
+                _relevant_summaries = _cached_model_summaries[
+                    :TOP_K_MODELS_IN_CHAT_CONTEXT
+                ]
+            _cached_models_list = "\n".join(s["line"] for s in _relevant_summaries)
             _cached_models_count = _cached_trained_models_total
+            _cached_models_shown = len(_relevant_summaries)
         else:
             _cached_models_list = "  None - user needs to train a model first"
             _cached_models_count = 0
+            _cached_models_shown = 0
 
     async def _with_new_session(coro_factory):
         async with async_session() as s:
@@ -4380,28 +4405,6 @@ async def chat_with_ai(
     else:
         data_types_info = "None"
 
-    # Format trained models info (with detailed info for external validation)
-    # Embedding dimension mapping for feature extractors
-    EXTRACTOR_EMBED_DIM = {
-        "resnet50": 2048,
-        "vit_l_16": 1024,
-        "conch": 512,
-        "uni": 1024,
-        "uni2": 1536,
-        "virchow": 1280,
-        "virchow2": 1280,
-        "plip": 512,
-        "phikon": 1024,
-        "phikon2": 1024,
-        "patho_clip": 512,
-        "openmidnight": 1536,
-        "conch15": 512,
-        "H-Optimus-1": 1536,
-        "H-Optimus-0": 1536,
-        "mSTAR": 1024,
-        "GPFM": 1024,
-    }
-
     if trained_models:
         model_summaries = []
         # Batch query all training tasks to get detailed info with eager loading
@@ -4545,10 +4548,31 @@ async def chat_with_ai(
             # Get embedding dimension for WSI models
             embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
 
-            # -----------------------------------------------------------------------
-            # Pre-compute compatible datasets for external validation at API level.
-            # Rules mirror the frontend/backend external validation validation logic.
-            # -----------------------------------------------------------------------
+            _seg_spec = _get_segmentation_model_spec(m, training_task)
+            _model_raw_classes = list(
+                (
+                    training_task.classes
+                    if isinstance(training_task, TrainingTask)
+                    else None
+                )
+                or m.classes
+                or []
+            )
+            _extval_model_info = ExtvalModelInfo(
+                data_type=data_type,
+                task_type=task_type,
+                classes=_model_raw_classes,
+                feature_extractor=str(getattr(m, "feature_extractor", "") or ""),
+                wsi_ids=model_wsi_ids,
+                source_dataset_id=source_dataset_id,
+                seg_task_architecture=_seg_spec["task_architecture"],
+                seg_task_backbone=_seg_spec["task_backbone"],
+                seg_saved_architecture=_seg_spec["saved_architecture"],
+                seg_saved_backbone=_seg_spec["saved_backbone"],
+                segmentation_labels=_model_raw_classes,
+                training_dataset_ids=training_dataset_ids,
+            )
+
             compatible_datasets = []
             if data_type != "unknown" and task_type != "unknown":
                 _now_compat = time.monotonic()
@@ -4579,22 +4603,20 @@ async def chat_with_ai(
                             )
                         continue
 
-                    ds["available_feature_extractors"] = (
-                        available_extractors_per_dataset.get(cand_id, [])
-                    )
-                    ds["wsi_ids"] = dataset_wsi_ids_per_dataset.get(
-                        cand_id, ds.get("wsi_ids", [])
-                    )
-                    compatibility_error = _get_external_validation_compatibility_error(
-                        model=m,
-                        training_task=training_task,
-                        model_data_type=data_type,
-                        model_task_type=task_type,
-                        source_dataset_id=source_dataset_id,
-                        training_dataset_ids=training_dataset_ids,
-                        model_wsi_ids=model_wsi_ids,
-                        dataset_meta=ds,
-                        extractor_embed_dim=EXTRACTOR_EMBED_DIM,
+                    compatibility_error = check_extval_compatibility(
+                        model_info=_extval_model_info,
+                        dataset_info=ExtvalDatasetInfo(
+                            dataset_id=cand_id,
+                            data_type=ds.get("data_type", "unknown"),
+                            task_type=ds.get("task_type", "unknown"),
+                            aggregation_level=ds.get("aggregation_level", "file"),
+                            labels=list((ds.get("labels") or {}).keys()),
+                            segmentation_labels=ds.get("segmentation_labels") or [],
+                            feature_extractors=available_extractors_per_dataset.get(
+                                cand_id, []
+                            ),
+                            wsi_ids=set(dataset_wsi_ids_per_dataset.get(cand_id, [])),
+                        ),
                     )
                     _compat_check_cache[_ck] = (
                         compatibility_error is None,
@@ -4627,11 +4649,15 @@ async def chat_with_ai(
                 if source_dataset_id:
                     info_parts.append(f"source_dataset_id={source_dataset_id}")
 
-            # Add feature extractor info for WSI models
-            if data_type == "wsi" and model_feature_extractor != "unknown":
+            # Add feature extractor / backbone for all model types.
+            # - WSI cls/survival: feature extractor name (uni, conch, …)
+            # - Patch cls:        feature extractor name (resnet50, uni, …)
+            # - Patch seg:        encoder backbone (resnet50, conch, …) stored in
+            #                     model.feature_extractor during training
+            if model_feature_extractor not in ("unknown", ""):
                 info_parts.append(f"feature_extractor={model_feature_extractor}")
-                if embed_dim > 0:
-                    info_parts.append(f"embedding_dim={embed_dim}")
+            if data_type == "wsi" and embed_dim > 0:
+                info_parts.append(f"embedding_dim={embed_dim}")
 
             # Add training dataset source / names for reference
             if training_dataset_sources:
@@ -4663,6 +4689,8 @@ async def chat_with_ai(
                 info_parts.append("heatmap_result_datasets=[]")
 
             info_parts.append(f"trained_on_task={model_task_id}")
+            if training_task and training_task.task_name:
+                info_parts.append(f"task_name={training_task.task_name}")
 
             # Add pre-computed compatible datasets list (API-level filtering)
             if compatible_datasets:
@@ -4696,48 +4724,33 @@ async def chat_with_ai(
                 }
             )
 
-        recent_model_summaries = model_summaries[:MAX_MODELS_IN_CHAT_CONTEXT]
-        models_sections = []
+        if (
+            use_semantic_model_ranking
+            and model_summaries
+            and len(model_summaries) > TOP_K_MODELS_IN_CHAT_CONTEXT
+        ):
+            try:
+                from .chat_pdf_vectorstore import _embed_texts as _emb
 
-        if inferred_model_filters:
-            matching_model_summaries = [
-                summary
-                for summary in model_summaries
-                if _matches_model_request_filters(summary, inferred_model_filters)
-            ][:MAX_MODELS_IN_CHAT_CONTEXT]
-            filter_summary = _format_model_filter_summary(inferred_model_filters)
-            models_sections.append(
-                f"  MATCHING CURRENT REQUEST (preferred for this turn; filters={filter_summary}):"
+                _emb_vecs = _emb([s["line"] for s in model_summaries])
+                for _i, _s in enumerate(model_summaries):
+                    _s["embedding"] = _emb_vecs[_i].tolist()
+            except Exception:
+                pass
+        if use_semantic_model_ranking:
+            relevant_summaries = _semantic_top_k_models(
+                semantic_query_text, model_summaries
             )
-            if matching_model_summaries:
-                models_sections.extend(
-                    summary["line"] for summary in matching_model_summaries
-                )
-            else:
-                models_sections.append("  - None")
-
-            matching_model_ids = {summary["id"] for summary in matching_model_summaries}
-            other_recent_models = [
-                summary
-                for summary in recent_model_summaries
-                if summary["id"] not in matching_model_ids
-            ]
-            if other_recent_models:
-                models_sections.append("  ADDITIONAL CANDIDATE MODELS:")
-                models_sections.extend(
-                    summary["line"] for summary in other_recent_models
-                )
         else:
-            models_sections.append("  CANDIDATE MODELS:")
-            models_sections.extend(
-                summary["line"] for summary in recent_model_summaries
-            )
-
-        models_list = "\n".join(models_sections)
+            relevant_summaries = model_summaries[:TOP_K_MODELS_IN_CHAT_CONTEXT]
+        models_list = "\n".join(summary["line"] for summary in relevant_summaries)
         models_count = trained_models_total
+        models_shown = len(relevant_summaries)
     else:
+        model_summaries = []
         models_list = "  None - user needs to train a model first"
         models_count = 0
+        models_shown = 0
 
     # Format user permissions info
     user_role = user.role
@@ -4886,6 +4899,8 @@ async def chat_with_ai(
         datasets_list=datasets_list,
         models_count=models_count,
         models_list=models_list,
+        models_shown=models_shown,
+        models_selection_note=models_selection_note,
         training_tasks_total=training_tasks_total,
         training_tasks_completed=training_tasks_completed,
         training_tasks_running=training_tasks_running,
@@ -4950,6 +4965,8 @@ async def chat_with_ai(
             datasets_list=_ctx_cached.get("datasets_list", "  None"),
             models_count=_cached_models_count,
             models_list=_cached_models_list,
+            models_shown=_cached_models_shown,
+            models_selection_note=models_selection_note,
             training_tasks_total=_ctx_cached.get("training_tasks_total", 0),
             training_tasks_completed=_ctx_cached.get("training_tasks_completed", 0),
             training_tasks_running=_ctx_cached.get("training_tasks_running", 0),

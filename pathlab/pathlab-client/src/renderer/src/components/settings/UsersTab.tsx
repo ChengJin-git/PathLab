@@ -17,6 +17,8 @@ import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
 import { CreateUserModal } from './CreateUserModal'
 import { PermissionCenterModal } from './PermissionCenterModal'
+import { AnnotationAuditCard } from './AnnotationAuditCard'
+import { useAuth } from '../../contexts/AuthContext'
 
 type PermissionMode = 'user' | 'dataset'
 
@@ -37,6 +39,7 @@ function getRoleBadgeColor(role: string) {
 
 export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId }: UsersTabProps) {
   const { t } = useTranslation()
+  const { isAdmin } = useAuth()
 
   // User management state
   const [users, setUsers] = useState<UserListItem[]>([])
@@ -667,6 +670,8 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
         </>
       )}
     </Card>
+
+      {isAdmin && <AnnotationAuditCard />}
 
       {/* Edit User Modal */}
       {editingUser && (

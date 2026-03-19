@@ -1,19 +1,18 @@
-"""
-SegmentationAnnotationRepository - Data Access Layer for Segmentation Annotations
-
-Unified COCO-format annotation storage for segmentation tasks.
-Supports annotations from viewer drawing, file import, upload, and ROI extraction.
-"""
-
 import logging
 from typing import List, Optional, Set, Any
-from sqlalchemy import select, delete, func, or_
+from sqlalchemy import select, delete, update, func, or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 from ..models import SegmentationAnnotation, utc_now
+
+
+class VersionConflictError(Exception):
+    def __init__(self, current_version: int):
+        self.current_version = current_version
+        super().__init__(f"Version conflict: current version is {current_version}")
 
 
 class SegmentationAnnotationRepository:
@@ -66,7 +65,9 @@ class SegmentationAnnotationRepository:
         annotation_pk = result.scalar_one()
 
         annotation_result = await db.execute(
-            select(SegmentationAnnotation).where(SegmentationAnnotation.id == annotation_pk)
+            select(SegmentationAnnotation).where(
+                SegmentationAnnotation.id == annotation_pk
+            )
         )
         return annotation_result.scalar_one()
 
@@ -123,11 +124,12 @@ class SegmentationAnnotationRepository:
         dataset_id: str,
         user_id: str,
     ) -> int:
-        """Delete all annotations for a user within a dataset. Returns deleted row count."""
+        """Delete personal draft annotations for a user within a dataset. Returns deleted row count."""
         result = await db.execute(
             delete(SegmentationAnnotation)
             .where(SegmentationAnnotation.source_dataset_id == dataset_id)
             .where(SegmentationAnnotation.user_id == user_id)
+            .where(SegmentationAnnotation.status == "draft")
         )
         await db.flush()
         return int(result.rowcount or 0)
@@ -257,7 +259,7 @@ class SegmentationAnnotationRepository:
             .order_by(SegmentationAnnotation.updated_at.desc())
         )
         if not include_drafts:
-            query = query.where(SegmentationAnnotation.status != "draft")
+            query = query.where(SegmentationAnnotation.status == "finalized")
 
         result = await db.execute(query)
         return result.scalars().all()
@@ -279,7 +281,7 @@ class SegmentationAnnotationRepository:
         query = (
             select(SegmentationAnnotation)
             .where(SegmentationAnnotation.source_dataset_id == dataset_id)
-            .where(SegmentationAnnotation.status != "draft")
+            .where(SegmentationAnnotation.status == "finalized")
             .where(SegmentationAnnotation.annotation_id.in_(target_ids))
             .order_by(SegmentationAnnotation.updated_at.desc())
         )
@@ -299,10 +301,179 @@ class SegmentationAnnotationRepository:
                 func.max(SegmentationAnnotation.updated_at),
             )
             .where(SegmentationAnnotation.source_dataset_id == dataset_id)
-            .where(SegmentationAnnotation.status != "draft")
+            .where(SegmentationAnnotation.status == "finalized")
         )
         count, latest_updated_at = result.one()
         return {
             "count": int(count or 0),
-            "latest_updated_at": latest_updated_at.isoformat() if latest_updated_at else None,
+            "latest_updated_at": latest_updated_at.isoformat()
+            if latest_updated_at
+            else None,
         }
+
+    @staticmethod
+    async def get_shared_draft(
+        db: AsyncSession,
+        dataset_id: str,
+    ) -> Optional[SegmentationAnnotation]:
+        result = await db.execute(
+            select(SegmentationAnnotation).where(
+                SegmentationAnnotation.annotation_id == f"shared_{dataset_id}"
+            )
+        )
+        return result.scalar_one_or_none()
+
+    @staticmethod
+    async def upsert_shared(
+        db: AsyncSession,
+        dataset_id: str,
+        owner_user_id: str,
+        last_edited_by: str,
+        annotations: dict[str, Any],
+        expected_version: int,
+        force: bool = False,
+    ) -> SegmentationAnnotation:
+        """
+        Atomically create-or-update the shared_draft for a dataset.
+
+        force=True  (owner / admin): skip version check, always overwrite.
+        force=False (collaborator):  UPDATE only when version == expected_version.
+                                     Raises VersionConflictError if stale.
+        """
+        annotation_id = f"shared_{dataset_id}"
+        timestamp = utc_now()
+
+        if force:
+            stmt = (
+                insert(SegmentationAnnotation)
+                .values(
+                    annotation_id=annotation_id,
+                    user_id=owner_user_id,
+                    source_dataset_id=dataset_id,
+                    annotations=annotations,
+                    status="shared_draft",
+                    source="viewer",
+                    version=expected_version + 1,
+                    last_edited_by=last_edited_by,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+                .on_conflict_do_update(
+                    index_elements=[SegmentationAnnotation.annotation_id],
+                    set_={
+                        "annotations": annotations,
+                        "version": SegmentationAnnotation.version + 1,
+                        "last_edited_by": last_edited_by,
+                        "updated_at": timestamp,
+                    },
+                )
+                .returning(SegmentationAnnotation)
+            )
+            return (await db.execute(stmt)).scalar_one()
+
+        existing = await SegmentationAnnotationRepository.get_shared_draft(
+            db, dataset_id
+        )
+        if existing is None:
+            stmt = (
+                insert(SegmentationAnnotation)
+                .values(
+                    annotation_id=annotation_id,
+                    user_id=owner_user_id,
+                    source_dataset_id=dataset_id,
+                    annotations=annotations,
+                    status="shared_draft",
+                    source="viewer",
+                    version=1,
+                    last_edited_by=last_edited_by,
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+                .on_conflict_do_nothing()
+                .returning(SegmentationAnnotation)
+            )
+            row = (await db.execute(stmt)).scalar_one_or_none()
+            if row is not None:
+                return row
+            current = await SegmentationAnnotationRepository.get_shared_draft(
+                db, dataset_id
+            )
+            raise VersionConflictError(
+                current_version=current.version if current else 0
+            )
+
+        upd = (
+            update(SegmentationAnnotation)
+            .where(SegmentationAnnotation.annotation_id == annotation_id)
+            .where(SegmentationAnnotation.version == expected_version)
+            .values(
+                annotations=annotations,
+                version=expected_version + 1,
+                last_edited_by=last_edited_by,
+                updated_at=timestamp,
+            )
+            .returning(SegmentationAnnotation)
+        )
+        upd_result = await db.execute(upd)
+        updated = upd_result.scalar_one_or_none()
+        if updated is None:
+            current = await SegmentationAnnotationRepository.get_shared_draft(
+                db, dataset_id
+            )
+            raise VersionConflictError(
+                current_version=current.version if current else 0
+            )
+        return updated
+
+    @staticmethod
+    async def delete_shared(
+        db: AsyncSession,
+        dataset_id: str,
+    ) -> bool:
+        result = await db.execute(
+            delete(SegmentationAnnotation).where(
+                SegmentationAnnotation.annotation_id == f"shared_{dataset_id}"
+            )
+        )
+        await db.flush()
+        return result.rowcount > 0
+
+    @staticmethod
+    async def bulk_delete_regions_by_creator(
+        db: AsyncSession,
+        dataset_id: str,
+        creator_user_id: str,
+    ) -> int:
+        shared = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
+        if shared is None:
+            return 0
+
+        original: dict[str, Any] = (
+            shared.annotations if isinstance(shared.annotations, dict) else {}
+        )
+        filtered: dict[str, Any] = {}
+        deleted_count = 0
+
+        for wsi_id, regions in original.items():
+            if not isinstance(regions, list):
+                filtered[wsi_id] = regions
+                continue
+            kept = [r for r in regions if r.get("created_by") != creator_user_id]
+            deleted_count += len(regions) - len(kept)
+            filtered[wsi_id] = kept
+
+        if deleted_count == 0:
+            return 0
+
+        timestamp = utc_now()
+        await db.execute(
+            update(SegmentationAnnotation)
+            .where(SegmentationAnnotation.annotation_id == f"shared_{dataset_id}")
+            .values(
+                annotations=filtered,
+                version=shared.version + 1,
+                updated_at=timestamp,
+            )
+        )
+        await db.flush()
+        return deleted_count

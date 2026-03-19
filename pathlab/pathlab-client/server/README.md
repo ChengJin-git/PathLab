@@ -1,6 +1,6 @@
 # PathLab Python Backend
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.3`
 
 `server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI** 三个服务进程，并复用 `backend/` 下的共享模块。
 
@@ -28,7 +28,16 @@
 server/
 ├── main.py                 # 统一入口，负责拉起 3 个服务
 ├── requirements.txt        # Python 依赖
+├── requirements-test.txt   # 测试依赖（pytest、pytest-asyncio、httpx）
+├── pytest.ini              # asyncio_mode = auto
 ├── main.spec               # PyInstaller 配置
+├── tests/                  # 后端单元测试
+│   ├── conftest.py         # fixtures：auth mock、app factory、load_dotenv
+│   ├── test_config.py      # Config 类测试（28）
+│   ├── test_settings.py    # /settings 路由测试（19）
+│   ├── test_queue_config.py # /queue 路由测试（15）
+│   ├── test_ai_models.py   # AI 模型 GPU 测试（54）
+│   └── test_ai_extractors_pretrained.py  # HF 预训练模型测试（~144）
 ├── gateway/                # 对外 API 网关
 ├── backend/
 │   ├── ai/                 # AI 服务与任务实现
@@ -69,6 +78,44 @@ server/
 - AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
 - `main.spec` 用于将 sidecar 打包为独立可执行文件
 - 代码树中虽然存在 `backend/deep-research/`，但当前 sidecar 默认只启动 Gateway / Preprocessing / AI 三个服务
+
+## 单元测试
+
+后端测试基于 **pytest** + **pytest-asyncio** + **httpx**，覆盖配置层、Gateway 路由以及 AI 模型推理。
+
+```bash
+# 在 pathlab-client/ 目录下运行
+python -m pytest server/tests/ -v
+
+# 跳过需要 GPU 的预训练模型测试
+python -m pytest server/tests/ -v -k "not pretrained"
+
+# 单独运行预训练模型测试（需 GPU，耗时较长）
+python -m pytest server/tests/test_ai_extractors_pretrained.py -v
+```
+
+安装测试依赖：
+
+```bash
+pip install -r server/requirements-test.txt
+```
+
+当前后端测试文件（5 个测试文件，116 个常规测试 + ~144 个预训练模型测试）：
+
+| 文件 | 测试数 | 覆盖内容 |
+|------|--------|---------|
+| `tests/test_config.py` | 28 | Config 全局设置、任务超时、并发数、维护模式 |
+| `tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm（在线/离线/超时/无模型）|
+| `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
+| `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
+| `tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
+
+**测试设计要点**
+
+- **路由测试**：创建只挂载单个 router 的裸 FastAPI app，`app.dependency_overrides` 替换 auth 依赖，`httpx.AsyncClient(transport=ASGITransport(...))` 发请求，不依赖真实 DB / Redis / GPU
+- **Config 测试**：每个测试的 setup / teardown 两端均重置 `Config._global_settings_cache`、`_global_settings_dirty`、`_task_timeout`，防止缓存跨测试污染
+- **预训练模型测试**：用模块级 `_MODEL_CACHE` dict 跨 parametrize 用例复用同一模型实例，避免重复加载大模型
+- **HF Token**：通过 `.env`（已 gitignored）传入，`conftest.py` 顶部 `load_dotenv` 加载；`.env.example` 含 `HF_TOKEN` 占位说明
 
 ## 相关文档
 

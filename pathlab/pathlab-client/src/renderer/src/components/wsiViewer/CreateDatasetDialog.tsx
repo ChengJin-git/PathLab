@@ -1,7 +1,8 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { PackagePlus, Loader2 } from 'lucide-react'
+import { PackagePlus, Loader2, ChevronDown } from 'lucide-react'
 import { AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
+import { organSources, organSourceKeyMap } from '../upload/types'
 
 interface CreateDatasetDialogProps {
   show: boolean
@@ -9,21 +10,30 @@ interface CreateDatasetDialogProps {
   allAnnotations: AnnotationsMap
   summary?: DatasetAnnotationSummaryResponse | null
   labelColors: Record<string, string>
-  sourceDatasetId?: string
-  /** True if any annotated source slide is a WSI (not a patch image) */
   hasWsiSources?: boolean
-  onSubmitCreateDataset: (params: { datasetName: string; taskType: 'classification' | 'segmentation' }) => Promise<void>
+  defaultSource?: string | null
+  onSubmitCreateDataset: (params: { datasetName: string; taskType: 'classification' | 'segmentation'; sourceOrgan: string }) => Promise<void>
 }
 
 export function CreateDatasetDialog({
-  show, onClose, allAnnotations, summary, labelColors, sourceDatasetId,
+  show, onClose, allAnnotations, summary, labelColors,
   hasWsiSources = false,
+  defaultSource,
   onSubmitCreateDataset,
 }: CreateDatasetDialogProps) {
   const { t } = useTranslation()
   const [datasetName, setDatasetName] = useState('')
   const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
+  const [sourceSelection, setSourceSelection] = useState('')
+  const [sourceCustom, setSourceCustom] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  const knownSources = useMemo(() => organSources.filter(s => s !== 'Other'), [])
+
+  const resolvedSource = useMemo(() => {
+    if (sourceSelection === 'Other') return sourceCustom.trim()
+    return sourceSelection.trim()
+  }, [sourceSelection, sourceCustom])
 
   const localSummary = useMemo(() => {
     const labelCounts: Record<string, number> = {}
@@ -51,28 +61,40 @@ export function CreateDatasetDialog({
     }
   }, [localSummary, summary])
 
-  // Reset state when dialog opens
   useEffect(() => {
     if (show) {
       setDatasetName('')
       setTaskType('classification')
       setSubmitting(false)
+      const normalized = defaultSource?.trim() || ''
+      if (!normalized) {
+        setSourceSelection('')
+        setSourceCustom('')
+      } else if (knownSources.includes(normalized)) {
+        setSourceSelection(normalized)
+        setSourceCustom('')
+      } else {
+        setSourceSelection('Other')
+        setSourceCustom(normalized)
+      }
     }
-  }, [show])
-
-  // Segmentation on existing dataset: reuse instead of creating new
-  const isSegReuse = taskType === 'segmentation' && !!sourceDatasetId
+  }, [show, defaultSource, knownSources])
 
   const handleSubmit = async () => {
-    if ((!isSegReuse && !datasetName.trim()) || effectiveSummary.totalRegions === 0 || submitting) return
+    if (!datasetName.trim() || effectiveSummary.totalRegions === 0 || submitting) return
     setSubmitting(true)
-
     try {
-      await onSubmitCreateDataset({ datasetName: datasetName.trim(), taskType })
+      await onSubmitCreateDataset({ datasetName: datasetName.trim(), taskType, sourceOrgan: resolvedSource })
       onClose()
     } catch {
       setSubmitting(false)
     }
+  }
+
+  const getSourceLabel = (val: string) => {
+    if (!val) return ''
+    const key = organSourceKeyMap[val]
+    return key ? String(t(`organSources.${key}`)) : val
   }
 
   if (!show) return null
@@ -88,35 +110,28 @@ export function CreateDatasetDialog({
             <h3 className="text-lg font-semibold text-gray-900">{t('annotation.createDatasetTitle')}</h3>
           </div>
 
-          {/* Dataset name input — hidden when reusing existing dataset */}
-          {isSegReuse ? (
-            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm text-blue-700">{t('annotation.reuseDatasetHint')}</p>
-            </div>
-          ) : (
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.datasetName')}</label>
-              <input
-                type="text"
-                value={datasetName}
-                onChange={e => setDatasetName(e.target.value)}
-                placeholder={t('annotation.datasetNamePlaceholder')}
-                className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
-                disabled={submitting}
-                autoFocus
-              />
-            </div>
-          )}
-
-          {/* Task type selector */}
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.taskType')}</label>
+            <label htmlFor="create-dataset-name" className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.datasetName')}</label>
+            <input
+              id="create-dataset-name"
+              type="text"
+              value={datasetName}
+              onChange={e => setDatasetName(e.target.value)}
+              placeholder={t('annotation.datasetNamePlaceholder')}
+              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+              disabled={submitting}
+            />
+          </div>
+
+          <fieldset className="mb-4">
+            <legend className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.taskType')}</legend>
             <div className="flex gap-2">
               {(['classification', 'segmentation'] as const).map(tt => {
                 const isDisabled = submitting || (tt === 'segmentation' && hasWsiSources)
                 return (
                   <button
                     key={tt}
+                    type="button"
                     onClick={() => !isDisabled && setTaskType(tt)}
                     disabled={isDisabled}
                     title={tt === 'segmentation' && hasWsiSources ? t('annotation.segmentationWsiNotSupported') : undefined}
@@ -135,6 +150,45 @@ export function CreateDatasetDialog({
             </div>
             {hasWsiSources && (
               <p className="text-xs text-amber-600 mt-1">{t('annotation.segmentationWsiNotSupported')}</p>
+            )}
+          </fieldset>
+
+          <div className="mb-4">
+            <div className="flex items-center gap-2 mb-1">
+              <label htmlFor="create-dataset-source" className="text-sm font-medium text-gray-700">{t('annotation.datasetSource')}</label>
+              {defaultSource?.trim() && (
+                <span className="text-xs font-normal text-indigo-500">{t('annotation.sourceInherited')}</span>
+              )}
+            </div>
+            <div className="relative">
+              <select
+                id="create-dataset-source"
+                value={sourceSelection}
+                onChange={e => {
+                  setSourceSelection(e.target.value)
+                  if (e.target.value !== 'Other') setSourceCustom('')
+                }}
+                disabled={submitting}
+                className="w-full appearance-none px-3 py-2 pr-8 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none bg-white text-gray-700 disabled:bg-gray-50 disabled:text-gray-400"
+              >
+                <option value="">{t('annotation.sourceSelectPlaceholder')}</option>
+                {organSources.map(src => (
+                  <option key={src} value={src}>
+                    {getSourceLabel(src)}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
+            </div>
+            {sourceSelection === 'Other' && (
+              <input
+                type="text"
+                value={sourceCustom}
+                onChange={e => setSourceCustom(e.target.value)}
+                placeholder={t('annotation.sourceCustomPlaceholder')}
+                disabled={submitting}
+                className="mt-2 w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+              />
             )}
           </div>
 
@@ -160,6 +214,7 @@ export function CreateDatasetDialog({
 
         <div className="flex gap-3 px-6 py-4 bg-gray-50 border-t">
           <button
+            type="button"
             onClick={onClose}
             disabled={submitting}
             className="flex-1 px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
@@ -167,8 +222,9 @@ export function CreateDatasetDialog({
             {t('common.cancel')}
           </button>
           <button
+            type="button"
             onClick={handleSubmit}
-            disabled={(!isSegReuse && !datasetName.trim()) || effectiveSummary.totalRegions === 0 || submitting}
+            disabled={!datasetName.trim() || effectiveSummary.totalRegions === 0 || submitting}
             className="flex-1 px-4 py-2 text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
           >
             {submitting ? (
@@ -183,4 +239,3 @@ export function CreateDatasetDialog({
     </div>
   )
 }
-

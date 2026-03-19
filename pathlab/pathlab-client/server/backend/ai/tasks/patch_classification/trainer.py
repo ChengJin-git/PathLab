@@ -5,6 +5,7 @@ Consistent training paradigm with WSI Classification:
 1. Use Foundation Model as Feature Extractor (frozen)
 2. Train Linear Probe (instead of Aggregator for WSI)
 """
+
 from __future__ import annotations
 
 import json
@@ -21,23 +22,43 @@ import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from sklearn.metrics import (
-    roc_auc_score, accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix as sklearn_confusion_matrix
+    roc_auc_score,
+    accuracy_score,
+    precision_score,
+    recall_score,
+    f1_score,
+    confusion_matrix as sklearn_confusion_matrix,
 )
 
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.extractors import get_extractor
 from backend.ai.classifiers import get_classifier
+from backend.ai.utils.vram_guard import (
+    check_vram_before_model_load,
+    VRAMInsufficientError,
+)
 from backend.ai.utils.patch_resize import (
     build_patch_classification_transform,
     resolve_patch_resize_size,
 )
-from backend.ai.schemas import TaskType, TaskStatus, TrainResponse, FeatureExtractionResponse
+from backend.ai.schemas import (
+    TaskType,
+    TaskStatus,
+    TrainResponse,
+    FeatureExtractionResponse,
+)
 from backend.ai.utils.patch_dataset import PatchDatasetFromDB
 from backend.ai.utils.cam_utils import get_cam_extractor, get_cam_spatial_size
-from backend.database.repositories import TrainingTaskRepository, WSIRepository, AIResultRepository
+from backend.database.repositories import (
+    TrainingTaskRepository,
+    WSIRepository,
+    AIResultRepository,
+)
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
-from backend.ai.permission_revocation import is_permission_revoked, PermissionRevokedException
+from backend.ai.permission_revocation import (
+    is_permission_revoked,
+    PermissionRevokedException,
+)
 from backend.ai.tasks.training_utils import (
     safe_update_progress as _safe_update_progress,
     scoped_db,
@@ -46,6 +67,8 @@ from backend.ai.tasks.training_utils import (
     calculate_kfold_classification_metrics,
     calculate_progress_update_interval,
     interpolate_progress,
+    save_resume_checkpoint_sync,
+    delete_resume_checkpoint,
 )
 
 
@@ -99,7 +122,16 @@ class PatchClassificationTrainer(BaseTrainer):
         This method is a no-op to satisfy the BaseTrainer interface.
         """
         # Suppress unused parameter warnings (required by BaseTrainer interface)
-        del wsi_ids, extractor_name, batch_size, force_recompute, logger, session_maker, hf_token, preprocessing_config
+        del (
+            wsi_ids,
+            extractor_name,
+            batch_size,
+            force_recompute,
+            logger,
+            session_maker,
+            hf_token,
+            preprocessing_config,
+        )
         return self._build_feature_response([])
 
     def _is_kfold_splits(self, splits_map: Dict[str, List[str]]) -> bool:
@@ -193,15 +225,41 @@ class PatchClassificationTrainer(BaseTrainer):
 
         if is_kfold:
             return await self._train_kfold(
-                splits_map, image_paths, labels, classes, label_mapper,
-                extractor_name, num_classes, epochs, lr, logger, session_maker, all_ids,
-                optimizer, auto_balance, early_stopping_patience, classifier_name
+                splits_map,
+                image_paths,
+                labels,
+                classes,
+                label_mapper,
+                extractor_name,
+                num_classes,
+                epochs,
+                lr,
+                logger,
+                session_maker,
+                all_ids,
+                optimizer,
+                auto_balance,
+                early_stopping_patience,
+                classifier_name,
             )
         else:
             return await self._train_regular(
-                splits_map, image_paths, labels, classes, label_mapper,
-                extractor_name, num_classes, epochs, lr, logger, session_maker, all_ids,
-                optimizer, auto_balance, early_stopping_patience, classifier_name
+                splits_map,
+                image_paths,
+                labels,
+                classes,
+                label_mapper,
+                extractor_name,
+                num_classes,
+                epochs,
+                lr,
+                logger,
+                session_maker,
+                all_ids,
+                optimizer,
+                auto_balance,
+                early_stopping_patience,
+                classifier_name,
             )
 
     @staticmethod
@@ -278,7 +336,9 @@ class PatchClassificationTrainer(BaseTrainer):
         classifier_name: str = "linear",
     ) -> TrainResponse:
         """Train with regular train/val/test splits."""
-        train_ids = list(splits_map.get("train", []))  # Make a copy to avoid modifying original
+        train_ids = list(
+            splits_map.get("train", [])
+        )  # Make a copy to avoid modifying original
         val_ids = list(splits_map.get("val", []))
         test_ids = splits_map.get("test", [])
 
@@ -289,6 +349,7 @@ class PatchClassificationTrainer(BaseTrainer):
         auto_val_created = False
         if not val_ids and len(train_ids) > 1:
             import random
+
             n_val = max(1, int(len(train_ids) * 0.1))
             random.shuffle(train_ids)
             val_ids = train_ids[:n_val]
@@ -298,17 +359,30 @@ class PatchClassificationTrainer(BaseTrainer):
         if auto_val_created:
             await logger.info(
                 f"Auto-created val split: moved {len(val_ids)} samples from train to val (10%)",
-                {"train": len(train_ids), "val": len(val_ids), "test": len(test_ids), "auto_val": True}
+                {
+                    "train": len(train_ids),
+                    "val": len(val_ids),
+                    "test": len(test_ids),
+                    "auto_val": True,
+                },
             )
 
         # Build path -> label mapping for each split
-        train_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in train_ids}
+        train_items = {
+            image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in train_ids
+        }
         val_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in val_ids}
-        test_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in test_ids}
+        test_items = {
+            image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in test_ids
+        }
 
         await logger.info(
             f"[Data] Train: {len(train_items)}, Val: {len(val_items)}, Test: {len(test_items)}",
-            {"train_count": len(train_items), "val_count": len(val_items), "test_count": len(test_items)}
+            {
+                "train_count": len(train_items),
+                "val_count": len(val_items),
+                "test_count": len(test_items),
+            },
         )
 
         # Build dataloaders
@@ -322,13 +396,31 @@ class PatchClassificationTrainer(BaseTrainer):
 
         await logger.info(
             f"Starting Patch Classification training with {extractor_name}",
-            {"extractor": extractor_name, "num_classes": num_classes, "epochs": epochs, "lr": lr}
+            {
+                "extractor": extractor_name,
+                "num_classes": num_classes,
+                "epochs": epochs,
+                "lr": lr,
+            },
         )
 
-        # Build feature extractor (frozen)
-        extractor = get_extractor(
-            extractor_name, pretrained=True, hf_token=self.hf_token
-        ).to(self.device).eval()
+        device_obj = torch.device(self.device)
+        if device_obj.type == "cuda":
+            try:
+                await asyncio.to_thread(
+                    check_vram_before_model_load,
+                    model_name=extractor_name,
+                    device=device_obj,
+                    batch_size=self.batch_size,
+                )
+            except VRAMInsufficientError as e:
+                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
+
+        extractor = (
+            get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
+            .to(self.device)
+            .eval()
+        )
 
         for param in extractor.parameters():
             param.requires_grad = False
@@ -351,12 +443,14 @@ class PatchClassificationTrainer(BaseTrainer):
             for wsi_id in train_ids:
                 class_counts[labels[wsi_id]] += 1
             n_total = len(train_ids)
-            class_weights = torch.tensor([
-                n_total / (num_classes * max(1, count)) for count in class_counts
-            ], dtype=torch.float32, device=self.device)
+            class_weights = torch.tensor(
+                [n_total / (num_classes * max(1, count)) for count in class_counts],
+                dtype=torch.float32,
+                device=self.device,
+            )
             await logger.info(
                 f"Auto-balance enabled: class_weights={[f'{w:.2f}' for w in class_weights.tolist()]}",
-                {"class_counts": class_counts, "class_weights": class_weights.tolist()}
+                {"class_counts": class_counts, "class_weights": class_weights.tolist()},
             )
 
         # Criterion with optional class weights
@@ -365,66 +459,120 @@ class PatchClassificationTrainer(BaseTrainer):
         # Dynamic optimizer selection
         optimizer_type_lower = optimizer_type.lower()
         if optimizer_type_lower == "sgd":
-            optimizer = optim.SGD(classifier_head.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+            optimizer = optim.SGD(
+                classifier_head.parameters(), lr=lr, momentum=0.9, weight_decay=0.0
+            )
         elif optimizer_type_lower == "adamw":
-            optimizer = optim.AdamW(classifier_head.parameters(), lr=lr, weight_decay=0.01)
+            optimizer = optim.AdamW(
+                classifier_head.parameters(), lr=lr, weight_decay=0.01
+            )
         else:  # Default to adam
-            optimizer = optim.Adam(classifier_head.parameters(), lr=lr, weight_decay=0.0)
+            optimizer = optim.Adam(
+                classifier_head.parameters(), lr=lr, weight_decay=0.0
+            )
 
         # Learning rate scheduler
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
-        # Training loop
         history = {"loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
-        best_val_loss = float('inf')
+        best_val_loss = float("inf")
         best_val_metric = None
         best_epoch = 0
         best_val_metrics = None
         best_test_metrics = None
         epochs_without_improvement = 0
 
-        for epoch in range(1, epochs + 1):
+        _resume_path = (
+            self.uploads_root
+            / "models"
+            / f"patch_cls_{self.task_id}"
+            / "resume_checkpoint.pth"
+        )
+        start_epoch = 1
+        if _resume_path.exists():
+            try:
+                _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
+                classifier_head.load_state_dict(_ckpt["classifier_head_state_dict"])
+                optimizer.load_state_dict(_ckpt["optimizer_state_dict"])
+                scheduler.load_state_dict(_ckpt["scheduler_state_dict"])
+                history = _ckpt["history"]
+                best_val_loss = _ckpt["best_val_loss"]
+                best_val_metric = _ckpt["best_val_metric"]
+                best_epoch = _ckpt["best_epoch"]
+                best_val_metrics = _ckpt["best_val_metrics"]
+                best_test_metrics = _ckpt["best_test_metrics"]
+                epochs_without_improvement = _ckpt["epochs_without_improvement"]
+                start_epoch = _ckpt["epoch"] + 1
+                await logger.info(
+                    f"Resumed patch classification training from epoch {_ckpt['epoch']}",
+                    {"resumed_from_epoch": _ckpt["epoch"]},
+                )
+            except Exception as _e:
+                await logger.info(
+                    f"Could not load resume checkpoint ({_e}), starting from epoch 1",
+                    {"resume_error": str(_e)},
+                )
+
+        for epoch in range(start_epoch, epochs + 1):
             # Check for cancellation or permission revocation at each epoch start
             if is_task_cancelled(self.task_id):
-                await logger.info(f"Training cancelled by user/timeout at epoch {epoch}")
+                await logger.info(
+                    f"Training cancelled by user/timeout at epoch {epoch}"
+                )
                 # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
                 del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
                 raise TrainingCancelledException(f"Training cancelled at epoch {epoch}")
             if is_permission_revoked(self.task_id):
-                await logger.info(f"Training stopped: permission revoked at epoch {epoch}")
+                await logger.info(
+                    f"Training stopped: permission revoked at epoch {epoch}"
+                )
                 del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
-                raise PermissionRevokedException(f"Training stopped at epoch {epoch}: permission revoked by admin")
+                raise PermissionRevokedException(
+                    f"Training stopped at epoch {epoch}: permission revoked by admin"
+                )
 
             epoch_start_time = time.time()
 
             # Run training epoch in thread pool to avoid blocking the event loop.
             # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
             running_loss, num_batches, stop_reason = await asyncio.to_thread(
-                self._run_one_epoch, train_loader, extractor, classifier_head,
-                criterion, optimizer, self.device, self.task_id
+                self._run_one_epoch,
+                train_loader,
+                extractor,
+                classifier_head,
+                criterion,
+                optimizer,
+                self.device,
+                self.task_id,
             )
 
             if stop_reason == "cancelled":
                 del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
-                raise TrainingCancelledException(f"Training cancelled during epoch {epoch} loop")
+                raise TrainingCancelledException(
+                    f"Training cancelled during epoch {epoch} loop"
+                )
             if stop_reason == "permission_revoked":
                 del model, extractor, classifier_head, optimizer, criterion
                 if class_weights is not None:
                     del class_weights
-                raise PermissionRevokedException(f"Training stopped during epoch {epoch}: permission revoked by admin")
+                raise PermissionRevokedException(
+                    f"Training stopped during epoch {epoch}: permission revoked by admin"
+                )
 
             epoch_loss = running_loss / max(1, num_batches)
             history["loss"].append(epoch_loss)
 
             # Validation - run in thread pool (DataLoader + GPU inference are blocking)
             if val_loader is not None:
-                val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader, criterion)
+                val_metrics = await asyncio.to_thread(
+                    self._evaluate, model, val_loader, criterion
+                )
                 val_loss = val_metrics.get("loss", epoch_loss)
                 val_acc = val_metrics["accuracy"]
                 val_auc = val_metrics.get("auc")
@@ -467,13 +615,19 @@ class PatchClassificationTrainer(BaseTrainer):
             # Update progress: training from 0% to 90%, saving from 90% to 100%
             # Use epoch (not epoch-1) and enforce a minimum increment for immediate feedback.
             progress = min(90, max(1, int(epoch / epochs * 90)))
-            await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
+            await _safe_update_progress(
+                session_maker, self.task_id, TaskStatus.TRAINING, progress
+            )
 
             # Save best model based on accuracy/AUC (higher is better)
             # Fallback to loss (lower is better) if Acc/AUC are unavailable
             is_improvement = False
             # Prefer AUC if available, else Accuracy
-            check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+            check_metric = (
+                val_metrics.get("auc")
+                if val_metrics.get("auc") is not None
+                else val_metrics.get("accuracy")
+            )
             if val_metrics.get("auc") is not None:
                 selection_metric_key = "val_auc"
                 selection_metric_label = "Val AUC"
@@ -488,11 +642,11 @@ class PatchClassificationTrainer(BaseTrainer):
                 selection_metric_value = val_loss
 
             if check_metric is not None:
-                 if best_val_metric is None or check_metric > best_val_metric:
+                if best_val_metric is None or check_metric > best_val_metric:
                     best_val_metric = check_metric
                     is_improvement = True
             else:
-                 # Fallback to loss for tie-breaking or no metric
+                # Fallback to loss for tie-breaking or no metric
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     is_improvement = True
@@ -500,7 +654,7 @@ class PatchClassificationTrainer(BaseTrainer):
             if is_improvement:
                 # Update trackers
                 best_epoch = epoch
-                best_val_loss = val_loss # Keep this updated for info
+                best_val_loss = val_loss  # Keep this updated for info
                 best_val_metrics = val_metrics if val_loader else None
                 epochs_without_improvement = 0  # Reset counter
 
@@ -519,7 +673,9 @@ class PatchClassificationTrainer(BaseTrainer):
                 )
 
                 if test_loader is not None:
-                    best_test_metrics = await asyncio.to_thread(self._evaluate, model, test_loader, criterion)
+                    best_test_metrics = await asyncio.to_thread(
+                        self._evaluate, model, test_loader, criterion
+                    )
                     test_snapshot_metadata = {
                         "epoch": epoch,
                         **{f"test_{k}": v for k, v in best_test_metrics.items()},
@@ -530,7 +686,9 @@ class PatchClassificationTrainer(BaseTrainer):
                         f"Test Acc: {best_test_metrics.get('accuracy', 0):.4f}",
                     ]
                     if best_test_metrics.get("auc") is not None:
-                        test_log_parts.append(f"Test AUC: {best_test_metrics['auc']:.4f}")
+                        test_log_parts.append(
+                            f"Test AUC: {best_test_metrics['auc']:.4f}"
+                        )
                     await logger.info(
                         " | ".join(test_log_parts),
                         test_snapshot_metadata,
@@ -552,16 +710,61 @@ class PatchClassificationTrainer(BaseTrainer):
             else:
                 epochs_without_improvement += 1
 
+            await asyncio.to_thread(
+                save_resume_checkpoint_sync,
+                _resume_path,
+                {
+                    "epoch": epoch,
+                    "classifier_head_state_dict": {
+                        k: v.cpu() for k, v in classifier_head.state_dict().items()
+                    },
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "history": history,
+                    "best_val_loss": best_val_loss,
+                    "best_val_metric": best_val_metric,
+                    "best_epoch": best_epoch,
+                    "best_val_metrics": best_val_metrics,
+                    "best_test_metrics": best_test_metrics,
+                    "epochs_without_improvement": epochs_without_improvement,
+                },
+            )
+
             # Early stopping check
             if val_loader and epochs_without_improvement >= early_stopping_patience:
-                stopped_val = f"{best_val_metric:.4f}" if best_val_metric is not None else f"loss={best_val_loss:.4f}"
+                stopped_val = (
+                    f"{best_val_metric:.4f}"
+                    if best_val_metric is not None
+                    else f"loss={best_val_loss:.4f}"
+                )
                 await logger.info(
                     f"Early stopping triggered at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                    {"epoch": epoch, "best_val_metric": stopped_val}
+                    {"epoch": epoch, "best_val_metric": stopped_val},
                 )
                 break
 
-        # Save final metrics with complete history (even if last epoch wasn't best)
+        # Fallback: if no epoch ever triggered is_improvement (best_epoch stays 0),
+        # classifier_head.pth was never written. Save the final epoch's weights so that
+        # post-training inference (which loads classifier_head.pth) does not crash.
+        if best_epoch == 0:
+            self._save_checkpoint(
+                extractor_name=extractor_name,
+                classifier_head=classifier_head,
+                classifier_name=classifier_name,
+                extractor_dim=extractor.output_dim,
+                num_classes=num_classes,
+                epochs=epochs,
+                lr=lr,
+                history=history,
+                val_metrics=best_val_metrics,
+                test_metrics=best_test_metrics,
+                classes=classes,
+            )
+            await logger.info(
+                f"No improvement detected during training. Saving final epoch {epoch} model as classifier_head.pth fallback.",
+                {"fallback_epoch": epoch},
+            )
+
         self._save_final_metrics(history, best_val_metrics, best_test_metrics)
 
         # Save per-image inference results (like WSI classification)
@@ -581,6 +784,7 @@ class PatchClassificationTrainer(BaseTrainer):
         model_id = f"patch_cls_{self.task_id}"
         ckpt_path = self.uploads_root / "models" / model_id / "classifier_head.pth"
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
@@ -615,16 +819,62 @@ class PatchClassificationTrainer(BaseTrainer):
 
         await logger.info(
             f"Starting {num_folds}-fold cross-validation for Patch Classification",
-            metadata={"num_folds": num_folds, "epochs_per_fold": epochs}
+            metadata={"num_folds": num_folds, "epochs_per_fold": epochs},
         )
 
         fold_results = {}
         all_val_metrics = {"accuracy": [], "auc": [], "loss": []}
 
-        # Build extractor once (shared across folds)
-        extractor = get_extractor(
-            extractor_name, pretrained=True, hf_token=self.hf_token
-        ).to(self.device).eval()
+        _resume_path = (
+            self.uploads_root
+            / "models"
+            / f"patch_cls_{self.task_id}"
+            / "resume_checkpoint.pth"
+        )
+        _resume_start_fold = 0
+        _resume_start_epoch = 1
+        _resume_fold_state: Optional[dict] = None
+        if _resume_path.exists():
+            try:
+                _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
+                if _ckpt.get("type") == "kfold":
+                    fold_results = _ckpt.get("completed_fold_results", {})
+                    all_val_metrics = _ckpt.get(
+                        "completed_val_metrics", all_val_metrics
+                    )
+                    _resume_start_fold = _ckpt.get("fold_idx", 0)
+                    _resume_start_epoch = _ckpt.get("epoch", 0) + 1
+                    _resume_fold_state = _ckpt
+                    await logger.info(
+                        f"Resumed k-fold training from fold {_resume_start_fold + 1}, epoch {_ckpt.get('epoch', 0)}",
+                        {
+                            "resumed_fold": _resume_start_fold,
+                            "resumed_epoch": _ckpt.get("epoch", 0),
+                        },
+                    )
+            except Exception as _e:
+                await logger.info(
+                    f"Could not load kfold resume checkpoint ({_e}), starting from fold 1",
+                    {"resume_error": str(_e)},
+                )
+
+        device_obj = torch.device(self.device)
+        if device_obj.type == "cuda":
+            try:
+                await asyncio.to_thread(
+                    check_vram_before_model_load,
+                    model_name=extractor_name,
+                    device=device_obj,
+                    batch_size=self.batch_size,
+                )
+            except VRAMInsufficientError as e:
+                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
+
+        extractor = (
+            get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
+            .to(self.device)
+            .eval()
+        )
         for param in extractor.parameters():
             param.requires_grad = False
 
@@ -635,14 +885,35 @@ class PatchClassificationTrainer(BaseTrainer):
                 if key != val_fold_key:
                     train_ids.extend(splits_map[key])
 
+            if val_fold_key in fold_results:
+                await logger.info(
+                    f"Fold {fold_idx + 1}/{num_folds}: already completed, skipping",
+                    metadata={"fold": fold_idx + 1},
+                )
+                completed_metrics = fold_results[val_fold_key]["val_metrics"]
+                all_val_metrics["accuracy"].append(
+                    completed_metrics.get("accuracy", 0.0)
+                )
+                if completed_metrics.get("auc") is not None:
+                    all_val_metrics["auc"].append(completed_metrics["auc"])
+                continue
+
             await logger.info(
                 f"Fold {fold_idx + 1}/{num_folds}: train={len(train_ids)}, val={len(val_ids)}",
-                metadata={"fold": fold_idx + 1, "train": len(train_ids), "val": len(val_ids)}
+                metadata={
+                    "fold": fold_idx + 1,
+                    "train": len(train_ids),
+                    "val": len(val_ids),
+                },
             )
 
             # Build items for this fold
-            train_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in train_ids}
-            val_items = {image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in val_ids}
+            train_items = {
+                image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in train_ids
+            }
+            val_items = {
+                image_paths[wsi_id]: classes[labels[wsi_id]] for wsi_id in val_ids
+            }
 
             train_loader, val_loader, _ = self._build_dataloaders(
                 train_items=train_items,
@@ -669,29 +940,74 @@ class PatchClassificationTrainer(BaseTrainer):
                 for wsi_id in train_ids:
                     class_counts[labels[wsi_id]] += 1
                 n_total = len(train_ids)
-                class_weights = torch.tensor([
-                    n_total / (num_classes * max(1, count)) for count in class_counts
-                ], dtype=torch.float32, device=self.device)
+                class_weights = torch.tensor(
+                    [n_total / (num_classes * max(1, count)) for count in class_counts],
+                    dtype=torch.float32,
+                    device=self.device,
+                )
 
             criterion = nn.CrossEntropyLoss(weight=class_weights)
 
             # Dynamic optimizer selection
             optimizer_type_lower = optimizer_type.lower()
             if optimizer_type_lower == "sgd":
-                optimizer = optim.SGD(classifier_head.parameters(), lr=lr, momentum=0.9, weight_decay=0.0)
+                optimizer = optim.SGD(
+                    classifier_head.parameters(), lr=lr, momentum=0.9, weight_decay=0.0
+                )
             elif optimizer_type_lower == "adamw":
-                optimizer = optim.AdamW(classifier_head.parameters(), lr=lr, weight_decay=0.01)
+                optimizer = optim.AdamW(
+                    classifier_head.parameters(), lr=lr, weight_decay=0.01
+                )
             else:  # Default to adam
-                optimizer = optim.Adam(classifier_head.parameters(), lr=lr, weight_decay=0.0)
+                optimizer = optim.Adam(
+                    classifier_head.parameters(), lr=lr, weight_decay=0.0
+                )
 
             # Learning rate scheduler
             scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
 
             history = {"loss": [], "val_loss": [], "val_accuracy": [], "val_auc": []}
-            best_val_loss = float('inf')
+            best_val_loss = float("inf")
             best_val_metric = None
             best_state_dict = None
             epochs_without_improvement = 0
+            start_epoch_fold = 1
+
+            if (
+                _resume_fold_state is not None
+                and _resume_fold_state.get("fold_idx") == fold_idx
+            ):
+                try:
+                    classifier_head.load_state_dict(
+                        _resume_fold_state["classifier_head_state_dict"]
+                    )
+                    optimizer.load_state_dict(
+                        _resume_fold_state["optimizer_state_dict"]
+                    )
+                    scheduler.load_state_dict(
+                        _resume_fold_state["scheduler_state_dict"]
+                    )
+                    history = _resume_fold_state["history"]
+                    best_val_loss = _resume_fold_state["best_val_loss"]
+                    best_val_metric = _resume_fold_state["best_val_metric"]
+                    best_state_dict = _resume_fold_state["best_state_dict"]
+                    epochs_without_improvement = _resume_fold_state[
+                        "epochs_without_improvement"
+                    ]
+                    start_epoch_fold = _resume_fold_state["epoch"] + 1
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Resumed from epoch {_resume_fold_state['epoch']}",
+                        {
+                            "fold": fold_idx + 1,
+                            "resumed_epoch": _resume_fold_state["epoch"],
+                        },
+                    )
+                except Exception as _e:
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Could not restore fold state ({_e}), restarting fold",
+                        {"fold": fold_idx + 1, "resume_error": str(_e)},
+                    )
+                _resume_fold_state = None
 
             # Allocate each fold a contiguous slice of the full 0-100% range.
             fold_progress_start = round(fold_idx * 100 / num_folds)
@@ -703,39 +1019,57 @@ class PatchClassificationTrainer(BaseTrainer):
             fold_saving_base = fold_progress_start + fold_training_range
             fold_saving_range = max(0, fold_total_range - fold_training_range)
 
-            for epoch in range(1, epochs + 1):
+            for epoch in range(start_epoch_fold, epochs + 1):
                 # Check for cancellation or permission revocation at each epoch start
                 if is_task_cancelled(self.task_id):
-                    await logger.info(f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}")
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Training cancelled by user/timeout at epoch {epoch}"
+                    )
                     # Clean up CUDA tensors before raising exception to ensure GPU memory is freed
                     del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
-                    raise TrainingCancelledException(f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}")
+                    raise TrainingCancelledException(
+                        f"Training cancelled at fold {fold_idx + 1}, epoch {epoch}"
+                    )
                 if is_permission_revoked(self.task_id):
-                    await logger.info(f"[Fold {fold_idx + 1}] Training stopped: permission revoked at epoch {epoch}")
+                    await logger.info(
+                        f"[Fold {fold_idx + 1}] Training stopped: permission revoked at epoch {epoch}"
+                    )
                     del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
-                    raise PermissionRevokedException(f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin")
+                    raise PermissionRevokedException(
+                        f"Training stopped at fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin"
+                    )
 
                 # Run training epoch in thread pool to avoid blocking the event loop.
                 # GPU operations (forward/backward pass) and DataLoader iteration are blocking.
                 running_loss, num_batches, stop_reason = await asyncio.to_thread(
-                    self._run_one_epoch, train_loader, extractor, classifier_head,
-                    criterion, optimizer, self.device, self.task_id
+                    self._run_one_epoch,
+                    train_loader,
+                    extractor,
+                    classifier_head,
+                    criterion,
+                    optimizer,
+                    self.device,
+                    self.task_id,
                 )
 
                 if stop_reason == "cancelled":
                     del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
-                    raise TrainingCancelledException(f"Training cancelled during fold {fold_idx+1}, epoch {epoch} loop")
+                    raise TrainingCancelledException(
+                        f"Training cancelled during fold {fold_idx + 1}, epoch {epoch} loop"
+                    )
                 if stop_reason == "permission_revoked":
                     del model, extractor, classifier_head, optimizer, criterion
                     if class_weights is not None:
                         del class_weights
-                    raise PermissionRevokedException(f"Training stopped during fold {fold_idx+1}, epoch {epoch}: permission revoked by admin")
+                    raise PermissionRevokedException(
+                        f"Training stopped during fold {fold_idx + 1}, epoch {epoch}: permission revoked by admin"
+                    )
 
                 epoch_start_time = time.time()
 
@@ -743,7 +1077,9 @@ class PatchClassificationTrainer(BaseTrainer):
                 history["loss"].append(epoch_loss)
 
                 # Validation - run in thread pool (DataLoader + GPU inference are blocking)
-                val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader, criterion)
+                val_metrics = await asyncio.to_thread(
+                    self._evaluate, model, val_loader, criterion
+                )
                 val_loss = val_metrics.get("loss", epoch_loss)
                 val_acc = val_metrics.get("accuracy", 0.0)
                 history["val_loss"].append(val_loss)
@@ -752,7 +1088,11 @@ class PatchClassificationTrainer(BaseTrainer):
 
                 # Select best model based on accuracy/AUC (higher is better)
                 is_improvement = False
-                check_metric = val_metrics.get("auc") if val_metrics.get("auc") is not None else val_metrics.get("accuracy")
+                check_metric = (
+                    val_metrics.get("auc")
+                    if val_metrics.get("auc") is not None
+                    else val_metrics.get("accuracy")
+                )
                 if val_metrics.get("auc") is not None:
                     selection_metric_key = "val_auc"
                     selection_metric_label = "Val AUC"
@@ -767,7 +1107,7 @@ class PatchClassificationTrainer(BaseTrainer):
                     selection_metric_value = val_loss
 
                 if check_metric is not None:
-                     if best_val_metric is None or check_metric > best_val_metric:
+                    if best_val_metric is None or check_metric > best_val_metric:
                         best_val_metric = check_metric
                         is_improvement = True
                 else:
@@ -776,8 +1116,11 @@ class PatchClassificationTrainer(BaseTrainer):
                         is_improvement = True
 
                 if is_improvement:
-                    best_val_loss = val_loss # Update for logging
-                    best_state_dict = {k: v.cpu().clone() for k, v in classifier_head.state_dict().items()}
+                    best_val_loss = val_loss  # Update for logging
+                    best_state_dict = {
+                        k: v.cpu().clone()
+                        for k, v in classifier_head.state_dict().items()
+                    }
                     epochs_without_improvement = 0
                     best_metadata = {
                         "fold": fold_idx + 1,
@@ -827,23 +1170,58 @@ class PatchClassificationTrainer(BaseTrainer):
                 # Within each fold, 70% is reserved for training and the remainder for saving.
                 progress = min(
                     fold_saving_base,
-                    fold_progress_start + max(1, int(epoch / epochs * fold_training_range))
+                    fold_progress_start
+                    + max(1, int(epoch / epochs * fold_training_range)),
                 )
-                await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress)
+                await _safe_update_progress(
+                    session_maker, self.task_id, TaskStatus.TRAINING, progress
+                )
+
+                await asyncio.to_thread(
+                    save_resume_checkpoint_sync,
+                    _resume_path,
+                    {
+                        "type": "kfold",
+                        "fold_idx": fold_idx,
+                        "epoch": epoch,
+                        "classifier_head_state_dict": {
+                            k: v.cpu() for k, v in classifier_head.state_dict().items()
+                        },
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        "scheduler_state_dict": scheduler.state_dict(),
+                        "history": history,
+                        "best_val_loss": best_val_loss,
+                        "best_val_metric": best_val_metric,
+                        "best_state_dict": best_state_dict,
+                        "epochs_without_improvement": epochs_without_improvement,
+                        "completed_fold_results": fold_results,
+                        "completed_val_metrics": all_val_metrics,
+                    },
+                )
 
                 # Early stopping check
                 if epochs_without_improvement >= early_stopping_patience:
-                    stopped_val = f"{best_val_metric:.4f}" if best_val_metric is not None else f"loss={best_val_loss:.4f}"
+                    stopped_val = (
+                        f"{best_val_metric:.4f}"
+                        if best_val_metric is not None
+                        else f"loss={best_val_loss:.4f}"
+                    )
                     await logger.info(
                         f"[Fold {fold_idx + 1}] Early stopping at epoch {epoch} (no improvement for {early_stopping_patience} epochs)",
-                        metadata={"fold": fold_idx + 1, "epoch": epoch, "best_val_metric": stopped_val}
+                        metadata={
+                            "fold": fold_idx + 1,
+                            "epoch": epoch,
+                            "best_val_metric": stopped_val,
+                        },
                     )
                     break
 
             # Restore best and evaluate
             if best_state_dict:
                 classifier_head.load_state_dict(best_state_dict)
-            final_val_metrics = await asyncio.to_thread(self._evaluate, model, val_loader)
+            final_val_metrics = await asyncio.to_thread(
+                self._evaluate, model, val_loader
+            )
 
             fold_results[val_fold_key] = {
                 "history": history,
@@ -857,12 +1235,15 @@ class PatchClassificationTrainer(BaseTrainer):
             model_id = f"patch_cls_{self.task_id}"
             fold_dir = self.uploads_root / "models" / model_id / val_fold_key
             fold_dir.mkdir(parents=True, exist_ok=True)
-            torch.save({
-                "state_dict": classifier_head.state_dict(),
-                "classifier_name": classifier_name,
-                "feature_dim": extractor.output_dim,
-                "num_classes": num_classes,
-            }, fold_dir / "classifier_head.pth")
+            torch.save(
+                {
+                    "state_dict": classifier_head.state_dict(),
+                    "classifier_name": classifier_name,
+                    "feature_dim": extractor.output_dim,
+                    "num_classes": num_classes,
+                },
+                fold_dir / "classifier_head.pth",
+            )
 
             # Continue the same fold-local 0-100% allocation for result saving.
 
@@ -895,9 +1276,10 @@ class PatchClassificationTrainer(BaseTrainer):
             ]
             if final_val_metrics.get("auc") is not None:
                 fold_summary_parts.append(f"Val AUC: {final_val_metrics['auc']:.4f}")
-            await logger.info(" | ".join(fold_summary_parts), metadata=fold_summary_metadata)
+            await logger.info(
+                " | ".join(fold_summary_parts), metadata=fold_summary_metadata
+            )
 
-        # Calculate aggregated statistics (basic metrics from training, rounded to 4 decimal places)
         aggregated = {
             "accuracy": {
                 "mean": round(float(np.mean(all_val_metrics["accuracy"])), 4),
@@ -913,11 +1295,13 @@ class PatchClassificationTrainer(BaseTrainer):
         # Calculate comprehensive metrics by reading saved JSON files
         # This provides precision, sensitivity, specificity, f1, etc. - similar to Analysis
         # Pass splits_map to enable fast direct file access instead of slow directory scanning
-        comprehensive_metrics, per_fold_comprehensive = self._calculate_kfold_comprehensive_metrics(
-            task_id=self.task_id,
-            fold_keys=fold_keys,
-            classes=classes,
-            splits_map=splits_map,
+        comprehensive_metrics, per_fold_comprehensive = (
+            self._calculate_kfold_comprehensive_metrics(
+                task_id=self.task_id,
+                fold_keys=fold_keys,
+                classes=classes,
+                splits_map=splits_map,
+            )
         )
         # Merge comprehensive metrics into aggregated (don't overwrite accuracy/auc already calculated)
         for metric_name, metric_stats in comprehensive_metrics.items():
@@ -937,7 +1321,11 @@ class PatchClassificationTrainer(BaseTrainer):
         await logger.info(
             f"K-Fold complete: accuracy={aggregated['accuracy']['mean']:.4f}±{aggregated['accuracy']['std']:.4f}, "
             f"best={best_fold_key} (acc={best_fold_accuracy:.4f})",
-            metadata={"aggregated": aggregated, "best_fold": best_fold_key, "best_fold_accuracy": best_fold_accuracy}
+            metadata={
+                "aggregated": aggregated,
+                "best_fold": best_fold_key,
+                "best_fold_accuracy": best_fold_accuracy,
+            },
         )
 
         # Save aggregated metrics
@@ -945,17 +1333,23 @@ class PatchClassificationTrainer(BaseTrainer):
         model_dir = self.uploads_root / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
 
-        (model_dir / "config.json").write_text(json.dumps({
-            "task_id": self.task_id,
-            "extractor": extractor_name,
-            "feature_dim": extractor.output_dim,
-            "num_classes": num_classes,
-            "epochs": epochs,
-            "lr": lr,
-            "split_type": "kfold",
-            "num_folds": num_folds,
-            "best_fold": best_fold_key,
-        }, ensure_ascii=False, indent=2))
+        (model_dir / "config.json").write_text(
+            json.dumps(
+                {
+                    "task_id": self.task_id,
+                    "extractor": extractor_name,
+                    "feature_dim": extractor.output_dim,
+                    "num_classes": num_classes,
+                    "epochs": epochs,
+                    "lr": lr,
+                    "split_type": "kfold",
+                    "num_folds": num_folds,
+                    "best_fold": best_fold_key,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
 
         metrics_data = {
             "is_kfold": True,
@@ -964,7 +1358,9 @@ class PatchClassificationTrainer(BaseTrainer):
             "folds": fold_results,
             "aggregated": aggregated,
         }
-        (model_dir / "metrics.json").write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+        (model_dir / "metrics.json").write_text(
+            json.dumps(metrics_data, ensure_ascii=False, indent=2)
+        )
 
         # Use best fold's checkpoint as default
         ckpt_path = model_dir / best_fold_key / "classifier_head.pth"
@@ -976,6 +1372,7 @@ class PatchClassificationTrainer(BaseTrainer):
         if aggregated.get("auc", {}).get("mean") is not None:
             val_metrics_dict["auc"] = aggregated["auc"]["mean"]
 
+        delete_resume_checkpoint(_resume_path)
         return self._build_train_response(
             model_id=model_id,
             checkpoint_path=str(ckpt_path),
@@ -993,11 +1390,19 @@ class PatchClassificationTrainer(BaseTrainer):
         extractor_name: str,
     ) -> Tuple[DataLoader[Any], Optional[DataLoader[Any]], Optional[DataLoader[Any]]]:
         """Build train/val/test dataloaders."""
-        extractor = get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
+        extractor = get_extractor(
+            extractor_name, pretrained=True, hf_token=self.hf_token
+        )
         try:
-            target_size = resolve_patch_resize_size(extractor_name, hf_token=self.hf_token)
-            train_transform = build_patch_classification_transform(extractor, target_size, mode="train")
-            eval_transform = build_patch_classification_transform(extractor, target_size, mode="eval")
+            target_size = resolve_patch_resize_size(
+                extractor_name, hf_token=self.hf_token
+            )
+            train_transform = build_patch_classification_transform(
+                extractor, target_size, mode="train"
+            )
+            eval_transform = build_patch_classification_transform(
+                extractor, target_size, mode="eval"
+            )
         finally:
             del extractor
 
@@ -1006,16 +1411,24 @@ class PatchClassificationTrainer(BaseTrainer):
             label_mapper=label_mapper,
             extractor=train_transform,
         )
-        val_dataset = PatchDatasetFromDB(
-            annotations=val_items,
-            label_mapper=label_mapper,
-            extractor=eval_transform,
-        ) if val_items else None
-        test_dataset = PatchDatasetFromDB(
-            annotations=test_items,
-            label_mapper=label_mapper,
-            extractor=eval_transform,
-        ) if test_items else None
+        val_dataset = (
+            PatchDatasetFromDB(
+                annotations=val_items,
+                label_mapper=label_mapper,
+                extractor=eval_transform,
+            )
+            if val_items
+            else None
+        )
+        test_dataset = (
+            PatchDatasetFromDB(
+                annotations=test_items,
+                label_mapper=label_mapper,
+                extractor=eval_transform,
+            )
+            if test_items
+            else None
+        )
 
         train_loader = DataLoader(
             train_dataset,
@@ -1025,28 +1438,36 @@ class PatchClassificationTrainer(BaseTrainer):
             pin_memory=True,
             persistent_workers=True,
             prefetch_factor=2,
-            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
+            multiprocessing_context="spawn",  # Avoid fork deadlock in multithreaded env
         )
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
-            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
-        ) if val_dataset else None
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True,
-            prefetch_factor=2,
-            multiprocessing_context='spawn',  # Avoid fork deadlock in multithreaded env
-        ) if test_dataset else None
+        val_loader = (
+            DataLoader(
+                val_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=4,
+                pin_memory=True,
+                persistent_workers=True,
+                prefetch_factor=2,
+                multiprocessing_context="spawn",  # Avoid fork deadlock in multithreaded env
+            )
+            if val_dataset
+            else None
+        )
+        test_loader = (
+            DataLoader(
+                test_dataset,
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=4,
+                pin_memory=True,
+                persistent_workers=True,
+                prefetch_factor=2,
+                multiprocessing_context="spawn",  # Avoid fork deadlock in multithreaded env
+            )
+            if test_dataset
+            else None
+        )
 
         return train_loader, val_loader, test_loader
 
@@ -1099,7 +1520,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 auc = roc_auc_score(all_labels, all_probs[:, 1])
             else:
                 auc = roc_auc_score(
-                    all_labels, all_probs, multi_class='ovr', average='macro'
+                    all_labels, all_probs, multi_class="ovr", average="macro"
                 )
         except ValueError:
             auc = None
@@ -1107,7 +1528,7 @@ class PatchClassificationTrainer(BaseTrainer):
         # Round all metrics to 4 decimal places
         metrics = {
             "loss": round(float(avg_loss), 4),
-            "accuracy": round(float(accuracy), 4)
+            "accuracy": round(float(accuracy), 4),
         }
         if auc is not None:
             metrics["auc"] = round(float(auc), 4)
@@ -1135,13 +1556,16 @@ class PatchClassificationTrainer(BaseTrainer):
 
         # Save classifier head weights
         ckpt_path = model_dir / "classifier_head.pth"
-        torch.save({
-            "state_dict": classifier_head.state_dict(),
-            "classifier_name": classifier_name,
-            "extractor_name": extractor_name,
-            "extractor_dim": extractor_dim,
-            "num_classes": num_classes,
-        }, ckpt_path)
+        torch.save(
+            {
+                "state_dict": classifier_head.state_dict(),
+                "classifier_name": classifier_name,
+                "extractor_name": extractor_name,
+                "extractor_dim": extractor_dim,
+                "num_classes": num_classes,
+            },
+            ckpt_path,
+        )
 
         # Save config
         config = {
@@ -1263,10 +1687,17 @@ class PatchClassificationTrainer(BaseTrainer):
         )
         file_io_progress_range = progress_file_io_end - progress_file_io_start
 
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_inference)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_inference
+        )
         await logger.info(
             f"[Saving] Starting to save inference results{fold_desc} for {total_images} images...",
-            {"task_id": task_id, "num_images": total_images, "fold_key": fold_key, "phase": "saving_results"}
+            {
+                "task_id": task_id,
+                "num_images": total_images,
+                "fold_key": fold_key,
+                "phase": "saving_results",
+            },
         )
 
         model.eval()
@@ -1274,10 +1705,16 @@ class PatchClassificationTrainer(BaseTrainer):
         num_classes = len(classes)
 
         # Get transforms for inference using actual extractor resize rules
-        extractor_temp = get_extractor(extractor_name, pretrained=False, hf_token=self.hf_token)
+        extractor_temp = get_extractor(
+            extractor_name, pretrained=False, hf_token=self.hf_token
+        )
         try:
-            target_size = resolve_patch_resize_size(extractor_name, hf_token=self.hf_token)
-            fm_transform = build_patch_classification_transform(extractor_temp, target_size, mode="eval")
+            target_size = resolve_patch_resize_size(
+                extractor_name, hf_token=self.hf_token
+            )
+            fm_transform = build_patch_classification_transform(
+                extractor_temp, target_size, mode="eval"
+            )
         finally:
             del extractor_temp
 
@@ -1287,11 +1724,12 @@ class PatchClassificationTrainer(BaseTrainer):
 
         await logger.info(
             f"[Saving] Using CAM extractor for {extractor_name}, CAM size: {cam_size}",
-            {"extractor": extractor_name, "cam_size": cam_size}
+            {"extractor": extractor_name, "cam_size": cam_size},
         )
 
         # Need to enable gradients for Grad-CAM (ResNet)
         from backend.ai.utils.cam_utils import is_cnn_extractor
+
         use_gradients = is_cnn_extractor(extractor_name)
 
         # Phase 1: Run inference and collect results in thread pool.
@@ -1338,9 +1776,14 @@ class PatchClassificationTrainer(BaseTrainer):
                         cam_map = cam_map.squeeze(0)
                     except Exception as e:
                         import traceback
+
                         error_details = traceback.format_exc()
-                        logger.warning(f"CAM extraction failed for {wsi_id}: {e}\n{error_details}")
-                        cam_map = np.ones(cam_size, dtype=np.float32) / (cam_size[0] * cam_size[1])
+                        logger.warning(
+                            f"CAM extraction failed for {wsi_id}: {e}\n{error_details}"
+                        )
+                        cam_map = np.ones(cam_size, dtype=np.float32) / (
+                            cam_size[0] * cam_size[1]
+                        )
 
                     # Collect for metrics
                     _all_probs.append(probs)
@@ -1352,7 +1795,9 @@ class PatchClassificationTrainer(BaseTrainer):
 
                     wsi_result_dir = ai_results_root / wsi_id
                     cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
-                    result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                    result_file = (
+                        wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
+                    )
 
                     result_data = {
                         "wsi_id": wsi_id,
@@ -1368,28 +1813,35 @@ class PatchClassificationTrainer(BaseTrainer):
                     if fold_key:
                         result_data["fold_key"] = fold_key
 
-                    _file_save_items.append((wsi_result_dir, result_data, cam_map, fold_suffix, task_id))
+                    _file_save_items.append(
+                        (wsi_result_dir, result_data, cam_map, fold_suffix, task_id)
+                    )
 
                     # Prepare database record
-                    _db_records.append({
-                        "wsi_id": wsi_id,
-                        "task_id": task_id,
-                        "pred": pred_label,
-                        "probs": probs_dict,
-                        "extra_metadata": {
-                            "ground_truth": gt_label,
-                            "correct": pred_label == gt_label,
-                            "classes": classes,
-                            "task_type": "patch_classification",
-                            "cam_file": str(cam_file),
-                            "cam_size": list(cam_size),
-                            "fold_key": fold_key,
-                            "result_file": str(result_file),
+                    _db_records.append(
+                        {
+                            "wsi_id": wsi_id,
+                            "task_id": task_id,
+                            "pred": pred_label,
+                            "probs": probs_dict,
+                            "extra_metadata": {
+                                "ground_truth": gt_label,
+                                "correct": pred_label == gt_label,
+                                "classes": classes,
+                                "task_type": "patch_classification",
+                                "cam_file": str(cam_file),
+                                "cam_size": list(cam_size),
+                                "fold_key": fold_key,
+                                "result_file": str(result_file),
+                            },
                         }
-                    })
+                    )
 
                     processed_images += 1
-                    if processed_images % inference_update_interval == 0 or processed_images >= total_images:
+                    if (
+                        processed_images % inference_update_interval == 0
+                        or processed_images >= total_images
+                    ):
                         inference_progress = interpolate_progress(
                             progress_inference,
                             progress_file_io_start,
@@ -1397,19 +1849,38 @@ class PatchClassificationTrainer(BaseTrainer):
                             total_images,
                         )
                         asyncio.run_coroutine_threadsafe(
-                            _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, inference_progress),
+                            _safe_update_progress(
+                                session_maker,
+                                self.task_id,
+                                TaskStatus.TRAINING,
+                                inference_progress,
+                            ),
                             running_loop,
                         )
 
-            return _all_probs, _all_preds, _all_labels_list, _file_save_items, _db_records
+            return (
+                _all_probs,
+                _all_preds,
+                _all_labels_list,
+                _file_save_items,
+                _db_records,
+            )
 
-        all_probs, all_preds, all_labels_list, file_save_items, db_records = await asyncio.to_thread(_run_inference)
+        (
+            all_probs,
+            all_preds,
+            all_labels_list,
+            file_save_items,
+            db_records,
+        ) = await asyncio.to_thread(_run_inference)
 
         # Phase 2: Parallel file I/O using thread pool with progress updates
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_file_io_start
+        )
         await logger.info(
             f"[Saving] Writing {total_images} result files to disk...",
-            {"phase": "writing_files", "num_files": total_images}
+            {"phase": "writing_files", "num_files": total_images},
         )
         await logger.info(
             "[Saving] Using throttled file I/O to reduce disk pressure",
@@ -1417,7 +1888,7 @@ class PatchClassificationTrainer(BaseTrainer):
                 "phase": "writing_files",
                 "max_workers": SAVE_FILE_IO_MAX_WORKERS,
                 "batch_size": SAVE_FILE_IO_BATCH_SIZE,
-            }
+            },
         )
 
         # Track completed files for progress updates
@@ -1440,7 +1911,7 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Save result JSON
             result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-            with open(result_file, 'w', encoding='utf-8') as f:
+            with open(result_file, "w", encoding="utf-8") as f:
                 json.dump(result_data, f, ensure_ascii=False)
 
             return result_data["wsi_id"]
@@ -1449,46 +1920,68 @@ class PatchClassificationTrainer(BaseTrainer):
         session_maker_ref = session_maker
         task_id_for_update = self.task_id
 
-        async def save_with_progress(executor, item, total,
-                                      file_io_start, file_io_range):
+        async def save_with_progress(
+            executor, item, total, file_io_start, file_io_range
+        ):
             """Save files and update progress."""
             loop = asyncio.get_event_loop()
             result = await loop.run_in_executor(executor, save_single_image_files, item)
             async with progress_lock:
                 completed_count[0] += 1
-                if completed_count[0] % file_update_interval == 0 or completed_count[0] == total:
+                if (
+                    completed_count[0] % file_update_interval == 0
+                    or completed_count[0] == total
+                ):
                     file_progress = interpolate_progress(
                         file_io_start,
                         file_io_start + file_io_range,
                         completed_count[0],
                         total,
                     )
-                    await _safe_update_progress(session_maker_ref, task_id_for_update, TaskStatus.TRAINING, file_progress)
+                    await _safe_update_progress(
+                        session_maker_ref,
+                        task_id_for_update,
+                        TaskStatus.TRAINING,
+                        file_progress,
+                    )
             return result
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=SAVE_FILE_IO_MAX_WORKERS) as executor:
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=SAVE_FILE_IO_MAX_WORKERS
+        ) as executor:
             for batch_start in range(0, total_images, SAVE_FILE_IO_BATCH_SIZE):
-                batch_items = file_save_items[batch_start:batch_start + SAVE_FILE_IO_BATCH_SIZE]
+                batch_items = file_save_items[
+                    batch_start : batch_start + SAVE_FILE_IO_BATCH_SIZE
+                ]
                 tasks = [
-                    save_with_progress(executor, item, total_images,
-                                       progress_file_io_start, file_io_progress_range)
+                    save_with_progress(
+                        executor,
+                        item,
+                        total_images,
+                        progress_file_io_start,
+                        file_io_progress_range,
+                    )
                     for item in batch_items
                 ]
                 await asyncio.gather(*tasks)
                 await asyncio.sleep(0)
 
         # Phase 3: Batch database insert
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_db)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_db
+        )
         await logger.info(
             f"[Saving] Inserting {len(db_records)} records to database...",
-            {"phase": "database_insert", "num_records": len(db_records)}
+            {"phase": "database_insert", "num_records": len(db_records)},
         )
 
         async with scoped_db(session_maker) as db:
             await AIResultRepository.bulk_create(db, db_records, batch_size=100)
 
         # Phase 4: Calculate and log final metrics
-        await _safe_update_progress(session_maker, self.task_id, TaskStatus.TRAINING, progress_metrics)
+        await _safe_update_progress(
+            session_maker, self.task_id, TaskStatus.TRAINING, progress_metrics
+        )
 
         all_probs = np.array(all_probs)
         all_preds = np.array(all_preds)
@@ -1507,10 +2000,22 @@ class PatchClassificationTrainer(BaseTrainer):
 
                 try:
                     if num_classes == 2:
-                        auc = round(float(roc_auc_score(test_labels, test_probs[:, 1])), 4)
+                        auc = round(
+                            float(roc_auc_score(test_labels, test_probs[:, 1])), 4
+                        )
                         auc_display = f"AUC: {auc:.4f}"
                     else:
-                        auc = round(float(roc_auc_score(test_labels, test_probs, multi_class='ovr', average='macro')), 4)
+                        auc = round(
+                            float(
+                                roc_auc_score(
+                                    test_labels,
+                                    test_probs,
+                                    multi_class="ovr",
+                                    average="macro",
+                                )
+                            ),
+                            4,
+                        )
                         auc_display = f"AUC (macro-OVR): {auc:.4f}"
                 except ValueError:
                     auc = None
@@ -1528,19 +2033,18 @@ class PatchClassificationTrainer(BaseTrainer):
 
                 await logger.info(
                     f"[Saving] Complete - Test Set Accuracy: {accuracy:.4f}, {auc_display} (n={len(test_labels)})",
-                    metadata=metrics_metadata
+                    metadata=metrics_metadata,
                 )
             else:
                 await logger.info(
                     f"[Saving] Complete - No test samples found for metrics calculation",
-                    metadata={"task_id": task_id}
+                    metadata={"task_id": task_id},
                 )
         else:
             # No test set specified - log without metrics (for k-fold or when no test set)
             await logger.info(
                 f"[Saving] Complete - Inference results saved for {len(wsi_ids)} images",
-                metadata={"task_id": task_id, "num_images": len(wsi_ids)}
+                metadata={"task_id": task_id, "num_images": len(wsi_ids)},
             )
 
         model.train()
-

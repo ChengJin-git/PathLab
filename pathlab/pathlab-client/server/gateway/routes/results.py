@@ -35,6 +35,7 @@ from backend.database.models import (
     TrainingTaskWSI,
     DataGroup,
     Dataset,
+    AnalysisRun,
 )
 from backend.database.repositories import (
     AIResultRepository,
@@ -46,6 +47,7 @@ from backend.database.repositories import (
     DatasetPermissionRepository,
 )
 from backend.common.config import Config
+from backend.common.redis_client import get_redis, make_key
 from backend.storage import StorageManager
 from backend.auth import (
     current_active_user,
@@ -75,7 +77,13 @@ from .analysis_helpers import (
 from .classification_analysis import _run_classification_analysis
 from .segmentation_analysis import _run_segmentation_analysis
 from .survival_analysis import _run_survival_analysis
-from .external_validation_analysis import _run_external_validation_analysis
+from .external_validation_analysis import (
+    _run_external_validation_analysis,
+    check_extval_compatibility,
+    ExtvalModelInfo,
+    ExtvalDatasetInfo,
+    _is_extval_segmentation_task,
+)
 from .analysis_metrics import (
     _calculate_all_metrics,
     _calculate_bootstrap_ci,
@@ -878,13 +886,21 @@ async def _check_task_resources_batch(
         data_type = task_data_types.get(task_id, "wsi")
         is_patch_task = data_type == "patch"
 
-        # Check features (not needed for patch classification/segmentation)
         if is_patch_task:
-            # Patch tasks don't store pre-extracted features
-            has_features = True  # Mark as True since it's not required
+            has_features = True
         else:
             features_dir = uploads_dir / "training" / task_id / "features"
-            has_features = features_dir.exists() and any(features_dir.glob("*.pt"))
+            sentinel = features_dir / ".done"
+            if sentinel.exists():
+                has_features = True
+            elif features_dir.exists() and any(features_dir.glob("*.pt")):
+                has_features = True
+                try:
+                    sentinel.touch()
+                except OSError:
+                    pass
+            else:
+                has_features = False
 
         # Check model (use cached directory list)
         # Support both regular training (aggregator.pth in model_dir) and
@@ -976,19 +992,22 @@ async def _check_task_resources(task_id: str, db: AsyncSession) -> dict[str, Any
     return await _enrich_single_task_resources(task_id, db, base_resources)
 
 
+_RESULTS_TASKS_CACHE_TTL = 60
+
+
 @router.get("/tasks")
 async def get_analysis_tasks(
     user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
-    """
-    Get list of tasks available for analysis.
-    Users see only their own tasks, admin sees all.
+    cache_key = make_key("results_tasks", "admin" if user.is_admin() else str(user.id))
+    try:
+        r = get_redis()
+        cached = await r.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
 
-    Only returns tasks that have both features and model available.
-    Also indicates whether ai_results exist (needed before running analysis).
-
-    OPTIMIZED: Uses batch query for AI results count instead of per-task file scanning.
-    """
     task_list = []
 
     # Get completed tasks from database
@@ -1115,7 +1134,13 @@ async def get_analysis_tasks(
             }
         )
 
-    return {"items": task_list, "total": len(task_list)}
+    response = {"items": task_list, "total": len(task_list)}
+    try:
+        r = get_redis()
+        await r.set(cache_key, json.dumps(response), ex=_RESULTS_TASKS_CACHE_TTL)
+    except Exception:
+        pass
+    return response
 
 
 def _split_case_attention_to_slides_static(
@@ -2885,8 +2910,9 @@ async def get_datasets_for_validation(
     Returns dataset metadata including aggregation_level, task_type, data_type,
     slide/case counts, distinct label count, and WSI IDs (for overlap detection).
 
-    WSI datasets are only included if ALL their WSIs have feature_extracted=True
-    in the database. Patch datasets are exempt from this check.
+    available_feature_extractors lists extractors with cached features for the
+    dataset's first WSI. Datasets are not filtered on feature availability —
+    missing features are extracted automatically when validation starts.
     """
     datasets = await DatasetRepository.get_all(db)
     elevated_dataset_ids = set()
@@ -2920,10 +2946,6 @@ async def get_datasets_for_validation(
         distinct_labels = await DatasetRepository.get_distinct_labels(db, dataset_id)
         distinct_label_count = len(distinct_labels)
 
-        # For WSI datasets, scan feature cache to find which extractors have features.
-        # This replaces the old feature_extracted DB column check which was inconsistent
-        # with how the chat context detects features (disk-based).
-        # Datasets without any features on disk for WSI are skipped.
         available_feature_extractors: list[Any] = []
         if dg.data_type != "patch" and wsi_ids:
             first_wsi_id = wsi_ids[0]
@@ -2939,9 +2961,6 @@ async def get_datasets_for_validation(
                                         extractor_dir.name
                                     )
                                     break  # Found for this extractor, move to next
-            # WSI datasets must have at least one feature extractor available
-            if not available_feature_extractors:
-                continue
 
         # Get case count for case-level datasets
         total_wsi_count = len(wsi_ids)
@@ -2987,6 +3006,9 @@ class ExternalValidationRequest(BaseModel):
 
     model_id: str  # TrainedModel ID from the models table
     dataset_id: str  # Dataset whose WSIs will be used for validation
+    rerun_from_task_id: Optional[str] = (
+        None  # Admin rerun only: preserve owner from source task
+    )
     # Analysis options
     metrics: Optional[List[str]] = (
         None  # Metrics to compute (default: accuracy, precision, recall, f1, auc, weighted_kappa)
@@ -3017,6 +3039,19 @@ async def start_external_validation(
     """
     import uuid as uuid_module
     from ..task_queue import get_task_queue, TaskType
+
+    effective_task_owner_user_id = str(user.id)
+
+    if user.is_admin() and req.rerun_from_task_id:
+        source_task = await TrainingTaskRepository.get_by_id(db, req.rerun_from_task_id)
+        if not source_task:
+            raise HTTPException(
+                status_code=404,
+                detail="Source training task not found for rerun",
+            )
+        source_task_user_id = _coerce_str(source_task.user_id)
+        if source_task_user_id:
+            effective_task_owner_user_id = source_task_user_id
 
     # Validate model exists
     trained_model = await TrainedModelRepository.get_by_id(db, req.model_id)
@@ -3077,196 +3112,106 @@ async def start_external_validation(
     # COMPATIBILITY VALIDATION
     # ========================================================================
 
-    # Get data_type and task_type from DataGroup relationships
     model_data_group = model_task.data_group
     target_data_group = target_dataset.data_group
 
-    # 1. Validate data_type compatibility (WSI model <-> WSI data, Patch model <-> Patch data)
     model_data_type = model_data_group.data_type if model_data_group else "wsi"
     target_data_type = target_data_group.data_type if target_data_group else "wsi"
-    if model_data_type != target_data_type:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Data type mismatch: Model trained on '{model_data_type}' data cannot validate '{target_data_type}' data. "
-            f"Please select a dataset with '{model_data_type}' data type.",
-        )
-
-    # 2. Validate task_type compatibility (Classification <-> Classification, Survival <-> Survival)
-    # Normalize task types for comparison
-    def is_classification_task(task_type: str) -> bool:
-        return task_type in (
-            "classification",
-            "wsi_classification",
-            "patch_classification",
-        )
-
-    def is_survival_task(task_type: str) -> bool:
-        return task_type in ("wsi_survival", "survival")
-
-    def is_segmentation_task(task_type: str) -> bool:
-        return task_type in ("segmentation", "patch_segmentation")
-
     model_task_type = (
         model_data_group.task_type if model_data_group else "classification"
     )
     target_task_type = (
         target_data_group.task_type if target_data_group else "classification"
     )
+    target_aggregation_level = (
+        target_data_group.aggregation_level if target_data_group else "file"
+    )
 
-    model_is_classification = is_classification_task(model_task_type)
-    target_is_classification = is_classification_task(target_task_type)
-    model_is_survival = is_survival_task(model_task_type)
-    target_is_survival = is_survival_task(target_task_type)
-    model_is_segmentation = is_segmentation_task(model_task_type)
-    target_is_segmentation = is_segmentation_task(target_task_type)
-
-    if model_is_segmentation and not target_is_segmentation:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task type mismatch: Segmentation model cannot validate non-segmentation data. "
-            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-            f"Please select a segmentation dataset.",
-        )
-
-    if model_is_classification and not target_is_classification:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task type mismatch: Classification model cannot validate survival data. "
-            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-            f"Please select a classification dataset.",
-        )
-
-    if model_is_survival and not target_is_survival:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Task type mismatch: Survival model cannot validate classification data. "
-            f"Model type: '{model_task_type}', Target dataset type: '{target_task_type}'. "
-            f"Please select a survival dataset.",
-        )
-
-    # 3. Validate class label name matching (for classification tasks)
-    if model_is_classification and target_is_classification:
-        model_classes = set(_coerce_str_list(trained_model.classes))
-        dataset_labels = set(
-            await DatasetRepository.get_distinct_labels(db, req.dataset_id)
-        )
-        if model_classes != dataset_labels:
-            missing_in_dataset = model_classes - dataset_labels
-            extra_in_dataset = dataset_labels - model_classes
-            detail_parts = ["Label mismatch between model and dataset."]
-            if missing_in_dataset:
-                detail_parts.append(
-                    f"Model classes not in dataset: {sorted(missing_in_dataset)}"
-                )
-            if extra_in_dataset:
-                detail_parts.append(
-                    f"Dataset labels not in model: {sorted(extra_in_dataset)}"
-                )
-            raise HTTPException(
-                status_code=400,
-                detail=" ".join(detail_parts),
-            )
-
-    if model_is_segmentation and target_is_segmentation:
-        source_task_id = _coerce_str(trained_model.task_id)
-        source_dataset_id = (
-            await TrainingTaskRepository.get_source_dataset_ids_batch(
-                db, [source_task_id]
-            )
-        ).get(source_task_id)
-        if not source_dataset_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Cannot determine the source training dataset for this segmentation model. "
-                "External validation requires a source model trained on a single dataset.",
-            )
-
-        if source_dataset_id == req.dataset_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Target dataset must be different from the source training dataset for segmentation external validation.",
-            )
-
-        model_config = (
-            model_task.model_config if isinstance(model_task.model_config, dict) else {}
-        )
-        task_architecture = str(model_config.get("architecture") or "").strip()
-        task_backbone = str(model_config.get("backbone") or "").strip()
-        saved_architecture = str(trained_model.aggregator or "").strip()
-        saved_backbone = str(trained_model.feature_extractor or "").strip()
-
-        if (
-            not task_architecture
-            or not task_backbone
-            or not saved_architecture
-            or not saved_backbone
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation model architecture metadata is incomplete. "
-                "The source model must include both architecture and backbone metadata for external validation.",
-            )
-
-        if task_architecture != saved_architecture or task_backbone != saved_backbone:
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation model metadata mismatch detected. "
-                f"Task config expects architecture/backbone '{task_architecture}/{task_backbone}', "
-                f"but stored model metadata is '{saved_architecture}/{saved_backbone}'.",
-            )
-
-        model_segmentation_labels = _normalize_label_names(
-            _coerce_str_list(model_task.classes or trained_model.classes or [])
-        )
-        target_segmentation_labels = _extract_segmentation_label_names(
-            await WSIRepository._get_coco_categories_for_dataset(db, req.dataset_id)
-        )
-
-        if not model_segmentation_labels or not target_segmentation_labels:
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation label metadata is incomplete. "
-                "Both the source model and target dataset must define labels for external validation.",
-            )
-
-        if model_segmentation_labels != target_segmentation_labels:
-            missing_in_dataset = sorted(
-                set(model_segmentation_labels) - set(target_segmentation_labels)
-            )
-            extra_in_dataset = sorted(
-                set(target_segmentation_labels) - set(model_segmentation_labels)
-            )
-            detail_parts = [
-                "Segmentation label mismatch between source model and target dataset."
-            ]
-            if missing_in_dataset:
-                detail_parts.append(
-                    f"Model labels not in dataset: {missing_in_dataset}"
-                )
-            if extra_in_dataset:
-                detail_parts.append(f"Dataset labels not in model: {extra_in_dataset}")
-            raise HTTPException(status_code=400, detail=" ".join(detail_parts))
-
-    # Get WSI IDs from target dataset
     wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
     if not wsi_ids:
         raise HTTPException(
             status_code=400, detail=f"No WSI IDs found for dataset: {req.dataset_id}"
         )
 
-    # 4. Prevent validating on data that overlaps with training data (WSI-level check)
     model_wsi_ids = set(
         await TrainingTaskRepository.get_wsi_ids(db, _coerce_str(trained_model.task_id))
     )
-    data_wsi_ids = set(wsi_ids)
-    overlapping_wsi_ids = model_wsi_ids & data_wsi_ids
-    if overlapping_wsi_ids:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Data leakage detected: {len(overlapping_wsi_ids)} WSI(s) in the selected dataset "
-            f"were also used in the model's training data. "
-            f"Please select a dataset with no overlapping slides for external validation.",
+    training_dataset_ids: set[str] = set()
+    training_ds_rows = await db.execute(
+        select(WSISlide.dataset_id)
+        .join(TrainingTaskWSI, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
+        .where(
+            TrainingTaskWSI.task_id == trained_model_task_id,
+            WSISlide.dataset_id.isnot(None),
         )
+        .distinct()
+    )
+    training_dataset_ids = {
+        _coerce_str(row[0]) for row in training_ds_rows.all() if _coerce_str(row[0])
+    }
+
+    dataset_labels = await DatasetRepository.get_distinct_labels(db, req.dataset_id)
+    dataset_feature_extractors: List[str] = []
+    if target_data_type != "patch" and wsi_ids:
+        first_wsi_id = wsi_ids[0]
+        features_root = Config.get_uploads_dir() / "features"
+        if features_root.exists():
+            for extractor_dir in features_root.iterdir():
+                if not extractor_dir.is_dir():
+                    continue
+                for params_hash_dir in extractor_dir.iterdir():
+                    if not params_hash_dir.is_dir():
+                        continue
+                    if (params_hash_dir / f"{first_wsi_id}.pt").exists():
+                        dataset_feature_extractors.append(extractor_dir.name)
+                        break
+
+    source_dataset_id: Optional[str] = None
+    target_seg_labels: List[str] = []
+    model_config = (
+        model_task.model_config if isinstance(model_task.model_config, dict) else {}
+    )
+    if _is_extval_segmentation_task(model_task_type):
+        source_task_id = _coerce_str(trained_model.task_id)
+        source_dataset_id = (
+            await TrainingTaskRepository.get_source_dataset_ids_batch(
+                db, [source_task_id]
+            )
+        ).get(source_task_id)
+        target_seg_labels = _extract_segmentation_label_names(
+            await WSIRepository._get_coco_categories_for_dataset(db, req.dataset_id)
+        )
+
+    compat_error = check_extval_compatibility(
+        model_info=ExtvalModelInfo(
+            data_type=model_data_type,
+            task_type=model_task_type,
+            classes=_coerce_str_list(trained_model.classes),
+            feature_extractor=str(trained_model.feature_extractor or ""),
+            wsi_ids=model_wsi_ids,
+            source_dataset_id=source_dataset_id,
+            seg_task_architecture=str(model_config.get("architecture") or "").strip(),
+            seg_task_backbone=str(model_config.get("backbone") or "").strip(),
+            seg_saved_architecture=str(trained_model.aggregator or "").strip(),
+            seg_saved_backbone=str(trained_model.feature_extractor or "").strip(),
+            segmentation_labels=_coerce_str_list(
+                model_task.classes or trained_model.classes or []
+            ),
+            training_dataset_ids=training_dataset_ids,
+        ),
+        dataset_info=ExtvalDatasetInfo(
+            dataset_id=req.dataset_id,
+            data_type=target_data_type,
+            task_type=target_task_type,
+            aggregation_level=target_aggregation_level,
+            labels=dataset_labels,
+            segmentation_labels=target_seg_labels,
+            feature_extractors=dataset_feature_extractors,
+            wsi_ids=set(wsi_ids),
+        ),
+    )
+    if compat_error:
+        raise HTTPException(status_code=400, detail=compat_error)
 
     # Check if inference results already exist for this model + data combination
     # Look for existing extval_*_result.json files in the WSI ai_results directories
@@ -3354,7 +3299,7 @@ async def start_external_validation(
         )
 
     # Prepare analysis options (use segmentation-specific defaults if needed)
-    if model_is_segmentation:
+    if _is_extval_segmentation_task(model_task_type):
         analysis_metrics = req.metrics or [
             "iou",
             "dice",
@@ -3459,9 +3404,9 @@ async def start_external_validation(
 
     validation_task = TrainingTask(
         task_id=validation_id,
-        task_name=f"External Validation: {trained_model.model_name} → {target_dataset.name or req.dataset_id}",
+        task_name=f"{model_task.task_name} → {target_dataset.name or req.dataset_id}",
         group_id=validation_data_group.group_id,
-        user_id=str(user.id),
+        user_id=effective_task_owner_user_id,
         task_description=f"Validate model '{trained_model.model_name}' on dataset '{target_dataset.name}'",
         status=TaskStatus.PENDING,
         progress=0,
@@ -3479,6 +3424,9 @@ async def start_external_validation(
             "dataset_name": target_dataset.name,  # Store dataset name for display
             "total_wsi": len(wsi_ids),
             "aggregator": trained_model.aggregator,  # Store aggregator name for task list display
+            # Store pipeline params needed to re-submit after system restart (resume_interrupted_tasks)
+            "model_task_type": model_task_type,  # e.g. "classification", "survival", "wsi_survival"
+            "model_data_type": model_data_type,  # "wsi" or "patch"
             # Store analysis options for auto-triggered analysis
             "analysis_metrics": analysis_metrics,
             "analysis_charts": analysis_charts,
@@ -4901,8 +4849,7 @@ async def _run_external_validation(
                     f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache..."
                 )
 
-            # Update status to EXTRACTING so frontend shows feature extraction stage
-            await update_task_progress(TaskStatus.EXTRACTING, 5)
+            await update_task_progress(TaskStatus.PATCHING, 5)
             await set_progress(task_id, 5)
 
             # Step 2a: Patch extraction via preprocessing service (with fallback logic)
@@ -5040,7 +4987,7 @@ async def _run_external_validation(
 
                 # Update progress (5-30% for patch extraction)
                 progress = 5 + int((idx / total_missing) * 25)
-                await update_task_progress(TaskStatus.EXTRACTING, progress)
+                await update_task_progress(TaskStatus.PATCHING, progress)
                 await set_progress(task_id, progress)
 
             # Log summary of coords extraction
@@ -5239,6 +5186,7 @@ async def _run_external_validation(
         case_to_wsi: Dict[str, List[str]] = {}
         case_wsi_patch_counts: Dict[str, List[int]] = {}
         case_labels_map: Dict[str, int] = {}
+        case_survival_data: Dict[str, Dict[str, Any]] = {}
 
         if is_case_level:
             # Group WSIs by case_id and validate feature existence
@@ -5267,13 +5215,17 @@ async def _run_external_validation(
                 for case_id, case_wsi_ids in case_to_wsi.items():
                     first_wsi = case_wsi_ids[0]
                     if first_wsi in survival_data:
-                        case_times[case_id] = survival_data[first_wsi]["event_time"]
-                        case_statuses[case_id] = survival_data[first_wsi][
-                            "event_status"
-                        ]
+                        case_gt = survival_data[first_wsi]
+                        case_times[case_id] = case_gt["event_time"]
+                        case_statuses[case_id] = case_gt["event_status"]
+                        case_survival_data[case_id] = case_gt
                     else:
                         case_times[case_id] = 0.0
                         case_statuses[case_id] = 0
+                        case_survival_data[case_id] = {
+                            "event_time": 0.0,
+                            "event_status": 0,
+                        }
             if is_survival:
                 dataset = CaseFeatureDataset(
                     features_dir=features_dir,
@@ -5359,6 +5311,13 @@ async def _run_external_validation(
                 for idx in range(start_idx, end_idx):
                     # Load item from dataset (triggers torch.load for features)
                     item = dataset[idx]
+
+                    hazards = np.array([], dtype=np.float32)
+                    risk_score = 0.0
+                    surv_probs: List[float] = []
+                    probs = np.array([], dtype=np.float32)
+                    slide_attentions: Dict[str, Any] = {}
+                    slide_raw_attentions: Dict[str, Any] = {}
 
                     if is_case_level:
                         # CaseFeatureDataset returns:
@@ -5496,12 +5455,11 @@ async def _run_external_validation(
 
                     # --- Build prediction data ---
                     gt_data: Dict[str, Any] = {}
-                    hazards = np.array([], dtype=np.float32)
-                    risk_score = 0.0
-                    surv_probs: List[float] = []
-                    probs = np.array([], dtype=np.float32)
                     if is_survival:
-                        gt_data = survival_data.get(item_id, {})
+                        if is_case_level:
+                            gt_data = case_survival_data.get(item_id, {})
+                        else:
+                            gt_data = survival_data.get(item_id, {})
                         _chunk_risk_scores.append(
                             float(np.sum(hazards))
                             if isinstance(hazards, np.ndarray)
@@ -5532,8 +5490,6 @@ async def _run_external_validation(
                             )
 
                     # --- Save per-WSI results ---
-                    slide_attentions: Dict[str, Any] = {}
-                    slide_raw_attentions: Dict[str, Any] = {}
                     for wsi_id in item_wsi_ids:
                         wsi_result_dir = ai_results_root / wsi_id
                         wsi_result_dir.mkdir(parents=True, exist_ok=True)
@@ -6091,8 +6047,6 @@ async def run_task_analysis(
     # Build meaningful title based on task type
     is_external = task_type_str == "external_validation"
     if is_external:
-        # External validation: task_name already has format "External Validation: model → dataset"
-        # Extract source and target from task_name or model_config
         model_config = task.model_config or {}
         model_id = model_config.get("model_id", "")
         dataset_id = model_config.get("dataset_id", "")
@@ -6134,6 +6088,21 @@ async def run_task_analysis(
         analysis_type=analysis_type,
         task_category=task_category,
     )
+
+    # Persist internal analysis run to DB for usage statistics.
+    # External validation is already tracked via TrainingTask, so we only write here
+    # for internal analyses to avoid double-counting.
+    if not is_external:
+        try:
+            run_record = AnalysisRun(
+                analysis_id=analysis_id,
+                task_id=task_id,
+                user_id=str(user.id),
+            )
+            db.add(run_record)
+            await db.flush()
+        except Exception as _ar_err:
+            logger.warning(f"Failed to persist AnalysisRun record: {_ar_err}")
 
     # Check if GPU inference is needed (AI results missing)
     # External validation does not need GPU check here as it handles its own inference flow
@@ -6639,21 +6608,9 @@ async def get_analysis_file(
 async def delete_task_analysis(
     task_id: str,
     analysis_id: str,
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Delete a specific analysis run for a task.
-    Requires pathologist or admin role. Users can only delete their own task's analysis.
-
-    Args:
-        task_id: Training task ID
-        analysis_id: Analysis run ID (timestamp directory name)
-
-    Returns:
-        Success message
-    """
-    # Check task ownership
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if task is not None and not check_data_ownership(_coerce_str(task.user_id), user):
         raise HTTPException(
@@ -6674,8 +6631,24 @@ async def delete_task_analysis(
             status_code=400, detail=f"Invalid analysis ID: {analysis_id}"
         )
 
+    if not user.is_admin():
+        summary_file = analysis_dir / "summary.json"
+        if summary_file.exists():
+            try:
+                with open(summary_file, "r") as f:
+                    summary = json.load(f)
+                submitted_by = summary.get("submitted_by")
+                if submitted_by and submitted_by != str(user.id):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="You don't have permission to delete this analysis",
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                pass
+
     try:
-        # Run in thread pool to avoid blocking event loop
         await asyncio.to_thread(shutil.rmtree, analysis_dir)
         logger.info(f"Deleted analysis {analysis_id} for task {task_id}")
         return {

@@ -13,6 +13,7 @@ import { DataLevel } from '../../constants/training'
 export interface StepProgressBarProps {
   currentStep: number
   dataLevel: DataLevel
+  onStepClick?: (step: number) => void
 }
 
 interface StepConfig {
@@ -21,7 +22,7 @@ interface StepConfig {
   displayNumber?: string
 }
 
-export function StepProgressBar({ currentStep, dataLevel }: StepProgressBarProps) {
+export function StepProgressBar({ currentStep, dataLevel, onStepClick }: StepProgressBarProps) {
   const { t } = useTranslation()
   const isWSI = dataLevel === 'wsi'
 
@@ -45,40 +46,64 @@ export function StepProgressBar({ currentStep, dataLevel }: StepProgressBarProps
   return (
     <Card className="p-3 sm:p-6 overflow-x-auto scrollbar-none">
       <div className="flex items-center justify-between min-w-[500px] px-1">
-        {steps.map((step, index) => (
-          <React.Fragment key={step.number}>
-            <div className="flex items-center space-x-2 sm:space-x-3">
-              <div
-                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${
-                  currentStep >= step.number
-                    ? 'bg-primary-600 text-white ring-2 ring-primary-100'
-                    : 'bg-gray-100 text-gray-400'
-                }`}
-              >
-                {currentStep > step.number ? (
-                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
-                ) : (
-                  step.displayNumber || step.number
-                )}
-              </div>
-              <span
-                className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${
-                  currentStep >= step.number ? 'text-gray-900' : 'text-gray-400'
-                }`}
-              >
-                {step.label}
-              </span>
-            </div>
+        {steps.map((step, index) => {
+          const isClickable = !!onStepClick && currentStep >= step.number
+          return (
+            <React.Fragment key={step.number}>
+              {isClickable ? (
+                <button
+                  type="button"
+                  className="flex items-center space-x-2 sm:space-x-3 group cursor-pointer"
+                  onClick={() => onStepClick(step.number)}
+                >
+                  <div
+                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 bg-primary-600 text-white ring-2 ring-primary-100 group-hover:ring-4 group-hover:ring-primary-200`}
+                  >
+                    {currentStep > step.number ? (
+                      <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                    ) : (
+                      step.displayNumber || step.number
+                    )}
+                  </div>
+                  <span className="font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap text-gray-900 group-hover:text-primary-700">
+                    {step.label}
+                  </span>
+                </button>
+              ) : (
+                <div className="flex items-center space-x-2 sm:space-x-3">
+                  <div
+                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${
+                      currentStep >= step.number
+                        ? 'bg-primary-600 text-white ring-2 ring-primary-100'
+                        : 'bg-gray-100 text-gray-400'
+                    }`}
+                  >
+                    {currentStep > step.number ? (
+                      <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                    ) : (
+                      step.displayNumber || step.number
+                    )}
+                  </div>
+                  <span
+                    className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${
+                      currentStep >= step.number ? 'text-gray-900' : 'text-gray-400'
+                    }`}
+                  >
+                    {step.label}
+                  </span>
+                </div>
+              )}
 
-            {index < steps.length - 1 && (
-              <div
-                className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${
-                  currentStep > step.number ? 'bg-primary-600' : 'bg-gray-200'
-                }`}
-              />
-            )}
-          </React.Fragment>
-        ))}
+              {index < steps.length - 1 && (
+                <div
+                  className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${
+                    currentStep > step.number ? 'bg-primary-600' : 'bg-gray-200'
+                  }`}
+                />
+              )}
+            </React.Fragment>
+          )
+        })}
       </div>
     </Card>
   )

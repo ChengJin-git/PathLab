@@ -27,7 +27,7 @@ function resolveLanguage(language: string): SupportedLegalLanguage {
   return 'en-US'
 }
 
-export function LegalInlineLink({ href, children }: { href: string; children: ReactNode }) {
+export function LegalInlineLink({ href, children }: { href: string; children?: ReactNode }) {
   return (
     <a
       href={href}

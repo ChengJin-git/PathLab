@@ -7,6 +7,7 @@ Common functionality extracted from individual trainers to avoid code duplicatio
 - K-fold split detection helpers
 - Classification metrics aggregation for K-fold training
 """
+
 from __future__ import annotations
 
 import json
@@ -18,7 +19,10 @@ from contextlib import asynccontextmanager
 
 import numpy as np
 from sklearn.metrics import (
-    roc_auc_score, precision_score, recall_score, f1_score,
+    roc_auc_score,
+    precision_score,
+    recall_score,
+    f1_score,
     cohen_kappa_score,
     confusion_matrix as sklearn_confusion_matrix,
 )
@@ -51,7 +55,9 @@ def calculate_progress_update_interval(
         return 1
     if target_updates <= 0:
         target_updates = 1
-    return max(1, min((total_items + target_updates - 1) // target_updates, max_interval))
+    return max(
+        1, min((total_items + target_updates - 1) // target_updates, max_interval)
+    )
 
 
 def interpolate_progress(
@@ -67,7 +73,9 @@ def interpolate_progress(
         return progress_end
 
     bounded_completed = max(0, min(completed_items, total_items))
-    return progress_start + int((bounded_completed / total_items) * (progress_end - progress_start))
+    return progress_start + int(
+        (bounded_completed / total_items) * (progress_end - progress_start)
+    )
 
 
 # Keep backward-compatible alias
@@ -94,9 +102,7 @@ async def scoped_db(session_maker):
     except TimeoutError:
         with anyio.CancelScope(shield=True):
             await session.rollback()
-        _scoped_db_logger.error(
-            f"Database operation timed out after {timeout}s."
-        )
+        _scoped_db_logger.error(f"Database operation timed out after {timeout}s.")
         raise
     except Exception:
         with anyio.CancelScope(shield=True):
@@ -173,16 +179,20 @@ def calculate_kfold_classification_metrics(
         if splits_map and fold_key in splits_map:
             wsi_ids = splits_map[fold_key]
             for wsi_id in wsi_ids:
-                result_file = ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
+                result_file = (
+                    ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
+                )
                 if result_file.exists():
                     try:
-                        with open(result_file, 'r') as f:
+                        with open(result_file, "r") as f:
                             data = json.load(f)
                             pred = data.get("pred")
                             gt = data.get("ground_truth")
                             probs = data.get("probs", {})
                             if pred and gt:
-                                pred_idx = classes.index(pred) if pred in classes else -1
+                                pred_idx = (
+                                    classes.index(pred) if pred in classes else -1
+                                )
                                 gt_idx = classes.index(gt) if gt in classes else -1
                                 if pred_idx >= 0 and gt_idx >= 0:
                                     all_preds.append(pred_idx)
@@ -198,19 +208,30 @@ def calculate_kfold_classification_metrics(
                     result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
                     if result_file.exists():
                         try:
-                            with open(result_file, 'r') as f:
+                            with open(result_file, "r") as f:
                                 data = json.load(f)
-                                if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
+                                if (
+                                    data.get("task_id") == task_id
+                                    and data.get("fold_key") == fold_key
+                                ):
                                     pred = data.get("pred")
                                     gt = data.get("ground_truth")
                                     probs = data.get("probs", {})
                                     if pred and gt:
-                                        pred_idx = classes.index(pred) if pred in classes else -1
-                                        gt_idx = classes.index(gt) if gt in classes else -1
+                                        pred_idx = (
+                                            classes.index(pred)
+                                            if pred in classes
+                                            else -1
+                                        )
+                                        gt_idx = (
+                                            classes.index(gt) if gt in classes else -1
+                                        )
                                         if pred_idx >= 0 and gt_idx >= 0:
                                             all_preds.append(pred_idx)
                                             all_labels.append(gt_idx)
-                                            probs_arr = [probs.get(cls, 0.0) for cls in classes]
+                                            probs_arr = [
+                                                probs.get(cls, 0.0) for cls in classes
+                                            ]
                                             all_probs.append(probs_arr)
                         except Exception:
                             continue
@@ -223,15 +244,17 @@ def calculate_kfold_classification_metrics(
         all_probs = np.array(all_probs)
 
         # Calculate metrics using sklearn
-        precision = precision_score(all_labels, all_preds, average='macro', zero_division=0)
-        recall = recall_score(all_labels, all_preds, average='macro', zero_division=0)
-        f1 = f1_score(all_labels, all_preds, average='macro', zero_division=0)
+        precision = precision_score(
+            all_labels, all_preds, average="macro", zero_division=0
+        )
+        recall = recall_score(all_labels, all_preds, average="macro", zero_division=0)
+        f1 = f1_score(all_labels, all_preds, average="macro", zero_division=0)
         try:
             weighted_kappa = cohen_kappa_score(
                 all_labels,
                 all_preds,
                 labels=list(range(n_classes)),
-                weights='quadratic'
+                weights="quadratic",
             )
             if np.isnan(weighted_kappa):
                 weighted_kappa = None
@@ -239,7 +262,9 @@ def calculate_kfold_classification_metrics(
             weighted_kappa = None
 
         # Specificity calculation (macro average)
-        cm = sklearn_confusion_matrix(all_labels, all_preds, labels=list(range(n_classes)))
+        cm = sklearn_confusion_matrix(
+            all_labels, all_preds, labels=list(range(n_classes))
+        )
         specificities = []
         for i in range(n_classes):
             tp = cm[i, i]
@@ -255,7 +280,9 @@ def calculate_kfold_classification_metrics(
             if n_classes == 2:
                 auc_val = roc_auc_score(all_labels, all_probs[:, 1])
             else:
-                auc_val = roc_auc_score(all_labels, all_probs, multi_class='ovr', average='macro')
+                auc_val = roc_auc_score(
+                    all_labels, all_probs, multi_class="ovr", average="macro"
+                )
         except ValueError:
             auc_val = None
 
@@ -286,7 +313,9 @@ def calculate_kfold_classification_metrics(
         if auc_val is not None and not np.isnan(auc_val):
             per_fold_metrics[fold_key]["auc"] = round(float(auc_val), 4)
         if weighted_kappa is not None:
-            per_fold_metrics[fold_key]["weighted_kappa"] = round(float(weighted_kappa), 4)
+            per_fold_metrics[fold_key]["weighted_kappa"] = round(
+                float(weighted_kappa), 4
+            )
 
     # Calculate mean and std for each metric (rounded to 4 decimal places)
     aggregated = {}
@@ -301,3 +330,34 @@ def calculate_kfold_classification_metrics(
                 }
 
     return aggregated, per_fold_metrics
+
+
+# ---------------------------------------------------------------------------
+# Resume-checkpoint helpers
+# ---------------------------------------------------------------------------
+
+
+def save_resume_checkpoint_sync(path: Path, data: dict) -> None:
+    """Atomically save a resume checkpoint via tmp-file + rename.
+
+    Uses a sibling ``*.pth.tmp`` file so a crash mid-write never leaves a
+    partially-written checkpoint.  Errors are silently swallowed so a failed
+    save never aborts training.
+    """
+    import torch as _torch
+
+    try:
+        tmp = path.with_suffix(".pth.tmp")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _torch.save(data, tmp)
+        tmp.replace(path)
+    except Exception:
+        pass
+
+
+def delete_resume_checkpoint(path: Path) -> None:
+    """Delete the resume checkpoint if it exists.  Errors are silently ignored."""
+    try:
+        path.unlink(missing_ok=True)
+    except Exception:
+        pass

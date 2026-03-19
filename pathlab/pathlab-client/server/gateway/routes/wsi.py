@@ -447,6 +447,14 @@ async def list_wsi(
         le=10000,
         description="Number of case groups per page. 0 = return all (no pagination).",
     ),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Sort field: original_filename, label, event_time, event_status",
+    ),
+    sort_order: str = Query(
+        "asc",
+        description="Sort direction: asc or desc",
+    ),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db),
@@ -485,6 +493,8 @@ async def list_wsi(
                 data_type=data_type,
                 search=search,
                 elevated_dataset_ids=elevated_dataset_ids,
+                sort_by=sort_by,
+                sort_order=sort_order,
             )
             total = await WSIRepository.count_by_dataset(
                 db,
@@ -528,6 +538,9 @@ async def list_wsi(
             user_id=user_id_filter,
             data_type=data_type,
             elevated_dataset_ids=elevated_dataset_ids,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            named_count=case_meta["named_case_count"],
         )
 
         items = await _serialize_dataset_wsi_items(
@@ -1078,12 +1091,17 @@ async def update_dataset_source(
         )
 
         from sqlalchemy import update as sql_update
-        from backend.database.models import WSISlide
+        from backend.database.models import WSISlide, Dataset
 
         normalized_source = req.source.strip() if isinstance(req.source, str) else None
         if normalized_source == "":
             normalized_source = None
 
+        await db.execute(
+            sql_update(Dataset)
+            .where(Dataset.dataset_id == dataset_id)
+            .values(source_organ=normalized_source)
+        )
         result = await db.execute(
             sql_update(WSISlide)
             .where(WSISlide.dataset_id == dataset_id)
@@ -1468,9 +1486,9 @@ async def upload_dataset_splits(
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
 
-    # Decode as UTF-8
+    # Decode as UTF-8 (utf-8-sig strips BOM if present — Excel often adds BOM to CSV)
     try:
-        text = content.decode("utf-8")
+        text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise HTTPException(
             status_code=400, detail="Invalid CSV file: not valid UTF-8 encoding"
@@ -1773,7 +1791,8 @@ async def export_dataset_labels(
     """
     Export dataset labels as CSV file.
 
-    Admin only. Non-blocking operation using StreamingResponse.
+    Available to dataset owners and users with elevated access permissions.
+    Non-blocking operation using StreamingResponse.
 
     If dataset has predefined splits, exports them directly.
     If generate_split=True and no predefined splits, generates splits using the same
@@ -1785,14 +1804,14 @@ async def export_dataset_labels(
     - Survival (file-level): filename, event_time, event_status, case_id, age, gender, split
     - Survival (case-level): case_id, event_time, event_status, file_count, age, gender, split, filenames
     """
-    # Admin only
-    if not user.is_admin():
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    # Get dataset
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset = await get_dataset_with_access(
+        dataset_id,
+        user,
+        db,
+        require_owner=False,
+        not_found_detail="Dataset not found",
+        forbidden_detail="You don't have permission to export this dataset",
+    )
 
     aggregation_level = (
         dataset.data_group.aggregation_level if dataset.data_group else "file"

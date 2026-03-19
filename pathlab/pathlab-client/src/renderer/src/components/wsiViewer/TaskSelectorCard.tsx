@@ -21,6 +21,8 @@ interface TaskSelectorCardProps {
   heatmapData: HeatmapData | null
   patchCAMData: PatchCAMData | null
   isPatchLevel: boolean
+  wsiLabel?: string | null
+  wsiEventStatus?: number | null
 }
 
 export function TaskSelectorCard({
@@ -38,7 +40,9 @@ export function TaskSelectorCard({
   setShowDeleteConfirm,
   heatmapData,
   patchCAMData,
-  isPatchLevel
+  isPatchLevel,
+  wsiLabel,
+  wsiEventStatus,
 }: TaskSelectorCardProps) {
   const { t } = useTranslation()
   const selectedTask = selectedTaskEntries.find(h => h.data_type === 'wsi' || h.data_type === 'patch')
@@ -60,7 +64,7 @@ export function TaskSelectorCard({
   const displayClasses = segmentationTask?.classes ?? selectedTask?.classes ?? patchCAMData?.classes ?? heatmapData?.classes ?? []
 
   return (
-    <Card className="mb-4 overflow-visible">
+    <Card className="mb-4 overflow-visible shrink-0" noPadding>
       <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
         <Layers className="w-4 h-4 text-indigo-500" />
         <h3 className="m-0 text-sm font-semibold text-gray-900">{t('wsiViewerComponents.taskSelector.selectTask')}</h3>
@@ -87,7 +91,7 @@ export function TaskSelectorCard({
                 {(() => {
                   const task = selectedTask;
                   if (!task) return t('wsiViewerComponents.taskSelector.selectATask');
-                  return formatClasses(task.classes) || task.task_name || task.task_type?.replace(/_/g, ' ');
+                  return task.task_name || formatClasses(task.classes) || task.task_type?.replace(/_/g, ' ');
                 })()}
               </span>
               {(() => {
@@ -144,7 +148,7 @@ export function TaskSelectorCard({
                           <div className="flex items-center gap-2">
                             <span className={`text-[13px] font-semibold tracking-tight transition-colors duration-200 capitalize ${selectedTaskId === (hm.task_id || '') ? 'text-white' : 'text-gray-700'
                               }`}>
-                              {formatClasses(hm.classes) || hm.task_name || hm.task_type?.replace(/_/g, ' ')}
+                              {hm.task_name || formatClasses(hm.classes) || hm.task_type?.replace(/_/g, ' ')}
                             </span>
                             {hm.isKFold && (
                               <span className={`text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full transition-colors duration-200 ${selectedTaskId === (hm.task_id || '')
@@ -309,7 +313,21 @@ export function TaskSelectorCard({
                   }
                   return null
                 })()}
+                {(wsiLabel != null) && (
+                  <div className="mt-2 pt-2 border-t border-indigo-100 flex items-center gap-1.5">
+                    <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">GT</span>
+                    <span className="text-xs font-medium text-indigo-700">{wsiLabel}</span>
+                  </div>
+                )}
               </>
+            )}
+            {isSurvivalTask && (wsiEventStatus != null) && (
+              <div className="mt-2 pt-2 border-t border-emerald-100 flex items-center gap-1.5">
+                <span className="text-[9px] uppercase tracking-wider font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 shrink-0">GT</span>
+                <span className={`text-xs font-medium ${wsiEventStatus === 1 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {wsiEventStatus === 1 ? t('wsiViewerComponents.taskSelector.event') : t('wsiViewerComponents.taskSelector.censored')}
+                </span>
+              </div>
             )}
           </div>
         )}

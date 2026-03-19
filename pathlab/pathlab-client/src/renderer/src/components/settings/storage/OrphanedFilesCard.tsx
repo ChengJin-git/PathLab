@@ -56,7 +56,15 @@ export const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
                 <CheckCircle className="w-5 h-5" />
                 {t('settings.storage.cleanupComplete')}
               </div>
-              <div className="text-sm text-green-700">{cleanupResult.summary}</div>
+              <div className="text-sm text-green-700">
+                {t('settings.storage.orphanedFilesCleanupSummary', {
+                  files: cleanupResult.deleted_files.length,
+                  dirs: cleanupResult.deleted_dirs.length,
+                  emptyDirs: cleanupResult.deleted_empty_dirs.length,
+                  failed: cleanupResult.failed.length,
+                  size: formatBytes(cleanupResult.total_size)
+                })}
+              </div>
             </div>
           ) : orphanedFiles.total_orphaned_count > 0 ? (
             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">

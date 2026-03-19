@@ -26,12 +26,25 @@ export const StorageStatsDisplay: React.FC<StorageStatsDisplayProps> = ({ stats,
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 pb-6 border-b border-gray-200">
         <div className="bg-gray-50 rounded-lg p-4">
           <div className="text-sm text-gray-600 mb-1">{t('settings.storage.totalStorage')}</div>
-          <div className="text-3xl font-bold text-gray-900">
-            {stats.total_size_gb.toFixed(2)} <span className="text-lg text-gray-600">GB</span>
-          </div>
-          <div className="text-xs text-gray-500 mt-1">
-            {stats.total_size_mb.toFixed(2)} MB
-          </div>
+          {stats.total_size_gb >= 1024 ? (
+            <>
+              <div className="text-3xl font-bold text-gray-900">
+                {(stats.total_size_gb / 1024).toFixed(2)} <span className="text-lg text-gray-600">TB</span>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {stats.total_size_gb.toFixed(1)} GB
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="text-3xl font-bold text-gray-900">
+                {stats.total_size_gb.toFixed(2)} <span className="text-lg text-gray-600">GB</span>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                {stats.total_size_mb.toFixed(2)} MB
+              </div>
+            </>
+          )}
         </div>
         <div className="bg-gray-50 rounded-lg p-4">
           <div className="text-sm text-gray-600 mb-1">{t('settings.storage.totalFiles')}</div>

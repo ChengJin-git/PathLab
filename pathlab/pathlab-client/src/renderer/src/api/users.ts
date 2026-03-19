@@ -259,6 +259,15 @@ export interface MaintenanceNotice {
   needs_acknowledgment: boolean
 }
 
+export async function getPublicMaintenanceNotice(): Promise<Omit<MaintenanceNotice, 'needs_acknowledgment'>> {
+  return apiFetch<Omit<MaintenanceNotice, 'needs_acknowledgment'>>(
+    `${API_BASE}/auth/maintenance-notice/public`,
+    undefined,
+    'Failed to get public maintenance notice',
+    true
+  )
+}
+
 /**
  * Get current maintenance notice and whether user needs to acknowledge it
  * @throws {ApiError} If request fails

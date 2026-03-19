@@ -12,7 +12,7 @@ export type TaskStatus = 'pending' | 'running' | 'success' | 'error' | 'cancelle
 export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data'
 
 // Training task status from backend (more granular)
-export type TrainingTaskStatus = 'creating' | 'pending' | 'queued' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
+export type TrainingTaskStatus = 'creating' | 'pending' | 'queued' | 'resuming' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
 
 // Server task type from backend
 export type ServerTaskType = 'classification' | 'survival' | 'segmentation' | 'external_validation'
@@ -81,6 +81,7 @@ export interface UploadTaskFile {
   metadata?: {
     dataset_id?: string  // Dataset UUID (for existing dataset)
     dataset_name?: string  // Dataset display name (for creating new dataset)
+    source_organ?: string  // Source organ/tissue for new dataset
     aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string

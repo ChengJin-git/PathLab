@@ -124,7 +124,7 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
         }
         csvContent = csv
       } else {
-        csvContent = new TextDecoder().decode(arrayBuffer)
+        csvContent = new TextDecoder().decode(arrayBuffer).replace(/^\uFEFF/, '') // Strip BOM
       }
 
       const lines = csvContent.split('\n').filter(line => line.trim() !== '')
@@ -335,9 +335,8 @@ export function MetadataUploadCard({ config, onSuccess, onError }: MetadataUploa
         {/* Drop zone — show when no task submitted yet, or on error (retry) */}
         {!taskSubmitted && (
           <div
-            className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer ${
-              isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
-            }`}
+            className={`border-2 border-dashed rounded-xl p-6 text-center transition-colors cursor-pointer ${isDragging ? 'border-primary-500 bg-primary-50' : 'border-gray-200 hover:border-gray-300'
+              }`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}

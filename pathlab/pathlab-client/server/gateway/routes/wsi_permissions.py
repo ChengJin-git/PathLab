@@ -2,6 +2,8 @@
 WSI dataset permission routes
 Handles temporary elevated access permissions for datasets (demo/review use case).
 """
+
+import asyncio
 import httpx
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any
@@ -17,10 +19,13 @@ from backend.database.repositories import (
     DatasetPermissionRepository,
     SegmentationAnnotationRepository,
     TrainingTaskRepository,
+    AnnotationCollaboratorRepository,
 )
 from backend.database.models import Dataset, TrainingTask, WSISlide
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin
+from backend.common.annotation_pubsub import publish as publish_annotation
+from backend.common.presence_pubsub import publish_presence
 from ..dependencies import logger, AI_SERVICE_URL
 
 router = APIRouter(tags=["WSI Permissions"])
@@ -28,12 +33,14 @@ router = APIRouter(tags=["WSI Permissions"])
 
 class BatchGrantDatasetPermissionRequest(BaseModel):
     """Grant one dataset to many users in a single request."""
+
     user_ids: List[str] = Field(default_factory=list)
     expires_in_hours: Optional[int] = None
 
 
 class BatchRevokeDatasetPermissionRequest(BaseModel):
     """Revoke one dataset from many users in a single request."""
+
     user_ids: List[str] = Field(default_factory=list)
 
 
@@ -41,7 +48,9 @@ def _calculate_expires_at(expires_in_hours: Optional[int]) -> Optional[datetime]
     """Convert hours into a naive UTC expiration timestamp for PostgreSQL compatibility."""
     if expires_in_hours is None or expires_in_hours <= 0:
         return None
-    return (datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)).replace(tzinfo=None)
+    return (datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)).replace(
+        tzinfo=None
+    )
 
 
 async def _grant_or_renew_dataset_permission(
@@ -51,7 +60,9 @@ async def _grant_or_renew_dataset_permission(
     granted_by: str,
     expires_at: Optional[datetime],
 ) -> Tuple[str, Dict[str, Any]]:
-    existing = await DatasetPermissionRepository.get_by_dataset_and_user(db, dataset_id, user_id)
+    existing = await DatasetPermissionRepository.get_by_dataset_and_user(
+        db, dataset_id, user_id
+    )
     if existing:
         if existing.is_expired():
             existing.expires_at = expires_at
@@ -62,7 +73,7 @@ async def _grant_or_renew_dataset_permission(
 
         raise HTTPException(
             status_code=400,
-            detail="Valid permission already exists for this user on this dataset"
+            detail="Valid permission already exists for this user on this dataset",
         )
 
     permission = await DatasetPermissionRepository.create(
@@ -85,7 +96,7 @@ async def _find_affected_training_tasks(
     if not dataset_wsi_ids:
         return affected_task_ids
 
-    running_statuses = ['pending', 'patching', 'extracting', 'training', 'resuming']
+    running_statuses = ["pending", "patching", "extracting", "training", "resuming"]
     running_tasks_result = await db.execute(
         select(TrainingTask.task_id)
         .where(TrainingTask.user_id == target_user_id)
@@ -106,14 +117,22 @@ async def _notify_ai_service_permission_revocation(task_ids: List[str]) -> List[
     for task_id in task_ids:
         try:
             async with httpx.AsyncClient(timeout=1.0) as client:
-                await client.post(f"{AI_SERVICE_URL}/api/ai/training/{task_id}/revoke-permission")
+                await client.post(
+                    f"{AI_SERVICE_URL}/api/ai/training/{task_id}/revoke-permission"
+                )
                 revoked_tasks.append(task_id)
-                logger.info(f"Permission revocation sent to AI service for task {task_id}")
+                logger.info(
+                    f"Permission revocation sent to AI service for task {task_id}"
+                )
         except httpx.TimeoutException:
             revoked_tasks.append(task_id)
-            logger.debug(f"Permission revocation sent to AI service for task {task_id} (fire-and-forget)")
+            logger.debug(
+                f"Permission revocation sent to AI service for task {task_id} (fire-and-forget)"
+            )
         except Exception as e:
-            logger.warning(f"Failed to send permission revocation to AI service for task {task_id}: {e}")
+            logger.warning(
+                f"Failed to send permission revocation to AI service for task {task_id}: {e}"
+            )
     return revoked_tasks
 
 
@@ -123,13 +142,17 @@ async def _revoke_dataset_permission_with_side_effects(
     target_user_id: str,
     dataset_wsi_ids: set[Any],
 ) -> Dict[str, Any]:
-    affected_task_ids = await _find_affected_training_tasks(db, target_user_id, dataset_wsi_ids)
+    affected_task_ids = await _find_affected_training_tasks(
+        db, target_user_id, dataset_wsi_ids
+    )
     revoked_tasks = await _notify_ai_service_permission_revocation(affected_task_ids)
 
-    deleted_annotation_count = await SegmentationAnnotationRepository.delete_by_dataset_and_user(
-        db,
-        dataset_id,
-        target_user_id,
+    deleted_annotation_count = (
+        await SegmentationAnnotationRepository.delete_by_dataset_and_user(
+            db,
+            dataset_id,
+            target_user_id,
+        )
     )
     if deleted_annotation_count:
         logger.info(
@@ -138,22 +161,42 @@ async def _revoke_dataset_permission_with_side_effects(
             f"during permission revocation"
         )
 
-    deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(db, dataset_id, target_user_id)
+    collab_removed = await AnnotationCollaboratorRepository.remove(
+        db, dataset_id, target_user_id
+    )
+
+    deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(
+        db, dataset_id, target_user_id
+    )
     if not deleted:
         raise HTTPException(status_code=404, detail="Permission not found")
+
+    if collab_removed:
+        try:
+            await publish_annotation(
+                dataset_id, {"type": "access_revoked", "user_id": target_user_id}
+            )
+            await publish_presence(
+                dataset_id, {"type": "force_disconnect", "user_id": target_user_id}
+            )
+        except Exception as pub_err:
+            logger.warning(
+                f"Failed to publish revocation events for {target_user_id} on {dataset_id}: {pub_err}"
+            )
 
     result: Dict[str, Any] = {"message": "Permission revoked successfully"}
     if revoked_tasks:
         result["affected_tasks"] = revoked_tasks
-        result["message"] = f"Permission revoked. {len(revoked_tasks)} running task(s) will be stopped."
+        result["message"] = (
+            f"Permission revoked. {len(revoked_tasks)} running task(s) will be stopped."
+        )
     return result
 
 
 # NOTE: These routes must be defined BEFORE /{wsi_id} to avoid path parameter conflicts
 @router.get("/my-permissions")
 async def get_my_dataset_permissions(
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
     """
     Get all valid (non-expired) dataset permissions for the current user.
@@ -163,7 +206,7 @@ async def get_my_dataset_permissions(
     return {
         "user_id": str(user.id),
         "permissions": [p.to_dict() for p in permissions],
-        "elevated_dataset_ids": [p.dataset_id for p in permissions if p.is_valid()]
+        "elevated_dataset_ids": [p.dataset_id for p in permissions if p.is_valid()],
     }
 
 
@@ -171,7 +214,7 @@ async def get_my_dataset_permissions(
 async def get_user_dataset_permissions(
     target_user_id: str,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get all dataset permissions for a specific user.
@@ -182,7 +225,9 @@ async def get_user_dataset_permissions(
     dataset_names: Dict[str, str] = {}
     if dataset_ids:
         dataset_rows = await db.execute(
-            select(Dataset.dataset_id, Dataset.name).where(Dataset.dataset_id.in_(dataset_ids))
+            select(Dataset.dataset_id, Dataset.name).where(
+                Dataset.dataset_id.in_(dataset_ids)
+            )
         )
         dataset_names = {row[0]: row[1] for row in dataset_rows.all()}
 
@@ -197,7 +242,11 @@ async def get_user_dataset_permissions(
     return {
         "user_id": target_user_id,
         "permissions": serialized_permissions,
-        "valid_permissions": [permission for permission in serialized_permissions if permission["is_valid"]]
+        "valid_permissions": [
+            permission
+            for permission in serialized_permissions
+            if permission["is_valid"]
+        ],
     }
 
 
@@ -205,7 +254,7 @@ async def get_user_dataset_permissions(
 async def list_dataset_permissions(
     dataset_id: str,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     List all permissions granted for a dataset.
@@ -221,8 +270,9 @@ async def list_dataset_permissions(
     user_map: Dict[str, Dict[str, object]] = {}
     if user_ids:
         user_rows = await db.execute(
-            select(User.id, User.email, User.nickname, User.role, User.is_active)
-            .where(User.id.in_(user_ids))
+            select(User.id, User.email, User.nickname, User.role, User.is_active).where(
+                User.id.in_(user_ids)
+            )
         )
         user_map = {
             str(row[0]): {
@@ -242,7 +292,7 @@ async def list_dataset_permissions(
                 **user_map.get(p.user_id, {}),
             }
             for p in permissions
-        ]
+        ],
     }
 
 
@@ -250,9 +300,11 @@ async def list_dataset_permissions(
 async def grant_dataset_permission(
     dataset_id: str,
     user_id: str = Form(..., description="User UUID to grant permission to"),
-    expires_in_hours: Optional[int] = Form(None, description="Hours until permission expires (null = no expiration)"),
+    expires_in_hours: Optional[int] = Form(
+        None, description="Hours until permission expires (null = no expiration)"
+    ),
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Grant temporary elevated permission (pathologist-level) to a user for a specific dataset.
@@ -284,13 +336,10 @@ async def grant_dataset_permission(
         await db.rollback()
         raise HTTPException(
             status_code=400,
-            detail="Valid permission already exists for this user on this dataset"
+            detail="Valid permission already exists for this user on this dataset",
         )
 
-    return {
-        "message": message,
-        "permission": permission
-    }
+    return {"message": message, "permission": permission}
 
 
 @router.post("/datasets/{dataset_id}/permissions/batch-grant")
@@ -298,7 +347,7 @@ async def batch_grant_dataset_permissions(
     dataset_id: str,
     request: BatchGrantDatasetPermissionRequest,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Grant one dataset to many users in a single request."""
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
@@ -319,38 +368,46 @@ async def batch_grant_dataset_permissions(
                 expires_at=expires_at,
             )
             await db.commit()
-            results.append({
-                "user_id": user_id,
-                "success": True,
-                "message": message,
-                "permission": permission,
-            })
+            results.append(
+                {
+                    "user_id": user_id,
+                    "success": True,
+                    "message": message,
+                    "permission": permission,
+                }
+            )
             granted += 1
         except HTTPException as exc:
             await db.rollback()
-            results.append({
-                "user_id": user_id,
-                "success": False,
-                "error": str(exc.detail),
-            })
+            results.append(
+                {
+                    "user_id": user_id,
+                    "success": False,
+                    "error": str(exc.detail),
+                }
+            )
         except IntegrityError:
             await db.rollback()
-            results.append({
-                "user_id": user_id,
-                "success": False,
-                "error": "Valid permission already exists for this user on this dataset",
-            })
+            results.append(
+                {
+                    "user_id": user_id,
+                    "success": False,
+                    "error": "Valid permission already exists for this user on this dataset",
+                }
+            )
         except Exception as exc:
             await db.rollback()
             logger.warning(
                 f"Failed to batch grant permission for user {user_id} "
                 f"on dataset {dataset_id}: {exc}"
             )
-            results.append({
-                "user_id": user_id,
-                "success": False,
-                "error": str(exc),
-            })
+            results.append(
+                {
+                    "user_id": user_id,
+                    "success": False,
+                    "error": str(exc),
+                }
+            )
 
     return {
         "dataset_id": dataset_id,
@@ -365,7 +422,7 @@ async def revoke_dataset_permission(
     dataset_id: str,
     target_user_id: str,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Revoke a user's permission for a dataset.
@@ -400,7 +457,7 @@ async def batch_revoke_dataset_permissions(
     dataset_id: str,
     request: BatchRevokeDatasetPermissionRequest,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """Revoke one dataset from many users in a single request."""
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
@@ -424,30 +481,36 @@ async def batch_revoke_dataset_permissions(
                 dataset_wsi_ids=dataset_wsi_ids,
             )
             await db.commit()
-            results.append({
-                "user_id": target_user_id,
-                "success": True,
-                **result,
-            })
+            results.append(
+                {
+                    "user_id": target_user_id,
+                    "success": True,
+                    **result,
+                }
+            )
             revoked += 1
         except HTTPException as exc:
             await db.rollback()
-            results.append({
-                "user_id": target_user_id,
-                "success": False,
-                "error": str(exc.detail),
-            })
+            results.append(
+                {
+                    "user_id": target_user_id,
+                    "success": False,
+                    "error": str(exc.detail),
+                }
+            )
         except Exception as exc:
             await db.rollback()
             logger.warning(
                 f"Failed to batch revoke permission for user {target_user_id} "
                 f"on dataset {dataset_id}: {exc}"
             )
-            results.append({
-                "user_id": target_user_id,
-                "success": False,
-                "error": str(exc),
-            })
+            results.append(
+                {
+                    "user_id": target_user_id,
+                    "success": False,
+                    "error": str(exc),
+                }
+            )
 
     return {
         "dataset_id": dataset_id,

@@ -2,6 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, Settings2 } from 'lucide-react'
 import { Button } from '../ui/button'
+import { Select } from '../ui/select'
 import type { UploadMode, FileMetadata } from './types'
 
 export interface BulkEditModalProps {
@@ -57,18 +58,18 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                   onChange={e => onBatchMetadataChange(p => ({ ...p, event_time: e.target.value }))}
                 />
               </div>
-              <div className="space-y-1.5">
-                <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">{t('uploadComponents.bulkEdit.status')}</label>
-                <select
-                  className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-emerald-500/10 focus:border-emerald-500 outline-none"
-                  value={batchMetadata.event_status}
-                  onChange={e => onBatchMetadataChange(p => ({ ...p, event_status: e.target.value }))}
-                >
-                  <option value="">{t('uploadComponents.bulkEdit.noChange')}</option>
-                  <option value="1">{t('uploadComponents.bulkEdit.event1')}</option>
-                  <option value="0">{t('uploadComponents.bulkEdit.censored0')}</option>
-                </select>
-              </div>
+               <div className="space-y-1.5">
+                 <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">{t('uploadComponents.bulkEdit.status')}</label>
+                 <Select
+                   value={batchMetadata.event_status}
+                   onChange={(v) => onBatchMetadataChange(p => ({ ...p, event_status: v }))}
+                   options={[
+                     { value: '1', label: t('uploadComponents.bulkEdit.event1') },
+                     { value: '0', label: t('uploadComponents.bulkEdit.censored0') },
+                   ]}
+                   placeholder={t('uploadComponents.bulkEdit.noChange')}
+                 />
+               </div>
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-3 sm:gap-4">
@@ -92,22 +93,22 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3 sm:gap-4">
-            <div className="space-y-1.5">
-              <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.gender')}</label>
-              <select
-                className="w-full px-3 py-2 border border-slate-200 rounded-xl text-sm focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none"
-                value={batchMetadata.gender}
-                onChange={e => onBatchMetadataChange(p => ({ ...p, gender: e.target.value }))}
-              >
-                <option value="">{t('uploadComponents.bulkEdit.noChange')}</option>
-                <option value="Male">{t('uploadComponents.bulkEdit.male')}</option>
-                <option value="Female">{t('uploadComponents.bulkEdit.female')}</option>
-                <option value="Unspecified">{t('uploadComponents.bulkEdit.any')}</option>
-              </select>
-            </div>
-            <div />
-          </div>
+           <div className="grid grid-cols-2 gap-3 sm:gap-4">
+             <div className="space-y-1.5">
+               <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.gender')}</label>
+               <Select
+                 value={batchMetadata.gender}
+                 onChange={(v) => onBatchMetadataChange(p => ({ ...p, gender: v }))}
+                 options={[
+                   { value: 'Male', label: t('uploadComponents.bulkEdit.male') },
+                   { value: 'Female', label: t('uploadComponents.bulkEdit.female') },
+                   { value: 'Unspecified', label: t('uploadComponents.bulkEdit.any') },
+                 ]}
+                 placeholder={t('uploadComponents.bulkEdit.noChange')}
+               />
+             </div>
+             <div />
+           </div>
         </div>
 
         <div className="mt-8 flex flex-col sm:flex-row justify-end gap-3">

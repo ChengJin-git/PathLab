@@ -16,8 +16,8 @@ export const mapTrainingStatus = (status: string): TaskStatus => {
   switch (status) {
     case 'pending':
     case 'queued':  // Task is queued in GPU queue
-    case 'resuming':  // Task is being resumed after system restart
       return 'pending'
+    case 'resuming':  // Task is being resumed after system restart
     case 'patching':
     case 'extracting':
     case 'training':

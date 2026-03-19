@@ -4,7 +4,7 @@
  * Similar to the "Thinking..." indicator but for web search operations.
  * Also handles PDF parsing status display.
  */
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Globe, FileText, Download, ChevronDown, ExternalLink, AlertCircle } from 'lucide-react'
@@ -184,6 +184,64 @@ export const SearchCompletedCard = React.memo(function SearchCompletedCard({
         )}
       </AnimatePresence>
     </motion.div>
+  )
+})
+
+type SearchResultItem = { title: string; url: string; snippet: string }
+type WebSearchResult = { query: string; results?: SearchResultItem[] }
+
+export const SearchResultsZone = React.memo(function SearchResultsZone({
+  results,
+  isStreaming,
+}: {
+  results: WebSearchResult[]
+  isStreaming: boolean
+}) {
+  const { t } = useTranslation()
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    if (!isStreaming) setExpanded(false)
+  }, [isStreaming])
+
+  const totalSources = results.reduce((sum, r) => sum + (r.results?.length ?? 0), 0)
+
+  if (isStreaming || expanded) {
+    return (
+      <div>
+        {results.map((result, index) => (
+          <SearchCompletedCard
+            key={`${result.query}-${index}`}
+            query={result.query}
+            resultCount={result.results?.length ?? 0}
+            results={result.results}
+          />
+        ))}
+        {!isStreaming && (
+          <button
+            type="button"
+            onClick={() => setExpanded(false)}
+            className="flex items-center gap-1 px-2 py-0.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            <ChevronDown className="w-3 h-3 rotate-180" />
+          </button>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setExpanded(true)}
+      className="flex items-center gap-2 px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded-lg transition-colors w-full mb-2"
+    >
+      <Globe className="w-3 h-3 text-green-500 flex-shrink-0" />
+      <span className="flex-1 text-left text-green-700">
+        {t('settings.general.searchedPages', { count: totalSources })}
+      </span>
+      <ChevronDown className="w-3 h-3 text-green-400" />
+    </button>
   )
 })
 

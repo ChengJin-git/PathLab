@@ -4,6 +4,7 @@ Coordinate cache validation, orchestration, visualization, and safe H5 loading u
 Extracted from tiling.py to keep tiling.py focused on the core TissueSegmenter
 and WSITiler classes.
 """
+
 import json
 import numpy as np
 import cv2
@@ -19,10 +20,22 @@ logger = logging.getLogger(__name__)
 # Note: patch_size and stride are recorded but NOT used for cache validation
 # because they are auto-determined by each WSI's magnification/MPP (PrePATH-style)
 REQUIRED_COORDS_ATTRS = [
-    'patch_size', 'stride', 'patch_level', 'contour_fn', 'use_padding',
-    'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
-    'a_t', 'a_h', 'max_n_holes',
-    'native_mpp', 'read_size', 'step_size',
+    "patch_size",
+    "stride",
+    "patch_level",
+    "contour_fn",
+    "use_padding",
+    "seg_level",
+    "sthresh",
+    "mthresh",
+    "close",
+    "use_otsu",
+    "a_t",
+    "a_h",
+    "max_n_holes",
+    "native_mpp",
+    "read_size",
+    "step_size",
 ]
 
 
@@ -62,16 +75,16 @@ def safe_load_h5_coords(
         return None, None, f"File does not exist: {h5_path}"
 
     try:
-        with h5py.File(h5_path, 'r') as f:
-            if 'coords' not in f:
+        with h5py.File(h5_path, "r") as f:
+            if "coords" not in f:
                 error_msg = f"No 'coords' dataset in {h5_path}"
                 logger.warning(error_msg)
                 if delete_if_corrupted:
                     _delete_corrupted_h5(h5_path)
                 return None, None, error_msg
 
-            coords_array = f['coords'][:]
-            attrs = dict(f['coords'].attrs)
+            coords_array = f["coords"][:]
+            attrs = dict(f["coords"].attrs)
             return coords_array, attrs, None
 
     except OSError as e:
@@ -105,15 +118,15 @@ def safe_load_h5_coords_attrs(
         return None, f"File does not exist: {h5_path}"
 
     try:
-        with h5py.File(h5_path, 'r') as f:
-            if 'coords' not in f:
+        with h5py.File(h5_path, "r") as f:
+            if "coords" not in f:
                 error_msg = f"No 'coords' dataset in {h5_path}"
                 logger.warning(error_msg)
                 if delete_if_corrupted:
                     _delete_corrupted_h5(h5_path)
                 return None, error_msg
 
-            return dict(f['coords'].attrs), None
+            return dict(f["coords"].attrs), None
 
     except OSError as e:
         error_msg = str(e)
@@ -167,62 +180,84 @@ def _check_coords_params_match(
     filter_params = filter_params or {}
 
     # Check basic tiling parameters (NOT patch_size/stride - they're auto-determined by MPP)
-    if attrs['patch_level'] != level:
-        logger.warning(f"patch_level mismatch: cached={attrs['patch_level']}, requested={level}")
+    if attrs["patch_level"] != level:
+        logger.warning(
+            f"patch_level mismatch: cached={attrs['patch_level']}, requested={level}"
+        )
         return False
 
     # Handle bytes vs string for contour_fn
-    cached_contour_fn = attrs['contour_fn']
+    cached_contour_fn = attrs["contour_fn"]
     if isinstance(cached_contour_fn, bytes):
-        cached_contour_fn = cached_contour_fn.decode('utf-8')
+        cached_contour_fn = cached_contour_fn.decode("utf-8")
 
     if cached_contour_fn != contour_fn:
-        logger.warning(f"contour_fn mismatch: cached={cached_contour_fn}, requested={contour_fn}")
+        logger.warning(
+            f"contour_fn mismatch: cached={cached_contour_fn}, requested={contour_fn}"
+        )
         return False
-    if attrs['use_padding'] != use_padding:
-        logger.warning(f"use_padding mismatch: cached={attrs['use_padding']}, requested={use_padding}")
+    if attrs["use_padding"] != use_padding:
+        logger.warning(
+            f"use_padding mismatch: cached={attrs['use_padding']}, requested={use_padding}"
+        )
         return False
 
     # Check seg_level
-    if attrs['seg_level'] != seg_level:
-        logger.warning(f"seg_level mismatch: cached={attrs['seg_level']}, requested={seg_level}")
+    if attrs["seg_level"] != seg_level:
+        logger.warning(
+            f"seg_level mismatch: cached={attrs['seg_level']}, requested={seg_level}"
+        )
         return False
 
     # Check segmentation parameters (always check, use defaults if not provided)
-    requested_sthresh = seg_params.get('sthresh', 5)
-    if attrs['sthresh'] != requested_sthresh:
-        logger.warning(f"sthresh mismatch: cached={attrs['sthresh']}, requested={requested_sthresh}")
+    requested_sthresh = seg_params.get("sthresh", 5)
+    if attrs["sthresh"] != requested_sthresh:
+        logger.warning(
+            f"sthresh mismatch: cached={attrs['sthresh']}, requested={requested_sthresh}"
+        )
         return False
 
-    requested_mthresh = seg_params.get('mthresh', 7)
-    if attrs['mthresh'] != requested_mthresh:
-        logger.warning(f"mthresh mismatch: cached={attrs['mthresh']}, requested={requested_mthresh}")
+    requested_mthresh = seg_params.get("mthresh", 7)
+    if attrs["mthresh"] != requested_mthresh:
+        logger.warning(
+            f"mthresh mismatch: cached={attrs['mthresh']}, requested={requested_mthresh}"
+        )
         return False
 
-    requested_close = seg_params.get('close', 4)
-    if attrs['close'] != requested_close:
-        logger.warning(f"close mismatch: cached={attrs['close']}, requested={requested_close}")
+    requested_close = seg_params.get("close", 4)
+    if attrs["close"] != requested_close:
+        logger.warning(
+            f"close mismatch: cached={attrs['close']}, requested={requested_close}"
+        )
         return False
 
-    requested_use_otsu = seg_params.get('use_otsu', False)
-    if attrs['use_otsu'] != requested_use_otsu:
-        logger.warning(f"use_otsu mismatch: cached={attrs['use_otsu']}, requested={requested_use_otsu}")
+    requested_use_otsu = seg_params.get("use_otsu", False)
+    if attrs["use_otsu"] != requested_use_otsu:
+        logger.warning(
+            f"use_otsu mismatch: cached={attrs['use_otsu']}, requested={requested_use_otsu}"
+        )
         return False
 
     # Check filter parameters (always check, use defaults if not provided)
-    requested_a_t = filter_params.get('a_t', 100)
-    if attrs['a_t'] != requested_a_t:
-        logger.warning(f"a_t mismatch: cached={attrs['a_t']}, requested={requested_a_t}")
+    requested_a_t = filter_params.get("a_t", 100)
+    if attrs["a_t"] != requested_a_t:
+        logger.warning(
+            f"a_t mismatch: cached={attrs['a_t']}, requested={requested_a_t}"
+        )
         return False
 
-    requested_a_h = filter_params.get('a_h', 16)
-    if attrs['a_h'] != requested_a_h:
-        logger.warning(f"a_h mismatch: cached={attrs['a_h']}, requested={requested_a_h}")
+    requested_a_h = filter_params.get("a_h", 16)
+    if attrs["a_h"] != requested_a_h:
+        logger.warning(
+            f"a_h mismatch: cached={attrs['a_h']}, requested={requested_a_h}"
+        )
         return False
 
-    requested_max_n_holes = filter_params.get('max_n_holes', 8)
-    if attrs['max_n_holes'] != requested_max_n_holes:
-        logger.warning(f"max_n_holes mismatch: cached={attrs['max_n_holes']}, requested={requested_max_n_holes}")
+    requested_max_n_holes = filter_params.get("max_n_holes", 8)
+    if attrs["max_n_holes"] != requested_max_n_holes:
+        logger.warning(
+            f"max_n_holes mismatch: cached={attrs['max_n_holes']}, requested={requested_max_n_holes}"
+        )
         return False
 
     # NOTE: native_mpp is NOT validated - same slide always has same MPP
@@ -237,7 +272,7 @@ def check_coords_cache_valid(
     level: int = 0,
     seg_params: Optional[Dict[str, Any]] = None,
     filter_params: Optional[Dict[str, Any]] = None,
-    contour_fn: str = 'four_pt',
+    contour_fn: str = "four_pt",
     use_padding: bool = True,
     seg_level: int = -1,
     **kwargs,  # Ignore legacy patch_size, stride parameters
@@ -275,7 +310,9 @@ def check_coords_cache_valid(
         return None
 
     # Use safe loading to handle corrupted files
-    coords_array, attrs, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=True)
+    coords_array, attrs, load_error = safe_load_h5_coords(
+        coords_file, delete_if_corrupted=True
+    )
 
     if coords_array is None:
         logger.warning(f"Failed to load cached coordinates: {load_error}")
@@ -284,12 +321,18 @@ def check_coords_cache_valid(
     # With params_hash directory structure, we trust the hash matches
     # But still validate to catch any edge cases (e.g., hash collision)
     if _check_coords_params_match(
-        attrs, level,
-        seg_params, filter_params, contour_fn, use_padding,
+        attrs,
+        level,
+        seg_params,
+        filter_params,
+        contour_fn,
+        use_padding,
         seg_level=seg_level,
     ):
         if len(coords_array) > 0:
-            logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
+            logger.info(
+                f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}"
+            )
             return [tuple(coord) for coord in coords_array], coords_file
         else:
             # Cached file has 0 coordinates - treat as cache miss so adaptive fallback can try
@@ -311,7 +354,7 @@ def get_or_compute_coordinates(
     force_recompute: bool = False,
     seg_params: Optional[Dict[str, Any]] = None,
     filter_params: Optional[Dict[str, Any]] = None,
-    contour_fn: str = 'four_pt',
+    contour_fn: str = "four_pt",
     use_padding: bool = True,
     seg_level: int = -1,
     tissue_contours: Optional[List[Any]] = None,
@@ -390,18 +433,26 @@ def get_or_compute_coordinates(
         logger.info(f"Checking cached coordinates: {coords_file}")
 
         # Use safe loading to handle corrupted files
-        coords_array, attrs, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=True)
+        coords_array, attrs, load_error = safe_load_h5_coords(
+            coords_file, delete_if_corrupted=True
+        )
 
         if coords_array is not None:
             # With params_hash directory, we trust the hash matches
             # But still validate to catch edge cases
             if _check_coords_params_match(
-                attrs, level,
-                seg_params, filter_params, contour_fn, use_padding,
+                attrs,
+                level,
+                seg_params,
+                filter_params,
+                contour_fn,
+                use_padding,
                 seg_level=seg_level,
             ):
                 if len(coords_array) > 0:
-                    logger.info(f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}")
+                    logger.info(
+                        f"[Coords cache hit] {len(coords_array)} coordinates from {coords_file}"
+                    )
                     return [tuple(coord) for coord in coords_array], coords_file
                 else:
                     # Cached file has 0 coordinates - recompute with adaptive fallback
@@ -410,28 +461,31 @@ def get_or_compute_coordinates(
                         f"recomputing with adaptive seg_level fallback"
                     )
             else:
-                logger.warning("Cached coordinates have different parameters (hash collision?), recomputing")
+                logger.warning(
+                    "Cached coordinates have different parameters (hash collision?), recomputing"
+                )
         else:
-            logger.warning(f"Failed to load cached coordinates: {load_error}, recomputing")
+            logger.warning(
+                f"Failed to load cached coordinates: {load_error}, recomputing"
+            )
 
     # Compute new coordinates
     logger.info(f"Computing new coordinates for {wsi_id}")
 
     # Merge seg_level into seg_params for TissueSegmenter
     effective_seg_params = dict(seg_params or {})
-    effective_seg_params['seg_level'] = seg_level
+    effective_seg_params["seg_level"] = seg_level
 
     # Create segmenter with custom parameters
-    segmenter = TissueSegmenter(
-        **effective_seg_params,
-        filter_params=filter_params
-    )
+    segmenter = TissueSegmenter(**effective_seg_params, filter_params=filter_params)
 
     # Resolve the actual segmentation level (auto-selection resolves -1 to a concrete level)
     initial_seg_level = segmenter._get_seg_level(slide)
 
     # Get level downsample factor for MPP calculation
-    level_downsample = slide.level_downsamples[level] if level < len(slide.level_downsamples) else 1.0
+    level_downsample = (
+        slide.level_downsamples[level] if level < len(slide.level_downsamples) else 1.0
+    )
 
     # Create tiler with PrePATH-style settings (patch_size/stride auto-determined by MPP)
     tiler = WSITiler(
@@ -445,14 +499,16 @@ def get_or_compute_coordinates(
 
     # Don't save yet - may need adaptive fallback to lower seg_levels
     coordinates = tiler.compute_coordinates(
-        slide, save_path=None,
+        slide,
+        save_path=None,
         tissue_contours=tissue_contours,
         hole_contours=hole_contours,
-        seg_params=seg_params, filter_params=filter_params
+        seg_params=seg_params,
+        filter_params=filter_params,
     )
 
     # Get default sthresh value for adaptive fallback
-    default_sthresh = seg_params.get('sthresh', 8) if seg_params else 8
+    default_sthresh = seg_params.get("sthresh", 8) if seg_params else 8
 
     # Adaptive sthresh fallback: if no coordinates found, try lower sthresh values first
     # This is cheaper than falling back to lower seg_levels
@@ -463,14 +519,15 @@ def get_or_compute_coordinates(
             if fallback_sthresh >= default_sthresh:
                 continue
 
-            logger.info(f"[Adaptive sthresh fallback] Trying sthresh={fallback_sthresh} (default={default_sthresh}) for {wsi_id}")
+            logger.info(
+                f"[Adaptive sthresh fallback] Trying sthresh={fallback_sthresh} (default={default_sthresh}) for {wsi_id}"
+            )
 
             fallback_seg_params = dict(seg_params or {})
-            fallback_seg_params['sthresh'] = fallback_sthresh
+            fallback_seg_params["sthresh"] = fallback_sthresh
 
             fallback_segmenter = TissueSegmenter(
-                **fallback_seg_params,
-                filter_params=filter_params
+                **fallback_seg_params, filter_params=filter_params
             )
 
             fallback_tiler = WSITiler(
@@ -483,8 +540,10 @@ def get_or_compute_coordinates(
             )
 
             coordinates = fallback_tiler.compute_coordinates(
-                slide, save_path=None,
-                seg_params=fallback_seg_params, filter_params=filter_params
+                slide,
+                save_path=None,
+                seg_params=fallback_seg_params,
+                filter_params=filter_params,
             )
 
             if len(coordinates) > 0:
@@ -498,14 +557,39 @@ def get_or_compute_coordinates(
                 break
 
     # Adaptive seg_level fallback: if no coordinates found after sthresh fallback, try lower seg_levels
-    # Lower levels have higher resolution, making it easier to detect small tissue regions
-    if len(coordinates) == 0 and initial_seg_level > 0:
+    # Lower levels have higher resolution, making it easier to detect small tissue regions.
+    #
+    # SAFETY: Only try levels whose image dimensions do not exceed _SEG_MAX_DIM on either axis.
+    # segment_tissue() calls slide.read_region((0,0), level, level_dims), so attempting a level
+    # with e.g. 100k×80k pixels loads the entire image into RAM, causing OOM or an indefinite hang
+    # on large blank slides — which in turn triggers a 504 from the Gateway (600 s timeout).
+    # 8192 px is ample for tissue detection: tissue blobs are large low-frequency structures
+    # visible at any sufficiently downsampled resolution.
+    _SEG_MAX_DIM = 8192
+    safe_fallback_levels = [
+        lvl
+        for lvl in range(initial_seg_level - 1, -1, -1)
+        if max(slide.level_dimensions[lvl]) <= _SEG_MAX_DIM
+    ]
+    skipped_oversized_levels = [
+        lvl
+        for lvl in range(initial_seg_level - 1, -1, -1)
+        if max(slide.level_dimensions[lvl]) > _SEG_MAX_DIM
+    ]
+    if skipped_oversized_levels:
+        logger.warning(
+            f"[Adaptive fallback] Skipping seg_levels {skipped_oversized_levels} for {wsi_id} "
+            f"— their dimensions exceed {_SEG_MAX_DIM}px and would cause OOM/hang."
+        )
+    if len(coordinates) == 0 and safe_fallback_levels:
         logger.warning(
             f"No coordinates found at seg_level={initial_seg_level} (sthresh fallback exhausted) for {wsi_id}, "
-            f"trying lower seg_levels with adaptive sthresh..."
+            f"trying lower seg_levels {safe_fallback_levels} (max_dim<={_SEG_MAX_DIM}px) with adaptive sthresh..."
         )
-        for fallback_level in range(initial_seg_level - 1, -1, -1):
-            logger.info(f"[Adaptive fallback] Trying seg_level={fallback_level} for {wsi_id}")
+        for fallback_level in safe_fallback_levels:
+            logger.info(
+                f"[Adaptive fallback] Trying seg_level={fallback_level} for {wsi_id}"
+            )
 
             # For each seg_level, also try adaptive sthresh values
             for sthresh_val in [default_sthresh] + STHREAD_FALLBACK_VALUES:
@@ -513,12 +597,11 @@ def get_or_compute_coordinates(
                     sthresh_val = default_sthresh
 
                 fallback_seg_params = dict(seg_params or {})
-                fallback_seg_params['seg_level'] = fallback_level
-                fallback_seg_params['sthresh'] = sthresh_val
+                fallback_seg_params["seg_level"] = fallback_level
+                fallback_seg_params["sthresh"] = sthresh_val
 
                 fallback_segmenter = TissueSegmenter(
-                    **fallback_seg_params,
-                    filter_params=filter_params
+                    **fallback_seg_params, filter_params=filter_params
                 )
 
                 fallback_tiler = WSITiler(
@@ -531,8 +614,10 @@ def get_or_compute_coordinates(
                 )
 
                 coordinates = fallback_tiler.compute_coordinates(
-                    slide, save_path=None,
-                    seg_params=fallback_seg_params, filter_params=filter_params
+                    slide,
+                    save_path=None,
+                    seg_params=fallback_seg_params,
+                    filter_params=filter_params,
                 )
 
                 if len(coordinates) > 0:
@@ -550,8 +635,9 @@ def get_or_compute_coordinates(
 
         if len(coordinates) == 0:
             logger.error(
-                f"No tissue coordinates found at any seg_level (0 to {initial_seg_level}) "
-                f"or sthresh fallback for {wsi_id}. The slide may not contain detectable tissue."
+                f"No tissue coordinates found for {wsi_id} after exhausting all safe seg_levels "
+                f"(tried: {safe_fallback_levels}; skipped oversized: {skipped_oversized_levels}). "
+                f"The slide may not contain detectable tissue."
             )
 
     # Only save coordinates if we actually found tissue patches.
@@ -559,8 +645,7 @@ def get_or_compute_coordinates(
     # feature extraction to produce empty [0, feat_dim] tensors that crash training.
     if len(coordinates) > 0:
         tiler._save_coordinates(
-            coordinates, coords_file,
-            seg_params=seg_params, filter_params=filter_params
+            coordinates, coords_file, seg_params=seg_params, filter_params=filter_params
         )
     else:
         logger.warning(
@@ -578,7 +663,7 @@ def visualize_segmentation(
     vis_level: int = -1,
     line_thickness: int = 5,
     color: Tuple[int, int, int] = (0, 255, 0),
-    hole_color: Tuple[int, int, int] = (0, 0, 255)
+    hole_color: Tuple[int, int, int] = (0, 0, 255),
 ) -> Image.Image:
     """
     Visualize tissue segmentation results
@@ -610,24 +695,29 @@ def visualize_segmentation(
     # Read slide at visualization level
     level_dims = slide.level_dimensions[vis_level]
     img = slide.read_region((0, 0), vis_level, level_dims)
-    img_np = np.array(img.convert('RGB'))
+    img_np = np.array(img.convert("RGB"))
     del img  # Release PIL image immediately
 
     # Scale contours to visualization level
     downsample = slide.level_downsamples[vis_level]
     scale = (1.0 / downsample, 1.0 / downsample)
 
-    scaled_tissue = [np.array(cont * scale, dtype='int32') for cont in tissue_contours]
-    scaled_holes = [[np.array(h * scale, dtype='int32') for h in holes]
-                    for holes in hole_contours]
+    scaled_tissue = [np.array(cont * scale, dtype="int32") for cont in tissue_contours]
+    scaled_holes = [
+        [np.array(h * scale, dtype="int32") for h in holes] for holes in hole_contours
+    ]
 
     # Draw tissue contours
-    cv2.drawContours(img_np, scaled_tissue, -1, color, line_thickness, lineType=cv2.LINE_8)
+    cv2.drawContours(
+        img_np, scaled_tissue, -1, color, line_thickness, lineType=cv2.LINE_8
+    )
     del scaled_tissue  # Release scaled contour copies
 
     # Draw holes
     for holes in scaled_holes:
-        cv2.drawContours(img_np, holes, -1, hole_color, line_thickness, lineType=cv2.LINE_8)
+        cv2.drawContours(
+            img_np, holes, -1, hole_color, line_thickness, lineType=cv2.LINE_8
+        )
     del scaled_holes  # Release scaled hole copies
 
     # Convert to PIL and release numpy array

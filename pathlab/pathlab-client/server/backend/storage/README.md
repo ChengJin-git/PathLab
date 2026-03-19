@@ -1,6 +1,6 @@
 # PathLab Storage Management
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.3`
 
 `server/backend/storage/` 负责文件系统层面的统计、迁移、配置与清理工作，是数据库状态与 `uploads/` 目录之间的一层维护工具。
 
@@ -18,7 +18,7 @@
 - 总存储统计与分目录统计
 - WSI 级别存储信息读取
 - 训练任务级别存储信息读取
-- 删除 WSI 相关衍生文件
+- 删除 WSI 相关衍生文件（包含 MRXS 关联数据目录与 TMAP `.DT<n>` 伴随文件；以文件 stem 为准，同时适用于上传文件和外部文件）
 - 删除训练任务相关衍生文件
 - 重置部分派生数据与悬挂符号链接清理辅助逻辑
 
@@ -68,7 +68,7 @@
 
 `orphan_mixin.py` 当前重点扫描这些类别：
 
-- `wsi_files`
+- `wsi_files`（MRXS 格式还会同时检测同名关联数据目录；TMAP 格式还会同时检测同 stem 的 `.DT<n>` 伴随文件）
 - `coordinates`
 - `masks`
 - `features_cache`

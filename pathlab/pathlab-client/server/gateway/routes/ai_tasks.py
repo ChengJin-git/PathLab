@@ -141,6 +141,12 @@ async def list_available_extractors(user: User = Depends(current_active_user)):
                     "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)",
                     "supports_spatial": True,
                 },
+                {
+                    "id": "CytoFM",
+                    "name": "CytoFM",
+                    "description": "DINOv2 ViT-L/14, 1024-dim, pure vision self-supervised (Smartlab)",
+                    "supports_spatial": True,
+                },
             ]
         }
 

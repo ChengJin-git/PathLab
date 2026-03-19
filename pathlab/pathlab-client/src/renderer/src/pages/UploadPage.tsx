@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
+import { useDraftState, clearDraftKeys } from '../lib/useDraftState'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -30,8 +31,9 @@ import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import { Select } from '../components/ui/select'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
-import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
+import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, updateDatasetSource } from '../api'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
@@ -53,16 +55,16 @@ export default function RegisterPage() {
   const { t } = useTranslation()
 
   // Upload mode state (classification or survival)
-  const [uploadMode, setUploadMode] = useState<UploadMode>('classification')
+  const [uploadMode, setUploadMode] = useDraftState<UploadMode>('draft:upload:uploadMode', 'classification')
   // Aggregation level state (case-level or file-level)
-  const [dataLevel, setDataLevel] = useState<DataLevel>('file')
+  const [dataLevel, setDataLevel] = useDraftState<DataLevel>('draft:upload:dataLevel', 'file')
 
   // Dataset name (required for grouping files)
-  const [datasetName, setDatasetName] = useState('')
+  const [datasetName, setDatasetName] = useDraftState<string>('draft:upload:datasetName', '')
   // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
   const [datasetId, setDatasetId] = useState<string | null>(null)
-  const [datasetSourceSelection, setDatasetSourceSelection] = useState('')
-  const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
+  const [datasetSourceSelection, setDatasetSourceSelection] = useDraftState<string>('draft:upload:datasetSourceSelection', '')
+  const [datasetSourceCustom, setDatasetSourceCustom] = useDraftState<string>('draft:upload:datasetSourceCustom', '')
   // Source organ of the existing dataset (for auto-fill when appending)
   const [existingDatasetSource, setExistingDatasetSource] = useState<string | undefined>()
 
@@ -111,12 +113,7 @@ export default function RegisterPage() {
   // Checking for initial dataset from navigation state
   const location = useLocation()
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
-  const navigateBackToDashboard = () => {
-    navigate('/dashboard', {
-      state: fromAIChat ? { restoreAIChatFromSession: true } : undefined
-    })
-  }
-
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setDatasetName/setUploadMode/setDataLevel are stable draft setters; location is the only meaningful trigger
   useEffect(() => {
     if (location.state) {
       if (location.state.datasetName) {
@@ -161,6 +158,7 @@ export default function RegisterPage() {
   }, [datasetName, existingDatasetDataTypes])
 
   // Auto-select analysis type, data level, and datasetId for existing datasets
+  // biome-ignore lint/correctness/useExhaustiveDependencies: setUploadMode/setDataLevel are stable draft setters; datasetName and dataset maps are the actual triggers
   useEffect(() => {
     const trimmed = datasetName.trim()
     if (existingDatasetTypes.has(trimmed)) {
@@ -541,7 +539,7 @@ export default function RegisterPage() {
 
   const handleUpload = async () => {
     // Check if we have files OR a split file to upload
-    if (localItems.length === 0 && !splitFile) return
+    if (localItems.length === 0 && !splitFile && !segmentationJsonOnlyAppend) return
     setShowValidation(true)
     setSubmitError(null)
 
@@ -692,6 +690,7 @@ export default function RegisterPage() {
             // Use dataset_id for existing datasets, dataset_name for new datasets
             dataset_id: datasetId ?? undefined,
             dataset_name: datasetId ? undefined : datasetName.trim(),
+            source_organ: datasetId ? undefined : (resolvedDatasetSource || undefined),
             // Only pass aggregation_level for new datasets (when dataset_id is not set)
             aggregation_level: datasetId ? undefined : dataLevel,
             task_type: uploadMode,
@@ -721,13 +720,14 @@ export default function RegisterPage() {
 
       // Clear the form
       resetUpload()
-      navigateBackToDashboard()
+      navigate('/dashboard')
     } catch (error) {
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
   }
 
   const resetUpload = () => {
+    clearDraftKeys('draft:upload:')
     setStep(1)
     setDatasetName('')
     setDatasetId(null)
@@ -768,66 +768,84 @@ export default function RegisterPage() {
   const [uploadingSplit, setUploadingSplit] = useState(false)
 
   const [splitFileError, setSplitFileError] = useState<string | null>(null)
+  const [isCsvDragging, setIsCsvDragging] = useState(false)
+
+  const processSplitFile = async (file: File) => {
+    setSplitFileError(null)
+    const fileName = file.name.toLowerCase()
+
+    // Client-side validation
+    try {
+      let csvContent: string
+      let finalFile: File = file
+
+      if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+        const { sheetNames, csv } = await xlsxToCSV(await file.arrayBuffer())
+        if (sheetNames.length > 1) {
+          setSplitFileError(t('uploadPage.excelMultipleSheets'))
+          return
+        }
+        csvContent = csv
+        finalFile = new File([new Blob([csv], { type: 'text/csv' })], file.name, { type: 'text/csv' })
+      } else {
+        csvContent = await file.text()
+      }
+
+      const lines = csvContent.split('\n').filter(line => line.trim() !== '')
+
+      if (lines.length < 2) {
+        setSplitFileError(t('uploadPage.fileEmptyOrNoData'))
+        return
+      }
+
+      const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
+
+      // Validate required columns based on upload mode
+      if (!headers.includes('filename')) {
+        setSplitFileError(t('uploadPage.missingFilenameColumn'))
+        return
+      }
+
+      if (uploadMode === 'classification') {
+        if (!headers.includes('label')) {
+          setSplitFileError(t('uploadPage.missingLabelColumn'))
+          return
+        }
+      } else if (uploadMode === 'survival') {
+        // survival mode
+        if (!headers.includes('event_time')) {
+          setSplitFileError(t('uploadPage.missingEventTimeColumn'))
+          return
+        }
+        if (!headers.includes('event_status')) {
+          setSplitFileError(t('uploadPage.missingEventStatusColumn'))
+          return
+        }
+      }
+
+      setSplitFile(finalFile)
+    } catch (err) {
+      setSplitFileError(t('uploadPage.failedReadFile', { error: String(err) }))
+    }
+  }
 
   const handleSplitFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    setSplitFileError(null)
     if (e.target.files && e.target.files.length > 0) {
-      const file = e.target.files[0]
-      const fileName = file.name.toLowerCase()
+      await processSplitFile(e.target.files[0])
+    }
+  }
 
-      // Client-side validation
-      try {
-        let csvContent: string
-        let finalFile: File = file
-
-        if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-          const { sheetNames, csv } = await xlsxToCSV(await file.arrayBuffer())
-          if (sheetNames.length > 1) {
-            setSplitFileError(t('uploadPage.excelMultipleSheets'))
-            return
-          }
-          csvContent = csv
-          finalFile = new File([new Blob([csv], { type: 'text/csv' })], file.name, { type: 'text/csv' })
-        } else {
-          csvContent = await file.text()
-        }
-
-        const lines = csvContent.split('\n').filter(line => line.trim() !== '')
-
-        if (lines.length < 2) {
-          setSplitFileError(t('uploadPage.fileEmptyOrNoData'))
-          return
-        }
-
-        const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
-
-        // Validate required columns based on upload mode
-        if (!headers.includes('filename')) {
-          setSplitFileError(t('uploadPage.missingFilenameColumn'))
-          return
-        }
-
-        if (uploadMode === 'classification') {
-          if (!headers.includes('label')) {
-            setSplitFileError(t('uploadPage.missingLabelColumn'))
-            return
-          }
-        } else if (uploadMode === 'survival') {
-          // survival mode
-          if (!headers.includes('event_time')) {
-            setSplitFileError(t('uploadPage.missingEventTimeColumn'))
-            return
-          }
-          if (!headers.includes('event_status')) {
-            setSplitFileError(t('uploadPage.missingEventStatusColumn'))
-            return
-          }
-        }
-
-        setSplitFile(finalFile)
-      } catch (err) {
-        setSplitFileError(t('uploadPage.failedReadFile', { error: String(err) }))
-      }
+  const handleCsvDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsCsvDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    const csvFile = files.find(f => {
+      const name = f.name.toLowerCase()
+      return name.endsWith('.csv') || name.endsWith('.xlsx') || name.endsWith('.xls')
+    })
+    if (csvFile) {
+      await processSplitFile(csvFile)
     }
   }
 
@@ -913,15 +931,27 @@ export default function RegisterPage() {
           existingDatasetSource={existingDatasetSource}
           showValidation={showValidation}
           fromAIChat={fromAIChat}
-          onNext={() => setStep(2)}
-          onBack={navigateBackToDashboard}
+          onNext={async () => {
+            if (isExistingDataset && datasetId) {
+              const resolvedSource = getResolvedDatasetSource()
+              if (resolvedSource && resolvedSource !== existingDatasetSource) {
+                try {
+                  await updateDatasetSource(datasetId, resolvedSource)
+                } catch (e) {
+                  console.warn('Failed to update dataset source organ:', e)
+                }
+              }
+            }
+            setStep(2)
+          }}
+          onBack={() => navigate('/dashboard')}
         />
       ) : step === 3 ? (
         <SuccessStep
           datasetName={datasetName}
           splitUploadSuccess={splitUploadSuccess}
           fromAIChat={fromAIChat}
-          onNavigate={navigateBackToDashboard}
+          onNavigate={() => navigate('/dashboard')}
           onReset={resetUpload}
         />
       ) : (
@@ -933,7 +963,7 @@ export default function RegisterPage() {
             >
               <Button
                 variant="outline"
-                onClick={navigateBackToDashboard}
+                onClick={() => navigate('/dashboard')}
                 className="gap-2 h-9 sm:h-10 text-xs sm:text-sm"
               >
                 <ArrowLeft className="w-4 h-4" />
@@ -1158,16 +1188,16 @@ export default function RegisterPage() {
               <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-2 sm:mb-4 mx-2 sm:mx-0 max-h-[600px]">
                 {segmentationJsonOnlyAppend ? (
                   <div className="flex-1 bg-white p-6 sm:p-8 flex items-center justify-center">
-                    <div className="max-w-2xl w-full rounded-2xl border border-amber-200 bg-amber-50 px-5 py-6 text-left">
+                    <div className="max-w-2xl w-full rounded-2xl border border-green-200 bg-green-50 px-5 py-6 text-left">
                       <div className="flex items-start gap-3">
-                        <FileJson className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                        <FileJson className="w-6 h-6 text-green-600 shrink-0 mt-0.5" />
                         <div>
-                          <h3 className="text-base sm:text-lg font-semibold text-amber-900">JSON-only segmentation append ready</h3>
-                          <p className="text-sm text-amber-800 mt-2 leading-relaxed">
-                            {segmentationJsonFiles.size} COCO JSON file(s) will be matched to existing images in this dataset by filename stem.
+                          <h3 className="text-base sm:text-lg font-semibold text-green-900">{t('uploadPage.jsonOnlyAppendTitle')}</h3>
+                          <p className="text-sm text-green-800 mt-2 leading-relaxed">
+                            {t('uploadPage.jsonOnlyAppendDesc', { count: segmentationJsonFiles.size })}
                           </p>
-                          <p className="text-xs text-amber-700 mt-2 leading-relaxed">
-                            Matched annotations will be appended or updated. Files without a matching existing image will fail individually.
+                          <p className="text-xs text-green-700 mt-2 leading-relaxed">
+                            {t('uploadPage.jsonOnlyAppendNote')}
                           </p>
                         </div>
                       </div>
@@ -1283,17 +1313,18 @@ export default function RegisterPage() {
                                     onChange={e => handleMetadataChange(item.key, 'event_time', e.target.value)}
                                   />
                                 </td>
-                                <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
-                                  <select
-                                    className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-emerald-400 focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 outline-none transition-all ${hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
-                                    value={meta.event_status}
-                                    onChange={e => handleMetadataChange(item.key, 'event_status', e.target.value)}
-                                  >
-                                    <option value="">{t('uploadPage.statusDefault')}</option>
-                                    <option value="1">{t('uploadPage.eventOption')}</option>
-                                    <option value="0">{t('uploadPage.censoredOption')}</option>
-                                  </select>
-                                </td>
+                                 <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
+                                   <Select
+                                     value={meta.event_status}
+                                     onChange={(v) => handleMetadataChange(item.key, 'event_status', v)}
+                                     options={[
+                                       { value: '1', label: t('uploadPage.eventOption') },
+                                       { value: '0', label: t('uploadPage.censoredOption') },
+                                     ]}
+                                     placeholder={t('uploadPage.statusDefault')}
+                                     triggerClassName={hasError && !meta.event_status.trim() ? 'border-red-500 bg-red-50' : ''}
+                                   />
+                                 </td>
                               </>
                             ) : uploadMode === 'segmentation' ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
@@ -1326,16 +1357,16 @@ export default function RegisterPage() {
                               />
                             </td>
                             <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
-                              <select
-                                className="w-full px-2 py-1.5 text-sm border border-slate-100 rounded-lg bg-slate-50/50 hover:bg-white hover:border-blue-400 focus:bg-white focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all"
+                              <Select
                                 value={meta.gender}
-                                onChange={e => handleMetadataChange(item.key, 'gender', e.target.value)}
-                              >
-                                <option value="">-</option>
-                                <option value="Male">{t('uploadPage.genderM')}</option>
-                                <option value="Female">{t('uploadPage.genderF')}</option>
-                                <option value="Unspecified">?</option>
-                              </select>
+                                onChange={(v) => handleMetadataChange(item.key, 'gender', v)}
+                                options={[
+                                  { value: 'Male', label: t('uploadPage.genderM') },
+                                  { value: 'Female', label: t('uploadPage.genderF') },
+                                  { value: 'Unspecified', label: '?' },
+                                ]}
+                                placeholder="-"
+                              />
                             </td>
                             <td className="px-3 sm:px-4 py-3 align-middle text-right border-b border-slate-100">
                               <button
@@ -1423,7 +1454,12 @@ export default function RegisterPage() {
                       </ul>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 bg-gray-50 p-3 sm:p-4 rounded-lg border border-dashed border-gray-300">
+                    <div
+                      className={`flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-4 p-3 sm:p-4 rounded-lg border border-dashed transition-all ${isCsvDragging ? 'border-blue-400 bg-blue-50/50' : 'bg-gray-50 border-gray-300 hover:border-blue-300'}`}
+                      onDragOver={e => { e.preventDefault(); e.stopPropagation(); setIsCsvDragging(true) }}
+                      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsCsvDragging(false) }}
+                      onDrop={handleCsvDrop}
+                    >
                       {splitFile ? (
                         // Show selected file info when we have a splitFile
                         <div className="flex-1 flex items-center gap-3">

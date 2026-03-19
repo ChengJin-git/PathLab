@@ -68,17 +68,12 @@ export function LanguageSwitcher({ className, variant = 'dropdown' }: LanguageSw
     return (
       <div className={`flex items-center gap-2 ${className || ''}`}>
         <Globe className="w-4 h-4 text-gray-500" />
-        <select
+        <Select
           value={i18n.language}
-          onChange={(e) => handleChange(e.target.value)}
-          className="bg-transparent border-none text-sm text-gray-700 focus:outline-none focus:ring-0 cursor-pointer"
-        >
-          {supportedLanguages.map((lang) => (
-            <option key={lang.code} value={lang.code}>
-              {lang.nativeName}
-            </option>
-          ))}
-        </select>
+          onChange={handleChange}
+          options={supportedLanguages.map((lang) => ({ value: lang.code, label: lang.nativeName }))}
+          triggerClassName="border-none shadow-none bg-transparent hover:bg-transparent text-gray-700 h-8 px-1"
+        />
       </div>
     )
   }
