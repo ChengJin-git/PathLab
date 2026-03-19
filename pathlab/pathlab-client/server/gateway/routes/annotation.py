@@ -30,7 +30,7 @@ from backend.database import get_db
 from backend.database.database import async_session as _async_session
 from backend.database.repositories import (
     SegmentationAnnotationRepository,
-    AnnotationCollaboratorRepository,
+    DatasetCollaboratorRepository,
     AnnotationAuditLogRepository,
     VersionConflictError,
     WSIRepository,
@@ -43,7 +43,6 @@ from backend.auth.dependencies import (
 )
 from backend.auth.annotation_permissions import (
     can_access_shared,
-    can_write_shared,
     can_finalize,
     is_annotation_owner,
 )
@@ -1261,7 +1260,7 @@ async def save_shared_annotation(
     db: AsyncSession = Depends(get_db),
 ):
     dataset = await _get_dataset_with_access(dataset_id, user, db)
-    if not await can_write_shared(user, dataset, db):
+    if not await can_access_shared(user, dataset, db):
         raise HTTPException(status_code=403, detail="Access denied")
 
     existing = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)
@@ -1497,7 +1496,7 @@ async def list_collaborators(
     if not await can_access_shared(user, dataset, db):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    collabs = await AnnotationCollaboratorRepository.list_by_dataset(db, dataset_id)
+    collabs = await DatasetCollaboratorRepository.list_by_dataset(db, dataset_id)
     collab_user_ids = [c.user_id for c in collabs]
 
     admins = []
@@ -1600,11 +1599,11 @@ async def add_collaborator(
             status_code=403, detail="Cannot add admin as explicit collaborator"
         )
 
-    if await AnnotationCollaboratorRepository.exists(db, dataset_id, req.user_id):
+    if await DatasetCollaboratorRepository.exists(db, dataset_id, req.user_id):
         raise HTTPException(status_code=409, detail="User is already a collaborator")
 
     try:
-        collab = await AnnotationCollaboratorRepository.add(
+        collab = await DatasetCollaboratorRepository.add(
             db, dataset_id, req.user_id, str(user.id)
         )
         await AnnotationAuditLogRepository.log(
@@ -1649,7 +1648,7 @@ async def remove_collaborator(
                     if isinstance(r, dict) and r.get("created_by") == target_user_id
                 )
 
-    removed = await AnnotationCollaboratorRepository.remove(
+    removed = await DatasetCollaboratorRepository.remove(
         db, dataset_id, target_user_id
     )
     if not removed:

@@ -2,18 +2,18 @@ from typing import List, Optional
 from sqlalchemy import select, delete, distinct
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..models import AnnotationCollaborator, utc_now
+from ..models import DatasetCollaborator, utc_now
 
 
-class AnnotationCollaboratorRepository:
+class DatasetCollaboratorRepository:
     @staticmethod
     async def add(
         db: AsyncSession,
         dataset_id: str,
         user_id: str,
         added_by: str,
-    ) -> AnnotationCollaborator:
-        collab = AnnotationCollaborator(
+    ) -> DatasetCollaborator:
+        collab = DatasetCollaborator(
             dataset_id=dataset_id,
             user_id=user_id,
             added_by=added_by,
@@ -31,9 +31,9 @@ class AnnotationCollaboratorRepository:
         user_id: str,
     ) -> bool:
         result = await db.execute(
-            delete(AnnotationCollaborator)
-            .where(AnnotationCollaborator.dataset_id == dataset_id)
-            .where(AnnotationCollaborator.user_id == user_id)
+            delete(DatasetCollaborator)
+            .where(DatasetCollaborator.dataset_id == dataset_id)
+            .where(DatasetCollaborator.user_id == user_id)
         )
         await db.flush()
         return result.rowcount > 0
@@ -45,9 +45,9 @@ class AnnotationCollaboratorRepository:
         user_id: str,
     ) -> bool:
         result = await db.execute(
-            select(AnnotationCollaborator.id)
-            .where(AnnotationCollaborator.dataset_id == dataset_id)
-            .where(AnnotationCollaborator.user_id == user_id)
+            select(DatasetCollaborator.id)
+            .where(DatasetCollaborator.dataset_id == dataset_id)
+            .where(DatasetCollaborator.user_id == user_id)
         )
         return result.scalar_one_or_none() is not None
 
@@ -55,11 +55,11 @@ class AnnotationCollaboratorRepository:
     async def list_by_dataset(
         db: AsyncSession,
         dataset_id: str,
-    ) -> List[AnnotationCollaborator]:
+    ) -> List[DatasetCollaborator]:
         result = await db.execute(
-            select(AnnotationCollaborator)
-            .where(AnnotationCollaborator.dataset_id == dataset_id)
-            .order_by(AnnotationCollaborator.created_at)
+            select(DatasetCollaborator)
+            .where(DatasetCollaborator.dataset_id == dataset_id)
+            .order_by(DatasetCollaborator.created_at)
         )
         return list(result.scalars().all())
 
@@ -69,8 +69,8 @@ class AnnotationCollaboratorRepository:
         user_id: str,
     ) -> List[str]:
         result = await db.execute(
-            select(distinct(AnnotationCollaborator.dataset_id)).where(
-                AnnotationCollaborator.user_id == user_id
+            select(distinct(DatasetCollaborator.dataset_id)).where(
+                DatasetCollaborator.user_id == user_id
             )
         )
         return list(result.scalars().all())

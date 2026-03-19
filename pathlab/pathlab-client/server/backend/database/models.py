@@ -1169,7 +1169,7 @@ class SegmentationAnnotation(Base):
         }
 
 
-class AnnotationCollaborator(Base):
+class DatasetCollaborator(Base):
     """
     Annotation Collaborator table.
     Tracks which users have explicit write access to a dataset's shared_draft annotation.

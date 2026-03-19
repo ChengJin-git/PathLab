@@ -1,6 +1,7 @@
 """
 DatasetPermissionRepository - Data Access Layer
 """
+
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict
@@ -22,7 +23,7 @@ class DatasetPermissionRepository:
         user_id: str,
         granted_by: str,
         permission_level: str = "pathologist",
-        expires_at: datetime = None
+        expires_at: datetime = None,
     ) -> DatasetPermission:
         """
         Grant temporary elevated permission to a user for a specific dataset.
@@ -40,7 +41,7 @@ class DatasetPermissionRepository:
             user_id=user_id,
             granted_by=granted_by,
             permission_level=permission_level,
-            expires_at=expires_at
+            expires_at=expires_at,
         )
         db.add(permission)
         await db.flush()
@@ -48,7 +49,9 @@ class DatasetPermissionRepository:
         return permission
 
     @staticmethod
-    async def get_by_id(db: AsyncSession, permission_id: int) -> Optional[DatasetPermission]:
+    async def get_by_id(
+        db: AsyncSession, permission_id: int
+    ) -> Optional[DatasetPermission]:
         """Get permission by ID"""
         result = await db.execute(
             select(DatasetPermission).where(DatasetPermission.id == permission_id)
@@ -57,9 +60,7 @@ class DatasetPermissionRepository:
 
     @staticmethod
     async def get_by_dataset_and_user(
-        db: AsyncSession,
-        dataset_id: str,
-        user_id: str
+        db: AsyncSession, dataset_id: str, user_id: str
     ) -> Optional[DatasetPermission]:
         """Get permission for a specific user on a specific dataset"""
         result = await db.execute(
@@ -70,7 +71,9 @@ class DatasetPermissionRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_by_dataset(db: AsyncSession, dataset_id: str) -> List[DatasetPermission]:
+    async def get_by_dataset(
+        db: AsyncSession, dataset_id: str
+    ) -> List[DatasetPermission]:
         """Get all permissions for a dataset"""
         result = await db.execute(
             select(DatasetPermission)
@@ -90,17 +93,20 @@ class DatasetPermissionRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def get_valid_by_user(db: AsyncSession, user_id: str) -> List[DatasetPermission]:
+    async def get_valid_by_user(
+        db: AsyncSession, user_id: str
+    ) -> List[DatasetPermission]:
         """Get all valid (non-expired) permissions for a user"""
         from datetime import datetime, timezone
+
         # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             select(DatasetPermission)
             .where(DatasetPermission.user_id == user_id)
             .where(
-                (DatasetPermission.expires_at.is_(None)) |
-                (DatasetPermission.expires_at > now)
+                (DatasetPermission.expires_at.is_(None))
+                | (DatasetPermission.expires_at > now)
             )
             .order_by(DatasetPermission.created_at)
         )
@@ -111,31 +117,17 @@ class DatasetPermissionRepository:
         db: AsyncSession,
         dataset_id: str,
         user_id: str,
-        permission_level: str = "pathologist"
     ) -> bool:
-        """
-        Check if a user has valid (non-expired) permission for a dataset.
-
-        Args:
-            db: Database session
-            dataset_id: Dataset UUID
-            user_id: User UUID
-            permission_level: Required permission level
-
-        Returns:
-            True if user has valid permission at or above the required level
-        """
         from datetime import datetime, timezone
-        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             select(DatasetPermission)
             .where(DatasetPermission.dataset_id == dataset_id)
             .where(DatasetPermission.user_id == user_id)
-            .where(DatasetPermission.permission_level == permission_level)
             .where(
-                (DatasetPermission.expires_at.is_(None)) |
-                (DatasetPermission.expires_at > now)
+                (DatasetPermission.expires_at.is_(None))
+                | (DatasetPermission.expires_at > now)
             )
         )
         return result.scalar_one_or_none() is not None
@@ -151,9 +143,7 @@ class DatasetPermissionRepository:
 
     @staticmethod
     async def delete_by_dataset_and_user(
-        db: AsyncSession,
-        dataset_id: str,
-        user_id: str
+        db: AsyncSession, dataset_id: str, user_id: str
     ) -> bool:
         """Delete permission for a specific user on a specific dataset"""
         result = await db.execute(
@@ -165,10 +155,21 @@ class DatasetPermissionRepository:
         return result.rowcount > 0
 
     @staticmethod
-    async def delete_expired(db: AsyncSession) -> int:
-        """Delete all expired permissions. Returns count of deleted records."""
+    async def get_all_expired(db: AsyncSession) -> List[DatasetPermission]:
         from datetime import datetime, timezone
-        # Use naive UTC datetime for PostgreSQL TIMESTAMP WITHOUT TIME ZONE compatibility
+
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        result = await db.execute(
+            select(DatasetPermission)
+            .where(DatasetPermission.expires_at.isnot(None))
+            .where(DatasetPermission.expires_at <= now)
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def delete_expired(db: AsyncSession) -> int:
+        from datetime import datetime, timezone
+
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(
             delete(DatasetPermission)
@@ -177,5 +178,3 @@ class DatasetPermissionRepository:
         )
         await db.flush()
         return result.rowcount
-
-

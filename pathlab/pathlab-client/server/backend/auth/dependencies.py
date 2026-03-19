@@ -136,13 +136,13 @@ async def get_permitted_dataset_ids(
     from backend.database.repositories import (
         DatasetPermissionRepository,
         DatasetRepository,
-        AnnotationCollaboratorRepository,
+        DatasetCollaboratorRepository,
     )
 
     permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
     permitted_ids = [p.dataset_id for p in permissions if p.is_valid()]
     public_ids = await DatasetRepository.get_public_dataset_ids(db)
-    collab_ids = await AnnotationCollaboratorRepository.list_dataset_ids_for_user(
+    collab_ids = await DatasetCollaboratorRepository.list_dataset_ids_for_user(
         db, str(user.id)
     )
     child_ids = await DatasetRepository.get_child_dataset_ids(db, collab_ids)
@@ -197,19 +197,19 @@ async def check_wsi_access_permission(
     if wsi_dataset_id:
         from backend.database.repositories import (
             DatasetPermissionRepository,
-            AnnotationCollaboratorRepository,
+            DatasetCollaboratorRepository,
         )
 
         if await DatasetPermissionRepository.has_valid_permission(
-            db, wsi_dataset_id, str(user.id), "pathologist"
-        ):
+                    db, wsi_dataset_id, str(user.id)
+                ):
             return True
-        if await AnnotationCollaboratorRepository.exists(
+        if await DatasetCollaboratorRepository.exists(
             db, wsi_dataset_id, str(user.id)
         ):
             return True
 
-        if parent_dataset_id and await AnnotationCollaboratorRepository.exists(
+        if parent_dataset_id and await DatasetCollaboratorRepository.exists(
             db, parent_dataset_id, str(user.id)
         ):
             return True
@@ -237,18 +237,18 @@ async def check_dataset_access_permission(
 
     from backend.database.repositories import (
         DatasetPermissionRepository,
-        AnnotationCollaboratorRepository,
+        DatasetCollaboratorRepository,
     )
 
     if await DatasetPermissionRepository.has_valid_permission(
-        db, dataset_id, str(user.id), "pathologist"
-    ):
+                db, dataset_id, str(user.id)
+            ):
         return True
 
-    if await AnnotationCollaboratorRepository.exists(db, dataset_id, str(user.id)):
+    if await DatasetCollaboratorRepository.exists(db, dataset_id, str(user.id)):
         return True
 
-    if parent_dataset_id and await AnnotationCollaboratorRepository.exists(
+    if parent_dataset_id and await DatasetCollaboratorRepository.exists(
         db, parent_dataset_id, str(user.id)
     ):
         return True
@@ -411,8 +411,8 @@ async def check_dataset_gpu_permission(
     from backend.database.repositories import DatasetPermissionRepository
 
     return await DatasetPermissionRepository.has_valid_permission(
-        db, dataset_id, str(user.id), "pathologist"
-    )
+                db, dataset_id, str(user.id)
+            )
 
 
 async def require_dataset_gpu_permission(

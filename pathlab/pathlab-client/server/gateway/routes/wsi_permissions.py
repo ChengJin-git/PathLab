@@ -3,7 +3,6 @@ WSI dataset permission routes
 Handles temporary elevated access permissions for datasets (demo/review use case).
 """
 
-import asyncio
 import httpx
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Tuple, Any
@@ -19,13 +18,10 @@ from backend.database.repositories import (
     DatasetPermissionRepository,
     SegmentationAnnotationRepository,
     TrainingTaskRepository,
-    AnnotationCollaboratorRepository,
 )
 from backend.database.models import Dataset, TrainingTask, WSISlide
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin
-from backend.common.annotation_pubsub import publish as publish_annotation
-from backend.common.presence_pubsub import publish_presence
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import DatasetUpdateVisibilityRequest
 
@@ -162,28 +158,11 @@ async def _revoke_dataset_permission_with_side_effects(
             f"during permission revocation"
         )
 
-    collab_removed = await AnnotationCollaboratorRepository.remove(
-        db, dataset_id, target_user_id
-    )
-
     deleted = await DatasetPermissionRepository.delete_by_dataset_and_user(
         db, dataset_id, target_user_id
     )
     if not deleted:
         raise HTTPException(status_code=404, detail="Permission not found")
-
-    if collab_removed:
-        try:
-            await publish_annotation(
-                dataset_id, {"type": "access_revoked", "user_id": target_user_id}
-            )
-            await publish_presence(
-                dataset_id, {"type": "force_disconnect", "user_id": target_user_id}
-            )
-        except Exception as pub_err:
-            logger.warning(
-                f"Failed to publish revocation events for {target_user_id} on {dataset_id}: {pub_err}"
-            )
 
     result: Dict[str, Any] = {"message": "Permission revoked successfully"}
     if revoked_tasks:

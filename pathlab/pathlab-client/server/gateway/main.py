@@ -30,6 +30,8 @@ from backend.database.repositories import (
     ExportTaskRepository,
     StorageTaskRepository,
     WSIRepository,
+    DatasetPermissionRepository,
+    SegmentationAnnotationRepository,
 )
 from backend.database.models import TrainingTask
 from sqlalchemy.orm import selectinload
@@ -316,6 +318,8 @@ async def lifespan(app: FastAPI):
     # Cleanup old finished tasks (completed/failed/cancelled older than 7 days)
     await cleanup_old_tasks()
 
+    await cleanup_expired_permissions()
+
     # Cleanup expired PDF cache files
     from .routes.chat_pdf import cleanup_expired_pdf_cache
 
@@ -536,6 +540,23 @@ async def cleanup_old_tasks():
         except Exception as e:
             logger.error(f"Failed to cleanup old tasks: {e}")
         break  # Only need one iteration
+
+
+async def cleanup_expired_permissions():
+    async for db in get_db():
+        try:
+            expired = await DatasetPermissionRepository.get_all_expired(db)
+            for perm in expired:
+                await SegmentationAnnotationRepository.delete_by_dataset_and_user(
+                    db, perm.dataset_id, perm.user_id
+                )
+            count = await DatasetPermissionRepository.delete_expired(db)
+            if count > 0:
+                await db.commit()
+                logger.info(f"✓ Cleaned up {count} expired dataset permission(s)")
+        except Exception as e:
+            logger.error(f"Failed to cleanup expired permissions: {e}")
+        break
 
 
 async def resume_interrupted_tasks():

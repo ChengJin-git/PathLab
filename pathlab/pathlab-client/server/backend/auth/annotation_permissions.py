@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.models import User
 from backend.database.models import Dataset
-from backend.database.repositories import AnnotationCollaboratorRepository
+from backend.database.repositories import DatasetCollaboratorRepository
 
 
 async def can_access_shared(user: User, dataset: Dataset, db: AsyncSession) -> bool:
@@ -10,15 +10,7 @@ async def can_access_shared(user: User, dataset: Dataset, db: AsyncSession) -> b
         return True
     if dataset.is_public:
         return True
-    return await AnnotationCollaboratorRepository.exists(
-        db, dataset.dataset_id, str(user.id)
-    )
-
-
-async def can_write_shared(user: User, dataset: Dataset, db: AsyncSession) -> bool:
-    if user.is_admin() or dataset.user_id == str(user.id):
-        return True
-    return await AnnotationCollaboratorRepository.exists(
+    return await DatasetCollaboratorRepository.exists(
         db, dataset.dataset_id, str(user.id)
     )
 

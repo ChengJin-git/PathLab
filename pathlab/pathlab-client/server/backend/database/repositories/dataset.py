@@ -311,11 +311,25 @@ class DatasetRepository:
 
     @staticmethod
     async def get_child_dataset_ids(
-        db: AsyncSession, parent_ids: List[str]
+        db: AsyncSession, parent_ids: List[str], max_depth: int = 3
     ) -> List[str]:
         if not parent_ids:
             return []
-        result = await db.execute(
-            select(Dataset.dataset_id).where(Dataset.parent_dataset_id.in_(parent_ids))
-        )
-        return [row[0] for row in result.all()]
+        all_child_ids: set = set()
+        frontier = list(parent_ids)
+        for _ in range(max_depth):
+            result = await db.execute(
+                select(Dataset.dataset_id).where(
+                    Dataset.parent_dataset_id.in_(frontier)
+                )
+            )
+            new_ids = [
+                row[0]
+                for row in result.all()
+                if row[0] not in all_child_ids and row[0] not in parent_ids
+            ]
+            if not new_ids:
+                break
+            all_child_ids.update(new_ids)
+            frontier = new_ids
+        return list(all_child_ids)

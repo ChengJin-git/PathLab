@@ -3087,8 +3087,8 @@ async def start_external_validation(
     ):
         # Fallback: check temporary elevated permission for the target dataset
         has_temp_dataset_perm = await DatasetPermissionRepository.has_valid_permission(
-            db, req.dataset_id, str(user.id), "pathologist"
-        )
+                    db, req.dataset_id, str(user.id)
+                )
         if not has_temp_dataset_perm:
             raise HTTPException(
                 status_code=403, detail="You don't have permission to use this dataset"

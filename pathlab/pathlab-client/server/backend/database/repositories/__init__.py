@@ -20,7 +20,7 @@ from .permissions import DatasetPermissionRepository
 from .storage_task import StorageTaskRepository
 from .orphaned import OrphanedRecordsRepository
 from .annotation import SegmentationAnnotationRepository, VersionConflictError
-from .annotation_collaborator import AnnotationCollaboratorRepository
+from .dataset_collaborator import DatasetCollaboratorRepository
 from .annotation_audit import AnnotationAuditLogRepository
 from .dataset_stats import DatasetStatsRepository
 
@@ -41,7 +41,7 @@ __all__ = [
     "OrphanedRecordsRepository",
     "SegmentationAnnotationRepository",
     "VersionConflictError",
-    "AnnotationCollaboratorRepository",
+    "DatasetCollaboratorRepository",
     "AnnotationAuditLogRepository",
     "DatasetStatsRepository",
 ]
