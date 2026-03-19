@@ -363,7 +363,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
         </div>
       </div>
 
-      <RegisterRequestModal isOpen={isRegisterOpen} onClose={() => setIsRegisterOpen(false)} />
+      <RegisterRequestModal isOpen={isRegisterOpen} onClose={() => setIsRegisterOpen(false)} turnstileSiteKey={turnstileSiteKey || undefined} />
 
       <DisclaimerModal
         isOpen={isTermsPreviewOpen}
