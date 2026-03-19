@@ -431,14 +431,7 @@ class WSIRepository:
     def _build_data_type_filter(data_type: Optional[str]):
         if data_type not in {"wsi", "patch"}:
             return None
-        stored_match = WSISlide.data_type == data_type
-        # Safety net for legacy rows that have not been backfilled yet
-        # (only exercised during the brief window before init_db runs on first restart).
-        legacy_match = and_(
-            WSISlide.data_type.is_(None),
-            WSIRepository._build_file_level_data_type_filter(data_type),
-        )
-        return or_(stored_match, legacy_match)
+        return WSISlide.data_type == data_type
 
     @staticmethod
     async def get_chat_context_stats(
@@ -792,9 +785,8 @@ class WSIRepository:
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
     ):
-        from sqlalchemy import case
+        from ..models import DatasetStats
 
-        file_filter = WSIRepository._build_data_type_filter(data_type)
         ParentDataset = aliased(Dataset, flat=True)
 
         query = (
@@ -806,88 +798,36 @@ class WSIRepository:
                 DataGroup.data_type,
                 DataGroup.aggregation_level,
                 DataGroup.task_type,
-                func.count(WSISlide.id).label("file_count"),
-                func.sum(WSISlide.file_size).label("total_size"),
+                DatasetStats.file_count,
+                DatasetStats.total_size,
                 Dataset.source_organ.label("source_organ"),
                 Dataset.parent_dataset_id.label("parent_dataset_id"),
                 ParentDataset.name.label("parent_dataset_name"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                func.lower(WSISlide.split) == "train",
-                                case(
-                                    (
-                                        DataGroup.aggregation_level == "case",
-                                        func.coalesce(
-                                            WSISlide.case_id, WSISlide.wsi_id
-                                        ),
-                                    ),
-                                    else_=WSISlide.wsi_id,
-                                ),
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_train_count"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                or_(
-                                    func.lower(WSISlide.split) == "val",
-                                    func.lower(WSISlide.split) == "validation",
-                                ),
-                                case(
-                                    (
-                                        DataGroup.aggregation_level == "case",
-                                        func.coalesce(
-                                            WSISlide.case_id, WSISlide.wsi_id
-                                        ),
-                                    ),
-                                    else_=WSISlide.wsi_id,
-                                ),
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_val_count"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                func.lower(WSISlide.split) == "test",
-                                case(
-                                    (
-                                        DataGroup.aggregation_level == "case",
-                                        func.coalesce(
-                                            WSISlide.case_id, WSISlide.wsi_id
-                                        ),
-                                    ),
-                                    else_=WSISlide.wsi_id,
-                                ),
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_test_count"),
+                DatasetStats.split_train_count,
+                DatasetStats.split_val_count,
+                DatasetStats.split_test_count,
             )
-            .select_from(WSISlide)
-            .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
-            .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
+            .select_from(Dataset)
+            .join(DataGroup, Dataset.group_id == DataGroup.group_id)
+            .join(DatasetStats, Dataset.dataset_id == DatasetStats.dataset_id)
             .outerjoin(
                 ParentDataset, Dataset.parent_dataset_id == ParentDataset.dataset_id
             )
         )
 
-        visibility_filter = WSIRepository._build_visibility_filter(
-            user_id, elevated_dataset_ids
-        )
-        if visibility_filter is not None:
-            query = query.where(visibility_filter)
+        if user_id is not None:
+            if elevated_dataset_ids:
+                query = query.where(
+                    or_(
+                        Dataset.user_id == user_id,
+                        Dataset.dataset_id.in_(elevated_dataset_ids),
+                    )
+                )
+            else:
+                query = query.where(Dataset.user_id == user_id)
 
-        if file_filter is not None:
-            query = query.where(file_filter)
+        if data_type in {"wsi", "patch"}:
+            query = query.where(DataGroup.data_type == data_type)
 
         normalized_search = search.strip() if search else None
         if normalized_search:
@@ -910,18 +850,7 @@ class WSIRepository:
                 )
                 query = query.where(source_expr == normalized_source)
 
-        return query.group_by(
-            Dataset.dataset_id,
-            Dataset.name,
-            Dataset.user_id,
-            Dataset.group_id,
-            Dataset.source_organ,
-            Dataset.parent_dataset_id,
-            ParentDataset.name,
-            DataGroup.data_type,
-            DataGroup.aggregation_level,
-            DataGroup.task_type,
-        )
+        return query
 
     @staticmethod
     async def count_datasets(
@@ -935,42 +864,17 @@ class WSIRepository:
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
     ) -> int:
-        """Count datasets visible under the current filter set."""
-        file_filter = WSIRepository._build_data_type_filter(data_type)
-        visibility_filter = WSIRepository._build_visibility_filter(
-            user_id, elevated_dataset_ids
-        )
-
-        query = (
-            select(func.count(func.distinct(Dataset.dataset_id)))
-            .select_from(WSISlide)
-            .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
-            .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
-        )
-
-        if visibility_filter is not None:
-            query = query.where(visibility_filter)
-        if file_filter is not None:
-            query = query.where(file_filter)
-
-        normalized_search = search.strip() if search else None
-        if normalized_search:
-            query = query.where(Dataset.name.ilike(f"%{normalized_search}%"))
-        if dataset_id:
-            query = query.where(Dataset.dataset_id == dataset_id)
-        if task_type:
-            query = query.where(DataGroup.task_type == task_type)
-        if aggregation_level:
-            query = query.where(DataGroup.aggregation_level == aggregation_level)
-        if source_organ:
-            normalized_source = source_organ.strip()
-            if normalized_source:
-                source_expr = func.coalesce(
-                    func.nullif(func.trim(Dataset.source_organ), ""), "__unknown__"
-                )
-                query = query.where(source_expr == normalized_source)
-
-        result = await db.execute(query)
+        subq = WSIRepository._build_dataset_summary_query(
+            data_type=data_type,
+            user_id=user_id,
+            elevated_dataset_ids=elevated_dataset_ids,
+            search=search,
+            dataset_id=dataset_id,
+            task_type=task_type,
+            aggregation_level=aggregation_level,
+            source_organ=source_organ,
+        ).subquery("ds_count")
+        result = await db.execute(select(func.count()).select_from(subq))
         return result.scalar() or 0
 
     @staticmethod

@@ -169,43 +169,6 @@ async def init_db():
         )
         await conn.execute(
             text(
-                "UPDATE wsi_slides SET data_type = 'patch' WHERE data_type IS NULL"
-                " AND (LOWER(wsi_path) LIKE '%.jpg' OR LOWER(wsi_path) LIKE '%.jpeg'"
-                "  OR LOWER(wsi_path) LIKE '%.png' OR LOWER(wsi_path) LIKE '%.bmp')"
-            )
-        )
-        await conn.execute(
-            text(
-                "UPDATE wsi_slides SET data_type = 'wsi' WHERE data_type IS NULL"
-                " AND (LOWER(wsi_path) LIKE '%.svs'  OR LOWER(wsi_path) LIKE '%.svslide'"
-                "  OR LOWER(wsi_path) LIKE '%.ndpi' OR LOWER(wsi_path) LIKE '%.scn'"
-                "  OR LOWER(wsi_path) LIKE '%.mrxs' OR LOWER(wsi_path) LIKE '%.bif'"
-                "  OR LOWER(wsi_path) LIKE '%.vsi'  OR LOWER(wsi_path) LIKE '%.vms'"
-                "  OR LOWER(wsi_path) LIKE '%.vmu'  OR LOWER(wsi_path) LIKE '%.kfb'"
-                "  OR LOWER(wsi_path) LIKE '%.sdpc' OR LOWER(wsi_path) LIKE '%.tmap'"
-                "  OR LOWER(wsi_path) LIKE '%.mds'  OR LOWER(wsi_path) LIKE '%.mdsx'"
-                "  OR LOWER(wsi_path) LIKE '%.qptiff' OR LOWER(wsi_path) LIKE '%.tron'"
-                "  OR LOWER(wsi_path) LIKE '%.isyntax' OR LOWER(wsi_path) LIKE '%.dyj'"
-                "  OR LOWER(wsi_path) LIKE '%.dyqx' OR LOWER(wsi_path) LIKE '%.ibl'"
-                "  OR LOWER(wsi_path) LIKE '%.zyp')"
-            )
-        )
-        await conn.execute(
-            text(
-                "UPDATE wsi_slides SET data_type = 'wsi' WHERE data_type IS NULL"
-                " AND (LOWER(wsi_path) LIKE '%.tif' OR LOWER(wsi_path) LIKE '%.tiff')"
-                " AND file_size >= 33554432"
-            )
-        )
-        await conn.execute(
-            text(
-                "UPDATE wsi_slides SET data_type = 'patch' WHERE data_type IS NULL"
-                " AND (LOWER(wsi_path) LIKE '%.tif' OR LOWER(wsi_path) LIKE '%.tiff')"
-                " AND (file_size < 33554432 OR file_size IS NULL)"
-            )
-        )
-        await conn.execute(
-            text(
                 "CREATE INDEX IF NOT EXISTS idx_wsi_user_type"
                 " ON wsi_slides (user_id, data_type)"
             )
@@ -217,6 +180,44 @@ async def init_db():
             )
         )
         logger.info("wsi_slides.data_type column and indexes ensured")
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS dataset_stats ("
+                "    dataset_id   VARCHAR(255) PRIMARY KEY"
+                "        REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                "    file_count        INTEGER   NOT NULL DEFAULT 0,"
+                "    total_size        BIGINT    NOT NULL DEFAULT 0,"
+                "    split_train_count INTEGER   NOT NULL DEFAULT 0,"
+                "    split_val_count   INTEGER   NOT NULL DEFAULT 0,"
+                "    split_test_count  INTEGER   NOT NULL DEFAULT 0,"
+                "    updated_at        TIMESTAMP NOT NULL DEFAULT NOW()"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO dataset_stats"
+                " (dataset_id, file_count, total_size,"
+                "  split_train_count, split_val_count, split_test_count, updated_at)"
+                " SELECT w.dataset_id, COUNT(*), COALESCE(SUM(w.file_size), 0),"
+                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'train' THEN"
+                "     CASE WHEN dg.aggregation_level = 'case'"
+                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) IN ('val','validation') THEN"
+                "     CASE WHEN dg.aggregation_level = 'case'"
+                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'test' THEN"
+                "     CASE WHEN dg.aggregation_level = 'case'"
+                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                "   NOW()"
+                " FROM wsi_slides w"
+                " JOIN datasets d ON w.dataset_id = d.dataset_id"
+                " JOIN data_groups dg ON d.group_id = dg.group_id"
+                " GROUP BY w.dataset_id"
+                " ON CONFLICT (dataset_id) DO NOTHING"
+            )
+        )
+        logger.info("dataset_stats table ensured and pre-populated")
 
     # Create default admin user if no users exist
     await _create_default_admin()

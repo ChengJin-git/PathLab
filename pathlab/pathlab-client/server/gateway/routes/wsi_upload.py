@@ -22,6 +22,7 @@ from backend.database.repositories import (
     DatasetRepository,
     DataGroupRepository,
     SegmentationAnnotationRepository,
+    DatasetStatsRepository,
 )
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
@@ -653,7 +654,7 @@ async def upload_wsi_file(
             "case_id": case_id,
             "label": None if resolved_task_type == "segmentation" else label,
             "wsi_path": str(wsi_path),
-            "data_type": file_data_type,
+            "data_type": data_group.data_type if data_group else file_data_type,
             "age": age,
             "gender": gender,
             "source": (existing_dataset.source_organ if dataset_id else source_organ)
@@ -686,6 +687,8 @@ async def upload_wsi_file(
                     status="finalized",
                     source="upload",
                 )
+            if resolved_dataset_id:
+                await DatasetStatsRepository.recompute(db, resolved_dataset_id)
             await db.commit()
         except IntegrityError:
             await db.rollback()
@@ -1043,7 +1046,7 @@ async def upload_wsi_by_path(
             "label": None if resolved_task_type == "segmentation" else req.label,
             "case_id": case_id,
             "wsi_path": req.wsi_path,
-            "data_type": file_data_type,
+            "data_type": data_group.data_type if data_group else file_data_type,
             "file_size": file_size,
             "age": req.age,
             "gender": req.gender,
@@ -1078,6 +1081,8 @@ async def upload_wsi_by_path(
                     status="finalized",
                     source="upload_path",
                 )
+            if resolved_dataset_id:
+                await DatasetStatsRepository.recompute(db, resolved_dataset_id)
             await db.commit()
         except IntegrityError:
             await db.rollback()

@@ -1247,3 +1247,20 @@ class AnalysisRun(Base):
             if self.created_at
             else None,
         }
+
+
+class DatasetStats(Base):
+    __tablename__ = "dataset_stats"
+
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    file_count = Column(Integer, nullable=False, server_default="0")
+    total_size = Column(BigInteger, nullable=False, server_default="0")
+    split_train_count = Column(Integer, nullable=False, server_default="0")
+    split_val_count = Column(Integer, nullable=False, server_default="0")
+    split_test_count = Column(Integer, nullable=False, server_default="0")
+    updated_at = Column(DateTime, default=utc_now, nullable=False)

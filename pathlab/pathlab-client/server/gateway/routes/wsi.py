@@ -29,6 +29,7 @@ from backend.database.repositories import (
     DataGroupRepository,
     AIResultRepository,
     SegmentationAnnotationRepository,
+    DatasetStatsRepository,
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
@@ -1246,6 +1247,7 @@ async def delete_wsi(
         )
 
         wsi_path = wsi.wsi_path
+        dataset_id = wsi.dataset_id
 
         # Delete all associated data before deleting the WSI
         # Using raw SQL for efficiency
@@ -1265,6 +1267,8 @@ async def delete_wsi(
 
         # Delete WSI from database
         await WSIRepository.delete(db, wsi_id)
+        if dataset_id:
+            await DatasetStatsRepository.recompute(db, dataset_id)
         await db.commit()
         await invalidate_chat_context(str(wsi.user_id or user.id))
 

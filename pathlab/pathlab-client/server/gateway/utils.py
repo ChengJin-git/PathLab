@@ -22,6 +22,7 @@ from backend.ai.tasks.patch_cache import (
     find_valid_cached_coords_summary,
 )
 from backend.common.config import Config
+from sqlalchemy import text as sa_text
 from backend.database.repositories import (
     DataGroupRepository,
     DatasetRepository,
@@ -268,6 +269,14 @@ async def align_dataset_data_type_for_file(
         )
         dataset.group_id = target_group.group_id
         await db.flush()
+        await db.execute(
+            sa_text(
+                "UPDATE wsi_slides SET data_type = 'wsi', updated_at = NOW()"
+                " WHERE dataset_id = :did AND data_type = 'patch'"
+                " AND (LOWER(wsi_path) LIKE '%.tif' OR LOWER(wsi_path) LIKE '%.tiff')"
+            ),
+            {"did": dataset.dataset_id},
+        )
         logger.info(
             "Promoted dataset %s to wsi during %s because TIFF/TIFF files contained a WSI",
             dataset.dataset_id,

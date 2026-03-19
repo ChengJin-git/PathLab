@@ -22,6 +22,7 @@ from .orphaned import OrphanedRecordsRepository
 from .annotation import SegmentationAnnotationRepository, VersionConflictError
 from .annotation_collaborator import AnnotationCollaboratorRepository
 from .annotation_audit import AnnotationAuditLogRepository
+from .dataset_stats import DatasetStatsRepository
 
 __all__ = [
     "DataGroupRepository",
@@ -42,4 +43,5 @@ __all__ = [
     "VersionConflictError",
     "AnnotationCollaboratorRepository",
     "AnnotationAuditLogRepository",
+    "DatasetStatsRepository",
 ]
