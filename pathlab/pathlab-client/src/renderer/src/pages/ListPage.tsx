@@ -480,9 +480,8 @@ export default function ListPage() {
     }
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-    const t1 = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
-    const t2 = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
-    return () => { clearTimeout(t1); clearTimeout(t2) }
+    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
+    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
   }, [tasks, qc, removeDeletingDatasetByTaskId])
 
   useEffect(() => {
