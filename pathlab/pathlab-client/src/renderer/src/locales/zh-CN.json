@@ -813,7 +813,22 @@
     "avatarUploadFailed": "头像上传失败",
     "user": "用户",
     "profileMenu": "个人菜单",
-    "switchLanguage": "切换语言"
+    "switchLanguage": "切换语言",
+    "changePassword": "修改密码"
+  },
+  "changePassword": {
+    "title": "修改密码",
+    "currentPassword": "当前密码",
+    "newPassword": "新密码",
+    "confirmPassword": "确认新密码",
+    "submit": "更新密码",
+    "submitting": "更新中...",
+    "success": "密码修改成功",
+    "mismatch": "两次输入的新密码不一致",
+    "newPasswordRequired": "新密码不能为空",
+    "currentPasswordIncorrect": "当前密码不正确",
+    "genericError": "密码更新失败",
+    "forgotHint": "忘记当前密码？请联系管理员重置："
   },
   "time": {
     "justNow": "刚刚",

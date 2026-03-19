@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu } from 'lucide-react'
+import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu, KeyRound } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
@@ -9,6 +9,7 @@ import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
 import { PrivacyPolicyModal } from './PrivacyPolicyModal'
 import { MaintenanceNoticeModal } from './MaintenanceNoticeModal'
+import { ChangePasswordModal } from './ChangePasswordModal'
 import { uploadAvatar, deleteAvatar, ApiError } from '../api'
 import { API_BASE } from '../config'
 import { useTranslation } from 'react-i18next'
@@ -26,6 +27,7 @@ export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isPrivacyPolicyOpen, setIsPrivacyPolicyOpen] = useState(false)
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -236,6 +238,15 @@ export default function Layout({ children }: LayoutProps) {
                           <span>{t('layout.deleteAvatar')}</span>
                         </button>
                       )}
+
+                      <button
+                        type="button"
+                        onClick={() => { setIsChangePasswordOpen(true); setIsMenuOpen(false) }}
+                        className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
+                      >
+                        <KeyRound className="w-3.5 h-3.5 mr-2 text-gray-400 group-hover:text-primary-500" />
+                        <span>{t('layout.changePassword')}</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -282,6 +293,11 @@ export default function Layout({ children }: LayoutProps) {
         isOpen={needsAgreement && isPrivacyPolicyOpen}
         onClose={() => setIsPrivacyPolicyOpen(false)}
         onBackToTerms={() => setIsPrivacyPolicyOpen(false)}
+      />
+
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
       />
 
       {/* Maintenance Notice Modal - shown when admin posts a notice */}

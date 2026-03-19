@@ -197,12 +197,23 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
   }
 }
 
-/**
- * Update current user info
- * @param data - Update data
- * @returns Updated user
- * @throws {ApiError} If update fails
- */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<AuthUser> {
+  const currentPasswordSha256 = await sha256(currentPassword)
+  const newPasswordSha256 = await sha256(newPassword)
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/me/change-password`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password_sha256: currentPasswordSha256, new_password_sha256: newPasswordSha256 })
+    },
+    'Failed to change password'
+  )
+}
+
 export async function updateCurrentUser(data: CurrentUserUpdateRequest): Promise<AuthUser> {
   return apiFetch<AuthUser>(
     `${API_BASE}/auth/me`,

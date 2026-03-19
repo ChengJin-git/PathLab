@@ -813,7 +813,22 @@
     "avatarUploadFailed": "頭像上載失敗",
     "user": "使用者",
     "profileMenu": "個人選單",
-    "switchLanguage": "切換語言"
+    "switchLanguage": "切換語言",
+    "changePassword": "修改密碼"
+  },
+  "changePassword": {
+    "title": "修改密碼",
+    "currentPassword": "目前密碼",
+    "newPassword": "新密碼",
+    "confirmPassword": "確認新密碼",
+    "submit": "更新密碼",
+    "submitting": "更新中...",
+    "success": "密碼修改成功",
+    "mismatch": "兩次輸入的新密碼不一致",
+    "newPasswordRequired": "新密碼不能為空",
+    "currentPasswordIncorrect": "目前密碼不正確",
+    "genericError": "密碼更新失敗",
+    "forgotHint": "忘記目前密碼？請聯絡管理員重置："
   },
   "time": {
     "justNow": "剛才",

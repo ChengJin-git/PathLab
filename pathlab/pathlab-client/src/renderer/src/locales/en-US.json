@@ -813,7 +813,22 @@
     "avatarUploadFailed": "Failed to upload avatar",
     "user": "User",
     "profileMenu": "Profile Menu",
-    "switchLanguage": "Switch Language"
+    "switchLanguage": "Switch Language",
+    "changePassword": "Change Password"
+  },
+  "changePassword": {
+    "title": "Change Password",
+    "currentPassword": "Current Password",
+    "newPassword": "New Password",
+    "confirmPassword": "Confirm New Password",
+    "submit": "Update Password",
+    "submitting": "Updating...",
+    "success": "Password updated successfully",
+    "mismatch": "New passwords do not match",
+    "newPasswordRequired": "New password cannot be empty",
+    "currentPasswordIncorrect": "Current password is incorrect",
+    "genericError": "Failed to update password",
+    "forgotHint": "Forgot your current password? Contact the administrator:"
   },
   "time": {
     "justNow": "Just now",

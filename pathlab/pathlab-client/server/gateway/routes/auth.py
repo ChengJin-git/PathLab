@@ -929,6 +929,57 @@ async def acknowledge_notice(
     return user
 
 
+# ============================================================================
+# Self-service Password Change
+# ============================================================================
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password_sha256: str
+    new_password_sha256: str
+
+
+@router.post(
+    "/auth/me/change-password",
+    response_model=UserRead,
+    tags=["Authentication"],
+)
+async def change_my_password(
+    request: ChangePasswordRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from fastapi_users.password import PasswordHelper
+
+    if not user.password_sha256:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CHANGE_PASSWORD_NOT_SUPPORTED",
+        )
+
+    if request.current_password_sha256 != user.password_sha256:
+        logger.warning(f"User {user.email} provided incorrect current password")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CURRENT_PASSWORD_INCORRECT",
+        )
+
+    password_helper = PasswordHelper()
+    user.hashed_password = password_helper.hash(request.new_password_sha256)
+    user.password_sha256 = request.new_password_sha256
+
+    await db.commit()
+    await db.refresh(user)
+
+    if user.avatar_path:
+        user.avatar_url = (
+            f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+        )
+
+    logger.info(f"User {user.email} changed their own password")
+    return user
+
+
 # Avatar management routes
 @router.get("/auth/me", response_model=UserRead, tags=["Authentication"])
 async def get_me(user: User = Depends(current_active_user)):
