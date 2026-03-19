@@ -132,10 +132,16 @@ _LEGAL_FOOTER_HTML = (
 
 
 async def _send_activation_email(user: "User") -> None:
+    logger.info(f"[activation_email] triggered for user={user.email!r} reg_email={user.registration_email!r}")
     settings = Config.get_global_settings()
     if not settings.get("resend_enabled") or not settings.get("resend_api_key"):
+        logger.info(
+            f"[activation_email] skipped: resend_enabled={settings.get('resend_enabled')!r} "
+            f"api_key_set={bool(settings.get('resend_api_key'))}"
+        )
         return
     if not user.registration_email:
+        logger.info(f"[activation_email] skipped: no registration_email for user={user.email!r}")
         return
 
     try:
