@@ -305,6 +305,11 @@ export default function ResultsViewerPage() {
     }
   }, [selectedTaskId, tasks])
 
+  useEffect(() => {
+    setCurrentResult(null)
+    setAnalysisError(null)
+  }, [selectedTaskId])
+
   // Reset metrics/charts selection when external model changes
   useEffect(() => {
     if (pageMode !== 'external-validation' || !selectedModelId) return
@@ -1324,6 +1329,20 @@ export default function ResultsViewerPage() {
                             onClick={() => {
                               setSelectedTaskId(task.task_id)
                               setIsTaskDropdownOpen(false)
+                            }}
+                            onMouseEnter={() => {
+                              if (task.task_id !== selectedTaskId) {
+                                void qc.prefetchQuery({
+                                  queryKey: ['analyses', task.task_id],
+                                  queryFn: async () => {
+                                    const response = await fetch(`${API_BASE}/results/tasks/${task.task_id}/analysis`, buildAuthRequestInit())
+                                    if (!response.ok) throw new Error('Failed to load analyses')
+                                    const data = await response.json()
+                                    return (data.analyses || []) as AnalysisSummary[]
+                                  },
+                                  staleTime: 30 * 1000,
+                                })
+                              }
                             }}
                             className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"
                           >

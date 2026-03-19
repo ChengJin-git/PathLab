@@ -162,6 +162,61 @@ async def init_db():
                 "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
             )
         )
+        await conn.execute(
+            text(
+                "ALTER TABLE wsi_slides ADD COLUMN IF NOT EXISTS data_type VARCHAR(20)"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE wsi_slides SET data_type = 'patch' WHERE data_type IS NULL"
+                " AND (LOWER(wsi_path) LIKE '%.jpg' OR LOWER(wsi_path) LIKE '%.jpeg'"
+                "  OR LOWER(wsi_path) LIKE '%.png' OR LOWER(wsi_path) LIKE '%.bmp')"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE wsi_slides SET data_type = 'wsi' WHERE data_type IS NULL"
+                " AND (LOWER(wsi_path) LIKE '%.svs'  OR LOWER(wsi_path) LIKE '%.svslide'"
+                "  OR LOWER(wsi_path) LIKE '%.ndpi' OR LOWER(wsi_path) LIKE '%.scn'"
+                "  OR LOWER(wsi_path) LIKE '%.mrxs' OR LOWER(wsi_path) LIKE '%.bif'"
+                "  OR LOWER(wsi_path) LIKE '%.vsi'  OR LOWER(wsi_path) LIKE '%.vms'"
+                "  OR LOWER(wsi_path) LIKE '%.vmu'  OR LOWER(wsi_path) LIKE '%.kfb'"
+                "  OR LOWER(wsi_path) LIKE '%.sdpc' OR LOWER(wsi_path) LIKE '%.tmap'"
+                "  OR LOWER(wsi_path) LIKE '%.mds'  OR LOWER(wsi_path) LIKE '%.mdsx'"
+                "  OR LOWER(wsi_path) LIKE '%.qptiff' OR LOWER(wsi_path) LIKE '%.tron'"
+                "  OR LOWER(wsi_path) LIKE '%.isyntax' OR LOWER(wsi_path) LIKE '%.dyj'"
+                "  OR LOWER(wsi_path) LIKE '%.dyqx' OR LOWER(wsi_path) LIKE '%.ibl'"
+                "  OR LOWER(wsi_path) LIKE '%.zyp')"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE wsi_slides SET data_type = 'wsi' WHERE data_type IS NULL"
+                " AND (LOWER(wsi_path) LIKE '%.tif' OR LOWER(wsi_path) LIKE '%.tiff')"
+                " AND file_size >= 33554432"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE wsi_slides SET data_type = 'patch' WHERE data_type IS NULL"
+                " AND (LOWER(wsi_path) LIKE '%.tif' OR LOWER(wsi_path) LIKE '%.tiff')"
+                " AND (file_size < 33554432 OR file_size IS NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_wsi_user_type"
+                " ON wsi_slides (user_id, data_type)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_type"
+                " ON wsi_slides (dataset_id, data_type)"
+            )
+        )
+        logger.info("wsi_slides.data_type column and indexes ensured")
 
     # Create default admin user if no users exist
     await _create_default_admin()

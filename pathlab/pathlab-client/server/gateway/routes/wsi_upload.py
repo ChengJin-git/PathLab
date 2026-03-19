@@ -278,6 +278,7 @@ async def upload_wsi_by_csv(
                     "label": label,
                     "case_id": case_id,
                     "wsi_path": wsi_path,
+                    "data_type": _file_data_type,
                     "file_size": file_size,
                     "age": age,
                     "gender": gender,
@@ -288,7 +289,7 @@ async def upload_wsi_by_csv(
                     "width": wsi_props["width"],
                     "height": wsi_props["height"],
                     "magnification": wsi_props["magnification"],
-                    "user_id": str(user.id),  # Associate with current user
+                    "user_id": str(user.id),
                 }
 
                 wsi = await WSIRepository.create(db, wsi_data)
@@ -652,6 +653,7 @@ async def upload_wsi_file(
             "case_id": case_id,
             "label": None if resolved_task_type == "segmentation" else label,
             "wsi_path": str(wsi_path),
+            "data_type": file_data_type,
             "age": age,
             "gender": gender,
             "source": (existing_dataset.source_organ if dataset_id else source_organ)
@@ -664,7 +666,7 @@ async def upload_wsi_file(
             "height": props.get("height"),
             "magnification": props.get("magnification"),
             "file_size": file_size,
-            "user_id": str(user.id),  # Associate with current user
+            "user_id": str(user.id),
         }
 
         # Race-condition safe: catch IntegrityError if concurrent upload
@@ -1041,6 +1043,7 @@ async def upload_wsi_by_path(
             "label": None if resolved_task_type == "segmentation" else req.label,
             "case_id": case_id,
             "wsi_path": req.wsi_path,
+            "data_type": file_data_type,
             "file_size": file_size,
             "age": req.age,
             "gender": req.gender,
@@ -1055,7 +1058,7 @@ async def upload_wsi_by_path(
             "width": wsi_props["width"],
             "height": wsi_props["height"],
             "magnification": wsi_props["magnification"],
-            "user_id": str(user.id),  # Associate with current user
+            "user_id": str(user.id),
         }
 
         # Race-condition safe: catch IntegrityError if concurrent register

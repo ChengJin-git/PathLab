@@ -235,6 +235,11 @@ class WSISlide(Base):
         Boolean, default=False, nullable=False, server_default="false", index=True
     )
 
+    # Denormalized file type hint – set at upload time for fast index filtering.
+    # Eliminates per-query lower(wsi_path) LIKE scans on every paginated list.
+    # Values: 'wsi' | 'patch' | NULL (legacy rows; backfilled at startup via init_db)
+    data_type = Column(String(20), nullable=True, index=True)
+
     # Timestamps
     created_at = Column(DateTime, default=utc_now, nullable=False)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
@@ -255,12 +260,11 @@ class WSISlide(Base):
         "WSISlide", remote_side=[wsi_id], foreign_keys=[parent_wsi_id]
     )
 
-    # Composite indexes for common query patterns (PostgreSQL)
     __table_args__ = (
-        # Speeds up get_datasets() filtered by user_id and grouped by dataset_id
         Index("idx_wsi_user_dataset", "user_id", "dataset_id"),
-        # Speeds up sorted dataset listings (e.g., newest first within dataset)
         Index("idx_wsi_dataset_created", "dataset_id", "created_at"),
+        Index("idx_wsi_user_type", "user_id", "data_type"),
+        Index("idx_wsi_dataset_type", "dataset_id", "data_type"),
     )
 
     def _get_file_extension(self) -> str:

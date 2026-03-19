@@ -429,31 +429,16 @@ class WSIRepository:
 
     @staticmethod
     def _build_data_type_filter(data_type: Optional[str]):
-        """
-        Build SQLAlchemy filter for data_type (wsi/patch).
-
-        Args:
-            data_type: "wsi" for WSI files, "patch" for image files, None for all
-
-        Returns:
-            SQLAlchemy filter condition or None
-        """
-        if data_type in {"wsi", "patch"}:
-            file_level_filter = WSIRepository._build_file_level_data_type_filter(
-                data_type
-            )
-            dataset_level_filter = WSISlide.dataset.has(
-                Dataset.data_group.has(DataGroup.data_type == data_type)
-            )
-            ungrouped_fallback = and_(
-                or_(
-                    WSISlide.dataset_id.is_(None),
-                    WSISlide.dataset.has(Dataset.group_id.is_(None)),
-                ),
-                file_level_filter,
-            )
-            return or_(dataset_level_filter, ungrouped_fallback)
-        return None
+        if data_type not in {"wsi", "patch"}:
+            return None
+        stored_match = WSISlide.data_type == data_type
+        # Safety net for legacy rows that have not been backfilled yet
+        # (only exercised during the brief window before init_db runs on first restart).
+        legacy_match = and_(
+            WSISlide.data_type.is_(None),
+            WSIRepository._build_file_level_data_type_filter(data_type),
+        )
+        return or_(stored_match, legacy_match)
 
     @staticmethod
     async def get_chat_context_stats(
@@ -1035,22 +1020,30 @@ class WSIRepository:
             query = query.limit(limit)
 
         result = await db.execute(query)
+        rows = result.all()
+
+        seg_ids = [
+            r.dataset_id for r in rows if r.task_type == "segmentation" and r.dataset_id
+        ]
+        coco_map: Dict[str, List[Dict[str, Any]]] = {}
+        if seg_ids:
+            coco_map = await WSIRepository._get_coco_categories_batch(db, seg_ids)
+
         datasets = []
-        for row in result.all():
+        for row in rows:
             train_count = row.split_train_count or 0
             val_count = row.split_val_count or 0
             test_count = row.split_test_count or 0
             has_predefined_splits = (train_count + val_count + test_count) > 0
 
             dataset_dict = {
-                "dataset_id": row.dataset_id,  # UUID for API calls
-                "dataset_name": row.dataset_name or "Uncategorized",  # Display name
-                "user_id": row.dataset_user_id,  # Dataset owner
+                "dataset_id": row.dataset_id,
+                "dataset_name": row.dataset_name or "Uncategorized",
+                "user_id": row.dataset_user_id,
                 "group_id": row.group_id,
-                "data_type": row.data_type,  # wsi or patch (for frontend display)
-                "aggregation_level": row.aggregation_level,  # file or case
-                "task_type": row.task_type
-                or "classification",  # classification, survival
+                "data_type": row.data_type,
+                "aggregation_level": row.aggregation_level,
+                "task_type": row.task_type or "classification",
                 "source_organ": row.source_organ,
                 "parent_dataset_id": row.parent_dataset_id,
                 "parent_dataset_name": row.parent_dataset_name,
@@ -1067,11 +1060,8 @@ class WSIRepository:
                 },
             }
 
-            # For segmentation datasets, fetch COCO categories from annotation files
             if row.task_type == "segmentation" and row.dataset_id:
-                coco_categories = await WSIRepository._get_coco_categories_for_dataset(
-                    db, row.dataset_id
-                )
+                coco_categories = coco_map.get(row.dataset_id, [])
                 if coco_categories:
                     dataset_dict["coco_categories"] = coco_categories
                     dataset_dict["num_coco_categories"] = len(coco_categories)
@@ -1082,49 +1072,16 @@ class WSIRepository:
         return datasets
 
     @staticmethod
-    async def _get_coco_categories_for_dataset(
-        db: AsyncSession, dataset_id: str
-    ) -> List[Dict[str, Any]]:
-        """
-        Extract COCO categories from segmentation annotations stored in DB.
-
-        Looks up SegmentationAnnotation records linked to this dataset_id
-        and extracts categories from the COCO JSON.
-
-        Args:
-            db: Database session
-            dataset_id: Dataset UUID
-
-        Returns:
-            List of category dicts with id, name, and optionally supercategory
-        """
-        from backend.database.models import SegmentationAnnotation
-
-        # Query annotations linked to this dataset
-        query = (
-            select(SegmentationAnnotation)
-            .where(SegmentationAnnotation.source_dataset_id == dataset_id)
-            .limit(1)
-        )
-
-        result = await db.execute(query)
-        annotation = result.scalar_one_or_none()
-
+    def _extract_coco_categories_from_annotation(annotation) -> List[Dict[str, Any]]:
         if not annotation or not annotation.annotations:
             return []
-
         try:
             coco_data = annotation.annotations
             if not isinstance(coco_data, dict):
                 return []
-
-            # Extract categories from COCO format
             categories = coco_data.get("categories", [])
             if not categories:
-                # Legacy format: categories as dict { "0": "label", ... }
                 return []
-
-            # Handle list format (standard COCO)
             if isinstance(categories, list):
                 return [
                     {
@@ -1135,23 +1092,148 @@ class WSIRepository:
                     for cat in categories
                     if cat.get("id") is not None and cat.get("name")
                 ]
-
-            # Handle dict format { "0": "label", "1": "label2" }
             if isinstance(categories, dict):
                 return [
                     {"id": int(cat_id), "name": cat_name}
                     for cat_id, cat_name in categories.items()
                 ]
-
             return []
         except Exception as e:
-            import logging
-
-            _logger = logging.getLogger(__name__)
-            _logger.warning(
-                f"Failed to extract COCO categories for dataset {dataset_id}: {e}"
-            )
+            logger.warning(f"Failed to extract COCO categories: {e}")
             return []
+
+    @staticmethod
+    async def _get_coco_categories_for_dataset(
+        db: AsyncSession, dataset_id: str
+    ) -> List[Dict[str, Any]]:
+        from backend.database.models import SegmentationAnnotation
+
+        result = await db.execute(
+            select(SegmentationAnnotation)
+            .where(SegmentationAnnotation.source_dataset_id == dataset_id)
+            .limit(1)
+        )
+        annotation = result.scalar_one_or_none()
+        return WSIRepository._extract_coco_categories_from_annotation(annotation)
+
+    @staticmethod
+    async def _get_coco_categories_batch(
+        db: AsyncSession, dataset_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        if not dataset_ids:
+            return {}
+        from backend.database.models import SegmentationAnnotation
+
+        min_id_subq = (
+            select(
+                SegmentationAnnotation.source_dataset_id,
+                func.min(SegmentationAnnotation.id).label("min_id"),
+            )
+            .where(SegmentationAnnotation.source_dataset_id.in_(dataset_ids))
+            .group_by(SegmentationAnnotation.source_dataset_id)
+            .subquery()
+        )
+        query = select(SegmentationAnnotation).join(
+            min_id_subq,
+            SegmentationAnnotation.id == min_id_subq.c.min_id,
+        )
+        result = await db.execute(query)
+        annotations = result.scalars().all()
+        coco_map: Dict[str, List[Dict[str, Any]]] = {}
+        for annot in annotations:
+            coco_map[annot.source_dataset_id] = (
+                WSIRepository._extract_coco_categories_from_annotation(annot)
+            )
+        return coco_map
+
+    @staticmethod
+    async def get_datasets_with_total(
+        db: AsyncSession,
+        data_type: Optional[str] = None,
+        user_id: Optional[str] = None,
+        elevated_dataset_ids: Optional[List[str]] = None,
+        search: Optional[str] = None,
+        dataset_id: Optional[str] = None,
+        task_type: Optional[str] = None,
+        aggregation_level: Optional[str] = None,
+        source_organ: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 0,
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Return (datasets_page, total_count) in a single query via window function.
+
+        COUNT(*) OVER() is evaluated before OFFSET/LIMIT, so total reflects the
+        full untruncated result set even when limit > 0.
+        """
+        base_subq = WSIRepository._build_dataset_summary_query(
+            data_type=data_type,
+            user_id=user_id,
+            elevated_dataset_ids=elevated_dataset_ids,
+            search=search,
+            dataset_id=dataset_id,
+            task_type=task_type,
+            aggregation_level=aggregation_level,
+            source_organ=source_organ,
+        ).subquery("ds")
+        total_col = func.count().over().label("_total_count")
+        query = select(base_subq, total_col).order_by(base_subq.c.dataset_name)
+        if skip > 0:
+            query = query.offset(skip)
+        if limit > 0:
+            query = query.limit(limit)
+
+        result = await db.execute(query)
+        rows = result.all()
+        if not rows:
+            return [], 0
+
+        total = int(rows[0]._total_count)
+
+        seg_ids = [
+            r.dataset_id for r in rows if r.task_type == "segmentation" and r.dataset_id
+        ]
+        coco_map: Dict[str, List[Dict[str, Any]]] = {}
+        if seg_ids:
+            coco_map = await WSIRepository._get_coco_categories_batch(db, seg_ids)
+
+        datasets: List[Dict[str, Any]] = []
+        for row in rows:
+            train_count = row.split_train_count or 0
+            val_count = row.split_val_count or 0
+            test_count = row.split_test_count or 0
+            dataset_dict = {
+                "dataset_id": row.dataset_id,
+                "dataset_name": row.dataset_name or "Uncategorized",
+                "user_id": row.dataset_user_id,
+                "group_id": row.group_id,
+                "data_type": row.data_type,
+                "aggregation_level": row.aggregation_level,
+                "task_type": row.task_type or "classification",
+                "source_organ": row.source_organ,
+                "parent_dataset_id": row.parent_dataset_id,
+                "parent_dataset_name": row.parent_dataset_name,
+                "file_count": row.file_count,
+                "total_size": row.total_size or 0,
+                "has_predefined_splits": (train_count + val_count + test_count) > 0,
+                "predefined_split_unit": "cases"
+                if row.aggregation_level == "case"
+                else "files",
+                "predefined_split_counts": {
+                    "train": train_count,
+                    "val": val_count,
+                    "test": test_count,
+                },
+            }
+            if row.task_type == "segmentation" and row.dataset_id:
+                coco_categories = coco_map.get(row.dataset_id, [])
+                if coco_categories:
+                    dataset_dict["coco_categories"] = coco_categories
+                    dataset_dict["num_coco_categories"] = len(coco_categories)
+                else:
+                    dataset_dict["num_coco_categories"] = 0
+            datasets.append(dataset_dict)
+
+        return datasets, total
 
     @staticmethod
     async def get_by_filename_in_dataset(

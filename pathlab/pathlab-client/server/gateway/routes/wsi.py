@@ -701,18 +701,8 @@ async def list_datasets(
     # Get elevated dataset IDs for non-admin users
     elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
     skip = 0 if page_size == 0 else (page - 1) * page_size
-    total = await WSIRepository.count_datasets(
-        db,
-        data_type=data_type,
-        user_id=user_id_filter,
-        elevated_dataset_ids=elevated_dataset_ids,
-        search=search,
-        task_type=task_type,
-        aggregation_level=aggregation_level,
-        source_organ=source_organ,
-    )
 
-    datasets = await WSIRepository.get_datasets(
+    datasets, total = await WSIRepository.get_datasets_with_total(
         db,
         data_type=data_type,
         user_id=user_id_filter,

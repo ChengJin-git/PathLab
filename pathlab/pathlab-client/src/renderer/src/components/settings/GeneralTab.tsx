@@ -67,8 +67,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { id: 'z-ai/glm-5', label: 'GLM-5', multimodal: false },
   { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
   { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
-  { id: 'z-ai/glm-4.7-flash', label: 'GLM-4.7-Flash', multimodal: false },
-  { id: 'moonshotai/kimi-k2-0905', label: 'Kimi-K2-Instruct-0905', multimodal: false },
+  { id: 'minimax/minimax-m2.7', label: 'Minimax-M2.7', multimodal: false },
+  { id: 'xiaomi/mimo-v2-pro', label: 'MIMO-V2-Pro', multimodal: false },
 ]
 
 export const CUSTOM_MODEL_SENTINEL = '__custom__'
