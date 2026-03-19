@@ -28,6 +28,9 @@ export interface GlobalSettings {
   turnstile_enabled: boolean
   turnstile_site_key: string
   turnstile_secret_key: string
+  resend_enabled: boolean
+  resend_api_key: string
+  resend_from_email: string
 }
 
 /**

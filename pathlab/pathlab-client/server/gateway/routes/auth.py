@@ -64,7 +64,12 @@ from functools import lru_cache as _lru_cache
 
 @_lru_cache(maxsize=1)
 def _load_university_domains() -> frozenset:
-    data_file = _Path(__file__).parent.parent.parent / "backend" / "auth" / "university_domains.json"
+    data_file = (
+        _Path(__file__).parent.parent.parent
+        / "backend"
+        / "auth"
+        / "university_domains.json"
+    )
     if data_file.exists():
         return frozenset(_json.loads(data_file.read_text()))
     return frozenset()
@@ -106,7 +111,65 @@ class AccessRequest(BaseModel):
     nickname: Optional[str] = Field(default=None, description="Display name")
 
 
+_LEGAL_FOOTER_HTML = (
+    "<hr style='border:none;border-top:1px solid #e0e0e0;margin:32px 0 16px'>"
+    "<p style='font-size:11px;color:#999;line-height:1.6;font-family:Arial,sans-serif;'>"
+    "This message contains confidential information intended for a specific individual "
+    "and purpose. If you are not the intended recipient, you should delete this message "
+    "and notify the sender, "
+    "<a href='https://smartlab.cse.ust.hk/' style='color:#999;'>SmartLab</a>, "
+    "and The Hong Kong University of Science and Technology (the University) immediately. "
+    "Any disclosure, copying, or distribution of this message, or the taking of any action "
+    "based on it, is strictly prohibited and may be unlawful.<br><br>"
+    "SmartLab and the University specifically deny any responsibility for the accuracy or "
+    "quality of information obtained through University E-mail Facilities. Any views and "
+    "opinions expressed are only those of the author(s) and do not necessarily represent "
+    "those of SmartLab or the University, and neither SmartLab nor the University accepts "
+    "liability whatsoever for any losses or damages incurred or caused to any party as a "
+    "result of the use of such information."
+    "</p>"
+)
 
+
+async def _send_activation_email(user: "User") -> None:
+    settings = Config.get_global_settings()
+    if not settings.get("resend_enabled") or not settings.get("resend_api_key"):
+        return
+    if not user.registration_email:
+        return
+
+    try:
+        import resend as _resend
+
+        _resend.api_key = settings["resend_api_key"]
+        from_addr = settings.get("resend_from_email") or "PathLab <noreply@resend.dev>"
+        display_name = user.nickname or user.email
+        html_body = (
+            "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>"
+            f"<p>Dear {display_name},</p>"
+            f"<p>Your PathLab account <strong>{user.email}</strong> has been activated "
+            "by an administrator. You can now log in to the platform.</p>"
+            "<p>If you have any questions, please contact your system administrator.</p>"
+            "<p style='color:#555;'>\u2014 PathLab \u00b7 "
+            "<a href='https://smartlab.cse.ust.hk/' style='color:#555;'>SmartLab</a>, HKUST</p>"
+            + _LEGAL_FOOTER_HTML
+            + "</div>"
+        )
+        _resend.Emails.send(
+            {
+                "from": from_addr,
+                "to": [user.registration_email],
+                "subject": "Your PathLab account has been activated",
+                "html": html_body,
+            }
+        )
+        logger.info(
+            f"Activation email sent to {user.registration_email} for user {user.email}"
+        )
+    except Exception as exc:
+        logger.warning(
+            f"Failed to send activation email to {user.registration_email}: {exc}"
+        )
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:
     """
@@ -243,8 +306,6 @@ async def register_user(
     return user
 
 
-
-
 @router.post("/auth/request-access", response_model=UserRead, tags=["Authentication"])
 async def request_access(
     request: AccessRequest,
@@ -297,10 +358,10 @@ async def request_access(
 
     user = User(
         id=uuid_module.uuid4(),
-        email=username,                    # username stored in email field
+        email=username,  # username stored in email field
         hashed_password=hashed_password,
         password_sha256=password_sha256,
-        is_active=False,                   # inactive until admin approves
+        is_active=False,  # inactive until admin approves
         is_superuser=False,
         is_verified=True,
         role="guest",
@@ -324,6 +385,7 @@ async def request_access(
         f"registration_email={user.registration_email}"
     )
     return user
+
 
 # Secure login endpoint with client-side password hashing
 @router.post("/auth/secure-login", tags=["Authentication"])
@@ -602,6 +664,8 @@ async def update_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    was_active = user.is_active
+
     # Update fields
     update_data = user_update.model_dump(exclude_unset=True)
 
@@ -624,6 +688,8 @@ async def update_user(
     await db.refresh(user)
 
     logger.info(f"Admin {admin.email} updated user {user.email}")
+    if not was_active and user.is_active:
+        await _send_activation_email(user)
     return user
 
 
@@ -766,6 +832,7 @@ async def batch_activate_users(
     import uuid
 
     updated = 0
+    activated_users = []
     for user_id in request.user_ids:
         try:
             user_uuid = uuid.UUID(user_id)
@@ -776,11 +843,15 @@ async def batch_activate_users(
         user = result.scalar_one_or_none()
 
         if user and user.role != "admin" and user.id != admin.id:
+            if not user.is_active:
+                activated_users.append(user)
             user.is_active = True
             updated += 1
 
     await db.commit()
     logger.info(f"Admin {admin.email} batch activated {updated} users")
+    for _u in activated_users:
+        await _send_activation_email(_u)
     return {"updated": updated}
 
 

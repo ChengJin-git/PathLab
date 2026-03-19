@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Cloud, Server, Key, Info, CheckCircle, Mic, Search, Power, Globe } from 'lucide-react'
+import { Cloud, Server, Key, Info, CheckCircle, Mic, Globe, Mail } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -108,7 +108,10 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [localVllmStatus, setLocalVllmStatus] = useState<'checking' | 'online' | 'offline'>('offline')
   const [localVllmDetectedModel, setLocalVllmDetectedModel] = useState<string | null>(null)
 
-  // Local ASR state
+  const [resendEnabled, setResendEnabled] = useState(false)
+  const [resendApiKey, setResendApiKey] = useState('')
+  const [resendFromEmail, setResendFromEmail] = useState('')
+
   const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
   const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('http://127.0.0.1:8001/v1')
   const [localAsrModel, setLocalAsrModel] = useState('')
@@ -167,6 +170,9 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setExaApiKey(s.exa_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
+      setResendEnabled(s.resend_enabled || false)
+      setResendApiKey(s.resend_api_key || '')
+      setResendFromEmail(s.resend_from_email || '')
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
       setLocalAsrModel(s.local_asr_model); setLocalAsrApiKey(s.local_asr_api_key)
       if (s.local_vllm_enabled && s.local_vllm_base_url) {
@@ -199,6 +205,8 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
+        resend_enabled: resendEnabled, resend_api_key: resendApiKey,
+        resend_from_email: resendFromEmail,
       })
       localStorage.setItem('openrouter_api_key', apiKey)
       localStorage.setItem('openrouter_base_url', baseUrl)
@@ -408,6 +416,53 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-violet-100 rounded-md">
+                        <Mail className="w-4 h-4 text-violet-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-slate-900">{t('settings.general.resendEmailCard')}</h3>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Resend</span>
+                      </div>
+                    </div>
+                    <ToggleSwitch enabled={resendEnabled} onChange={() => setResendEnabled(!resendEnabled)} />
+                  </div>
+
+                  {resendEnabled && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.resendApiKey')}</Label>
+                        <div className="relative">
+                          <Input
+                            type="password"
+                            value={resendApiKey}
+                            onChange={(e) => setResendApiKey(e.target.value)}
+                            placeholder="re_..."
+                            className="h-9 text-sm border-slate-300 focus:border-violet-500 focus:ring-violet-500 pr-20"
+                          />
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                            <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-xs text-violet-600 hover:text-violet-700 font-medium hover:underline">
+                              {t('common.getKey')}
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.resendFromEmail')}</Label>
+                        <Input
+                          type="email"
+                          value={resendFromEmail}
+                          onChange={(e) => setResendFromEmail(e.target.value)}
+                          placeholder="PathLab <noreply@yourdomain.com>"
+                          className="h-9 text-sm border-slate-300 focus:border-violet-500 focus:ring-violet-500"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
