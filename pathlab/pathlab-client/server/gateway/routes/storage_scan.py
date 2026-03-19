@@ -1,4 +1,5 @@
 from typing import Any
+
 """
 Storage scan and external file management routes.
 
@@ -22,12 +23,17 @@ from backend.database.repositories import (
     WSIRepository,
     DatasetRepository,
     StorageTaskRepository,
+    DatasetStatsRepository,
 )
 from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import User
 from backend.auth.dependencies import require_admin
 from ..dependencies import logger
-from ..models import ScanDirectoryRequest, CheckExternalFilesRequest, DeleteUnavailableFilesRequest
+from ..models import (
+    ScanDirectoryRequest,
+    CheckExternalFilesRequest,
+    DeleteUnavailableFilesRequest,
+)
 from ..scan_sessions import build_scan_response, create_scan_session, get_scan_session
 from ..utils import (
     build_segmentation_annotation_index,
@@ -45,7 +51,10 @@ router = APIRouter()
 # Directory Scanning
 # ==============================================================================
 
-def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = False) -> list[Any]:
+
+def _scan_directory_for_wsi(
+    directory: str, *, include_annotation_json: bool = False
+) -> list[Any]:
     """
     Scan a directory for WSI and patch files (non-recursive).
     Handles special formats: MRXS (requires data folder), TMAP (may have DT files).
@@ -73,9 +82,13 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
 
     entries = list(dir_path.iterdir())
     all_items = {item.name: item for item in entries}
-    annotation_index = build_segmentation_annotation_index(dir_path) if include_annotation_json else {}
+    annotation_index = (
+        build_segmentation_annotation_index(dir_path) if include_annotation_json else {}
+    )
 
-    def _build_file_info(item: Path, *, file_size: int, data_type: str) -> dict[str, Any]:
+    def _build_file_info(
+        item: Path, *, file_size: int, data_type: str
+    ) -> dict[str, Any]:
         total_size = file_size
         ext = item.suffix.lower()
 
@@ -91,7 +104,7 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
             "has_annotation_json": False,
         }
 
-        if ext == '.mrxs':
+        if ext == ".mrxs":
             file_info["format_type"] = "mrxs"
             data_folder_name = item.stem
             if data_folder_name in all_items and all_items[data_folder_name].is_dir():
@@ -105,14 +118,16 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
                     pass
             else:
                 file_info["valid"] = False
-                file_info["validation_message"] = f"Missing required data folder: {data_folder_name}/"
-        elif ext == '.tmap':
+                file_info["validation_message"] = (
+                    f"Missing required data folder: {data_folder_name}/"
+                )
+        elif ext == ".tmap":
             file_info["format_type"] = "tmap"
             dt_files = []
             for other_item in all_items.values():
                 if other_item.is_file() and other_item.stem == item.stem:
                     other_ext = other_item.suffix.lower()
-                    if other_ext.startswith('.dt') and len(other_ext) > 3:
+                    if other_ext.startswith(".dt") and len(other_ext) > 3:
                         suffix_num = other_ext[3:]
                         if suffix_num.isdigit():
                             dt_files.append(str(other_item))
@@ -124,9 +139,11 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
                 file_info["associated_data"] = sorted(dt_files)
 
         if include_annotation_json:
-            matched_annotation_path, _annotation_error = resolve_segmentation_annotation_match(
-                item,
-                annotation_index=annotation_index,
+            matched_annotation_path, _annotation_error = (
+                resolve_segmentation_annotation_match(
+                    item,
+                    annotation_index=annotation_index,
+                )
             )
             file_info["has_annotation_json"] = matched_annotation_path is not None
 
@@ -138,7 +155,11 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
             continue
 
         ext = item.suffix.lower()
-        if ext not in WSI_EXTENSIONS and ext not in PATCH_EXTENSIONS and not is_tiff_family(item):
+        if (
+            ext not in WSI_EXTENSIONS
+            and ext not in PATCH_EXTENSIONS
+            and not is_tiff_family(item)
+        ):
             continue
 
         if item.stem in seen_stems:
@@ -153,12 +174,16 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
         if ext in WSI_EXTENSIONS:
             results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
         elif ext in PATCH_EXTENSIONS:
-            results.append(_build_file_info(item, file_size=file_size, data_type="patch"))
+            results.append(
+                _build_file_info(item, file_size=file_size, data_type="patch")
+            )
         else:
             pending_tiff_items.append((item, file_size))
 
     if pending_tiff_items:
-        sorted_tiff_items = sorted(pending_tiff_items, key=lambda entry: entry[1], reverse=True)
+        sorted_tiff_items = sorted(
+            pending_tiff_items, key=lambda entry: entry[1], reverse=True
+        )
         checked_tiff_items: list[tuple[Path, int, str]] = []
         tiff_batch_has_wsi = False
 
@@ -171,12 +196,18 @@ def _scan_directory_for_wsi(directory: str, *, include_annotation_json: bool = F
 
         if tiff_batch_has_wsi:
             for item, file_size, _data_type in checked_tiff_items:
-                results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
-            for item, file_size in sorted_tiff_items[len(checked_tiff_items):]:
-                results.append(_build_file_info(item, file_size=file_size, data_type="wsi"))
+                results.append(
+                    _build_file_info(item, file_size=file_size, data_type="wsi")
+                )
+            for item, file_size in sorted_tiff_items[len(checked_tiff_items) :]:
+                results.append(
+                    _build_file_info(item, file_size=file_size, data_type="wsi")
+                )
         else:
             for item, file_size, data_type in checked_tiff_items:
-                results.append(_build_file_info(item, file_size=file_size, data_type=data_type))
+                results.append(
+                    _build_file_info(item, file_size=file_size, data_type=data_type)
+                )
 
     # Sort by filename for consistent ordering
     results.sort(key=lambda x: x["filename"].lower())
@@ -219,26 +250,37 @@ async def scan_directory(
         directory = request.directory_path
         page = max(1, request.page)
         page_size = min(max(1, request.page_size), 500)
-        include_annotation_json = request.task_type == 'segmentation'
+        include_annotation_json = request.task_type == "segmentation"
 
         if request.scan_id:
             session = get_scan_session(request.scan_id, str(user.id))
             if session is None:
-                raise HTTPException(status_code=404, detail="Scan session not found or expired")
+                raise HTTPException(
+                    status_code=404, detail="Scan session not found or expired"
+                )
             if session["directory"] != directory:
-                raise HTTPException(status_code=400, detail="Scan session does not match requested directory")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Scan session does not match requested directory",
+                )
             if not include_annotation_json or session.get("annotation_scan_enabled"):
                 return build_scan_response(session, page=page, page_size=page_size)
 
         # Validate directory exists
         if not os.path.exists(directory):
-            raise HTTPException(status_code=400, detail=f"Directory does not exist: {directory}")
+            raise HTTPException(
+                status_code=400, detail=f"Directory does not exist: {directory}"
+            )
 
         if not os.path.isdir(directory):
-            raise HTTPException(status_code=400, detail=f"Path is not a directory: {directory}")
+            raise HTTPException(
+                status_code=400, detail=f"Path is not a directory: {directory}"
+            )
 
         if not os.access(directory, os.R_OK):
-            raise HTTPException(status_code=400, detail=f"Directory is not readable: {directory}")
+            raise HTTPException(
+                status_code=400, detail=f"Directory is not readable: {directory}"
+            )
 
         # Scan directory in thread pool to avoid blocking
         files = await asyncio.to_thread(
@@ -258,12 +300,15 @@ async def scan_directory(
         raise
     except Exception as e:
         logger.error(f"Failed to scan directory: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to scan directory: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to scan directory: {str(e)}"
+        )
 
 
 # ==============================================================================
 # External File Availability Checking
 # ==============================================================================
+
 
 def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
     """
@@ -293,12 +338,16 @@ def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
 
     if t.is_alive():
         # Thread is still running - path check is hanging (likely NAS unreachable)
-        raise TimeoutError(f"File accessibility check timed out after {timeout}s for: {path}")
+        raise TimeoutError(
+            f"File accessibility check timed out after {timeout}s for: {path}"
+        )
 
     return result[0]
 
 
-def _check_wsi_file_availability(wsi_path: str, associated_files: dict[str, Any] = None, timeout: float = 5.0) -> tuple[bool, str]:
+def _check_wsi_file_availability(
+    wsi_path: str, associated_files: dict[str, Any] = None, timeout: float = 5.0
+) -> tuple[bool, str]:
     """
     Check if a WSI file and its associated data are available.
 
@@ -334,12 +383,21 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict[str, Any]
         if format_type == "mrxs":
             data_folder = associated_files.get("data_folder")
             if data_folder:
-                if not _check_path_exists_with_timeout(data_folder, timeout=timeout) or not Path(data_folder).is_dir():
-                    return False, f"Missing required data folder: {Path(data_folder).name}/"
+                if (
+                    not _check_path_exists_with_timeout(data_folder, timeout=timeout)
+                    or not Path(data_folder).is_dir()
+                ):
+                    return (
+                        False,
+                        f"Missing required data folder: {Path(data_folder).name}/",
+                    )
             else:
                 # Fallback: check for data folder with same name as file
                 data_folder = str(file_path.parent / file_path.stem)
-                if not _check_path_exists_with_timeout(data_folder, timeout=timeout) or not Path(data_folder).is_dir():
+                if (
+                    not _check_path_exists_with_timeout(data_folder, timeout=timeout)
+                    or not Path(data_folder).is_dir()
+                ):
                     return False, f"Missing required data folder: {file_path.stem}/"
 
         # Check TMAP DT files (only if they were registered)
@@ -355,17 +413,19 @@ def _check_wsi_file_availability(wsi_path: str, associated_files: dict[str, Any]
     else:
         # Fallback for files registered before this feature: check by extension
         ext = file_path.suffix.lower()
-        if ext == '.mrxs':
+        if ext == ".mrxs":
             data_folder = str(file_path.parent / file_path.stem)
-            if not _check_path_exists_with_timeout(data_folder, timeout=timeout) or not Path(data_folder).is_dir():
+            if (
+                not _check_path_exists_with_timeout(data_folder, timeout=timeout)
+                or not Path(data_folder).is_dir()
+            ):
                 return False, f"Missing required data folder: {file_path.stem}/"
 
     return True, "Available"
 
 
 def _check_external_files_sync(
-    wsi_data: list[dict[str, Any]],
-    uploads_dir: str
+    wsi_data: list[dict[str, Any]], uploads_dir: str
 ) -> dict[str, Any]:
     """
     Check external files availability synchronously.
@@ -407,14 +467,15 @@ def _check_external_files_sync(
 
             try:
                 is_available, message = _check_wsi_file_availability(
-                    wsi_path,
-                    item["associated_files"]
+                    wsi_path, item["associated_files"]
                 )
             except TimeoutError:
                 storage_timeout = True
                 timeout_path = wsi_path
                 file_info["status"] = "unavailable"
-                file_info["reason"] = "External storage not responding (connection timed out)"
+                file_info["reason"] = (
+                    "External storage not responding (connection timed out)"
+                )
                 unavailable.append(file_info)
                 continue
 
@@ -449,10 +510,10 @@ def _check_external_files_sync(
 # External File Endpoints
 # ==============================================================================
 
+
 @router.get("/external-datasets-summary")
 async def get_external_datasets_summary(
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """
     Get a lightweight summary of datasets containing externally imported WSI files.
@@ -480,20 +541,21 @@ async def get_external_datasets_summary(
                 if ds_id not in dataset_stats:
                     dataset_stats[ds_id] = {
                         "dataset_id": wsi.dataset_id,
-                        "dataset_name": wsi.dataset.name if wsi.dataset else "Uncategorized",
+                        "dataset_name": wsi.dataset.name
+                        if wsi.dataset
+                        else "Uncategorized",
                         "total_files": 0,
                     }
                 dataset_stats[ds_id]["total_files"] += 1
 
         datasets = list(dataset_stats.values())
-        return {
-            "datasets": datasets,
-            "total": sum(d["total_files"] for d in datasets)
-        }
+        return {"datasets": datasets, "total": sum(d["total_files"] for d in datasets)}
 
     except Exception as e:
         logger.error(f"Failed to get external datasets summary: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get external datasets summary: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get external datasets summary: {str(e)}"
+        )
 
 
 @router.post("/tasks/unbind-dataset")
@@ -501,7 +563,7 @@ async def start_unbind_dataset_task(
     dataset_id: str,
     background_tasks: BackgroundTasks,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Start a background task to unbind (delete records of) all external files in a dataset.
@@ -522,14 +584,12 @@ async def start_unbind_dataset_task(
 
         # Filter to only external files (use wsi_id, not database id)
         external_wsi_ids = [
-            wsi.wsi_id for wsi in wsi_list
-            if not wsi.wsi_path.startswith(uploads_dir)
+            wsi.wsi_id for wsi in wsi_list if not wsi.wsi_path.startswith(uploads_dir)
         ]
 
         if not external_wsi_ids:
             raise HTTPException(
-                status_code=400,
-                detail="No external files found in this dataset"
+                status_code=400, detail="No external files found in this dataset"
             )
 
         # Generate task ID
@@ -544,24 +604,22 @@ async def start_unbind_dataset_task(
             db,
             task_id=task_id,
             user_id=str(user.id),
-            task_type='unbind_dataset',
+            task_type="unbind_dataset",
             total_items=len(external_wsi_ids),
             params={
                 "dataset_id": dataset_id,
                 "dataset_name": dataset_name,
-                "wsi_ids": external_wsi_ids
-            }
+                "wsi_ids": external_wsi_ids,
+            },
         )
         await db.commit()
 
         # Start background task (reuse the delete external task logic)
         # Lazy import to avoid circular dependency
         from .storage_tasks import _run_delete_external_task
+
         background_tasks.add_task(
-            _run_delete_external_task,
-            task_id,
-            str(user.id),
-            external_wsi_ids
+            _run_delete_external_task, task_id, str(user.id), external_wsi_ids
         )
 
         return {
@@ -569,21 +627,23 @@ async def start_unbind_dataset_task(
             "message": f"Unbind dataset task started for '{dataset_name}'",
             "dataset_id": dataset_id,
             "dataset_name": dataset_name,
-            "total_files": len(external_wsi_ids)
+            "total_files": len(external_wsi_ids),
         }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to start unbind dataset task: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to start unbind dataset task: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start unbind dataset task: {str(e)}"
+        )
 
 
 @router.post("/check-external-files")
 async def check_external_files(
     request: CheckExternalFilesRequest,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Check availability of externally imported WSI files.
@@ -607,7 +667,9 @@ async def check_external_files(
 
         # Get all WSI records with dataset relationship loaded, optionally filtered by dataset
         if request.dataset_id:
-            wsi_list = await WSIRepository.get_by_dataset(db, request.dataset_id, limit=0)
+            wsi_list = await WSIRepository.get_by_dataset(
+                db, request.dataset_id, limit=0
+            )
         else:
             wsi_list = await WSIRepository.get_all_with_dataset(db, limit=0)
 
@@ -626,19 +688,23 @@ async def check_external_files(
         ]
 
         # Run file availability checks in thread pool to avoid blocking event loop
-        result = await asyncio.to_thread(_check_external_files_sync, wsi_data, uploads_dir)
+        result = await asyncio.to_thread(
+            _check_external_files_sync, wsi_data, uploads_dir
+        )
         return result
 
     except Exception as e:
         logger.error(f"Failed to check external files: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to check external files: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to check external files: {str(e)}"
+        )
 
 
 @router.post("/delete-unavailable-files")
 async def delete_unavailable_files(
     request: DeleteUnavailableFilesRequest,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Delete WSI records for files that are no longer available.
@@ -663,11 +729,13 @@ async def delete_unavailable_files(
                 # Get WSI to verify it exists
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
                 if not wsi:
-                    results.append({
-                        "wsi_id": wsi_id,
-                        "status": "failed",
-                        "message": "WSI not found"
-                    })
+                    results.append(
+                        {
+                            "wsi_id": wsi_id,
+                            "status": "failed",
+                            "message": "WSI not found",
+                        }
+                    )
                     failed_count += 1
                     continue
 
@@ -675,51 +743,55 @@ async def delete_unavailable_files(
                 # (PostgreSQL enforces FK constraints strictly)
                 try:
                     await db.execute(
-                        sql_delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id == wsi_id)
+                        sql_delete(TrainingTaskWSI).where(
+                            TrainingTaskWSI.wsi_id == wsi_id
+                        )
                     )
                     await db.execute(
                         sql_delete(AIResult).where(AIResult.wsi_id == wsi_id)
                     )
-                    await db.execute(
-                        sql_delete(AITask).where(AITask.wsi_id == wsi_id)
-                    )
+                    await db.execute(sql_delete(AITask).where(AITask.wsi_id == wsi_id))
                 except Exception as assoc_error:
-                    logger.warning(f"Failed to delete associated data for {wsi_id}: {assoc_error}")
+                    logger.warning(
+                        f"Failed to delete associated data for {wsi_id}: {assoc_error}"
+                    )
 
                 # Delete the WSI record
+                dataset_id = wsi.dataset_id
                 success = await WSIRepository.delete(db, wsi_id)
                 if success:
+                    await DatasetStatsRepository.recompute(db, dataset_id)
                     await db.commit()
-                    results.append({
-                        "wsi_id": wsi_id,
-                        "status": "deleted",
-                        "message": "Record deleted successfully"
-                    })
+                    results.append(
+                        {
+                            "wsi_id": wsi_id,
+                            "status": "deleted",
+                            "message": "Record deleted successfully",
+                        }
+                    )
                     deleted_count += 1
                     logger.info(f"Deleted unavailable WSI record: {wsi_id}")
                 else:
-                    results.append({
-                        "wsi_id": wsi_id,
-                        "status": "failed",
-                        "message": "Failed to delete record"
-                    })
+                    results.append(
+                        {
+                            "wsi_id": wsi_id,
+                            "status": "failed",
+                            "message": "Failed to delete record",
+                        }
+                    )
                     failed_count += 1
 
             except Exception as e:
-                results.append({
-                    "wsi_id": wsi_id,
-                    "status": "failed",
-                    "message": str(e)
-                })
+                results.append(
+                    {"wsi_id": wsi_id, "status": "failed", "message": str(e)}
+                )
                 failed_count += 1
                 logger.error(f"Failed to delete WSI record {wsi_id}: {e}")
 
-        return {
-            "deleted": deleted_count,
-            "failed": failed_count,
-            "results": results
-        }
+        return {"deleted": deleted_count, "failed": failed_count, "results": results}
 
     except Exception as e:
         logger.error(f"Failed to delete unavailable files: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to delete unavailable files: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to delete unavailable files: {str(e)}"
+        )

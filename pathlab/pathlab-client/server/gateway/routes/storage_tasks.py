@@ -28,6 +28,7 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     StorageTaskRepository,
     SegmentationAnnotationRepository,
+    DatasetStatsRepository,
 )
 from backend.database.models import TrainingTaskWSI, AIResult, AITask
 from backend.auth import current_active_user, User, get_user_from_token_param
@@ -580,6 +581,7 @@ async def _run_batch_import_task(
                     )
                     success_count += 1
                     existing_set.add(original_filename)
+                    await DatasetStatsRepository.recompute(db, resolved_dataset_id)
 
                 except Exception as e:
                     results.append(
@@ -732,6 +734,7 @@ async def _delete_wsi_record_and_files(
     if not success:
         raise RuntimeError("Failed to delete WSI record")
 
+    await DatasetStatsRepository.recompute(db, wsi.dataset_id)
     await db.commit()
 
     try:

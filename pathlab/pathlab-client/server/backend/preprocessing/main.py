@@ -1082,6 +1082,7 @@ async def _extract_regions_background(
         DataGroupRepository,
         DatasetRepository,
         WSIRepository,
+        DatasetStatsRepository,
     )
     from backend.common.progress_store import set_progress, clear_progress
 
@@ -1177,6 +1178,7 @@ async def _extract_regions_background(
                             progress = int(completed / total_regions * 100)
                             await set_progress(task_id, progress)
 
+                await DatasetStatsRepository.recompute(db, dataset_id)
                 await db.commit()
 
         logger.info(
@@ -1360,7 +1362,7 @@ async def _extract_segmentation_dataset(
     import uuid
     import json
     import shutil
-    from backend.database.repositories import WSIRepository
+    from backend.database.repositories import WSIRepository, DatasetStatsRepository
     from backend.common.progress_store import set_progress
 
     output_dir = UPLOADS_DIR / "wsi_files"
@@ -1516,6 +1518,7 @@ async def _extract_segmentation_dataset(
             status="finalized",
             source="extraction",
         )
+        await DatasetStatsRepository.recompute(db, dataset_id)
         await db.commit()
         await rebuild_dataset_annotation_summary_cache(db, dataset_id)
     except Exception as e:
