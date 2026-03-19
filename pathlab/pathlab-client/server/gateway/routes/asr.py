@@ -14,7 +14,7 @@ import asyncio
 import websockets
 import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import uuid
 from jose import jwt, JWTError
@@ -38,19 +38,20 @@ class _LocalASRWarmup:
     """Keeps one pre-warmed WebSocket to local ASR (session.created already received)."""
 
     def __init__(self) -> None:
-        self._ws: Optional[websockets.WebSocketClientProtocol] = None
+        self._ws: Optional[Any] = None
         self._session_created_msg: Optional[str] = None
         self._url: Optional[str] = None
         self._lock: asyncio.Lock = asyncio.Lock()
         self._warming: bool = False
 
-    async def _do_warm(self, url: str, headers: dict) -> None:
+    async def _do_warm(self, url: str, headers: dict[str, str]) -> None:
         ws = None
         try:
             ws = await websockets.connect(
                 url, additional_headers=headers, open_timeout=10
             )
-            msg = await asyncio.wait_for(ws.recv(), timeout=30)
+            raw = await asyncio.wait_for(ws.recv(), timeout=30)
+            msg = raw if isinstance(raw, str) else raw.decode("utf-8")
             data = json.loads(msg)
             if data.get("type") == "session.created":
                 async with self._lock:
@@ -74,15 +75,15 @@ class _LocalASRWarmup:
                 except Exception:
                     pass
 
-    def ensure_warm(self, url: str, headers: dict) -> None:
+    def ensure_warm(self, url: str, headers: dict[str, str]) -> None:
         if self._warming or (self._ws is not None and self._url == url):
             return
         self._warming = True
         asyncio.create_task(self._do_warm(url, headers))
 
     async def claim(
-        self, url: str, headers: dict
-    ) -> Tuple[Optional["websockets.WebSocketClientProtocol"], Optional[str]]:
+        self, url: str, headers: dict[str, str]
+    ) -> Tuple[Optional[Any], Optional[str]]:
         async with self._lock:
             if self._ws is not None and self._url == url and not self._ws.closed:
                 ws, msg = self._ws, self._session_created_msg
@@ -278,7 +279,7 @@ async def asr_realtime_websocket(
     source_name = "DashScope"  # Will be updated if local succeeds
     stored_session_created: Optional[str] = None
     _warm_url: Optional[str] = None
-    _warm_headers: Optional[dict] = None
+    _warm_headers: Optional[dict[str, str]] = None
 
     # Helper function to connect to DashScope with retry
     async def connect_to_dashscope():
@@ -359,19 +360,32 @@ async def asr_realtime_websocket(
                 if local_asr_api_key:
                     headers["Authorization"] = f"Bearer {local_asr_api_key}"
 
-                logger.info(f"Connecting to local ASR: {url}")
-                await websocket.send_json(
-                    {
-                        "type": "session.progress",
-                        "step": "connecting_upstream",
-                        "provider": "Local ASR",
-                    }
+                upstream_ws, stored_session_created = await _asr_warmup.claim(
+                    url, headers
                 )
-                upstream_ws = await websockets.connect(
-                    url, additional_headers=headers, open_timeout=10
-                )
-                source_name = "Local ASR"
-                logger.info(f"Connected to local ASR with model: {effective_model}")
+                if upstream_ws:
+                    source_name = "Local ASR"
+                    logger.info(
+                        f"Local ASR fast path: pre-warmed connection claimed (model: {effective_model})"
+                    )
+                else:
+                    logger.info(f"Connecting to local ASR: {url}")
+                    await websocket.send_json(
+                        {
+                            "type": "session.progress",
+                            "step": "connecting_upstream",
+                            "provider": "Local ASR",
+                        }
+                    )
+                    upstream_ws = await websockets.connect(
+                        url, additional_headers=headers, open_timeout=10
+                    )
+                    source_name = "Local ASR"
+                    logger.info(f"Connected to local ASR with model: {effective_model}")
+
+                _warm_url = url
+                _warm_headers = headers
+                _asr_warmup.ensure_warm(url, headers)
             except Exception as local_err:
                 # Local ASR WebSocket connection failed, try fallback to DashScope
                 logger.warning(f"Local ASR WebSocket connection failed: {local_err}")
@@ -390,8 +404,14 @@ async def asr_realtime_websocket(
 
         # Forward session.created event to client when we receive it
         async def forward_from_upstream():
-            """Forward events from upstream ASR server to frontend"""
             try:
+                if stored_session_created:
+                    data = json.loads(stored_session_created)
+                    logger.info(
+                        f"{source_name} -> Client: session.created (pre-warmed)"
+                    )
+                    await websocket.send_json(data)
+
                 async for message in upstream_ws:
                     data = json.loads(message)
                     event_type = data.get("type", "")
@@ -503,3 +523,5 @@ async def asr_realtime_websocket(
         except Exception:
             pass
         logger.info(f"Realtime ASR WebSocket closed (was using {source_name})")
+        if _warm_url and _warm_headers:
+            _asr_warmup.ensure_warm(_warm_url, _warm_headers)
