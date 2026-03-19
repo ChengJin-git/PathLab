@@ -43,6 +43,7 @@ from backend.auth.dependencies import (
 )
 from backend.auth.annotation_permissions import (
     can_access_shared,
+    can_write_shared,
     can_finalize,
     is_annotation_owner,
 )
@@ -476,10 +477,14 @@ async def _get_dataset_with_access(dataset_id: str, user: User, db: AsyncSession
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
 
-    if await check_dataset_access_permission(user, dataset_id, dataset.user_id, db):
-        return dataset
-
-    if await AnnotationCollaboratorRepository.exists(db, dataset_id, str(user.id)):
+    if await check_dataset_access_permission(
+        user,
+        dataset_id,
+        dataset.user_id,
+        db,
+        is_public=dataset.is_public,
+        parent_dataset_id=dataset.parent_dataset_id,
+    ):
         return dataset
 
     raise HTTPException(
@@ -1256,7 +1261,7 @@ async def save_shared_annotation(
     db: AsyncSession = Depends(get_db),
 ):
     dataset = await _get_dataset_with_access(dataset_id, user, db)
-    if not await can_access_shared(user, dataset, db):
+    if not await can_write_shared(user, dataset, db):
         raise HTTPException(status_code=403, detail="Access denied")
 
     existing = await SegmentationAnnotationRepository.get_shared_draft(db, dataset_id)

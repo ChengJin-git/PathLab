@@ -308,3 +308,14 @@ class DatasetRepository:
             select(Dataset.dataset_id).where(Dataset.is_public.is_(True))
         )
         return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def get_child_dataset_ids(
+        db: AsyncSession, parent_ids: List[str]
+    ) -> List[str]:
+        if not parent_ids:
+            return []
+        result = await db.execute(
+            select(Dataset.dataset_id).where(Dataset.parent_dataset_id.in_(parent_ids))
+        )
+        return [row[0] for row in result.all()]
