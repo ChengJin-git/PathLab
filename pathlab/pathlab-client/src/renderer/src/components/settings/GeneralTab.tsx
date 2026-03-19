@@ -454,7 +454,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       <div className="space-y-2">
                         <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.resendFromEmail')}</Label>
                         <Input
-                          type="email"
+                          type="text"
                           value={resendFromEmail}
                           onChange={(e) => setResendFromEmail(e.target.value)}
                           placeholder="PathLab <noreply@yourdomain.com>"
