@@ -3572,6 +3572,7 @@
     "errorEmailRequired": "Please enter your educational email",
     "errorEmailNotEducational": "The email address does not appear to belong to an educational institution. Please use your institutional email (e.g. .edu, .ac.uk, .edu.hk). If your institution uses a non-standard domain, contact an admin directly.",
     "errorUsernameTaken": "This username is already taken",
-    "errorGeneric": "Registration failed. Please try again."
+    "errorGeneric": "Registration failed. Please try again.",
+    "errorTurnstileFailed": "Security verification failed. Please try again."
   }
 }

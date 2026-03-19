@@ -8,11 +8,12 @@ import { requestAccess, ApiError } from '../api'
 interface Props {
   isOpen: boolean
   onClose: () => void
+  turnstileSiteKey?: string
 }
 
 type Step = 'form' | 'success'
 
-export function RegisterRequestModal({ isOpen, onClose }: Props) {
+export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Props) {
   const { t } = useTranslation()
 
   const [step, setStep] = React.useState<Step>('form')
@@ -24,6 +25,10 @@ export function RegisterRequestModal({ isOpen, onClose }: Props) {
   const [isSubmitting, setIsSubmitting] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
+  const [turnstileToken, setTurnstileToken] = React.useState<string | undefined>(undefined)
+  const turnstileRef = React.useRef<HTMLDivElement>(null)
+  const turnstileWidgetId = React.useRef<string | null>(null)
+
   React.useEffect(() => {
     if (isOpen) {
       setStep('form')
@@ -34,8 +39,43 @@ export function RegisterRequestModal({ isOpen, onClose }: Props) {
       setNickname('')
       setError(null)
       setIsSubmitting(false)
+      setTurnstileToken(undefined)
+    } else {
+      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.remove(turnstileWidgetId.current)
+        } catch { /* ignore */ }
+        turnstileWidgetId.current = null
+      }
     }
   }, [isOpen])
+
+  React.useEffect(() => {
+    if (!isOpen || !turnstileSiteKey || !turnstileRef.current) return
+    if (turnstileWidgetId.current !== null) return
+
+    const render = () => {
+      if (!turnstileRef.current || turnstileWidgetId.current !== null) return
+      if (!(window as any).turnstile) return
+      turnstileWidgetId.current = (window as any).turnstile.render(turnstileRef.current, {
+        sitekey: turnstileSiteKey,
+        callback: (token: string) => setTurnstileToken(token),
+        'expired-callback': () => setTurnstileToken(undefined),
+        'error-callback': () => setTurnstileToken(undefined),
+        theme: 'light',
+        size: 'flexible',
+      })
+    }
+
+    if ((window as any).turnstile) {
+      render()
+    } else {
+      const existing = document.querySelector('script[src*="challenges.cloudflare.com/turnstile"]')
+      if (existing) {
+        existing.addEventListener('load', render, { once: true })
+      }
+    }
+  }, [isOpen, turnstileSiteKey])
 
   if (!isOpen) return null
 
@@ -55,9 +95,16 @@ export function RegisterRequestModal({ isOpen, onClose }: Props) {
         password,
         registration_email: registrationEmail.trim(),
         nickname: nickname.trim() || undefined,
+        turnstile_token: turnstileToken,
       })
       setStep('success')
     } catch (err) {
+      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+        try {
+          (window as any).turnstile.reset(turnstileWidgetId.current)
+          setTurnstileToken(undefined)
+        } catch { /* ignore */ }
+      }
       if (err instanceof ApiError) {
         const detail = err.details as string | undefined
         if (detail === 'REGISTRATION_EMAIL_NOT_EDUCATIONAL') {
@@ -66,6 +113,8 @@ export function RegisterRequestModal({ isOpen, onClose }: Props) {
           setError(t('registerModal.errorUsernameTaken'))
         } else if (detail === 'REGISTER_PASSWORD_TOO_SHORT') {
           setError(t('registerModal.errorPasswordTooShort'))
+        } else if (detail === 'TURNSTILE_TOKEN_REQUIRED' || detail === 'TURNSTILE_VERIFICATION_FAILED') {
+          setError(t('registerModal.errorTurnstileFailed'))
         } else {
           setError(err.message || t('registerModal.errorGeneric'))
         }
@@ -151,7 +200,11 @@ export function RegisterRequestModal({ isOpen, onClose }: Props) {
                 </div>
               )}
 
-              <Button type="submit" disabled={isSubmitting} className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg">
+              {turnstileSiteKey && (
+                <div ref={turnstileRef} className="flex justify-center" />
+              )}
+
+              <Button type="submit" disabled={isSubmitting || (!!turnstileSiteKey && !turnstileToken)} className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg">
                 {isSubmitting
                   ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t('registerModal.submitting')}</>
                   : <><UserPlus className="w-4 h-4 mr-2" />{t('registerModal.submit')}</>

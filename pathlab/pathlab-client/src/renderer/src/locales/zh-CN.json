@@ -72,7 +72,8 @@
     "welcomeBack": "欢迎回来",
     "signedInAs": "登录为",
     "systemMaintenance": "系统正在维护中，请稍后再试。",
-    "sessionExpired": "您的账号已在其他设备登录，当前会话已结束。"
+    "sessionExpired": "您的账号已在其他设备登录，当前会话已结束。",
+    "accountPendingApproval": "您的账号正在等待管理员审核，激活后将发送邮件通知。"
   },
   "nav": {
     "dashboard": "工作台",
@@ -3571,6 +3572,7 @@
     "errorEmailRequired": "请输入您的教育邮箱",
     "errorEmailNotEducational": "该邮箱地址似乎不属于教育机构。请使用机构邮箱（如 .edu、.ac.uk、.edu.hk 等）。若您的院校使用非标准域名，请直接联系管理员。",
     "errorUsernameTaken": "该用户名已被占用",
-    "errorGeneric": "注册失败，请重试。"
+    "errorGeneric": "注册失败，请重试。",
+    "errorTurnstileFailed": "安全验证失败，请重试。"
   }
 }

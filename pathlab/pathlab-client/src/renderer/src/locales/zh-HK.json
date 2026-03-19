@@ -72,7 +72,8 @@
     "welcomeBack": "歡迎回來",
     "signedInAs": "登入為",
     "systemMaintenance": "系統正在維護中，請稍後再試。",
-    "sessionExpired": "您的帳號已在其他裝置登入，當前會話已結束。"
+    "sessionExpired": "您的帳號已在其他裝置登入，當前會話已結束。",
+    "accountPendingApproval": "您的帳號正在等待管理員審核，激活後將發送郵件通知。"
   },
   "nav": {
     "dashboard": "工作枱",
@@ -3570,6 +3571,7 @@
     "errorEmailRequired": "請輸入您的教育郵箱",
     "errorEmailNotEducational": "該郵箱地址似乎不屬於教育機構。請使用院校郵箱（如 .edu、.ac.uk、.edu.hk 等）。若您的院校使用非標準域名，請直接聯絡管理員。",
     "errorUsernameTaken": "該用戶名已被佔用",
-    "errorGeneric": "註冊失敗，請重試。"
+    "errorGeneric": "註冊失敗，請重試。",
+    "errorTurnstileFailed": "安全驗證失敗，請重試。"
   }
 }
