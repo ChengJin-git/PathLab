@@ -52,6 +52,52 @@ from ..dependencies import logger
 
 APP_SALT: str = os.getenv("APP_SALT", "PathLab2024SecureSalt")
 
+# ============================================================================
+# Educational Email Validation
+# ============================================================================
+
+import re as _re
+
+def is_educational_email(email: str) -> bool:
+    """
+    Validate that an email belongs to an educational institution.
+
+    Covered patterns (best-effort — admin review compensates for edge cases):
+      - *.edu          — US universities and other .edu TLD holders
+      - *.edu.XX       — Country-code .edu domains (edu.cn, edu.au, edu.hk,
+                         edu.sg, edu.tw, edu.my, edu.ph, edu.vn, etc.)
+      - *.ac.XX        — Academic domains with country code (ac.uk, ac.jp,
+                         ac.nz, ac.za, ac.kr, ac.in, ac.il, ac.id, etc.)
+
+    Known limitation: some institutional addresses that use non-standard TLDs
+    (e.g. ust.hk, hku.hk) will not match here; admins should use their
+    discretion when activating those accounts.
+    """
+    if not email or "@" not in email:
+        return False
+    domain = email.strip().lower().rsplit("@", 1)[-1]
+    if not domain or "." not in domain:
+        return False
+    patterns = [
+        r"\.edu$",               # *.edu
+        r"\.edu\.[a-z]{2,6}$",  # *.edu.XX
+        r"\.ac\.[a-z]{2,6}$",   # *.ac.XX
+    ]
+    return any(_re.search(pat, domain) for pat in patterns)
+
+
+class AccessRequest(BaseModel):
+    """Request body for public self-registration (access request)."""
+
+    username: str = Field(description="Desired username (stored in email field)")
+    password: str = Field(description="Account password")
+    registration_email: str = Field(
+        description="Educational email for identity verification"
+    )
+    nickname: Optional[str] = Field(default=None, description="Display name")
+
+
+
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:
     """
@@ -187,6 +233,88 @@ async def register_user(
     logger.info(f"New user registered: {user.email} (role={user.role})")
     return user
 
+
+
+
+@router.post("/auth/request-access", response_model=UserRead, tags=["Authentication"])
+async def request_access(
+    request: AccessRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Public self-registration — submit an account access request.
+
+    - Requires an educational email address for identity proof.
+    - The created account is **inactive** until an admin reviews and activates it.
+    - Username must be unique.
+    """
+    from fastapi_users.password import PasswordHelper
+    import uuid as uuid_module
+
+    # Validate educational email
+    if not is_educational_email(request.registration_email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTRATION_EMAIL_NOT_EDUCATIONAL",
+        )
+
+    # Normalise inputs
+    username = request.username.strip()
+    reg_email = request.registration_email.strip().lower()
+
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_USERNAME_EMPTY",
+        )
+    if len(request.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_PASSWORD_TOO_SHORT",
+        )
+
+    # Check username uniqueness
+    result = await db.execute(select(User).where(User.email == username))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_USER_ALREADY_EXISTS",
+        )
+
+    # Hash password
+    password_helper = PasswordHelper()
+    hashed_password = password_helper.hash(request.password)
+    password_sha256 = hashlib.sha256(request.password.encode()).hexdigest()
+
+    user = User(
+        id=uuid_module.uuid4(),
+        email=username,                    # username stored in email field
+        hashed_password=hashed_password,
+        password_sha256=password_sha256,
+        is_active=False,                   # inactive until admin approves
+        is_superuser=False,
+        is_verified=True,
+        role="guest",
+        nickname=request.nickname,
+        registration_email=reg_email,
+    )
+
+    try:
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_USER_ALREADY_EXISTS",
+        )
+
+    logger.info(
+        f"Access request submitted: username={user.email}, "
+        f"registration_email={user.registration_email}"
+    )
+    return user
 
 # Secure login endpoint with client-side password hashing
 @router.post("/auth/secure-login", tags=["Authentication"])

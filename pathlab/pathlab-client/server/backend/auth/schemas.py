@@ -54,6 +54,7 @@ class UserRead(BaseModel):
     agreement_accepted_at: Optional[datetime] = Field(default=None, description="When user accepted the terms of service")
     agreement_ip: Optional[str] = Field(default=None, description="IP address when user accepted the terms of service")
     notice_acknowledged_at: Optional[datetime] = Field(default=None, description="When user last acknowledged a maintenance notice")
+    registration_email: Optional[str] = Field(default=None, description="Educational email provided during self-registration")
     created_at: Optional[datetime] = Field(default=None, description="Account creation time")
     updated_at: Optional[datetime] = Field(default=None, description="Last update time")
 

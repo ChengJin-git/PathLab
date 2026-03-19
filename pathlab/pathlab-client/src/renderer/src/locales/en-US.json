@@ -112,10 +112,10 @@
     "workflow": "Workflow",
     "dataRepository": "Data Repository",
     "dataRepositoryDesc": "Manage registered datasets",
-    "analysisLab": "Analysis Lab",
-    "analysisLabDesc": "Run & monitor tasks",
-    "insightsReports": "Insights & Reports",
-    "insightsReportsDesc": "Visualize findings",
+    "analysisLab": "Experiment Records",
+    "analysisLabDesc": "View and manage experiment records",
+    "insightsReports": "More Tools",
+    "insightsReportsDesc": "Use additional analysis and utility tools",
     "browse": "Browse",
     "registerData": "Register",
     "viewTasks": "Tasks",
@@ -153,7 +153,8 @@
     "buildVersion": "Build v1.0.3-stable",
     "legalNotice": "Before signing in, you may review the Terms of Service and Privacy Notice. First access still requires acceptance before you can enter the system.",
     "viewTerms": "View Terms of Service",
-    "viewPrivacy": "View Privacy Notice"
+    "viewPrivacy": "View Privacy Notice",
+    "requestAccess": "Request Access"
   },
   "settings": {
     "title": "Settings",
@@ -606,6 +607,7 @@
       "columnStatus": "Status",
       "columnAgreement": "Agreement",
       "columnConsentIP": "Consent IP",
+      "columnEmail": "Email",
       "columnActions": "Actions",
       "cannotBatchSelect": "Cannot batch select this user",
       "active": "Active",
@@ -914,8 +916,8 @@
     "signIn": "Sign In"
   },
   "toolsPage": {
-    "title": "Insights & Reports",
-    "description": "Visualize findings and generate reports.",
+    "title": "More Tools",
+    "description": "Use additional analysis and utility tools",
     "backToDashboard": "Back",
     "comingSoon": "Coming Soon",
     "tools": {
@@ -1202,7 +1204,7 @@
     }
   },
   "taskList": {
-    "title": "Analysis Lab",
+    "title": "Experiment Records",
     "description": "Coordinate, run, and monitor AI analysis tasks",
     "backToDashboard": "Back",
     "newTask": "New Task",
@@ -1342,8 +1344,8 @@
     "sidebar": {
       "tools": "Tools",
       "dataRepository": "Data Repository",
-      "analysisLab": "Analysis Lab",
-      "insightsReports": "Insights & Reports",
+      "analysisLab": "Experiment Records",
+      "insightsReports": "More Tools",
       "registerData": "Register Data"
     },
     "deleteAllHistory": "Delete all history",
@@ -3540,5 +3542,32 @@
     "vagina": "Vagina",
     "vulva": "Vulva",
     "other": "Other"
+  },
+  "registerModal": {
+    "title": "Request Account Access",
+    "subtitle": "Submit a request — an admin will review and activate your account",
+    "username": "Username",
+    "usernamePlaceholder": "Choose a username",
+    "nickname": "Display Name",
+    "nicknamePlaceholder": "Your name (optional)",
+    "password": "Password",
+    "passwordPlaceholder": "At least 6 characters",
+    "confirmPassword": "Confirm Password",
+    "confirmPasswordPlaceholder": "Re-enter your password",
+    "educationalEmail": "Educational Email",
+    "educationalEmailPlaceholder": "you@university.edu",
+    "educationalEmailHint": "Use your institutional email. Accepted formats include .edu, .edu.hk, .edu.cn, .edu.au, .ac.uk, .ac.jp, and other academic domains. If your institution uses a non-standard domain, an admin can still review your request.",
+    "submit": "Submit Request",
+    "submitting": "Submitting...",
+    "adminNote": "Your account will be inactive until an admin approves it.",
+    "successTitle": "Request Submitted",
+    "successMessage": "Your access request has been received. Please wait for an admin to review and activate your account.",
+    "errorUsernameRequired": "Please enter a username",
+    "errorPasswordTooShort": "Password must be at least 6 characters",
+    "errorPasswordMismatch": "Passwords do not match",
+    "errorEmailRequired": "Please enter your educational email",
+    "errorEmailNotEducational": "The email address does not appear to belong to an educational institution. Please use your institutional email (e.g. .edu, .ac.uk, .edu.hk). If your institution uses a non-standard domain, contact an admin directly.",
+    "errorUsernameTaken": "This username is already taken",
+    "errorGeneric": "Registration failed. Please try again."
   }
 }

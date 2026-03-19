@@ -112,10 +112,10 @@
     "workflow": "工作枱",
     "dataRepository": "資料倉庫",
     "dataRepositoryDesc": "管理已註冊的資料集",
-    "analysisLab": "分析實驗室",
-    "analysisLabDesc": "執行和監控任務",
-    "insightsReports": "洞察與報告",
-    "insightsReportsDesc": "視覺化發現",
+    "analysisLab": "實驗記錄",
+    "analysisLabDesc": "查看和管理實驗記錄",
+    "insightsReports": "更多工具",
+    "insightsReportsDesc": "使用更多分析與輔助工具",
     "browse": "瀏覽",
     "registerData": "註冊",
     "viewTasks": "任務",
@@ -153,7 +153,8 @@
     "buildVersion": "版本 v1.0.3-stable",
     "legalNotice": "登入前，您可先查閱服務條款及私隱聲明。首次進入系統前，系統仍會要求您確認同意。",
     "viewTerms": "查閱服務條款",
-    "viewPrivacy": "查閱私隱聲明"
+    "viewPrivacy": "查閱私隱聲明",
+    "requestAccess": "申請帳號"
   },
   "settings": {
     "title": "設定",
@@ -606,6 +607,7 @@
       "columnStatus": "狀態",
       "columnAgreement": "協議",
       "columnConsentIP": "同意 IP",
+      "columnEmail": "郵箱",
       "columnActions": "操作",
       "cannotBatchSelect": "無法批次選擇此使用者",
       "active": "啟用",
@@ -914,8 +916,8 @@
     "signIn": "登入"
   },
   "toolsPage": {
-    "title": "洞察與報告",
-    "description": "視覺化發現並產生報告。",
+    "title": "更多工具",
+    "description": "使用更多分析與輔助工具",
     "backToDashboard": "返回",
     "comingSoon": "即將推出",
     "tools": {
@@ -1202,7 +1204,7 @@
     }
   },
   "taskList": {
-    "title": "分析實驗室",
+    "title": "實驗記錄",
     "description": "協調、運行和監控 AI 分析任務",
     "backToDashboard": "返回",
     "newTask": "新建任務",
@@ -1342,8 +1344,8 @@
     "sidebar": {
       "tools": "工具",
       "dataRepository": "資料倉庫",
-      "analysisLab": "分析實驗室",
-      "insightsReports": "洞察與報告",
+      "analysisLab": "實驗記錄",
+      "insightsReports": "更多工具",
       "registerData": "註冊資料"
     },
     "deleteAllHistory": "刪除所有歷史記錄",
@@ -3539,5 +3541,32 @@
     "vagina": "陰道",
     "vulva": "外陰",
     "other": "其他"
+  },
+  "registerModal": {
+    "title": "申請帳號存取權限",
+    "subtitle": "提交申請，管理員審核後將啟用您的帳號",
+    "username": "用戶名",
+    "usernamePlaceholder": "請選擇用戶名",
+    "nickname": "顯示名稱",
+    "nicknamePlaceholder": "您的姓名（選填）",
+    "password": "密碼",
+    "passwordPlaceholder": "至少 6 個字元",
+    "confirmPassword": "確認密碼",
+    "confirmPasswordPlaceholder": "請再次輸入密碼",
+    "educationalEmail": "教育郵箱",
+    "educationalEmailPlaceholder": "you@university.edu",
+    "educationalEmailHint": "請使用院校郵箱。支援格式包括 .edu、.edu.hk、.edu.cn、.edu.au、.ac.uk、.ac.jp 等學術域名。若您的院校使用非標準域名，管理員仍可手動審核您的申請。",
+    "submit": "提交申請",
+    "submitting": "提交中...",
+    "adminNote": "您的帳號將在管理員批准後啟用。",
+    "successTitle": "申請已提交",
+    "successMessage": "您的存取申請已收到，請等待管理員審核並啟用您的帳號。",
+    "errorUsernameRequired": "請輸入用戶名",
+    "errorPasswordTooShort": "密碼至少需要 6 個字元",
+    "errorPasswordMismatch": "兩次輸入的密碼不一致",
+    "errorEmailRequired": "請輸入您的教育郵箱",
+    "errorEmailNotEducational": "該郵箱地址似乎不屬於教育機構。請使用院校郵箱（如 .edu、.ac.uk、.edu.hk 等）。若您的院校使用非標準域名，請直接聯絡管理員。",
+    "errorUsernameTaken": "該用戶名已被佔用",
+    "errorGeneric": "註冊失敗，請重試。"
   }
 }

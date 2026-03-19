@@ -1,14 +1,13 @@
 import {
 	Bot,
-	Brain,
 	ChevronDown,
 	ChevronRight,
 	Clock,
+	ClipboardList,
 	Database,
 	FileSpreadsheet,
 	Share2,
 	History,
-	LineChart,
 	Loader2,
 	Menu,
 	MessageSquare,
@@ -3108,7 +3107,7 @@ export default function AIChatPage() {
 								}}
 								className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors group"
 							>
-								<Brain className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
+							<ClipboardList className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
 								<span className="flex-1 text-left">
 									{t("aiChat.sidebar.analysisLab")}
 								</span>
@@ -3122,7 +3121,7 @@ export default function AIChatPage() {
 								}}
 								className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors group"
 							>
-								<LineChart className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
+							<Wrench className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
 								<span className="flex-1 text-left">
 									{t("aiChat.sidebar.insightsReports")}
 								</span>

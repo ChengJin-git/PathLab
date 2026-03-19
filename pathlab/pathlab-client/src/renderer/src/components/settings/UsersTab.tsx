@@ -512,6 +512,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                 <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600 hidden xs:table-cell sm:table-cell">{t('settings.usersTab.columnNickname')}</th>
                 <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnRole')}</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600 hidden sm:table-cell">{t('settings.usersTab.columnStatus')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden md:table-cell">{t('settings.usersTab.columnEmail')}</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600 hidden md:table-cell">{t('settings.usersTab.columnAgreement')}</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600 hidden lg:table-cell">{t('settings.usersTab.columnConsentIP')}</th>
                 <th className="text-right py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnActions')}</th>
@@ -555,6 +556,13 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                       <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${user.is_active ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
                         {user.is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}
                       </span>
+                    </td>
+                    <td className="py-3 px-4 hidden md:table-cell">
+                      {user.registration_email ? (
+                        <span className="text-xs text-blue-600 font-mono">{user.registration_email}</span>
+                      ) : (
+                        <span className="text-xs text-gray-400">-</span>
+                      )}
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell">
                       {user.role === 'admin' ? (
@@ -607,7 +615,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
               })}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-gray-500">
+                  <td colSpan={9} className="py-8 text-center text-gray-500">
                     {searchQuery ? t('settings.usersTab.noUsersMatchingSearch') : t('settings.usersTab.noUsersFound')}
                   </td>
                 </tr>

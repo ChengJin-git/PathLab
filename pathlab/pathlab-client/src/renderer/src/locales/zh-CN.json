@@ -112,10 +112,10 @@
     "workflow": "工作台",
     "dataRepository": "数据仓库",
     "dataRepositoryDesc": "管理已注册的数据集",
-    "analysisLab": "分析实验室",
-    "analysisLabDesc": "运行和监控任务",
-    "insightsReports": "洞察与报告",
-    "insightsReportsDesc": "可视化发现",
+    "analysisLab": "实验记录",
+    "analysisLabDesc": "查看和管理实验记录",
+    "insightsReports": "更多工具",
+    "insightsReportsDesc": "使用更多分析与辅助工具",
     "browse": "浏览",
     "registerData": "注册",
     "viewTasks": "任务",
@@ -153,7 +153,8 @@
     "buildVersion": "版本 v1.0.3-stable",
     "legalNotice": "登录前，您可先查看服务条款及隐私声明。首次进入系统前，系统仍会要求您完成同意确认。",
     "viewTerms": "查看服务条款",
-    "viewPrivacy": "查看隐私声明"
+    "viewPrivacy": "查看隐私声明",
+    "requestAccess": "申请账号"
   },
   "settings": {
     "title": "设置",
@@ -606,6 +607,7 @@
       "columnStatus": "状态",
       "columnAgreement": "协议",
       "columnConsentIP": "同意 IP",
+      "columnEmail": "邮箱",
       "columnActions": "操作",
       "cannotBatchSelect": "无法批量选择此用户",
       "active": "激活",
@@ -914,8 +916,8 @@
     "signIn": "登录"
   },
   "toolsPage": {
-    "title": "洞察与报告",
-    "description": "可视化发现并生成报告。",
+    "title": "更多工具",
+    "description": "使用更多分析与辅助工具",
     "backToDashboard": "返回",
     "comingSoon": "即将推出",
     "tools": {
@@ -1202,7 +1204,7 @@
     }
   },
   "taskList": {
-    "title": "分析实验室",
+    "title": "实验记录",
     "description": "协调、运行和监控 AI 分析任务",
     "backToDashboard": "返回",
     "newTask": "新建任务",
@@ -1342,8 +1344,8 @@
     "sidebar": {
       "tools": "工具",
       "dataRepository": "数据仓库",
-      "analysisLab": "分析实验室",
-      "insightsReports": "洞察与报告",
+      "analysisLab": "实验记录",
+      "insightsReports": "更多工具",
       "registerData": "注册数据"
     },
     "deleteAllHistory": "删除所有历史记录",
@@ -3540,5 +3542,32 @@
     "vagina": "阴道",
     "vulva": "外阴",
     "other": "其他"
+  },
+  "registerModal": {
+    "title": "申请账号访问权限",
+    "subtitle": "提交申请，管理员审核后将激活您的账号",
+    "username": "用户名",
+    "usernamePlaceholder": "请选择用户名",
+    "nickname": "显示名称",
+    "nicknamePlaceholder": "您的姓名（可选）",
+    "password": "密码",
+    "passwordPlaceholder": "至少 6 个字符",
+    "confirmPassword": "确认密码",
+    "confirmPasswordPlaceholder": "请再次输入密码",
+    "educationalEmail": "教育邮箱",
+    "educationalEmailPlaceholder": "you@university.edu",
+    "educationalEmailHint": "请使用机构邮箱。支持格式包括 .edu、.edu.hk、.edu.cn、.edu.au、.ac.uk、.ac.jp 等学术域名。若您的院校使用非标准域名，管理员仍可手动审核您的申请。",
+    "submit": "提交申请",
+    "submitting": "提交中...",
+    "adminNote": "您的账号将在管理员批准后激活。",
+    "successTitle": "申请已提交",
+    "successMessage": "您的访问申请已收到，请等待管理员审核并激活您的账号。",
+    "errorUsernameRequired": "请输入用户名",
+    "errorPasswordTooShort": "密码至少需要 6 个字符",
+    "errorPasswordMismatch": "两次输入的密码不一致",
+    "errorEmailRequired": "请输入您的教育邮箱",
+    "errorEmailNotEducational": "该邮箱地址似乎不属于教育机构。请使用机构邮箱（如 .edu、.ac.uk、.edu.hk 等）。若您的院校使用非标准域名，请直接联系管理员。",
+    "errorUsernameTaken": "该用户名已被占用",
+    "errorGeneric": "注册失败，请重试。"
   }
 }

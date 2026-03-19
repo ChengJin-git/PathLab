@@ -19,6 +19,7 @@ export interface AuthUser {
   agreement_accepted_at?: string | null
   agreement_ip?: string | null
   notice_acknowledged_at?: string | null
+  registration_email?: string | null
   created_at?: string
   updated_at?: string
 }
@@ -71,6 +72,13 @@ export interface RegisterRequest {
   password: string
   nickname?: string
   role?: 'pathologist' | 'guest'
+}
+
+export interface AccessRequest {
+  username: string
+  password: string
+  registration_email: string
+  nickname?: string
 }
 
 export interface CurrentUserUpdateRequest {
@@ -195,6 +203,25 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
     }
     return { is_logged_in: false }
   }
+}
+
+/**
+ * Submit a public access request (self-registration).
+ * The account is created as inactive and must be activated by an admin.
+ * @param data - Registration data including educational email
+ * @returns Created (inactive) user
+ * @throws {ApiError} If registration fails
+ */
+export async function requestAccess(data: AccessRequest): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/request-access`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    },
+    'Access request failed'
+  )
 }
 
 export async function changePassword(
