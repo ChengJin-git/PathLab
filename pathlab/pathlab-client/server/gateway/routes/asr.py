@@ -43,6 +43,7 @@ class _LocalASRWarmup:
         self._url: Optional[str] = None
         self._lock: asyncio.Lock = asyncio.Lock()
         self._warming: bool = False
+        self._monitor_task: Optional[asyncio.Task[None]] = None
 
     async def _do_warm(self, url: str, headers: dict[str, str]) -> None:
         ws = None
@@ -60,9 +61,14 @@ class _LocalASRWarmup:
                             await self._ws.close()
                         except Exception:
                             pass
+                    if self._monitor_task and not self._monitor_task.done():
+                        self._monitor_task.cancel()
                     self._ws = ws
                     self._session_created_msg = msg
                     self._url = url
+                    self._monitor_task = asyncio.create_task(
+                        self._monitor(ws, url, headers)
+                    )
                 logger.info("Local ASR pre-warm ready (session.created buffered)")
                 ws = None  # ownership transferred; don't close in finally
         except Exception as e:
@@ -75,6 +81,24 @@ class _LocalASRWarmup:
                 except Exception:
                     pass
 
+    async def _monitor(self, ws: Any, url: str, headers: dict[str, str]) -> None:
+        try:
+            await ws.wait_closed()
+        except Exception:
+            pass
+        async with self._lock:
+            if self._ws is ws:
+                self._ws = None
+                self._session_created_msg = None
+                should_rewarm = not self._warming
+                if should_rewarm:
+                    self._warming = True
+            else:
+                should_rewarm = False
+        if should_rewarm:
+            logger.debug("Local ASR warmup connection closed by server; re-warming")
+            asyncio.create_task(self._do_warm(url, headers))
+
     def ensure_warm(self, url: str, headers: dict[str, str]) -> None:
         if self._warming or (self._ws is not None and self._url == url):
             return
@@ -85,14 +109,20 @@ class _LocalASRWarmup:
         self, url: str, headers: dict[str, str]
     ) -> Tuple[Optional[Any], Optional[str]]:
         async with self._lock:
-            if self._ws is not None and self._url == url and not self._ws.closed:
-                ws, msg = self._ws, self._session_created_msg
-                self._ws = None
-                self._session_created_msg = None
-                # Re-warm immediately so the next caller doesn't wait
-                self._warming = True
-                asyncio.create_task(self._do_warm(url, headers))
-                return ws, msg
+            if self._ws is not None and self._url == url:
+                if not self._ws.closed:
+                    ws, msg = self._ws, self._session_created_msg
+                    self._ws = None
+                    self._session_created_msg = None
+                    if self._monitor_task and not self._monitor_task.done():
+                        self._monitor_task.cancel()
+                    self._warming = True
+                    asyncio.create_task(self._do_warm(url, headers))
+                    return ws, msg
+                else:
+                    # Stale connection — clear so ensure_warm can restart properly
+                    self._ws = None
+                    self._session_created_msg = None
         return None, None
 
 
