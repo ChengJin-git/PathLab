@@ -211,6 +211,21 @@ describe('fetchDatasets', () => {
     expect(url).toContain('is_public=true')
   })
 
+  it('does not include is_public when omitted', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, {})
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).not.toContain('is_public=')
+  })
+
+  it('uses separate cache entries for private and public filters', async () => {
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, { is_public: false })
+    await fetchDatasets(undefined, { is_public: false })
+    await fetchDatasets(undefined, { is_public: true })
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
+
   it('caches results', async () => {
     mockFetch.mockResolvedValue(ok({ items: [], total: 0 }))
     await fetchDatasets()
