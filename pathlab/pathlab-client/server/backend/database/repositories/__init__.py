@@ -18,7 +18,11 @@ from .trained_model import TrainedModelRepository
 from .training_log import TrainingLogRepository
 from .storage_task import StorageTaskRepository
 from .orphaned import OrphanedRecordsRepository
-from .annotation import SegmentationAnnotationRepository, VersionConflictError
+from .annotation import (
+    SegmentationAnnotationRepository,
+    VersionConflictError,
+    AnnotationOwnershipConflictError,
+)
 from .annotation_audit import AnnotationAuditLogRepository
 from .dataset_stats import DatasetStatsRepository
 from .dataset_grant import DatasetGrantRepository, PermissionAuditLogRepository
@@ -39,6 +43,7 @@ __all__ = [
     "OrphanedRecordsRepository",
     "SegmentationAnnotationRepository",
     "VersionConflictError",
+    "AnnotationOwnershipConflictError",
     "AnnotationAuditLogRepository",
     "DatasetStatsRepository",
     "DatasetGrantRepository",
