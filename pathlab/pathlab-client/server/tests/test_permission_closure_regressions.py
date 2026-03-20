@@ -196,11 +196,10 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monk
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
-    monkeypatch.setattr(
         "gateway.routes.wsi_upload.DatasetStatsRepository.recompute",
         staticmethod(_fake_recompute_dataset_stats),
     )
-
+    monkeypatch.setattr(
         "gateway.routes.wsi_upload.WSIRepository.create",
         staticmethod(_fake_create_wsi),
     )
