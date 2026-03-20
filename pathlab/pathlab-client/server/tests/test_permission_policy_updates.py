@@ -9,6 +9,8 @@ from backend.auth.dependencies import check_dataset_gpu_permission
 from backend.database.repositories.annotation import SegmentationAnnotationRepository
 from backend.database.repositories.dataset_grant import DatasetGrantRepository
 from gateway.routes.wsi_grants import _grant_or_renew_permission
+from gateway.routes.annotation import save_annotation, extract_regions
+from gateway.models import AnnotationSaveRequest, AnnotationExtractRequest
 
 
 class _Result:
@@ -28,6 +30,12 @@ class _DB:
 
     async def execute(self, _stmt):
         return _Result(self._value)
+
+    async def commit(self):
+        return None
+
+    async def rollback(self):
+        return None
 
 
 @pytest.mark.asyncio
@@ -173,6 +181,107 @@ async def test_upsert_accepts_annotation_mode_alias_for_personal():
     )
 
     assert result.annotation_id == "annot-alias"
+
+
+@pytest.mark.asyncio
+async def test_save_annotation_rejects_non_owner_non_admin_personal_draft(monkeypatch):
+    async def _dataset_with_access(_dataset_id, _user, _db):
+        return types.SimpleNamespace(dataset_id="ds-1", user_id="owner-1")
+
+    monkeypatch.setattr(
+        "gateway.routes.annotation._get_dataset_with_access",
+        _dataset_with_access,
+    )
+
+    req = AnnotationSaveRequest(
+        annotation_id="annot-owner-only",
+        source_dataset_id="ds-1",
+        annotations={},
+    )
+    user = types.SimpleNamespace(id="viewer-1", is_admin=lambda: False)
+
+    with pytest.raises(
+        HTTPException,
+        match="Personal annotation is only available to the dataset owner or admin",
+    ):
+        await save_annotation(
+            req, types.SimpleNamespace(add_task=lambda *a, **k: None), user, object()
+        )
+
+
+@pytest.mark.asyncio
+async def test_extract_shared_dataset_scope_rejects_non_collaborator(monkeypatch):
+    async def _resolve_effective(_dataset_id, _user, _db):
+        return {
+            "wsis": [types.SimpleNamespace(wsi_id="wsi-1")],
+            "gt_annotations": {},
+            "effective_annotations": {},
+            "draft_annotation": None,
+            "draft_annotations": {},
+            "gt_record_count": 0,
+            "shared_draft": types.SimpleNamespace(annotations={"wsi-1": []}),
+        }
+
+    async def _allow_wsi(_wsi_id, _user, _db, **_kwargs):
+        return types.SimpleNamespace(wsi_id="wsi-1")
+
+    async def _noop_request(*_args, **_kwargs):
+        return None
+
+    async def _noop_set_owner(*_args, **_kwargs):
+        return None
+
+    async def _deny_shared(_user, _dataset, _db):
+        return False
+
+    async def _dataset_with_access(_dataset_id, _user, _db):
+        return types.SimpleNamespace(dataset_id="ds-1", user_id="owner-1")
+
+    class _ExtractDB:
+        async def execute(self, _stmt):
+            return _Result(None)
+
+        async def commit(self):
+            return None
+
+        async def rollback(self):
+            return None
+
+    monkeypatch.setattr(
+        "gateway.routes.annotation._resolve_effective_dataset_annotations",
+        _resolve_effective,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.annotation.get_wsi_with_access",
+        _allow_wsi,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.annotation.request_preprocessing_service",
+        _noop_request,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.annotation.set_task_owner",
+        _noop_set_owner,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.annotation.can_access_shared",
+        _deny_shared,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.annotation._get_dataset_with_access",
+        _dataset_with_access,
+    )
+
+    req = AnnotationExtractRequest(
+        dataset_name="derived",
+        source_dataset_id="ds-1",
+        dataset_scope=True,
+        annotation_mode="shared",
+    )
+    user = types.SimpleNamespace(id="viewer-1", is_admin=lambda: False)
+
+    with pytest.raises(HTTPException, match="Access denied"):
+        await extract_regions(req, user, _ExtractDB())
 
 
 def test_upload_request_defaults_to_private_visibility():

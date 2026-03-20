@@ -737,6 +737,8 @@ async def save_annotation(
             status_code=409,
             detail="annotation_id already belongs to another user",
         )
+    except HTTPException:
+        raise
     except Exception as e:
         await db.rollback()
         logger.error(f"Failed to save annotation: {e}")
@@ -1086,6 +1088,10 @@ async def extract_regions(
                 status_code=400,
                 detail="source_dataset_id is required when dataset_scope=true",
             )
+        if req.annotation_mode == "shared":
+            dataset = await _get_dataset_with_access(req.source_dataset_id, user, db)
+            if not await can_access_shared(user, dataset, db):
+                raise HTTPException(status_code=403, detail="Access denied")
         resolved = await _resolve_effective_dataset_annotations(
             req.source_dataset_id, user, db
         )
@@ -1120,7 +1126,9 @@ async def extract_regions(
         if not annotation:
             raise HTTPException(status_code=404, detail="Annotation not found")
         if annotation.source_dataset_id:
-            dataset = await _get_dataset_with_access(annotation.source_dataset_id, user, db)
+            dataset = await _get_dataset_with_access(
+                annotation.source_dataset_id, user, db
+            )
             _require_personal_annotation_owner(dataset, user)
         annotations = annotation.annotations
     if not annotations:
