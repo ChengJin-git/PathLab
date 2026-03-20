@@ -284,6 +284,7 @@ async def update_dataset_visibility(
 
     was_public = bool(dataset.is_public)
     becoming_private = was_public and not request.is_public
+    becoming_public = (not was_public) and request.is_public
 
     updates: Dict[str, Any] = {"is_public": request.is_public}
 
@@ -292,6 +293,10 @@ async def update_dataset_visibility(
         revoked_by_user = await _stop_non_owner_training_tasks(
             db, dataset_id, dataset.user_id
         )
+
+    revoked_grants = 0
+    if becoming_public:
+        revoked_grants = await DatasetGrantRepository.delete_by_dataset(db, dataset_id)
 
     await DatasetRepository.update(db, dataset_id, updates)
     await db.commit()
@@ -308,6 +313,12 @@ async def update_dataset_visibility(
             f"Visibility updated. {total_revoked} running task(s) from "
             f"{len(revoked_by_user)} user(s) will be stopped."
         )
+    if revoked_grants > 0:
+        response["revoked_dataset_grants"] = revoked_grants
+        response["message"] = (
+            response.get("message", "Visibility updated.")
+            + f" Removed {revoked_grants} temporary private grant(s) because dataset is now public."
+        )
     return response
 
 
@@ -316,11 +327,11 @@ async def get_my_dataset_grants(
     user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
     grants = await DatasetGrantRepository.get_valid_by_user(db, str(user.id))
-    gpu_grants = [g for g in grants if g.can_use_gpu and g.is_valid()]
+    visible_private_grants = [g for g in grants if g.can_read and g.is_valid()]
     return {
         "user_id": str(user.id),
-        "grants": [g.to_dict() for g in gpu_grants],
-        "elevated_dataset_ids": [g.dataset_id for g in gpu_grants],
+        "grants": [g.to_dict() for g in visible_private_grants],
+        "elevated_dataset_ids": [g.dataset_id for g in visible_private_grants],
     }
 
 
@@ -403,14 +414,18 @@ async def grant_dataset_grant(
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    if can_use_gpu and can_collaborate:
-        raise HTTPException(
-            status_code=400,
-            detail="Grant GPU and collaborator permissions separately for clearer role boundaries",
-        )
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+    if dataset.is_public:
+        raise HTTPException(
+            status_code=400,
+            detail="Temporary grants are only available for private datasets",
+        )
+
+    can_read = True
+    can_collaborate = False
+    can_use_gpu = False
 
     expires_at = _calculate_expires_at(expires_in_hours)
 
@@ -460,10 +475,10 @@ async def batch_grant_dataset_grants(
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
 
-    if request.can_use_gpu and request.can_collaborate:
+    if dataset.is_public:
         raise HTTPException(
             status_code=400,
-            detail="Grant GPU and collaborator permissions separately for clearer role boundaries",
+            detail="Temporary grants are only available for private datasets",
         )
 
     expires_at = _calculate_expires_at(request.expires_in_hours)
@@ -478,12 +493,8 @@ async def batch_grant_dataset_grants(
                 user_id=uid,
                 granted_by=str(user.id),
                 can_read=request.can_read if request.can_read is not None else True,
-                can_collaborate=request.can_collaborate
-                if request.can_collaborate is not None
-                else False,
-                can_use_gpu=request.can_use_gpu
-                if request.can_use_gpu is not None
-                else False,
+                can_collaborate=False,
+                can_use_gpu=False,
                 expires_at=expires_at,
             )
             await PermissionAuditLogRepository.log(

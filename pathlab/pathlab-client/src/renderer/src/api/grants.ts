@@ -35,19 +35,13 @@ export async function getMyDatasetGrants(): Promise<{
 export async function grantDatasetGrant(
   datasetId: string,
   userId: string,
-  expiresInHours?: number,
-  canRead: boolean = true,
-  canCollaborate: boolean = false,
-  canUseGpu: boolean = false
+  expiresInHours?: number
 ): Promise<{ message: string; permission: DatasetGrant }> {
   const formData = new FormData()
   formData.append('user_id', userId)
   if (expiresInHours !== undefined && expiresInHours > 0) {
     formData.append('expires_in_hours', expiresInHours.toString())
   }
-  formData.append('can_read', canRead.toString())
-  formData.append('can_collaborate', canCollaborate.toString())
-  formData.append('can_use_gpu', canUseGpu.toString())
 
   return apiFetch(
     `${API_BASE}/wsi/datasets/${datasetId}/grants`,
@@ -113,10 +107,7 @@ export interface BatchDatasetGrantResponse {
 export async function batchGrantDatasetGrants(
   datasetId: string,
   userIds: string[],
-  expiresInHours?: number,
-  canRead: boolean = true,
-  canCollaborate: boolean = false,
-  canUseGpu: boolean = false
+  expiresInHours?: number
 ): Promise<BatchDatasetGrantResponse> {
   return apiFetch(
     `${API_BASE}/wsi/datasets/${datasetId}/grants/batch-grant`,
@@ -125,10 +116,7 @@ export async function batchGrantDatasetGrants(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user_ids: userIds,
-        expires_in_hours: expiresInHours,
-        can_read: canRead,
-        can_collaborate: canCollaborate,
-        can_use_gpu: canUseGpu
+        expires_in_hours: expiresInHours
       })
     },
     'Failed to batch grant dataset grants'

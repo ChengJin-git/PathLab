@@ -219,6 +219,14 @@ class DatasetGrantRepository:
         return result.rowcount > 0
 
     @staticmethod
+    async def delete_by_dataset(db: AsyncSession, dataset_id: str) -> int:
+        result = await db.execute(
+            delete(DatasetGrant).where(DatasetGrant.dataset_id == dataset_id)
+        )
+        await db.flush()
+        return result.rowcount or 0
+
+    @staticmethod
     async def get_all_expired(db: AsyncSession) -> List[DatasetGrant]:
         now = datetime.now(timezone.utc).replace(tzinfo=None)
         result = await db.execute(

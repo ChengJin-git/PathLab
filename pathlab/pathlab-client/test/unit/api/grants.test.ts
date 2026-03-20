@@ -31,6 +31,7 @@ const MOCK_GRANT: DatasetGrant = {
   user_role: 'guest',
   user_is_active: true,
   granted_by: 'user_1',
+  can_read: true,
   can_collaborate: false,
   can_use_gpu: true,
   expires_at: null,
@@ -87,6 +88,15 @@ describe('grantDatasetGrant', () => {
     await grantDatasetGrant('ds_1', 'user_2', 0)
     const formData = mockFetch.mock.calls[0][1]?.body as FormData
     expect(formData.get('expires_in_hours')).toBeNull()
+  })
+
+  it('does not send legacy permission switches', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', grant: MOCK_GRANT }))
+    await grantDatasetGrant('ds_1', 'user_2', 24)
+    const formData = mockFetch.mock.calls[0][1]?.body as FormData
+    expect(formData.get('can_read')).toBeNull()
+    expect(formData.get('can_collaborate')).toBeNull()
+    expect(formData.get('can_use_gpu')).toBeNull()
   })
 })
 
@@ -146,6 +156,15 @@ describe('batchGrantDatasetGrants', () => {
     await batchGrantDatasetGrants('ds_1', ['user_2'], 24)
     const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
     expect(body.expires_in_hours).toBe(24)
+  })
+
+  it('does not send legacy permission switches in batch payload', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', granted: 1, failed: 0, results: [] }))
+    await batchGrantDatasetGrants('ds_1', ['user_2'], 24)
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.can_read).toBeUndefined()
+    expect(body.can_collaborate).toBeUndefined()
+    expect(body.can_use_gpu).toBeUndefined()
   })
 })
 

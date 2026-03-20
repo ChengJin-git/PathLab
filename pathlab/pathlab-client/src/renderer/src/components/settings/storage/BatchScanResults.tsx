@@ -29,8 +29,6 @@ interface BatchScanResultsProps {
   setBatchDataLevel: (level: 'case' | 'file') => void
   batchIsPublic: boolean
   setBatchIsPublic: (value: boolean) => void
-  batchIsOpenCollaboration: boolean
-  setBatchIsOpenCollaboration: (value: boolean) => void
   handleBatchScanPageChange: (page: number) => Promise<void>
   isBatchFileSelected: (path: string, valid: boolean) => boolean
   handleBatchFileToggle: (path: string, valid: boolean) => void
@@ -57,8 +55,6 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
   setBatchDataLevel,
   batchIsPublic,
   setBatchIsPublic,
-  batchIsOpenCollaboration,
-  setBatchIsOpenCollaboration,
   handleBatchScanPageChange,
   isBatchFileSelected,
   handleBatchFileToggle,
@@ -306,34 +302,6 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
             >
               <Globe className={`w-4 h-4 ${batchIsPublic ? 'text-primary-700' : 'text-gray-400'}`} />
               {t('settings.storage.public')}
-            </button>
-          </div>
-
-          <Label className="text-sm font-medium text-slate-900 block">{t('datasetPermission.openCollaboration')}</Label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setBatchIsOpenCollaboration(false)}
-              className={`flex-1 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                !batchIsOpenCollaboration
-                  ? 'bg-slate-200 text-slate-900 border-2 border-slate-400 shadow-sm'
-                  : 'bg-white text-gray-500 border border-gray-100 hover:border-slate-300 hover:text-slate-600'
-              }`}
-            >
-              <Lock className={`w-4 h-4 ${!batchIsOpenCollaboration ? 'text-slate-700' : 'text-gray-400'}`} />
-              {t('datasetPermission.closedCollaboration')}
-            </button>
-            <button
-              type="button"
-              onClick={() => setBatchIsOpenCollaboration(true)}
-              className={`flex-1 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-                batchIsOpenCollaboration
-                  ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
-                  : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
-              }`}
-            >
-              <Globe className={`w-4 h-4 ${batchIsOpenCollaboration ? 'text-primary-700' : 'text-gray-400'}`} />
-              {t('datasetPermission.openCollaboration')}
             </button>
           </div>
 

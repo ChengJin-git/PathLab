@@ -9,6 +9,13 @@ from backend.auth.dependencies import check_dataset_gpu_permission
 from backend.database.repositories.annotation import SegmentationAnnotationRepository
 from backend.database.repositories.dataset_grant import DatasetGrantRepository
 from gateway.routes.wsi_grants import _grant_or_renew_permission
+from gateway.routes.wsi_grants import (
+    batch_grant_dataset_grants,
+    get_my_dataset_grants,
+    grant_dataset_grant,
+    update_dataset_visibility,
+    BatchGrantDatasetGrantRequest,
+)
 from gateway.routes.annotation import save_annotation, extract_regions
 from gateway.models import AnnotationSaveRequest, AnnotationExtractRequest
 
@@ -293,3 +300,138 @@ def test_upload_request_defaults_to_private_visibility():
     )
 
     assert request.is_public is False
+
+
+@pytest.mark.asyncio
+async def test_grant_dataset_grant_rejects_public_dataset(monkeypatch):
+    async def _dataset_by_id(_db, _dataset_id):
+        return types.SimpleNamespace(dataset_id="ds-public", is_public=True)
+
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.DatasetRepository.get_by_id",
+        _dataset_by_id,
+    )
+
+    admin_user = types.SimpleNamespace(id="admin-1")
+
+    with pytest.raises(
+        HTTPException,
+        match="Temporary grants are only available for private datasets",
+    ):
+        await grant_dataset_grant(
+            dataset_id="ds-public",
+            user_id="user-1",
+            user=admin_user,
+            db=_DB(None),
+        )
+
+
+@pytest.mark.asyncio
+async def test_batch_grant_dataset_grants_rejects_public_dataset(monkeypatch):
+    async def _dataset_by_id(_db, _dataset_id):
+        return types.SimpleNamespace(dataset_id="ds-public", is_public=True)
+
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.DatasetRepository.get_by_id",
+        _dataset_by_id,
+    )
+
+    admin_user = types.SimpleNamespace(id="admin-1")
+
+    with pytest.raises(
+        HTTPException,
+        match="Temporary grants are only available for private datasets",
+    ):
+        await batch_grant_dataset_grants(
+            dataset_id="ds-public",
+            request=BatchGrantDatasetGrantRequest(user_ids=["user-1"]),
+            user=admin_user,
+            db=_DB(None),
+        )
+
+
+@pytest.mark.asyncio
+async def test_update_visibility_public_revokes_temp_private_grants(monkeypatch):
+    calls = {"delete_by_dataset": 0, "update": 0}
+
+    datasets = [
+        types.SimpleNamespace(dataset_id="ds-1", user_id="owner-1", is_public=False),
+        types.SimpleNamespace(dataset_id="ds-1", user_id="owner-1", is_public=True),
+    ]
+
+    async def _dataset_by_id(_db, _dataset_id):
+        return datasets.pop(0)
+
+    async def _update(_db, _dataset_id, _updates):
+        calls["update"] += 1
+        return None
+
+    async def _delete_by_dataset(_db, _dataset_id):
+        calls["delete_by_dataset"] += 1
+        return 2
+
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.DatasetRepository.get_by_id",
+        _dataset_by_id,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.DatasetRepository.update",
+        _update,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.DatasetGrantRepository.delete_by_dataset",
+        _delete_by_dataset,
+    )
+
+    db = _DB(None)
+    user = types.SimpleNamespace(id="owner-1", is_admin=lambda: False)
+    response = await update_dataset_visibility(
+        dataset_id="ds-1",
+        request=types.SimpleNamespace(is_public=True),
+        user=user,
+        db=db,
+    )
+
+    assert calls["update"] == 1
+    assert calls["delete_by_dataset"] == 1
+    assert response["is_public"] is True
+    assert response["revoked_dataset_grants"] == 2
+
+
+@pytest.mark.asyncio
+async def test_get_my_dataset_grants_uses_valid_read_grants(monkeypatch):
+    class _Grant:
+        def __init__(self, dataset_id: str, can_read: bool, can_use_gpu: bool):
+            self.dataset_id = dataset_id
+            self.can_read = can_read
+            self.can_use_gpu = can_use_gpu
+
+        def is_valid(self):
+            return True
+
+        def to_dict(self):
+            return {
+                "dataset_id": self.dataset_id,
+                "can_read": self.can_read,
+                "can_use_gpu": self.can_use_gpu,
+            }
+
+    async def _valid_grants(_db, _user_id):
+        return [
+            _Grant("read-only", True, False),
+            _Grant("gpu-only", False, True),
+        ]
+
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "get_valid_by_user",
+        staticmethod(_valid_grants),
+    )
+
+    response = await get_my_dataset_grants(
+        user=types.SimpleNamespace(id="user-1"),
+        db=_DB(None),
+    )
+
+    assert response["elevated_dataset_ids"] == ["read-only"]
+    assert len(response["grants"]) == 1
