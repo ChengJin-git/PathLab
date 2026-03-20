@@ -183,6 +183,8 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monk
                 "vendor": None,
                 "objective_power": None,
                 "magnification": None,
+                "width": 100,
+                "height": 200,
             },
         ),
     )
