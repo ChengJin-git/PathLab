@@ -135,18 +135,19 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
 
 ## 5.2 Grant model
 - Grant dimensions: `can_read`, `can_collaborate`, `can_use_gpu`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:53`.
+- The public `POST /datasets/{dataset_id}/grants` endpoint always forces `can_read=True, can_collaborate=False, can_use_gpu=False` (lines 426–428); the `can_collaborate` dimension is set separately via the collaborator add endpoint, and `can_use_gpu` is only accessible through the internal `_grant_or_renew_permission` helper.
 - Guest cannot receive GPU grants:
   - runtime guard in `_grant_or_renew_permission`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:73`
-  - test coverage: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:125`.
+  - test coverage: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:131`.
 
 ## 5.3 Revoke model and side effects
-- Single revoke endpoint: `DELETE /datasets/{dataset_id}/grants/{target_user_id}`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:535`.
-- Batch revoke endpoint: `POST /datasets/{dataset_id}/grants/batch-revoke`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:571`.
+- Single revoke endpoint: `DELETE /datasets/{dataset_id}/grants/{target_user_id}`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:546`.
+- Batch revoke endpoint: `POST /datasets/{dataset_id}/grants/batch-revoke`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:582`.
 - Revoke side effects include:
   - find affected running tasks using dataset WSIs: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:112`
   - notify AI service to revoke permission on running tasks: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:136`
   - cascade revoke on child datasets: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:188`
-  - audit log entries: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:564`.
+  - audit log entries: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:575`.
 
 ## 5.4 Public->private transition side effect
 - When visibility switches public->private, non-owner running training tasks on that dataset can be stopped: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:270`.
@@ -234,6 +235,7 @@ Code: `pathlab/pathlab-client/server/backend/database/repositories/annotation.py
 
 ## 9.4 GT deletion guard with active training
 - Ground-truth delete endpoint blocks when active training tasks exist: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1796`.
+- Note: the guard is system-wide — any active training task (regardless of dataset) will block deletion.
 
 ## 9.5 Task access and analysis visibility boundary
 - Task analysis endpoints require task access checks; non-admin analysis listing is further filtered to analyses submitted by current user.
@@ -244,9 +246,9 @@ Code: `pathlab/pathlab-client/server/gateway/routes/results.py:5926`, `pathlab/p
 
 ## 10) Tests that Anchor Current Permission Behavior
 
-- Guest cannot gain GPU via dataset grant: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:42`.
-- Shared annotation requires explicit collaborator even for public dataset: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:64`.
-- Non-owner cannot read personal draft via repository permission API: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:88`.
+- Guest cannot gain GPU via dataset grant: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:49`.
+- Shared annotation requires explicit collaborator even for public dataset: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:71`.
+- Non-owner cannot read personal draft via repository permission API: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:96`.
 - Dataset/WSI access ancestor grant logic: `pathlab/pathlab-client/server/tests/test_permission_logic.py:73`, `pathlab/pathlab-client/server/tests/test_permission_logic.py:116`.
 - Upload CSV route gate is authenticated-user (guest-capable) regression check: `pathlab/pathlab-client/server/tests/test_permission_closure_regressions.py:245`.
 
