@@ -146,6 +146,7 @@ class UploadByPathRequest(BaseModel):
     )
     task_type: Optional[str] = None  # classification | survival | segmentation
     is_public: bool = False
+    is_open_collaboration: bool = False
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None

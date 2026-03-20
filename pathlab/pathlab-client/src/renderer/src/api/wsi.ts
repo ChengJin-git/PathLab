@@ -614,6 +614,7 @@ export async function uploadWSIFile(
     source_organ?: string
     aggregation_level?: 'case' | 'file'
     is_public?: boolean
+    is_open_collaboration?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
@@ -635,6 +636,7 @@ export async function uploadWSIFile(
   if (options?.source_organ) formData.append('source_organ', options.source_organ)
   if (options?.aggregation_level) formData.append('aggregation_level', options.aggregation_level)
   if (options?.is_public !== undefined) formData.append('is_public', options.is_public.toString())
+  if (options?.is_open_collaboration !== undefined) formData.append('is_open_collaboration', options.is_open_collaboration.toString())
   if (options?.task_type) formData.append('task_type', options.task_type)
   if (options?.label) formData.append('label', options.label)
   if (options?.case_id) formData.append('case_id', options.case_id)
@@ -722,6 +724,7 @@ export async function uploadWSIByPath(
     source_organ?: string
     aggregation_level?: 'case' | 'file'
     is_public?: boolean
+    is_open_collaboration?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
@@ -745,6 +748,7 @@ export async function uploadWSIByPath(
         source_organ: options?.source_organ,
         aggregation_level: options?.aggregation_level,
         is_public: options?.is_public,
+        is_open_collaboration: options?.is_open_collaboration,
         task_type: options?.task_type,
         label: options?.label,
         case_id: options?.case_id,
