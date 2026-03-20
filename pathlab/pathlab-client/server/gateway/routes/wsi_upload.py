@@ -365,7 +365,6 @@ async def upload_wsi_file(
     ),  # Aggregation level for new dataset: "case" or "file"
     task_type: Optional[str] = Form(None),
     is_public: bool = Form(False),
-    is_open_collaboration: bool = Form(False),
     label: Optional[str] = Form(None),
     case_id: Optional[str] = Form(None),
     age: Optional[int] = Form(None),
@@ -590,7 +589,6 @@ async def upload_wsi_file(
                     user_id=str(user.id),
                     source_organ=source_organ or None,
                     is_public=is_public,
-                    is_open_collaboration=is_open_collaboration,
                     reuse_existing=False,
                 )
             except DatasetNameConflictError:
@@ -1004,7 +1002,6 @@ async def upload_wsi_by_path(
                     user_id=str(user.id),
                     source_organ=req.source_organ or None,
                     is_public=req.is_public,
-                    is_open_collaboration=req.is_open_collaboration,
                     reuse_existing=False,
                 )
             except DatasetNameConflictError:
