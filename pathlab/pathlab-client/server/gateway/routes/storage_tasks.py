@@ -1413,23 +1413,11 @@ async def start_batch_import_task(
         # Generate task ID
         task_id = f"import_{uuid.uuid4().hex[:16]}"
 
-        default_label = (
-            request.default_label if request.task_type == "classification" else None
+        params = _build_batch_import_task_params(
+            request=request,
+            resolved_files=resolved_files,
+            resolved_scan_root=resolved_scan_root,
         )
-
-        # Prepare params for storage
-        params = {
-            "files": resolved_files,
-            "dataset_id": request.dataset_id,
-            "dataset_name": request.dataset_name,
-            "source_organ": request.source_organ,
-            "scan_root": resolved_scan_root,
-            "aggregation_level": request.aggregation_level,
-            "task_type": request.task_type,
-            "default_label": default_label,
-            "default_event_time": request.default_event_time,
-            "default_event_status": request.default_event_status,
-        }
 
         # Create task record
         task = await StorageTaskRepository.create(
@@ -1875,3 +1863,26 @@ async def cancel_storage_task(
     logger.info(f"Storage task {task_id} cancelled by user {user.id}")
 
     return {"cancelled": True, "message": f"Task {task_id} cancelled successfully"}
+
+
+def _build_batch_import_task_params(
+    request: StartBatchImportRequest,
+    resolved_files: list[dict[str, Any]],
+    resolved_scan_root: str | None,
+) -> dict[str, Any]:
+    default_label = (
+        request.default_label if request.task_type == "classification" else None
+    )
+    return {
+        "files": resolved_files,
+        "dataset_id": request.dataset_id,
+        "dataset_name": request.dataset_name,
+        "source_organ": request.source_organ,
+        "scan_root": resolved_scan_root,
+        "aggregation_level": request.aggregation_level,
+        "task_type": request.task_type,
+        "is_public": request.is_public,
+        "default_label": default_label,
+        "default_event_time": request.default_event_time,
+        "default_event_status": request.default_event_status,
+    }
