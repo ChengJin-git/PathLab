@@ -1,13 +1,7 @@
 import { API_BASE } from '../config'
 import { apiFetch } from './client'
 
-// ============================================================================
-// Dataset Permission APIs (Temporary Elevated Access Management)
-// ============================================================================
 
-/**
- * Dataset permission info
- */
 export interface DatasetPermission {
   id: number
   dataset_id: string
@@ -18,17 +12,14 @@ export interface DatasetPermission {
   user_role?: string | null
   user_is_active?: boolean | null
   granted_by: string
-  permission_level: string
+  can_collaborate: boolean
+  can_use_gpu: boolean
   expires_at: string | null
   created_at: string
   is_expired: boolean
   is_valid: boolean
 }
 
-/**
- * Get current user's dataset permissions
- * Returns list of datasets where user has temporary elevated access
- */
 export async function getMyDatasetPermissions(): Promise<{
   user_id: string
   permissions: DatasetPermission[]
@@ -40,12 +31,6 @@ export async function getMyDatasetPermissions(): Promise<{
     'Failed to get dataset permissions'
   )
 }
-/**
- * Grant temporary elevated permission to a user for a dataset (admin only)
- * @param datasetId - Dataset ID
- * @param userId - User ID to grant permission to
- * @param expiresInHours - Optional expiration time in hours (null = no expiration)
- */
 export async function grantDatasetPermission(
   datasetId: string,
   userId: string,
@@ -67,11 +52,6 @@ export async function grantDatasetPermission(
   )
 }
 
-/**
- * Revoke a user's permission for a dataset (admin only)
- * @param datasetId - Dataset ID
- * @param userId - User ID to revoke permission from
- */
 export async function revokeDatasetPermission(
   datasetId: string,
   userId: string
@@ -83,10 +63,6 @@ export async function revokeDatasetPermission(
   )
 }
 
-/**
- * Get all dataset permissions for a specific user (admin only)
- * @param userId - User ID to get permissions for
- */
 export async function getUserDatasetPermissions(userId: string): Promise<{
   user_id: string
   permissions: DatasetPermission[]
@@ -99,10 +75,6 @@ export async function getUserDatasetPermissions(userId: string): Promise<{
   )
 }
 
-/**
- * Get all permissions granted for a specific dataset (admin only)
- * @param datasetId - Dataset ID
- */
 export async function listDatasetPermissions(datasetId: string): Promise<{
   dataset_id: string
   permissions: DatasetPermission[]
@@ -131,9 +103,6 @@ export interface BatchDatasetPermissionResponse {
   results: BatchDatasetPermissionResult[]
 }
 
-/**
- * Grant one dataset to many users in a single request (admin only)
- */
 export async function batchGrantDatasetPermissions(
   datasetId: string,
   userIds: string[],
@@ -150,9 +119,6 @@ export async function batchGrantDatasetPermissions(
   )
 }
 
-/**
- * Revoke one dataset from many users in a single request (admin only)
- */
 export async function batchRevokeDatasetPermissions(
   datasetId: string,
   userIds: string[]
@@ -168,25 +134,18 @@ export async function batchRevokeDatasetPermissions(
   )
 }
 
-// ============================================================================
-// Dataset Visibility APIs
-// ============================================================================
 
-/**
- * Update the public/private visibility of a dataset (admin only)
- * @param datasetId - Dataset ID
- * @param isPublic - Whether the dataset should be publicly accessible
- */
 export async function updateDatasetVisibility(
   datasetId: string,
-  isPublic: boolean
-): Promise<{ dataset_id: string; is_public: boolean }> {
+  isPublic: boolean,
+  isOpenCollaboration?: boolean
+): Promise<{ dataset_id: string; is_public: boolean; is_open_collaboration: boolean }> {
   return apiFetch(
     `${API_BASE}/wsi/datasets/${datasetId}/visibility`,
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_public: isPublic })
+      body: JSON.stringify({ is_public: isPublic, is_open_collaboration: isOpenCollaboration })
     },
     'Failed to update dataset visibility'
   )

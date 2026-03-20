@@ -1719,6 +1719,7 @@
     "noDatasetsDescription": "註冊您的第一個資料集以開始 WSI 分析。",
     "editDataset": "編輯資料集",
     "public": "公開",
+    "openCollab": "開放協作",
     "makePublic": "設為公開",
     "makePrivate": "設為私有",
     "makePublicSuccess": "資料集已設為公開",

@@ -140,6 +140,12 @@ class Dataset(Base):
     #             False (default) = only owner + explicitly authorized users
     is_public = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # Open collaboration: True = any authenticated user can write shared annotations
+    # Only meaningful when is_public=True
+    is_open_collaboration = Column(
+        Boolean, default=False, nullable=False, server_default="false"
+    )
+
     parent_dataset_id = Column(
         String(255),
         ForeignKey("datasets.dataset_id", ondelete="SET NULL"),
@@ -167,6 +173,7 @@ class Dataset(Base):
             "group_id": self.group_id,
             "source_organ": self.source_organ,
             "is_public": self.is_public,
+            "is_open_collaboration": self.is_open_collaboration,
             "data_type": self.data_group.data_type if self.data_group else None,
             "aggregation_level": self.data_group.aggregation_level
             if self.data_group
@@ -1285,3 +1292,88 @@ class DatasetStats(Base):
     split_val_count = Column(Integer, nullable=False, server_default="0")
     split_test_count = Column(Integer, nullable=False, server_default="0")
     updated_at = Column(DateTime, default=utc_now, nullable=False)
+
+
+class DatasetGrant(Base):
+    __tablename__ = "dataset_grants"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(String(255), nullable=False, index=True)
+    granted_by = Column(String(255), nullable=False)
+
+    can_collaborate = Column(Boolean, default=False, nullable=False)
+    can_use_gpu = Column(Boolean, default=False, nullable=False)
+
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_dataset_grants_user_dataset", "user_id", "dataset_id", unique=True),
+    )
+
+    def is_expired(self) -> bool:
+        if self.expires_at is None:
+            return False
+        return datetime.now(timezone.utc).replace(tzinfo=None) > self.expires_at
+
+    def is_valid(self) -> bool:
+        return not self.is_expired()
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "user_id": self.user_id,
+            "granted_by": self.granted_by,
+            "can_collaborate": self.can_collaborate,
+            "can_use_gpu": self.can_use_gpu,
+            "expires_at": self.expires_at.isoformat() + "Z"
+            if self.expires_at
+            else None,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "is_expired": self.is_expired(),
+            "is_valid": self.is_valid(),
+        }
+
+
+class PermissionAuditLog(Base):
+    __tablename__ = "permission_audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    actor_id = Column(String(255), nullable=False)
+    target_user_id = Column(String(255), nullable=False)
+    action = Column(String(50), nullable=False)
+    metadata = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_perm_audit_dataset_created", "dataset_id", "created_at"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "actor_id": self.actor_id,
+            "target_user_id": self.target_user_id,
+            "action": self.action,
+            "metadata": self.metadata,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+        }

@@ -291,6 +291,7 @@ export interface DatasetSummary {
   task_type: 'classification' | 'survival' | 'segmentation' // Task type: classification, survival, or segmentation
   aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
   is_public?: boolean
+  is_open_collaboration?: boolean
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
   // Pre-defined split information (from CSV upload)

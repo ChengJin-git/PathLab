@@ -31,7 +31,9 @@ from backend.database.database import async_session as _async_session
 from backend.database.repositories import (
     SegmentationAnnotationRepository,
     DatasetCollaboratorRepository,
+    DatasetGrantRepository,
     AnnotationAuditLogRepository,
+    PermissionAuditLogRepository,
     VersionConflictError,
     WSIRepository,
 )
@@ -1496,8 +1498,9 @@ async def list_collaborators(
     if not await can_access_shared(user, dataset, db):
         raise HTTPException(status_code=403, detail="Access denied")
 
-    collabs = await DatasetCollaboratorRepository.list_by_dataset(db, dataset_id)
-    collab_user_ids = [c.user_id for c in collabs]
+    all_grants = await DatasetGrantRepository.get_by_dataset(db, dataset_id)
+    collab_grants = [g for g in all_grants if g.can_collaborate and g.is_valid()]
+    collab_user_ids = [g.user_id for g in collab_grants]
 
     admins = []
     explicit_members = []
@@ -1546,16 +1549,16 @@ async def list_collaborators(
                 "role": "owner",
             }
 
-    for c in collabs:
-        info = user_map.get(c.user_id, {})
+    for g in collab_grants:
+        info = user_map.get(g.user_id, {})
         explicit_members.append(
             {
-                "user_id": c.user_id,
+                "user_id": g.user_id,
                 "email": info.get("email"),
                 "nickname": info.get("nickname"),
                 "role": "collaborator",
-                "added_by": c.added_by,
-                "created_at": c.created_at.isoformat() + "Z" if c.created_at else None,
+                "added_by": g.granted_by,
+                "created_at": g.created_at.isoformat() + "Z" if g.created_at else None,
             }
         )
 
@@ -1599,13 +1602,21 @@ async def add_collaborator(
             status_code=403, detail="Cannot add admin as explicit collaborator"
         )
 
-    if await DatasetCollaboratorRepository.exists(db, dataset_id, req.user_id):
+    existing = await DatasetGrantRepository.get_by_dataset_and_user(
+        db, dataset_id, req.user_id
+    )
+    if existing and existing.can_collaborate:
         raise HTTPException(status_code=409, detail="User is already a collaborator")
 
     try:
-        collab = await DatasetCollaboratorRepository.add(
-            db, dataset_id, req.user_id, str(user.id)
-        )
+        if existing:
+            existing.can_collaborate = True
+            await db.flush()
+            grant = existing
+        else:
+            grant = await DatasetGrantRepository.create(
+                db, dataset_id, req.user_id, str(user.id), can_collaborate=True
+            )
         await AnnotationAuditLogRepository.log(
             db,
             dataset_id,
@@ -1613,12 +1624,15 @@ async def add_collaborator(
             "collaborator_add",
             {"target_user_id": req.user_id},
         )
+        await PermissionAuditLogRepository.log(
+            db, dataset_id, str(user.id), req.user_id, "grant_collaborate", {}
+        )
         await db.commit()
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
 
-    return {"collaborator": collab.to_dict()}
+    return {"collaborator": grant.to_dict()}
 
 
 @router.delete("/datasets/{dataset_id}/collaborators/{target_user_id}")
@@ -1648,11 +1662,17 @@ async def remove_collaborator(
                     if isinstance(r, dict) and r.get("created_by") == target_user_id
                 )
 
-    removed = await DatasetCollaboratorRepository.remove(
+    grant = await DatasetGrantRepository.get_by_dataset_and_user(
         db, dataset_id, target_user_id
     )
-    if not removed:
+    if not grant or not grant.can_collaborate:
         raise HTTPException(status_code=404, detail="Collaborator not found")
+
+    if grant.can_use_gpu:
+        grant.can_collaborate = False
+        await db.flush()
+    else:
+        await DatasetGrantRepository.delete(db, dataset_id, target_user_id)
 
     await AnnotationAuditLogRepository.log(
         db,
@@ -1660,6 +1680,9 @@ async def remove_collaborator(
         str(user.id),
         "collaborator_remove",
         {"target_user_id": target_user_id, "residual_region_count": residual_count},
+    )
+    await PermissionAuditLogRepository.log(
+        db, dataset_id, str(user.id), target_user_id, "revoke_collaborate", {}
     )
     await db.commit()
     asyncio.create_task(

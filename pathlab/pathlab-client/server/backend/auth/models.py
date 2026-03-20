@@ -124,8 +124,7 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
     VALID_ROLES = {ROLE_ADMIN, ROLE_PATHOLOGIST, ROLE_GUEST}
 
     def is_admin(self) -> bool:
-        """Check if user has admin role."""
-        return self.role == self.ROLE_ADMIN or self.is_superuser
+        return self.role == self.ROLE_ADMIN
 
     def is_pathologist(self) -> bool:
         """Check if user has pathologist role."""

@@ -31,6 +31,7 @@ from backend.database.repositories import (
     StorageTaskRepository,
     WSIRepository,
     DatasetPermissionRepository,
+    DatasetGrantRepository,
     SegmentationAnnotationRepository,
 )
 from backend.database.models import TrainingTask
@@ -545,17 +546,18 @@ async def cleanup_old_tasks():
 async def cleanup_expired_permissions():
     async for db in get_db():
         try:
-            expired = await DatasetPermissionRepository.get_all_expired(db)
-            for perm in expired:
-                await SegmentationAnnotationRepository.delete_by_dataset_and_user(
-                    db, perm.dataset_id, perm.user_id
-                )
-            count = await DatasetPermissionRepository.delete_expired(db)
+            expired = await DatasetGrantRepository.get_all_expired(db)
+            for grant in expired:
+                if grant.can_use_gpu:
+                    await SegmentationAnnotationRepository.delete_by_dataset_and_user(
+                        db, grant.dataset_id, grant.user_id
+                    )
+            count = await DatasetGrantRepository.delete_expired(db)
             if count > 0:
                 await db.commit()
-                logger.info(f"✓ Cleaned up {count} expired dataset permission(s)")
+                logger.info(f"✓ Cleaned up {count} expired dataset grant(s)")
         except Exception as e:
-            logger.error(f"Failed to cleanup expired permissions: {e}")
+            logger.error(f"Failed to cleanup expired grants: {e}")
         break
 
 

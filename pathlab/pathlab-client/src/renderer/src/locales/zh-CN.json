@@ -2684,6 +2684,7 @@
       "updateCount": "更新 {{count}} 张切片",
     "editDataset": "编辑数据集",
     "public": "公开",
+    "openCollab": "开放协作",
     "makePublic": "设为公开",
     "makePrivate": "设为私有",
     "makePublicSuccess": "数据集已设为公开",

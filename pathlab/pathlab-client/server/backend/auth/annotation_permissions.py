@@ -2,15 +2,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth.models import User
 from backend.database.models import Dataset
-from backend.database.repositories import DatasetCollaboratorRepository
+from backend.database.repositories import DatasetGrantRepository
 
 
 async def can_access_shared(user: User, dataset: Dataset, db: AsyncSession) -> bool:
     if user.is_admin() or dataset.user_id == str(user.id):
         return True
-    if dataset.is_public:
+    if dataset.is_public and dataset.is_open_collaboration:
         return True
-    return await DatasetCollaboratorRepository.exists(
+    return await DatasetGrantRepository.has_valid_collaborate(
         db, dataset.dataset_id, str(user.id)
     )
 

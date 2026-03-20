@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Database, Search, Clock, Trash2, X, Globe, Lock } from 'lucide-react'
+import { Database, Search, Clock, Trash2, X, Globe, Lock, Users } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Checkbox } from '../ui/checkbox'
 import { Input } from '../ui/input'
@@ -23,7 +23,7 @@ export interface DatasetPermissionModalProps {
   onClose: () => void
 }
 
-type PermissionDataset = { dataset_id: string; dataset_name: string; is_public: boolean }
+type PermissionDataset = { dataset_id: string; dataset_name: string; is_public: boolean; is_open_collaboration: boolean }
 
 function getRoleBadgeColor(role: string) {
   switch (role) {
@@ -41,7 +41,9 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
   const [permissions, setPermissions] = useState<DatasetPermission[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [selectedDatasetIsPublic, setSelectedDatasetIsPublic] = useState(false)
+  const [selectedDatasetIsOpenCollab, setSelectedDatasetIsOpenCollab] = useState(false)
   const [togglingVisibility, setTogglingVisibility] = useState(false)
+  const [togglingOpenCollab, setTogglingOpenCollab] = useState(false)
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [userSearchQuery, setUserSearchQuery] = useState('')
   const [expiresInHours, setExpiresInHours] = useState('')
@@ -74,7 +76,12 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
       const [userList, datasetResponse] = await Promise.all([listUsers(), fetchDatasets()])
       const permissionDatasets = datasetResponse.items
         .filter((dataset) => dataset.dataset_id !== null)
-        .map((dataset) => ({ dataset_id: dataset.dataset_id!, dataset_name: dataset.dataset_name, is_public: dataset.is_public ?? false }))
+        .map((dataset) => ({
+          dataset_id: dataset.dataset_id!,
+          dataset_name: dataset.dataset_name,
+          is_public: dataset.is_public ?? false,
+          is_open_collaboration: dataset.is_open_collaboration ?? false,
+        }))
         .sort((a, b) => a.dataset_name.localeCompare(b.dataset_name))
 
       setUsers(userList)
@@ -83,6 +90,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
       const initialDatasetId = permissionDatasets[0]?.dataset_id ?? ''
       setSelectedDatasetId(initialDatasetId)
       setSelectedDatasetIsPublic(permissionDatasets[0]?.is_public ?? false)
+      setSelectedDatasetIsOpenCollab(permissionDatasets[0]?.is_open_collaboration ?? false)
       setSelectedUserIds([])
       setUserSearchQuery('')
       setExpiresInHours('')
@@ -126,8 +134,10 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
   const allAvailableSelected = availableUsers.length > 0 && availableUsers.every((user) => selectedUserIds.includes(user.id))
 
   const handleDatasetChange = (datasetId: string) => {
+    const ds = datasets.find(d => d.dataset_id === datasetId)
     setSelectedDatasetId(datasetId)
-    setSelectedDatasetIsPublic(datasets.find(d => d.dataset_id === datasetId)?.is_public ?? false)
+    setSelectedDatasetIsPublic(ds?.is_public ?? false)
+    setSelectedDatasetIsOpenCollab(ds?.is_open_collaboration ?? false)
     setSelectedUserIds([])
     setUserSearchQuery('')
     setExpiresInHours('')
@@ -140,13 +150,37 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
     setError(null)
     try {
       const newValue = !selectedDatasetIsPublic
-      await updateDatasetVisibility(selectedDatasetId, newValue)
-      setSelectedDatasetIsPublic(newValue)
-      setDatasets(prev => prev.map(d => d.dataset_id === selectedDatasetId ? { ...d, is_public: newValue } : d))
+      const newOpenCollab = newValue ? selectedDatasetIsOpenCollab : false
+      const result = await updateDatasetVisibility(selectedDatasetId, newValue, newOpenCollab)
+      setSelectedDatasetIsPublic(result.is_public)
+      setSelectedDatasetIsOpenCollab(result.is_open_collaboration)
+      setDatasets(prev => prev.map(d => d.dataset_id === selectedDatasetId
+        ? { ...d, is_public: result.is_public, is_open_collaboration: result.is_open_collaboration }
+        : d
+      ))
     } catch (err) {
       setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToUpdateVisibility'))
     } finally {
       setTogglingVisibility(false)
+    }
+  }
+
+  const handleToggleOpenCollab = async () => {
+    if (!selectedDatasetId || !selectedDatasetIsPublic) return
+    setTogglingOpenCollab(true)
+    setError(null)
+    try {
+      const newValue = !selectedDatasetIsOpenCollab
+      const result = await updateDatasetVisibility(selectedDatasetId, selectedDatasetIsPublic, newValue)
+      setSelectedDatasetIsOpenCollab(result.is_open_collaboration)
+      setDatasets(prev => prev.map(d => d.dataset_id === selectedDatasetId
+        ? { ...d, is_open_collaboration: result.is_open_collaboration }
+        : d
+      ))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToUpdateVisibility'))
+    } finally {
+      setTogglingOpenCollab(false)
     }
   }
 
@@ -250,7 +284,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
             </h3>
             <p className="text-sm text-gray-500 mt-1">{t('settings.datasetPermissionModal.description')}</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -278,35 +312,65 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
                 placeholder={t('settings.datasetPermissionModal.selectDataset')}
               />
               {selectedDatasetId && (
-                <div className="flex items-center justify-between pt-1">
-                  <div className="flex items-center gap-2 text-sm text-gray-600">
-                    {selectedDatasetIsPublic ? (
-                      <Globe className="w-4 h-4 text-blue-500" />
-                    ) : (
-                      <Lock className="w-4 h-4 text-gray-400" />
-                    )}
-                    <span>
-                      {selectedDatasetIsPublic
-                        ? t('settings.datasetPermissionModal.visibilityPublic')
-                        : t('settings.datasetPermissionModal.visibilityPrivate')}
-                    </span>
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      {selectedDatasetIsPublic ? (
+                        <Globe className="w-4 h-4 text-blue-500" />
+                      ) : (
+                        <Lock className="w-4 h-4 text-gray-400" />
+                      )}
+                      <span>
+                        {selectedDatasetIsPublic
+                          ? t('settings.datasetPermissionModal.visibilityPublic')
+                          : t('settings.datasetPermissionModal.visibilityPrivate')}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleToggleVisibility}
+                      disabled={togglingVisibility}
+                      className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors ${
+                        selectedDatasetIsPublic
+                          ? 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                          : 'border-blue-200 text-blue-600 hover:bg-blue-50'
+                      }`}
+                    >
+                      {togglingVisibility
+                        ? t('settings.datasetPermissionModal.updating')
+                        : selectedDatasetIsPublic
+                          ? t('settings.datasetPermissionModal.makePrivate')
+                          : t('settings.datasetPermissionModal.makePublic')}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleToggleVisibility}
-                    disabled={togglingVisibility}
-                    className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors ${
-                      selectedDatasetIsPublic
-                        ? 'border-gray-200 text-gray-600 hover:bg-gray-50'
-                        : 'border-blue-200 text-blue-600 hover:bg-blue-50'
-                    }`}
-                  >
-                    {togglingVisibility
-                      ? t('settings.datasetPermissionModal.updating')
-                      : selectedDatasetIsPublic
-                        ? t('settings.datasetPermissionModal.makePrivate')
-                        : t('settings.datasetPermissionModal.makePublic')}
-                  </button>
+                  {selectedDatasetIsPublic && (
+                    <div className="flex items-center justify-between pl-6">
+                      <div className="flex items-center gap-2 text-sm text-gray-600">
+                        <Users className={`w-4 h-4 ${selectedDatasetIsOpenCollab ? 'text-green-500' : 'text-gray-400'}`} />
+                        <span>
+                          {selectedDatasetIsOpenCollab
+                            ? t('settings.datasetPermissionModal.openCollabOn', { defaultValue: 'Open collaboration (anyone can annotate)' })
+                            : t('settings.datasetPermissionModal.openCollabOff', { defaultValue: 'Closed collaboration (only invited)' })}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleToggleOpenCollab}
+                        disabled={togglingOpenCollab}
+                        className={`text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors ${
+                          selectedDatasetIsOpenCollab
+                            ? 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                            : 'border-green-200 text-green-600 hover:bg-green-50'
+                        }`}
+                      >
+                        {togglingOpenCollab
+                          ? t('settings.datasetPermissionModal.updating')
+                          : selectedDatasetIsOpenCollab
+                            ? t('settings.datasetPermissionModal.closeCollab', { defaultValue: 'Close' })
+                            : t('settings.datasetPermissionModal.openCollab', { defaultValue: 'Open' })}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

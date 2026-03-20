@@ -23,6 +23,7 @@ from .annotation import SegmentationAnnotationRepository, VersionConflictError
 from .dataset_collaborator import DatasetCollaboratorRepository
 from .annotation_audit import AnnotationAuditLogRepository
 from .dataset_stats import DatasetStatsRepository
+from .dataset_grant import DatasetGrantRepository, PermissionAuditLogRepository
 
 __all__ = [
     "DataGroupRepository",
@@ -44,4 +45,6 @@ __all__ = [
     "DatasetCollaboratorRepository",
     "AnnotationAuditLogRepository",
     "DatasetStatsRepository",
+    "DatasetGrantRepository",
+    "PermissionAuditLogRepository",
 ]

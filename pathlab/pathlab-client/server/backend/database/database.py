@@ -235,6 +235,76 @@ async def init_db():
         )
         logger.info("datasets.is_public column ensured")
 
+        await conn.execute(
+            text(
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                "is_open_collaboration BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        logger.info("datasets.is_open_collaboration column ensured")
+
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS dataset_grants ("
+                "    id           SERIAL PRIMARY KEY,"
+                "    dataset_id   VARCHAR(255) NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                "    user_id      VARCHAR(255) NOT NULL,"
+                "    granted_by   VARCHAR(255) NOT NULL,"
+                "    can_collaborate BOOLEAN NOT NULL DEFAULT FALSE,"
+                "    can_use_gpu  BOOLEAN NOT NULL DEFAULT FALSE,"
+                "    expires_at   TIMESTAMP,"
+                "    created_at   TIMESTAMP NOT NULL DEFAULT NOW()"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_grants_user_dataset"
+                " ON dataset_grants (user_id, dataset_id)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO dataset_grants"
+                "    (dataset_id, user_id, granted_by, can_use_gpu, expires_at, created_at)"
+                " SELECT dataset_id, user_id, granted_by, TRUE, expires_at, created_at"
+                " FROM dataset_permissions"
+                " ON CONFLICT (user_id, dataset_id) DO NOTHING"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO dataset_grants"
+                "    (dataset_id, user_id, granted_by, can_collaborate, created_at)"
+                " SELECT dataset_id, user_id, added_by, TRUE, created_at"
+                " FROM annotation_collaborators"
+                " ON CONFLICT (user_id, dataset_id) DO UPDATE"
+                "   SET can_collaborate = TRUE"
+            )
+        )
+        logger.info("dataset_grants table created and seeded from legacy tables")
+
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS permission_audit_logs ("
+                "    id              SERIAL PRIMARY KEY,"
+                "    dataset_id      VARCHAR(255) NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                "    actor_id        VARCHAR(255) NOT NULL,"
+                "    target_user_id  VARCHAR(255) NOT NULL,"
+                "    action          VARCHAR(50) NOT NULL,"
+                "    metadata        JSONB NOT NULL DEFAULT '{}',"
+                "    created_at      TIMESTAMP NOT NULL DEFAULT NOW()"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_perm_audit_dataset_created"
+                " ON permission_audit_logs (dataset_id, created_at)"
+            )
+        )
+        logger.info("permission_audit_logs table ensured")
+
     # Create default admin user if no users exist
     await _create_default_admin()
 

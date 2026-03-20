@@ -1764,6 +1764,11 @@ export default function ListPage() {
                              <Globe className="w-2.5 h-2.5" />{t('listPage.public')}
                            </span>
                          )}
+                         {dataset.is_public && dataset.is_open_collaboration && (
+                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-green-50 text-green-700 border border-green-100/70">
+                             <Users className="w-2.5 h-2.5" />{t('listPage.openCollab')}
+                           </span>
+                         )}
                        </div>
  
                        {dataset.parent_dataset_name && (
@@ -1898,6 +1903,11 @@ export default function ListPage() {
                                 {dataset.is_public && (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100/70">
                                     <Globe className="w-2.5 h-2.5" />{t('listPage.public')}
+                                  </span>
+                                )}
+                                {dataset.is_public && dataset.is_open_collaboration && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-green-50 text-green-700 border border-green-100/70">
+                                    <Users className="w-2.5 h-2.5" />{t('listPage.openCollab')}
                                   </span>
                                 )}
                                 {dataset.parent_dataset_name && (

@@ -10,6 +10,7 @@ from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
 class DatasetUpdateVisibilityRequest(BaseModel):
     is_public: bool
+    is_open_collaboration: Optional[bool] = None
 
 
 class DatasetRenameRequest(BaseModel):
