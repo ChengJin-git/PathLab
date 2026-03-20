@@ -360,13 +360,23 @@ async def test_get_permitted_dataset_ids_uses_read_ids(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_with_permission_allows_inherit_draft_for_dataset_access():
+async def test_get_with_permission_allows_inherit_draft_for_dataset_access(monkeypatch):
     annotation = types.SimpleNamespace(
         user_id="owner-1",
         status="draft",
         visibility_mode="inherit",
         source_dataset_id="ds-2",
     )
+
+    async def _get_by_id(_db, dataset_id):
+        return types.SimpleNamespace(
+            dataset_id=dataset_id,
+            is_public=False,
+            is_open_collaboration=False,
+        )
+
+    monkeypatch.setattr(DatasetRepository, "get_by_id", staticmethod(_get_by_id))
+
     db = _DB(annotation)
 
     result = await SegmentationAnnotationRepository.get_with_permission(
