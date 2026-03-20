@@ -58,6 +58,7 @@ from backend.auth import (
 from backend.auth.dependencies import (
     require_pathologist_or_admin,
     check_data_ownership,
+    check_dataset_access_permission,
     check_dataset_gpu_permission,
     check_wsi_access_permission,
 )
@@ -136,6 +137,19 @@ def _coerce_str_list(values: Any) -> List[str]:
     if not isinstance(values, list):
         return []
     return [str(v) for v in values if isinstance(v, (str, int, float)) or v is not None]
+
+
+async def _has_external_validation_dataset_access(
+    user: User, dataset: Dataset, db: AsyncSession
+) -> bool:
+    return await check_dataset_access_permission(
+        user,
+        _coerce_str(dataset.dataset_id),
+        _coerce_str(dataset.user_id),
+        db,
+        is_public=bool(getattr(dataset, "is_public", False)),
+        parent_dataset_id=getattr(dataset, "parent_dataset_id", None),
+    )
 
 
 def _candidate_metrics_paths(
@@ -3082,19 +3096,13 @@ async def start_external_validation(
             status_code=404, detail=f"Dataset not found: {req.dataset_id}"
         )
 
-    # Check ownership of the dataset (supports temporary elevated dataset grants)
-    target_dataset_user_id = _coerce_str(target_dataset.user_id)
-    if target_dataset_user_id and not check_data_ownership(
-        target_dataset_user_id, user
-    ):
-        # Fallback: check temporary elevated permission for the target dataset
-        has_temp_dataset_perm = await DatasetGrantRepository.has_valid_read_access(
-            db, req.dataset_id, str(user.id)
+    has_dataset_access = await _has_external_validation_dataset_access(
+        user, target_dataset, db
+    )
+    if not has_dataset_access:
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to use this dataset"
         )
-        if not has_temp_dataset_perm:
-            raise HTTPException(
-                status_code=403, detail="You don't have permission to use this dataset"
-            )
 
     # Check GPU permission for the target dataset
     has_permission = await check_dataset_gpu_permission(user, req.dataset_id, db)
