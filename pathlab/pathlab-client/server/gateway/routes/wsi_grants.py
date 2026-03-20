@@ -28,6 +28,9 @@ router = APIRouter(tags=["WSI Grants"])
 class BatchGrantDatasetGrantRequest(BaseModel):
     user_ids: List[str] = Field(default_factory=list)
     expires_in_hours: Optional[int] = None
+    can_read: Optional[bool] = True
+    can_collaborate: Optional[bool] = False
+    can_use_gpu: Optional[bool] = False
 
 
 class BatchRevokeDatasetGrantRequest(BaseModel):
@@ -42,12 +45,15 @@ def _calculate_expires_at(expires_in_hours: Optional[int]) -> Optional[datetime]
     )
 
 
-async def _grant_or_renew_gpu_permission(
+async def _grant_or_renew_permission(
     db: AsyncSession,
     dataset_id: str,
     user_id: str,
     granted_by: str,
-    expires_at: Optional[datetime],
+    can_read: bool = True,
+    can_collaborate: bool = False,
+    can_use_gpu: bool = False,
+    expires_at: Optional[datetime] = None,
 ) -> Tuple[str, Dict[str, Any]]:
     existing = await DatasetGrantRepository.get_by_dataset_and_user(
         db, dataset_id, user_id
@@ -57,25 +63,26 @@ async def _grant_or_renew_gpu_permission(
             existing.expires_at = expires_at
             existing.granted_by = granted_by
             existing.created_at = datetime.now(timezone.utc).replace(tzinfo=None)
-            existing.can_use_gpu = True
+            existing.can_read = can_read
+            existing.can_collaborate = can_collaborate
+            existing.can_use_gpu = can_use_gpu
             await db.flush()
             return "Permission renewed successfully", existing.to_dict()
-        if existing.can_use_gpu:
-            raise HTTPException(
-                status_code=400,
-                detail="Valid GPU permission already exists for this user on this dataset",
-            )
-        existing.can_use_gpu = True
+        existing.can_read = can_read
+        existing.can_collaborate = can_collaborate
+        existing.can_use_gpu = can_use_gpu
         existing.granted_by = granted_by
         await db.flush()
-        return "GPU permission added successfully", existing.to_dict()
+        return "Permission updated successfully", existing.to_dict()
 
     grant = await DatasetGrantRepository.create(
         db=db,
         dataset_id=dataset_id,
         user_id=user_id,
         granted_by=granted_by,
-        can_use_gpu=True,
+        can_read=can_read,
+        can_collaborate=can_collaborate,
+        can_use_gpu=can_use_gpu,
         expires_at=expires_at,
     )
     return "Permission granted successfully", grant.to_dict()
@@ -213,7 +220,7 @@ async def _revoke_child_dataset_grants(
     return results
 
 
-async def _revoke_gpu_permission_with_side_effects(
+async def _revoke_permission_with_side_effects(
     db: AsyncSession,
     dataset_id: str,
     target_user_id: str,
@@ -243,11 +250,7 @@ async def _revoke_gpu_permission_with_side_effects(
     if not grant:
         raise HTTPException(status_code=404, detail="Permission not found")
 
-    if grant.can_collaborate:
-        grant.can_use_gpu = False
-        await db.flush()
-    else:
-        await DatasetGrantRepository.delete(db, dataset_id, target_user_id)
+    await DatasetGrantRepository.delete(db, dataset_id, target_user_id)
 
     result: Dict[str, Any] = {"message": "Permission revoked successfully"}
     if revoked_tasks:
@@ -393,6 +396,9 @@ async def grant_dataset_grant(
     dataset_id: str,
     user_id: str = Form(...),
     expires_in_hours: Optional[int] = Form(None),
+    can_read: bool = Form(True),
+    can_collaborate: bool = Form(False),
+    can_use_gpu: bool = Form(False),
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -403,11 +409,14 @@ async def grant_dataset_grant(
     expires_at = _calculate_expires_at(expires_in_hours)
 
     try:
-        message, grant = await _grant_or_renew_gpu_permission(
+        message, grant = await _grant_or_renew_permission(
             db=db,
             dataset_id=dataset_id,
             user_id=user_id,
             granted_by=str(user.id),
+            can_read=can_read,
+            can_collaborate=can_collaborate,
+            can_use_gpu=can_use_gpu,
             expires_at=expires_at,
         )
         await PermissionAuditLogRepository.log(
@@ -415,8 +424,13 @@ async def grant_dataset_grant(
             dataset_id,
             str(user.id),
             user_id,
-            "grant_gpu",
-            {"expires_in_hours": expires_in_hours},
+            "grant_permission",
+            {
+                "expires_in_hours": expires_in_hours,
+                "can_read": can_read,
+                "can_collaborate": can_collaborate,
+                "can_use_gpu": can_use_gpu,
+            },
         )
         await db.commit()
     except IntegrityError:
@@ -446,11 +460,18 @@ async def batch_grant_dataset_grants(
 
     for uid in list(dict.fromkeys(request.user_ids)):
         try:
-            message, grant = await _grant_or_renew_gpu_permission(
+            message, grant = await _grant_or_renew_permission(
                 db=db,
                 dataset_id=dataset_id,
                 user_id=uid,
                 granted_by=str(user.id),
+                can_read=request.can_read if request.can_read is not None else True,
+                can_collaborate=request.can_collaborate
+                if request.can_collaborate is not None
+                else False,
+                can_use_gpu=request.can_use_gpu
+                if request.can_use_gpu is not None
+                else False,
                 expires_at=expires_at,
             )
             await PermissionAuditLogRepository.log(
@@ -458,8 +479,13 @@ async def batch_grant_dataset_grants(
                 dataset_id,
                 str(user.id),
                 uid,
-                "grant_gpu",
-                {"expires_in_hours": request.expires_in_hours},
+                "grant_permission",
+                {
+                    "expires_in_hours": request.expires_in_hours,
+                    "can_read": request.can_read,
+                    "can_collaborate": request.can_collaborate,
+                    "can_use_gpu": request.can_use_gpu,
+                },
             )
             await db.commit()
             results.append(
@@ -509,7 +535,7 @@ async def revoke_dataset_grant(
         select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
     )
     dataset_wsi_ids = {row[0] for row in wsi_ids_result.all()}
-    result = await _revoke_gpu_permission_with_side_effects(
+    result = await _revoke_permission_with_side_effects(
         db=db,
         dataset_id=dataset_id,
         target_user_id=target_user_id,
@@ -522,7 +548,7 @@ async def revoke_dataset_grant(
             f"{result['message']} Also revoked access to {len(child_results)} child dataset(s)."
         )
     await PermissionAuditLogRepository.log(
-        db, dataset_id, str(user.id), target_user_id, "revoke_gpu", {}
+        db, dataset_id, str(user.id), target_user_id, "revoke_permission", {}
     )
     await db.commit()
     return result
@@ -549,7 +575,7 @@ async def batch_revoke_dataset_grants(
 
     for uid in list(dict.fromkeys(request.user_ids)):
         try:
-            result = await _revoke_gpu_permission_with_side_effects(
+            result = await _revoke_permission_with_side_effects(
                 db=db,
                 dataset_id=dataset_id,
                 target_user_id=uid,
@@ -562,7 +588,7 @@ async def batch_revoke_dataset_grants(
                     f"{result['message']} Also revoked access to {len(child_results)} child dataset(s)."
                 )
             await PermissionAuditLogRepository.log(
-                db, dataset_id, str(user.id), uid, "revoke_gpu", {}
+                db, dataset_id, str(user.id), uid, "revoke_permission", {}
             )
             await db.commit()
             results.append({"user_id": uid, "success": True, **result})

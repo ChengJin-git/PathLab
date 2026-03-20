@@ -1197,6 +1197,7 @@ class DatasetGrant(Base):
     user_id = Column(String(255), nullable=False, index=True)
     granted_by = Column(String(255), nullable=False)
 
+    can_read = Column(Boolean, default=True, nullable=False)
     can_collaborate = Column(Boolean, default=False, nullable=False)
     can_use_gpu = Column(Boolean, default=False, nullable=False)
 
@@ -1221,6 +1222,7 @@ class DatasetGrant(Base):
             "dataset_id": self.dataset_id,
             "user_id": self.user_id,
             "granted_by": self.granted_by,
+            "can_read": self.can_read,
             "can_collaborate": self.can_collaborate,
             "can_use_gpu": self.can_use_gpu,
             "expires_at": self.expires_at.isoformat() + "Z"

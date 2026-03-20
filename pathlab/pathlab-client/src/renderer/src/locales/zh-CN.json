@@ -328,7 +328,14 @@
       "revokeAllDatasetGrantsConfirm": "确定要撤销 {{count}} 个用户对 \"{{datasetName}}\" 的访问权限吗？",
       "failedToRevokeUserPermissions": "批量撤销该用户权限失败",
       "failedToRevokeDatasetGrants": "批量撤销该数据集用户权限失败",
-      "revokeAll": "全部撤销"
+      "revokeAll": "全部撤销",
+      "permissionLevel": "权限级别",
+      "canRead": "读取",
+      "canCollaborate": "协作",
+      "canUseGpu": "GPU",
+      "read": "读取",
+      "collaborate": "协作",
+      "gpu": "GPU"
     },
     "datasetPermissionModal": {
       "title": "按数据授权",
@@ -2820,7 +2827,9 @@
       "private": "私有",
       "privateDesc": "仅自己可见",
       "public": "公开",
-      "publicDesc": "所有用户自动可见"
+      "publicDesc": "所有用户自动可见",
+      "openCollaboration": "开放协作",
+      "openCollaborationDesc": "允许任何用户标注此数据集"
     },
     "successStep": {
       "importSuccessful": "导入成功",

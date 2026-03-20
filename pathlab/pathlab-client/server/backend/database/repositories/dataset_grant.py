@@ -14,6 +14,7 @@ class DatasetGrantRepository:
         dataset_id: str,
         user_id: str,
         granted_by: str,
+        can_read: bool = True,
         can_collaborate: bool = False,
         can_use_gpu: bool = False,
         expires_at: Optional[datetime] = None,
@@ -22,6 +23,7 @@ class DatasetGrantRepository:
             dataset_id=dataset_id,
             user_id=user_id,
             granted_by=granted_by,
+            can_read=can_read,
             can_collaborate=can_collaborate,
             can_use_gpu=can_use_gpu,
             expires_at=expires_at,
@@ -104,10 +106,7 @@ class DatasetGrantRepository:
             .where(
                 (DatasetGrant.expires_at.is_(None)) | (DatasetGrant.expires_at > now)
             )
-            .where(
-                (DatasetGrant.can_collaborate.is_(True))
-                | (DatasetGrant.can_use_gpu.is_(True))
-            )
+            .where(DatasetGrant.can_read.is_(True))
         )
         return result.scalar_one_or_none() is not None
 
@@ -170,10 +169,7 @@ class DatasetGrantRepository:
         result = await db.execute(
             select(distinct(DatasetGrant.dataset_id))
             .where(DatasetGrant.user_id == user_id)
-            .where(
-                (DatasetGrant.can_collaborate.is_(True))
-                | (DatasetGrant.can_use_gpu.is_(True))
-            )
+            .where(DatasetGrant.can_read.is_(True))
             .where(
                 (DatasetGrant.expires_at.is_(None)) | (DatasetGrant.expires_at > now)
             )

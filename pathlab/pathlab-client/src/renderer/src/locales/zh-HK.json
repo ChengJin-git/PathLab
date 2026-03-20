@@ -328,7 +328,14 @@
       "revokeAllDatasetGrantsConfirm": "確定要撤銷 {{count}} 個使用者對 \"{{datasetName}}\" 的存取權限嗎？",
       "failedToRevokeUserPermissions": "批次撤銷該使用者權限失敗",
       "failedToRevokeDatasetGrants": "批次撤銷該資料集使用者權限失敗",
-      "revokeAll": "全部撤銷"
+      "revokeAll": "全部撤銷",
+      "permissionLevel": "權限級別",
+      "canRead": "讀取",
+      "canCollaborate": "協作",
+      "canUseGpu": "GPU",
+      "read": "讀取",
+      "collaborate": "協作",
+      "gpu": "GPU"
     },
     "datasetPermissionModal": {
       "title": "按資料授權",
@@ -2819,7 +2826,9 @@
       "private": "私有",
       "privateDesc": "僅自己可見",
       "public": "公開",
-      "publicDesc": "所有用戶自動可見"
+      "publicDesc": "所有用戶自動可見",
+      "openCollaboration": "開放協作",
+      "openCollaborationDesc": "允許任何用戶標註此資料集"
     },
     "successStep": {
       "importSuccessful": "匯入成功",

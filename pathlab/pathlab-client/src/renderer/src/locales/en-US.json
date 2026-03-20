@@ -328,7 +328,14 @@
       "revokeAllDatasetGrantsConfirm": "Are you sure you want to revoke access for {{count}} users from \"{{datasetName}}\"?",
       "failedToRevokeUserPermissions": "Failed to revoke all permissions from this user",
       "failedToRevokeDatasetGrants": "Failed to revoke selected users from this dataset",
-      "revokeAll": "Revoke All"
+      "revokeAll": "Revoke All",
+      "permissionLevel": "Permission Level",
+      "canRead": "Read",
+      "canCollaborate": "Collaborate",
+      "canUseGpu": "GPU",
+      "read": "Read",
+      "collaborate": "Collaborate",
+      "gpu": "GPU"
     },
     "datasetPermissionModal": {
       "title": "Manage Dataset Access",
@@ -2876,7 +2883,9 @@
       "private": "Private",
       "privateDesc": "Only visible to you",
       "public": "Public",
-      "publicDesc": "Visible to all users automatically"
+      "publicDesc": "Visible to all users automatically",
+      "openCollaboration": "Open Collaboration",
+      "openCollaborationDesc": "Allow any user to annotate this dataset"
     },
     "successStep": {
       "importSuccessful": "Import Successful",

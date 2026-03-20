@@ -66,6 +66,7 @@ export default function RegisterPage() {
   // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
   const [datasetId, setDatasetId] = useState<string | null>(null)
   const [isPublic, setIsPublic] = useState(false)
+  const [isOpenCollaboration, setIsOpenCollaboration] = useState(false)
   const [datasetSourceSelection, setDatasetSourceSelection] = useDraftState<string>('draft:upload:datasetSourceSelection', '')
   const [datasetSourceCustom, setDatasetSourceCustom] = useDraftState<string>('draft:upload:datasetSourceCustom', '')
   // Source organ of the existing dataset (for auto-fill when appending)
@@ -704,6 +705,7 @@ export default function RegisterPage() {
             source_organ: datasetId ? undefined : (resolvedDatasetSource || undefined),
             aggregation_level: datasetId ? undefined : dataLevel,
             is_public: datasetId ? undefined : isPublic,
+            is_open_collaboration: datasetId ? undefined : (isPublic ? isOpenCollaboration : false),
             task_type: uploadMode,
             label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
             case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
@@ -753,6 +755,7 @@ export default function RegisterPage() {
     setDatasetName('')
     setDatasetId(null)
     setIsPublic(false)
+    setIsOpenCollaboration(false)
     setLocalItems([])
     setLocalMetadata(new Map())
     setShowValidation(false)
@@ -955,6 +958,8 @@ export default function RegisterPage() {
           fromAIChat={fromAIChat}
           isPublic={isPublic}
           onIsPublicChange={setIsPublic}
+          isOpenCollaboration={isOpenCollaboration}
+          onIsOpenCollaborationChange={setIsOpenCollaboration}
           onNext={async () => {
             const trimmedDatasetName = datasetName.trim()
             if (
