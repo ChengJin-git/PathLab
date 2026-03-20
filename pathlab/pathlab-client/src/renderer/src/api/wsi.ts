@@ -318,6 +318,7 @@ export interface DatasetListQueryOptions {
   task_type?: 'classification' | 'survival' | 'segmentation'
   aggregation_level?: 'file' | 'case'
   source_organ?: string
+  is_public?: boolean
   forceRefresh?: boolean
 }
 
@@ -328,6 +329,7 @@ function buildDatasetListCacheKey(dataLevel?: string, options?: DatasetListQuery
     task_type: options?.task_type ?? null,
     aggregation_level: options?.aggregation_level ?? null,
     source_organ: options?.source_organ ?? null,
+    is_public: options?.is_public ?? null,
     page_size: options?.page_size ?? null,
     page: options?.page_size !== undefined ? (options.page ?? 1) : null,
   })
@@ -348,6 +350,7 @@ export async function fetchDatasets(
     task_type: options?.task_type,
     aggregation_level: options?.aggregation_level,
     source_organ: options?.source_organ,
+    is_public: options?.is_public,
     page_size: options?.page_size,
     page: options?.page_size !== undefined ? (options.page ?? 1) : undefined,
   })
@@ -893,4 +896,3 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   invalidateWSIListCache()
   return result
 }
-

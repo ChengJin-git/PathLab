@@ -197,6 +197,20 @@ describe('fetchDatasets', () => {
     expect(url).toContain('search=tcga')
   })
 
+  it('includes is_public=false filter for private datasets', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, { is_public: false })
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('is_public=false')
+  })
+
+  it('includes is_public=true filter for public datasets', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, { is_public: true })
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('is_public=true')
+  })
+
   it('caches results', async () => {
     mockFetch.mockResolvedValue(ok({ items: [], total: 0 }))
     await fetchDatasets()

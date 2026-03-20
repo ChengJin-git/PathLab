@@ -169,8 +169,9 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 ## 推荐阅读顺序
 
 1. [server/README.md](server/README.md)
-2. [server/gateway/README.md](server/gateway/README.md)
-3. [server/backend/database/README.md](server/backend/database/README.md)
-4. [src/renderer/README.md](src/renderer/README.md)
-5. [deploy/README.md](deploy/README.md)
-6. [test/README.md](test/README.md)
+2. [server/permissions/README.md](server/permissions/README.md)
+3. [server/gateway/README.md](server/gateway/README.md)
+4. [server/backend/database/README.md](server/backend/database/README.md)
+5. [src/renderer/README.md](src/renderer/README.md)
+6. [deploy/README.md](deploy/README.md)
+7. [test/README.md](test/README.md)

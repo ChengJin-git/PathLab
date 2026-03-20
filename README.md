@@ -56,6 +56,7 @@ pathlab/
 
 - [PathLab Client](pathlab/pathlab-client/README.md)
 - [Python Backend](pathlab/pathlab-client/server/README.md)
+- [Permission Baseline](pathlab/pathlab-client/server/permissions/README.md)
 - [Gateway](pathlab/pathlab-client/server/gateway/README.md)
 - [Backend Services](pathlab/pathlab-client/server/backend/README.md)
 - [Database Layer](pathlab/pathlab-client/server/backend/database/README.md)

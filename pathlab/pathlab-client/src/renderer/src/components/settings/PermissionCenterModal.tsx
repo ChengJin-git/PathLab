@@ -27,6 +27,7 @@ type PermissionDataset = DatasetSummary & { dataset_id: string }
 
 const PAGE_SIZE_OPTIONS = ['4', '6', '9', '18']
 const SEARCH_DEBOUNCE_MS = 300
+const PRIVATE_DATASET_FILTER = { is_public: false as const }
 
 export interface PermissionCenterModalProps {
   showConfirmDialog: ShowConfirmDialog
@@ -203,7 +204,11 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   }, [grantUserSearchQuery])
 
   const fetchAllSelectableDatasetIds = useCallback(async () => {
-    const response = await fetchDatasets(undefined, { search: debouncedDatasetSearchQuery.trim() || undefined, page_size: 0 })
+    const response = await fetchDatasets(undefined, {
+      ...PRIVATE_DATASET_FILTER,
+      search: debouncedDatasetSearchQuery.trim() || undefined,
+      page_size: 0
+    })
     return response.items
       .filter((item): item is PermissionDataset => Boolean(item.dataset_id))
       .filter((item) => !validUserDatasetIds.has(item.dataset_id) && item.user_id !== selectedUser?.id)
@@ -238,7 +243,12 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     try {
       const page = mode === 'dataset' ? datasetPage : grantDatasetPage
       const pageSize = mode === 'dataset' ? datasetPageSize : grantDatasetPageSize
-      const response = await fetchDatasets(undefined, { page, page_size: pageSize, search: debouncedDatasetSearchQuery.trim() || undefined })
+      const response = await fetchDatasets(undefined, {
+        ...PRIVATE_DATASET_FILTER,
+        page,
+        page_size: pageSize,
+        search: debouncedDatasetSearchQuery.trim() || undefined
+      })
       setDatasetItems(response.items)
       setDatasetTotal(response.total)
     } catch (err) {
