@@ -119,6 +119,7 @@ pip install -r server/requirements-test.txt
 
 ## 相关文档
 
+- [Permissions README](permissions/README.md)
 - [Gateway README](gateway/README.md)
 - [Backend Services README](backend/README.md)
 - [Database README](backend/database/README.md)
