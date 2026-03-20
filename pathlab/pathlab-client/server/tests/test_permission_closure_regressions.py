@@ -118,7 +118,9 @@ def test_build_batch_import_task_params_keeps_visibility_flags():
 
 
 @pytest.mark.asyncio
-async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monkeypatch):
+async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
+    monkeypatch,
+):
     captured = {}
 
     async def _fake_get_by_id(db, dataset_id):
@@ -227,7 +229,12 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monk
     )
     user = types.SimpleNamespace(id="user-1")
 
-    response = await upload_wsi_by_path(req, user, object())
+    async def _noop():
+        pass
+
+    db_mock = types.SimpleNamespace(commit=_noop, rollback=_noop)
+
+    response = await upload_wsi_by_path(req, user, db_mock)
 
     assert response["wsi_id"] == "wsi-1"
     assert captured == {
@@ -236,4 +243,3 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monk
         "is_public": True,
         "is_open_collaboration": True,
     }
-
