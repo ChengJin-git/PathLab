@@ -34,13 +34,13 @@ vi.mock("@renderer/api", () => ({
   updateDatasetVisibility: (...args: unknown[]) => updateDatasetVisibilityMock(...args),
 }));
 
-function renderModal() {
+function renderModal(initialMode: "user" | "dataset" = "user") {
   return render(
     <PermissionCenterModal
       showConfirmDialog={vi.fn()}
       closeConfirmDialog={vi.fn()}
       onClose={vi.fn()}
-      initialMode="user"
+      initialMode={initialMode}
     />,
   );
 }
@@ -152,5 +152,26 @@ describe("PermissionCenterModal", () => {
 
     expect(screen.getByText("settings.permissionCenterModal.currentPermissionsCount:0")).toBeInTheDocument();
     expect(screen.getByText("settings.permissionCenterModal.noCurrentPermissions")).toBeInTheDocument();
+  });
+
+  it("hides current-access empty-state details for public dataset in dataset mode", async () => {
+    const user = userEvent.setup();
+    renderModal("dataset");
+
+    await screen.findByText("Private Dataset");
+    await screen.findByText("Public Dataset");
+
+    const publicDatasetButton = screen.getByText("Public Dataset").closest("button");
+    if (!publicDatasetButton) throw new Error("Public dataset button not found");
+
+    await user.click(publicDatasetButton);
+
+    await screen.findByText("settings.permissionCenterModal.publicDatasetGrantDisabled");
+    expect(
+      screen.queryByText("settings.permissionCenterModal.currentAccessCount:0"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("settings.permissionCenterModal.noCurrentAccess"),
+    ).not.toBeInTheDocument();
   });
 });

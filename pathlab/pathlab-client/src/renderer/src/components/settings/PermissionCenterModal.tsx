@@ -1781,11 +1781,19 @@ export function PermissionCenterModal({
                           )
                         : t("settings.permissionCenterModal.selectDatasetHint")}
                     </p>
-                    <p className="mt-1 text-xs text-gray-500">
-                      {t("settings.permissionCenterModal.currentAccessCount", {
-                        count: validDatasetGrants.length,
-                      })}
-                    </p>
+                    {selectedDatasetIsPublic ? (
+                      <p className="mt-1 text-xs text-amber-700">
+                        {t(
+                          "settings.permissionCenterModal.publicDatasetGrantDisabled",
+                        )}
+                      </p>
+                    ) : (
+                      <p className="mt-1 text-xs text-gray-500">
+                        {t("settings.permissionCenterModal.currentAccessCount", {
+                          count: validDatasetGrants.length,
+                        })}
+                      </p>
+                    )}
                   </div>
                   <Button
                     type="button"
@@ -1807,6 +1815,12 @@ export function PermissionCenterModal({
                 {loadingDatasetGrants ? (
                   <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
                     {t("settings.permissionCenterModal.loadingDatasetGrants")}
+                  </div>
+                ) : selectedDatasetIsPublic ? (
+                  <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/60 px-4 py-8 text-center text-sm text-amber-700">
+                    {t(
+                      "settings.permissionCenterModal.publicDatasetGrantDisabled",
+                    )}
                   </div>
                 ) : sortedDatasetGrants.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
