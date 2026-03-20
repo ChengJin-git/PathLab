@@ -14,6 +14,7 @@ import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
+import { clampDatasetPage } from '../lib/datasetPagination'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
 import { organSources, organSourceKeyMap } from '../components/upload/types'
@@ -88,6 +89,8 @@ export default function ListPage() {
   // Search and Filter state
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [datasetSearchQuery, setDatasetSearchQuery] = useState('')
+  const [datasetDebouncedSearch, setDatasetDebouncedSearch] = useState('')
   const [datasetTaskFilter, setDatasetTaskFilter] = useState<DatasetTaskFilter>('all')
   const [datasetTypeFilter, setDatasetTypeFilter] = useState<DatasetTypeFilter>('all')
   const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
@@ -306,6 +309,7 @@ export default function ListPage() {
       {
         page: datasetCurrentPage,
         pageSize: datasetItemsPerPage,
+        search: datasetDebouncedSearch,
         taskType: datasetTaskFilter,
         dataType: datasetTypeFilter,
         level: datasetLevelFilter,
@@ -324,6 +328,7 @@ export default function ListPage() {
             ? 'case'
             : 'file',
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+        search: datasetDebouncedSearch || undefined,
       })
 
       const totalPages = Math.max(1, Math.ceil((d.total || 0) / datasetItemsPerPage))
@@ -337,6 +342,7 @@ export default function ListPage() {
             ? ('case' as const)
             : ('file' as const),
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+        search: datasetDebouncedSearch || undefined,
       }
       if (datasetCurrentPage < totalPages) {
         void prefetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
@@ -440,13 +446,12 @@ export default function ListPage() {
     datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
 
   useEffect(() => {
-    // Don't clamp page when query is in error state — a 500 response sets data to
-    // undefined, which makes datasetTotalPages briefly fall to 1 and would silently
-    // reset the user to page 1.  Keep the page as-is so the error UI stays visible.
-    if (!datasetsQuery.isError) {
-      setDatasetCurrentPage(prev => Math.min(prev, datasetTotalPages))
-    }
-  }, [datasetTotalPages, datasetsQuery.isError])
+    setDatasetCurrentPage((prev) => clampDatasetPage(prev, datasetTotalPages, {
+      isError: datasetsQuery.isError,
+      isFetching: datasetsQuery.isFetching,
+      hasQueryData: Boolean(datasetsQuery.data),
+    }))
+  }, [datasetTotalPages, datasetsQuery.isError, datasetsQuery.isFetching, datasetsQuery.data])
 
   useEffect(() => {
     setDatasetPageInput(String(datasetCurrentPage))
@@ -522,6 +527,15 @@ export default function ListPage() {
     }, 300)
     return () => clearTimeout(timer)
   }, [searchQuery])
+
+  // Debounce dataset search input → datasetDebouncedSearch (300ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDatasetCurrentPage((previousPage) => (previousPage === 1 ? previousPage : 1))
+      setDatasetDebouncedSearch(datasetSearchQuery)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [datasetSearchQuery])
 
   const commitDatasetPageInput = (rawValue: string) => {
     const trimmed = rawValue.trim()
@@ -628,6 +642,7 @@ export default function ListPage() {
         {
           page: 1,
           pageSize,
+          search: datasetDebouncedSearch,
           taskType,
           dataType,
           level,
@@ -642,10 +657,11 @@ export default function ListPage() {
           aggregation_level:
             level === 'all' ? undefined : level === 'patient' ? 'case' : 'file',
           source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+          search: datasetDebouncedSearch || undefined,
         }),
       staleTime: 2 * 60 * 1000,
     })
-  }, [qc, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter, datasetViewMode, datasetListItemsPerPage])
+  }, [qc, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter, datasetViewMode, datasetListItemsPerPage, datasetDebouncedSearch])
 
   const renderDatasetFilterGroup = (
     label: string,
@@ -1440,57 +1456,84 @@ export default function ListPage() {
           {((datasetsQuery.data?.total ?? 0) > 0 || hasActiveDatasetFilters) && (
             <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 xl:flex-1">
-                    {renderDatasetFilterGroup(
-                      t('listPage.filters.groups.taskType'),
-                      datasetTaskFilter,
-                      [
-                        { value: 'all', label: t('common.all') },
-                        { value: 'classification', label: t('listPage.classification') },
-                        { value: 'survival', label: t('listPage.survival') },
-                        { value: 'segmentation', label: t('listPage.segmentation') },
-                      ],
-                      (nextValue) => { setDatasetTaskFilter(nextValue as DatasetTaskFilter); setDatasetCurrentPage(1) },
-                      (v) => prefetchFilteredDatasets({ taskType: v as DatasetTaskFilter })
-                    )}
-
-                    {renderDatasetFilterGroup(
-                      t('listPage.filters.groups.dataType'),
-                      datasetTypeFilter,
-                      [
-                        { value: 'all', label: t('common.all') },
-                        { value: 'wsi', label: t('listPage.wholeSlideImaging') },
-                        { value: 'patch', label: t('listPage.patchCollection') },
-                      ],
-                      (nextValue) => { setDatasetTypeFilter(nextValue as DatasetTypeFilter); setDatasetCurrentPage(1) },
-                      (v) => prefetchFilteredDatasets({ dataType: v as DatasetTypeFilter })
-                    )}
-
-                    {renderDatasetFilterGroup(
-                      t('listPage.filters.groups.dataLevel'),
-                      datasetLevelFilter,
-                      [
-                        { value: 'all', label: t('common.all') },
-                        { value: 'file', label: t('listPage.fileLevel') },
-                        { value: 'patient', label: t('listPage.patientLevel') },
-                      ],
-                      (nextValue) => { setDatasetLevelFilter(nextValue as DatasetLevelFilter); setDatasetCurrentPage(1) },
-                      (v) => prefetchFilteredDatasets({ level: v as DatasetLevelFilter })
-                    )}
-
-                    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
-                      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
-                        {t('listPage.filters.groups.sourceOrgan')}
-                      </p>
-                      <Select
-                        value={datasetSourceFilter}
-                        onChange={(v) => { setDatasetSourceFilter(v); setDatasetCurrentPage(1) }}
-                        options={datasetSourceOptions}
-                        placeholder={t('listPage.filters.selectSourceOrgan')}
-                        className="w-full min-w-[160px] sm:min-w-[180px] lg:w-[180px] xl:w-[200px]"
-                        triggerClassName="h-8 px-2.5 text-xs sm:text-sm"
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                  {/* Left Side: Search & Filters */}
+                  <div className="flex min-w-0 flex-col gap-3 xl:flex-1">
+                    {/* Search Box */}
+                    <div className="relative w-full max-w-md">
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <Search className="h-4 sm:h-5 w-4 sm:w-5 text-gray-400" />
+                      </div>
+                      <input
+                        type="text"
+                        className="block w-full pl-9 sm:pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm transition-all shadow-sm"
+                        placeholder={t('listPage.searchPlaceholder')}
+                        value={datasetSearchQuery}
+                        onChange={(e) => setDatasetSearchQuery(e.target.value)}
                       />
+                      {datasetSearchQuery && (
+                        <button
+                          type="button"
+                          className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                          onClick={() => setDatasetSearchQuery('')}
+                        >
+                          <X className="h-4 w-4 text-gray-400 hover:text-gray-600" />
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Filters */}
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3">
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.taskType'),
+                        datasetTaskFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'classification', label: t('listPage.classification') },
+                          { value: 'survival', label: t('listPage.survival') },
+                          { value: 'segmentation', label: t('listPage.segmentation') },
+                        ],
+                        (nextValue) => { setDatasetTaskFilter(nextValue as DatasetTaskFilter); setDatasetCurrentPage(1) },
+                        (v) => prefetchFilteredDatasets({ taskType: v as DatasetTaskFilter })
+                      )}
+
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.dataType'),
+                        datasetTypeFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'wsi', label: t('listPage.wholeSlideImaging') },
+                          { value: 'patch', label: t('listPage.patchCollection') },
+                        ],
+                        (nextValue) => { setDatasetTypeFilter(nextValue as DatasetTypeFilter); setDatasetCurrentPage(1) },
+                        (v) => prefetchFilteredDatasets({ dataType: v as DatasetTypeFilter })
+                      )}
+
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.dataLevel'),
+                        datasetLevelFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'file', label: t('listPage.fileLevel') },
+                          { value: 'patient', label: t('listPage.patientLevel') },
+                        ],
+                        (nextValue) => { setDatasetLevelFilter(nextValue as DatasetLevelFilter); setDatasetCurrentPage(1) },
+                        (v) => prefetchFilteredDatasets({ level: v as DatasetLevelFilter })
+                      )}
+
+                      <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
+                        <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
+                          {t('listPage.filters.groups.sourceOrgan')}
+                        </p>
+                        <Select
+                          value={datasetSourceFilter}
+                          onChange={(v) => { setDatasetSourceFilter(v); setDatasetCurrentPage(1) }}
+                          options={datasetSourceOptions}
+                          placeholder={t('listPage.filters.selectSourceOrgan')}
+                          className="w-full min-w-[160px] sm:min-w-[180px] lg:w-[180px] xl:w-[200px]"
+                          triggerClassName="h-8 px-2.5 text-xs sm:text-sm"
+                        />
+                      </div>
                     </div>
                   </div>
 
