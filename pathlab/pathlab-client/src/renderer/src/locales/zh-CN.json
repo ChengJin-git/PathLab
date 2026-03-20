@@ -2716,7 +2716,7 @@
       "privateDesc": "仅自己可见",
       "public": "公开",
       "publicDesc": "所有用户自动可见",
-      "changingVisibilityWarning": "更改可见性可能影响现有访问权限"
+      "changingVisibilityWarning": "更改可见性会影响其他用户的访问权限"
     },
     "fileMetadata": {
       "setMetadataForFiles": "设置文件元数据",

@@ -2778,7 +2778,7 @@
       "privateDesc": "Only visible to you",
       "public": "Public",
       "publicDesc": "Visible to all users automatically",
-      "changingVisibilityWarning": "Changing visibility may affect existing access"
+      "changingVisibilityWarning": "Changing visibility will affect other users' access permissions"
     },
     "fileMetadata": {
       "setMetadataForFiles": "Set Metadata for Files",

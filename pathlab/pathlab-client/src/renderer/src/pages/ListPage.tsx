@@ -5,7 +5,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
 import { ApiError } from '../api/client'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -1728,9 +1728,13 @@ export default function ListPage() {
                          }`}>
                            {sourceOrganLabel}
                          </span>
-                         {dataset.is_public && (
+                         {dataset.is_public ? (
                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100/70">
-                             <Globe className="w-2.5 h-2.5" />{t('listPage.public')}
+                             <Globe className="w-2.5 h-2.5" />{t('listComponents.editModals.public')}
+                           </span>
+                         ) : (
+                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200/70">
+                             <Lock className="w-2.5 h-2.5" />{t('listComponents.editModals.private')}
                            </span>
                          )}
                        </div>
@@ -1864,9 +1868,13 @@ export default function ListPage() {
                                 }`}>
                                   {sourceOrganLabel}
                                 </span>
-                                {dataset.is_public && (
+                                {dataset.is_public ? (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100/70">
-                                    <Globe className="w-2.5 h-2.5" />{t('listPage.public')}
+                                    <Globe className="w-2.5 h-2.5" />{t('listComponents.editModals.public')}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200/70">
+                                    <Lock className="w-2.5 h-2.5" />{t('listComponents.editModals.private')}
                                   </span>
                                 )}
                                 {dataset.parent_dataset_name && (

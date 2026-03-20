@@ -2721,7 +2721,7 @@
       "privateDesc": "僅自己可見",
       "public": "公開",
       "publicDesc": "所有用戶自動可見",
-      "changingVisibilityWarning": "更改可見性可能影響現有存取權限"
+      "changingVisibilityWarning": "更改可見性會影響其他使用者的存取權限"
     },
     "fileMetadata": {
       "setMetadataForFiles": "設定檔案元數據",
