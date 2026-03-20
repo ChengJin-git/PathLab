@@ -187,3 +187,109 @@ async def test_upsert_raises_on_cross_user_draft_conflict():
             source_dataset_id="ds-1",
             status="draft",
         )
+
+
+@pytest.mark.asyncio
+async def test_dataset_access_allows_public_without_grant(monkeypatch):
+    async def _read_access(*_args, **_kwargs):
+        raise AssertionError(
+            "read-access grant check should not run for public datasets"
+        )
+
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "has_valid_read_access",
+        staticmethod(_read_access),
+    )
+
+    allowed = await check_dataset_access_permission(
+        _user(),
+        "ds-public",
+        dataset_user_id="owner-1",
+        db=object(),
+        is_public=True,
+        parent_dataset_id=None,
+    )
+
+    assert allowed is True
+
+
+@pytest.mark.asyncio
+async def test_wsi_access_denies_when_no_public_owner_or_grant(monkeypatch):
+    async def _read_access(_db, _dataset_id, _user_id):
+        return False
+
+    async def _collab(_db, _dataset_id, _user_id):
+        return False
+
+    async def _ancestors(_db, _dataset_id, _max_depth=8):
+        return ["parent-only"]
+
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "has_valid_read_access",
+        staticmethod(_read_access),
+    )
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "has_valid_collaborate",
+        staticmethod(_collab),
+    )
+    monkeypatch.setattr(
+        DatasetRepository,
+        "get_ancestor_dataset_ids",
+        staticmethod(_ancestors),
+    )
+
+    allowed = await check_wsi_access_permission(
+        _user(),
+        wsi_dataset_id="ds-private",
+        wsi_user_id="owner-2",
+        db=object(),
+        dataset_is_public=False,
+        parent_dataset_id="parent-only",
+    )
+
+    assert allowed is False
+
+
+@pytest.mark.asyncio
+async def test_get_with_permission_allows_inherit_draft_for_dataset_access():
+    annotation = types.SimpleNamespace(
+        user_id="owner-1",
+        status="draft",
+        visibility_mode="inherit",
+        source_dataset_id="ds-2",
+    )
+    db = _DB(annotation)
+
+    result = await SegmentationAnnotationRepository.get_with_permission(
+        db,
+        annotation_id="annot-2",
+        user_id="viewer-2",
+        is_admin=False,
+        elevated_dataset_ids={"ds-2"},
+    )
+
+    assert result is annotation
+
+
+@pytest.mark.asyncio
+async def test_get_with_permission_allows_shared_draft_for_dataset_access():
+    annotation = types.SimpleNamespace(
+        user_id="owner-1",
+        status="shared_draft",
+        visibility_mode="shared",
+        source_dataset_id="ds-3",
+    )
+    db = _DB(annotation)
+
+    result = await SegmentationAnnotationRepository.get_with_permission(
+        db,
+        annotation_id="shared_ds-3",
+        user_id="viewer-3",
+        is_admin=False,
+        elevated_dataset_ids={"ds-3"},
+    )
+
+    assert result is annotation
