@@ -381,6 +381,66 @@ async def test_get_with_permission_allows_inherit_draft_for_dataset_access():
 
 
 @pytest.mark.asyncio
+async def test_get_with_permission_allows_inherit_on_public_dataset(monkeypatch):
+    annotation = types.SimpleNamespace(
+        user_id="owner-1",
+        status="draft",
+        visibility_mode="inherit",
+        source_dataset_id="ds-public",
+    )
+
+    async def _get_by_id(_db, dataset_id):
+        return types.SimpleNamespace(
+            dataset_id=dataset_id,
+            is_public=True,
+            is_open_collaboration=False,
+        )
+
+    monkeypatch.setattr(DatasetRepository, "get_by_id", staticmethod(_get_by_id))
+
+    db = _DB(annotation)
+    result = await SegmentationAnnotationRepository.get_with_permission(
+        db,
+        annotation_id="annot-public",
+        user_id="viewer-any",
+        is_admin=False,
+        elevated_dataset_ids=None,
+    )
+
+    assert result is annotation
+
+
+@pytest.mark.asyncio
+async def test_get_with_permission_blocks_inherit_on_private_dataset(monkeypatch):
+    annotation = types.SimpleNamespace(
+        user_id="owner-1",
+        status="draft",
+        visibility_mode="inherit",
+        source_dataset_id="ds-private",
+    )
+
+    async def _get_by_id(_db, dataset_id):
+        return types.SimpleNamespace(
+            dataset_id=dataset_id,
+            is_public=False,
+            is_open_collaboration=False,
+        )
+
+    monkeypatch.setattr(DatasetRepository, "get_by_id", staticmethod(_get_by_id))
+
+    db = _DB(annotation)
+    result = await SegmentationAnnotationRepository.get_with_permission(
+        db,
+        annotation_id="annot-private",
+        user_id="viewer-any",
+        is_admin=False,
+        elevated_dataset_ids=None,
+    )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_get_with_permission_allows_shared_draft_for_dataset_access():
     annotation = types.SimpleNamespace(
         user_id="owner-1",

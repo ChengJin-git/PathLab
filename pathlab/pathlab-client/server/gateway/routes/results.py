@@ -6630,7 +6630,7 @@ async def get_analysis_file(
 async def delete_task_analysis(
     task_id: str,
     analysis_id: str,
-    user: User = Depends(current_active_user),
+    user: User = Depends(require_pathologist_or_admin),
     db: AsyncSession = Depends(get_db),
 ):
     task = await TrainingTaskRepository.get_by_id(db, task_id)
