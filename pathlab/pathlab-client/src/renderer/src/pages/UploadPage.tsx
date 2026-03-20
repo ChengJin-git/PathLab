@@ -66,8 +66,8 @@ export default function RegisterPage() {
   const [datasetName, setDatasetName] = useDraftState<string>('draft:upload:datasetName', '')
   // Dataset ID (UUID) - only set when using existing dataset or passed from navigation
   const [datasetId, setDatasetId] = useState<string | null>(null)
-  const [isPublic, setIsPublic] = useState(false)
-  const [isOpenCollaboration, setIsOpenCollaboration] = useState(false)
+  const [isPublic, setIsPublic] = useDraftState<boolean>('draft:upload:isPublic', false)
+  const [isOpenCollaboration, setIsOpenCollaboration] = useDraftState<boolean>('draft:upload:isOpenCollaboration', false)
   const [datasetSourceSelection, setDatasetSourceSelection] = useDraftState<string>('draft:upload:datasetSourceSelection', '')
   const [datasetSourceCustom, setDatasetSourceCustom] = useDraftState<string>('draft:upload:datasetSourceCustom', '')
   // Source organ of the existing dataset (for auto-fill when appending)

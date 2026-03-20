@@ -1116,6 +1116,8 @@ class WSIRepository:
                 "aggregation_level": row.aggregation_level,
                 "task_type": row.task_type or "classification",
                 "source_organ": row.source_organ,
+                "is_public": bool(row.is_public),
+                "is_open_collaboration": bool(row.is_open_collaboration),
                 "parent_dataset_id": row.parent_dataset_id,
                 "parent_dataset_name": row.parent_dataset_name,
                 "file_count": row.file_count,
