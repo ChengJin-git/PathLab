@@ -156,6 +156,92 @@ export default function ListPage() {
   const [batchEditEventTime, setBatchEditEventTime] = useState('')
   const [batchEditEventStatus, setBatchEditEventStatus] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
+
+  // Case grouping - tracks which case_ids are expanded
+  const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
+
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = useCallback((col: SortColumn) => {
+    if (sortColumn === col) {
+      if (sortDirection === 'asc') {
+        setSortDirection('desc')
+      } else {
+        setSortColumn(null)
+        setSortDirection('asc')
+      }
+    } else {
+      setSortColumn(col)
+      setSortDirection('asc')
+    }
+    setCurrentPage(1)
+  }, [sortColumn, sortDirection])
+
+  const prefetchSort = useCallback((col: SortColumn) => {
+    if (!selectedDatasetId) return
+    const nextSortBy = SORT_FIELD_MAP[col]
+    let nextOrder: 'asc' | 'desc'
+    if (sortColumn === col) {
+      if (sortDirection === 'asc') {
+        nextOrder = 'desc'
+      } else {
+        return
+      }
+    } else {
+      nextOrder = 'asc'
+    }
+    void qc.prefetchQuery({
+      queryKey: ['wsi-list', selectedDatasetId, { page: 1, search: debouncedSearch, sort_by: nextSortBy, sort_order: nextOrder }],
+      queryFn: () => fetchWSIList(selectedDatasetId!, undefined, {
+        page: 1,
+        page_size: itemsPerPage,
+        search: debouncedSearch || undefined,
+        sort_by: nextSortBy,
+        sort_order: nextOrder,
+      }),
+      staleTime: 2 * 60 * 1000,
+    })
+  }, [qc, selectedDatasetId, sortColumn, sortDirection, debouncedSearch])
+
+  // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
+  const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
+  const [editingDatasetName, setEditingDatasetName] = useState('')
+  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'file'>('file')
+  const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'file'>('file')
+  const [editingDatasetSourceSelection, setEditingDatasetSourceSelection] = useState('')
+  const [editingDatasetSourceCustom, setEditingDatasetSourceCustom] = useState('')
+  const [editingDatasetOriginalSource, setEditingDatasetOriginalSource] = useState('')
+  const [editingDatasetIsPublic, setEditingDatasetIsPublic] = useState(false)
+  const [editingDatasetIsOpenCollaboration, setEditingDatasetIsOpenCollaboration] = useState(false)
+  const [editingDatasetOriginalIsPublic, setEditingDatasetOriginalIsPublic] = useState(false)
+  const [editingDatasetOriginalIsOpenCollaboration, setEditingDatasetOriginalIsOpenCollaboration] = useState(false)
+  const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
+
+  const resolveSourceValue = (selection: string, custom: string) => selection === 'Other' ? custom.trim() : selection.trim()
+
+  const toSourceSelectionState = (value?: string | null) => {
+    const normalized = value?.trim() || ''
+    const knownSources = organSources.filter(source => source !== 'Other')
+    if (!normalized) return { selection: '', custom: '' }
+    return knownSources.includes(normalized)
+      ? { selection: normalized, custom: '' }
+      : { selection: 'Other', custom: normalized }
+  }
+
+  // Legacy inline rename (still used for inline editing display)
+  const [renamingDatasetId, setRenamingDatasetId] = useState<string | null>(null)
+  const [renameDatasetNewName, setRenameDatasetNewName] = useState('')
+
+  // Delete dataset - stores dataset_id and name for the dataset to delete
+  const [datasetToDeleteId, setDatasetToDeleteId] = useState<string | null>(null)
+  const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
+  const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
+  const [deleting, setDeleting] = useState(false)
+  const [togglingVisibilityId, setTogglingVisibilityId] = useState<string | null>(null)
+
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
   const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
 
