@@ -18,6 +18,9 @@ class _Result:
     def scalar_one_or_none(self):
         return self._value
 
+    def first(self):
+        return self._value
+
 
 class _DB:
     def __init__(self, value):
@@ -95,10 +98,9 @@ async def test_get_with_permission_blocks_non_owner_personal_annotation():
     assert result is None
 
 
-
-
 def test_upsert_rejects_legacy_inherit_mode():
     with pytest.raises(ValueError, match="legacy 'inherit' mode has been removed"):
+
         async def _run():
             await SegmentationAnnotationRepository.upsert(
                 db=object(),
@@ -111,28 +113,31 @@ def test_upsert_rejects_legacy_inherit_mode():
         asyncio.run(_run())
 
 
-
 @pytest.mark.asyncio
 async def test_grant_or_renew_permission_rejects_guest_gpu_grant(monkeypatch):
+    guest_uuid = "11111111-1111-1111-1111-111111111111"
+
     class _GrantDB:
         async def execute(self, _stmt):
-            return _Result(types.SimpleNamespace(id='guest-1', role='guest'))
+            return _Result(types.SimpleNamespace(id=guest_uuid, role="guest"))
 
         async def flush(self):
             return None
 
     monkeypatch.setattr(
         DatasetGrantRepository,
-        'get_by_dataset_and_user',
+        "get_by_dataset_and_user",
         staticmethod(lambda *_args, **_kwargs: asyncio.sleep(0, result=None)),
     )
 
-    with pytest.raises(HTTPException, match='Guest users cannot be granted GPU permission'):
+    with pytest.raises(
+        HTTPException, match="Guest users cannot be granted GPU permission"
+    ):
         await _grant_or_renew_permission(
             db=_GrantDB(),
-            dataset_id='ds-1',
-            user_id='guest-1',
-            granted_by='admin-1',
+            dataset_id="ds-1",
+            user_id=guest_uuid,
+            granted_by="22222222-2222-2222-2222-222222222222",
             can_use_gpu=True,
         )
 
@@ -145,7 +150,7 @@ async def test_upsert_accepts_annotation_mode_alias_for_personal():
 
     class _SelectResult:
         def scalar_one(self):
-            return types.SimpleNamespace(annotation_id='annot-alias')
+            return types.SimpleNamespace(annotation_id="annot-alias")
 
     class _AliasDB:
         def __init__(self):
@@ -161,21 +166,20 @@ async def test_upsert_accepts_annotation_mode_alias_for_personal():
 
     result = await SegmentationAnnotationRepository.upsert(
         db=_AliasDB(),
-        annotation_id='annot-alias',
-        user_id='owner-1',
+        annotation_id="annot-alias",
+        user_id="owner-1",
         annotations={},
-        annotation_mode='personal',
+        annotation_mode="personal",
     )
 
-    assert result.annotation_id == 'annot-alias'
-
+    assert result.annotation_id == "annot-alias"
 
 
 def test_upload_request_defaults_to_private_visibility():
     from gateway.models import UploadByPathRequest
 
     request = UploadByPathRequest(
-        wsi_path='/tmp/sample.svs',
+        wsi_path="/tmp/sample.svs",
         is_public=False,
     )
 

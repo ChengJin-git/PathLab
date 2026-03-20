@@ -151,7 +151,7 @@ async def _append_segmentation_annotation_to_existing_dataset(
 @router.post("/csv")
 async def upload_wsi_by_csv(
     file: UploadFile = File(...),
-    user: User = Depends(require_pathologist_or_admin),
+    user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
     """

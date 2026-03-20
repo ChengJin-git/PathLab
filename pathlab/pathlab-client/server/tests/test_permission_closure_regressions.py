@@ -5,7 +5,9 @@ import pytest
 from gateway.routes.results import _has_external_validation_dataset_access
 from gateway.routes.storage_tasks import _build_batch_import_task_params
 from gateway.routes.training import _has_wsi_training_access
-from gateway.routes.wsi_upload import upload_wsi_by_path
+from gateway.routes.wsi_upload import router as wsi_upload_router, upload_wsi_by_path
+from backend.auth import current_active_user
+from backend.auth.dependencies import require_pathologist_or_admin
 
 
 @pytest.mark.asyncio
@@ -238,3 +240,16 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
         "source_organ": "lung",
         "is_public": True,
     }
+
+
+def test_upload_csv_route_allows_any_authenticated_user():
+    csv_route = next(
+        route
+        for route in wsi_upload_router.routes
+        if route.path == "/wsi/upload/csv" and "POST" in route.methods
+    )
+
+    dependency_calls = [dep.call for dep in csv_route.dependant.dependencies]
+
+    assert current_active_user in dependency_calls
+    assert require_pathologist_or_admin not in dependency_calls
