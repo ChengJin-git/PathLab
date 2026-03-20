@@ -158,12 +158,16 @@ async def _send_activation_email(user: "User") -> None:
         from_addr = settings.get("resend_from_email") or "PathLab <noreply@resend.dev>"
         display_name = user.nickname or user.email
         site_url = settings.get("site_url", "").rstrip("/")
+        configured_logo_url = (settings.get("resend_logo_url") or "").strip()
+        logo_url = configured_logo_url or (
+            f"{site_url}/images/pathlab-logo.png" if site_url else ""
+        )
         logo_html = (
             (
-                f"<img src='{site_url}/images/pathlab-logo.png' "
+                f"<img src='{logo_url}' "
                 "alt='PathLab' style='height:40px;width:auto;margin-bottom:24px;' /><br>"
             )
-            if site_url
+            if logo_url
             else ""
         )
         html_body = (

@@ -87,4 +87,3 @@ export async function updateGlobalSettings(
     'Failed to update global settings'
   )
 }
-

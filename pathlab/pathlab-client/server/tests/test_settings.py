@@ -114,6 +114,11 @@ class TestGetGlobalSettings:
             "turnstile_enabled",
             "turnstile_site_key",
             "turnstile_secret_key",
+            "resend_enabled",
+            "resend_api_key",
+            "resend_from_email",
+            "resend_logo_url",
+            "site_url",
         }
         assert expected_keys.issubset(data.keys())
 
@@ -176,6 +181,15 @@ class TestUpdateGlobalSettings:
         data = resp.json()
         assert data["local_asr_enabled"] is True
         assert data["local_asr_model"] == "whisper"
+
+    async def test_update_resend_logo_url(self, admin_client):
+        logo_url = "https://cdn.example.com/pathlab-logo.png"
+        resp = await admin_client.post(
+            "/settings",
+            json={"resend_logo_url": logo_url},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["resend_logo_url"] == logo_url
 
     async def test_empty_update_body_returns_400(self, admin_client):
         resp = await admin_client.post("/settings", json={})

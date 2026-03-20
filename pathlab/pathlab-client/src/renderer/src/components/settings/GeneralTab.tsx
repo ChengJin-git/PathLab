@@ -32,6 +32,7 @@ function StatusBadge({ status }: { status: 'online' | 'offline' | 'checking' }) 
 function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
   return (
     <button
+      type="button"
       onClick={onChange}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
         enabled ? 'bg-emerald-600 ring-emerald-500' : 'bg-slate-300 ring-slate-400'
@@ -121,7 +122,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [localAsrDetectedModel, setLocalAsrDetectedModel] = useState<string | null>(null)
 
   // Check local vLLM status
-  const checkLocalVllmStatusWithParams = async (bUrl: string, aKey: string) => {
+  const checkLocalVllmStatusWithParams = useCallback(async (bUrl: string, aKey: string) => {
     if (!bUrl) { setLocalVllmStatus('offline'); setLocalVllmDetectedModel(null); return }
     setLocalVllmStatus('checking')
     setLocalVllmDetectedModel(null)
@@ -137,10 +138,10 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         if (data.online && data.model) setLocalVllmDetectedModel(data.model)
       } else { setLocalVllmStatus('offline') }
     } catch { setLocalVllmStatus('offline') }
-  }
+  }, [])
 
   // Check local ASR status
-  const checkLocalAsrStatusWithParams = async (bUrl: string, aKey: string, m?: string) => {
+  const checkLocalAsrStatusWithParams = useCallback(async (bUrl: string, aKey: string, m?: string) => {
     if (!bUrl) { setLocalAsrStatus('offline'); setLocalAsrDetectedModel(null); return }
     setLocalAsrStatus('checking')
     setLocalAsrDetectedModel(null)
@@ -156,7 +157,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         if (data.online && data.model) setLocalAsrDetectedModel(data.model)
       } else { setLocalAsrStatus('offline') }
     } catch { setLocalAsrStatus('offline') }
-  }
+  }, [])
 
   // Load global settings
   const loadGlobalSettings = useCallback(async () => {
@@ -184,7 +185,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         checkLocalAsrStatusWithParams(s.local_asr_base_url, s.local_asr_api_key, s.local_asr_model)
       }
     } catch (err) { console.error('Failed to load global settings:', err) }
-  }, [])
+  }, [checkLocalAsrStatusWithParams, checkLocalVllmStatusWithParams])
 
   useEffect(() => { loadGlobalSettings() }, [loadGlobalSettings])
 
@@ -385,7 +386,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                         className="h-9 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500 pr-20"
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                        <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-xs text-orange-600 hover:text-orange-700 font-medium hover:underline">
+                          <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" rel="noopener noreferrer" className="text-xs text-orange-600 hover:text-orange-700 font-medium hover:underline">
                           {t('common.getKey')}
                         </a>
                       </div>
@@ -413,7 +414,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                         className="h-9 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500 pr-20"
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                        <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
+                          <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
                           {t('common.getToken')}
                         </a>
                       </div>
