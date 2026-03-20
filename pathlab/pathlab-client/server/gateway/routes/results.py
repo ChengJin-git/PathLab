@@ -3082,7 +3082,7 @@ async def start_external_validation(
             status_code=404, detail=f"Dataset not found: {req.dataset_id}"
         )
 
-    # Check ownership of the dataset (supports temporary elevated dataset permissions)
+    # Check ownership of the dataset (supports temporary elevated dataset grants)
     target_dataset_user_id = _coerce_str(target_dataset.user_id)
     if target_dataset_user_id and not check_data_ownership(
         target_dataset_user_id, user
@@ -6785,7 +6785,7 @@ async def get_results(
 ):
     """
     Get AI analysis results for a WSI from database.
-    Users can access the WSI itself via ownership or temporary dataset permission,
+    Users can access the WSI itself via ownership or temporary dataset grant,
     but only admins can see all derived results; non-admins only see their own
     results for that WSI.
 
@@ -6795,7 +6795,7 @@ async def get_results(
     Returns:
         AI result data including predictions and probabilities
     """
-    # Check WSI access permission (ownership or elevated dataset permission)
+    # Check WSI access permission (ownership or elevated dataset grant)
     wsi = await WSIRepository.get_by_id_with_dataset(db, wsi_id)
     if wsi:
         has_access = await check_wsi_access_permission(

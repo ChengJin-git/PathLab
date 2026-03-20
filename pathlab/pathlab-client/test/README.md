@@ -604,7 +604,7 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **权限与维护**
 
-- `getMyDatasetPermissions()`：获取当前用户的临时提权数据集 ID 列表
+- `getMyDatasetGrants()`：获取当前用户的临时提权数据集 ID 列表
 - `getClientIP()`：获取客户端 IP（用于协议签署记录）
 - `getMaintenanceNotice()`：获取当前维护公告（含 `active`、`message`、`needs_acknowledgment`）
 - `acknowledgeNotice()`：标记用户已读维护公告
@@ -684,7 +684,7 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 - 有用户会话时收到事件：调用 `toast.warning()`，`user` 清为 `null`
 - 无用户（未登录）时收到事件：不触发 toast（避免误报）
 
-**`refreshDatasetPermissions()`**
+**`refreshDatasetGrants()`**
 
 - 成功：更新 `elevatedDatasetIds`
 - 失败：重置为空数组
@@ -754,15 +754,15 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 ## unit/api/permissions.test.ts
 
-**对应源文件**：`src/renderer/src/api/permissions.ts`
+**对应源文件**：`src/renderer/src/api/grants.ts`
 
 覆盖数据集临时提权管理：
 
-- `getMyDatasetPermissions()`：获取当前用户已获得临时提权的数据集 ID 列表
-- `grantDatasetPermission()` / `revokeDatasetPermission()`：单条授权 / 撤销
-- `getUserDatasetPermissions()`：获取指定用户的所有权限记录
-- `listDatasetPermissions()`：管理员分页列出全量权限记录（含过期状态）
-- `batchGrantDatasetPermissions()` / `batchRevokeDatasetPermissions()`：批量授权 / 批量撤销
+- `getMyDatasetGrants()`：获取当前用户已获得临时提权的数据集 ID 列表
+- `grantDatasetGrant()` / `revokeDatasetGrant()`：单条授权 / 撤销
+- `getUserDatasetGrants()`：获取指定用户的所有权限记录
+- `listDatasetGrants()`：管理员分页列出全量权限记录（含过期状态）
+- `batchGrantDatasetGrants()` / `batchRevokeDatasetGrants()`：批量授权 / 批量撤销
 
 ---
 

@@ -22,15 +22,15 @@ from backend.database.repositories import (
 from ..dependencies import AI_SERVICE_URL, logger
 from ..models import DatasetUpdateVisibilityRequest
 
-router = APIRouter(tags=["WSI Permissions"])
+router = APIRouter(tags=["WSI Grants"])
 
 
-class BatchGrantDatasetPermissionRequest(BaseModel):
+class BatchGrantDatasetGrantRequest(BaseModel):
     user_ids: List[str] = Field(default_factory=list)
     expires_in_hours: Optional[int] = None
 
 
-class BatchRevokeDatasetPermissionRequest(BaseModel):
+class BatchRevokeDatasetGrantRequest(BaseModel):
     user_ids: List[str] = Field(default_factory=list)
 
 
@@ -200,8 +200,8 @@ async def update_dataset_visibility(
     }
 
 
-@router.get("/my-permissions")
-async def get_my_dataset_permissions(
+@router.get("/my-grants")
+async def get_my_dataset_grants(
     user: User = Depends(current_active_user), db: AsyncSession = Depends(get_db)
 ):
     grants = await DatasetGrantRepository.get_valid_by_user(db, str(user.id))
@@ -213,8 +213,8 @@ async def get_my_dataset_permissions(
     }
 
 
-@router.get("/user-permissions/{target_user_id}")
-async def get_user_dataset_permissions(
+@router.get("/user-grants/{target_user_id}")
+async def get_user_dataset_grants(
     target_user_id: str,
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -240,8 +240,8 @@ async def get_user_dataset_permissions(
     }
 
 
-@router.get("/datasets/{dataset_id}/permissions")
-async def list_dataset_permissions(
+@router.get("/datasets/{dataset_id}/grants")
+async def list_dataset_grants(
     dataset_id: str,
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
@@ -281,8 +281,8 @@ async def list_dataset_permissions(
     }
 
 
-@router.post("/datasets/{dataset_id}/permissions")
-async def grant_dataset_permission(
+@router.post("/datasets/{dataset_id}/grants")
+async def grant_dataset_grant(
     dataset_id: str,
     user_id: str = Form(...),
     expires_in_hours: Optional[int] = Form(None),
@@ -322,10 +322,10 @@ async def grant_dataset_permission(
     return {"message": message, "permission": grant}
 
 
-@router.post("/datasets/{dataset_id}/permissions/batch-grant")
-async def batch_grant_dataset_permissions(
+@router.post("/datasets/{dataset_id}/grants/batch-grant")
+async def batch_grant_dataset_grants(
     dataset_id: str,
-    request: BatchGrantDatasetPermissionRequest,
+    request: BatchGrantDatasetGrantRequest,
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
@@ -387,8 +387,8 @@ async def batch_grant_dataset_permissions(
     }
 
 
-@router.delete("/datasets/{dataset_id}/permissions/{target_user_id}")
-async def revoke_dataset_permission(
+@router.delete("/datasets/{dataset_id}/grants/{target_user_id}")
+async def revoke_dataset_grant(
     dataset_id: str,
     target_user_id: str,
     user: User = Depends(require_admin),
@@ -415,10 +415,10 @@ async def revoke_dataset_permission(
     return result
 
 
-@router.post("/datasets/{dataset_id}/permissions/batch-revoke")
-async def batch_revoke_dataset_permissions(
+@router.post("/datasets/{dataset_id}/grants/batch-revoke")
+async def batch_revoke_dataset_grants(
     dataset_id: str,
-    request: BatchRevokeDatasetPermissionRequest,
+    request: BatchRevokeDatasetGrantRequest,
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):

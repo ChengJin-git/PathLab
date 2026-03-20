@@ -65,11 +65,11 @@ from ..utils import (
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
-# Include permissions sub-router FIRST — routes like /my-permissions must be
+# Include grants sub-router FIRST — routes like /my-grants must be
 # registered before /{wsi_id} to avoid path parameter conflicts.
-from .wsi_permissions import router as wsi_permissions_router
+from .wsi_grants import router as wsi_grants_router
 
-router.include_router(wsi_permissions_router)
+router.include_router(wsi_grants_router)
 
 
 def _normalize_annotation_file_key(file_name: Optional[str]) -> Optional[str]:

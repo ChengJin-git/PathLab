@@ -2,7 +2,7 @@ import { API_BASE } from '../config'
 import { apiFetch } from './client'
 
 
-export interface DatasetPermission {
+export interface DatasetGrant {
   id: number
   dataset_id: string
   dataset_name?: string | null
@@ -20,22 +20,22 @@ export interface DatasetPermission {
   is_valid: boolean
 }
 
-export async function getMyDatasetPermissions(): Promise<{
+export async function getMyDatasetGrants(): Promise<{
   user_id: string
-  permissions: DatasetPermission[]
+  permissions: DatasetGrant[]
   elevated_dataset_ids: string[]
 }> {
   return apiFetch(
-    `${API_BASE}/wsi/my-permissions`,
+    `${API_BASE}/wsi/my-grants`,
     undefined,
-    'Failed to get dataset permissions'
+    'Failed to get dataset grants'
   )
 }
-export async function grantDatasetPermission(
+export async function grantDatasetGrant(
   datasetId: string,
   userId: string,
   expiresInHours?: number
-): Promise<{ message: string; permission: DatasetPermission }> {
+): Promise<{ message: string; permission: DatasetGrant }> {
   const formData = new FormData()
   formData.append('user_id', userId)
   if (expiresInHours !== undefined && expiresInHours > 0) {
@@ -43,94 +43,94 @@ export async function grantDatasetPermission(
   }
 
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions`,
+    `${API_BASE}/wsi/datasets/${datasetId}/grants`,
     {
       method: 'POST',
       body: formData
     },
-    'Failed to grant dataset permission'
+    'Failed to grant dataset grant'
   )
 }
 
-export async function revokeDatasetPermission(
+export async function revokeDatasetGrant(
   datasetId: string,
   userId: string
 ): Promise<{ message: string }> {
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions/${userId}`,
+    `${API_BASE}/wsi/datasets/${datasetId}/grants/${userId}`,
     { method: 'DELETE' },
-    'Failed to revoke dataset permission'
+    'Failed to revoke dataset grant'
   )
 }
 
-export async function getUserDatasetPermissions(userId: string): Promise<{
+export async function getUserDatasetGrants(userId: string): Promise<{
   user_id: string
-  permissions: DatasetPermission[]
-  valid_permissions: DatasetPermission[]
+  permissions: DatasetGrant[]
+  valid_permissions: DatasetGrant[]
 }> {
   return apiFetch(
-    `${API_BASE}/wsi/user-permissions/${userId}`,
+    `${API_BASE}/wsi/user-grants/${userId}`,
     undefined,
-    'Failed to get user dataset permissions'
+    'Failed to get user dataset grants'
   )
 }
 
-export async function listDatasetPermissions(datasetId: string): Promise<{
+export async function listDatasetGrants(datasetId: string): Promise<{
   dataset_id: string
-  permissions: DatasetPermission[]
+  permissions: DatasetGrant[]
 }> {
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions`,
+    `${API_BASE}/wsi/datasets/${datasetId}/grants`,
     undefined,
-    'Failed to list dataset permissions'
+    'Failed to list dataset grants'
   )
 }
 
-export interface BatchDatasetPermissionResult {
+export interface BatchDatasetGrantResult {
   user_id: string
   success: boolean
   message?: string
   error?: string
-  permission?: DatasetPermission
+  permission?: DatasetGrant
   affected_tasks?: string[]
 }
 
-export interface BatchDatasetPermissionResponse {
+export interface BatchDatasetGrantResponse {
   dataset_id: string
   granted?: number
   revoked?: number
   failed: number
-  results: BatchDatasetPermissionResult[]
+  results: BatchDatasetGrantResult[]
 }
 
-export async function batchGrantDatasetPermissions(
+export async function batchGrantDatasetGrants(
   datasetId: string,
   userIds: string[],
   expiresInHours?: number
-): Promise<BatchDatasetPermissionResponse> {
+): Promise<BatchDatasetGrantResponse> {
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions/batch-grant`,
+    `${API_BASE}/wsi/datasets/${datasetId}/grants/batch-grant`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_ids: userIds, expires_in_hours: expiresInHours })
     },
-    'Failed to batch grant dataset permissions'
+    'Failed to batch grant dataset grants'
   )
 }
 
-export async function batchRevokeDatasetPermissions(
+export async function batchRevokeDatasetGrants(
   datasetId: string,
   userIds: string[]
-): Promise<BatchDatasetPermissionResponse> {
+): Promise<BatchDatasetGrantResponse> {
   return apiFetch(
-    `${API_BASE}/wsi/datasets/${datasetId}/permissions/batch-revoke`,
+    `${API_BASE}/wsi/datasets/${datasetId}/grants/batch-revoke`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ user_ids: userIds })
     },
-    'Failed to batch revoke dataset permissions'
+    'Failed to batch revoke dataset grants'
   )
 }
 
@@ -150,4 +150,3 @@ export async function updateDatasetVisibility(
     'Failed to update dataset visibility'
   )
 }
-

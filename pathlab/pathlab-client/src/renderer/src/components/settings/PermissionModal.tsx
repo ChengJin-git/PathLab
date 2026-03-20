@@ -4,11 +4,11 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Checkbox } from '../ui/checkbox'
-import { UserListItem, DatasetPermission } from '../../api'
+import { UserListItem, DatasetGrant } from '../../api'
 
 export interface PermissionModalProps {
   user: UserListItem
-  permissions: DatasetPermission[]
+  permissions: DatasetGrant[]
   datasets: { dataset_id: string; dataset_name: string }[]
   selectedDatasetIds: string[]
   expiresInHours: string

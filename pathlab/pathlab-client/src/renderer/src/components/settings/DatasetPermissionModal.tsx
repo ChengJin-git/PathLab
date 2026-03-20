@@ -8,16 +8,16 @@ import { Label } from '../ui/label'
 import { Select } from '../ui/select'
 import {
   fetchDatasets,
-  grantDatasetPermission,
-  listDatasetPermissions,
+  grantDatasetGrant,
+  listDatasetGrants,
   listUsers,
-  revokeDatasetPermission,
+  revokeDatasetGrant,
   updateDatasetVisibility
 } from '../../api'
-import type { DatasetPermission, UserListItem } from '../../api'
+import type { DatasetGrant, UserListItem } from '../../api'
 import type { ShowConfirmDialog } from './ConfirmDialog'
 
-export interface DatasetPermissionModalProps {
+export interface DatasetGrantModalProps {
   showConfirmDialog: ShowConfirmDialog
   closeConfirmDialog: () => void
   onClose: () => void
@@ -34,11 +34,11 @@ function getRoleBadgeColor(role: string) {
   }
 }
 
-export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, onClose }: DatasetPermissionModalProps) {
+export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClose }: DatasetGrantModalProps) {
   const { t } = useTranslation()
   const [users, setUsers] = useState<UserListItem[]>([])
   const [datasets, setDatasets] = useState<PermissionDataset[]>([])
-  const [permissions, setPermissions] = useState<DatasetPermission[]>([])
+  const [permissions, setPermissions] = useState<DatasetGrant[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [selectedDatasetIsPublic, setSelectedDatasetIsPublic] = useState(false)
   const [selectedDatasetIsOpenCollab, setSelectedDatasetIsOpenCollab] = useState(false)
@@ -52,7 +52,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
   const [loadingPermissions, setLoadingPermissions] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
-  const loadDatasetPermissionList = useCallback(async (datasetId: string) => {
+  const loadDatasetGrantList = useCallback(async (datasetId: string) => {
     if (!datasetId) {
       setPermissions([])
       return
@@ -60,7 +60,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
     setLoadingPermissions(true)
     setError(null)
     try {
-      const response = await listDatasetPermissions(datasetId)
+      const response = await listDatasetGrants(datasetId)
       setPermissions(response.permissions)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToLoadPermissions'))
@@ -96,7 +96,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
       setExpiresInHours('')
 
       if (initialDatasetId) {
-        await loadDatasetPermissionList(initialDatasetId)
+        await loadDatasetGrantList(initialDatasetId)
       } else {
         setPermissions([])
       }
@@ -105,7 +105,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
     } finally {
       setLoadingData(false)
     }
-  }, [loadDatasetPermissionList, t])
+  }, [loadDatasetGrantList, t])
 
   useEffect(() => {
     void loadInitialData()
@@ -141,7 +141,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
     setSelectedUserIds([])
     setUserSearchQuery('')
     setExpiresInHours('')
-    void loadDatasetPermissionList(datasetId)
+    void loadDatasetGrantList(datasetId)
   }
 
   const handleToggleVisibility = async () => {
@@ -205,8 +205,8 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
     try {
       setSubmitting(true)
       setError(null)
-      const results = await Promise.allSettled(selectedUserIds.map((userId) => grantDatasetPermission(selectedDatasetId, userId, hours)))
-      await loadDatasetPermissionList(selectedDatasetId)
+      const results = await Promise.allSettled(selectedUserIds.map((userId) => grantDatasetGrant(selectedDatasetId, userId, hours)))
+      await loadDatasetGrantList(selectedDatasetId)
       setSelectedUserIds([])
       setExpiresInHours('')
       if (results.some((result) => result.status === 'rejected')) {
@@ -219,7 +219,7 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
     }
   }
 
-  const handleRevokePermission = (permission: DatasetPermission) => {
+  const handleRevokePermission = (permission: DatasetGrant) => {
     const datasetName = datasetMap.get(permission.dataset_id)?.dataset_name || permission.dataset_id
     const userName = userMap.get(permission.user_id)?.nickname || userMap.get(permission.user_id)?.email || permission.user_id
 
@@ -233,8 +233,8 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
         try {
           setSubmitting(true)
           setError(null)
-          await revokeDatasetPermission(permission.dataset_id, permission.user_id)
-          await loadDatasetPermissionList(permission.dataset_id)
+          await revokeDatasetGrant(permission.dataset_id, permission.user_id)
+          await loadDatasetGrantList(permission.dataset_id)
         } catch (err) {
           setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToRevokePermission'))
         } finally {
@@ -259,8 +259,8 @@ export function DatasetPermissionModal({ showConfirmDialog, closeConfirmDialog, 
         try {
           setSubmitting(true)
           setError(null)
-          const results = await Promise.allSettled(validPermissions.map((permission) => revokeDatasetPermission(selectedDatasetId, permission.user_id)))
-          await loadDatasetPermissionList(selectedDatasetId)
+          const results = await Promise.allSettled(validPermissions.map((permission) => revokeDatasetGrant(selectedDatasetId, permission.user_id)))
+          await loadDatasetGrantList(selectedDatasetId)
           if (results.some((result) => result.status === 'rejected')) {
             setError(t('settings.datasetPermissionModal.failedToRevokePermissions'))
           }

@@ -28,7 +28,7 @@ def _get_patch_overlay_proxy_timeout(preset: Optional[str]) -> float:
 
 
 async def _check_wsi_access(wsi_id: str, user: User, db: AsyncSession):
-    """Helper to check WSI access permission (ownership or elevated dataset permission)."""
+    """Helper to check WSI access permission (ownership or elevated dataset grant)."""
     await get_wsi_with_access(
         wsi_id,
         user,

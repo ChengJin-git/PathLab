@@ -21,7 +21,7 @@ const mockLoginWithCredentials = vi.fn()
 const mockApiLogout = vi.fn()
 const mockClearAuthToken = vi.fn()
 const mockApiAcceptAgreement = vi.fn()
-const mockGetMyDatasetPermissions = vi.fn()
+const mockGetMyDatasetGrants = vi.fn()
 const mockGetClientIP = vi.fn()
 const mockGetMaintenanceNotice = vi.fn()
 const mockApiAcknowledgeNotice = vi.fn()
@@ -32,7 +32,7 @@ vi.mock('@renderer/api', () => ({
   logout: (...args: unknown[]) => mockApiLogout(...args),
   clearAuthToken: (...args: unknown[]) => mockClearAuthToken(...args),
   acceptAgreement: (...args: unknown[]) => mockApiAcceptAgreement(...args),
-  getMyDatasetPermissions: (...args: unknown[]) => mockGetMyDatasetPermissions(...args),
+  getMyDatasetGrants: (...args: unknown[]) => mockGetMyDatasetGrants(...args),
   getClientIP: (...args: unknown[]) => mockGetClientIP(...args),
   getMaintenanceNotice: (...args: unknown[]) => mockGetMaintenanceNotice(...args),
   acknowledgeNotice: (...args: unknown[]) => mockApiAcknowledgeNotice(...args),
@@ -101,14 +101,14 @@ function wrapper({ children }: { children: React.ReactNode }) {
 
 function notLoggedIn() {
   mockGetCurrentUser.mockResolvedValue({ is_logged_in: false, user: null })
-  mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+  mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
   mockGetMaintenanceNotice.mockResolvedValue({ active: false, message: null, needs_acknowledgment: false })
 }
 
 function loggedInAs(userOverrides: Record<string, unknown> = {}) {
   const user = buildUser(userOverrides)
   mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user })
-  mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+  mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
   mockGetMaintenanceNotice.mockResolvedValue({ active: false, message: null, needs_acknowledgment: false })
   return user
 }
@@ -149,7 +149,7 @@ describe('AuthContext', () => {
 
     it('sets error when getCurrentUser throws', async () => {
       mockGetCurrentUser.mockRejectedValue(new Error('network failure'))
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
 
       const { result } = renderHook(() => useAuth(), { wrapper })
       await waitFor(() => expect(result.current.isLoading).toBe(false))
@@ -171,7 +171,7 @@ describe('AuthContext', () => {
       const user = buildUser()
       mockLoginWithCredentials.mockResolvedValue(undefined)
       mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user })
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
 
       let loginResult: boolean
       await act(async () => {
@@ -189,7 +189,7 @@ describe('AuthContext', () => {
 
       mockLoginWithCredentials.mockResolvedValue(undefined)
       mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user: buildUser() })
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
 
       await act(async () => {
         await result.current.login('alice', 'secret', 'turnstile_token_123')
@@ -372,7 +372,7 @@ describe('AuthContext', () => {
     it('returns true for guest with elevated access to that dataset', async () => {
       const user = buildUser({ role: 'guest' })
       mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user })
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: ['ds-456'] })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: ['ds-456'] })
       mockGetMaintenanceNotice.mockResolvedValue({ active: false, message: null, needs_acknowledgment: false })
 
       const { result } = renderHook(() => useAuth(), { wrapper })
@@ -487,7 +487,7 @@ describe('AuthContext', () => {
     it('sets maintenanceNoticeMessage when notice is active', async () => {
       const user = buildUser({ role: 'pathologist' })
       mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user })
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
       mockGetMaintenanceNotice.mockResolvedValue({
         active: true,
         message: 'Server maintenance tonight',
@@ -513,7 +513,7 @@ describe('AuthContext', () => {
     it('clears notice state when user logs out', async () => {
       const user = buildUser({ role: 'pathologist' })
       mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user })
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
       mockGetMaintenanceNotice.mockResolvedValue({
         active: true,
         message: 'Maintenance',
@@ -537,7 +537,7 @@ describe('AuthContext', () => {
     it('returns true, updates user, and clears acknowledgment flag', async () => {
       const user = buildUser({ role: 'pathologist' })
       mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user })
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: [] })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: [] })
       mockGetMaintenanceNotice
         .mockResolvedValueOnce({ active: true, message: 'Maintenance', needs_acknowledgment: true })
         .mockResolvedValue({ active: false, message: null, needs_acknowledgment: false })
@@ -618,9 +618,9 @@ describe('AuthContext', () => {
     })
   })
 
-  // ── refreshDatasetPermissions() ────────────────────────────────────────
+  // ── refreshDatasetGrants() ────────────────────────────────────────
 
-  describe('refreshDatasetPermissions()', () => {
+  describe('refreshDatasetGrants()', () => {
     it('updates elevatedDatasetIds on success', async () => {
       loggedInAs({ role: 'guest' })
       const { result } = renderHook(() => useAuth(), { wrapper })
@@ -630,8 +630,8 @@ describe('AuthContext', () => {
       expect(result.current.elevatedDatasetIds).toEqual([])
 
       // Now elevated access is granted
-      mockGetMyDatasetPermissions.mockResolvedValue({ elevated_dataset_ids: ['ds-777'] })
-      await act(async () => { await result.current.refreshDatasetPermissions() })
+      mockGetMyDatasetGrants.mockResolvedValue({ elevated_dataset_ids: ['ds-777'] })
+      await act(async () => { await result.current.refreshDatasetGrants() })
 
       expect(result.current.elevatedDatasetIds).toEqual(['ds-777'])
       expect(result.current.canUseGpuForDataset('ds-777')).toBe(true)
@@ -640,7 +640,7 @@ describe('AuthContext', () => {
     it('resets elevatedDatasetIds to [] on failure', async () => {
       const user = buildUser({ role: 'guest' })
       mockGetCurrentUser.mockResolvedValue({ is_logged_in: true, user })
-      mockGetMyDatasetPermissions
+      mockGetMyDatasetGrants
         .mockResolvedValueOnce({ elevated_dataset_ids: ['ds-777'] })
         .mockRejectedValueOnce(new Error('server error'))
       mockGetMaintenanceNotice.mockResolvedValue({ active: false, message: null, needs_acknowledgment: false })
@@ -652,7 +652,7 @@ describe('AuthContext', () => {
       expect(result.current.elevatedDatasetIds).toEqual(['ds-777'])
 
       // Now refresh fails
-      await act(async () => { await result.current.refreshDatasetPermissions() })
+      await act(async () => { await result.current.refreshDatasetGrants() })
       expect(result.current.elevatedDatasetIds).toEqual([])
     })
   })

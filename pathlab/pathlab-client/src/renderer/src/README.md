@@ -63,7 +63,7 @@ src/
 - `api/export.ts`
 - `api/feedback.ts`
 - `api/heatmap.ts`
-- `api/permissions.ts`
+- `api/grants.ts`
 - `api/queue.ts`
 - `api/results.ts`
 - `api/settings.ts`

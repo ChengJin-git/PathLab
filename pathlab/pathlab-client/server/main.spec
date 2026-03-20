@@ -149,7 +149,7 @@ extra_hidden = [
     'gateway.routes.settings',
     'gateway.routes.gpu',
     'gateway.routes.annotation',
-    'gateway.routes.wsi_permissions',
+    'gateway.routes.wsi_grants',
     'gateway.routes.analysis_helpers',
     'gateway.routes.analysis_metrics',
     'gateway.routes.analysis_state',

@@ -67,7 +67,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - 训练辅助：`training_options.py`（为 `training_options_router` 提供 `/training/options` 接口）
 - 运行时辅助：`transformers_runtime.py`
 - 存储辅助：`storage_scan.py`、`storage_tasks.py`
-- WSI 权限辅助：`wsi_permissions.py`
+- WSI 权限辅助：`wsi_grants.py`
 
 这些文件通常通过导入被组合到顶层 router，而不是单独挂载；当前也没有额外单列的 `deep-research` router 入口。
 

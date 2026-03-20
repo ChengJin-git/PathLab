@@ -8,16 +8,16 @@ import { Label } from '../ui/label'
 import { Select } from '../ui/select'
 import { cn } from '../../lib/utils'
 import {
-  batchGrantDatasetPermissions,
-  batchRevokeDatasetPermissions,
+  batchGrantDatasetGrants,
+  batchRevokeDatasetGrants,
   fetchDatasets,
-  getUserDatasetPermissions,
-  grantDatasetPermission,
-  listDatasetPermissions,
+  getUserDatasetGrants,
+  grantDatasetGrant,
+  listDatasetGrants,
   listUsersPaged,
-  revokeDatasetPermission
+  revokeDatasetGrant
 } from '../../api'
-import type { DatasetPermission } from '../../api/permissions'
+import type { DatasetGrant } from '../../api/grants'
 import type { UserListItem } from '../../api/users'
 import type { DatasetSummary } from '../../api/wsi'
 import type { ShowConfirmDialog } from './ConfirmDialog'
@@ -157,10 +157,10 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const [grantUserItems, setGrantUserItems] = useState<UserListItem[]>([])
   const [grantUserTotal, setGrantUserTotal] = useState(0)
   const [loadingGrantUsers, setLoadingGrantUsers] = useState(false)
-  const [userPermissions, setUserPermissions] = useState<DatasetPermission[]>([])
-  const [datasetPermissions, setDatasetPermissions] = useState<DatasetPermission[]>([])
+  const [userPermissions, setUserPermissions] = useState<DatasetGrant[]>([])
+  const [datasetPermissions, setDatasetGrants] = useState<DatasetGrant[]>([])
   const [loadingUserPermissions, setLoadingUserPermissions] = useState(false)
-  const [loadingDatasetPermissions, setLoadingDatasetPermissions] = useState(false)
+  const [loadingDatasetGrants, setLoadingDatasetGrants] = useState(false)
   const [selectedDatasetIds, setSelectedDatasetIds] = useState<string[]>([])
   const [selectedGrantUserIds, setSelectedGrantUserIds] = useState<string[]>([])
   const [selectingAllDatasets, setSelectingAllDatasets] = useState(false)
@@ -178,10 +178,10 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   const sortedUserPermissions = useMemo(() => [...userPermissions].sort((a, b) => a.is_valid !== b.is_valid ? (a.is_valid ? -1 : 1) : (a.dataset_name || a.dataset_id).localeCompare(b.dataset_name || b.dataset_id)), [userPermissions])
   const selectableDatasetIdsOnPage = useMemo(() => pagedDatasets.filter((dataset) => !validUserDatasetIds.has(dataset.dataset_id) && dataset.user_id !== selectedUser?.id).map((dataset) => dataset.dataset_id), [pagedDatasets, validUserDatasetIds, selectedUser])
   const allVisibleDatasetsSelected = useMemo(() => selectableDatasetIdsOnPage.length > 0 && selectableDatasetIdsOnPage.every((datasetId) => selectedDatasetIds.includes(datasetId)), [selectableDatasetIdsOnPage, selectedDatasetIds])
-  const validDatasetPermissions = useMemo(() => datasetPermissions.filter((permission) => permission.is_valid), [datasetPermissions])
-  const validDatasetPermissionUserIds = useMemo(() => new Set(validDatasetPermissions.map((permission) => permission.user_id)), [validDatasetPermissions])
-  const sortedDatasetPermissions = useMemo(() => [...datasetPermissions].sort((a, b) => a.is_valid !== b.is_valid ? (a.is_valid ? -1 : 1) : (a.user_nickname || a.user_email || a.user_id).localeCompare(b.user_nickname || b.user_email || b.user_id)), [datasetPermissions])
-  const selectableGrantUsers = useMemo(() => grantUserItems.filter((user) => !validDatasetPermissionUserIds.has(user.id) && user.id !== selectedDataset?.user_id), [grantUserItems, validDatasetPermissionUserIds, selectedDataset])
+  const validDatasetGrants = useMemo(() => datasetPermissions.filter((permission) => permission.is_valid), [datasetPermissions])
+  const validDatasetGrantUserIds = useMemo(() => new Set(validDatasetGrants.map((permission) => permission.user_id)), [validDatasetGrants])
+  const sortedDatasetGrants = useMemo(() => [...datasetPermissions].sort((a, b) => a.is_valid !== b.is_valid ? (a.is_valid ? -1 : 1) : (a.user_nickname || a.user_email || a.user_id).localeCompare(b.user_nickname || b.user_email || b.user_id)), [datasetPermissions])
+  const selectableGrantUsers = useMemo(() => grantUserItems.filter((user) => !validDatasetGrantUserIds.has(user.id) && user.id !== selectedDataset?.user_id), [grantUserItems, validDatasetGrantUserIds, selectedDataset])
   const allVisibleUsersSelected = useMemo(() => selectableGrantUsers.length > 0 && selectableGrantUsers.every((user) => selectedGrantUserIds.includes(user.id)), [selectableGrantUsers, selectedGrantUserIds])
 
   useEffect(() => {
@@ -222,13 +222,13 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
       })
       total = response.total
       response.items.forEach((user) => {
-        if (!validDatasetPermissionUserIds.has(user.id) && user.id !== selectedDataset?.user_id) ids.push(user.id)
+        if (!validDatasetGrantUserIds.has(user.id) && user.id !== selectedDataset?.user_id) ids.push(user.id)
       })
       page += 1
     } while ((page - 1) * pageSize < total)
 
     return Array.from(new Set(ids))
-  }, [debouncedGrantUserSearchQuery, validDatasetPermissionUserIds, selectedDataset])
+  }, [debouncedGrantUserSearchQuery, validDatasetGrantUserIds, selectedDataset])
 
   const loadDatasets = useCallback(async () => {
     setLoadingDatasets(true)
@@ -275,7 +275,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     if (!userId) { setUserPermissions([]); return }
     setLoadingUserPermissions(true)
     try {
-      const response = await getUserDatasetPermissions(userId)
+      const response = await getUserDatasetGrants(userId)
       setUserPermissions(response.permissions)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToLoadUserPermissions'))
@@ -284,16 +284,16 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     }
   }, [t])
 
-  const loadDatasetPermissions = useCallback(async (datasetId: string) => {
-    if (!datasetId) { setDatasetPermissions([]); return }
-    setLoadingDatasetPermissions(true)
+  const loadDatasetGrants = useCallback(async (datasetId: string) => {
+    if (!datasetId) { setDatasetGrants([]); return }
+    setLoadingDatasetGrants(true)
     try {
-      const response = await listDatasetPermissions(datasetId)
-      setDatasetPermissions(response.permissions)
+      const response = await listDatasetGrants(datasetId)
+      setDatasetGrants(response.permissions)
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToLoadDatasetPermissions'))
+      setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToLoadDatasetGrants'))
     } finally {
-      setLoadingDatasetPermissions(false)
+      setLoadingDatasetGrants(false)
     }
   }, [t])
 
@@ -308,10 +308,10 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   useEffect(() => { if (mode === 'user' && selectedUserId) void loadUserPermissions(selectedUserId) }, [loadUserPermissions, mode, selectedUserId])
   useEffect(() => {
     if (mode !== 'dataset') return
-    if (pagedDatasets.length === 0) { setSelectedDatasetId(''); setDatasetPermissions([]); return }
+    if (pagedDatasets.length === 0) { setSelectedDatasetId(''); setDatasetGrants([]); return }
     if (!pagedDatasets.some((dataset) => dataset.dataset_id === selectedDatasetId)) setSelectedDatasetId(pagedDatasets[0].dataset_id)
   }, [mode, pagedDatasets, selectedDatasetId])
-  useEffect(() => { if (mode === 'dataset' && selectedDatasetId) void loadDatasetPermissions(selectedDatasetId) }, [loadDatasetPermissions, mode, selectedDatasetId])
+  useEffect(() => { if (mode === 'dataset' && selectedDatasetId) void loadDatasetGrants(selectedDatasetId) }, [loadDatasetGrants, mode, selectedDatasetId])
   useEffect(() => {
     setAllMatchingDatasetsSelected(false)
     setAllMatchingDatasetCount(0)
@@ -319,7 +319,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   useEffect(() => {
     setAllMatchingUsersSelected(false)
     setAllMatchingUserCount(0)
-  }, [grantUserSearchQuery, selectedDatasetId, validDatasetPermissionUserIds])
+  }, [grantUserSearchQuery, selectedDatasetId, validDatasetGrantUserIds])
 
   const handleModeChange = (nextMode: PermissionMode) => { setMode(nextMode); onModeChange?.(nextMode); setError(null); setExpiresInHours(''); setSelectedDatasetIds([]); setSelectedGrantUserIds([]); setAllMatchingDatasetsSelected(false); setAllMatchingUsersSelected(false); setAllMatchingDatasetCount(0); setAllMatchingUserCount(0) }
   const handleToggleAllDatasets = (checked: boolean) => {
@@ -395,7 +395,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
       setSubmitting(true)
       setError(null)
       const hours = parsePositiveHours(expiresInHours)
-      const results = await Promise.allSettled(selectedDatasetIds.map((datasetId) => grantDatasetPermission(datasetId, selectedUser.id, hours)))
+      const results = await Promise.allSettled(selectedDatasetIds.map((datasetId) => grantDatasetGrant(datasetId, selectedUser.id, hours)))
       await loadUserPermissions(selectedUser.id)
       setSelectedDatasetIds([])
       setAllMatchingDatasetsSelected(false)
@@ -410,7 +410,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     }
   }
 
-  const handleRevokeFromUser = (permission: DatasetPermission) => {
+  const handleRevokeFromUser = (permission: DatasetGrant) => {
     if (!selectedUser) return
     showConfirmDialog({
       title: t('settings.permissionCenterModal.revokePermission'),
@@ -422,7 +422,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
         try {
           setSubmitting(true)
           setError(null)
-          await revokeDatasetPermission(permission.dataset_id, selectedUser.id)
+          await revokeDatasetGrant(permission.dataset_id, selectedUser.id)
           await loadUserPermissions(selectedUser.id)
         } catch (err) {
           setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToRevokeUserPermission'))
@@ -445,7 +445,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
         try {
           setSubmitting(true)
           setError(null)
-          const results = await Promise.allSettled(validUserPermissions.map((permission) => revokeDatasetPermission(permission.dataset_id, selectedUser.id)))
+          const results = await Promise.allSettled(validUserPermissions.map((permission) => revokeDatasetGrant(permission.dataset_id, selectedUser.id)))
           await loadUserPermissions(selectedUser.id)
           const failedCount = results.filter((result) => result.status === 'rejected').length
           if (failedCount > 0) setError(t('settings.permissionCenterModal.partialRevokeWarning', { failed: failedCount }))
@@ -464,26 +464,26 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
       setSubmitting(true)
       setError(null)
       const hours = parsePositiveHours(expiresInHours)
-      const response = await batchGrantDatasetPermissions(selectedDatasetId, selectedGrantUserIds, hours)
-      await loadDatasetPermissions(selectedDatasetId)
+      const response = await batchGrantDatasetGrants(selectedDatasetId, selectedGrantUserIds, hours)
+      await loadDatasetGrants(selectedDatasetId)
       setSelectedGrantUserIds([])
       setAllMatchingUsersSelected(false)
       setAllMatchingUserCount(0)
       setExpiresInHours('')
       if ((response.failed || 0) > 0) setError(t('settings.permissionCenterModal.partialGrantWarning', { failed: response.failed }))
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToGrantDatasetPermissions'))
+      setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToGrantDatasetGrants'))
     } finally {
       setSubmitting(false)
     }
   }
 
-  const handleRevokeFromDataset = (permission: DatasetPermission) => {
+  const handleRevokeFromDataset = (permission: DatasetGrant) => {
     const userName = permission.user_nickname || permission.user_email || permission.user_id
     const datasetName = selectedDataset?.dataset_name || permission.dataset_id
     showConfirmDialog({
       title: t('settings.permissionCenterModal.revokePermission'),
-      message: t('settings.permissionCenterModal.revokeDatasetPermissionConfirm', { userName, datasetName }),
+      message: t('settings.permissionCenterModal.revokeDatasetGrantConfirm', { userName, datasetName }),
       confirmText: t('settings.usersTab.revoke'),
       confirmVariant: 'warning',
       onConfirm: async () => {
@@ -491,11 +491,11 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
         try {
           setSubmitting(true)
           setError(null)
-          const response = await batchRevokeDatasetPermissions(permission.dataset_id, [permission.user_id])
-          await loadDatasetPermissions(permission.dataset_id)
+          const response = await batchRevokeDatasetGrants(permission.dataset_id, [permission.user_id])
+          await loadDatasetGrants(permission.dataset_id)
           if ((response.failed || 0) > 0) setError(t('settings.permissionCenterModal.partialRevokeWarning', { failed: response.failed }))
         } catch (err) {
-          setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToRevokeDatasetPermission'))
+          setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToRevokeDatasetGrant'))
         } finally {
           setSubmitting(false)
         }
@@ -504,10 +504,10 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
   }
 
   const handleRevokeAllFromDataset = () => {
-    if (!selectedDatasetId || validDatasetPermissions.length === 0) return
+    if (!selectedDatasetId || validDatasetGrants.length === 0) return
     showConfirmDialog({
       title: t('settings.permissionCenterModal.revokeAllPermissions'),
-      message: t('settings.permissionCenterModal.revokeAllDatasetPermissionsConfirm', { datasetName: selectedDataset?.dataset_name || selectedDatasetId, count: validDatasetPermissions.length }),
+      message: t('settings.permissionCenterModal.revokeAllDatasetGrantsConfirm', { datasetName: selectedDataset?.dataset_name || selectedDatasetId, count: validDatasetGrants.length }),
       confirmText: t('settings.permissionCenterModal.revokeAll'),
       confirmVariant: 'danger',
       onConfirm: async () => {
@@ -515,11 +515,11 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
         try {
           setSubmitting(true)
           setError(null)
-          const response = await batchRevokeDatasetPermissions(selectedDatasetId, validDatasetPermissions.map((permission) => permission.user_id))
-          await loadDatasetPermissions(selectedDatasetId)
+          const response = await batchRevokeDatasetGrants(selectedDatasetId, validDatasetGrants.map((permission) => permission.user_id))
+          await loadDatasetGrants(selectedDatasetId)
           if ((response.failed || 0) > 0) setError(t('settings.permissionCenterModal.partialRevokeWarning', { failed: response.failed }))
         } catch (err) {
-          setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToRevokeDatasetPermissions'))
+          setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToRevokeDatasetGrants'))
         } finally {
           setSubmitting(false)
         }
@@ -602,8 +602,8 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
             </div>
             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
               <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-3"><div><h4 className="text-sm font-medium text-gray-900">{t('settings.permissionCenterModal.currentAccess')}</h4><p className="mt-1 text-xs text-gray-500">{selectedDataset ? t('settings.permissionCenterModal.selectedDatasetName', { name: selectedDataset.dataset_name }) : t('settings.permissionCenterModal.selectDatasetHint')}</p><p className="mt-1 text-xs text-gray-500">{t('settings.permissionCenterModal.currentAccessCount', { count: validDatasetPermissions.length })}</p></div><Button type="button" variant="ghost" size="sm" onClick={handleRevokeAllFromDataset} disabled={!selectedDatasetId || validDatasetPermissions.length === 0 || submitting || loadingDatasetPermissions} className="text-red-600 hover:bg-red-50 hover:text-red-700"><Trash2 className="mr-1 h-3.5 w-3.5" />{t('settings.permissionCenterModal.revokeAll')}</Button></div>
-                {loadingDatasetPermissions ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingDatasetPermissions')}</div> : sortedDatasetPermissions.length === 0 ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noCurrentAccess')}</div> : <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">{sortedDatasetPermissions.map((permission) => {
+                <div className="mb-3 flex items-center justify-between gap-3"><div><h4 className="text-sm font-medium text-gray-900">{t('settings.permissionCenterModal.currentAccess')}</h4><p className="mt-1 text-xs text-gray-500">{selectedDataset ? t('settings.permissionCenterModal.selectedDatasetName', { name: selectedDataset.dataset_name }) : t('settings.permissionCenterModal.selectDatasetHint')}</p><p className="mt-1 text-xs text-gray-500">{t('settings.permissionCenterModal.currentAccessCount', { count: validDatasetGrants.length })}</p></div><Button type="button" variant="ghost" size="sm" onClick={handleRevokeAllFromDataset} disabled={!selectedDatasetId || validDatasetGrants.length === 0 || submitting || loadingDatasetGrants} className="text-red-600 hover:bg-red-50 hover:text-red-700"><Trash2 className="mr-1 h-3.5 w-3.5" />{t('settings.permissionCenterModal.revokeAll')}</Button></div>
+                {loadingDatasetGrants ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingDatasetGrants')}</div> : sortedDatasetGrants.length === 0 ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noCurrentAccess')}</div> : <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">{sortedDatasetGrants.map((permission) => {
                   const displayName = permission.user_nickname || permission.user_email || permission.user_id
                   return <div key={permission.id} className={cn('flex items-start justify-between gap-3 rounded-xl border p-3', permission.is_valid ? 'border-green-200 bg-green-50/40' : 'border-gray-200 bg-gray-50 opacity-70')}><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-gray-900">{displayName}</div>{permission.user_email && <div className="mt-1 truncate text-xs text-gray-500">{permission.user_email}</div>}<div className="mt-2 flex flex-wrap items-center gap-2">{permission.user_role && <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getRoleBadgeColor(permission.user_role)}`}>{t(`settings.usersTab.role_${permission.user_role}`)}</span>}{typeof permission.user_is_active === 'boolean' && <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${permission.user_is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>{permission.user_is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}</span>}<span className="inline-flex items-center gap-1 text-xs text-gray-500"><Clock className="h-3 w-3" />{permission.expires_at ? t('settings.permissionModal.expires', { date: new Date(permission.expires_at).toLocaleString() }) : t('settings.permissionModal.noExpiration')}</span>{!permission.is_valid && <span className="text-xs font-medium text-red-600">{t('settings.permissionModal.expired')}</span>}</div></div><Button type="button" variant="ghost" size="sm" onClick={() => handleRevokeFromDataset(permission)} disabled={submitting} className="h-8 w-8 p-0 text-red-600 hover:bg-red-50 hover:text-red-700"><Trash2 className="h-4 w-4" /></Button></div>
                 })}</div>}
@@ -622,7 +622,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
                   onClearSelection={handleClearUserSelection}
                 />
                 <div className="space-y-2">{loadingGrantUsers ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.loadingUsers')}</div> : grantUserItems.length === 0 ? <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">{t('settings.permissionCenterModal.noUsers')}</div> : <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">{grantUserItems.map((user) => {
-                  const alreadyGranted = validDatasetPermissionUserIds.has(user.id)
+                  const alreadyGranted = validDatasetGrantUserIds.has(user.id)
                   const isDatasetOwner = selectedDataset?.user_id !== null && user.id === selectedDataset?.user_id
                   return <div key={user.id} className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3"><Checkbox checked={selectedGrantUserIds.includes(user.id)} disabled={alreadyGranted || isDatasetOwner || submitting || !selectedDatasetId} onCheckedChange={(checked) => handleToggleGrantUser(user.id, checked)} /><div className="min-w-0 flex-1"><div className="truncate text-sm font-medium text-gray-900">{getUserDisplayName(user)}</div><div className="mt-1 truncate text-xs text-gray-500">{user.email}</div><div className="mt-2 flex flex-wrap items-center gap-2"><span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getRoleBadgeColor(user.role)}`}>{t(`settings.usersTab.role_${user.role}`)}</span><span className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${user.is_active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-600'}`}>{user.is_active ? t('settings.usersTab.active') : t('settings.usersTab.inactive')}</span>{isDatasetOwner && <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">{t('settings.permissionCenterModal.datasetOwner')}</span>}{!isDatasetOwner && alreadyGranted && <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">{t('settings.permissionCenterModal.alreadyGranted')}</span>}</div></div></div>
                 })}</div>}</div>
