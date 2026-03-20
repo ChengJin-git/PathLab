@@ -21,7 +21,7 @@ import { setAuthToken } from '@renderer/api/client'
 
 const mockFetch = vi.mocked(fetch)
 
-const MOCK_PERMISSION: DatasetGrant = {
+const MOCK_GRANT: DatasetGrant = {
   id: 1,
   dataset_id: 'ds_1',
   dataset_name: 'TCGA-BRCA',
@@ -31,7 +31,8 @@ const MOCK_PERMISSION: DatasetGrant = {
   user_role: 'guest',
   user_is_active: true,
   granted_by: 'user_1',
-  permission_level: 'read',
+  can_collaborate: false,
+  can_use_gpu: true,
   expires_at: null,
   created_at: '2024-01-01T00:00:00Z',
   is_expired: false,
@@ -46,7 +47,7 @@ describe('getMyDatasetGrants', () => {
   it('fetches from GET /wsi/my-grants', async () => {
     mockFetch.mockResolvedValueOnce(ok({
       user_id: 'user_2',
-      permissions: [MOCK_PERMISSION],
+      permissions: [MOCK_GRANT],
       elevated_dataset_ids: ['ds_1'],
     }))
     const result = await getMyDatasetGrants()
@@ -58,8 +59,8 @@ describe('getMyDatasetGrants', () => {
 })
 
 describe('grantDatasetGrant', () => {
-  it('sends POST with FormData to /wsi/datasets/:id/permissions', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Permission granted', permission: MOCK_PERMISSION }))
+  it('sends POST with FormData to /wsi/datasets/:id/grants', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2')
     const [url, opts] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/wsi/datasets/ds_1/grants')
@@ -68,21 +69,21 @@ describe('grantDatasetGrant', () => {
   })
 
   it('includes user_id in FormData', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Permission granted', permission: MOCK_PERMISSION }))
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2')
     const formData = mockFetch.mock.calls[0][1]?.body as FormData
     expect(formData.get('user_id')).toBe('user_2')
   })
 
   it('includes expires_in_hours when provided and > 0', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Permission granted', permission: MOCK_PERMISSION }))
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2', 48)
     const formData = mockFetch.mock.calls[0][1]?.body as FormData
     expect(formData.get('expires_in_hours')).toBe('48')
   })
 
   it('does not include expires_in_hours when 0', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Permission granted', permission: MOCK_PERMISSION }))
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2', 0)
     const formData = mockFetch.mock.calls[0][1]?.body as FormData
     expect(formData.get('expires_in_hours')).toBeNull()
@@ -90,13 +91,13 @@ describe('grantDatasetGrant', () => {
 })
 
 describe('revokeDatasetGrant', () => {
-  it('sends DELETE to /wsi/datasets/:datasetId/permissions/:userId', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Permission revoked' }))
+  it('sends DELETE to /wsi/datasets/:datasetId/grants/:userId', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant revoked' }))
     const result = await revokeDatasetGrant('ds_1', 'user_2')
     const [url, opts] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/wsi/datasets/ds_1/grants/user_2')
     expect(opts?.method).toBe('DELETE')
-    expect(result.message).toBe('Permission revoked')
+    expect(result.message).toBe('Grant revoked')
   })
 })
 
@@ -104,8 +105,8 @@ describe('getUserDatasetGrants', () => {
   it('fetches from GET /wsi/user-grants/:userId', async () => {
     mockFetch.mockResolvedValueOnce(ok({
       user_id: 'user_2',
-      permissions: [MOCK_PERMISSION],
-      valid_permissions: [MOCK_PERMISSION],
+      permissions: [MOCK_GRANT],
+      valid_permissions: [MOCK_GRANT],
     }))
     const result = await getUserDatasetGrants('user_2')
     const [url] = mockFetch.mock.calls[0]
@@ -115,8 +116,8 @@ describe('getUserDatasetGrants', () => {
 })
 
 describe('listDatasetGrants', () => {
-  it('fetches from GET /wsi/datasets/:datasetId/permissions', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', permissions: [MOCK_PERMISSION] }))
+  it('fetches from GET /wsi/datasets/:datasetId/grants', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', permissions: [MOCK_GRANT] }))
     const result = await listDatasetGrants('ds_1')
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/wsi/datasets/ds_1/grants')
@@ -130,7 +131,7 @@ describe('listDatasetGrants', () => {
 })
 
 describe('batchGrantDatasetGrants', () => {
-  it('sends POST to /wsi/datasets/:id/permissions/batch-grant', async () => {
+  it('sends POST to /wsi/datasets/:id/grants/batch-grant', async () => {
     mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', granted: 2, failed: 0, results: [] }))
     await batchGrantDatasetGrants('ds_1', ['user_2', 'user_3'])
     const [url, opts] = mockFetch.mock.calls[0]
@@ -149,7 +150,7 @@ describe('batchGrantDatasetGrants', () => {
 })
 
 describe('batchRevokeDatasetGrants', () => {
-  it('sends POST to /wsi/datasets/:id/permissions/batch-revoke', async () => {
+  it('sends POST to /wsi/datasets/:id/grants/batch-revoke', async () => {
     mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', revoked: 2, failed: 0, results: [] }))
     await batchRevokeDatasetGrants('ds_1', ['user_2', 'user_3'])
     const [url, opts] = mockFetch.mock.calls[0]

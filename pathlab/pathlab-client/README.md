@@ -127,7 +127,7 @@ npm run test:coverage # 生成覆盖率报告
 | 业务 API | `unit/api/annotation.test.ts` | 分割标注 CRUD、ground-truth 读取、ROI 提取 |
 | 业务 API | `unit/api/export.test.ts` | 异步导出任务创建、状态轮询、文件下载 |
 | 业务 API | `unit/api/feedback.test.ts` | 消息反馈提交 / 删除、管理员查看、统计导出 |
-| 业务 API | `unit/api/permissions.test.ts` | 数据集临时提权授权 / 撤销、批量操作 |
+| 业务 API | `unit/api/grants.test.ts` | 数据集临时提权授权 / 撤销、批量操作 |
 | 业务 API | `unit/api/queue.test.ts` | GPU 队列状态、配置读写、任务取消 |
 | 业务 API | `unit/api/settings.test.ts` | 公开设置读取、全局设置读写 |
 | 业务 API | `unit/api/storage.test.ts` | 存储配置、统计、孤立项、迁移、扫描、批量任务 |

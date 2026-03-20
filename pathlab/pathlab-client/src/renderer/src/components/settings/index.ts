@@ -11,8 +11,8 @@ export type { CreateUserModalProps } from './CreateUserModal'
 export { PermissionModal } from './PermissionModal'
 export type { PermissionModalProps } from './PermissionModal'
 
-export { DatasetGrantModal } from './DatasetGrantModal'
-export type { DatasetGrantModalProps } from './DatasetGrantModal'
+export { DatasetGrantModal } from './DatasetPermissionModal'
+export type { DatasetGrantModalProps } from './DatasetPermissionModal'
 
 export { PermissionCenterModal } from './PermissionCenterModal'
 export type { PermissionCenterModalProps } from './PermissionCenterModal'
@@ -37,4 +37,3 @@ export type { FeedbackTabProps } from './FeedbackTab'
 
 export { StorageTab } from './StorageTab'
 export type { StorageTabProps } from './StorageTab'
-

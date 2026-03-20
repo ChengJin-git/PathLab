@@ -51,7 +51,7 @@ test/
     │   ├── annotation.test.ts
     │   ├── export.test.ts
     │   ├── feedback.test.ts
-    │   ├── permissions.test.ts
+    │   ├── grants.test.ts
     │   ├── queue.test.ts
     │   ├── settings.test.ts
     │   ├── storage.test.ts
@@ -752,7 +752,7 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 ---
 
-## unit/api/permissions.test.ts
+## unit/api/grants.test.ts
 
 **对应源文件**：`src/renderer/src/api/grants.ts`
 

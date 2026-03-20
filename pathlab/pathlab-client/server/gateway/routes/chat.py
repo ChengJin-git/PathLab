@@ -4778,8 +4778,15 @@ async def chat_with_ai(
             else:
                 expires_info = ", no expiration"
 
+            grant_bits = []
+            if perm.can_use_gpu:
+                grant_bits.append("gpu")
+            if perm.can_collaborate:
+                grant_bits.append("annotate")
+            grant_label = ", ".join(grant_bits) if grant_bits else "none"
+
             temp_perms_details.append(
-                f"  - **{dataset_name}** (dataset_id={perm.dataset_id}): {perm.permission_level} access{expires_info}"
+                f"  - **{dataset_name}** (dataset_id={perm.dataset_id}): grants={grant_label}{expires_info}"
             )
         temp_perms_list = "\n".join(temp_perms_details)
     else:

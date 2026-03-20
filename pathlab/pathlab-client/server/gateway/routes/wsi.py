@@ -65,8 +65,6 @@ from ..utils import (
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
-# Include grants sub-router FIRST — routes like /my-grants must be
-# registered before /{wsi_id} to avoid path parameter conflicts.
 from .wsi_grants import router as wsi_grants_router
 
 router.include_router(wsi_grants_router)

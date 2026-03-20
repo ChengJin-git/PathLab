@@ -77,7 +77,7 @@ src/renderer/
 - `export`
 - `feedback`
 - `heatmap`
-- `permissions`
+- `grants`
 - `queue`
 - `results`
 - `settings`
