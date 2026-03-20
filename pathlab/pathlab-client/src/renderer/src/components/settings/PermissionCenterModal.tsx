@@ -276,7 +276,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     setLoadingUserPermissions(true)
     try {
       const response = await getUserDatasetGrants(userId)
-      setUserPermissions(response.permissions)
+      setUserPermissions(response.grants)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToLoadUserPermissions'))
     } finally {
@@ -289,7 +289,7 @@ export function PermissionCenterModal({ showConfirmDialog, closeConfirmDialog, o
     setLoadingDatasetGrants(true)
     try {
       const response = await listDatasetGrants(datasetId)
-      setDatasetGrants(response.permissions)
+      setDatasetGrants(response.grants)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('settings.permissionCenterModal.failedToLoadDatasetGrants'))
     } finally {

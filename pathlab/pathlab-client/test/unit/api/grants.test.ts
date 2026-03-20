@@ -47,20 +47,20 @@ describe('getMyDatasetGrants', () => {
   it('fetches from GET /wsi/my-grants', async () => {
     mockFetch.mockResolvedValueOnce(ok({
       user_id: 'user_2',
-      permissions: [MOCK_GRANT],
+      grants: [MOCK_GRANT],
       elevated_dataset_ids: ['ds_1'],
     }))
     const result = await getMyDatasetGrants()
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/wsi/my-grants')
     expect(result.elevated_dataset_ids).toContain('ds_1')
-    expect(result.permissions).toHaveLength(1)
+    expect(result.grants).toHaveLength(1)
   })
 })
 
 describe('grantDatasetGrant', () => {
   it('sends POST with FormData to /wsi/datasets/:id/grants', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', grant: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2')
     const [url, opts] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/wsi/datasets/ds_1/grants')
@@ -69,21 +69,21 @@ describe('grantDatasetGrant', () => {
   })
 
   it('includes user_id in FormData', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', grant: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2')
     const formData = mockFetch.mock.calls[0][1]?.body as FormData
     expect(formData.get('user_id')).toBe('user_2')
   })
 
   it('includes expires_in_hours when provided and > 0', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', grant: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2', 48)
     const formData = mockFetch.mock.calls[0][1]?.body as FormData
     expect(formData.get('expires_in_hours')).toBe('48')
   })
 
   it('does not include expires_in_hours when 0', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', permission: MOCK_GRANT }))
+    mockFetch.mockResolvedValueOnce(ok({ message: 'Grant created', grant: MOCK_GRANT }))
     await grantDatasetGrant('ds_1', 'user_2', 0)
     const formData = mockFetch.mock.calls[0][1]?.body as FormData
     expect(formData.get('expires_in_hours')).toBeNull()
@@ -105,23 +105,23 @@ describe('getUserDatasetGrants', () => {
   it('fetches from GET /wsi/user-grants/:userId', async () => {
     mockFetch.mockResolvedValueOnce(ok({
       user_id: 'user_2',
-      permissions: [MOCK_GRANT],
-      valid_permissions: [MOCK_GRANT],
+      grants: [MOCK_GRANT],
+      valid_grants: [MOCK_GRANT],
     }))
     const result = await getUserDatasetGrants('user_2')
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/wsi/user-grants/user_2')
-    expect(result.valid_permissions).toHaveLength(1)
+    expect(result.valid_grants).toHaveLength(1)
   })
 })
 
 describe('listDatasetGrants', () => {
   it('fetches from GET /wsi/datasets/:datasetId/grants', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', permissions: [MOCK_GRANT] }))
+    mockFetch.mockResolvedValueOnce(ok({ dataset_id: 'ds_1', grants: [MOCK_GRANT] }))
     const result = await listDatasetGrants('ds_1')
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/wsi/datasets/ds_1/grants')
-    expect(result.permissions).toHaveLength(1)
+    expect(result.grants).toHaveLength(1)
   })
 
   it('throws NOT_FOUND for unknown dataset', async () => {

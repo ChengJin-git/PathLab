@@ -61,7 +61,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
     setError(null)
     try {
       const response = await listDatasetGrants(datasetId)
-      setPermissions(response.permissions)
+      setPermissions(response.grants)
     } catch (err) {
       setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToLoadPermissions'))
     } finally {

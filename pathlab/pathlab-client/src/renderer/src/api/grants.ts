@@ -22,7 +22,7 @@ export interface DatasetGrant {
 
 export async function getMyDatasetGrants(): Promise<{
   user_id: string
-  permissions: DatasetGrant[]
+  grants: DatasetGrant[]
   elevated_dataset_ids: string[]
 }> {
   return apiFetch(
@@ -65,8 +65,8 @@ export async function revokeDatasetGrant(
 
 export async function getUserDatasetGrants(userId: string): Promise<{
   user_id: string
-  permissions: DatasetGrant[]
-  valid_permissions: DatasetGrant[]
+  grants: DatasetGrant[]
+  valid_grants: DatasetGrant[]
 }> {
   return apiFetch(
     `${API_BASE}/wsi/user-grants/${userId}`,
@@ -77,7 +77,7 @@ export async function getUserDatasetGrants(userId: string): Promise<{
 
 export async function listDatasetGrants(datasetId: string): Promise<{
   dataset_id: string
-  permissions: DatasetGrant[]
+  grants: DatasetGrant[]
 }> {
   return apiFetch(
     `${API_BASE}/wsi/datasets/${datasetId}/grants`,
@@ -91,7 +91,7 @@ export interface BatchDatasetGrantResult {
   success: boolean
   message?: string
   error?: string
-  permission?: DatasetGrant
+  grant?: DatasetGrant
   affected_tasks?: string[]
 }
 

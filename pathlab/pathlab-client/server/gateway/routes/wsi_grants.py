@@ -208,7 +208,7 @@ async def get_my_dataset_grants(
     gpu_grants = [g for g in grants if g.can_use_gpu and g.is_valid()]
     return {
         "user_id": str(user.id),
-        "permissions": [g.to_dict() for g in gpu_grants],
+        "grants": [g.to_dict() for g in gpu_grants],
         "elevated_dataset_ids": [g.dataset_id for g in gpu_grants],
     }
 
@@ -235,8 +235,8 @@ async def get_user_dataset_grants(
     ]
     return {
         "user_id": target_user_id,
-        "permissions": serialized,
-        "valid_permissions": [g for g in serialized if g["is_valid"]],
+        "grants": serialized,
+        "valid_grants": [g for g in serialized if g["is_valid"]],
     }
 
 
@@ -277,7 +277,7 @@ async def list_dataset_grants(
 
     return {
         "dataset_id": dataset_id,
-        "permissions": [{**g.to_dict(), **user_map.get(g.user_id, {})} for g in grants],
+        "grants": [{**g.to_dict(), **user_map.get(g.user_id, {})} for g in grants],
     }
 
 
@@ -319,7 +319,7 @@ async def grant_dataset_grant(
             detail="Valid permission already exists for this user on this dataset",
         )
 
-    return {"message": message, "permission": grant}
+    return {"message": message, "grant": grant}
 
 
 @router.post("/datasets/{dataset_id}/grants/batch-grant")
@@ -360,7 +360,7 @@ async def batch_grant_dataset_grants(
                     "user_id": uid,
                     "success": True,
                     "message": message,
-                    "permission": grant,
+                    "grant": grant,
                 }
             )
             granted += 1
