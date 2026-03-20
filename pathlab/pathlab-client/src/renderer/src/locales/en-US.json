@@ -1802,6 +1802,7 @@
     "noFilesInDataset": "No Files in Dataset",
     "datasetEmptyDescription": "This dataset is empty. Register files to add them to this dataset.",
     "searchPlaceholder": "Search by slide ID, filename, case ID...",
+    "searchDatasetPlaceholder": "Search by dataset name...",
     "noMatchingFiles": "No matching files found",
     "adjustSearchTerms": "Try adjusting your search terms",
     "clearSearch": "Clear Search",

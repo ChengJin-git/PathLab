@@ -1458,16 +1458,16 @@ export default function ListPage() {
               <div className="px-4 py-3 sm:px-5 sm:py-3.5">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
                   {/* Left Side: Search & Filters */}
-                  <div className="flex min-w-0 flex-col gap-3 xl:flex-1">
+                  <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 xl:flex-1">
                     {/* Search Box */}
-                    <div className="relative w-full max-w-md">
+                    <div className="relative w-full sm:w-64 lg:w-72 shrink-0">
                       <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                         <Search className="h-4 sm:h-5 w-4 sm:w-5 text-gray-400" />
                       </div>
                       <input
                         type="text"
                         className="block w-full pl-9 sm:pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm transition-all shadow-sm"
-                        placeholder={t('listPage.searchPlaceholder')}
+                        placeholder={t('listPage.searchDatasetPlaceholder')}
                         value={datasetSearchQuery}
                         onChange={(e) => setDatasetSearchQuery(e.target.value)}
                       />
@@ -1483,7 +1483,6 @@ export default function ListPage() {
                     </div>
 
                     {/* Filters */}
-                    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3">
                       {renderDatasetFilterGroup(
                         t('listPage.filters.groups.taskType'),
                         datasetTaskFilter,
@@ -1535,7 +1534,6 @@ export default function ListPage() {
                         />
                       </div>
                     </div>
-                  </div>
 
                   <div className="flex shrink-0 items-center gap-2 sm:gap-3 self-start xl:ml-4 xl:self-center">
                     <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 shadow-inner">

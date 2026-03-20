@@ -1801,6 +1801,7 @@
     "noFilesInDataset": "資料集中無檔案",
     "datasetEmptyDescription": "此資料集為空。註冊檔案以將其新增到此資料集。",
     "searchPlaceholder": "按切片 ID、檔案名、病例 ID 搜尋...",
+    "searchDatasetPlaceholder": "按數據集名稱搜尋...",
     "noMatchingFiles": "未找到匹配的檔案",
     "adjustSearchTerms": "請嘗試調整搜尋條件",
     "clearSearch": "清除搜尋",
