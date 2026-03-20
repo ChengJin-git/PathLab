@@ -185,9 +185,6 @@ async def _run_batch_import_task(
             aggregation_level = request_params.get("aggregation_level", "file")
             task_type = request_params.get("task_type", "classification")
             is_public = request_params.get("is_public", False)
-            is_open_collaboration = request_params.get(
-                "is_open_collaboration", False
-            )
             default_label = request_params.get("default_label")
             default_event_time = request_params.get("default_event_time")
             default_event_status = request_params.get("default_event_status")
@@ -330,7 +327,6 @@ async def _run_batch_import_task(
                     user_id=user_id,
                     source_organ=source_organ or None,
                     is_public=is_public,
-                    is_open_collaboration=is_open_collaboration,
                 )
                 if dataset_name and files:
                     if not anchor_path and files:
@@ -1886,7 +1882,6 @@ def _build_batch_import_task_params(
         "aggregation_level": request.aggregation_level,
         "task_type": request.task_type,
         "is_public": request.is_public,
-        "is_open_collaboration": request.is_open_collaboration,
         "default_label": default_label,
         "default_event_time": request.default_event_time,
         "default_event_status": request.default_event_status,

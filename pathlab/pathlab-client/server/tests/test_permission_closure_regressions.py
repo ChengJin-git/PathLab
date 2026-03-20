@@ -104,7 +104,6 @@ def test_build_batch_import_task_params_keeps_visibility_flags():
         default_event_time=None,
         default_event_status=None,
         is_public=True,
-        is_open_collaboration=True,
     )
 
     params = _build_batch_import_task_params(
@@ -114,7 +113,6 @@ def test_build_batch_import_task_params_keeps_visibility_flags():
     )
 
     assert params["is_public"] is True
-    assert params["is_open_collaboration"] is True
 
 
 @pytest.mark.asyncio
@@ -138,7 +136,6 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
         captured["dataset_name"] = dataset_name
         captured["source_organ"] = kwargs.get("source_organ")
         captured["is_public"] = kwargs.get("is_public")
-        captured["is_open_collaboration"] = kwargs.get("is_open_collaboration")
         return types.SimpleNamespace(dataset_id="ds-new", data_group=None)
 
     async def _fake_align_dataset_data_type_for_file(db, dataset, **kwargs):
@@ -218,7 +215,6 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
         aggregation_level="file",
         task_type="classification",
         is_public=True,
-        is_open_collaboration=True,
         wsi_id="wsi-1",
         case_id="case-1",
         label="tumor",
@@ -241,5 +237,4 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
         "dataset_name": "new-dataset",
         "source_organ": "lung",
         "is_public": True,
-        "is_open_collaboration": True,
     }

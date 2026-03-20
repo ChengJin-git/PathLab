@@ -67,7 +67,6 @@ async def test_shared_access_requires_explicit_collaborator_even_for_public_data
         dataset_id="ds-public",
         user_id="owner-1",
         is_public=True,
-        is_open_collaboration=True,
     )
 
     allowed = await can_access_shared(user, dataset, object())
@@ -172,24 +171,12 @@ async def test_upsert_accepts_annotation_mode_alias_for_personal():
 
 
 
-def test_visibility_request_closes_open_collab_when_private():
-    from gateway.models import DatasetUpdateVisibilityRequest
-
-    request = DatasetUpdateVisibilityRequest(
-        is_public=False,
-        is_open_collaboration=True,
-    )
-
-    assert request.is_open_collaboration is False
-
-
-def test_upload_request_closes_open_collab_when_private():
+def test_upload_request_defaults_to_private_visibility():
     from gateway.models import UploadByPathRequest
 
     request = UploadByPathRequest(
         wsi_path='/tmp/sample.svs',
         is_public=False,
-        is_open_collaboration=True,
     )
 
-    assert request.is_open_collaboration is False
+    assert request.is_public is False

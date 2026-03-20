@@ -286,10 +286,6 @@ async def update_dataset_visibility(
     becoming_private = was_public and not request.is_public
 
     updates: Dict[str, Any] = {"is_public": request.is_public}
-    if request.is_open_collaboration is not None:
-        updates["is_open_collaboration"] = request.is_open_collaboration
-    if not request.is_public:
-        updates["is_open_collaboration"] = False
 
     revoked_by_user: Dict[str, List[str]] = {}
     if becoming_private:
@@ -304,7 +300,6 @@ async def update_dataset_visibility(
     response: Dict[str, Any] = {
         "dataset_id": dataset_id,
         "is_public": dataset.is_public,
-        "is_open_collaboration": dataset.is_open_collaboration,
     }
     if revoked_by_user:
         total_revoked = sum(len(v) for v in revoked_by_user.values())
