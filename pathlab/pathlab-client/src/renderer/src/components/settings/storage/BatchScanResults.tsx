@@ -2,7 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   CheckCircle, AlertCircle, ChevronLeft, ChevronRight, RefreshCw, Upload,
-  Layers, Clock, Info, Grid3X3, FileJson, Globe, Lock
+  Layers, Clock, Info, Grid3X3, FileJson, Globe, Lock, Users
 } from 'lucide-react'
 import { Button } from '../../ui/button'
 import { Label } from '../../ui/label'
@@ -29,6 +29,8 @@ interface BatchScanResultsProps {
   setBatchDataLevel: (level: 'case' | 'file') => void
   batchIsPublic: boolean
   setBatchIsPublic: (value: boolean) => void
+  batchIsOpenCollaboration: boolean
+  setBatchIsOpenCollaboration: (value: boolean) => void
   handleBatchScanPageChange: (page: number) => Promise<void>
   isBatchFileSelected: (path: string, valid: boolean) => boolean
   handleBatchFileToggle: (path: string, valid: boolean) => void
@@ -55,6 +57,8 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
   setBatchDataLevel,
   batchIsPublic,
   setBatchIsPublic,
+  batchIsOpenCollaboration,
+  setBatchIsOpenCollaboration,
   handleBatchScanPageChange,
   isBatchFileSelected,
   handleBatchFileToggle,
@@ -274,12 +278,15 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
       />
 
       {batchDatasetMode === 'new' && (
-        <div className="bg-slate-50 rounded-lg p-4 space-y-2 border border-slate-200">
+        <div className="bg-slate-50 rounded-lg p-4 space-y-3 border border-slate-200">
           <Label className="text-sm font-medium text-slate-900 block">{t('settings.storage.datasetVisibility')}</Label>
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => setBatchIsPublic(false)}
+              onClick={() => {
+                setBatchIsPublic(false)
+                setBatchIsOpenCollaboration(false)
+              }}
               className={`flex-1 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
                 !batchIsPublic
                   ? 'bg-slate-200 text-slate-900 border-2 border-slate-400 shadow-sm'
@@ -302,6 +309,40 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
               {t('settings.storage.public')}
             </button>
           </div>
+
+          {batchIsPublic && (
+            <>
+              <Label className="text-sm font-medium text-slate-900 block">
+                {t('settings.datasetPermissionModal.collaborationMode', { defaultValue: 'Collaboration Mode' })}
+              </Label>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setBatchIsOpenCollaboration(false)}
+                  className={`flex-1 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    !batchIsOpenCollaboration
+                      ? 'bg-slate-200 text-slate-900 border-2 border-slate-400 shadow-sm'
+                      : 'bg-white text-gray-500 border border-gray-100 hover:border-slate-300 hover:text-slate-600'
+                  }`}
+                >
+                  <Users className={`w-4 h-4 ${!batchIsOpenCollaboration ? 'text-slate-700' : 'text-gray-400'}`} />
+                  {t('settings.datasetPermissionModal.openCollabOff', { defaultValue: 'Closed collaboration (only invited)' })}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBatchIsOpenCollaboration(true)}
+                  className={`flex-1 flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                    batchIsOpenCollaboration
+                      ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
+                      : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
+                  }`}
+                >
+                  <Users className={`w-4 h-4 ${batchIsOpenCollaboration ? 'text-primary-700' : 'text-gray-400'}`} />
+                  {t('settings.datasetPermissionModal.openCollabOn', { defaultValue: 'Open collaboration (anyone can annotate)' })}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       )}
 

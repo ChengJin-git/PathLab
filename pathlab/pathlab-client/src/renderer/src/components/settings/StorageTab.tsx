@@ -109,6 +109,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [batchTaskType, setBatchTaskTypeRaw] = useState<'classification' | 'survival' | 'segmentation'>('classification')
   const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
   const [batchIsPublic, setBatchIsPublic] = useState(false)
+  const [batchIsOpenCollaboration, setBatchIsOpenCollaboration] = useState(false)
   const setBatchTaskType = (type: 'classification' | 'survival' | 'segmentation') => {
     setBatchTaskTypeRaw(type)
     if (type === 'segmentation') setBatchDataLevel('file')
@@ -343,7 +344,10 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         scan_root: batchScanResult?.directory,
         aggregation_level: batchDataLevel,
         task_type: batchTaskType,
-        is_public: batchDatasetMode === 'new' ? batchIsPublic : undefined
+        is_public: batchDatasetMode === 'new' ? batchIsPublic : undefined,
+        is_open_collaboration: batchDatasetMode === 'new' && batchIsPublic
+          ? batchIsOpenCollaboration
+          : undefined
       })
       setBatchImportTaskId(result.task_id)
       setBatchSelectedFiles(new Set())
@@ -791,6 +795,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         setBatchDataLevel={setBatchDataLevel}
         batchIsPublic={batchIsPublic}
         setBatchIsPublic={setBatchIsPublic}
+        batchIsOpenCollaboration={batchIsOpenCollaboration}
+        setBatchIsOpenCollaboration={setBatchIsOpenCollaboration}
         handleSelectBatchScanDir={handleSelectBatchScanDir}
         handleBatchScan={handleBatchScan}
           handleBatchScanPageChange={handleBatchScanPageChange}

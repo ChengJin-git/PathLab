@@ -32,6 +32,8 @@ interface BatchRegisterCardProps {
   setBatchDataLevel: (level: 'case' | 'file') => void
   batchIsPublic: boolean
   setBatchIsPublic: (value: boolean) => void
+  batchIsOpenCollaboration: boolean
+  setBatchIsOpenCollaboration: (value: boolean) => void
   handleSelectBatchScanDir: () => Promise<void>
   handleBatchScan: () => Promise<void>
   handleBatchScanPageChange: (page: number) => Promise<void>
@@ -77,6 +79,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   setBatchDataLevel,
   batchIsPublic,
   setBatchIsPublic,
+  batchIsOpenCollaboration,
+  setBatchIsOpenCollaboration,
   handleSelectBatchScanDir,
   handleBatchScan,
   handleBatchScanPageChange,
@@ -172,6 +176,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
           setBatchDataLevel={setBatchDataLevel}
           batchIsPublic={batchIsPublic}
           setBatchIsPublic={setBatchIsPublic}
+          batchIsOpenCollaboration={batchIsOpenCollaboration}
+          setBatchIsOpenCollaboration={setBatchIsOpenCollaboration}
           handleBatchScanPageChange={handleBatchScanPageChange}
           isBatchFileSelected={isBatchFileSelected}
           handleBatchFileToggle={handleBatchFileToggle}

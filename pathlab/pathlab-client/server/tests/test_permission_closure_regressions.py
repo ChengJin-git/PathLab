@@ -92,7 +92,7 @@ async def test_extval_access_uses_unified_dataset_access_check(monkeypatch):
     }
 
 
-def test_build_batch_import_task_params_keeps_is_public_flag():
+def test_build_batch_import_task_params_keeps_visibility_flags():
     request = types.SimpleNamespace(
         dataset_id="existing-ds",
         dataset_name=None,
@@ -103,6 +103,7 @@ def test_build_batch_import_task_params_keeps_is_public_flag():
         default_event_time=None,
         default_event_status=None,
         is_public=True,
+        is_open_collaboration=True,
     )
 
     params = _build_batch_import_task_params(
@@ -112,3 +113,4 @@ def test_build_batch_import_task_params_keeps_is_public_flag():
     )
 
     assert params["is_public"] is True
+    assert params["is_open_collaboration"] is True
