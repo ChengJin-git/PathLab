@@ -1465,6 +1465,7 @@
   },
   "uploadPage": {
     "datasetNameRequired": "数据集名称不能为空。",
+    "datasetNameExistsForCurrentUser": "你已存在同名数据集，请使用其他名称。",
     "failedUploadCsv": "上传 CSV 数据失败。",
     "failedParseCsv": "解析 CSV 失败：{{error}}",
     "validationMissingLabels": "{{count}} 个文件缺少标签。请在提交前填写所有标签。",

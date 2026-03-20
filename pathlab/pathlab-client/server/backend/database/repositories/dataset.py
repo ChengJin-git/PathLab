@@ -25,6 +25,10 @@ from ..models import (
 )
 
 
+class DatasetNameConflictError(ValueError):
+    pass
+
+
 class DatasetRepository:
     """Repository for Dataset operations"""
 
@@ -95,11 +99,14 @@ class DatasetRepository:
         source_organ: str = None,
         parent_dataset_id: str = None,
         is_public: bool = False,
+        reuse_existing: bool = True,
     ) -> Dataset:
         import uuid
 
         existing = await DatasetRepository.get_by_name(db, name, user_id=user_id)
         if existing:
+            if not reuse_existing:
+                raise DatasetNameConflictError(name)
             return existing
         dataset_id = str(uuid.uuid4())
         try:

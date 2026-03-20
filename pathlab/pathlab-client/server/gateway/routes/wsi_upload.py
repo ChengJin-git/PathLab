@@ -24,6 +24,7 @@ from backend.database.repositories import (
     SegmentationAnnotationRepository,
     DatasetStatsRepository,
 )
+from backend.database.repositories.dataset import DatasetNameConflictError
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
 from ..dependencies import logger, storage_manager, UPLOADS_DIR
@@ -570,14 +571,21 @@ async def upload_wsi_file(
             )
 
             # Create or get dataset by name with group_id
-            dataset = await DatasetRepository.get_or_create(
-                db,
-                dataset_name,
-                group_id=data_group.group_id,
-                user_id=str(user.id),
-                source_organ=source_organ or None,
-                is_public=is_public,
-            )
+            try:
+                dataset = await DatasetRepository.get_or_create(
+                    db,
+                    dataset_name,
+                    group_id=data_group.group_id,
+                    user_id=str(user.id),
+                    source_organ=source_organ or None,
+                    is_public=is_public,
+                    reuse_existing=False,
+                )
+            except DatasetNameConflictError:
+                raise HTTPException(
+                    status_code=409,
+                    detail="DATASET_NAME_ALREADY_EXISTS",
+                )
             dataset = await align_dataset_data_type_for_file(
                 db,
                 dataset,
@@ -969,14 +977,21 @@ async def upload_wsi_by_path(
             )
 
             # Create or get dataset by name with group_id
-            dataset = await DatasetRepository.get_or_create(
-                db,
-                req.dataset_name,
-                group_id=data_group.group_id,
-                user_id=str(user.id),
-                source_organ=req.source_organ or None,
-                is_public=req.is_public,
-            )
+            try:
+                dataset = await DatasetRepository.get_or_create(
+                    db,
+                    req.dataset_name,
+                    group_id=data_group.group_id,
+                    user_id=str(user.id),
+                    source_organ=req.source_organ or None,
+                    is_public=req.is_public,
+                    reuse_existing=False,
+                )
+            except DatasetNameConflictError:
+                raise HTTPException(
+                    status_code=409,
+                    detail="DATASET_NAME_ALREADY_EXISTS",
+                )
             dataset = await align_dataset_data_type_for_file(
                 db,
                 dataset,

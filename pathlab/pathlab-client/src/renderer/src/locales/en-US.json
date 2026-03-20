@@ -1465,6 +1465,7 @@
   },
   "uploadPage": {
     "datasetNameRequired": "Dataset name is required.",
+    "datasetNameExistsForCurrentUser": "You already have a dataset with this name. Please use another name.",
     "failedUploadCsv": "Failed to upload CSV data.",
     "failedParseCsv": "Failed to parse CSV: {{error}}",
     "validationMissingLabels": "{{count}} file(s) are missing labels. Please fill in all labels before submitting.",

@@ -2,7 +2,10 @@ import types
 
 import pytest
 
-from backend.database.repositories.dataset import DatasetRepository
+from backend.database.repositories.dataset import (
+    DatasetNameConflictError,
+    DatasetRepository,
+)
 
 
 class _AsyncNullContext:
@@ -123,3 +126,32 @@ async def test_get_or_create_reuses_dataset_for_same_user(monkeypatch):
 
     assert result is existing_same_user
     assert create_calls == []
+
+
+@pytest.mark.asyncio
+async def test_get_or_create_raises_conflict_when_reuse_disabled(monkeypatch):
+    existing_same_user = types.SimpleNamespace(
+        dataset_id="ds-a",
+        user_id="user-a",
+        name="Dataset A",
+    )
+
+    async def _fake_get_by_name(_db, _name, user_id=None):
+        if user_id == "user-a":
+            return existing_same_user
+        return None
+
+    monkeypatch.setattr(
+        DatasetRepository,
+        "get_by_name",
+        staticmethod(_fake_get_by_name),
+    )
+
+    with pytest.raises(DatasetNameConflictError):
+        await DatasetRepository.get_or_create(
+            _DummyDB(),
+            name="Dataset A",
+            group_id="group-1",
+            user_id="user-a",
+            reuse_existing=False,
+        )

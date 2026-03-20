@@ -33,7 +33,9 @@ import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
+import { useAuth } from '../contexts/AuthContext'
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, updateDatasetSource } from '../api'
+import { ApiError } from '../api/client'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
@@ -97,7 +99,7 @@ export default function RegisterPage() {
         idMap.set(d.dataset_name, d.dataset_id)
         sourceOrganMap.set(d.dataset_name, d.source_organ ?? null)
       })
-      return { sortedDatasetNames, typeMap, levelMap, dataTypeMap, idMap, sourceOrganMap }
+      return { sortedDatasetNames, typeMap, levelMap, dataTypeMap, idMap, sourceOrganMap, items: data.items }
     },
     staleTime: 5 * 60 * 1000,
   })
@@ -108,6 +110,15 @@ export default function RegisterPage() {
   const existingDatasetDataTypes = datasetsData?.dataTypeMap ?? new Map<string, DataType>()
   const datasetNameToId = datasetsData?.idMap ?? new Map<string, string | null>()
   const datasetNameToSourceOrgan = datasetsData?.sourceOrganMap ?? new Map<string, string | null>()
+  const existingDatasetOwners = useMemo(() => {
+    if (!datasetsData?.items) return new Set<string>()
+    const currentUserId = user?.id
+    return new Set(
+      datasetsData.items
+        .filter(dataset => !!currentUserId && dataset.user_id === currentUserId)
+        .map(dataset => dataset.dataset_name.trim().toLowerCase())
+    )
+  }, [datasetsData?.items, user?.id])
   // Toggle for Dataset Splits Configuration visibility
   const [showSplitConfig, setShowSplitConfig] = useState(false)
 
@@ -722,6 +733,16 @@ export default function RegisterPage() {
       resetUpload()
       navigate('/dashboard')
     } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status === 409 &&
+        error.details === 'DATASET_NAME_ALREADY_EXISTS'
+      ) {
+        const message = t('uploadPage.datasetNameExistsForCurrentUser')
+        toastError(message)
+        setSubmitError(message)
+        return
+      }
       setSubmitError(error instanceof Error ? error.message : String(error))
     }
   }
@@ -935,6 +956,15 @@ export default function RegisterPage() {
           isPublic={isPublic}
           onIsPublicChange={setIsPublic}
           onNext={async () => {
+            const trimmedDatasetName = datasetName.trim()
+            if (
+              trimmedDatasetName &&
+              !isExistingDataset &&
+              existingDatasetOwners.has(trimmedDatasetName.toLowerCase())
+            ) {
+              toastError(t('uploadPage.datasetNameExistsForCurrentUser'))
+              return
+            }
             if (isExistingDataset && datasetId) {
               const resolvedSource = getResolvedDatasetSource()
               if (resolvedSource && resolvedSource !== existingDatasetSource) {
