@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampDatasetPage } from '@renderer/lib/datasetPagination'
+import { clampDatasetPage } from '../../../src/renderer/src/lib/datasetPagination'
 
 describe('clampDatasetPage', () => {
   it('does not reset page during transient refetch without data', () => {

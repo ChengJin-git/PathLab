@@ -443,7 +443,7 @@ export default function ListPage() {
   const isFilesRefreshing = wsiListQuery.isLoading && hasFileContent
 
   const hasActiveDatasetFilters =
-    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
+    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all' || datasetSearchQuery !== '' || datasetDebouncedSearch !== ''
 
   useEffect(() => {
     setDatasetCurrentPage((prev) => clampDatasetPage(prev, datasetTotalPages, {
@@ -519,21 +519,21 @@ export default function ListPage() {
     }
   }, [selectedDatasetId, selectedDatasetSummary])
 
-  // Debounce search input → debouncedSearch (300ms)
+  // Debounce search input → debouncedSearch (800ms)
   useEffect(() => {
     const timer = setTimeout(() => {
       setCurrentPage((previousPage) => (previousPage === 1 ? previousPage : 1))
       setDebouncedSearch(searchQuery)
-    }, 300)
+    }, 800)
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  // Debounce dataset search input → datasetDebouncedSearch (300ms)
+  // Debounce dataset search input → datasetDebouncedSearch (800ms)
   useEffect(() => {
     const timer = setTimeout(() => {
       setDatasetCurrentPage((previousPage) => (previousPage === 1 ? previousPage : 1))
       setDatasetDebouncedSearch(datasetSearchQuery)
-    }, 300)
+    }, 800)
     return () => clearTimeout(timer)
   }, [datasetSearchQuery])
 
@@ -623,6 +623,7 @@ export default function ListPage() {
     setDatasetTypeFilter('all')
     setDatasetLevelFilter('all')
     setDatasetSourceFilter('all')
+    setDatasetSearchQuery('')
     setDatasetCurrentPage(1)
   }
 
@@ -1452,37 +1453,39 @@ export default function ListPage() {
             </div>
           )}
 
-          {/* Dataset Filters */}
+          {/* Dataset Filters & Search */}
           {((datasetsQuery.data?.total ?? 0) > 0 || hasActiveDatasetFilters) && (
-            <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
-              <div className="px-4 py-3 sm:px-5 sm:py-3.5">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-                  {/* Left Side: Search & Filters */}
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 xl:flex-1">
-                    {/* Search Box */}
-                    <div className="relative w-full sm:w-64 lg:w-72 shrink-0">
-                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                        <Search className="h-4 sm:h-5 w-4 sm:w-5 text-gray-400" />
-                      </div>
-                      <input
-                        type="text"
-                        className="block w-full pl-9 sm:pl-10 pr-3 py-2 border border-gray-300 rounded-lg leading-5 bg-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-sm transition-all shadow-sm"
-                        placeholder={t('listPage.searchDatasetPlaceholder')}
-                        value={datasetSearchQuery}
-                        onChange={(e) => setDatasetSearchQuery(e.target.value)}
-                      />
-                      {datasetSearchQuery && (
-                        <button
-                          type="button"
-                          className="absolute inset-y-0 right-0 pr-3 flex items-center"
-                          onClick={() => setDatasetSearchQuery('')}
-                        >
-                          <X className="h-4 w-4 text-gray-400 hover:text-gray-600" />
-                        </button>
-                      )}
-                    </div>
+            <div className="flex flex-col gap-4">
+              {/* Search Box */}
+              <div className="relative w-full max-w-md transition-all duration-300 focus-within:ring-1 focus-within:ring-primary-500 focus-within:border-primary-500 rounded-lg">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Search className="h-4 sm:h-5 w-4 sm:w-5 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  className="block w-full h-10 pl-10 pr-10 py-2 border border-gray-200 hover:border-gray-300 rounded-lg bg-white focus:bg-white placeholder-gray-400 focus:outline-none focus:ring-1 text-sm transition-colors shadow-sm"
+                  placeholder={t('listPage.searchDatasetPlaceholder')}
+                  value={datasetSearchQuery}
+                  onChange={(e) => setDatasetSearchQuery(e.target.value)}
+                />
+                {datasetSearchQuery && (
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    onClick={() => setDatasetSearchQuery('')}
+                  >
+                    <X className="h-4 w-4 text-gray-400 hover:text-gray-600" />
+                  </button>
+                )}
+              </div>
 
-                    {/* Filters */}
+              {/* Filters Card */}
+              <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
+                <div className="px-4 py-3 sm:px-5 sm:py-3.5">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                    {/* Left Side: Filters */}
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 xl:flex-1">
+                      {/* Filters */}
                       {renderDatasetFilterGroup(
                         t('listPage.filters.groups.taskType'),
                         datasetTaskFilter,
@@ -1583,8 +1586,9 @@ export default function ListPage() {
                 </div>
               </div>
             </Card>
+            </div>
           )}
-
+          
           {/* Filtered Empty State */}
           {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && hasActiveDatasetFilters && (
             ((datasetsQuery.data?.total ?? 0) === 0) ||

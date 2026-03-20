@@ -1729,7 +1729,7 @@
     "errorLoadingDatasets": "加载数据集失败",
     "errorServiceUnavailable": "服务不可用，请检查数据库连接。",
     "noDatasetsFound": "未找到数据集",
-    "noDatasetsDescription": "注册您的第一个数据集以开始 WSI 分析。",
+    "noDatasetsDescription": "注册您的第一个数据集以开始分析",
     "editDataset": "编辑数据集",
     "deleteDataset": "删除数据集",
     "datasetDeleteStarted": "已在后台开始删除数据集“{{name}}”",
