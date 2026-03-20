@@ -694,7 +694,7 @@ export default function ListPage() {
       metadata.set(file.name, { label: '', case_id: '', age: '', gender: '' })
     })
     setFileMetadata(metadata)
-    const dataset = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === selectedDatasetId)
+    const dataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === selectedDatasetId)
     const sourceState = toSourceSelectionState(dataset?.source_organ)
     setUploadDatasetSourceSelection(sourceState.selection)
     setUploadDatasetSourceCustom(sourceState.custom)
@@ -722,7 +722,7 @@ export default function ListPage() {
       const resolvedDatasetSource = resolveSourceValue(uploadDatasetSourceSelection, uploadDatasetSourceCustom)
 
       if (selectedDatasetId) {
-        const currentDataset = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === selectedDatasetId)
+        const currentDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === selectedDatasetId)
         const currentSource = currentDataset?.source_organ?.trim() || ''
         if (resolvedDatasetSource !== currentSource) {
           await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
@@ -1046,7 +1046,7 @@ export default function ListPage() {
     setEditingDatasetSaving(true)
     try {
       // Find the original name from datasets
-      const originalDataset = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
+      const originalDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
       const originalName = originalDataset?.dataset_name || ''
 
       // Rename if name changed
@@ -1175,10 +1175,10 @@ export default function ListPage() {
 
   // Group items by case_id (for display within current page)
   const groupedByCaseId = React.useMemo(() => {
-    const groups = new Map<string, { slides: any[]; isNoCase: boolean; order: number }>()
+    const groups = new Map<string, { slides: ListWSIItem[]; isNoCase: boolean; order: number }>()
     const NO_CASE = '__no_case__'
 
-    ;(sortedItems).forEach((item, index) => {
+    sortedItems.forEach((item: ListWSIItem, index: number) => {
       const normalizedCaseId = item.case_id?.trim()
       const isNoCase = !normalizedCaseId
       const groupKey = isNoCase ? `${NO_CASE}:${item.wsi_id}` : normalizedCaseId
@@ -1200,7 +1200,7 @@ export default function ListPage() {
 
   const isPatchDataset = React.useMemo(() => {
     if (sortedItems.length === 0) return false
-    const patchCount = sortedItems.filter(item => getFileType(item.file_extension, item.file_size, item.data_type) === 'Patch').length
+    const patchCount = sortedItems.filter((item: ListWSIItem) => getFileType(item.file_extension, item.file_size, item.data_type) === 'Patch').length
     return patchCount > sortedItems.length / 2
   }, [sortedItems])
 
@@ -1231,7 +1231,7 @@ export default function ListPage() {
     return paginatedItems || []
   }, [useCaseGroupedView, paginatedCases, paginatedItems])
 
-  const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
+  const allPageSelected = pageSlides.length > 0 && pageSlides.every((s: ListWSIItem) => selectedIds.has(s.wsi_id))
 
   // Check if all items across all pages are selected (based on totalCount)
   const allFilteredSelected = selectedIds.size > 0 && selectedIds.size === (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0)
@@ -1250,9 +1250,9 @@ export default function ListPage() {
 
     const newSelected = new Set(selectedIds)
     if (allPageSelected) {
-      pageSlides.forEach(s => { newSelected.delete(s.wsi_id) })
+      pageSlides.forEach((s: ListWSIItem) => { newSelected.delete(s.wsi_id) })
     } else {
-      pageSlides.forEach(s => { newSelected.add(s.wsi_id) })
+      pageSlides.forEach((s: ListWSIItem) => { newSelected.add(s.wsi_id) })
     }
     setSelectedIds(newSelected)
   }
@@ -1566,7 +1566,7 @@ export default function ListPage() {
           {/* Datasets Grid */}
           {visibleDatasets.length > 0 && datasetViewMode === 'grid' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
-              {paginatedDatasets.map((dataset) => {
+              {paginatedDatasets.map((dataset: DatasetSummary) => {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
@@ -1788,7 +1788,7 @@ export default function ListPage() {
           {/* Datasets List */}
           {visibleDatasets.length > 0 && datasetViewMode === 'list' && (
             <div className="space-y-3 p-1">
-              {paginatedDatasets.map((dataset) => {
+              {paginatedDatasets.map((dataset: DatasetSummary) => {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
@@ -2714,7 +2714,7 @@ export default function ListPage() {
                       })
                     ) : (
                       // Flat view - no multi-slide cases
-                      paginatedItems.map((it) => {
+                      paginatedItems.map((it: ListWSIItem) => {
                         const isSelected = selectedIds.has(it.wsi_id)
                         return (
                           <tr
@@ -2833,7 +2833,7 @@ export default function ListPage() {
                                     )}
                                     {it.gender && (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                        {t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender)}
+                                        {String(t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender))}
                                       </span>
                                     )}
                                   </>
@@ -3122,15 +3122,15 @@ export default function ListPage() {
           editingDatasetOriginalIsPublic={editingDatasetOriginalIsPublic}
           editingDatasetSaving={editingDatasetSaving}
           isSlideDataset={(() => {
-            const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
+            const ds = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
             return ds ? getDatasetVisualType(ds) === 'slides' : false
           })()}
           canSelectSegmentation={editingDatasetDataLevel === 'file' && (() => {
-            const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
+            const ds = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
             return ds ? getDatasetVisualType(ds) !== 'slides' : false
           })()}
           canEditVisibility={(() => {
-            const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
+            const ds = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
             if (!ds) return false
             return ds.user_id === user?.id || user?.role === 'admin'
           })()}
