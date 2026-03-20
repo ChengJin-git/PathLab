@@ -546,11 +546,8 @@ async def cleanup_expired_permissions():
     async for db in get_db():
         try:
             expired = await DatasetGrantRepository.get_all_expired(db)
-            for grant in expired:
-                if grant.can_use_gpu:
-                    await SegmentationAnnotationRepository.delete_by_dataset_and_user(
-                        db, grant.dataset_id, grant.user_id
-                    )
+            # Expired grants should not delete historical annotations or drafts.
+            # Permission expiry only affects future access checks.
             count = await DatasetGrantRepository.delete_expired(db)
             if count > 0:
                 await db.commit()

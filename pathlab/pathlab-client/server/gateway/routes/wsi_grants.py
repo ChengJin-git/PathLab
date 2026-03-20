@@ -1,4 +1,5 @@
 import httpx
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,7 +17,6 @@ from backend.database.repositories import (
     DatasetGrantRepository,
     DatasetRepository,
     PermissionAuditLogRepository,
-    SegmentationAnnotationRepository,
     TrainingTaskRepository,
 )
 from ..dependencies import AI_SERVICE_URL, logger
@@ -55,6 +55,27 @@ async def _grant_or_renew_permission(
     can_use_gpu: bool = False,
     expires_at: Optional[datetime] = None,
 ) -> Tuple[str, Dict[str, Any]]:
+    target_user = None
+    if can_use_gpu:
+        from backend.auth.models import User as UserModel
+
+        try:
+            target_uuid = uuid.UUID(str(user_id))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid target user id")
+
+        target_row = await db.execute(
+            select(UserModel.id, UserModel.role).where(UserModel.id == target_uuid)
+        )
+        target_user = target_row.first()
+        if target_user is None:
+            raise HTTPException(status_code=404, detail="Target user not found")
+        if target_user.role == UserModel.ROLE_GUEST:
+            raise HTTPException(
+                status_code=400,
+                detail="Guest users cannot be granted GPU permission",
+            )
+
     existing = await DatasetGrantRepository.get_by_dataset_and_user(
         db, dataset_id, user_id
     )
@@ -160,14 +181,6 @@ async def _stop_non_owner_training_tasks(
 
     for user_id, task_ids in affected_by_user.items():
         await _notify_ai_service_permission_revocation(task_ids)
-        deleted = await SegmentationAnnotationRepository.delete_by_dataset_and_user(
-            db, dataset_id, user_id
-        )
-        if deleted:
-            logger.info(
-                f"Deleted {deleted} annotation(s) for user {user_id} on dataset {dataset_id} "
-                f"during visibility change to private"
-            )
 
     return affected_by_user
 
@@ -176,6 +189,7 @@ async def _revoke_child_dataset_grants(
     db: AsyncSession,
     parent_dataset_id: str,
     target_user_id: str,
+    actor_user_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     child_ids = await DatasetRepository.get_child_dataset_ids(db, [parent_dataset_id])
     if not child_ids:
@@ -204,15 +218,20 @@ async def _revoke_child_dataset_grants(
         )
         await _notify_ai_service_permission_revocation(affected_task_ids)
 
-        deleted = await SegmentationAnnotationRepository.delete_by_dataset_and_user(
-            db, child_id, target_user_id
-        )
         await DatasetGrantRepository.delete(db, child_id, target_user_id)
+        if actor_user_id:
+            await PermissionAuditLogRepository.log(
+                db,
+                child_id,
+                actor_user_id,
+                target_user_id,
+                "revoke_permission_cascade",
+                {},
+            )
 
         results.append(
             {
                 "dataset_id": child_id,
-                "deleted_annotations": deleted,
                 "stopped_tasks": affected_task_ids,
             }
         )
@@ -230,19 +249,6 @@ async def _revoke_permission_with_side_effects(
         db, target_user_id, dataset_wsi_ids
     )
     revoked_tasks = await _notify_ai_service_permission_revocation(affected_task_ids)
-
-    deleted_annotation_count = (
-        await SegmentationAnnotationRepository.delete_by_dataset_and_user(
-            db,
-            dataset_id,
-            target_user_id,
-        )
-    )
-    if deleted_annotation_count:
-        logger.info(
-            f"Deleted {deleted_annotation_count} annotation record(s) "
-            f"for user {target_user_id} on dataset {dataset_id} during permission revocation"
-        )
 
     grant = await DatasetGrantRepository.get_by_dataset_and_user(
         db, dataset_id, target_user_id
@@ -326,7 +332,7 @@ async def get_my_dataset_grants(
 @router.get("/user-grants/{target_user_id}")
 async def get_user_dataset_grants(
     target_user_id: str,
-    user: User = Depends(require_admin),
+    _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     grants = await DatasetGrantRepository.get_by_user(db, target_user_id)
@@ -353,7 +359,7 @@ async def get_user_dataset_grants(
 @router.get("/datasets/{dataset_id}/grants")
 async def list_dataset_grants(
     dataset_id: str,
-    user: User = Depends(require_admin),
+    _: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
@@ -402,6 +408,11 @@ async def grant_dataset_grant(
     user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
+    if can_use_gpu and can_collaborate:
+        raise HTTPException(
+            status_code=400,
+            detail="Grant GPU and collaborator permissions separately for clearer role boundaries",
+        )
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
@@ -453,6 +464,12 @@ async def batch_grant_dataset_grants(
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail=f"Dataset not found: {dataset_id}")
+
+    if request.can_use_gpu and request.can_collaborate:
+        raise HTTPException(
+            status_code=400,
+            detail="Grant GPU and collaborator permissions separately for clearer role boundaries",
+        )
 
     expires_at = _calculate_expires_at(request.expires_in_hours)
     results = []
@@ -541,7 +558,9 @@ async def revoke_dataset_grant(
         target_user_id=target_user_id,
         dataset_wsi_ids=dataset_wsi_ids,
     )
-    child_results = await _revoke_child_dataset_grants(db, dataset_id, target_user_id)
+    child_results = await _revoke_child_dataset_grants(
+        db, dataset_id, target_user_id, str(user.id)
+    )
     if child_results:
         result["child_datasets_revoked"] = len(child_results)
         result["message"] = (
@@ -581,7 +600,9 @@ async def batch_revoke_dataset_grants(
                 target_user_id=uid,
                 dataset_wsi_ids=dataset_wsi_ids,
             )
-            child_results = await _revoke_child_dataset_grants(db, dataset_id, uid)
+            child_results = await _revoke_child_dataset_grants(
+                db, dataset_id, uid, str(user.id)
+            )
             if child_results:
                 result["child_datasets_revoked"] = len(child_results)
                 result["message"] = (

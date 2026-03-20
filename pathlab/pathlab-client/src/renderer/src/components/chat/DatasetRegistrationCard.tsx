@@ -84,7 +84,6 @@ export function DatasetRegistrationCard({
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(config?.dataset_id || '')
   const [newDatasetName, setNewDatasetName] = useState(config?.dataset_name || '')
   const [isPublic, setIsPublic] = useState<boolean>(Boolean(config?.is_public))
-  const [isOpenCollaboration, setIsOpenCollaboration] = useState<boolean>(Boolean(config?.is_open_collaboration))
   const isSegmentation = config?.upload_mode === 'segmentation'
   const [dataLevel, setDataLevel] = useState<'file' | 'case'>(isSegmentation ? 'file' : (config?.aggregation_level || 'file'))
   
@@ -440,7 +439,6 @@ export function DatasetRegistrationCard({
                 dataset_name: mode === 'new' ? newDatasetName : undefined,
                 aggregation_level: dataLevel,
                 is_public: mode === 'new' ? isPublic : undefined,
-                is_open_collaboration: mode === 'new' && isPublic ? isOpenCollaboration : undefined,
                 task_type: config?.upload_mode || 'classification',
                 label: isSegmentation ? undefined : '',
                 case_id: '',
@@ -695,7 +693,7 @@ export function DatasetRegistrationCard({
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => { setIsPublic(false); setIsOpenCollaboration(false); }}
+                      onClick={() => setIsPublic(false)}
                       className={`border rounded-lg p-3 text-left transition-all ${
                         !isPublic
                           ? 'bg-primary-50 border-primary-200 text-primary-700'
@@ -721,39 +719,6 @@ export function DatasetRegistrationCard({
                 </div>
               )}
 
-              {mode === 'new' && isPublic && (
-                <div className="w-full">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('settings.datasetPermissionModal.collaborationMode', { defaultValue: 'Collaboration Mode' })}
-                  </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setIsOpenCollaboration(false)}
-                      className={`border rounded-lg p-3 text-left transition-all ${
-                        !isOpenCollaboration
-                          ? 'bg-primary-50 border-primary-200 text-primary-700'
-                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="text-sm font-medium">{t('settings.datasetPermissionModal.openCollabOff', { defaultValue: 'Closed collaboration (only invited)' })}</div>
-                      <div className="text-xs opacity-80">{t('settings.datasetPermissionModal.closedCollabDesc', { defaultValue: 'Only invited users can annotate' })}</div>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsOpenCollaboration(true)}
-                      className={`border rounded-lg p-3 text-left transition-all ${
-                        isOpenCollaboration
-                          ? 'bg-primary-50 border-primary-200 text-primary-700'
-                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      <div className="text-sm font-medium">{t('settings.datasetPermissionModal.openCollabOn', { defaultValue: 'Open collaboration (anyone can annotate)' })}</div>
-                      <div className="text-xs opacity-80">{t('settings.datasetPermissionModal.openCollabDesc', { defaultValue: 'Any authenticated user can create shared annotations' })}</div>
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
 
             <div

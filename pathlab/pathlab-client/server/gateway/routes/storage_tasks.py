@@ -571,7 +571,7 @@ async def _run_batch_import_task(
                             annotations=coco_data,
                             source_dataset_id=resolved_dataset_id,
                             status="finalized",
-                            visibility_mode="inherit",
+                            annotation_mode="personal",
                             source="import",
                         )
                         logger.info(

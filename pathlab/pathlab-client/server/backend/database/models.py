@@ -1046,10 +1046,14 @@ class SegmentationAnnotation(Base):
       "shared_draft" – collaborative draft (one per dataset, annotation_id = "shared_{dataset_id}")
       "finalized"    – ground-truth, immutable once written
 
+    The canonical annotation mode is ``annotation_mode``. The database column
+    is still named ``visibility_mode`` for now, but the legacy ``inherit`` mode
+    has been removed. The only supported modes are ``personal`` and ``shared``.
+
     For shared_draft records:
-      user_id       = dataset owner's user_id (stable ownership marker)
+      user_id        = dataset owner's user_id (stable ownership marker)
       last_edited_by = user_id of whoever last saved this record
-      version       = optimistic-lock counter, incremented on every write
+      version        = optimistic-lock counter, incremented on every write
     """
 
     __tablename__ = "segmentation_annotations"
@@ -1066,6 +1070,7 @@ class SegmentationAnnotation(Base):
 
     # Annotation lifecycle status: "draft" | "shared_draft" | "finalized"
     status = Column(String(20), nullable=False, default="draft")
+    # Annotation mode: "personal" | "shared"
     visibility_mode = Column(
         String(20), nullable=False, default="personal", server_default="personal"
     )
@@ -1093,7 +1098,7 @@ class SegmentationAnnotation(Base):
             "source_dataset_id": self.source_dataset_id,
             "annotations": self.annotations,
             "status": self.status,
-            "visibility_mode": self.visibility_mode,
+            "annotation_mode": self.visibility_mode,
             "source": self.source,
             "version": self.version,
             "last_edited_by": self.last_edited_by,

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info, Database, Globe, Lock, UsersRound } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info, Database, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
@@ -26,8 +26,6 @@ export interface DatasetConfigStepProps {
   existingDatasetSource?: string
   isPublic: boolean
   onIsPublicChange: (value: boolean) => void
-  isOpenCollaboration: boolean
-  onIsOpenCollaborationChange: (value: boolean) => void
   onNext: () => void
   onBack: () => void
 }
@@ -37,7 +35,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   dataLevel, onDataLevelChange, datasetSourceSelection, datasetSourceCustom,
   onDatasetSourceSelectionChange, onDatasetSourceCustomChange, isExistingDataset, existingDatasets,
   showValidation, fromAIChat, existingDatasetSource, isPublic, onIsPublicChange,
-  isOpenCollaboration, onIsOpenCollaborationChange, onNext, onBack
+  onNext, onBack
 }) => {
   const { t } = useTranslation()
   const debounceTimerRef = useRef<NodeJS.Timeout>()
@@ -339,29 +337,6 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                       </div>
                     </button>
                   </div>
-                  {isPublic && (
-                    <div className="mt-3">
-                      <button
-                        type="button"
-                        onClick={() => onIsOpenCollaborationChange(!isOpenCollaboration)}
-                        className={`flex flex-row items-center w-full p-4 rounded-xl border-2 transition-all text-left ${isOpenCollaboration
-                          ? 'border-emerald-500 bg-emerald-50/50'
-                          : 'border-slate-100 bg-white hover:border-slate-200'
-                          }`}
-                      >
-                        <div className={`p-2 rounded-lg mr-4 ${isOpenCollaboration ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                          <UsersRound className="w-5 h-5" />
-                        </div>
-                        <div className="flex-1">
-                          <span className={`font-bold block ${isOpenCollaboration ? 'text-emerald-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.openCollaboration')}</span>
-                          <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.openCollaborationDesc')}</span>
-                        </div>
-                        <div className={`w-10 h-6 rounded-full transition-colors ${isOpenCollaboration ? 'bg-emerald-500' : 'bg-slate-300'}`}>
-                          <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform mt-0.5 ${isOpenCollaboration ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
-                        </div>
-                      </button>
-                    </div>
-                  )}
                 </div>
               )}
 

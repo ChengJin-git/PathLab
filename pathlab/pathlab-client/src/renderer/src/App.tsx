@@ -1,4 +1,3 @@
-import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Routes, Route, Link } from 'react-router-dom'
 import Layout from './components/Layout'
@@ -40,13 +39,13 @@ export default function App() {
       <Route path="/dashboard" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/dashboard/:conversationId" element={<ProtectedRoute><Layout><AIChatPage /></Layout></ProtectedRoute>} />
       <Route path="/tools" element={<ProtectedRoute><Layout><ToolsPage /></Layout></ProtectedRoute>} />
-      <Route path="/settings" element={<ProtectedRoute><Layout><SettingsPage /></Layout></ProtectedRoute>} />
-      <Route path="/task-setup" element={<ProtectedRoute><Layout><NewTaskPage /></Layout></ProtectedRoute>} />
+      <Route path="/settings" element={<ProtectedRoute requireAdmin><Layout><SettingsPage /></Layout></ProtectedRoute>} />
+      <Route path="/task-setup" element={<ProtectedRoute requireGpu><Layout><NewTaskPage /></Layout></ProtectedRoute>} />
       <Route path="/task-list" element={<ProtectedRoute><Layout><TaskListPage /></Layout></ProtectedRoute>} />
       <Route path="/task/:task_id" element={<ProtectedRoute><Layout><TaskDetailPage /></Layout></ProtectedRoute>} />
       <Route path="/wsi-list" element={<ProtectedRoute><Layout><ListPage /></Layout></ProtectedRoute>} />
       <Route path="/register" element={<ProtectedRoute><Layout><RegisterPage /></Layout></ProtectedRoute>} />
-      <Route path="/results" element={<ProtectedRoute><Layout><ResultsViewerPage /></Layout></ProtectedRoute>} />
+      <Route path="/results" element={<ProtectedRoute requireGpu><Layout><ResultsViewerPage /></Layout></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Layout><ReportGeneratorPage /></Layout></ProtectedRoute>} />
 
       {/* WSIViewerPage without Layout (full screen viewer) - Also protected */}

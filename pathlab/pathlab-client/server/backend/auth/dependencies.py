@@ -296,6 +296,9 @@ async def check_dataset_gpu_permission(
     if user.can_use_gpu():
         return True
 
+    if user.is_guest():
+        return False
+
     from backend.database.repositories import DatasetGrantRepository
 
     return await DatasetGrantRepository.has_valid_gpu(db, dataset_id, str(user.id))

@@ -153,15 +153,14 @@ export async function batchRevokeDatasetGrants(
 
 export async function updateDatasetVisibility(
   datasetId: string,
-  isPublic: boolean,
-  isOpenCollaboration?: boolean
+  isPublic: boolean
 ): Promise<{ dataset_id: string; is_public: boolean; is_open_collaboration: boolean }> {
   return apiFetch(
     `${API_BASE}/wsi/datasets/${datasetId}/visibility`,
     {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ is_public: isPublic, is_open_collaboration: isOpenCollaboration })
+      body: JSON.stringify({ is_public: isPublic })
     },
     'Failed to update dataset visibility'
   )

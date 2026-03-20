@@ -503,6 +503,15 @@ async def _get_dataset_with_access(dataset_id: str, user: User, db: AsyncSession
     )
 
 
+def _require_personal_annotation_owner(dataset, user: User) -> None:
+    if is_annotation_owner(user, dataset):
+        return
+    raise HTTPException(
+        status_code=403,
+        detail="Personal annotation is only available to the dataset owner or admin",
+    )
+
+
 async def _get_dataset_wsis(dataset_id: str, db: AsyncSession):
     return await WSIRepository.get_by_dataset(db, dataset_id, skip=0, limit=0)
 
@@ -696,7 +705,8 @@ async def save_annotation(
     """Create or update a segmentation annotation (auto-save)."""
     try:
         if req.source_dataset_id:
-            await _get_dataset_with_access(req.source_dataset_id, user, db)
+            dataset = await _get_dataset_with_access(req.source_dataset_id, user, db)
+            _require_personal_annotation_owner(dataset, user)
 
         annotation = await SegmentationAnnotationRepository.upsert(
             db,
@@ -704,7 +714,7 @@ async def save_annotation(
             user_id=str(user.id),
             annotations=req.annotations,
             source_dataset_id=req.source_dataset_id,
-            visibility_mode=req.visibility_mode,
+            annotation_mode="personal",
         )
         await db.commit()
 
@@ -916,6 +926,9 @@ async def get_annotation(
     )
     if not annotation:
         raise HTTPException(status_code=404, detail="Annotation not found")
+    if annotation.source_dataset_id:
+        dataset = await _get_dataset_with_access(annotation.source_dataset_id, user, db)
+        _require_personal_annotation_owner(dataset, user)
     return annotation.to_dict()
 
 
@@ -926,6 +939,15 @@ async def delete_annotation(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete an annotation."""
+    annotation = await SegmentationAnnotationRepository.get(
+        db, annotation_id, str(user.id)
+    )
+    if not annotation:
+        raise HTTPException(status_code=404, detail="Annotation not found")
+    if annotation.source_dataset_id:
+        dataset = await _get_dataset_with_access(annotation.source_dataset_id, user, db)
+        _require_personal_annotation_owner(dataset, user)
+
     deleted = await SegmentationAnnotationRepository.delete(
         db, annotation_id, str(user.id)
     )
@@ -971,6 +993,8 @@ async def delete_dataset_annotations_by_labels(
 
     if changed or not resolved["draft_annotation"]:
         try:
+            dataset = await _get_dataset_with_access(dataset_id, user, db)
+            _require_personal_annotation_owner(dataset, user)
             saved_annotation = await SegmentationAnnotationRepository.upsert(
                 db,
                 annotation_id=annotation_id,
@@ -978,7 +1002,7 @@ async def delete_dataset_annotations_by_labels(
                 annotations=next_draft_annotations,
                 source_dataset_id=dataset_id,
                 status="draft",
-                visibility_mode="inherit",
+                annotation_mode="personal",
                 source="viewer",
             )
             await db.commit()
@@ -1095,6 +1119,9 @@ async def extract_regions(
         )
         if not annotation:
             raise HTTPException(status_code=404, detail="Annotation not found")
+        if annotation.source_dataset_id:
+            dataset = await _get_dataset_with_access(annotation.source_dataset_id, user, db)
+            _require_personal_annotation_owner(dataset, user)
         annotations = annotation.annotations
     if not annotations:
         raise HTTPException(status_code=400, detail="No annotations provided")
@@ -1410,7 +1437,7 @@ async def finalize_shared_annotation(
             annotations=annotations,
             source_dataset_id=dataset_id,
             status="finalized",
-            visibility_mode="inherit",
+            annotation_mode="personal",
             source="viewer",
         )
 

@@ -215,9 +215,7 @@ export default function ListPage() {
   const [editingDatasetSourceCustom, setEditingDatasetSourceCustom] = useState('')
   const [editingDatasetOriginalSource, setEditingDatasetOriginalSource] = useState('')
   const [editingDatasetIsPublic, setEditingDatasetIsPublic] = useState(false)
-  const [editingDatasetIsOpenCollaboration, setEditingDatasetIsOpenCollaboration] = useState(false)
   const [editingDatasetOriginalIsPublic, setEditingDatasetOriginalIsPublic] = useState(false)
-  const [editingDatasetOriginalIsOpenCollaboration, setEditingDatasetOriginalIsOpenCollaboration] = useState(false)
   const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
 
   const resolveSourceValue = (selection: string, custom: string) => selection === 'Other' ? custom.trim() : selection.trim()
@@ -1025,11 +1023,8 @@ export default function ListPage() {
     setEditingDatasetSourceCustom(sourceState.custom)
     setEditingDatasetOriginalSource(dataset.source_organ || '')
     const isPublic = dataset.is_public || false
-    const isOpenCollaboration = dataset.is_open_collaboration || false
     setEditingDatasetIsPublic(isPublic)
-    setEditingDatasetIsOpenCollaboration(isOpenCollaboration)
     setEditingDatasetOriginalIsPublic(isPublic)
-    setEditingDatasetOriginalIsOpenCollaboration(isOpenCollaboration)
   }
 
   const handleEditDatasetCancel = () => {
@@ -1043,9 +1038,7 @@ export default function ListPage() {
     setEditingDatasetSourceCustom('')
     setEditingDatasetOriginalSource('')
     setEditingDatasetIsPublic(false)
-    setEditingDatasetIsOpenCollaboration(false)
     setEditingDatasetOriginalIsPublic(false)
-    setEditingDatasetOriginalIsOpenCollaboration(false)
     setEditingDatasetSaving(false)
   }
 
@@ -1081,8 +1074,8 @@ export default function ListPage() {
         await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
       }
 
-      if (editingDatasetIsPublic !== editingDatasetOriginalIsPublic || editingDatasetIsOpenCollaboration !== editingDatasetOriginalIsOpenCollaboration) {
-        await updateDatasetVisibility(editingDatasetId, editingDatasetIsPublic, editingDatasetIsOpenCollaboration)
+      if (editingDatasetIsPublic !== editingDatasetOriginalIsPublic) {
+        await updateDatasetVisibility(editingDatasetId, editingDatasetIsPublic)
       }
 
       void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
@@ -1754,7 +1747,7 @@ export default function ListPage() {
                          )}
                          {dataset.is_public && dataset.is_open_collaboration && (
                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-green-50 text-green-700 border border-green-100/70">
-                             <Users className="w-2.5 h-2.5" />{t('listPage.openCollab')}
+                             <Users className="w-2.5 h-2.5" />{t('listPage.openCollab', { defaultValue: 'Shared workspace' })}
                            </span>
                          )}
                        </div>
@@ -1895,7 +1888,7 @@ export default function ListPage() {
                                 )}
                                 {dataset.is_public && dataset.is_open_collaboration && (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-green-50 text-green-700 border border-green-100/70">
-                                    <Users className="w-2.5 h-2.5" />{t('listPage.openCollab')}
+                                    <Users className="w-2.5 h-2.5" />{t('listPage.openCollab', { defaultValue: 'Shared workspace' })}
                                   </span>
                                 )}
                                 {dataset.parent_dataset_name && (
@@ -3148,9 +3141,7 @@ export default function ListPage() {
           editingDatasetSourceSelection={editingDatasetSourceSelection}
           editingDatasetSourceCustom={editingDatasetSourceCustom}
           editingDatasetIsPublic={editingDatasetIsPublic}
-          editingDatasetIsOpenCollaboration={editingDatasetIsOpenCollaboration}
           editingDatasetOriginalIsPublic={editingDatasetOriginalIsPublic}
-          editingDatasetOriginalIsOpenCollaboration={editingDatasetOriginalIsOpenCollaboration}
           editingDatasetSaving={editingDatasetSaving}
           isSlideDataset={(() => {
             const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
@@ -3174,7 +3165,6 @@ export default function ListPage() {
           }}
           onSourceCustomChange={setEditingDatasetSourceCustom}
           onIsPublicChange={setEditingDatasetIsPublic}
-          onIsOpenCollaborationChange={setEditingDatasetIsOpenCollaboration}
           onCancel={handleEditDatasetCancel}
           onSave={handleEditDatasetSave}
         />

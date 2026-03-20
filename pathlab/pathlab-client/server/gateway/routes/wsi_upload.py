@@ -142,7 +142,7 @@ async def _append_segmentation_annotation_to_existing_dataset(
         annotations=annotation_payload,
         source_dataset_id=dataset_id,
         status="finalized",
-        visibility_mode="inherit",
+        annotation_mode="personal",
         source=source,
     )
     return matched_wsi
@@ -708,7 +708,7 @@ async def upload_wsi_file(
                     annotations=segmentation_annotation,
                     source_dataset_id=resolved_dataset_id,
                     status="finalized",
-                    visibility_mode="inherit",
+                    annotation_mode="personal",
                     source="upload",
                 )
             if resolved_dataset_id:
@@ -1119,7 +1119,7 @@ async def upload_wsi_by_path(
                     annotations=segmentation_annotation,
                     source_dataset_id=resolved_dataset_id,
                     status="finalized",
-                    visibility_mode="inherit",
+                    annotation_mode="personal",
                     source="upload_path",
                 )
             if resolved_dataset_id:

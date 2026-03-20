@@ -8,8 +8,8 @@ from backend.database.repositories import DatasetGrantRepository
 async def can_access_shared(user: User, dataset: Dataset, db: AsyncSession) -> bool:
     if user.is_admin() or dataset.user_id == str(user.id):
         return True
-    if dataset.is_public and dataset.is_open_collaboration:
-        return True
+    if not dataset.is_open_collaboration:
+        return False
     return await DatasetGrantRepository.has_valid_collaborate(
         db, dataset.dataset_id, str(user.id)
     )

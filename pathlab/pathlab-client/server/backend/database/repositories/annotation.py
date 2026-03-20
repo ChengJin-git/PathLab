@@ -1,13 +1,12 @@
 import logging
-from typing import List, Optional, Set, Any
-from sqlalchemy import select, delete, update, func, or_
+from typing import List, Optional, Any
+from sqlalchemy import select, delete, update, func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 from ..models import SegmentationAnnotation, utc_now
-from .dataset import DatasetRepository
 
 
 class VersionConflictError(Exception):
@@ -23,7 +22,7 @@ class AnnotationOwnershipConflictError(Exception):
 
 
 class SegmentationAnnotationRepository:
-    """Repository for SegmentationAnnotation CRUD operations"""
+    """Repository for SegmentationAnnotation CRUD operations."""
 
     @staticmethod
     async def upsert(
@@ -33,16 +32,26 @@ class SegmentationAnnotationRepository:
         annotations: dict[str, Any],
         source_dataset_id: Optional[str] = None,
         status: str = "draft",
-        visibility_mode: str = "personal",
+        annotation_mode: str = "personal",
         source: str = "viewer",
     ) -> SegmentationAnnotation:
         """
         Create or update a segmentation annotation atomically.
 
+        ``annotation_mode`` is the only supported API name. The underlying DB
+        column is still named ``visibility_mode`` until a later schema cleanup.
+        The legacy ``inherit`` mode is no longer supported.
+
         ``annotation_id`` is globally unique in the database, so viewer auto-save
         must use a PostgreSQL upsert here to avoid duplicate-key races when two
         save requests for the same draft arrive concurrently.
         """
+        if annotation_mode not in {"personal", "shared"}:
+            raise ValueError(
+                "Unsupported annotation mode. "
+                "The legacy 'inherit' mode has been removed; use 'personal' or 'shared'."
+            )
+
         if status == "draft":
             existing_result = await db.execute(
                 select(SegmentationAnnotation.user_id).where(
@@ -62,7 +71,7 @@ class SegmentationAnnotationRepository:
                 source_dataset_id=source_dataset_id,
                 annotations=annotations,
                 status=status,
-                visibility_mode=visibility_mode,
+                visibility_mode=annotation_mode,
                 source=source,
                 created_at=timestamp,
                 updated_at=timestamp,
@@ -74,7 +83,7 @@ class SegmentationAnnotationRepository:
                     "source_dataset_id": source_dataset_id,
                     "annotations": annotations,
                     "status": status,
-                    "visibility_mode": visibility_mode,
+                    "visibility_mode": annotation_mode,
                     "source": source,
                     "updated_at": timestamp,
                 },
@@ -144,7 +153,12 @@ class SegmentationAnnotationRepository:
         dataset_id: str,
         user_id: str,
     ) -> int:
-        """Delete personal draft annotations for a user within a dataset. Returns deleted row count."""
+        """
+        Delete personal draft annotations for a user within a dataset.
+
+        Historical/finalized annotations must remain stable even after permission
+        revocation, so this method is reserved for explicit draft cleanup flows.
+        """
         result = await db.execute(
             delete(SegmentationAnnotation)
             .where(SegmentationAnnotation.source_dataset_id == dataset_id)
@@ -160,17 +174,16 @@ class SegmentationAnnotationRepository:
         annotation_id: str,
         user_id: str,
         is_admin: bool = False,
-        elevated_dataset_ids: Optional[Set[str]] = None,
+        elevated_dataset_ids: Optional[set[str]] = None,
     ) -> Optional["SegmentationAnnotation"]:
         """
-        Get an annotation if the user has permission:
-          - admin: always allowed
-          - owner (annotation.user_id == user_id): allowed
-          - personal draft: owner only
-          - inherit mode: inherits dataset visibility (public → accessible)
-          - elevated_dataset_ids: temporary grant via DatasetGrant
-        Returns None if the annotation doesn't exist or the user has no access.
+        Get an annotation if the user has permission.
+
+        ``elevated_dataset_ids`` is ignored. Finalized records are resolved
+        through route-level dataset access, and personal drafts remain
+        owner/admin only.
         """
+        _ = elevated_dataset_ids
         result = await db.execute(
             select(SegmentationAnnotation).where(
                 SegmentationAnnotation.annotation_id == annotation_id
@@ -183,22 +196,7 @@ class SegmentationAnnotationRepository:
             return annotation
         if annotation.user_id == user_id:
             return annotation
-        if annotation.status == "draft" and annotation.visibility_mode == "personal":
-            return None
-        # inherit mode: inherit dataset visibility
-        if annotation.visibility_mode == "inherit" and annotation.source_dataset_id:
-            dataset = await DatasetRepository.get_by_id(
-                db, annotation.source_dataset_id
-            )
-            if dataset and dataset.is_public:
-                return annotation
-        if (
-            elevated_dataset_ids
-            and annotation.source_dataset_id
-            and annotation.source_dataset_id in elevated_dataset_ids
-        ):
-            return annotation
-        return None  # No access
+        return None
 
     @staticmethod
     async def get_by_dataset(

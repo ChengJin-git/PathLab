@@ -5,17 +5,21 @@ import { useAuth } from '../contexts/AuthContext'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
+  requireAdmin?: boolean
+  requireGpu?: boolean
 }
 
 /**
  * ProtectedRoute - Wrapper component that requires authentication
- * 
+ *
  * - If loading, shows a loading spinner
  * - If not logged in, redirects to /login
- * - If logged in, renders children
+ * - If role is insufficient, redirects to /dashboard
+ * - If GPU capability is required but unavailable, redirects to /tools
+ * - If checks pass, renders children
  */
-export function ProtectedRoute({ children }: ProtectedRouteProps): React.ReactElement {
-  const { isLoggedIn, isLoading } = useAuth()
+export function ProtectedRoute({ children, requireAdmin = false, requireGpu = false }: ProtectedRouteProps): React.ReactElement {
+  const { isLoggedIn, isLoading, isAdmin, canUseGpu } = useAuth()
   const { t } = useTranslation()
 
   // Show loading state while checking authentication
@@ -33,6 +37,14 @@ export function ProtectedRoute({ children }: ProtectedRouteProps): React.ReactEl
   // Redirect to login if not authenticated
   if (!isLoggedIn) {
     return <Navigate to="/login" replace />
+  }
+
+  if (requireAdmin && !isAdmin) {
+    return <Navigate to="/dashboard" replace />
+  }
+
+  if (requireGpu && !canUseGpu) {
+    return <Navigate to="/tools" replace />
   }
 
   // Render protected content

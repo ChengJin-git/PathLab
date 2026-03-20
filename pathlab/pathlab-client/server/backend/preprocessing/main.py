@@ -1533,7 +1533,7 @@ async def _extract_segmentation_dataset(
             annotations=coco_json,
             source_dataset_id=dataset_id,
             status="finalized",
-            visibility_mode="inherit",
+            annotation_mode="personal",
             source="extraction",
         )
         await DatasetStatsRepository.recompute(db, dataset_id)

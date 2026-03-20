@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { Edit, X, Users, FileImage, Globe, Lock, UsersRound } from 'lucide-react'
+import { Edit, X, Users, FileImage, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { organSources, organSourceKeyMap } from '../upload/types'
@@ -305,9 +305,7 @@ export interface EditDatasetModalProps {
   editingDatasetSourceSelection: string
   editingDatasetSourceCustom: string
   editingDatasetIsPublic: boolean
-  editingDatasetIsOpenCollaboration: boolean
   editingDatasetOriginalIsPublic: boolean
-  editingDatasetOriginalIsOpenCollaboration: boolean
   editingDatasetSaving: boolean
   isSlideDataset: boolean
   canSelectSegmentation: boolean
@@ -318,7 +316,6 @@ export interface EditDatasetModalProps {
   onSourceSelectionChange: (v: string) => void
   onSourceCustomChange: (v: string) => void
   onIsPublicChange: (v: boolean) => void
-  onIsOpenCollaborationChange: (v: boolean) => void
   onCancel: () => void
   onSave: () => void
 }
@@ -326,12 +323,11 @@ export interface EditDatasetModalProps {
 export function EditDatasetModal({
   editingDatasetName, editingDatasetType, editingDatasetOriginalType,
   editingDatasetDataLevel, editingDatasetOriginalDataLevel, editingDatasetSourceSelection, editingDatasetSourceCustom,
-  editingDatasetIsPublic, editingDatasetIsOpenCollaboration,
-  editingDatasetOriginalIsPublic, editingDatasetOriginalIsOpenCollaboration,
+  editingDatasetIsPublic, editingDatasetOriginalIsPublic,
   editingDatasetSaving,
   isSlideDataset, canSelectSegmentation, canEditVisibility,
   onNameChange, onTypeChange, onDataLevelChange, onSourceSelectionChange, onSourceCustomChange,
-  onIsPublicChange, onIsOpenCollaborationChange, onCancel, onSave,
+  onIsPublicChange, onCancel, onSave,
 }: EditDatasetModalProps) {
   const { t } = useTranslation()
   const isOtherSource = editingDatasetSourceSelection === 'Other'
@@ -464,7 +460,6 @@ export function EditDatasetModal({
                 type="button"
                 onClick={() => {
                   onIsPublicChange(false)
-                  onIsOpenCollaborationChange(false)
                 }}
                 className={`flex flex-row items-center p-3 rounded-xl border-2 transition-all text-left ${
                   !editingDatasetIsPublic
@@ -502,33 +497,7 @@ export function EditDatasetModal({
                 </div>
               </button>
             </div>
-            {editingDatasetIsPublic && (
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={() => onIsOpenCollaborationChange(!editingDatasetIsOpenCollaboration)}
-                  className={`flex flex-row items-center w-full p-3 rounded-xl border-2 transition-all text-left ${
-                    editingDatasetIsOpenCollaboration
-                      ? 'border-emerald-500 bg-emerald-50/50'
-                      : 'border-slate-100 bg-white hover:border-slate-200'
-                  }`}
-                >
-                  <div className={`p-2 rounded-lg mr-3 ${editingDatasetIsOpenCollaboration ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                    <UsersRound className="w-4 h-4" />
-                  </div>
-                  <div className="flex-1">
-                    <span className={`font-bold block text-sm ${editingDatasetIsOpenCollaboration ? 'text-emerald-900' : 'text-slate-700'}`}>
-                      {t('listComponents.editModals.openCollaboration')}
-                    </span>
-                    <span className="text-[10px] text-slate-500 mt-0.5">{t('listComponents.editModals.openCollaborationDesc')}</span>
-                  </div>
-                  <div className={`w-10 h-6 rounded-full transition-colors ${editingDatasetIsOpenCollaboration ? 'bg-emerald-500' : 'bg-slate-300'}`}>
-                    <div className={`w-5 h-5 rounded-full bg-white shadow transition-transform mt-0.5 ${editingDatasetIsOpenCollaboration ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
-                  </div>
-                </button>
-              </div>
-            )}
-            {(editingDatasetIsPublic !== editingDatasetOriginalIsPublic || editingDatasetIsOpenCollaboration !== editingDatasetOriginalIsOpenCollaboration) && (
+            {editingDatasetIsPublic !== editingDatasetOriginalIsPublic && (
               <p className="mt-2 text-xs text-amber-600">
                 {t('listComponents.editModals.changingVisibilityWarning')}
               </p>
