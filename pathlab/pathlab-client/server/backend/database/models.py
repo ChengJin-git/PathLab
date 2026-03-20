@@ -140,12 +140,6 @@ class Dataset(Base):
     #             False (default) = only owner + explicitly authorized users
     is_public = Column(Boolean, default=False, nullable=False, server_default="false")
 
-    # Open collaboration: True = any authenticated user can write shared annotations
-    # Only meaningful when is_public=True
-    is_open_collaboration = Column(
-        Boolean, default=False, nullable=False, server_default="false"
-    )
-
     parent_dataset_id = Column(
         String(255),
         ForeignKey("datasets.dataset_id", ondelete="SET NULL"),
@@ -173,7 +167,6 @@ class Dataset(Base):
             "group_id": self.group_id,
             "source_organ": self.source_organ,
             "is_public": self.is_public,
-            "is_open_collaboration": self.is_open_collaboration,
             "data_type": self.data_group.data_type if self.data_group else None,
             "aggregation_level": self.data_group.aggregation_level
             if self.data_group

@@ -43,7 +43,6 @@ class DatasetRepository:
         source_organ: str = None,
         parent_dataset_id: str = None,
         is_public: bool = False,
-        is_open_collaboration: bool = False,
     ) -> Dataset:
         dataset = Dataset(
             dataset_id=dataset_id,
@@ -54,7 +53,6 @@ class DatasetRepository:
             source_organ=source_organ or None,
             parent_dataset_id=parent_dataset_id or None,
             is_public=is_public,
-            is_open_collaboration=is_open_collaboration,
         )
         db.add(dataset)
         await db.flush()
@@ -101,7 +99,6 @@ class DatasetRepository:
         source_organ: str = None,
         parent_dataset_id: str = None,
         is_public: bool = False,
-        is_open_collaboration: bool = False,
         reuse_existing: bool = True,
     ) -> Dataset:
         import uuid
@@ -123,7 +120,6 @@ class DatasetRepository:
                     source_organ=source_organ,
                     parent_dataset_id=parent_dataset_id,
                     is_public=is_public,
-                    is_open_collaboration=is_open_collaboration,
                 )
         except IntegrityError:
             logger.debug(
