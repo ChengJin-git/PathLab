@@ -145,6 +145,9 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monk
     async def _fake_create_wsi(db, wsi_data):
         return types.SimpleNamespace(label=wsi_data.get("label"))
 
+    async def _fake_recompute_dataset_stats(db, dataset_id):
+        return None
+
     monkeypatch.setattr(
         "gateway.routes.wsi_upload.os.path.exists",
         lambda path: True,
@@ -193,6 +196,11 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monk
         lambda *args, **kwargs: None,
     )
     monkeypatch.setattr(
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.DatasetStatsRepository.recompute",
+        staticmethod(_fake_recompute_dataset_stats),
+    )
+
         "gateway.routes.wsi_upload.WSIRepository.create",
         staticmethod(_fake_create_wsi),
     )
