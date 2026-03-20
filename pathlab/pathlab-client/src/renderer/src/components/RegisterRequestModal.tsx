@@ -201,7 +201,7 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
               )}
 
               {turnstileSiteKey && (
-                <div ref={turnstileRef} className="flex justify-center" />
+                <div ref={turnstileRef} className="w-full" />
               )}
 
               <Button type="submit" disabled={isSubmitting || (!!turnstileSiteKey && !turnstileToken)} className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg">

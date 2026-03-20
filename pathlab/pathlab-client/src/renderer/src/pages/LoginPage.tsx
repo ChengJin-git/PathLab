@@ -219,7 +219,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
 
             {/* Cloudflare Turnstile Widget */}
             {turnstileSiteKey && (
-              <div ref={turnstileRef} className="flex justify-center" />
+              <div ref={turnstileRef} className="w-full" />
             )}
 
             <Button
