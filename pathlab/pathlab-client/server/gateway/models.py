@@ -10,13 +10,6 @@ from backend.ai.segmentors.specs import is_fm_segmentation_backbone
 
 class DatasetUpdateVisibilityRequest(BaseModel):
     is_public: bool
-    is_open_collaboration: Optional[bool] = None
-
-    @model_validator(mode="after")
-    def normalize_visibility(self):
-        if not self.is_public:
-            self.is_open_collaboration = False
-        return self
 
 
 class DatasetRenameRequest(BaseModel):
@@ -152,13 +145,6 @@ class UploadByPathRequest(BaseModel):
     )
     task_type: Optional[str] = None  # classification | survival | segmentation
     is_public: bool = False
-    is_open_collaboration: bool = False
-
-    @model_validator(mode="after")
-    def normalize_visibility(self):
-        if not self.is_public:
-            self.is_open_collaboration = False
-        return self
     label: Optional[str] = None
     case_id: Optional[str] = None
     wsi_id: Optional[str] = None
@@ -309,13 +295,6 @@ class BatchRegisterRequest(BaseModel):
     )
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     is_public: bool = False
-    is_open_collaboration: bool = False
-
-    @model_validator(mode="after")
-    def normalize_visibility(self):
-        if not self.is_public:
-            self.is_open_collaboration = False
-        return self
     # Classification fields
     default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
@@ -360,13 +339,6 @@ class StartBatchImportRequest(BaseModel):
     aggregation_level: str = "file"  # "case" or "file" - aggregation level
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     is_public: bool = False
-    is_open_collaboration: bool = False
-
-    @model_validator(mode="after")
-    def normalize_visibility(self):
-        if not self.is_public:
-            self.is_open_collaboration = False
-        return self
     # Classification fields
     default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")
