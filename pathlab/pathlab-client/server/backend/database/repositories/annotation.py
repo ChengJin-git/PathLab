@@ -146,7 +146,7 @@ class SegmentationAnnotationRepository:
         Get an annotation if the user has permission:
           - admin: always allowed
           - owner (annotation.user_id == user_id): allowed
-          - temporary escalation via dataset_permissions on source_dataset_id: allowed
+          - temporary elevation via dataset grants on source_dataset_id: allowed
         Returns None if the annotation doesn't exist or the user has no access.
         """
         result = await db.execute(

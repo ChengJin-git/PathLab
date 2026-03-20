@@ -220,7 +220,7 @@ class PermissionAuditLogRepository:
             actor_id=actor_id,
             target_user_id=target_user_id,
             action=action,
-            metadata=metadata or {},
+            extra_metadata=metadata or {},
         )
         db.add(entry)
         await db.flush()

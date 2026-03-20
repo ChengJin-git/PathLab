@@ -966,80 +966,6 @@ class TrainingLog(Base):
         }
 
 
-class DatasetPermission(Base):
-    """
-    Dataset Permission table.
-    Stores temporary elevated permissions for users on specific datasets.
-    Used for demo purposes - allows Guest users to have Pathologist-level access
-    to specific datasets (e.g., for running AI analysis during demos).
-    """
-
-    __tablename__ = "dataset_permissions"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-
-    # The dataset this permission applies to
-    dataset_id = Column(
-        String(255),
-        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-    # The user who is granted the permission
-    user_id = Column(String(255), nullable=False, index=True)
-
-    # The admin who granted this permission (UUID as string)
-    granted_by = Column(String(255), nullable=False)
-
-    # Permission level granted (currently only 'pathologist' is supported)
-    permission_level = Column(String(50), nullable=False, default="pathologist")
-
-    # Optional expiration time (NULL = no expiration)
-    expires_at = Column(DateTime, nullable=True)
-
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-
-    # Unique constraint: one permission per user per dataset
-    __table_args__ = (
-        Index(
-            "ix_dataset_permissions_user_dataset", "user_id", "dataset_id", unique=True
-        ),
-    )
-
-    def is_expired(self) -> bool:
-        """Check if this permission has expired."""
-        if self.expires_at is None:
-            return False
-        # PostgreSQL TIMESTAMP WITHOUT TIME ZONE returns naive datetimes (UTC assumed).
-        # Compare using naive UTC datetime for consistency.
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        return now > self.expires_at
-
-    def is_valid(self) -> bool:
-        """Check if this permission is still valid (not expired)."""
-        return not self.is_expired()
-
-    def to_dict(self):
-        """Convert to dictionary for API responses."""
-        return {
-            "id": self.id,
-            "dataset_id": self.dataset_id,
-            "user_id": self.user_id,
-            "granted_by": self.granted_by,
-            "permission_level": self.permission_level,
-            "expires_at": self.expires_at.isoformat() + "Z"
-            if self.expires_at
-            else None,
-            "created_at": self.created_at.isoformat() + "Z"
-            if self.created_at
-            else None,
-            "is_expired": self.is_expired(),
-            "is_valid": self.is_valid(),
-        }
-
-
 class StorageTask(Base):
     """
     Storage Task table.
@@ -1172,47 +1098,6 @@ class SegmentationAnnotation(Base):
             else None,
             "updated_at": self.updated_at.isoformat() + "Z"
             if self.updated_at
-            else None,
-        }
-
-
-class DatasetCollaborator(Base):
-    """
-    Annotation Collaborator table.
-    Tracks which users have explicit write access to a dataset's shared_draft annotation.
-
-    Implicit members (always have access, not stored here):
-      - Dataset owner  (dataset.user_id)
-      - All admin users (user.role == ROLE_ADMIN)
-    """
-
-    __tablename__ = "annotation_collaborators"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-
-    dataset_id = Column(
-        String(255),
-        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-    user_id = Column(String(255), nullable=False, index=True)
-    added_by = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-
-    __table_args__ = (
-        Index("idx_annot_collab_dataset_user", "dataset_id", "user_id", unique=True),
-    )
-
-    def to_dict(self):
-        return {
-            "id": self.id,
-            "dataset_id": self.dataset_id,
-            "user_id": self.user_id,
-            "added_by": self.added_by,
-            "created_at": self.created_at.isoformat() + "Z"
-            if self.created_at
             else None,
         }
 
@@ -1358,7 +1243,7 @@ class PermissionAuditLog(Base):
     actor_id = Column(String(255), nullable=False)
     target_user_id = Column(String(255), nullable=False)
     action = Column(String(50), nullable=False)
-    metadata = Column(JSON, default=dict, nullable=False)
+    extra_metadata = Column("metadata", JSON, default=dict, nullable=False)
     created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
 
     __table_args__ = (
@@ -1372,7 +1257,7 @@ class PermissionAuditLog(Base):
             "actor_id": self.actor_id,
             "target_user_id": self.target_user_id,
             "action": self.action,
-            "metadata": self.metadata,
+            "metadata": self.extra_metadata,
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,

@@ -569,7 +569,7 @@ async def detect_orphaned_records(
             "orphaned_training_logs": [...],
             "orphaned_trained_models": [...],
             "orphaned_message_feedbacks": [...],
-            "orphaned_dataset_permissions": [...],
+            "orphaned_dataset_grants": [...],
             "total_orphaned_count": int,
             "summary": {category: count, ...}
         }
@@ -598,7 +598,7 @@ async def cleanup_orphaned_records(
         {
             "categories": ["ai_tasks", "ai_results", "training_task_wsi",
                           "training_logs", "trained_models",
-                          "message_feedbacks", "dataset_permissions"]  // optional
+                          "message_feedbacks", "dataset_grants"]
         }
 
     Returns:

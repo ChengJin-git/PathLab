@@ -297,13 +297,15 @@ async def create_training_task(
                         )
             else:
                 # Non-admin: batch-fetch all user permissions upfront, then check in-memory
-                from backend.database.repositories import DatasetPermissionRepository
+                from backend.database.repositories import DatasetGrantRepository
 
-                user_permissions = await DatasetPermissionRepository.get_valid_by_user(
+                user_permissions = await DatasetGrantRepository.get_valid_by_user(
                     db, str(user.id)
                 )
                 elevated_dataset_ids = {
-                    p.dataset_id for p in user_permissions if p.is_valid()
+                    p.dataset_id
+                    for p in user_permissions
+                    if p.is_valid() and p.can_use_gpu
                 }
 
                 for wsi_id in wsi_ids:

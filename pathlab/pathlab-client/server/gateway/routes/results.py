@@ -44,7 +44,7 @@ from backend.database.repositories import (
     TrainedModelRepository,
     DataGroupRepository,
     DatasetRepository,
-    DatasetPermissionRepository,
+    DatasetGrantRepository,
 )
 from backend.common.config import Config
 from backend.common.redis_client import get_redis, make_key
@@ -438,8 +438,10 @@ async def _get_elevated_dataset_ids(
     """
     if user.is_admin():
         return None
-    permissions = await DatasetPermissionRepository.get_valid_by_user(db, str(user.id))
-    return [_coerce_str(p.dataset_id) for p in permissions if p.is_valid()]
+    permissions = await DatasetGrantRepository.get_valid_by_user(db, str(user.id))
+    return [
+        _coerce_str(p.dataset_id) for p in permissions if p.is_valid() and p.can_use_gpu
+    ]
 
 
 def _build_owned_ai_result_filter(user: User):
@@ -3086,9 +3088,9 @@ async def start_external_validation(
         target_dataset_user_id, user
     ):
         # Fallback: check temporary elevated permission for the target dataset
-        has_temp_dataset_perm = await DatasetPermissionRepository.has_valid_permission(
-                    db, req.dataset_id, str(user.id)
-                )
+        has_temp_dataset_perm = await DatasetGrantRepository.has_valid_permission(
+            db, req.dataset_id, str(user.id)
+        )
         if not has_temp_dataset_perm:
             raise HTTPException(
                 status_code=403, detail="You don't have permission to use this dataset"

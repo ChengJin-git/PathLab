@@ -263,26 +263,7 @@ async def init_db():
                 " ON dataset_grants (user_id, dataset_id)"
             )
         )
-        await conn.execute(
-            text(
-                "INSERT INTO dataset_grants"
-                "    (dataset_id, user_id, granted_by, can_use_gpu, expires_at, created_at)"
-                " SELECT dataset_id, user_id, granted_by, TRUE, expires_at, created_at"
-                " FROM dataset_permissions"
-                " ON CONFLICT (user_id, dataset_id) DO NOTHING"
-            )
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO dataset_grants"
-                "    (dataset_id, user_id, granted_by, can_collaborate, created_at)"
-                " SELECT dataset_id, user_id, added_by, TRUE, created_at"
-                " FROM annotation_collaborators"
-                " ON CONFLICT (user_id, dataset_id) DO UPDATE"
-                "   SET can_collaborate = TRUE"
-            )
-        )
-        logger.info("dataset_grants table created and seeded from legacy tables")
+        logger.info("dataset_grants table ensured")
 
         await conn.execute(
             text(
@@ -304,6 +285,9 @@ async def init_db():
             )
         )
         logger.info("permission_audit_logs table ensured")
+
+        await conn.execute(text("DROP TABLE IF EXISTS annotation_collaborators"))
+        await conn.execute(text("DROP TABLE IF EXISTS dataset_permissions"))
 
     # Create default admin user if no users exist
     await _create_default_admin()

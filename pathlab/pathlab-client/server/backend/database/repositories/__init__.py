@@ -16,11 +16,9 @@ from .export import ExportTaskRepository
 from .training import TrainingTaskRepository
 from .trained_model import TrainedModelRepository
 from .training_log import TrainingLogRepository
-from .permissions import DatasetPermissionRepository
 from .storage_task import StorageTaskRepository
 from .orphaned import OrphanedRecordsRepository
 from .annotation import SegmentationAnnotationRepository, VersionConflictError
-from .dataset_collaborator import DatasetCollaboratorRepository
 from .annotation_audit import AnnotationAuditLogRepository
 from .dataset_stats import DatasetStatsRepository
 from .dataset_grant import DatasetGrantRepository, PermissionAuditLogRepository
@@ -37,12 +35,10 @@ __all__ = [
     "TrainingTaskRepository",
     "TrainedModelRepository",
     "TrainingLogRepository",
-    "DatasetPermissionRepository",
     "StorageTaskRepository",
     "OrphanedRecordsRepository",
     "SegmentationAnnotationRepository",
     "VersionConflictError",
-    "DatasetCollaboratorRepository",
     "AnnotationAuditLogRepository",
     "DatasetStatsRepository",
     "DatasetGrantRepository",

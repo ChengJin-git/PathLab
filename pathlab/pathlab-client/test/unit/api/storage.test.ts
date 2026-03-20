@@ -216,7 +216,7 @@ describe('cleanupOrphanedFiles', () => {
 
 describe('detectOrphanedRecords', () => {
   it('fetches from GET /storage/orphaned-records', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ orphaned_ai_tasks: [], orphaned_ai_results: [], orphaned_training_task_wsi: [], orphaned_training_logs: [], orphaned_trained_models: [], orphaned_message_feedbacks: [], orphaned_dataset_permissions: [], total_orphaned_count: 0, summary: {} }))
+    mockFetch.mockResolvedValueOnce(ok({ orphaned_ai_tasks: [], orphaned_ai_results: [], orphaned_training_task_wsi: [], orphaned_training_logs: [], orphaned_trained_models: [], orphaned_message_feedbacks: [], orphaned_dataset_grants: [], total_orphaned_count: 0, summary: {} }))
     const result = await detectOrphanedRecords()
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/storage/orphaned-records')

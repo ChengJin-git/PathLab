@@ -63,7 +63,7 @@ backend/
 - ORM 模型：`database/models.py`
 - 仓储导出：`database/repositories/__init__.py`
 - 初始化：`database/init_db.py`
-- 当前已确认 ORM 表共 20 个（新增 `annotation_collaborators`、`annotation_audit_logs`、`analysis_runs`）
+- 当前已确认 ORM 表共 21 个，权限相关模型已统一为 `dataset_grants` 与 `permission_audit_logs`
 
 ### Redis / 配置
 

@@ -30,7 +30,6 @@ from backend.database.repositories import (
     ExportTaskRepository,
     StorageTaskRepository,
     WSIRepository,
-    DatasetPermissionRepository,
     DatasetGrantRepository,
     SegmentationAnnotationRepository,
 )

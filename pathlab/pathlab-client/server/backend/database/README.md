@@ -14,7 +14,7 @@
 
 ## 当前 ORM 表现状
 
-当前代码里可直接看到 **20 个 ORM 表**：
+当前代码里可直接看到 **21 个 ORM 表**：
 
 ### 业务表（`models.py`）
 
@@ -31,16 +31,17 @@
 11. `training_task_wsi`（训练任务与 WSI 的关联表）
 12. `trained_models`
 13. `training_logs`
-14. `dataset_permissions`
-15. `storage_tasks`
-16. `segmentation_annotations`
-17. `annotation_collaborators`（标注协作者权限表，记录对数据集共享草稿标注拥有写入权限的用户）
-18. `annotation_audit_logs`（标注操作审计日志表）
-19. `analysis_runs`（分析运行记录表，追踪训练任务结果的内部统计分析）
+14. `storage_tasks`
+15. `segmentation_annotations`
+16. `annotation_audit_logs`（标注操作审计日志表）
+17. `analysis_runs`（分析运行记录表，追踪训练任务结果的内部统计分析）
+18. `dataset_stats`
+19. `dataset_grants`
+20. `permission_audit_logs`
 
 ### 认证表（`backend/auth/models.py`）
 
-20. `users`
+21. `users`
 
 `users` 当前除 FastAPI-Users 的基础字段外，还直接扩展了这些与业务强相关的字段：
 
@@ -56,11 +57,11 @@
 - 标注表当前是 `segmentation_annotations`，不是旧文档里的 `annotation_drafts`
 - 当前 README 不再把 `accesstoken` 记作项目里明确可见的独立 ORM 模型
 - 认证更贴近"JWT + users + nonce 控制"的实现方式
-- 新增 `annotation_collaborators`、`annotation_audit_logs`、`analysis_runs` 三张表，ORM 表总数由 17 增至 20
+- 当前权限体系已统一到 `dataset_grants` / `permission_audit_logs`，旧表 `dataset_permissions` 与 `annotation_collaborators` 不再作为 ORM 模型存在
 
 ## Repository 现状
 
-`repositories/` 当前包含 17 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
+`repositories/` 当前包含 18 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
 
 - `DataGroupRepository`
 - `DatasetRepository`
@@ -73,11 +74,12 @@
 - `TrainingTaskRepository`
 - `TrainedModelRepository`
 - `TrainingLogRepository`
-- `DatasetPermissionRepository`
+- `DatasetStatsRepository`
+- `DatasetGrantRepository`
+- `PermissionAuditLogRepository`
 - `StorageTaskRepository`
 - `OrphanedRecordsRepository`
 - `SegmentationAnnotationRepository`（同时导出 `VersionConflictError`）
-- `AnnotationCollaboratorRepository`
 - `AnnotationAuditLogRepository`
 
 这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注及协作审计等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。

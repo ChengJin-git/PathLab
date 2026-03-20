@@ -351,7 +351,7 @@ export interface OrphanedMessageFeedback {
   feedback_type: string
 }
 
-export interface OrphanedDatasetPermission {
+export interface OrphanedDatasetGrant {
   id: number
   dataset_id: string
   user_id: string
@@ -364,7 +364,7 @@ export interface OrphanedRecordsInfo {
   orphaned_training_logs: OrphanedTrainingLog[]
   orphaned_trained_models: OrphanedTrainedModel[]
   orphaned_message_feedbacks: OrphanedMessageFeedback[]
-  orphaned_dataset_permissions: OrphanedDatasetPermission[]
+  orphaned_dataset_grants: OrphanedDatasetGrant[]
   total_orphaned_count: number
   summary: Record<string, number>
 }
@@ -860,4 +860,3 @@ export async function startBatchUpdateMetadataTask(
     'Failed to start batch update metadata task'
   )
 }
-

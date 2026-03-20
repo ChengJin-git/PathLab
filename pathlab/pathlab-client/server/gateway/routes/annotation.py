@@ -30,7 +30,6 @@ from backend.database import get_db
 from backend.database.database import async_session as _async_session
 from backend.database.repositories import (
     SegmentationAnnotationRepository,
-    DatasetCollaboratorRepository,
     DatasetGrantRepository,
     AnnotationAuditLogRepository,
     PermissionAuditLogRepository,

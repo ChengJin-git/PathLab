@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 from ..models import (
     DataGroup,
     Dataset,
-    DatasetPermission,
+    DatasetGrant,
     SegmentationAnnotation,
     WSISlide,
     AITask,
@@ -201,13 +201,12 @@ class DatasetRepository:
             )
         )
         await db.execute(
-            delete(DatasetPermission).where(DatasetPermission.dataset_id == dataset_id)
+            delete(DatasetGrant).where(DatasetGrant.dataset_id == dataset_id)
         )
 
         # Delete WSI slides
         await db.execute(delete(WSISlide).where(WSISlide.dataset_id == dataset_id))
 
-        # Delete the dataset (dataset_permissions has ondelete=CASCADE, DB handles it)
         result = await db.execute(
             delete(Dataset).where(Dataset.dataset_id == dataset_id)
         )

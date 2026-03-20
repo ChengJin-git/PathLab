@@ -28,7 +28,7 @@ from backend.database.repositories import (
     ChatRepository,
     WSIRepository,
     TrainedModelRepository,
-    DatasetPermissionRepository,
+    DatasetGrantRepository,
     DatasetRepository,
     TrainingTaskRepository,
     AITaskRepository,
@@ -4033,11 +4033,15 @@ async def chat_with_ai(
     temp_permissions = []
     elevated_dataset_ids = None
     if not user.is_admin():
-        temp_permissions = await DatasetPermissionRepository.get_valid_by_user(
+        temp_permissions = await DatasetGrantRepository.get_valid_by_user(
             db, str(user.id)
         )
         if temp_permissions:
-            elevated_dataset_ids = [perm.dataset_id for perm in temp_permissions]
+            elevated_dataset_ids = [
+                perm.dataset_id
+                for perm in temp_permissions
+                if perm.can_use_gpu and perm.is_valid()
+            ]
 
     latest_user_text = ""
     recent_user_texts: list[str] = []
