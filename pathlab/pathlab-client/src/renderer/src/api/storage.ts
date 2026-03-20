@@ -508,7 +508,6 @@ export interface BatchRegisterRequest {
   aggregation_level?: 'case' | 'file'
   task_type?: 'classification' | 'survival' | 'segmentation'
   is_public?: boolean
-  is_open_collaboration?: boolean
   default_label?: string
   default_event_time?: number
   default_event_status?: number

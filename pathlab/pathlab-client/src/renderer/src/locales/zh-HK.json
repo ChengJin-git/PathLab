@@ -1731,7 +1731,6 @@
     "noDatasetsDescription": "註冊您的第一個資料集以開始 WSI 分析。",
     "editDataset": "編輯資料集",
     "public": "公開",
-    "openCollab": "共享工作區",
     "makePublic": "設為公開",
     "makePrivate": "設為私有",
     "makePublicSuccess": "資料集已設為公開",
@@ -2722,9 +2721,6 @@
       "privateDesc": "僅自己可見",
       "public": "公開",
       "publicDesc": "所有用戶自動可見",
-      "openCollaboration": "共享工作區",
-      "openCollaborationDesc": "公開可見不等於自動獲得共享標註寫入權限",
-      "openCollaborationHint": "共享標註仍需協作者授權。",
       "changingVisibilityWarning": "更改可見性可能影響現有存取權限"
     },
     "fileMetadata": {
@@ -2839,10 +2835,7 @@
       "private": "私有",
       "privateDesc": "僅自己可見",
       "public": "公開",
-      "publicDesc": "所有用戶自動可見",
-      "openCollaboration": "共享工作區",
-      "openCollaborationDesc": "公開可見不等於自動獲得共享標註寫入權限",
-      "openCollaborationHint": "共享標註仍需協作者授權。"
+      "publicDesc": "所有用戶自動可見"
     },
     "successStep": {
       "importSuccessful": "匯入成功",

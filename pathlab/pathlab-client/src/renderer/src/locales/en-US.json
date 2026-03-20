@@ -1776,7 +1776,6 @@
     },
     "derivedFrom": "Derived from",
     "public": "Public",
-    "openCollab": "Shared workspace",
     "makePublic": "Make Public",
     "makePrivate": "Make Private",
     "makePublicSuccess": "Dataset is now public",
@@ -2779,9 +2778,6 @@
       "privateDesc": "Only visible to you",
       "public": "Public",
       "publicDesc": "Visible to all users automatically",
-      "openCollaboration": "Shared workspace",
-      "openCollaborationDesc": "Public visibility does not auto-grant shared annotation write access",
-      "openCollaborationHint": "Shared annotation still requires collaborator permission.",
       "changingVisibilityWarning": "Changing visibility may affect existing access"
     },
     "fileMetadata": {
@@ -2896,10 +2892,7 @@
       "private": "Private",
       "privateDesc": "Only visible to you",
       "public": "Public",
-      "publicDesc": "Visible to all users automatically",
-      "openCollaboration": "Shared workspace",
-      "openCollaborationDesc": "Public visibility does not auto-grant shared annotation write access",
-      "openCollaborationHint": "Shared annotation still requires collaborator permission."
+      "publicDesc": "Visible to all users automatically"
     },
     "successStep": {
       "importSuccessful": "Import Successful",

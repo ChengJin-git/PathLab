@@ -154,7 +154,7 @@ export async function batchRevokeDatasetGrants(
 export async function updateDatasetVisibility(
   datasetId: string,
   isPublic: boolean
-): Promise<{ dataset_id: string; is_public: boolean; is_open_collaboration: boolean }> {
+): Promise<{ dataset_id: string; is_public: boolean }> {
   return apiFetch(
     `${API_BASE}/wsi/datasets/${datasetId}/visibility`,
     {

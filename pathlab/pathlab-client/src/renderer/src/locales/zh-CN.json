@@ -2716,9 +2716,6 @@
       "privateDesc": "仅自己可见",
       "public": "公开",
       "publicDesc": "所有用户自动可见",
-      "openCollaboration": "共享工作区",
-      "openCollaborationDesc": "公开可见不等于自动获得共享标注写权限",
-      "openCollaborationHint": "共享标注仍需协作者授权。",
       "changingVisibilityWarning": "更改可见性可能影响现有访问权限"
     },
     "fileMetadata": {
@@ -2833,10 +2830,7 @@
       "private": "私有",
       "privateDesc": "仅自己可见",
       "public": "公开",
-      "publicDesc": "所有用户自动可见",
-      "openCollaboration": "共享工作区",
-      "openCollaborationDesc": "公开可见不等于自动获得共享标注写权限",
-      "openCollaborationHint": "共享标注仍需协作者授权。"
+      "publicDesc": "所有用户自动可见"
     },
     "successStep": {
       "importSuccessful": "导入成功",

@@ -3,9 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
 import { ApiError } from '../api/client'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe, Lock } from 'lucide-react'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -17,6 +17,9 @@ import { formatBytes } from '../lib/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
 import { organSources, organSourceKeyMap } from '../components/upload/types'
+
+
+type ListWSIItem = import('../api/wsi').WSISummary
 
 type DatasetTaskFilter = 'all' | 'classification' | 'survival' | 'segmentation'
 type DatasetTypeFilter = 'all' | 'wsi' | 'patch'
@@ -39,10 +42,6 @@ const getDatasetVisualType = (dataset: DatasetSummary): 'slides' | 'images' => {
   const avgSize = dataset.total_size / dataset.file_count
   return avgSize > 20 * 1024 * 1024 ? 'slides' : 'images'
 }
-
-const getDatasetLevelFilterValue = (
-  aggregationLevel: DatasetSummary['aggregation_level']
-): Exclude<DatasetLevelFilter, 'all'> => aggregationLevel === 'case' ? 'patient' : 'file'
 
 const getDatasetSourceOrganFilterValue = (sourceOrgan?: string | null): string => {
   const normalized = sourceOrgan?.trim()
@@ -238,7 +237,6 @@ export default function ListPage() {
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
   const [deleting, setDeleting] = useState(false)
-  const [togglingVisibilityId, setTogglingVisibilityId] = useState<string | null>(null)
 
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
   const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
@@ -351,7 +349,6 @@ export default function ListPage() {
     },
     enabled: !selectedDatasetId,
     staleTime: 2 * 60 * 1000,
-    placeholderData: (prev) => prev,
   })
 
   const activeSortBy = sortColumn ? SORT_FIELD_MAP[sortColumn] : undefined
@@ -386,7 +383,6 @@ export default function ListPage() {
     },
     enabled: !!selectedDatasetId,
     staleTime: 2 * 60 * 1000,
-    placeholderData: (prev) => prev,
   })
 
   const sourceOptionsQuery = useQuery({
@@ -400,7 +396,6 @@ export default function ListPage() {
     enabled: !selectedDatasetId,
     staleTime: 10 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
-    placeholderData: (prev) => prev,
   })
 
   const visibleDatasets = useMemo(() => {
@@ -1148,13 +1143,6 @@ export default function ListPage() {
     setExportingDataset(null)
   }
 
-  // Legacy inline rename functions (kept for compatibility)
-  const handleRenameClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
-    e.stopPropagation()
-    setRenamingDatasetId(datasetId)
-    setRenameDatasetNewName(datasetName)
-  }
-
   const handleRenameCancel = () => {
     setRenamingDatasetId(null)
     setRenameDatasetNewName('')
@@ -1745,13 +1733,8 @@ export default function ListPage() {
                              <Globe className="w-2.5 h-2.5" />{t('listPage.public')}
                            </span>
                          )}
-                         {dataset.is_public && dataset.is_open_collaboration && (
-                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-green-50 text-green-700 border border-green-100/70">
-                             <Users className="w-2.5 h-2.5" />{t('listPage.openCollab', { defaultValue: 'Shared workspace' })}
-                           </span>
-                         )}
                        </div>
- 
+
                        {dataset.parent_dataset_name && (
                          <div className="flex items-center gap-1.5 mb-3 sm:mb-4 text-[10px] sm:text-xs text-slate-500">
                            <GitMerge className="w-3 h-3 text-slate-400 flex-shrink-0" />
@@ -1884,11 +1867,6 @@ export default function ListPage() {
                                 {dataset.is_public && (
                                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100/70">
                                     <Globe className="w-2.5 h-2.5" />{t('listPage.public')}
-                                  </span>
-                                )}
-                                {dataset.is_public && dataset.is_open_collaboration && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-green-50 text-green-700 border border-green-100/70">
-                                    <Users className="w-2.5 h-2.5" />{t('listPage.openCollab', { defaultValue: 'Shared workspace' })}
                                   </span>
                                 )}
                                 {dataset.parent_dataset_name && (
@@ -2195,7 +2173,7 @@ export default function ListPage() {
           </div>
 
           {selectedIds.size > 0 && (
-            // Hidden visually but kept in DOM if needed for accessibility or other screen readers? 
+            // Hidden visually but kept in DOM if needed for accessibility or other screen readers?
             // Actually let's just remove the visual rendering here since we move it to table header.
             // But ListPage has Edit/Delete specific actions which NewTaskPage doesn't have.
             // We should put these actions into the header as well.

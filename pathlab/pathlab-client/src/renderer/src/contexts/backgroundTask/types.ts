@@ -85,7 +85,6 @@ export interface UploadTaskFile {
     source_organ?: string  // Source organ/tissue for new dataset
     aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     is_public?: boolean
-    is_open_collaboration?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string

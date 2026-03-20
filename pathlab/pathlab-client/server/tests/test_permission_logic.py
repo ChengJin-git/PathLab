@@ -160,7 +160,7 @@ async def test_get_with_permission_blocks_personal_draft_for_non_owner():
     annotation = types.SimpleNamespace(
         user_id="owner-1",
         status="draft",
-        visibility_mode="personal",
+        annotation_mode="personal",
         source_dataset_id="ds-1",
     )
     db = _DB(annotation)

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { 
-  UploadCloud, FolderPlus, File as FileIcon, AlertCircle, CheckCircle, 
-  Loader2, Database, AlertTriangle, FileSpreadsheet, Plus, X, Download,
+import {
+  UploadCloud, FolderPlus, File as FileIcon, CheckCircle,
+  Loader2, Database, AlertTriangle, Download,
   ThumbsUp, ThumbsDown
 } from 'lucide-react'
 import { fetchDatasets, DatasetSummary, downloadCSVTemplate } from '../../api'
@@ -47,7 +47,6 @@ interface DatasetRegistrationConfig {
   submitted_dataset_name?: string
   submitted_mode?: 'existing' | 'new'
   is_public?: boolean
-  is_open_collaboration?: boolean
 }
 
 export interface DatasetRegistrationCardProps {
