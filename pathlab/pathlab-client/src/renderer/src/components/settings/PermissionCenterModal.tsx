@@ -314,11 +314,29 @@ export function PermissionCenterModal({
       pagedDatasets
         .filter(
           (dataset) =>
+            !dataset.is_public &&
             !validUserDatasetIds.has(dataset.dataset_id) &&
             dataset.user_id !== selectedUser?.id,
         )
         .map((dataset) => dataset.dataset_id),
     [pagedDatasets, validUserDatasetIds, selectedUser],
+  );
+  const selectableDatasetIdSetOnPage = useMemo(
+    () => new Set(selectableDatasetIdsOnPage),
+    [selectableDatasetIdsOnPage],
+  );
+  const pagedDatasetIdSet = useMemo(
+    () => new Set(pagedDatasets.map((dataset) => dataset.dataset_id)),
+    [pagedDatasets],
+  );
+  const selectedGrantableDatasetIds = useMemo(
+    () =>
+      selectedDatasetIds.filter(
+        (datasetId) =>
+          !pagedDatasetIdSet.has(datasetId) ||
+          selectableDatasetIdSetOnPage.has(datasetId),
+      ),
+    [selectedDatasetIds, pagedDatasetIdSet, selectableDatasetIdSetOnPage],
   );
   const allVisibleDatasetsSelected = useMemo(
     () =>
@@ -618,6 +636,29 @@ export function PermissionCenterModal({
     setAllMatchingUserCount(0);
     setExpiresInHours("");
   }, [mode, selectedDatasetIsPublic]);
+  useEffect(() => {
+    if (mode !== "user") return;
+    const hasInvalidSelectionOnPage = selectedDatasetIds.some(
+      (datasetId) =>
+        pagedDatasetIdSet.has(datasetId) &&
+        !selectableDatasetIdSetOnPage.has(datasetId),
+    );
+    if (!hasInvalidSelectionOnPage) return;
+    setSelectedDatasetIds((prev) =>
+      prev.filter(
+        (datasetId) =>
+          !pagedDatasetIdSet.has(datasetId) ||
+          selectableDatasetIdSetOnPage.has(datasetId),
+      ),
+    );
+    setAllMatchingDatasetsSelected(false);
+    setAllMatchingDatasetCount(0);
+  }, [
+    mode,
+    selectedDatasetIds,
+    pagedDatasetIdSet,
+    selectableDatasetIdSetOnPage,
+  ]);
   const handleModeChange = (nextMode: PermissionMode) => {
     setMode(nextMode);
     onModeChange?.(nextMode);
@@ -648,6 +689,7 @@ export function PermissionCenterModal({
     setAllMatchingDatasetCount(0);
   };
   const handleToggleDataset = (datasetId: string, checked: boolean) => {
+    if (checked && !selectableDatasetIdSetOnPage.has(datasetId)) return;
     setSelectedDatasetIds((prev) =>
       checked
         ? Array.from(new Set([...prev, datasetId]))
@@ -735,13 +777,13 @@ export function PermissionCenterModal({
   };
 
   const handleGrantToUser = async () => {
-    if (!selectedUser || selectedDatasetIds.length === 0) return;
+    if (!selectedUser || selectedGrantableDatasetIds.length === 0) return;
     try {
       setSubmitting(true);
       setError(null);
       const hours = parsePositiveHours(expiresInHours);
       const results = await Promise.allSettled(
-        selectedDatasetIds.map((datasetId) =>
+        selectedGrantableDatasetIds.map((datasetId) =>
           grantDatasetGrant(datasetId, selectedUser.id, hours),
         ),
       );
@@ -1440,6 +1482,7 @@ export function PermissionCenterModal({
                                 dataset.dataset_id,
                               )}
                               disabled={
+                                dataset.is_public ||
                                 alreadyGranted ||
                                 isDatasetOwner ||
                                 submitting ||
@@ -1509,7 +1552,7 @@ export function PermissionCenterModal({
                       type="button"
                       onClick={handleGrantToUser}
                       disabled={
-                        selectedDatasetIds.length === 0 ||
+                        selectedGrantableDatasetIds.length === 0 ||
                         !selectedUser ||
                         submitting
                       }
@@ -1519,7 +1562,7 @@ export function PermissionCenterModal({
                         ? t("settings.permissionCenterModal.granting")
                         : t(
                             "settings.permissionCenterModal.grantSelectedDatasets",
-                            { count: selectedDatasetIds.length },
+                            { count: selectedGrantableDatasetIds.length },
                           )}
                     </Button>
                   </div>
