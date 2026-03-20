@@ -328,6 +328,7 @@ async def register_user(
         is_verified=True,  # Auto-verify since we don't use email verification
         role=user_create.role or "guest",
         nickname=user_create.nickname,
+        registration_email=user_create.registration_email,
     )
 
     # Race-condition safe: catch IntegrityError if concurrent registration

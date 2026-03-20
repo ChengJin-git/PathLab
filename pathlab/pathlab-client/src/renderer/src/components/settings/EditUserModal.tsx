@@ -7,8 +7,8 @@ import type { UserListItem } from '../../api/users'
 
 export interface EditUserModalProps {
   user: UserListItem
-  editForm: { nickname: string; role: string; password: string }
-  onEditFormChange: (form: { nickname: string; role: string; password: string }) => void
+  editForm: { nickname: string; role: string; password: string; registration_email: string }
+  onEditFormChange: (form: { nickname: string; role: string; password: string; registration_email: string }) => void
   onSave: () => void
   onClose: () => void
 }
@@ -32,6 +32,16 @@ export function EditUserModal({ user, editForm, onEditFormChange, onSave, onClos
               onChange={(e) => onEditFormChange({ ...editForm, nickname: e.target.value })}
               className="mt-1"
               placeholder={t('settings.editUserModal.enterNickname')}
+            />
+          </div>
+          <div>
+            <Label className="text-sm text-gray-600">{t('settings.editUserModal.email')}</Label>
+            <Input
+              value={editForm.registration_email}
+              onChange={(e) => onEditFormChange({ ...editForm, registration_email: e.target.value })}
+              className="mt-1"
+              placeholder={t('settings.editUserModal.emailPlaceholder')}
+              type="email"
             />
           </div>
           <div>

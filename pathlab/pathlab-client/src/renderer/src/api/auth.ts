@@ -72,6 +72,7 @@ export interface RegisterRequest {
   password: string
   nickname?: string
   role?: 'pathologist' | 'guest'
+  registration_email?: string
 }
 
 export interface AccessRequest {
@@ -93,6 +94,7 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
   is_active?: boolean
   is_superuser?: boolean
   is_verified?: boolean
+  registration_email?: string
 }
 
 /**

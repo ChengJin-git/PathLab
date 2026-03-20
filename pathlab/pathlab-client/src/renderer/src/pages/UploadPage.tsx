@@ -55,6 +55,7 @@ export default function RegisterPage() {
   const navigate = useNavigate()
   const { addUploadTask } = useBackgroundTask()
   const { t } = useTranslation()
+  const { user } = useAuth()
 
   // Upload mode state (classification or survival)
   const [uploadMode, setUploadMode] = useDraftState<UploadMode>('draft:upload:uploadMode', 'classification')

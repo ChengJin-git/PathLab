@@ -46,9 +46,9 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
   const [editingUser, setEditingUser] = useState<UserListItem | null>(null)
-  const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string }>({ nickname: '', role: '', password: '' })
+  const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string; registration_email: string }>({ nickname: '', role: '', password: '', registration_email: '' })
   const [showCreateUser, setShowCreateUser] = useState(false)
-  const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
+  const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string; registration_email: string }>({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
   const [creatingUser, setCreatingUser] = useState(false)
   const [maintenanceMode, setMaintenanceMode] = useState(false)
   const [noticeMessage, setNoticeMessage] = useState('')
@@ -130,6 +130,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
       if (editForm.nickname !== (editingUser.nickname || '')) updateData.nickname = editForm.nickname
       if (editForm.role !== editingUser.role) updateData.role = editForm.role as 'admin' | 'pathologist' | 'guest'
       if (editForm.password) updateData.password = editForm.password
+      if (editForm.registration_email !== (editingUser.registration_email || '')) updateData.registration_email = editForm.registration_email || undefined
       await updateUser(editingUser.id, updateData)
       setEditingUser(null)
       setUsersError(null)
@@ -150,14 +151,15 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
         email: createForm.username,
         password: createForm.password,
         nickname: createForm.nickname || undefined,
-        role: requestedRole === 'guest' ? 'guest' : 'pathologist'
+        role: requestedRole === 'guest' ? 'guest' : 'pathologist',
+        registration_email: createForm.registration_email || undefined
       }
       const createdUser = await registerUser(data)
       if (requestedRole === 'admin') {
         await updateUser(createdUser.id, { role: 'admin' })
       }
       setShowCreateUser(false)
-      setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+      setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
       loadUsers()
     } catch (err) {
       setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser'))
@@ -559,9 +561,21 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell">
                       {user.registration_email ? (
-                        <span className="text-xs text-blue-600 font-mono">{user.registration_email}</span>
+                        <button
+                          onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }}
+                          className="text-xs text-blue-600 font-mono hover:underline cursor-pointer"
+                          title={t('settings.usersTab.editUser')}
+                        >
+                          {user.registration_email}
+                        </button>
                       ) : (
-                        <span className="text-xs text-gray-400">-</span>
+                        <button
+                          onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: '' }) }}
+                          className="text-xs text-gray-400 hover:text-blue-600 hover:underline cursor-pointer"
+                          title={t('settings.usersTab.editUser')}
+                        >
+                          -
+                        </button>
                       )}
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell">
@@ -586,7 +600,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                     </td>
                     <td className="py-3 px-2 sm:px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
+                        <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
                           <Edit className="w-4 h-4" />
                         </Button>
                         {(!currentUserId || user.id !== currentUserId) && user.email !== 'admin' && (
@@ -697,7 +711,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           onSubmit={handleCreateUser}
           onClose={() => {
             setShowCreateUser(false)
-            setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+            setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
             setUsersError(null)
           }}
           isCreating={creatingUser}

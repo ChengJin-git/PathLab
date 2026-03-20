@@ -76,7 +76,7 @@ export default function ListPage() {
   const initialDatasetId = (location.state as { dataset_id?: string } | null)?.dataset_id
   const { error: toastError, success: toastSuccess } = useToast()
   const { addDeleteWSITask, tasks, subscribeStorageSSE, deletingDatasetNames, addDeletingDatasetName, removeDeletingDatasetByTaskId } = useBackgroundTask()
-  const { isAdmin } = useAuth()
+  const { isAdmin, user } = useAuth()
   const qc = useQueryClient()
 
   // Dataset view state - null means showing dataset list, otherwise showing files in that dataset
@@ -3077,7 +3077,7 @@ export default function ListPage() {
           canEditVisibility={(() => {
             const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
             if (!ds) return false
-            return ds.user_id === user?.id || user?.is_admin
+            return ds.user_id === user?.id || user?.role === 'admin'
           })()}
           onNameChange={setEditingDatasetName}
           onTypeChange={setEditingDatasetType}

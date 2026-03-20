@@ -6,8 +6,8 @@ import { Label } from '../ui/label'
 import { Select } from '../ui/select'
 
 export interface CreateUserModalProps {
-  createForm: { username: string; password: string; nickname: string; role: string }
-  onCreateFormChange: (form: { username: string; password: string; nickname: string; role: string }) => void
+  createForm: { username: string; password: string; nickname: string; role: string; registration_email: string }
+  onCreateFormChange: (form: { username: string; password: string; nickname: string; role: string; registration_email: string }) => void
   onSubmit: () => void
   onClose: () => void
   isCreating: boolean
@@ -53,6 +53,17 @@ export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onCl
               className="mt-1"
               placeholder={t('settings.createUserModal.displayNameOptional')}
               disabled={isCreating}
+            />
+          </div>
+          <div>
+            <Label className="text-sm text-gray-600">{t('settings.createUserModal.email')}</Label>
+            <Input
+              value={createForm.registration_email}
+              onChange={(e) => onCreateFormChange({ ...createForm, registration_email: e.target.value })}
+              className="mt-1"
+              placeholder={t('settings.createUserModal.emailPlaceholder')}
+              disabled={isCreating}
+              type="email"
             />
           </div>
            <div>
