@@ -1066,6 +1066,9 @@ class SegmentationAnnotation(Base):
 
     # Annotation lifecycle status: "draft" | "shared_draft" | "finalized"
     status = Column(String(20), nullable=False, default="draft")
+    visibility_mode = Column(
+        String(20), nullable=False, default="personal", server_default="personal"
+    )
     # Provenance: "viewer" | "import" | "upload" | "extraction"
     source = Column(String(50), nullable=False, default="viewer")
 
@@ -1090,6 +1093,7 @@ class SegmentationAnnotation(Base):
             "source_dataset_id": self.source_dataset_id,
             "annotations": self.annotations,
             "status": self.status,
+            "visibility_mode": self.visibility_mode,
             "source": self.source,
             "version": self.version,
             "last_edited_by": self.last_edited_by,

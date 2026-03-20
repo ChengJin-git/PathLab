@@ -332,3 +332,33 @@ class DatasetRepository:
             all_child_ids.update(new_ids)
             frontier = new_ids
         return list(all_child_ids)
+
+    @staticmethod
+    async def get_ancestor_dataset_ids(
+        db: AsyncSession, dataset_id: Optional[str], max_depth: int = 8
+    ) -> List[str]:
+        if not dataset_id:
+            return []
+
+        ancestors: List[str] = []
+        seen: set[str] = set()
+        current_id = dataset_id
+
+        for _ in range(max_depth):
+            if not current_id or current_id in seen:
+                break
+            seen.add(current_id)
+
+            result = await db.execute(
+                select(Dataset.parent_dataset_id).where(
+                    Dataset.dataset_id == current_id
+                )
+            )
+            parent_id = result.scalar_one_or_none()
+            if not parent_id:
+                break
+
+            ancestors.append(parent_id)
+            current_id = parent_id
+
+        return ancestors

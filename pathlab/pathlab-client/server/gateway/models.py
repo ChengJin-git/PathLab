@@ -382,6 +382,7 @@ class AnnotationSaveRequest(BaseModel):
 
     annotation_id: str
     source_dataset_id: Optional[str] = None
+    visibility_mode: Literal["personal", "inherit"] = "personal"
     # { wsi_id: [{ type, x, y, width, height, points, label, color }, ...] }
     annotations: Dict[str, Any]
 

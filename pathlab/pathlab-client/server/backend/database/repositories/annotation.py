@@ -15,6 +15,12 @@ class VersionConflictError(Exception):
         super().__init__(f"Version conflict: current version is {current_version}")
 
 
+class AnnotationOwnershipConflictError(Exception):
+    def __init__(self, annotation_id: str):
+        self.annotation_id = annotation_id
+        super().__init__(f"Annotation ownership conflict: {annotation_id}")
+
+
 class SegmentationAnnotationRepository:
     """Repository for SegmentationAnnotation CRUD operations"""
 
@@ -26,6 +32,7 @@ class SegmentationAnnotationRepository:
         annotations: dict[str, Any],
         source_dataset_id: Optional[str] = None,
         status: str = "draft",
+        visibility_mode: str = "personal",
         source: str = "viewer",
     ) -> SegmentationAnnotation:
         """
@@ -35,6 +42,16 @@ class SegmentationAnnotationRepository:
         must use a PostgreSQL upsert here to avoid duplicate-key races when two
         save requests for the same draft arrive concurrently.
         """
+        if status == "draft":
+            existing_result = await db.execute(
+                select(SegmentationAnnotation.user_id).where(
+                    SegmentationAnnotation.annotation_id == annotation_id
+                )
+            )
+            existing_owner = existing_result.scalar_one_or_none()
+            if existing_owner is not None and existing_owner != user_id:
+                raise AnnotationOwnershipConflictError(annotation_id)
+
         timestamp = utc_now()
         stmt = (
             insert(SegmentationAnnotation)
@@ -44,6 +61,7 @@ class SegmentationAnnotationRepository:
                 source_dataset_id=source_dataset_id,
                 annotations=annotations,
                 status=status,
+                visibility_mode=visibility_mode,
                 source=source,
                 created_at=timestamp,
                 updated_at=timestamp,
@@ -55,6 +73,7 @@ class SegmentationAnnotationRepository:
                     "source_dataset_id": source_dataset_id,
                     "annotations": annotations,
                     "status": status,
+                    "visibility_mode": visibility_mode,
                     "source": source,
                     "updated_at": timestamp,
                 },
@@ -161,6 +180,8 @@ class SegmentationAnnotationRepository:
             return annotation
         if annotation.user_id == user_id:
             return annotation
+        if annotation.status == "draft" and annotation.visibility_mode == "personal":
+            return None
         if (
             elevated_dataset_ids
             and annotation.source_dataset_id
@@ -332,6 +353,7 @@ class SegmentationAnnotationRepository:
                     source_dataset_id=dataset_id,
                     annotations=annotations,
                     status="shared_draft",
+                    visibility_mode="shared",
                     source="viewer",
                     version=expected_version + 1,
                     last_edited_by=last_edited_by,
@@ -342,6 +364,7 @@ class SegmentationAnnotationRepository:
                     index_elements=[SegmentationAnnotation.annotation_id],
                     set_={
                         "annotations": annotations,
+                        "visibility_mode": "shared",
                         "version": SegmentationAnnotation.version + 1,
                         "last_edited_by": last_edited_by,
                         "updated_at": timestamp,
@@ -363,6 +386,7 @@ class SegmentationAnnotationRepository:
                     source_dataset_id=dataset_id,
                     annotations=annotations,
                     status="shared_draft",
+                    visibility_mode="shared",
                     source="viewer",
                     version=1,
                     last_edited_by=last_edited_by,
@@ -388,6 +412,7 @@ class SegmentationAnnotationRepository:
             .where(SegmentationAnnotation.version == expected_version)
             .values(
                 annotations=annotations,
+                visibility_mode="shared",
                 version=expected_version + 1,
                 last_edited_by=last_edited_by,
                 updated_at=timestamp,

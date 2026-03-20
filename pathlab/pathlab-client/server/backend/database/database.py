@@ -164,6 +164,12 @@ async def init_db():
         )
         await conn.execute(
             text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) NOT NULL DEFAULT 'personal'"
+            )
+        )
+        await conn.execute(
+            text(
                 "ALTER TABLE wsi_slides ADD COLUMN IF NOT EXISTS data_type VARCHAR(20)"
             )
         )

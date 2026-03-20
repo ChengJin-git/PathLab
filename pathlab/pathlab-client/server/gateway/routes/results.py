@@ -3088,7 +3088,7 @@ async def start_external_validation(
         target_dataset_user_id, user
     ):
         # Fallback: check temporary elevated permission for the target dataset
-        has_temp_dataset_perm = await DatasetGrantRepository.has_valid_permission(
+        has_temp_dataset_perm = await DatasetGrantRepository.has_valid_read_access(
             db, req.dataset_id, str(user.id)
         )
         if not has_temp_dataset_perm:

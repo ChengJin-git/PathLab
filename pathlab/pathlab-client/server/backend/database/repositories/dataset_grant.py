@@ -91,6 +91,27 @@ class DatasetGrantRepository:
         return result.scalar_one_or_none() is not None
 
     @staticmethod
+    async def has_valid_read_access(
+        db: AsyncSession,
+        dataset_id: str,
+        user_id: str,
+    ) -> bool:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        result = await db.execute(
+            select(DatasetGrant)
+            .where(DatasetGrant.dataset_id == dataset_id)
+            .where(DatasetGrant.user_id == user_id)
+            .where(
+                (DatasetGrant.expires_at.is_(None)) | (DatasetGrant.expires_at > now)
+            )
+            .where(
+                (DatasetGrant.can_collaborate.is_(True))
+                | (DatasetGrant.can_use_gpu.is_(True))
+            )
+        )
+        return result.scalar_one_or_none() is not None
+
+    @staticmethod
     async def has_valid_collaborate(
         db: AsyncSession,
         dataset_id: str,

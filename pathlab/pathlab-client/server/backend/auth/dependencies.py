@@ -101,17 +101,25 @@ async def check_wsi_access_permission(
         return True
 
     if wsi_dataset_id:
-        from backend.database.repositories import DatasetGrantRepository
+        from backend.database.repositories import (
+            DatasetGrantRepository,
+            DatasetRepository,
+        )
 
-        if await DatasetGrantRepository.has_valid_permission(
+        if await DatasetGrantRepository.has_valid_read_access(
             db, wsi_dataset_id, str(user.id)
         ):
             return True
 
-        if parent_dataset_id and await DatasetGrantRepository.has_valid_collaborate(
-            db, parent_dataset_id, str(user.id)
-        ):
-            return True
+        if parent_dataset_id:
+            ancestor_ids = await DatasetRepository.get_ancestor_dataset_ids(
+                db, wsi_dataset_id
+            )
+            for ancestor_id in ancestor_ids:
+                if await DatasetGrantRepository.has_valid_collaborate(
+                    db, ancestor_id, str(user.id)
+                ):
+                    return True
 
     return False
 
@@ -134,15 +142,18 @@ async def check_dataset_access_permission(
     if check_data_ownership(dataset_user_id, user):
         return True
 
-    from backend.database.repositories import DatasetGrantRepository
+    from backend.database.repositories import DatasetGrantRepository, DatasetRepository
 
-    if await DatasetGrantRepository.has_valid_permission(db, dataset_id, str(user.id)):
+    if await DatasetGrantRepository.has_valid_read_access(db, dataset_id, str(user.id)):
         return True
 
-    if parent_dataset_id and await DatasetGrantRepository.has_valid_collaborate(
-        db, parent_dataset_id, str(user.id)
-    ):
-        return True
+    if parent_dataset_id:
+        ancestor_ids = await DatasetRepository.get_ancestor_dataset_ids(db, dataset_id)
+        for ancestor_id in ancestor_ids:
+            if await DatasetGrantRepository.has_valid_collaborate(
+                db, ancestor_id, str(user.id)
+            ):
+                return True
 
     return False
 

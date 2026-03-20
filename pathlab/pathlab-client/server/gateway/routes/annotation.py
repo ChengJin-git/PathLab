@@ -33,6 +33,7 @@ from backend.database.repositories import (
     DatasetGrantRepository,
     AnnotationAuditLogRepository,
     PermissionAuditLogRepository,
+    AnnotationOwnershipConflictError,
     VersionConflictError,
     WSIRepository,
 )
@@ -412,7 +413,15 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
         forbidden_detail="You don't have permission to access this WSI",
     )
 
-    elevated_dataset_ids = {wsi.dataset_id} if wsi.dataset_id else None
+    elevated_dataset_ids = None
+    if wsi.dataset_id:
+        from backend.auth.dependencies import get_permitted_dataset_ids
+
+        permitted_dataset_ids = await get_permitted_dataset_ids(user, db)
+        if permitted_dataset_ids is None:
+            elevated_dataset_ids = {wsi.dataset_id}
+        elif wsi.dataset_id in permitted_dataset_ids:
+            elevated_dataset_ids = {wsi.dataset_id}
     record_candidates = []
 
     direct_record = await SegmentationAnnotationRepository.get_with_permission(
@@ -694,6 +703,7 @@ async def save_annotation(
             user_id=str(user.id),
             annotations=req.annotations,
             source_dataset_id=req.source_dataset_id,
+            visibility_mode=req.visibility_mode,
         )
         await db.commit()
 
@@ -710,6 +720,12 @@ async def save_annotation(
             )
 
         return annotation.to_dict()
+    except AnnotationOwnershipConflictError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="annotation_id already belongs to another user",
+        )
     except Exception as e:
         await db.rollback()
         logger.error(f"Failed to save annotation: {e}")
@@ -961,6 +977,7 @@ async def delete_dataset_annotations_by_labels(
                 annotations=next_draft_annotations,
                 source_dataset_id=dataset_id,
                 status="draft",
+                visibility_mode="inherit",
                 source="viewer",
             )
             await db.commit()
@@ -975,6 +992,12 @@ async def delete_dataset_annotations_by_labels(
                 else None,
             )
             save_draft_annotation_summary_cache(annotation_id, draft_cache)
+        except AnnotationOwnershipConflictError:
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="annotation_id already belongs to another user",
+            )
         except Exception as e:
             await db.rollback()
             logger.error(f"Failed to delete dataset annotations by labels: {e}")
@@ -1386,6 +1409,7 @@ async def finalize_shared_annotation(
             annotations=annotations,
             source_dataset_id=dataset_id,
             status="finalized",
+            visibility_mode="inherit",
             source="viewer",
         )
 
