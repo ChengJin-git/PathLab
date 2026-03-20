@@ -22,6 +22,7 @@ Endpoints:
 """
 
 import hashlib
+import base64
 import time
 import os
 import shutil
@@ -134,6 +135,22 @@ _LEGAL_FOOTER_HTML = (
 )
 
 
+@_lru_cache(maxsize=1)
+def _load_default_email_icon_data_uri() -> str:
+    image_path = (
+        _Path(__file__).resolve().parents[3]
+        / "src"
+        / "renderer"
+        / "public"
+        / "images"
+        / "pathlab-logo.png"
+    )
+    if not image_path.exists():
+        return ""
+    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:image/png;base64,{encoded}"
+
+
 async def _send_activation_email(user: "User") -> None:
     logger.info(
         f"[activation_email] triggered for user={user.email!r} reg_email={user.registration_email!r}"
@@ -157,11 +174,7 @@ async def _send_activation_email(user: "User") -> None:
         _resend.api_key = settings["resend_api_key"]
         from_addr = settings.get("resend_from_email") or "PathLab <noreply@resend.dev>"
         display_name = user.nickname or user.email
-        site_url = settings.get("site_url", "").rstrip("/")
-        configured_logo_url = (settings.get("resend_logo_url") or "").strip()
-        logo_url = configured_logo_url or (
-            f"{site_url}/images/pathlab-logo.png" if site_url else ""
-        )
+        logo_url = _load_default_email_icon_data_uri()
         logo_html = (
             (
                 f"<img src='{logo_url}' "

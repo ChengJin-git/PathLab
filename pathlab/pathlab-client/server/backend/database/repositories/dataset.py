@@ -71,13 +71,19 @@ class DatasetRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_by_name(db: AsyncSession, name: str) -> Optional[Dataset]:
+    async def get_by_name(
+        db: AsyncSession, name: str, user_id: Optional[str] = None
+    ) -> Optional[Dataset]:
         """Get dataset by display name with data_group relationship loaded"""
-        result = await db.execute(
+        query = (
             select(Dataset)
             .options(selectinload(Dataset.data_group))
             .where(Dataset.name == name)
         )
+        if user_id is not None:
+            query = query.where(Dataset.user_id == user_id)
+
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -92,7 +98,7 @@ class DatasetRepository:
     ) -> Dataset:
         import uuid
 
-        existing = await DatasetRepository.get_by_name(db, name)
+        existing = await DatasetRepository.get_by_name(db, name, user_id=user_id)
         if existing:
             return existing
         dataset_id = str(uuid.uuid4())
@@ -112,7 +118,7 @@ class DatasetRepository:
             logger.debug(
                 f"Dataset concurrent insert detected for name='{name}', re-querying"
             )
-            existing = await DatasetRepository.get_by_name(db, name)
+            existing = await DatasetRepository.get_by_name(db, name, user_id=user_id)
             if existing:
                 return existing
             raise
