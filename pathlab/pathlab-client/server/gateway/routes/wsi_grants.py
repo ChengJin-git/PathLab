@@ -123,6 +123,96 @@ async def _notify_ai_service_permission_revocation(task_ids: List[str]) -> List[
     return revoked
 
 
+async def _stop_non_owner_training_tasks(
+    db: AsyncSession,
+    dataset_id: str,
+    owner_user_id: Optional[str],
+) -> Dict[str, List[str]]:
+    wsi_ids_result = await db.execute(
+        select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+    )
+    dataset_wsi_ids = {row[0] for row in wsi_ids_result.all()}
+    if not dataset_wsi_ids:
+        return {}
+
+    running_statuses = ["pending", "patching", "extracting", "training", "resuming"]
+    running_tasks_result = await db.execute(
+        select(TrainingTask.task_id, TrainingTask.user_id).where(
+            TrainingTask.status.in_(running_statuses)
+        )
+    )
+    all_running = running_tasks_result.all()
+
+    affected_by_user: Dict[str, List[str]] = {}
+    for task_id, task_user_id in all_running:
+        if owner_user_id and str(task_user_id) == str(owner_user_id):
+            continue
+        task_wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
+        if any(wsi_id in dataset_wsi_ids for wsi_id in task_wsi_ids):
+            affected_by_user.setdefault(str(task_user_id), []).append(task_id)
+
+    for user_id, task_ids in affected_by_user.items():
+        await _notify_ai_service_permission_revocation(task_ids)
+        deleted = await SegmentationAnnotationRepository.delete_by_dataset_and_user(
+            db, dataset_id, user_id
+        )
+        if deleted:
+            logger.info(
+                f"Deleted {deleted} annotation(s) for user {user_id} on dataset {dataset_id} "
+                f"during visibility change to private"
+            )
+
+    return affected_by_user
+
+
+async def _revoke_child_dataset_grants(
+    db: AsyncSession,
+    parent_dataset_id: str,
+    target_user_id: str,
+) -> List[Dict[str, Any]]:
+    child_ids = await DatasetRepository.get_child_dataset_ids(db, [parent_dataset_id])
+    if not child_ids:
+        return []
+
+    child_wsi_rows = await db.execute(
+        select(WSISlide.dataset_id, WSISlide.wsi_id).where(
+            WSISlide.dataset_id.in_(child_ids)
+        )
+    )
+    wsi_by_dataset: Dict[str, set] = {}
+    for ds_id, wsi_id in child_wsi_rows.all():
+        wsi_by_dataset.setdefault(str(ds_id), set()).add(str(wsi_id))
+
+    results: List[Dict[str, Any]] = []
+    for child_id in child_ids:
+        grant = await DatasetGrantRepository.get_by_dataset_and_user(
+            db, child_id, target_user_id
+        )
+        if not grant:
+            continue
+
+        child_wsi_ids = wsi_by_dataset.get(child_id, set())
+        affected_task_ids = await _find_affected_training_tasks(
+            db, target_user_id, child_wsi_ids
+        )
+        await _notify_ai_service_permission_revocation(affected_task_ids)
+
+        deleted = await SegmentationAnnotationRepository.delete_by_dataset_and_user(
+            db, child_id, target_user_id
+        )
+        await DatasetGrantRepository.delete(db, child_id, target_user_id)
+
+        results.append(
+            {
+                "dataset_id": child_id,
+                "deleted_annotations": deleted,
+                "stopped_tasks": affected_task_ids,
+            }
+        )
+
+    return results
+
+
 async def _revoke_gpu_permission_with_side_effects(
     db: AsyncSession,
     dataset_id: str,
@@ -183,21 +273,38 @@ async def update_dataset_visibility(
             status_code=403, detail="Not authorized to change dataset visibility"
         )
 
+    was_public = bool(dataset.is_public)
+    becoming_private = was_public and not request.is_public
+
     updates: Dict[str, Any] = {"is_public": request.is_public}
     if request.is_open_collaboration is not None:
         updates["is_open_collaboration"] = request.is_open_collaboration
     if not request.is_public:
         updates["is_open_collaboration"] = False
 
+    revoked_by_user: Dict[str, List[str]] = {}
+    if becoming_private:
+        revoked_by_user = await _stop_non_owner_training_tasks(
+            db, dataset_id, dataset.user_id
+        )
+
     await DatasetRepository.update(db, dataset_id, updates)
     await db.commit()
 
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    return {
+    response: Dict[str, Any] = {
         "dataset_id": dataset_id,
         "is_public": dataset.is_public,
         "is_open_collaboration": dataset.is_open_collaboration,
     }
+    if revoked_by_user:
+        total_revoked = sum(len(v) for v in revoked_by_user.values())
+        response["revoked_training_tasks"] = total_revoked
+        response["message"] = (
+            f"Visibility updated. {total_revoked} running task(s) from "
+            f"{len(revoked_by_user)} user(s) will be stopped."
+        )
+    return response
 
 
 @router.get("/my-grants")
@@ -408,6 +515,12 @@ async def revoke_dataset_grant(
         target_user_id=target_user_id,
         dataset_wsi_ids=dataset_wsi_ids,
     )
+    child_results = await _revoke_child_dataset_grants(db, dataset_id, target_user_id)
+    if child_results:
+        result["child_datasets_revoked"] = len(child_results)
+        result["message"] = (
+            f"{result['message']} Also revoked access to {len(child_results)} child dataset(s)."
+        )
     await PermissionAuditLogRepository.log(
         db, dataset_id, str(user.id), target_user_id, "revoke_gpu", {}
     )
@@ -442,6 +555,12 @@ async def batch_revoke_dataset_grants(
                 target_user_id=uid,
                 dataset_wsi_ids=dataset_wsi_ids,
             )
+            child_results = await _revoke_child_dataset_grants(db, dataset_id, uid)
+            if child_results:
+                result["child_datasets_revoked"] = len(child_results)
+                result["message"] = (
+                    f"{result['message']} Also revoked access to {len(child_results)} child dataset(s)."
+                )
             await PermissionAuditLogRepository.log(
                 db, dataset_id, str(user.id), uid, "revoke_gpu", {}
             )

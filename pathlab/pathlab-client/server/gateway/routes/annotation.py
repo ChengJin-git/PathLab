@@ -31,6 +31,7 @@ from backend.database.database import async_session as _async_session
 from backend.database.repositories import (
     SegmentationAnnotationRepository,
     DatasetGrantRepository,
+    DatasetRepository,
     AnnotationAuditLogRepository,
     PermissionAuditLogRepository,
     AnnotationOwnershipConflictError,
@@ -1696,6 +1697,22 @@ async def remove_collaborator(
         await db.flush()
     else:
         await DatasetGrantRepository.delete(db, dataset_id, target_user_id)
+
+    child_ids = await DatasetRepository.get_child_dataset_ids(db, [dataset_id])
+    for child_id in child_ids:
+        child_grant = await DatasetGrantRepository.get_by_dataset_and_user(
+            db, child_id, target_user_id
+        )
+        if not child_grant:
+            continue
+        if child_grant.can_use_gpu:
+            child_grant.can_collaborate = False
+            await db.flush()
+        else:
+            await DatasetGrantRepository.delete(db, child_id, target_user_id)
+        await PermissionAuditLogRepository.log(
+            db, child_id, str(user.id), target_user_id, "revoke_collaborate_cascade", {}
+        )
 
     await AnnotationAuditLogRepository.log(
         db,
