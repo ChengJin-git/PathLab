@@ -46,6 +46,7 @@ interface DatasetRegistrationConfig {
   submitted_file_count?: number
   submitted_dataset_name?: string
   submitted_mode?: 'existing' | 'new'
+  is_public?: boolean
 }
 
 export interface DatasetRegistrationCardProps {
@@ -81,6 +82,7 @@ export function DatasetRegistrationCard({
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(config?.dataset_id || '')
   const [newDatasetName, setNewDatasetName] = useState(config?.dataset_name || '')
+  const [isPublic, setIsPublic] = useState<boolean>(Boolean(config?.is_public))
   const isSegmentation = config?.upload_mode === 'segmentation'
   const [dataLevel, setDataLevel] = useState<'file' | 'case'>(isSegmentation ? 'file' : (config?.aggregation_level || 'file'))
   
@@ -431,13 +433,14 @@ export function DatasetRegistrationCard({
             name: item.name,
             file: item.file,
             path: item.path,
-            metadata: {
-              dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
-              dataset_name: mode === 'new' ? newDatasetName : undefined,
-              aggregation_level: dataLevel,
-              task_type: config?.upload_mode || 'classification',
-              label: isSegmentation ? undefined : '',
-              case_id: '',
+              metadata: {
+                dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
+                dataset_name: mode === 'new' ? newDatasetName : undefined,
+                aggregation_level: dataLevel,
+                is_public: mode === 'new' ? isPublic : undefined,
+                task_type: config?.upload_mode || 'classification',
+                label: isSegmentation ? undefined : '',
+                case_id: '',
               age: undefined,
               gender: '',
               event_time: undefined,
@@ -680,6 +683,40 @@ export function DatasetRegistrationCard({
                     </button>
                 </div>
               </div>
+
+              {mode === 'new' && (
+                <div className="w-full">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('uploadComponents.datasetConfig.datasetVisibility')}
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsPublic(false)}
+                      className={`border rounded-lg p-3 text-left transition-all ${
+                        !isPublic
+                          ? 'bg-primary-50 border-primary-200 text-primary-700'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="text-sm font-medium">{t('uploadComponents.datasetConfig.private')}</div>
+                      <div className="text-xs opacity-80">{t('uploadComponents.datasetConfig.privateDesc')}</div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsPublic(true)}
+                      className={`border rounded-lg p-3 text-left transition-all ${
+                        isPublic
+                          ? 'bg-primary-50 border-primary-200 text-primary-700'
+                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      <div className="text-sm font-medium">{t('uploadComponents.datasetConfig.public')}</div>
+                      <div className="text-xs opacity-80">{t('uploadComponents.datasetConfig.publicDesc')}</div>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div

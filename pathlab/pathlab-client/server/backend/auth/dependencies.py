@@ -64,14 +64,14 @@ async def get_permitted_dataset_ids(
     )
 
     public_ids = await DatasetRepository.get_public_dataset_ids(db)
-    gpu_ids = await DatasetGrantRepository.list_gpu_dataset_ids_for_user(
+    read_ids = await DatasetGrantRepository.list_read_dataset_ids_for_user(
         db, str(user.id)
     )
     collab_ids = await DatasetGrantRepository.list_collaborate_dataset_ids_for_user(
         db, str(user.id)
     )
     child_ids = await DatasetRepository.get_child_dataset_ids(db, collab_ids)
-    return list(set(public_ids + gpu_ids + collab_ids + child_ids))
+    return list(set(public_ids + read_ids + collab_ids + child_ids))
 
 
 def check_data_ownership(resource_user_id: Optional[str], current_user: User) -> bool:
@@ -145,6 +145,36 @@ async def check_dataset_access_permission(
     from backend.database.repositories import DatasetGrantRepository, DatasetRepository
 
     if await DatasetGrantRepository.has_valid_read_access(db, dataset_id, str(user.id)):
+        return True
+
+    if parent_dataset_id:
+        ancestor_ids = await DatasetRepository.get_ancestor_dataset_ids(db, dataset_id)
+        for ancestor_id in ancestor_ids:
+            if await DatasetGrantRepository.has_valid_collaborate(
+                db, ancestor_id, str(user.id)
+            ):
+                return True
+
+    return False
+
+
+async def check_dataset_write_permission(
+    user: User,
+    dataset_id: str,
+    dataset_user_id: Optional[str],
+    db: AsyncSession,
+    *,
+    parent_dataset_id: Optional[str] = None,
+) -> bool:
+    if user.is_admin():
+        return True
+
+    if check_data_ownership(dataset_user_id, user):
+        return True
+
+    from backend.database.repositories import DatasetGrantRepository, DatasetRepository
+
+    if await DatasetGrantRepository.has_valid_collaborate(db, dataset_id, str(user.id)):
         return True
 
     if parent_dataset_id:

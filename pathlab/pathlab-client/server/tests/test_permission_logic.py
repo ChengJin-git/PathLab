@@ -3,7 +3,9 @@ import types
 import pytest
 
 from backend.auth.dependencies import (
+    check_dataset_write_permission,
     check_dataset_access_permission,
+    get_permitted_dataset_ids,
     check_wsi_access_permission,
 )
 from backend.database.repositories.annotation import (
@@ -251,6 +253,110 @@ async def test_wsi_access_denies_when_no_public_owner_or_grant(monkeypatch):
     )
 
     assert allowed is False
+
+
+@pytest.mark.asyncio
+async def test_dataset_write_access_checks_direct_collaborate(monkeypatch):
+    async def _collab(_db, dataset_id, _user_id):
+        return dataset_id == "ds-write"
+
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "has_valid_collaborate",
+        staticmethod(_collab),
+    )
+
+    allowed = await check_dataset_write_permission(
+        _user(),
+        "ds-write",
+        dataset_user_id="owner-1",
+        db=object(),
+        parent_dataset_id=None,
+    )
+
+    assert allowed is True
+
+
+@pytest.mark.asyncio
+async def test_dataset_write_access_checks_ancestors_for_collaborator(monkeypatch):
+    calls = []
+
+    async def _ancestors(_db, _dataset_id, _max_depth=8):
+        return ["parent-a", "parent-b"]
+
+    async def _collab(_db, dataset_id, _user_id):
+        calls.append(dataset_id)
+        return dataset_id == "parent-b"
+
+    monkeypatch.setattr(
+        DatasetRepository,
+        "get_ancestor_dataset_ids",
+        staticmethod(_ancestors),
+    )
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "has_valid_collaborate",
+        staticmethod(_collab),
+    )
+
+    allowed = await check_dataset_write_permission(
+        _user(),
+        "ds-child",
+        dataset_user_id="owner-1",
+        db=object(),
+        parent_dataset_id="parent-a",
+    )
+
+    assert allowed is True
+    assert calls == ["ds-child", "parent-a", "parent-b"]
+
+
+@pytest.mark.asyncio
+async def test_get_permitted_dataset_ids_uses_read_ids(monkeypatch):
+    async def _public_ids(_db):
+        return ["ds-public"]
+
+    async def _read_ids(_db, _user_id):
+        return ["ds-read"]
+
+    async def _collab_ids(_db, _user_id):
+        return ["ds-collab"]
+
+    async def _children(_db, _ids):
+        return ["ds-child"]
+
+    async def _gpu_ids(*_args, **_kwargs):
+        raise AssertionError("GPU-only dataset IDs should not drive read visibility")
+
+    monkeypatch.setattr(
+        DatasetRepository,
+        "get_public_dataset_ids",
+        staticmethod(_public_ids),
+    )
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "list_read_dataset_ids_for_user",
+        staticmethod(_read_ids),
+    )
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "list_collaborate_dataset_ids_for_user",
+        staticmethod(_collab_ids),
+    )
+    monkeypatch.setattr(
+        DatasetRepository,
+        "get_child_dataset_ids",
+        staticmethod(_children),
+    )
+    monkeypatch.setattr(
+        DatasetGrantRepository,
+        "list_gpu_dataset_ids_for_user",
+        staticmethod(_gpu_ids),
+    )
+
+    dataset_ids = await get_permitted_dataset_ids(_user(), object())
+
+    assert set(dataset_ids) == {"ds-public", "ds-read", "ds-collab", "ds-child"}
 
 
 @pytest.mark.asyncio

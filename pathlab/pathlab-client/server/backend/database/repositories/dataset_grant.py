@@ -163,6 +163,24 @@ class DatasetGrantRepository:
         return list(result.scalars().all())
 
     @staticmethod
+    async def list_read_dataset_ids_for_user(
+        db: AsyncSession, user_id: str
+    ) -> List[str]:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        result = await db.execute(
+            select(distinct(DatasetGrant.dataset_id))
+            .where(DatasetGrant.user_id == user_id)
+            .where(
+                (DatasetGrant.can_collaborate.is_(True))
+                | (DatasetGrant.can_use_gpu.is_(True))
+            )
+            .where(
+                (DatasetGrant.expires_at.is_(None)) | (DatasetGrant.expires_at > now)
+            )
+        )
+        return list(result.scalars().all())
+
+    @staticmethod
     async def list_gpu_dataset_ids_for_user(
         db: AsyncSession, user_id: str
     ) -> List[str]:

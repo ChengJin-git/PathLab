@@ -26,7 +26,10 @@ from backend.database.repositories import (
 )
 from backend.database.repositories.dataset import DatasetNameConflictError
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
+from backend.auth.dependencies import (
+    require_pathologist_or_admin,
+    check_dataset_write_permission,
+)
 from ..dependencies import logger, storage_manager, UPLOADS_DIR
 from ..models import UploadByPathRequest
 from ..utils import (
@@ -508,7 +511,14 @@ async def upload_wsi_file(
                 raise HTTPException(
                     status_code=400, detail=f"Dataset not found: {dataset_id}"
                 )
-            if not check_data_ownership(str(existing_dataset.user_id or ""), user):
+            can_write_dataset = await check_dataset_write_permission(
+                user,
+                str(existing_dataset.dataset_id),
+                str(existing_dataset.user_id or ""),
+                db,
+                parent_dataset_id=getattr(existing_dataset, "parent_dataset_id", None),
+            )
+            if not can_write_dataset:
                 raise HTTPException(
                     status_code=403,
                     detail="You don't have permission to upload to this dataset",
@@ -914,7 +924,14 @@ async def upload_wsi_by_path(
                 raise HTTPException(
                     status_code=400, detail=f"Dataset not found: {req.dataset_id}"
                 )
-            if not check_data_ownership(str(existing_dataset.user_id or ""), user):
+            can_write_dataset = await check_dataset_write_permission(
+                user,
+                str(existing_dataset.dataset_id),
+                str(existing_dataset.user_id or ""),
+                db,
+                parent_dataset_id=getattr(existing_dataset, "parent_dataset_id", None),
+            )
+            if not can_write_dataset:
                 raise HTTPException(
                     status_code=403,
                     detail="You don't have permission to upload to this dataset",
