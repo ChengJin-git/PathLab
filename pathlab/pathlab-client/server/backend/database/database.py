@@ -243,14 +243,6 @@ async def init_db():
 
         await conn.execute(
             text(
-                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
-                "is_open_collaboration BOOLEAN NOT NULL DEFAULT FALSE"
-            )
-        )
-        logger.info("datasets.is_open_collaboration column ensured")
-
-        await conn.execute(
-            text(
                 "CREATE TABLE IF NOT EXISTS dataset_grants ("
                 "    id           SERIAL PRIMARY KEY,"
                 "    dataset_id   VARCHAR(255) NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
