@@ -125,7 +125,12 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monk
         return None
 
     async def _fake_get_or_create_data_group(db, **kwargs):
-        return types.SimpleNamespace(group_id="group-1")
+        return types.SimpleNamespace(
+            group_id="group-1",
+            data_type=kwargs.get("data_type", "wsi"),
+            aggregation_level=kwargs.get("aggregation_level", "file"),
+            task_type=kwargs.get("task_type", "classification"),
+        )
 
     async def _fake_get_or_create_dataset(db, dataset_name, **kwargs):
         captured["dataset_name"] = dataset_name
