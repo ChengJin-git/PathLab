@@ -999,12 +999,12 @@ async def upload_wsi_by_path(
             try:
                 dataset = await DatasetRepository.get_or_create(
                     db,
-                    dataset_name,
+                    req.dataset_name,
                     group_id=data_group.group_id,
                     user_id=str(user.id),
-                    source_organ=source_organ or None,
-                    is_public=is_public,
-                    is_open_collaboration=is_open_collaboration,
+                    source_organ=req.source_organ or None,
+                    is_public=req.is_public,
+                    is_open_collaboration=req.is_open_collaboration,
                     reuse_existing=False,
                 )
             except DatasetNameConflictError:

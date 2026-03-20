@@ -297,6 +297,7 @@ class BatchRegisterRequest(BaseModel):
     )
     task_type: str = "classification"  # "classification", "survival", or "segmentation"
     is_public: bool = False
+    is_open_collaboration: bool = False
     # Classification fields
     default_label: Optional[str] = None  # Default label for classification files
     # Survival analysis fields (required when task_type is "survival")

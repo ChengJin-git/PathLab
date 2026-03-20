@@ -5,6 +5,7 @@ import pytest
 from gateway.routes.results import _has_external_validation_dataset_access
 from gateway.routes.storage_tasks import _build_batch_import_task_params
 from gateway.routes.training import _has_wsi_training_access
+from gateway.routes.wsi_upload import upload_wsi_by_path
 
 
 @pytest.mark.asyncio
@@ -114,3 +115,111 @@ def test_build_batch_import_task_params_keeps_visibility_flags():
 
     assert params["is_public"] is True
     assert params["is_open_collaboration"] is True
+
+
+@pytest.mark.asyncio
+async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(monkeypatch):
+    captured = {}
+
+    async def _fake_get_by_id(db, dataset_id):
+        return None
+
+    async def _fake_get_or_create_data_group(db, **kwargs):
+        return types.SimpleNamespace(group_id="group-1")
+
+    async def _fake_get_or_create_dataset(db, dataset_name, **kwargs):
+        captured["dataset_name"] = dataset_name
+        captured["source_organ"] = kwargs.get("source_organ")
+        captured["is_public"] = kwargs.get("is_public")
+        captured["is_open_collaboration"] = kwargs.get("is_open_collaboration")
+        return types.SimpleNamespace(dataset_id="ds-new", data_group=None)
+
+    async def _fake_align_dataset_data_type_for_file(db, dataset, **kwargs):
+        return dataset
+
+    async def _fake_create_wsi(db, wsi_data):
+        return types.SimpleNamespace(label=wsi_data.get("label"))
+
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.os.path.exists",
+        lambda path: True,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.os.path.getsize",
+        lambda path: 123,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.Path",
+        lambda path: types.SimpleNamespace(name="sample.svs", suffix=".svs"),
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.WSIRepository.get_by_id",
+        staticmethod(_fake_get_by_id),
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.DataGroupRepository.get_or_create",
+        staticmethod(_fake_get_or_create_data_group),
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.DatasetRepository.get_or_create",
+        staticmethod(_fake_get_or_create_dataset),
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.align_dataset_data_type_for_file",
+        _fake_align_dataset_data_type_for_file,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.resolve_file_data_type_and_properties",
+        lambda path: (
+            "wsi",
+            {
+                "file_size": 123,
+                "mpp": None,
+                "vendor": None,
+                "objective_power": None,
+                "magnification": None,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.ensure_segmentation_contract",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.WSIRepository.create",
+        staticmethod(_fake_create_wsi),
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.uuid.uuid4",
+        lambda: "generated-uuid",
+    )
+
+    req = types.SimpleNamespace(
+        wsi_path="/tmp/sample.svs",
+        dataset_id=None,
+        dataset_name="new-dataset",
+        source_organ="lung",
+        aggregation_level="file",
+        task_type="classification",
+        is_public=True,
+        is_open_collaboration=True,
+        wsi_id="wsi-1",
+        case_id="case-1",
+        label="tumor",
+        age=None,
+        gender=None,
+        event_time=None,
+        event_status=None,
+    )
+    user = types.SimpleNamespace(id="user-1")
+
+    response = await upload_wsi_by_path(req, user, object())
+
+    assert response["wsi_id"] == "wsi-1"
+    assert captured == {
+        "dataset_name": "new-dataset",
+        "source_organ": "lung",
+        "is_public": True,
+        "is_open_collaboration": True,
+    }
+
