@@ -2712,7 +2712,15 @@
       "unknownSourceOrgan": "unknown",
       "datasetSourceDescription": "此來源會套用到資料集中的全部檔案。",
       "otherSource": "其他",
-      "otherSourcePlaceholder": "請輸入自訂來源"
+      "otherSourcePlaceholder": "請輸入自訂來源",
+      "datasetVisibility": "資料集可見性",
+      "private": "私有",
+      "privateDesc": "僅自己可見",
+      "public": "公開",
+      "publicDesc": "所有用戶自動可見",
+      "openCollaboration": "開放協作",
+      "openCollaborationDesc": "允許任何用戶標註此資料集",
+      "changingVisibilityWarning": "更改可見性可能影響現有存取權限"
     },
     "fileMetadata": {
       "setMetadataForFiles": "設定檔案元數據",

@@ -156,87 +156,6 @@ export default function ListPage() {
   const [batchEditEventTime, setBatchEditEventTime] = useState('')
   const [batchEditEventStatus, setBatchEditEventStatus] = useState('')
   const [batchUpdating, setBatchUpdating] = useState(false)
-
-  // Case grouping - tracks which case_ids are expanded
-  const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
-
-  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
-
-  const handleSort = useCallback((col: SortColumn) => {
-    if (sortColumn === col) {
-      if (sortDirection === 'asc') {
-        setSortDirection('desc')
-      } else {
-        setSortColumn(null)
-        setSortDirection('asc')
-      }
-    } else {
-      setSortColumn(col)
-      setSortDirection('asc')
-    }
-    setCurrentPage(1)
-  }, [sortColumn, sortDirection])
-
-  const prefetchSort = useCallback((col: SortColumn) => {
-    if (!selectedDatasetId) return
-    const nextSortBy = SORT_FIELD_MAP[col]
-    let nextOrder: 'asc' | 'desc'
-    if (sortColumn === col) {
-      if (sortDirection === 'asc') {
-        nextOrder = 'desc'
-      } else {
-        return
-      }
-    } else {
-      nextOrder = 'asc'
-    }
-    void qc.prefetchQuery({
-      queryKey: ['wsi-list', selectedDatasetId, { page: 1, search: debouncedSearch, sort_by: nextSortBy, sort_order: nextOrder }],
-      queryFn: () => fetchWSIList(selectedDatasetId!, undefined, {
-        page: 1,
-        page_size: itemsPerPage,
-        search: debouncedSearch || undefined,
-        sort_by: nextSortBy,
-        sort_order: nextOrder,
-      }),
-      staleTime: 2 * 60 * 1000,
-    })
-  }, [qc, selectedDatasetId, sortColumn, sortDirection, debouncedSearch])
-
-  // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
-  const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
-  const [editingDatasetName, setEditingDatasetName] = useState('')
-  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
-  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
-  const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'file'>('file')
-  const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'file'>('file')
-  const [editingDatasetSourceSelection, setEditingDatasetSourceSelection] = useState('')
-  const [editingDatasetSourceCustom, setEditingDatasetSourceCustom] = useState('')
-  const [editingDatasetOriginalSource, setEditingDatasetOriginalSource] = useState('')
-  const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
-
-  const resolveSourceValue = (selection: string, custom: string) => selection === 'Other' ? custom.trim() : selection.trim()
-
-  const toSourceSelectionState = (value?: string | null) => {
-    const normalized = value?.trim() || ''
-    const knownSources = organSources.filter(source => source !== 'Other')
-    if (!normalized) return { selection: '', custom: '' }
-    return knownSources.includes(normalized)
-      ? { selection: normalized, custom: '' }
-      : { selection: 'Other', custom: normalized }
-  }
-
-  // Legacy inline rename (still used for inline editing display)
-  const [renamingDatasetId, setRenamingDatasetId] = useState<string | null>(null)
-  const [renameDatasetNewName, setRenameDatasetNewName] = useState('')
-
-  // Delete dataset - stores dataset_id and name for the dataset to delete
-  const [datasetToDeleteId, setDatasetToDeleteId] = useState<string | null>(null)
-  const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
-  const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
-  const [deleting, setDeleting] = useState(false)
-  const [togglingVisibilityId, setTogglingVisibilityId] = useState<string | null>(null)
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
   const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
 
@@ -1019,6 +938,12 @@ export default function ListPage() {
     setEditingDatasetSourceSelection(sourceState.selection)
     setEditingDatasetSourceCustom(sourceState.custom)
     setEditingDatasetOriginalSource(dataset.source_organ || '')
+    const isPublic = dataset.is_public || false
+    const isOpenCollaboration = dataset.is_open_collaboration || false
+    setEditingDatasetIsPublic(isPublic)
+    setEditingDatasetIsOpenCollaboration(isOpenCollaboration)
+    setEditingDatasetOriginalIsPublic(isPublic)
+    setEditingDatasetOriginalIsOpenCollaboration(isOpenCollaboration)
   }
 
   const handleEditDatasetCancel = () => {
@@ -1031,6 +956,10 @@ export default function ListPage() {
     setEditingDatasetSourceSelection('')
     setEditingDatasetSourceCustom('')
     setEditingDatasetOriginalSource('')
+    setEditingDatasetIsPublic(false)
+    setEditingDatasetIsOpenCollaboration(false)
+    setEditingDatasetOriginalIsPublic(false)
+    setEditingDatasetOriginalIsOpenCollaboration(false)
     setEditingDatasetSaving(false)
   }
 
@@ -1066,6 +995,10 @@ export default function ListPage() {
         await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
       }
 
+      if (editingDatasetIsPublic !== editingDatasetOriginalIsPublic || editingDatasetIsOpenCollaboration !== editingDatasetOriginalIsOpenCollaboration) {
+        await updateDatasetVisibility(editingDatasetId, editingDatasetIsPublic, editingDatasetIsOpenCollaboration)
+      }
+
       void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
       await qc.invalidateQueries({ queryKey: ['page-datasets'] })
 
@@ -1081,22 +1014,6 @@ export default function ListPage() {
       toastError(t('listPage.failedUpdateDataset', { error: String(err) }))
     } finally {
       handleEditDatasetCancel()
-    }
-  }
-
-  const handleToggleVisibilityClick = async (e: React.MouseEvent, dataset: DatasetSummary) => {
-    e.stopPropagation()
-    e.preventDefault()
-    if (!dataset.dataset_id) return
-    setTogglingVisibilityId(dataset.dataset_id)
-    try {
-      await updateDatasetVisibility(dataset.dataset_id, !dataset.is_public)
-      await qc.invalidateQueries({ queryKey: ['page-datasets'] })
-      toastSuccess(t(dataset.is_public ? 'listPage.makePrivateSuccess' : 'listPage.makePublicSuccess'))
-    } catch {
-      toastError(t('listPage.failedUpdateVisibility'))
-    } finally {
-      setTogglingVisibilityId(null)
     }
   }
 
@@ -1687,31 +1604,16 @@ export default function ListPage() {
                                        <Download className="w-3.5 h-3.5" />
                                      )}
                                    </Button>
-                                 <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                  onClick={(e) => handleEditDatasetClick(e, dataset)}
-                  title={t('listPage.editDataset')}
-                                >
-                                   <Pencil className="w-3.5 h-3.5" />
-                                 </Button>
-                                 <Button
+                                  <Button
                                    variant="ghost"
                                    size="icon"
                                    className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                   onClick={(e) => handleToggleVisibilityClick(e, dataset)}
-                                   title={dataset.is_public ? t('listPage.makePrivate') : t('listPage.makePublic')}
-                                   disabled={togglingVisibilityId === dataset.dataset_id}
-                                 >
-                                   {togglingVisibilityId === dataset.dataset_id
-                                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                     : dataset.is_public
-                                       ? <Lock className="w-3.5 h-3.5" />
-                                       : <Globe className="w-3.5 h-3.5" />
-                                   }
-                                 </Button>
-                                 <Button
+                                   onClick={(e) => handleEditDatasetClick(e, dataset)}
+                  title={t('listPage.editDataset')}
+                                >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
                                    variant="ghost"
                                    size="icon"
                                    className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
@@ -1944,23 +1846,8 @@ export default function ListPage() {
                                      className="h-8 w-8 text-slate-400 hover:text-blue-600"
                                      onClick={(e) => handleEditDatasetClick(e, dataset)}
                                      title={t('listPage.editDataset')}
-                                   >
-                                      <Pencil className="w-4 h-4" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                      onClick={(e) => handleToggleVisibilityClick(e, dataset)}
-                                      title={dataset.is_public ? t('listPage.makePrivate') : t('listPage.makePublic')}
-                                      disabled={togglingVisibilityId === dataset.dataset_id}
                                     >
-                                      {togglingVisibilityId === dataset.dataset_id
-                                        ? <Loader2 className="w-4 h-4 animate-spin" />
-                                        : dataset.is_public
-                                          ? <Lock className="w-4 h-4" />
-                                          : <Globe className="w-4 h-4" />
-                                      }
+                                      <Pencil className="w-4 h-4" />
                                     </Button>
                                     <Button
                                       variant="ghost"
@@ -2022,21 +1909,6 @@ export default function ListPage() {
                                  title={t('listPage.editDataset')}
                                >
                                   <Pencil className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                  onClick={(e) => handleToggleVisibilityClick(e, dataset)}
-                                  title={dataset.is_public ? t('listPage.makePrivate') : t('listPage.makePublic')}
-                                  disabled={togglingVisibilityId === dataset.dataset_id}
-                                >
-                                  {togglingVisibilityId === dataset.dataset_id
-                                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                                    : dataset.is_public
-                                      ? <Lock className="w-4 h-4" />
-                                      : <Globe className="w-4 h-4" />
-                                  }
                                 </Button>
                                 <Button
                                   variant="ghost"
@@ -3189,6 +3061,10 @@ export default function ListPage() {
           editingDatasetOriginalDataLevel={editingDatasetOriginalDataLevel}
           editingDatasetSourceSelection={editingDatasetSourceSelection}
           editingDatasetSourceCustom={editingDatasetSourceCustom}
+          editingDatasetIsPublic={editingDatasetIsPublic}
+          editingDatasetIsOpenCollaboration={editingDatasetIsOpenCollaboration}
+          editingDatasetOriginalIsPublic={editingDatasetOriginalIsPublic}
+          editingDatasetOriginalIsOpenCollaboration={editingDatasetOriginalIsOpenCollaboration}
           editingDatasetSaving={editingDatasetSaving}
           isSlideDataset={(() => {
             const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
@@ -3198,6 +3074,11 @@ export default function ListPage() {
             const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
             return ds ? getDatasetVisualType(ds) !== 'slides' : false
           })()}
+          canEditVisibility={(() => {
+            const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
+            if (!ds) return false
+            return ds.user_id === user?.id || user?.is_admin
+          })()}
           onNameChange={setEditingDatasetName}
           onTypeChange={setEditingDatasetType}
           onDataLevelChange={setEditingDatasetDataLevel}
@@ -3206,6 +3087,8 @@ export default function ListPage() {
             if (value !== 'Other') setEditingDatasetSourceCustom('')
           }}
           onSourceCustomChange={setEditingDatasetSourceCustom}
+          onIsPublicChange={setEditingDatasetIsPublic}
+          onIsOpenCollaborationChange={setEditingDatasetIsOpenCollaboration}
           onCancel={handleEditDatasetCancel}
           onSave={handleEditDatasetSave}
         />

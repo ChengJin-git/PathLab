@@ -2769,7 +2769,15 @@
       "unknownSourceOrgan": "Unknown",
       "datasetSourceDescription": "This source will be applied to all files in the dataset.",
       "otherSource": "Other",
-      "otherSourcePlaceholder": "Enter a custom source"
+      "otherSourcePlaceholder": "Enter a custom source",
+      "datasetVisibility": "Dataset Visibility",
+      "private": "Private",
+      "privateDesc": "Only visible to you",
+      "public": "Public",
+      "publicDesc": "Visible to all users automatically",
+      "openCollaboration": "Open Collaboration",
+      "openCollaborationDesc": "Allow any user to annotate this dataset",
+      "changingVisibilityWarning": "Changing visibility may affect existing access"
     },
     "fileMetadata": {
       "setMetadataForFiles": "Set Metadata for Files",
