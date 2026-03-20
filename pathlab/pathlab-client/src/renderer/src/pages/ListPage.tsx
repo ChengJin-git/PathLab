@@ -1421,13 +1421,6 @@ export default function ListPage() {
       {/* === DATASETS VIEW (when no dataset is selected) === */}
       {!selectedDatasetId && (
         <>
-          {/* Datasets Loading State */}
-          {showInitialDatasetLoading && (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-            </div>
-          )}
-
           {/* Datasets Error State */}
           {(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && !showInitialDatasetLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
@@ -1605,6 +1598,12 @@ export default function ListPage() {
               <Button variant="outline" onClick={clearDatasetFilters} className="gap-2">
                 {t('listPage.filters.clear')}
               </Button>
+            </div>
+          )}
+
+          {showInitialDatasetLoading && (
+            <div className="flex items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
             </div>
           )}
 
