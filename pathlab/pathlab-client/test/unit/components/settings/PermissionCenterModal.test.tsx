@@ -166,7 +166,10 @@ describe("PermissionCenterModal", () => {
 
     await user.click(publicDatasetButton);
 
-    await screen.findByText("settings.permissionCenterModal.publicDatasetGrantDisabled");
+    const publicDisabledHints = await screen.findAllByText(
+      "settings.permissionCenterModal.publicDatasetGrantDisabled",
+    );
+    expect(publicDisabledHints.length).toBeGreaterThan(0);
     expect(
       screen.queryByText("settings.permissionCenterModal.currentAccessCount:0"),
     ).not.toBeInTheDocument();
