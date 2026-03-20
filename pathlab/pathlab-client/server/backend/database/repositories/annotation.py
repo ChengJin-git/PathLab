@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 logger = logging.getLogger(__name__)
 
 from ..models import SegmentationAnnotation, utc_now
+from .dataset import DatasetRepository
 
 
 class VersionConflictError(Exception):
@@ -165,7 +166,9 @@ class SegmentationAnnotationRepository:
         Get an annotation if the user has permission:
           - admin: always allowed
           - owner (annotation.user_id == user_id): allowed
-          - temporary elevation via dataset grants on source_dataset_id: allowed
+          - personal draft: owner only
+          - inherit mode: inherits dataset visibility (public → accessible)
+          - elevated_dataset_ids: temporary grant via DatasetGrant
         Returns None if the annotation doesn't exist or the user has no access.
         """
         result = await db.execute(
@@ -182,6 +185,13 @@ class SegmentationAnnotationRepository:
             return annotation
         if annotation.status == "draft" and annotation.visibility_mode == "personal":
             return None
+        # inherit mode: inherit dataset visibility
+        if annotation.visibility_mode == "inherit" and annotation.source_dataset_id:
+            dataset = await DatasetRepository.get_by_id(
+                db, annotation.source_dataset_id
+            )
+            if dataset and dataset.is_public:
+                return annotation
         if (
             elevated_dataset_ids
             and annotation.source_dataset_id
