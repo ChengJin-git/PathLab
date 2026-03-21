@@ -101,13 +101,36 @@ async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, A
     else:
         data_types_info = "None"
 
-    if stats.get("datasets"):
-        datasets_list = "\n".join(
-            [
-                f"  - {d.get('dataset_name', 'unknown')} (dataset_id={d.get('dataset_id', 'unknown')}): {d.get('file_count', 0)} files, type={d.get('data_type', 'unknown')}"
-                for d in stats["datasets"]
-            ]
+    own_public_datasets_count = 0
+    own_private_datasets_count = 0
+    elevated_datasets_count = 0
+    other_public_datasets_count = 0
+    datasets_details = []
+    for d in stats.get("datasets") or []:
+        access_type = d.get("access_type", "own")
+        name = d.get("dataset_name", "unknown")
+        did = d.get("dataset_id", "unknown")
+        fc = d.get("file_count", 0)
+        dt = d.get("data_type", "unknown")
+        if access_type == "elevated":
+            elevated_datasets_count += 1
+            marker = " [ELEVATED ACCESS - temporary permission]"
+        elif access_type == "public":
+            other_public_datasets_count += 1
+            marker = " [PUBLIC ACCESS - shared by other user]"
+        elif access_type == "other_user":
+            marker = " [OTHER USER'S DATA - admin view]"
+        else:
+            if d.get("is_public"):
+                own_public_datasets_count += 1
+            else:
+                own_private_datasets_count += 1
+            marker = ""
+        datasets_details.append(
+            f"  - {name} (dataset_id={did}): {fc} files, type={dt}{marker}"
         )
+    if datasets_details:
+        datasets_list = "\n".join(datasets_details)
     else:
         datasets_list = "  None"
 
@@ -196,6 +219,10 @@ async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, A
         "wsi_count": wsi_count,
         "data_types_info": data_types_info,
         "datasets_list": datasets_list,
+        "own_public_datasets_count": own_public_datasets_count,
+        "own_private_datasets_count": own_private_datasets_count,
+        "elevated_datasets_count": elevated_datasets_count,
+        "other_public_datasets_count": other_public_datasets_count,
         "trained_models_total": trained_models_total,
         "model_summaries": model_summaries,
         "training_tasks_total": training_tasks_total,

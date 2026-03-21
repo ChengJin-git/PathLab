@@ -20,6 +20,7 @@ import httpx
 from typing import Any, TypedDict
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, FileResponse
+from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -4081,920 +4082,42 @@ async def chat_with_ai(
     elif elevated_dataset_ids is None:
         _ctx_cached = await get_cached_context_kwargs(_ctx_cache_uid)
 
-    if _ctx_cached is not None:
-        stats = {"total_count": 0, "datasets": [], "data_types": {}}
-        rich_datasets = []
-        trained_models = []
-        trained_models_total = 0
-        training_tasks = []
-        training_tasks_stats = {}
-        inference_tasks = []
-        inference_tasks_stats = {}
-        _cached_model_summaries_raw = _ctx_cached.get("model_summaries", [])
-        _cached_model_summaries = []
-        if isinstance(_cached_model_summaries_raw, list):
-            for item in _cached_model_summaries_raw:
-                if not isinstance(item, dict):
-                    continue
-                line = item.get("line")
-                model_id = item.get("id")
-                if not isinstance(line, str):
-                    continue
-                _cached_model_summaries.append({**item, "line": line, "id": model_id})
-        _cached_trained_models_total = _ctx_cached.get("trained_models_total", 0)
-        if _cached_model_summaries:
-            if use_semantic_model_ranking:
-                _relevant_summaries = await asyncio.to_thread(
-                    _semantic_top_k_models, semantic_query_text, _cached_model_summaries
-                )
-            else:
-                _relevant_summaries = _cached_model_summaries[
-                    :TOP_K_MODELS_IN_CHAT_CONTEXT
-                ]
-            _cached_models_list = "\n".join(s["line"] for s in _relevant_summaries)
-            _cached_models_count = _cached_trained_models_total
-            _cached_models_shown = len(_relevant_summaries)
-        else:
-            _cached_models_list = "  None - user needs to train a model first"
-            _cached_models_count = 0
-            _cached_models_shown = 0
+    if _ctx_cached is not None and "other_public_datasets_count" not in _ctx_cached:
+        _ctx_cached = None
 
-    async def _with_new_session(coro_factory):
-        async with async_session() as s:
-            return await coro_factory(s)
-
-    _uid = user_id_filter
-    _eids = elevated_dataset_ids
-
-    if _ctx_cached is None and inferred_model_filters:
-        (
-            stats,
-            rich_datasets,
-            trained_models_total,
-            training_tasks,
-            training_tasks_stats,
-            inference_tasks,
-            inference_tasks_stats,
-        ) = await asyncio.gather(
-            _with_new_session(
-                lambda s: WSIRepository.get_chat_context_stats(
-                    s, user_id=_uid, elevated_dataset_ids=_eids
-                )
-            ),
-            _with_new_session(
-                lambda s: WSIRepository.get_datasets(
-                    s, user_id=_uid, elevated_dataset_ids=_eids
-                )
-            ),
-            _with_new_session(lambda s: TrainedModelRepository.count(s, user_id=_uid)),
-            _with_new_session(
-                lambda s: TrainingTaskRepository.get_all(
-                    s, limit=10, offset=0, user_id=_uid
-                )
-            ),
-            _with_new_session(
-                lambda s: TrainingTaskRepository.get_status_counts(s, user_id=_uid)
-            ),
-            _with_new_session(
-                lambda s: AITaskRepository.get_recent(s, limit=10, user_id=_uid)
-            ),
-            _with_new_session(
-                lambda s: AITaskRepository.get_status_counts(s, user_id=_uid)
-            ),
-        )
-
-        trained_models = []
-        scanned_count = 0
-        quick_match_count = 0
-        while scanned_count < FILTERED_MODEL_SCAN_LIMIT:
-            batch_limit = min(
-                MODEL_SCAN_BATCH_SIZE,
-                FILTERED_MODEL_SCAN_LIMIT - scanned_count,
-            )
-            batch = await TrainedModelRepository.get_all(
-                db,
-                limit=batch_limit,
-                offset=scanned_count,
-                user_id=user_id_filter,
-            )
-            if not batch:
-                break
-            trained_models.extend(batch)
-            scanned_count += len(batch)
-            if inferred_model_filters.get("text_keywords"):
-                quick_match_count += sum(
-                    1
-                    for item in batch
-                    if _matches_quick_model_request_filters(
-                        item, inferred_model_filters
-                    )
-                )
-                if (
-                    quick_match_count >= MAX_MODELS_IN_CHAT_CONTEXT
-                    and scanned_count >= DEFAULT_MODEL_SCAN_LIMIT
-                ):
-                    break
-            if len(batch) < batch_limit:
-                break
-    elif _ctx_cached is None:
-        (
-            stats,
-            rich_datasets,
-            trained_models,
-            trained_models_total,
-            training_tasks,
-            training_tasks_stats,
-            inference_tasks,
-            inference_tasks_stats,
-        ) = await asyncio.gather(
-            _with_new_session(
-                lambda s: WSIRepository.get_chat_context_stats(
-                    s, user_id=_uid, elevated_dataset_ids=_eids
-                )
-            ),
-            _with_new_session(
-                lambda s: WSIRepository.get_datasets(
-                    s, user_id=_uid, elevated_dataset_ids=_eids
-                )
-            ),
-            _with_new_session(
-                lambda s: TrainedModelRepository.get_all(
-                    s, limit=DEFAULT_MODEL_SCAN_LIMIT, offset=0, user_id=_uid
-                )
-            ),
-            _with_new_session(lambda s: TrainedModelRepository.count(s, user_id=_uid)),
-            _with_new_session(
-                lambda s: TrainingTaskRepository.get_all(
-                    s, limit=10, offset=0, user_id=_uid
-                )
-            ),
-            _with_new_session(
-                lambda s: TrainingTaskRepository.get_status_counts(s, user_id=_uid)
-            ),
-            _with_new_session(
-                lambda s: AITaskRepository.get_recent(s, limit=10, user_id=_uid)
-            ),
-            _with_new_session(
-                lambda s: AITaskRepository.get_status_counts(s, user_id=_uid)
-            ),
-        )
-
-    # Format user data context for System Prompt
-    wsi_count = stats["total_count"]
-    stats_datasets = stats[
-        "datasets"
-    ]  # Keep original reference; `datasets` may be overwritten later
-    rich_datasets_map = {dataset["dataset_id"]: dataset for dataset in rich_datasets}
-    datasets = stats_datasets
-    data_type_dist = stats["data_types"]
-
-    # Auxiliary lookup dict built during the dataset loop (used later for model compatibility)
-    available_extractors_per_dataset: dict[str, list[str]] = {}
-    dataset_wsi_ids_per_dataset: dict[str, list[str]] = {}
-
-    # Format datasets with detailed info (data_type and labels per dataset)
-    # Each dataset has its own labels and survival data - do NOT show global labels to avoid confusion
-    # Datasets are now marked with access_type: "own" (user's own) or "elevated" (temporary permission)
-    if datasets:
-        _batch_dataset_ids = [
-            d["dataset_id"]
-            for d in datasets
-            if d.get("dataset_id") and d.get("dataset_id") != "unknown"
-        ]
-        _wsi_ids_batch = await DatasetRepository.get_wsi_ids_batch(
-            db, _batch_dataset_ids
-        )
-
-        datasets_details = []
-        for d in datasets:
-            ds_name = d["dataset_name"]
-            ds_id = d.get("dataset_id", "unknown")
-            ds_count = d["file_count"]
-            ds_type = d.get("data_type", "unknown")
-            ds_labels = d.get("labels", {})
-            ds_survival = d.get("survival_count", 0)
-            ds_event_status = d.get("event_status", {})
-            ds_access_type = d.get("access_type", "own")
-            rich_ds = rich_datasets_map.get(ds_id, {})
-            ds_task_type = rich_ds.get("task_type") or d.get(
-                "group_task_type", "unknown"
-            )
-            is_segmentation_dataset = _is_segmentation_task(
-                ds_task_type
-            ) or _is_segmentation_task(d.get("group_task_type"))
-            effective_ds_labels = {} if is_segmentation_dataset else ds_labels
-            ds_aggregation_level = rich_ds.get("aggregation_level", "")
-            ds_split_counts = rich_ds.get("predefined_split_counts") or d.get(
-                "predefined_split_counts", {}
-            )
-            ds_split_unit = rich_ds.get("predefined_split_unit") or (
-                "cases" if ds_aggregation_level == "case" else "files"
-            )
-            ds_train_split = int(ds_split_counts.get("train", 0) or 0)
-            ds_val_split = int(ds_split_counts.get("val", 0) or 0)
-            ds_test_split = int(ds_split_counts.get("test", 0) or 0)
-            ds_has_splits = d.get("has_predefined_splits", False) or any(
-                count > 0 for count in (ds_train_split, ds_val_split, ds_test_split)
-            )
-            ds_segmentation_labels = _extract_segmentation_label_names(
-                rich_ds.get("coco_categories", []) or []
-            )
-            d["task_type"] = ds_task_type
-            d["labels"] = effective_ds_labels
-            d["aggregation_level"] = ds_aggregation_level
-            d["segmentation_labels"] = ds_segmentation_labels
-
-            # Build info parts
-            labels_str = (
-                ", ".join([f"{lbl}({cnt})" for lbl, cnt in effective_ds_labels.items()])
-                if effective_ds_labels
-                else "none"
-            )
-
-            # Format survival data with event_status distribution
-            if ds_survival > 0 and ds_event_status:
-                event_count = ds_event_status.get("event", 0)
-                censored_count = ds_event_status.get("censored", 0)
-                survival_str = f", survival_data={ds_survival} (event={event_count}, censored={censored_count})"
-            elif ds_survival > 0:
-                survival_str = f", survival_data={ds_survival}"
-            else:
-                survival_str = ""
-
-            splits_str = (
-                f", has_predefined_splits=true, predefined_split_distribution({ds_split_unit})="
-                f"[train:{ds_train_split}, val:{ds_val_split}, test:{ds_test_split}]"
-                if ds_has_splits
-                else ""
-            )
-
-            # Determine supported task types based on data
-            task_types = []
-            if effective_ds_labels:
-                task_types.append("classification")
-            if ds_survival > 0:
-                task_types.append("survival")
-            ds_group_task_type = d.get("group_task_type", "")
-            if _is_segmentation_task(ds_group_task_type) or is_segmentation_dataset:
-                task_types.append("segmentation")
-            task_types_str = (
-                f", supported_tasks=[{', '.join(task_types)}]" if task_types else ""
-            )
-            aggregation_str = (
-                f", aggregation_level={ds_aggregation_level}"
-                if ds_aggregation_level
-                else ""
-            )
-            segmentation_labels_str = (
-                f", segmentation_labels=[{', '.join(ds_segmentation_labels)}]"
-                if ds_segmentation_labels
-                else ""
-            )
-            ds_source = rich_ds.get("source_organ") or d.get("source_organ")
-            if isinstance(ds_source, str):
-                ds_source = ds_source.strip()
-
-            dataset_wsi_ids = (
-                _wsi_ids_batch.get(ds_id, []) if ds_id != "unknown" else []
-            )
-            dataset_wsi_ids_per_dataset[ds_id] = dataset_wsi_ids
-            d["wsi_ids"] = dataset_wsi_ids
-
-            available_extractors = []
-            available_extractors_str = ""
-            if ds_type == "wsi" and dataset_wsi_ids:
-                features_root = Config.get_uploads_dir() / "features"
-                available_extractors = await _get_available_extractors(
-                    features_root, dataset_wsi_ids[0]
-                )
-                if available_extractors:
-                    available_extractors_str = f", available_feature_extractors=[{', '.join(available_extractors)}]"
-            # Store for model compatibility lookup
-            available_extractors_per_dataset[ds_id] = available_extractors
-            d["available_feature_extractors"] = available_extractors
-
-            access_marker = (
-                " [ELEVATED ACCESS - temporary permission]"
-                if ds_access_type == "elevated"
-                else " [PUBLIC ACCESS - shared by other user]"
-                if ds_access_type == "public"
-                else " [OTHER USER'S DATA - admin view]"
-                if ds_access_type == "other_user"
-                else ""
-            )
-
-            datasets_details.append(
-                f"  - {ds_name} (dataset_id={ds_id}){access_marker}: {ds_count} files, type={ds_type}, "
-                f"source={ds_source or 'unknown'}, labels=[{labels_str}]{survival_str}{splits_str}{task_types_str}{aggregation_str}"
-                f"{segmentation_labels_str}{available_extractors_str}"
-            )
-        datasets_list = "\n".join(datasets_details)
-    else:
-        datasets_list = "  None"
-
-    # Format data type distribution (overall summary only)
-    wsi_count_val = data_type_dist.get("wsi", 0)
-    patch_count_val = data_type_dist.get("patch", 0)
-    if wsi_count_val > 0 and patch_count_val > 0:
-        data_types_info = f"WSI: {wsi_count_val}, Patches: {patch_count_val}"
-    elif wsi_count_val > 0:
-        data_types_info = f"WSI only: {wsi_count_val}"
-    elif patch_count_val > 0:
-        data_types_info = f"Patches only: {patch_count_val}"
-    else:
-        data_types_info = "None"
-
-    own_public_datasets_count = 0
-    own_private_datasets_count = 0
-    elevated_datasets_count = 0
-    other_public_datasets_count = 0
-    if not user.is_admin():
-        for d in stats_datasets:
-            access_type = d.get("access_type", "own")
-            if access_type == "elevated":
-                elevated_datasets_count += 1
-                continue
-            if access_type == "public":
-                other_public_datasets_count += 1
-                continue
-            if bool(d.get("is_public")):
-                own_public_datasets_count += 1
-            else:
-                own_private_datasets_count += 1
-
-    if trained_models:
-        model_summaries = []
-        # Batch query all training tasks to get detailed info with eager loading
-        task_ids = list(set(m.task_id for m in trained_models if m.task_id))
-        training_tasks_map = {}
-        # task_id -> set of dataset_ids actually used in training (via TrainingTaskWSI → WSISlide)
-        training_dataset_ids_map: dict[str, set[str]] = {}
-        training_wsi_ids_map: dict[str, set[str]] = {}
-        source_dataset_ids_map: dict[str, str | None] = {}
-        # task_id -> dataset_ids with persisted AI results/heatmap artifacts
-        result_dataset_ids_map: dict[str, set[str]] = {}
-        heatmap_dataset_ids_map: dict[str, set[str]] = {}
-        if task_ids:
-            from sqlalchemy import select
-
-            # Eager load data_group (for data_type / task_type), no need to load datasets relation
-            stmt = (
-                select(TrainingTask)
-                .options(selectinload(TrainingTask.data_group))
-                .where(TrainingTask.task_id.in_(task_ids))
-            )
-            result = await db.execute(stmt)
-            tasks = result.scalars().all()
-            for task in tasks:
-                training_tasks_map[task.task_id] = task
-
-            training_wsi_ids_raw = await TrainingTaskRepository.get_wsi_ids_batch(
-                db, task_ids
-            )
-            training_wsi_ids_map = {
-                task_id: set(wsi_ids)
-                for task_id, wsi_ids in training_wsi_ids_raw.items()
-            }
-            source_dataset_ids_map = (
-                await TrainingTaskRepository.get_source_dataset_ids_batch(db, task_ids)
-            )
-
-            # Batch-query the actual dataset_ids used in each training task
-            # Join TrainingTaskWSI → WSISlide to get the real training datasets
-            ds_rows = await db.execute(
-                select(TrainingTaskWSI.task_id, WSISlide.dataset_id)
-                .join(WSISlide, TrainingTaskWSI.wsi_id == WSISlide.wsi_id)
-                .where(
-                    TrainingTaskWSI.task_id.in_(task_ids),
-                    WSISlide.dataset_id.isnot(None),
-                )
-                .distinct()
-            )
-            for row in ds_rows.all():
-                tid, did = row[0], row[1]
-                if tid not in training_dataset_ids_map:
-                    training_dataset_ids_map[tid] = set()
-                training_dataset_ids_map[tid].add(did)
-
-            # Batch-query persisted AI results to provide dataset-specific evidence
-            # for image/heatmap browsing prompts.
-            result_rows = await db.execute(
-                select(AIResult.task_id, WSISlide.dataset_id, AIResult.extra_metadata)
-                .join(WSISlide, AIResult.wsi_id == WSISlide.wsi_id)
-                .where(AIResult.task_id.in_(task_ids), WSISlide.dataset_id.isnot(None))
-            )
-            for task_id, dataset_id, extra_metadata in result_rows.all():
-                if task_id not in result_dataset_ids_map:
-                    result_dataset_ids_map[task_id] = set()
-                result_dataset_ids_map[task_id].add(dataset_id)
-
-                meta = extra_metadata if isinstance(extra_metadata, dict) else {}
-                has_heatmap_artifact = bool(
-                    meta.get("attention_path")
-                    or meta.get("cam_file")
-                    or meta.get("heatmap_path")
-                    or meta.get("attention_scores_path")
-                )
-                if has_heatmap_artifact:
-                    if task_id not in heatmap_dataset_ids_map:
-                        heatmap_dataset_ids_map[task_id] = set()
-                    heatmap_dataset_ids_map[task_id].add(dataset_id)
-
-        for m in trained_models:
-            model_name = m.model_name
-            model_id = m.model_id
-            model_classes = m.classes or []
-            model_task_id = m.task_id
-            model_feature_extractor = m.feature_extractor or "unknown"
-            classes_str = ", ".join(model_classes) if model_classes else "none"
-
-            # Get data_type and task_type from training task's DataGroup
-            training_task = training_tasks_map.get(model_task_id)
-            # Actual dataset_ids this model was trained on (from WSI associations)
-            training_dataset_ids = training_dataset_ids_map.get(model_task_id, set())
-            model_wsi_ids = training_wsi_ids_map.get(model_task_id, set())
-            source_dataset_id = source_dataset_ids_map.get(model_task_id)
-            if training_task and training_task.data_group:
-                data_type = training_task.data_group.data_type
-                task_type = training_task.data_group.task_type
-            else:
-                data_type = "unknown"
-                task_type = "unknown"
-            # Resolve training dataset names / sources using the stats_datasets lookup
-            dataset_id_to_name = {
-                ds["dataset_id"]: ds["dataset_name"] for ds in stats_datasets
-            }
-            dataset_id_to_source = {}
-            for ds in stats_datasets:
-                ds_id = ds.get("dataset_id")
-                if not ds_id:
-                    continue
-                rich_ds = rich_datasets_map.get(ds_id, {})
-                ds_source = rich_ds.get("source_organ") or ds.get("source_organ")
-                if isinstance(ds_source, str):
-                    ds_source = ds_source.strip()
-                if ds_source:
-                    dataset_id_to_source[ds_id] = ds_source
-            training_dataset_names = [
-                dataset_id_to_name[did]
-                for did in training_dataset_ids
-                if did in dataset_id_to_name
-            ]
-            training_dataset_sources = []
-            seen_sources = set()
-            for did in training_dataset_ids:
-                ds_source = dataset_id_to_source.get(did)
-                if ds_source and ds_source not in seen_sources:
-                    training_dataset_sources.append(ds_source)
-                    seen_sources.add(ds_source)
-
-            # Dataset-level evidence from persisted AI results (and heatmap artifacts)
-            result_dataset_ids = result_dataset_ids_map.get(model_task_id, set())
-            heatmap_dataset_ids = heatmap_dataset_ids_map.get(model_task_id, set())
-            result_dataset_names = [
-                dataset_id_to_name[did]
-                for did in result_dataset_ids
-                if did in dataset_id_to_name
-            ]
-            heatmap_dataset_names = [
-                dataset_id_to_name[did]
-                for did in heatmap_dataset_ids
-                if did in dataset_id_to_name
-            ]
-
-            # Get embedding dimension for WSI models
-            embed_dim = EXTRACTOR_EMBED_DIM.get(model_feature_extractor, 0)
-
-            _seg_spec = _get_segmentation_model_spec(m, training_task)
-            _model_raw_classes = list(
-                (
-                    training_task.classes
-                    if isinstance(training_task, TrainingTask)
-                    else None
-                )
-                or m.classes
-                or []
-            )
-            _extval_model_info = ExtvalModelInfo(
-                data_type=data_type,
-                task_type=task_type,
-                classes=_model_raw_classes,
-                feature_extractor=str(getattr(m, "feature_extractor", "") or ""),
-                wsi_ids=model_wsi_ids,
-                source_dataset_id=source_dataset_id,
-                seg_task_architecture=_seg_spec["task_architecture"],
-                seg_task_backbone=_seg_spec["task_backbone"],
-                seg_saved_architecture=_seg_spec["saved_architecture"],
-                seg_saved_backbone=_seg_spec["saved_backbone"],
-                segmentation_labels=_model_raw_classes,
-                training_dataset_ids=training_dataset_ids,
-            )
-
-            compatible_datasets = []
-            if data_type != "unknown" and task_type != "unknown":
-                _now_compat = time.monotonic()
-                for ds in stats_datasets:
-                    cand_id = ds["dataset_id"]
-                    cand_name = ds["dataset_name"]
-                    cand_extractors = tuple(
-                        sorted(available_extractors_per_dataset.get(cand_id, []))
-                    )
-                    cand_wsi_count = len(dataset_wsi_ids_per_dataset.get(cand_id, []))
-                    _ck = (
-                        model_id,
-                        cand_id,
-                        data_type,
-                        task_type,
-                        source_dataset_id,
-                        cand_extractors,
-                        cand_wsi_count,
-                    )
-                    _cached_compat = _compat_check_cache.get(_ck)
-                    if (
-                        _cached_compat is not None
-                        and _now_compat - _cached_compat[1] < _COMPAT_CACHE_TTL
-                    ):
-                        if _cached_compat[0]:
-                            compatible_datasets.append(
-                                f"{cand_name} (dataset_id={cand_id})"
-                            )
-                        continue
-
-                    compatibility_error = check_extval_compatibility(
-                        model_info=_extval_model_info,
-                        dataset_info=ExtvalDatasetInfo(
-                            dataset_id=cand_id,
-                            data_type=ds.get("data_type", "unknown"),
-                            task_type=ds.get("task_type", "unknown"),
-                            aggregation_level=ds.get("aggregation_level", "file"),
-                            labels=list((ds.get("labels") or {}).keys()),
-                            segmentation_labels=ds.get("segmentation_labels") or [],
-                            feature_extractors=available_extractors_per_dataset.get(
-                                cand_id, []
-                            ),
-                            wsi_ids=set(dataset_wsi_ids_per_dataset.get(cand_id, [])),
-                        ),
-                    )
-                    _compat_check_cache[_ck] = (
-                        compatibility_error is None,
-                        _now_compat,
-                    )
-                    if compatibility_error is not None:
-                        continue
-
-                    compatible_datasets.append(f"{cand_name} (dataset_id={cand_id})")
-
-            # Build model info string
-            info_parts = [
-                f"id={model_id}",
-                f"task_type={task_type}",
-                f"data_type={data_type}",
-            ]
-
-            # Add classes for classification models
-            if model_classes:
-                info_parts.append(f"classes=[{classes_str}]")
-
-            if _is_segmentation_task(task_type):
-                segmentation_spec = _get_segmentation_model_spec(m, training_task)
-                if segmentation_spec["task_architecture"]:
-                    info_parts.append(
-                        f"architecture={segmentation_spec['task_architecture']}"
-                    )
-                if segmentation_spec["task_backbone"]:
-                    info_parts.append(f"backbone={segmentation_spec['task_backbone']}")
-                if source_dataset_id:
-                    info_parts.append(f"source_dataset_id={source_dataset_id}")
-
-            # Add feature extractor / backbone for all model types.
-            # - WSI cls/survival: feature extractor name (uni, conch, …)
-            # - Patch cls:        feature extractor name (resnet50, uni, …)
-            # - Patch seg:        encoder backbone (resnet50, conch, …) stored in
-            #                     model.feature_extractor during training
-            if model_feature_extractor not in ("unknown", ""):
-                info_parts.append(f"feature_extractor={model_feature_extractor}")
-            if data_type == "wsi" and embed_dim > 0:
-                info_parts.append(f"embedding_dim={embed_dim}")
-
-            # Add training dataset source / names for reference
-            if training_dataset_sources:
-                info_parts.append(f"source={', '.join(training_dataset_sources)}")
-
-            if training_dataset_names:
-                info_parts.append(
-                    f"trained_on_dataset={', '.join(training_dataset_names)}"
-                )
-
-            if result_dataset_names:
-                result_datasets_str = ", ".join(
-                    f"{dataset_id_to_name[did]} (dataset_id={did})"
-                    for did in result_dataset_ids
-                    if did in dataset_id_to_name
-                )
-                info_parts.append(f"result_evidence_datasets=[{result_datasets_str}]")
-            else:
-                info_parts.append("result_evidence_datasets=[]")
-
-            if heatmap_dataset_names:
-                heatmap_datasets_str = ", ".join(
-                    f"{dataset_id_to_name[did]} (dataset_id={did})"
-                    for did in heatmap_dataset_ids
-                    if did in dataset_id_to_name
-                )
-                info_parts.append(f"heatmap_result_datasets=[{heatmap_datasets_str}]")
-            else:
-                info_parts.append("heatmap_result_datasets=[]")
-
-            info_parts.append(f"trained_on_task={model_task_id}")
-            if training_task and training_task.task_name:
-                info_parts.append(f"task_name={training_task.task_name}")
-
-            # Add pre-computed compatible datasets list (API-level filtering)
-            if compatible_datasets:
-                compat_str = ", ".join(compatible_datasets)
-                info_parts.append(f"compatible_validation_datasets=[{compat_str}]")
-            else:
-                info_parts.append("compatible_validation_datasets=[]")
-
-            if m.created_at:
-                info_parts.append(f"created_at={m.created_at.isoformat()}Z")
-
-            model_summaries.append(
-                {
-                    "id": model_id,
-                    "task_type": task_type,
-                    "data_type": data_type,
-                    # Extra fields for richer filter matching (used by
-                    # _matches_model_request_filters to surface models by
-                    # label/dataset/task_name even when they fall outside the
-                    # MAX_MODELS_IN_CHAT_CONTEXT recent-model window).
-                    "classes": [c.lower() for c in model_classes],
-                    "dataset_names": [
-                        n.lower()
-                        for n in (training_dataset_names + result_dataset_names)
-                    ],
-                    "dataset_sources": [s.lower() for s in training_dataset_sources],
-                    "task_name": (training_task.task_name or "").lower()
-                    if training_task
-                    else "",
-                    "line": f"  - {model_name} ({', '.join(info_parts)})",
-                }
-            )
-
-        if (
-            use_semantic_model_ranking
-            and model_summaries
-            and len(model_summaries) > TOP_K_MODELS_IN_CHAT_CONTEXT
-        ):
-            try:
-                from .chat_pdf_vectorstore import _embed_texts as _emb
-
-                _emb_vecs = await asyncio.to_thread(
-                    _emb, [s["line"] for s in model_summaries]
-                )
-                for _i, _s in enumerate(model_summaries):
-                    _s["embedding"] = _emb_vecs[_i].tolist()
-            except Exception:
-                pass
-        if use_semantic_model_ranking:
-            relevant_summaries = await asyncio.to_thread(
-                _semantic_top_k_models, semantic_query_text, model_summaries
-            )
-        else:
-            relevant_summaries = model_summaries[:TOP_K_MODELS_IN_CHAT_CONTEXT]
-        models_list = "\n".join(summary["line"] for summary in relevant_summaries)
-        models_count = trained_models_total
-        models_shown = len(relevant_summaries)
-    else:
-        model_summaries = []
-        models_list = "  None - user needs to train a model first"
-        models_count = 0
-        models_shown = 0
-
-    # Format user permissions info
-    user_role = user.role
-    can_use_gpu_base = user.can_use_gpu()
-
-    # Format temporary permissions if any (for non-admin users)
-    # These are datasets owned by OTHER users that this user has been granted access to
-    if temp_permissions:
-        # Batch query all datasets at once to avoid N+1 query problem
-        dataset_ids = [perm.dataset_id for perm in temp_permissions]
-        datasets = await DatasetRepository.get_by_ids(db, dataset_ids)
-        dataset_map = {d.dataset_id: d for d in datasets}
-
-        temp_perms_details = []
-        for perm in temp_permissions:
-            dataset = dataset_map.get(perm.dataset_id)
-            dataset_name = dataset.name if dataset else "Unknown Dataset"
-
-            # Format expiration info
-            expires_info = ""
-            if perm.expires_at:
-                expires_info = (
-                    f", expires: {perm.expires_at.strftime('%Y-%m-%d %H:%M UTC')}"
-                )
-            else:
-                expires_info = ", no expiration"
-
-            grant_bits = []
-            if perm.can_use_gpu:
-                grant_bits.append("gpu")
-            if perm.can_collaborate:
-                grant_bits.append("annotate")
-            grant_label = ", ".join(grant_bits) if grant_bits else "none"
-
-            temp_perms_details.append(
-                f"  - **{dataset_name}** (dataset_id={perm.dataset_id}): grants={grant_label}{expires_info}"
-            )
-        temp_perms_list = "\n".join(temp_perms_details)
-    else:
-        temp_perms_list = "  None"
-
-    # Get GPU status for system prompt
     gpu_summary = (
         get_gpu_summary_for_prompt()
         if user.is_admin()
         else "GPU details hidden for non-admin users"
     )
+    user_role = user.role
+    can_use_gpu_base = user.can_use_gpu()
 
-    # Format training tasks info (recent 10 tasks with summary)
-    training_tasks_total = training_tasks_stats.get("total", 0)
-    training_tasks_completed = training_tasks_stats.get("completed", 0)
-    training_tasks_running = training_tasks_stats.get("running", 0)
-    training_tasks_failed = training_tasks_stats.get("failed", 0)
-
-    if training_tasks:
-        from backend.common.progress_store import get_all_progress
-
-        active_task_ids = [
-            t.task_id
-            for t in training_tasks
-            if str(getattr(t, "status", "") or "").lower() in ACTIVE_TRAINING_STATUSES
-        ]
-        live_progress_map = await get_all_progress() if active_task_ids else {}
-        recent_logs_by_task_id: dict[str, list[object]] = {}
-        if active_task_ids:
-            recent_logs_batches = await asyncio.gather(
-                *(get_training_snapshot(task_id) for task_id in active_task_ids)
+    if temp_permissions:
+        _tp_dataset_ids = [perm.dataset_id for perm in temp_permissions]
+        _tp_datasets = await DatasetRepository.get_by_ids(db, _tp_dataset_ids)
+        _tp_dataset_map = {d.dataset_id: d for d in _tp_datasets}
+        _tp_details = []
+        for perm in temp_permissions:
+            _tp_ds = _tp_dataset_map.get(perm.dataset_id)
+            _tp_ds_name = _tp_ds.name if _tp_ds else "Unknown Dataset"
+            _tp_expires = (
+                f", expires: {perm.expires_at.strftime('%Y-%m-%d %H:%M UTC')}"
+                if perm.expires_at
+                else ", no expiration"
             )
-            recent_logs_by_task_id = {
-                task_id: (logs or [])
-                for task_id, logs in zip(active_task_ids, recent_logs_batches)
-            }
-
-        training_tasks_details = []
-        for t in training_tasks:
-            created_str = (
-                t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
+            _tp_grants = []
+            if perm.can_use_gpu:
+                _tp_grants.append("gpu")
+            if perm.can_collaborate:
+                _tp_grants.append("annotate")
+            _tp_grant_label = ", ".join(_tp_grants) if _tp_grants else "none"
+            _tp_details.append(
+                f"  - **{_tp_ds_name}** (dataset_id={perm.dataset_id}): grants={_tp_grant_label}{_tp_expires}"
             )
-            status_lower = str(t.status or "").lower()
-            # Get task_type and data_type from DataGroup relationship
-            if t.data_group:
-                task_type = t.data_group.task_type
-                data_type = t.data_group.data_type
-            else:
-                task_type = "unknown"
-                data_type = "unknown"
-
-            detail_parts = [f"created={created_str}"]
-            if status_lower in ACTIVE_TRAINING_STATUSES:
-                live_progress = live_progress_map.get(t.task_id)
-                if live_progress is None:
-                    live_progress = getattr(t, "progress", None)
-                progress_value = _format_prompt_number(live_progress)
-                if progress_value is not None:
-                    detail_parts.append(f"progress={progress_value}%")
-
-                latest_snapshot = _extract_latest_training_snapshot(
-                    recent_logs_by_task_id.get(t.task_id, [])
-                )
-                if latest_snapshot:
-                    detail_parts.append(latest_snapshot)
-
-            training_tasks_details.append(
-                f"  - [{t.status.upper()}] {t.task_name} (id={t.task_id}): {task_type}, {data_type}, "
-                + "; ".join(detail_parts)
-            )
-        if training_tasks_total > 10:
-            training_tasks_details.append(
-                f"  ... and {training_tasks_total - 10} more tasks"
-            )
-        training_tasks_list = "\n".join(training_tasks_details)
+        temp_perms_list = "\n".join(_tp_details)
     else:
-        training_tasks_list = "  None - user has not created any training tasks yet"
-
-    # Format inference tasks info (recent 10 tasks with summary)
-    inference_tasks_total = inference_tasks_stats.get("total", 0)
-    inference_tasks_completed = inference_tasks_stats.get("completed", 0)
-    inference_tasks_running = inference_tasks_stats.get("running", 0)
-
-    if inference_tasks:
-        inference_task_wsi_map = await WSIRepository.get_by_ids_with_dataset(
-            db, [t.wsi_id for t in inference_tasks if t.wsi_id]
-        )
-        inference_tasks_details = []
-        for t in inference_tasks:
-            created_str = (
-                t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "unknown"
-            )
-            task_wsi = inference_task_wsi_map.get(t.wsi_id)
-            dataset_name = (
-                task_wsi.dataset.name
-                if task_wsi and task_wsi.dataset and task_wsi.dataset.name
-                else "unknown dataset"
-            )
-            dataset_id = (
-                task_wsi.dataset_id if task_wsi and task_wsi.dataset_id else "unknown"
-            )
-            inference_tasks_details.append(
-                f"  - [{t.status.upper()}] {t.task_type} on {t.wsi_id} (dataset={dataset_name}, dataset_id={dataset_id}, id={t.task_id}): created={created_str}"
-            )
-        if inference_tasks_total > 10:
-            inference_tasks_details.append(
-                f"  ... and {inference_tasks_total - 10} more tasks"
-            )
-        inference_tasks_list = "\n".join(inference_tasks_details)
-    else:
-        inference_tasks_list = "  None - user has not run any inference tasks yet"
-
-    # Format user data context using template
-    user_data_context = format_user_data_context(
-        wsi_count=wsi_count,
-        data_types_info=data_types_info,
-        datasets_list=datasets_list,
-        models_count=models_count,
-        models_list=models_list,
-        models_shown=models_shown,
-        models_selection_note=models_selection_note,
-        training_tasks_total=training_tasks_total,
-        training_tasks_completed=training_tasks_completed,
-        training_tasks_running=training_tasks_running,
-        training_tasks_failed=training_tasks_failed,
-        training_tasks_list=training_tasks_list,
-        inference_tasks_total=inference_tasks_total,
-        inference_tasks_completed=inference_tasks_completed,
-        inference_tasks_running=inference_tasks_running,
-        inference_tasks_list=inference_tasks_list,
-        gpu_summary=gpu_summary,
-        user_role=user_role,
-        is_admin=user.is_admin(),
-        can_use_gpu_base=can_use_gpu_base,
-        temp_perms_list=temp_perms_list,
-        own_public_datasets_count=own_public_datasets_count,
-        own_private_datasets_count=own_private_datasets_count,
-        elevated_datasets_count=elevated_datasets_count,
-        other_public_datasets_count=other_public_datasets_count,
-        current_datetime=current_datetime,
-    )
-
-    if _ctx_cached is None and user.is_admin():
-        await set_cached_context_kwargs_admin(
-            {
-                "wsi_count": wsi_count,
-                "data_types_info": data_types_info,
-                "datasets_list": datasets_list,
-                "trained_models_total": trained_models_total,
-                "model_summaries": model_summaries,
-                "training_tasks_total": training_tasks_total,
-                "training_tasks_completed": training_tasks_completed,
-                "training_tasks_running": training_tasks_running,
-                "training_tasks_failed": training_tasks_failed,
-                "training_tasks_list": training_tasks_list,
-                "inference_tasks_total": inference_tasks_total,
-                "inference_tasks_completed": inference_tasks_completed,
-                "inference_tasks_running": inference_tasks_running,
-                "inference_tasks_list": inference_tasks_list,
-                "own_public_datasets_count": own_public_datasets_count,
-                "own_private_datasets_count": own_private_datasets_count,
-                "elevated_datasets_count": elevated_datasets_count,
-                "other_public_datasets_count": other_public_datasets_count,
-            }
-        )
-    elif _ctx_cached is None and elevated_dataset_ids is None:
-        await set_cached_context_kwargs(
-            _ctx_cache_uid,
-            {
-                "wsi_count": wsi_count,
-                "data_types_info": data_types_info,
-                "datasets_list": datasets_list,
-                "trained_models_total": trained_models_total,
-                "model_summaries": model_summaries,
-                "training_tasks_total": training_tasks_total,
-                "training_tasks_completed": training_tasks_completed,
-                "training_tasks_running": training_tasks_running,
-                "training_tasks_failed": training_tasks_failed,
-                "training_tasks_list": training_tasks_list,
-                "inference_tasks_total": inference_tasks_total,
-                "inference_tasks_completed": inference_tasks_completed,
-                "inference_tasks_running": inference_tasks_running,
-                "inference_tasks_list": inference_tasks_list,
-                "own_public_datasets_count": own_public_datasets_count,
-                "own_private_datasets_count": own_private_datasets_count,
-                "elevated_datasets_count": elevated_datasets_count,
-                "other_public_datasets_count": other_public_datasets_count,
-            },
-        )
+        temp_perms_list = "  None"
 
     if _ctx_cached is not None:
         user_data_context = format_user_data_context(
@@ -5033,6 +4156,229 @@ async def chat_with_ai(
             ),
             current_datetime=current_datetime,
         )
+    else:
+        _uid = user_id_filter
+        _eids = elevated_dataset_ids
+
+        async def _with_new_session(coro_factory):
+            async with async_session() as _s:
+                return await coro_factory(_s)
+
+        (
+            _fb_stats,
+            _fb_trained_models,
+            _fb_trained_models_total,
+            _fb_training_tasks,
+            _fb_training_tasks_stats,
+            _fb_inference_tasks,
+            _fb_inference_tasks_stats,
+        ) = await asyncio.gather(
+            _with_new_session(
+                lambda s: WSIRepository.get_chat_context_stats(
+                    s, user_id=_uid, elevated_dataset_ids=_eids
+                )
+            ),
+            _with_new_session(
+                lambda s: TrainedModelRepository.get_all(
+                    s, limit=200, offset=0, user_id=_uid
+                )
+            ),
+            _with_new_session(lambda s: TrainedModelRepository.count(s, user_id=_uid)),
+            _with_new_session(
+                lambda s: TrainingTaskRepository.get_all(
+                    s, limit=10, offset=0, user_id=_uid
+                )
+            ),
+            _with_new_session(
+                lambda s: TrainingTaskRepository.get_status_counts(s, user_id=_uid)
+            ),
+            _with_new_session(
+                lambda s: AITaskRepository.get_recent(s, limit=10, user_id=_uid)
+            ),
+            _with_new_session(
+                lambda s: AITaskRepository.get_status_counts(s, user_id=_uid)
+            ),
+        )
+
+        _fb_wsi_count = _fb_stats.get("total_count", 0)
+        _fb_data_type_dist = _fb_stats.get("data_types", {})
+        _fb_wsi_val = _fb_data_type_dist.get("wsi", 0)
+        _fb_patch_val = _fb_data_type_dist.get("patch", 0)
+        if _fb_wsi_val > 0 and _fb_patch_val > 0:
+            _fb_data_types_info = f"WSI: {_fb_wsi_val}, Patches: {_fb_patch_val}"
+        elif _fb_wsi_val > 0:
+            _fb_data_types_info = f"WSI only: {_fb_wsi_val}"
+        elif _fb_patch_val > 0:
+            _fb_data_types_info = f"Patches only: {_fb_patch_val}"
+        else:
+            _fb_data_types_info = "None"
+
+        _fb_own_public = 0
+        _fb_own_private = 0
+        _fb_elevated = 0
+        _fb_other_public = 0
+        _fb_datasets_details = []
+        for _d in _fb_stats.get("datasets") or []:
+            _d_access = _d.get("access_type", "own")
+            _d_name = _d.get("dataset_name", "unknown")
+            _d_id = _d.get("dataset_id", "unknown")
+            _d_fc = _d.get("file_count", 0)
+            _d_type = _d.get("data_type", "unknown")
+            if _d_access == "elevated":
+                _fb_elevated += 1
+                _d_marker = " [ELEVATED ACCESS - temporary permission]"
+            elif _d_access == "public":
+                _fb_other_public += 1
+                _d_marker = " [PUBLIC ACCESS - shared by other user]"
+            elif _d_access == "other_user":
+                _d_marker = " [OTHER USER'S DATA - admin view]"
+            else:
+                if _d.get("is_public"):
+                    _fb_own_public += 1
+                else:
+                    _fb_own_private += 1
+                _d_marker = ""
+            _fb_datasets_details.append(
+                f"  - {_d_name} (dataset_id={_d_id}): {_d_fc} files, type={_d_type}{_d_marker}"
+            )
+        _fb_datasets_list = (
+            "\n".join(_fb_datasets_details) if _fb_datasets_details else "  None"
+        )
+
+        _fb_task_ids = list({str(m.task_id) for m in _fb_trained_models if m.task_id})
+        _fb_task_meta: dict[str, tuple[str, str, str]] = {}
+        if _fb_task_ids:
+            async with async_session() as _fb_db:
+                _fb_stmt = (
+                    sa_select(TrainingTask)
+                    .options(selectinload(TrainingTask.data_group))
+                    .where(TrainingTask.task_id.in_(_fb_task_ids))
+                )
+                _fb_result = await _fb_db.execute(_fb_stmt)
+                for _fb_task in _fb_result.scalars().all():
+                    _fb_dg = _fb_task.data_group
+                    _fb_task_meta[str(_fb_task.task_id)] = (
+                        str((_fb_dg.task_type if _fb_dg else None) or "unknown"),
+                        str((_fb_dg.data_type if _fb_dg else None) or "unknown"),
+                        str(_fb_task.task_name or ""),
+                    )
+
+        _fb_model_summaries = []
+        for _m in _fb_trained_models:
+            _m_tt, _m_dt, _m_tn = _fb_task_meta.get(
+                str(_m.task_id) if _m.task_id else "",
+                ("unknown", "unknown", ""),
+            )
+            _fb_model_summaries.append(
+                {
+                    "id": _m.model_id,
+                    "task_type": _m_tt,
+                    "data_type": _m_dt,
+                    "classes": [c.lower() for c in (_m.classes or [])],
+                    "dataset_names": [],
+                    "dataset_sources": [],
+                    "task_name": _m_tn.lower(),
+                    "line": f"  - {_m.model_name} (id={_m.model_id}, task_type={_m_tt}, trained_on_task={_m.task_id}, task_name={_m_tn or 'unknown'})",
+                    "embedding": None,
+                }
+            )
+
+        if _fb_model_summaries:
+            if use_semantic_model_ranking:
+                _fb_models_list_entries = await asyncio.to_thread(
+                    _semantic_top_k_models, semantic_query_text, _fb_model_summaries
+                )
+            else:
+                _fb_models_list_entries = _fb_model_summaries[
+                    :TOP_K_MODELS_IN_CHAT_CONTEXT
+                ]
+        else:
+            _fb_models_list_entries = []
+
+        _fb_models_list = (
+            "\n".join(s["line"] for s in _fb_models_list_entries)
+            if _fb_models_list_entries
+            else "  None - user needs to train a model first"
+        )
+        _fb_models_count = _fb_trained_models_total
+        _fb_models_shown = len(_fb_models_list_entries)
+
+        _fb_training_total = _fb_training_tasks_stats.get("total", 0)
+        _fb_training_completed = _fb_training_tasks_stats.get("completed", 0)
+        _fb_training_running = _fb_training_tasks_stats.get("running", 0)
+        _fb_training_failed = _fb_training_tasks_stats.get("failed", 0)
+        if _fb_training_tasks:
+            _fb_training_list = "\n".join(
+                f"  - [{str(t.status).upper()}] {t.task_name} (id={t.task_id})"
+                for t in _fb_training_tasks
+            )
+        else:
+            _fb_training_list = "  None - user has not created any training tasks yet"
+
+        _fb_inference_total = _fb_inference_tasks_stats.get("total", 0)
+        _fb_inference_completed = _fb_inference_tasks_stats.get("completed", 0)
+        _fb_inference_running = _fb_inference_tasks_stats.get("running", 0)
+        if _fb_inference_tasks:
+            _fb_inference_list = "\n".join(
+                f"  - [{str(t.status).upper()}] {t.task_type} on {t.wsi_id} (id={t.task_id})"
+                for t in _fb_inference_tasks
+            )
+        else:
+            _fb_inference_list = "  None - user has not run any inference tasks yet"
+
+        user_data_context = format_user_data_context(
+            wsi_count=_fb_wsi_count,
+            data_types_info=_fb_data_types_info,
+            datasets_list=_fb_datasets_list,
+            models_count=_fb_models_count,
+            models_list=_fb_models_list,
+            models_shown=_fb_models_shown,
+            models_selection_note=models_selection_note,
+            training_tasks_total=_fb_training_total,
+            training_tasks_completed=_fb_training_completed,
+            training_tasks_running=_fb_training_running,
+            training_tasks_failed=_fb_training_failed,
+            training_tasks_list=_fb_training_list,
+            inference_tasks_total=_fb_inference_total,
+            inference_tasks_completed=_fb_inference_completed,
+            inference_tasks_running=_fb_inference_running,
+            inference_tasks_list=_fb_inference_list,
+            gpu_summary=gpu_summary,
+            user_role=user_role,
+            is_admin=user.is_admin(),
+            can_use_gpu_base=can_use_gpu_base,
+            temp_perms_list=temp_perms_list,
+            own_public_datasets_count=_fb_own_public,
+            own_private_datasets_count=_fb_own_private,
+            elevated_datasets_count=_fb_elevated,
+            other_public_datasets_count=_fb_other_public,
+            current_datetime=current_datetime,
+        )
+
+        _fb_cache_payload = {
+            "wsi_count": _fb_wsi_count,
+            "data_types_info": _fb_data_types_info,
+            "datasets_list": _fb_datasets_list,
+            "own_public_datasets_count": _fb_own_public,
+            "own_private_datasets_count": _fb_own_private,
+            "elevated_datasets_count": _fb_elevated,
+            "other_public_datasets_count": _fb_other_public,
+            "trained_models_total": _fb_trained_models_total,
+            "model_summaries": _fb_model_summaries,
+            "training_tasks_total": _fb_training_total,
+            "training_tasks_completed": _fb_training_completed,
+            "training_tasks_running": _fb_training_running,
+            "training_tasks_failed": _fb_training_failed,
+            "training_tasks_list": _fb_training_list,
+            "inference_tasks_total": _fb_inference_total,
+            "inference_tasks_completed": _fb_inference_completed,
+            "inference_tasks_running": _fb_inference_running,
+            "inference_tasks_list": _fb_inference_list,
+        }
+        if user.is_admin():
+            await set_cached_context_kwargs_admin(_fb_cache_payload)
+        elif elevated_dataset_ids is None:
+            await set_cached_context_kwargs(_ctx_cache_uid, _fb_cache_payload)
 
     # Log the user_data_context for debugging
     # logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
