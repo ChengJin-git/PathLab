@@ -212,31 +212,31 @@ export async function deleteAnnotation(annotationId: string): Promise<{ ok: bool
 /**
  * Get dataset ground-truth annotations converted to viewer ROI format.
  */
-export async function getDatasetGroundTruth(datasetId: string): Promise<DatasetGroundTruthResponse> {
+export async function getDatasetLabels(datasetId: string): Promise<DatasetGroundTruthResponse> {
   return apiFetch<DatasetGroundTruthResponse>(
-    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/ground-truth`,
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/labels`,
     {},
-    'Failed to load dataset ground truth'
+    'Failed to load dataset labels'
   )
 }
 
 /**
  * Get ground-truth annotations for the current WSI/patch only.
  */
-export async function getWSIGroundTruth(wsiId: string): Promise<DatasetGroundTruthResponse> {
+export async function getWSILabels(wsiId: string): Promise<DatasetGroundTruthResponse> {
   return apiFetch<DatasetGroundTruthResponse>(
-    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/ground-truth`,
+    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/labels`,
     {},
-    'Failed to load WSI ground truth'
+    'Failed to load WSI labels'
   )
 }
 
 /**
  * Get a cached GT thumbnail image URL for recommendation card previews.
  */
-export function getGroundTruthThumbnailUrl(wsiId: string, size: number = 160): string {
+export function getLabelThumbnailUrl(wsiId: string, size: number = 160): string {
   return withAuthTokenQuery(
-    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/ground-truth-thumbnail?size=${encodeURIComponent(String(size))}`
+    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/label-thumbnail?size=${encodeURIComponent(String(size))}`
   )
 }
 
@@ -403,11 +403,11 @@ export async function removeCollaborator(
   )
 }
 
-export async function deleteDatasetGroundTruth(datasetId: string): Promise<{ ok: boolean }> {
+export async function deleteDatasetLabels(datasetId: string): Promise<{ ok: boolean }> {
   return apiFetch(
-    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/ground-truth`,
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/labels`,
     { method: 'DELETE' },
-    'Failed to delete ground truth'
+    'Failed to delete labels'
   )
 }
 

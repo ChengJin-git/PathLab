@@ -12,8 +12,8 @@ import {
   getRecommendationPatchCAMImageUrl as getPatchCAMImageUrl,
   getRecommendationHeatmapThumbnailUrl as getHeatmapThumbnailUrl,
   getRecommendationSegMaskImageUrl as getSegMaskImageUrl,
-  getGroundTruthThumbnailUrl,
-  getWSIGroundTruth,
+  getLabelThumbnailUrl,
+  getWSILabels,
   type WSISummary,
   type ResultWithWSI,
   type AvailableHeatmap
@@ -457,7 +457,7 @@ function GroundTruthMaskThumbnail({
   const isActiveRef = useRef(true)
   const releaseLoadSlotRef = useRef<(() => void) | null>(null)
   const gtThumbnailUrl = useMemo(
-    () => getGroundTruthThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE),
+    () => getLabelThumbnailUrl(image.wsi_id, CARD_THUMBNAIL_SIZE),
     [image.wsi_id]
   )
 
@@ -494,7 +494,7 @@ function GroundTruthMaskThumbnail({
 
   const handleLoadError = () => {
     releaseLoadSlot()
-    void getWSIGroundTruth(image.wsi_id)
+    void getWSILabels(image.wsi_id)
       .then((gtResult) => {
         if (!isActiveRef.current) return
         const nextRegions = gtResult.annotations?.[image.wsi_id] || []

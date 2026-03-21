@@ -36,7 +36,7 @@ import {
   saveAnnotation,
   listAnnotations,
   deleteAnnotation,
-  getWSIGroundTruth,
+  getWSILabels,
   getDatasetAnnotationSummary,
   deleteDatasetAnnotationsByLabels,
   extractRegions,
@@ -616,7 +616,7 @@ export default function WSIViewerPage() {
       return
     }
     let cancelled = false
-    getWSIGroundTruth(wsi_id).then(gt => {
+    getWSILabels(wsi_id).then(gt => {
       if (cancelled) return
       setGtRegions(gt.annotations[wsi_id] ?? [])
       setGtAnnotationSource(gt.annotation_source ?? null)
