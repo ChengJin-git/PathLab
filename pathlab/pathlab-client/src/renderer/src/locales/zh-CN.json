@@ -3639,5 +3639,11 @@
     "errorUsernameTaken": "该用户名已被占用",
     "errorGeneric": "注册失败，请重试。",
     "errorTurnstileFailed": "安全验证失败，请重试。"
+  },
+  "dataset": {
+    "labelSource": {
+      "imported": "导入 GT",
+      "userLabel": "用户标注"
+    }
   }
 }

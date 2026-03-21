@@ -3644,5 +3644,11 @@
     "errorUsernameTaken": "This username is already taken",
     "errorGeneric": "Registration failed. Please try again.",
     "errorTurnstileFailed": "Security verification failed. Please try again."
+  },
+  "dataset": {
+    "labelSource": {
+      "imported": "Imported GT",
+      "userLabel": "User Label"
+    }
   }
 }

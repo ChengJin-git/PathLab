@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
 import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
+import { getDatasetAnnotationSummary, AnnotationSource } from '../api/annotation'
 import { ApiError } from '../api/client'
 import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
@@ -163,6 +164,8 @@ export default function ListPage() {
 
   // Case grouping - tracks which case_ids are expanded
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
+
+  const [datasetLabelSources, setDatasetLabelSources] = useState<Map<string, AnnotationSource | null>>(new Map())
 
   const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
@@ -361,6 +364,35 @@ export default function ListPage() {
     enabled: !selectedDatasetId,
     staleTime: 2 * 60 * 1000,
   })
+
+  useEffect(() => {
+    const segmentationDatasets = datasetsQuery.data?.items?.filter(
+      (d: DatasetSummary) => getNormalizedDatasetTaskType(d.task_type || '') === 'segmentation' && d.dataset_id
+    ) ?? []
+    if (segmentationDatasets.length === 0) return
+
+    const toFetch = segmentationDatasets.filter((d: DatasetSummary) => !datasetLabelSources.has(d.dataset_id!))
+    if (toFetch.length === 0) return
+
+    void Promise.all(
+      toFetch.map(async (d: DatasetSummary) => {
+        try {
+          const summary = await getDatasetAnnotationSummary(d.dataset_id!)
+          return { id: d.dataset_id!, source: summary.label_annotation_source ?? null }
+        } catch {
+          return { id: d.dataset_id!, source: null as AnnotationSource | null }
+        }
+      })
+    ).then((results) => {
+      setDatasetLabelSources((prev) => {
+        const next = new Map(prev)
+        for (const { id, source } of results) {
+          next.set(id, source)
+        }
+        return next
+      })
+    })
+  }, [datasetsQuery.data, datasetLabelSources])
 
   const activeSortBy = sortColumn ? SORT_FIELD_MAP[sortColumn] : undefined
   const activeSortOrder = activeSortBy ? sortDirection : undefined
@@ -1798,6 +1830,17 @@ export default function ListPage() {
                          ) : (
                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200/70">
                              <Lock className="w-2.5 h-2.5" />{t('listComponents.editModals.private')}
+                           </span>
+                         )}
+                         {normalizedTaskType === 'segmentation' && dataset.dataset_id && datasetLabelSources.has(dataset.dataset_id) && datasetLabelSources.get(dataset.dataset_id) !== null && (
+                           <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                             datasetLabelSources.get(dataset.dataset_id) === 'imported_gt'
+                               ? 'bg-sky-50 text-sky-700 border border-sky-100/50'
+                               : 'bg-emerald-50 text-emerald-700 border border-emerald-100/50'
+                           }`}>
+                             {datasetLabelSources.get(dataset.dataset_id) === 'imported_gt'
+                               ? t('dataset.labelSource.imported')
+                               : t('dataset.labelSource.userLabel')}
                            </span>
                          )}
                        </div>

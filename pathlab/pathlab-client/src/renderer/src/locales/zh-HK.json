@@ -3643,5 +3643,11 @@
     "errorUsernameTaken": "該用戶名已被佔用",
     "errorGeneric": "註冊失敗，請重試。",
     "errorTurnstileFailed": "安全驗證失敗，請重試。"
+  },
+  "dataset": {
+    "labelSource": {
+      "imported": "匯入 GT",
+      "userLabel": "用戶標注"
+    }
   }
 }
