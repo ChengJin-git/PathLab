@@ -1,6 +1,6 @@
 # PathLab Storage Management
 
-> 适用版本：`PathLab v1.0.3`
+> 适用版本：`PathLab v1.0.4`
 
 `server/backend/storage/` 负责文件系统层面的统计、迁移、配置与清理工作，是数据库状态与 `uploads/` 目录之间的一层维护工具。
 

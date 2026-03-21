@@ -1,6 +1,6 @@
 # PathLab Frontend Source
 
-> 适用版本：`PathLab v1.0.3`
+> 适用版本：`PathLab v1.0.4`
 
 `src/renderer/src` 是当前 React 应用的真实源码目录。
 

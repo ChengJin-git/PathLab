@@ -1,6 +1,6 @@
 # PathLab Gateway
 
-> 适用版本：`PathLab v1.0.3`
+> 适用版本：`PathLab v1.0.4`
 
 Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
 
@@ -96,7 +96,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 | `POST` | `/datasets/{dataset_id}/delete-by-labels` | 按 label 类别删除标注 |
 | `POST` | `/annotation/extract` | 提取标注 ROI 到新数据集（触发 `promoted_to_training_reference` 审计） |
 
-注意：`/ground-truth` 路径已在 v1.0.3 本轮重构中改名为 `/labels`，旧路径不再有效。
+注意：`/ground-truth` 路径已在 v1.0.4 之前的重构中改名为 `/labels`，旧路径不再有效。
 
 ## 存储路由补充说明
 

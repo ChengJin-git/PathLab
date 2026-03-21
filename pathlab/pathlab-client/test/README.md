@@ -1,6 +1,6 @@
 # PathLab Client 单元测试
 
-> 适用版本：`PathLab v1.0.3`
+> 适用版本：`PathLab v1.0.4`
 
 本目录包含 PathLab 前端的完整单元测试套件，覆盖全部业务逻辑模块。
 

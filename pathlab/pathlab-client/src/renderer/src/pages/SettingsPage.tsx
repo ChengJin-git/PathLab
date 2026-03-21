@@ -193,7 +193,7 @@ export default function SettingsPage() {
             <div className="space-y-3">
               <div className="flex justify-between py-2 border-b border-gray-100">
                 <span className="text-sm font-medium text-gray-700">{t('settings.platformVersion')}</span>
-                <span className="text-sm text-gray-600">v1.0.3</span>
+                <span className="text-sm text-gray-600">v1.0.4</span>
               </div>
               {(['gateway', 'wsi', 'ai'] as const).map((service) => (
                 <div key={service} className={`flex justify-between py-2 ${service !== 'ai' ? 'border-b border-gray-100' : ''}`}>
