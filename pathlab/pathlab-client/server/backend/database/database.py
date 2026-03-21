@@ -287,13 +287,6 @@ async def init_db():
         await conn.execute(text("DROP TABLE IF EXISTS annotation_collaborators"))
         await conn.execute(text("DROP TABLE IF EXISTS dataset_permissions"))
 
-    from backend.database.migrate_rename_annot_to_label import (
-        run as _migrate_annot_to_label,
-    )
-
-    async with async_session() as session:
-        await _migrate_annot_to_label(session)
-
     await _create_default_admin()
 
 

@@ -6,12 +6,11 @@
 
 ## 当前组成
 
-- `database.py`：异步 engine / session 工厂（启动时自动调用 `migrate_rename_annot_to_label.py` 幂等迁移）
+- `database.py`：异步 engine / session 工厂
 - `models.py`：业务 ORM 模型
 - `init_db.py`：初始化与建表逻辑
 - `repositories/`：按业务拆分的数据访问对象
 - `migrate_unify_annotations.py`：标注相关迁移脚本
-- `migrate_rename_annot_to_label.py`：将 `annotation_id` 中 `annot_` 前缀统一重命名为 `label_` 的幂等迁移脚本
 
 ## 当前 ORM 表现状
 
@@ -62,8 +61,6 @@
 | 数据集级别标注（GT/labels） | `label_{dataset_id}` | 由 finalize 或 GT 导入写入 |
 | 个人/共享草稿 | UUID | 由草稿写入逻辑生成 |
 
-`migrate_rename_annot_to_label.py` 负责将旧格式 `annot_{dataset_id}` 批量迁移为 `label_{dataset_id}`，在 Gateway 启动时通过 `init_db()` 自动调用（幂等）。
-
 ## annotation_source 派生字段
 
 `annotation_source` 不是数据库列，而是**在查询时计算的派生字段**：
@@ -76,7 +73,7 @@
 ## 与旧文档相比的关键变化
 
 - 标注表当前是 `segmentation_annotations`，不是旧文档里的 `annotation_drafts`
-- `annotation_id` 中的 `annot_` 前缀已全部迁移为 `label_` 前缀（由幂等迁移脚本保障）
+- `annotation_id` 中的数据集级别记录统一使用 `label_{dataset_id}` 格式（旧 `annot_` 前缀已迁移完毕）
 - 当前 README 不再把 `accesstoken` 记作项目里明确可见的独立 ORM 模型
 - 认证更贴近"JWT + users + nonce 控制"的实现方式
 - 当前权限体系已统一到 `dataset_grants` / `permission_audit_logs`，旧表 `dataset_permissions` 与 `annotation_collaborators` 不再作为 ORM 模型存在

@@ -981,10 +981,6 @@
     "hidePredictionMask": "隱藏預測標注",
     "showGT": "顯示實際標注",
     "hideGT": "隱藏實際標注",
-    "gtSource": {
-      "imported": "導入",
-      "userLabel": "用戶標注"
-    },
     "opacity": "不透明度",
     "activation": "啟動值",
     "lowToHigh": "低 → 高",
