@@ -30,6 +30,9 @@ class _Result:
     def first(self):
         return self._value
 
+    def all(self):
+        return []
+
 
 class _DB:
     def __init__(self, value):
@@ -370,6 +373,19 @@ async def test_update_visibility_public_revokes_temp_private_grants(monkeypatch)
         calls["delete_by_dataset"] += 1
         return 2
 
+    async def _noop_invalidate_all(*args, **kwargs):
+        pass
+
+    async def _noop_invalidate(*args, **kwargs):
+        pass
+
+    class _FakeSessionCtx:
+        async def __aenter__(self):
+            return _DB(None)
+
+        async def __aexit__(self, *args):
+            pass
+
     monkeypatch.setattr(
         "gateway.routes.wsi_grants.DatasetRepository.get_by_id",
         _dataset_by_id,
@@ -381,6 +397,18 @@ async def test_update_visibility_public_revokes_temp_private_grants(monkeypatch)
     monkeypatch.setattr(
         "gateway.routes.wsi_grants.DatasetGrantRepository.delete_by_dataset",
         _delete_by_dataset,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.invalidate_all_user_chat_contexts",
+        _noop_invalidate_all,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.invalidate_chat_context",
+        _noop_invalidate,
+    )
+    monkeypatch.setattr(
+        "gateway.routes.wsi_grants.async_session",
+        _FakeSessionCtx,
     )
 
     db = _DB(None)

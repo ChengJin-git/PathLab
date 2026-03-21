@@ -13,7 +13,7 @@ permission grant/revoke. Chat handler rebuilds on the next cache miss.
 
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from backend.common.redis_client import get_redis, make_key
 
@@ -109,6 +109,22 @@ async def invalidate_chat_context(user_id: str) -> None:
         await r.expire(admin_ver_key, VER_TTL)
     except Exception as exc:
         logger.warning("[ChatCtxCache] invalidate error uid=%s: %s", user_id, exc)
+
+
+async def invalidate_all_user_chat_contexts(user_ids: List[str]) -> None:
+    if not user_ids:
+        return
+    try:
+        r = get_redis()
+        for uid in user_ids:
+            ver_key = make_key("chat_ctx_ver", uid)
+            await r.incr(ver_key)
+            await r.expire(ver_key, VER_TTL)
+        admin_ver_key = make_key("chat_ctx_ver", ADMIN_SCOPE)
+        await r.incr(admin_ver_key)
+        await r.expire(admin_ver_key, VER_TTL)
+    except Exception as exc:
+        logger.warning("[ChatCtxCache] batch invalidate error: %s", exc)
 
 
 async def get_training_snapshot(task_id: str) -> Optional[str]:

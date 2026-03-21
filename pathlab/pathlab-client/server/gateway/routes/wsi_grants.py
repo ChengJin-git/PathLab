@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import User, current_active_user
 from backend.auth.dependencies import require_admin
-from backend.database import get_db
+from backend.database import get_db, async_session
 from backend.database.models import Dataset, TrainingTask, WSISlide
 from backend.database.repositories import (
     DatasetGrantRepository,
@@ -21,6 +21,10 @@ from backend.database.repositories import (
 )
 from ..dependencies import AI_SERVICE_URL, logger
 from ..models import DatasetUpdateVisibilityRequest
+from backend.common.chat_context_cache import (
+    invalidate_chat_context,
+    invalidate_all_user_chat_contexts,
+)
 
 router = APIRouter(tags=["WSI Grants"])
 
@@ -303,6 +307,18 @@ async def update_dataset_visibility(
 
     await DatasetRepository.update(db, dataset_id, updates)
     await db.commit()
+
+    if becoming_public or becoming_private:
+        try:
+            async with async_session() as _db:
+                _r = await _db.execute(select(User.id))
+                all_user_ids = [str(row[0]) for row in _r.all()]
+            await invalidate_all_user_chat_contexts(all_user_ids)
+        except Exception as _exc:
+            logger.warning("[ChatCtxCache] broadcast invalidate failed: %s", _exc)
+            await invalidate_chat_context(str(user.id))
+    else:
+        await invalidate_chat_context(str(user.id))
 
     dataset = await DatasetRepository.get_by_id(db, dataset_id)
     response: Dict[str, Any] = {

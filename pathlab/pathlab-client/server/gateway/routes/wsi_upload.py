@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 
-from backend.database import get_db
+from backend.database import get_db, async_session
 from backend.database.repositories import (
     WSIRepository,
     DatasetRepository,
@@ -46,6 +46,13 @@ from backend.common.annotation_summary_cache import (
     rebuild_dataset_annotation_summary_cache,
 )
 from backend.common.annotation_pubsub import publish as publish_annotation_event
+from backend.common.chat_context_cache import (
+    invalidate_chat_context,
+    invalidate_all_user_chat_contexts,
+)
+from backend.auth import User as AuthUser
+from sqlalchemy import select as sa_select
+
 
 router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
 
@@ -718,6 +725,18 @@ async def upload_wsi_file(
                 status_code=400, detail=f"WSI ID already exists: {wsi_id}"
             )
 
+        if is_public:
+            try:
+                async with async_session() as _db:
+                    _r = await _db.execute(sa_select(AuthUser.id))
+                    _all_uids = [str(row[0]) for row in _r.all()]
+                await invalidate_all_user_chat_contexts(_all_uids)
+            except Exception as _exc:
+                logger.warning("[ChatCtxCache] broadcast invalidate failed: %s", _exc)
+                await invalidate_chat_context(str(user.id))
+        else:
+            await invalidate_chat_context(str(user.id))
+
         logger.info(f"Created WSI record in database: {wsi_id}")
 
         if resolved_task_type == "segmentation" and resolved_dataset_id:
@@ -1125,6 +1144,18 @@ async def upload_wsi_by_path(
         except IntegrityError:
             await db.rollback()
             raise HTTPException(status_code=400, detail=f"WSI already exists: {wsi_id}")
+
+        if req.is_public:
+            try:
+                async with async_session() as _db:
+                    _r = await _db.execute(sa_select(AuthUser.id))
+                    _all_uids = [str(row[0]) for row in _r.all()]
+                await invalidate_all_user_chat_contexts(_all_uids)
+            except Exception as _exc:
+                logger.warning("[ChatCtxCache] broadcast invalidate failed: %s", _exc)
+                await invalidate_chat_context(str(user.id))
+        else:
+            await invalidate_chat_context(str(user.id))
 
         logger.info(f"Registered WSI by path in database: {wsi_id}")
 
