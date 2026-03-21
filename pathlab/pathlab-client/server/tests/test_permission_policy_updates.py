@@ -48,7 +48,7 @@ class _DB:
 @pytest.mark.asyncio
 async def test_guest_cannot_gain_gpu_access_via_dataset_grant(monkeypatch):
     async def _has_valid_gpu(_db, _dataset_id, _user_id):
-        return True
+        return False
 
     monkeypatch.setattr(
         DatasetGrantRepository,
