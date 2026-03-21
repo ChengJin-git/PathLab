@@ -12,7 +12,11 @@ import {
 } from '../../api/annotation'
 import { getAuthToken } from '../../api/client'
 
-const PAGE_LIMIT = 50
+const PAGE_SIZE_OPTIONS = [
+  { value: '5', label: '5' },
+  { value: '10', label: '10' },
+  { value: '20', label: '20' },
+]
 
 const EVENT_TYPE_OPTIONS = [
   'shared_write',
@@ -23,6 +27,7 @@ const EVENT_TYPE_OPTIONS = [
 
 interface Query {
   page: number
+  pageSize: number
   datasetFilter: string
   eventTypeFilter: string
 }
@@ -43,14 +48,14 @@ function formatMetadata(meta: Record<string, unknown>): string {
 export function AnnotationAuditCard() {
   const { t } = useTranslation()
 
-  const [query, setQuery] = useState<Query>({ page: 1, datasetFilter: '', eventTypeFilter: '' })
+  const [query, setQuery] = useState<Query>({ page: 1, pageSize: 10, datasetFilter: '', eventTypeFilter: '' })
   const [entries, setEntries] = useState<AnnotationAuditEntry[]>([])
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [exporting, setExporting] = useState(false)
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_LIMIT))
+  const totalPages = Math.max(1, Math.ceil(totalCount / query.pageSize))
 
   useEffect(() => {
     let cancelled = false
@@ -61,8 +66,8 @@ export function AnnotationAuditCard() {
         const res = await listAnnotationAudit({
           dataset_id: query.datasetFilter || undefined,
           event_type: query.eventTypeFilter || undefined,
-          limit: PAGE_LIMIT,
-          offset: (query.page - 1) * PAGE_LIMIT,
+          limit: query.pageSize,
+          offset: (query.page - 1) * query.pageSize,
         })
         if (!cancelled) {
           setEntries(res.entries)
@@ -216,11 +221,24 @@ export function AnnotationAuditCard() {
           </div>
 
           <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-500">
-            <span>
-              {t('settings.usersTab.pageOf', { current: query.page, total: totalPages })}
-              {' · '}
-              {t('settings.usersTab.totalCount', { count: totalCount })}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="whitespace-nowrap">{t('settings.usersTab.rowsPerPage')}</span>
+              <div className="w-[70px]">
+                <Select
+                  value={query.pageSize.toString()}
+                  onChange={(v) => setQuery(q => ({ ...q, page: 1, pageSize: Number(v) }))}
+                  options={PAGE_SIZE_OPTIONS}
+                  className="h-7 text-xs"
+                />
+              </div>
+              <span className="text-gray-300">|</span>
+              <span className="whitespace-nowrap">
+                {t('settings.usersTab.pageOf', { current: query.page, total: totalPages })}
+              </span>
+              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">
+                ({t('settings.usersTab.totalCount', { count: totalCount })})
+              </span>
+            </div>
             <div className="flex items-center gap-1.5">
               <Button
                 variant="outline"

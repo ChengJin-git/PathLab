@@ -51,7 +51,6 @@ class GlobalSettingsResponse(BaseModel):
     resend_enabled: bool
     resend_api_key: str
     resend_from_email: str
-    site_url: str
 
 
 class GlobalSettingsUpdateRequest(BaseModel):
@@ -81,7 +80,6 @@ class GlobalSettingsUpdateRequest(BaseModel):
     resend_enabled: Optional[bool] = None
     resend_api_key: Optional[str] = None
     resend_from_email: Optional[str] = None
-    site_url: Optional[str] = None
 
 
 @router.get("/public")

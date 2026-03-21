@@ -11,7 +11,7 @@ import asyncio
 import httpx
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
-from sqlalchemy import select
+from sqlalchemy import select, text
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -288,6 +288,16 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db()
     logger.info("✓ Database initialized")
+
+    async with async_session() as db:
+        await db.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "deactivated_by_maintenance BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await db.commit()
+    logger.info("✓ Schema migration applied (deactivated_by_maintenance)")
 
     # Initialize Redis connection pool
     from backend.common.redis_client import init_redis, close_redis

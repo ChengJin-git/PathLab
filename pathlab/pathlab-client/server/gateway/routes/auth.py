@@ -21,6 +21,7 @@ Endpoints:
 - DELETE /auth/users/{id} - Delete user (admin only)
 """
 
+import asyncio
 import hashlib
 import base64
 import time
@@ -113,26 +114,6 @@ class AccessRequest(BaseModel):
     turnstile_token: Optional[str] = Field(
         default=None, description="Cloudflare Turnstile token"
     )
-
-
-_LEGAL_FOOTER_HTML = (
-    "<hr style='border:none;border-top:1px solid #e0e0e0;margin:32px 0 16px'>"
-    "<p style='font-size:11px;color:#999;line-height:1.6;font-family:Arial,sans-serif;'>"
-    "This message contains confidential information intended for a specific individual "
-    "and purpose. If you are not the intended recipient, you should delete this message "
-    "and notify the sender, "
-    "<a href='https://smartlab.cse.ust.hk/' style='color:#999;'>SmartLab</a>, "
-    "and The Hong Kong University of Science and Technology (the University) immediately. "
-    "Any disclosure, copying, or distribution of this message, or the taking of any action "
-    "based on it, is strictly prohibited and may be unlawful.<br><br>"
-    "SmartLab and the University specifically deny any responsibility for the accuracy or "
-    "quality of information obtained through University E-mail Facilities. Any views and "
-    "opinions expressed are only those of the author(s) and do not necessarily represent "
-    "those of SmartLab or the University, and neither SmartLab nor the University accepts "
-    "liability whatsoever for any losses or damages incurred or caused to any party as a "
-    "result of the use of such information."
-    "</p>"
-)
 
 
 @_lru_cache(maxsize=1)
@@ -750,6 +731,11 @@ async def update_user(
         if hasattr(user, field) and value is not None:
             setattr(user, field, value)
 
+    # Any explicit is_active change by admin removes the maintenance flag
+    # so this user is excluded from future maintenance restore.
+    if "is_active" in update_data:
+        user.deactivated_by_maintenance = False
+
     await db.commit()
     await db.refresh(user)
 
@@ -912,6 +898,7 @@ async def batch_activate_users(
             if not user.is_active:
                 activated_users.append(user)
             user.is_active = True
+            user.deactivated_by_maintenance = False
             updated += 1
 
     await db.commit()
@@ -945,6 +932,7 @@ async def batch_deactivate_users(
 
         if user and user.role != "admin" and user.id != admin.id:
             user.is_active = False
+            user.deactivated_by_maintenance = False
             updated += 1
 
     await db.commit()
@@ -1026,58 +1014,47 @@ async def set_maintenance_mode(
             )
             return {"enabled": True, "affected_users": 0}
 
-        # Deactivate all non-admin users
-        result = await db.execute(select(User).where(User.role != "admin"))
+        # Deactivate all active non-admin users and mark them with the flag so
+        # they can be restored later — but only if admin hasn't touched them.
+        result = await db.execute(
+            select(User).where(User.role != "admin", User.is_active.is_(True))
+        )
         users = result.scalars().all()
-        restore_user_ids: list[str] = []
 
         for user in users:
-            if user.is_active:
-                restore_user_ids.append(str(user.id))
-                user.is_active = False
-                affected_users += 1
+            user.is_active = False
+            user.deactivated_by_maintenance = True
+            affected_users += 1
 
-        Config.set_maintenance_mode_state(True, restore_user_ids)
+        Config.set_maintenance_mode(True)
         await db.commit()
         logger.info(
             f"Admin {admin.email} enabled maintenance mode, deactivated {affected_users} users"
         )
     else:
         if not previous_enabled:
-            Config.set_maintenance_mode_state(False, [])
+            Config.set_maintenance_mode(False)
             logger.info(
                 f"Admin {admin.email} requested maintenance mode disable, but it is already disabled"
             )
             return {"enabled": False, "affected_users": 0}
 
-        import uuid
-
-        restore_user_ids = Config.get_maintenance_mode_restore_user_ids()
-        restore_user_uuids = []
-
-        for user_id in restore_user_ids:
-            try:
-                restore_user_uuids.append(uuid.UUID(user_id))
-            except (TypeError, ValueError):
-                logger.warning(
-                    f"Skipping invalid maintenance restore user id: {user_id}"
-                )
-
-        if restore_user_uuids:
-            result = await db.execute(
-                select(User).where(
-                    User.role != "admin",
-                    User.id.in_(restore_user_uuids),
-                )
+        # Only restore users whose flag is still set — meaning admin never
+        # manually touched them during maintenance.
+        result = await db.execute(
+            select(User).where(
+                User.role != "admin",
+                User.deactivated_by_maintenance.is_(True),
             )
-            users = result.scalars().all()
-            for user in users:
-                if not user.is_active:
-                    user.is_active = True
-                    affected_users += 1
+        )
+        users = result.scalars().all()
+        for user in users:
+            user.is_active = True
+            user.deactivated_by_maintenance = False
+            affected_users += 1
 
+        Config.set_maintenance_mode(False)
         await db.commit()
-        Config.set_maintenance_mode_state(False, [])
         logger.info(
             f"Admin {admin.email} disabled maintenance mode, restored {affected_users} users"
         )

@@ -100,6 +100,21 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         doc="Educational email provided during self-registration for identity verification. NULL for admin-created users.",
     )
 
+    # Maintenance mode: set True when maintenance mode deactivated this user.
+    # Cleared when admin manually changes the user's is_active (either direction).
+    # On disable-maintenance, only users with this flag still True are restored.
+    deactivated_by_maintenance: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        doc=(
+            "True while this user was deactivated by enabling maintenance mode "
+            "AND has not been manually touched by an admin since. "
+            "Cleared on any explicit admin is_active change. "
+            "Used to restore only untouched users when maintenance ends."
+        ),
+    )
+
     # Maintenance notice acknowledgment tracking
     notice_acknowledged_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
