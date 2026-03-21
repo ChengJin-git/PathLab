@@ -3621,6 +3621,11 @@ async def _run_external_validation_patch_segmentation(
     from backend.database.repositories import WSIRepository, TrainedModelRepository
     from backend.database.database import safe_session
     from backend.common.progress_store import clear_progress
+    from backend.ai.permission_revocation import (
+        is_permission_revoked,
+        clear_revocation,
+        PermissionRevokedException,
+    )
 
     uploads_dir = Config.get_uploads_dir()
     device = (
@@ -3695,6 +3700,8 @@ async def _run_external_validation_patch_segmentation(
         )
 
         await update_task_progress(TaskStatus.PATCHING, 10)
+        if is_permission_revoked(task_id):
+            raise PermissionRevokedException(f"Permission revoked for task {task_id}")
 
         # 2. Get image paths and discover annotations from target dataset
         image_paths: Dict[str, str] = {}
@@ -3984,6 +3991,8 @@ async def _run_external_validation_patch_segmentation(
             return all_results
 
         all_results = await asyncio.to_thread(_run_inference)
+        if is_permission_revoked(task_id):
+            raise PermissionRevokedException(f"Permission revoked for task {task_id}")
 
         # 4. Save to database
         async with safe_session() as db:
@@ -4051,6 +4060,7 @@ async def _run_external_validation_patch_segmentation(
             pass
         await update_task_progress(TaskStatus.FAILED, 0, error_msg=str(e))
     finally:
+        clear_revocation(task_id)
         try:
             import gc
 
@@ -4100,6 +4110,11 @@ async def _run_external_validation_patch_classification(
     from backend.database.repositories import AIResultRepository, WSIRepository
     from backend.database.database import safe_session
     from backend.common.progress_store import clear_progress
+    from backend.ai.permission_revocation import (
+        is_permission_revoked,
+        clear_revocation,
+        PermissionRevokedException,
+    )
 
     uploads_dir = Config.get_uploads_dir()
     device = (
@@ -4246,6 +4261,8 @@ async def _run_external_validation_patch_classification(
             )
 
         await update_task_progress(TaskStatus.PATCHING, 10)
+        if is_permission_revoked(task_id):
+            raise PermissionRevokedException(f"Permission revoked for task {task_id}")
 
         # Delete old AIResult records for this task
         async with safe_session() as db:
@@ -4370,6 +4387,8 @@ async def _run_external_validation_patch_classification(
             return all_results
 
         all_results = await asyncio.to_thread(_run_inference)
+        if is_permission_revoked(task_id):
+            raise PermissionRevokedException(f"Permission revoked for task {task_id}")
 
         # Save to database (aligned with WSI branch fields)
         async with safe_session() as db:
@@ -4429,6 +4448,7 @@ async def _run_external_validation_patch_classification(
             pass
         await update_task_progress(TaskStatus.FAILED, 0, error_msg=str(e))
     finally:
+        clear_revocation(task_id)
         try:
             import gc
 
@@ -4485,6 +4505,11 @@ async def _run_external_validation(
         create_symlink_to_cache,
     )
     from gateway.utils import ensure_coords_ready
+    from backend.ai.permission_revocation import (
+        is_permission_revoked,
+        clear_revocation,
+        PermissionRevokedException,
+    )
 
     wsi_ids = wsi_ids or []
 
@@ -4529,6 +4554,8 @@ async def _run_external_validation(
     try:
         # Mark as running and log start
         await update_task_progress(TaskStatus.PATCHING, 0)
+        if is_permission_revoked(task_id):
+            raise PermissionRevokedException(f"Permission revoked for task {task_id}")
         async with logger_manager.session() as (tl, _db):
             await tl.info(f"Starting external validation for task: {task_id}")
             await tl.info(
@@ -5168,6 +5195,8 @@ async def _run_external_validation(
 
         # Update status to TRAINING for inference phase
         await update_task_progress(TaskStatus.TRAINING, 35)
+        if is_permission_revoked(task_id):
+            raise PermissionRevokedException(f"Permission revoked for task {task_id}")
         await set_progress(task_id, 35)
         async with logger_manager.session() as (tl, _db):
             valid_count = len(cached_wsi_ids)
@@ -5755,8 +5784,7 @@ async def _run_external_validation(
             pass  # Don't let logging failure mask the original error
         await update_task_progress(TaskStatus.FAILED, 0, error_msg=err_msg)
     finally:
-        # Clean up GPU memory regardless of success/failure.
-        # This mirrors cleanup_training_scoped() in backend/ai/routes/training.py.
+        clear_revocation(task_id)
         try:
             import gc
             from backend.ai.utils.feature_dataset import clear_feature_cache
@@ -6026,12 +6054,32 @@ async def run_task_analysis(
     """
     from gateway.task_queue import get_task_queue, TaskType
 
-    task, _ = await _get_task_with_access(
+    task, task_dataset_id = await _get_task_with_access(
         task_id,
         user,
         db,
         forbidden_detail="You don't have permission to analyze this task",
     )
+
+    # Verify dataset read access is still valid. A pathologist's role-level GPU
+    # capability bypasses _require_task_gpu_permission, so we need an explicit
+    # dataset-access check here to honour grant revocations.
+    if task_dataset_id and not user.is_admin():
+        dataset = await DatasetRepository.get_by_id(db, task_dataset_id)
+        if dataset:
+            has_dataset_access = await check_dataset_access_permission(
+                user,
+                task_dataset_id,
+                dataset.user_id,
+                db,
+                is_public=dataset.is_public,
+                parent_dataset_id=dataset.parent_dataset_id,
+            )
+            if not has_dataset_access:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Dataset access has been revoked. Cannot submit new analysis.",
+                )
 
     await _require_task_gpu_permission(
         user,

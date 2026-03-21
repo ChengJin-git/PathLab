@@ -2615,6 +2615,7 @@
       "computeBootstrapCI": "Compute Bootstrap Confidence Intervals",
       "bootstrapCIDescription": "Runs 1000 bootstrap resamples to estimate 95% confidence intervals for all metrics.",
       "failedToRunAnalysis": "Failed to run analysis",
+      "datasetAccessRevoked": "You no longer have access to this dataset. Analysis submission is not permitted.",
       "analysisCompletedSuccess": "Analysis completed successfully!",
       "helpfulnessFeedbackQuestion": "Was this analysis helpful?",
       "thankYouFeedback": "Thank you for your feedback!",

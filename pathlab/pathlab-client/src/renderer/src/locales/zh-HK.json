@@ -2614,6 +2614,7 @@
       "computeBootstrapCI": "計算 Bootstrap 置信區間",
       "bootstrapCIDescription": "運行 1000 次 Bootstrap 重採樣，估計所有指標的 95% 置信區間。",
       "failedToRunAnalysis": "運行分析失敗",
+      "datasetAccessRevoked": "您已失去該數據集的存取權限，無法提交新的分析。",
       "analysisCompletedSuccess": "分析已成功完成！",
       "helpfulnessFeedbackQuestion": "此分析對您有幫助嗎？",
       "thankYouFeedback": "感謝您的回饋！",

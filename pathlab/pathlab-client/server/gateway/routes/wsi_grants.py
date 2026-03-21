@@ -134,8 +134,11 @@ async def _find_affected_training_tasks(
 
 
 async def _notify_ai_service_permission_revocation(task_ids: List[str]) -> List[str]:
+    from backend.ai.permission_revocation import revoke_task_permission as _local_revoke
+
     revoked: List[str] = []
     for task_id in task_ids:
+        _local_revoke(task_id)
         try:
             async with httpx.AsyncClient(timeout=1.0) as client:
                 await client.post(
