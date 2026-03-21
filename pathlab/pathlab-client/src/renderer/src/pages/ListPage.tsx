@@ -16,6 +16,7 @@ import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
 import { clampDatasetPage } from '../lib/datasetPagination'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
 import { organSources, organSourceKeyMap } from '../components/upload/types'
@@ -109,7 +110,7 @@ export default function ListPage() {
   const itemsPerPage = 10
 
   // Upload functionality
-  const [uploading, setUploading] = useState(false)
+  const [uploading, runUpload] = useAsyncAction()
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -126,7 +127,7 @@ export default function ListPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [wsiToDelete, setWsiToDelete] = useState<{ wsi_id: string; label: string; original_filename?: string } | null>(null)
   const [wsiStorageInfo, setWsiStorageInfo] = useState<WSIStorageInfo | null>(null)
-  const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
+  const [loadingStorageInfo, runStorageInfo] = useAsyncAction()
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
 
   // Batch selection for deletion
@@ -150,7 +151,7 @@ export default function ListPage() {
   const [editGender, setEditGender] = useState('')
   const [editEventTime, setEditEventTime] = useState('')
   const [editEventStatus, setEditEventStatus] = useState('')
-  const [updating, setUpdating] = useState(false)
+  const [updating, runUpdate] = useAsyncAction()
 
   // Batch edit metadata
   const [showBatchEditModal, setShowBatchEditModal] = useState(false)
@@ -160,7 +161,7 @@ export default function ListPage() {
   const [batchEditGender, setBatchEditGender] = useState('')
   const [batchEditEventTime, setBatchEditEventTime] = useState('')
   const [batchEditEventStatus, setBatchEditEventStatus] = useState('')
-  const [batchUpdating, setBatchUpdating] = useState(false)
+  const [batchUpdating, runBatchUpdate] = useAsyncAction()
 
   // Case grouping - tracks which case_ids are expanded
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
@@ -223,7 +224,7 @@ export default function ListPage() {
   const [editingDatasetOriginalSource, setEditingDatasetOriginalSource] = useState('')
   const [editingDatasetIsPublic, setEditingDatasetIsPublic] = useState(false)
   const [editingDatasetOriginalIsPublic, setEditingDatasetOriginalIsPublic] = useState(false)
-  const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
+  const [editingDatasetSaving, runDatasetSave] = useAsyncAction()
 
   const resolveSourceValue = (selection: string, custom: string) => selection === 'Other' ? custom.trim() : selection.trim()
 
@@ -244,7 +245,7 @@ export default function ListPage() {
   const [datasetToDeleteId, setDatasetToDeleteId] = useState<string | null>(null)
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
-  const [deleting, setDeleting] = useState(false)
+  const [deleting, runDelete] = useAsyncAction()
 
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
   const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
@@ -255,7 +256,7 @@ export default function ListPage() {
   // Export labels - stores dataset for export modal
   const [exportingDataset, setExportingDataset] = useState<DatasetSummary | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, runExport] = useAsyncAction()
 
   const isSegmentationDataset = selectedDatasetType === 'segmentation'
   const labelColumnTitle = isSegmentationDataset ? t('listPage.annotationStatus') : t('listPage.label')
@@ -788,86 +789,82 @@ export default function ListPage() {
     if (selectedFiles.length === 0) return
 
     setShowFileMetadataModal(false)
-    setUploading(true)
 
-    // Initialize upload tracking for all files
     const newUploadingFiles = new Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>()
     selectedFiles.forEach(file => {
       newUploadingFiles.set(file.name, { progress: 0, status: 'uploading' })
     })
     setUploadingFiles(newUploadingFiles)
 
-    try {
-      let successCount = 0
-      let failedCount = 0
-      const resolvedDatasetSource = resolveSourceValue(uploadDatasetSourceSelection, uploadDatasetSourceCustom)
+    await runUpload(async () => {
+      try {
+        let successCount = 0
+        let failedCount = 0
+        const resolvedDatasetSource = resolveSourceValue(uploadDatasetSourceSelection, uploadDatasetSourceCustom)
 
-      if (selectedDatasetId) {
-        const currentDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === selectedDatasetId)
-        const currentSource = currentDataset?.source_organ?.trim() || ''
-        if (resolvedDatasetSource !== currentSource) {
-          await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
-          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+        if (selectedDatasetId) {
+          const currentDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === selectedDatasetId)
+          const currentSource = currentDataset?.source_organ?.trim() || ''
+          if (resolvedDatasetSource !== currentSource) {
+            await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
+            void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+          }
         }
-      }
 
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i]
-        const metadata = fileMetadata.get(file.name)
+        for (let i = 0; i < selectedFiles.length; i++) {
+          const file = selectedFiles[i]
+          const metadata = fileMetadata.get(file.name)
 
-        try {
-          const age = metadata?.age ? parseInt(metadata.age) : undefined
-          await uploadWSIFile(file, {
-            label: selectedDatasetType === 'classification' ? (metadata?.label || undefined) : undefined,
-            case_id: metadata?.case_id || undefined,
-            age: age,
-            gender: metadata?.gender || undefined,
-            onProgress: (progress) => {
-              setUploadingFiles(prev => {
-                const updated = new Map(prev)
-                updated.set(file.name, { progress, status: 'uploading' })
-                return updated
-              })
-            }
-          })
+          try {
+            const age = metadata?.age ? parseInt(metadata.age) : undefined
+            await uploadWSIFile(file, {
+              label: selectedDatasetType === 'classification' ? (metadata?.label || undefined) : undefined,
+              case_id: metadata?.case_id || undefined,
+              age: age,
+              gender: metadata?.gender || undefined,
+              onProgress: (progress) => {
+                setUploadingFiles(prev => {
+                  const updated = new Map(prev)
+                  updated.set(file.name, { progress, status: 'uploading' })
+                  return updated
+                })
+              }
+            })
 
-          // Mark as success
-          setUploadingFiles(prev => {
-            const updated = new Map(prev)
-            updated.set(file.name, { progress: 100, status: 'success' })
-            return updated
-          })
-          successCount++
-        } catch (err) {
-          console.error(`Failed to upload ${file.name}:`, err)
+            setUploadingFiles(prev => {
+              const updated = new Map(prev)
+              updated.set(file.name, { progress: 100, status: 'success' })
+              return updated
+            })
+            successCount++
+          } catch (err) {
+            console.error(`Failed to upload ${file.name}:`, err)
 
-          // Mark as error
-          setUploadingFiles(prev => {
-            const updated = new Map(prev)
-            updated.set(file.name, { progress: 100, status: 'error', error: String(err) })
-            return updated
-          })
-          failedCount++
+            setUploadingFiles(prev => {
+              const updated = new Map(prev)
+              updated.set(file.name, { progress: 100, status: 'error', error: String(err) })
+              return updated
+            })
+            failedCount++
+          }
         }
-      }
 
-      await reloadCurrentDataset()
+        await reloadCurrentDataset()
 
-      // Clear upload tracking after 3 seconds
-      setTimeout(() => {
-        setUploadingFiles(new Map())
-      }, 3000)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setUploading(false)
-      setSelectedFiles([])
-      setFileMetadata(new Map())
-      setUploadDatasetSourceSelection('')
-      setUploadDatasetSourceCustom('')
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
+        setTimeout(() => {
+          setUploadingFiles(new Map())
+        }, 3000)
+      } catch (err) {
+        console.error(err)
       }
+    })
+
+    setSelectedFiles([])
+    setFileMetadata(new Map())
+    setUploadDatasetSourceSelection('')
+    setUploadDatasetSourceCustom('')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
     }
   }
 
@@ -884,15 +881,9 @@ export default function ListPage() {
     setShowDeleteModal(true)
 
     // Load storage info
-    setLoadingStorageInfo(true)
-    try {
-      const info = await getWSIStorageInfo(wsi_id)
-      setWsiStorageInfo(info)
-    } catch (err) {
-      console.error('Failed to load storage info:', err)
-    } finally {
-      setLoadingStorageInfo(false)
-    }
+    await runStorageInfo(async () => {
+      setWsiStorageInfo(await getWSIStorageInfo(wsi_id))
+    })
   }
 
   const handleConfirmDelete = async () => {
@@ -932,39 +923,36 @@ export default function ListPage() {
   }
 
   const handleConfirmBatchDelete = async () => {
-    setDeleting(true)
+    await runDelete(async () => {
+      try {
+        if (datasetToDeleteId) {
+          const idToRemove = datasetToDeleteId
+          const deleteResponse = await startDeleteDatasetTask({
+            dataset_id: datasetToDeleteId,
+            mode: deleteMode
+          })
+          addDeletingDatasetName(deleteResponse.task_id, deleteResponse.dataset_name)
+          pendingDeleteRef.current.set(deleteResponse.task_id, idToRemove)
 
-    try {
-      if (datasetToDeleteId) {
-        const idToRemove = datasetToDeleteId
-        const deleteResponse = await startDeleteDatasetTask({
-          dataset_id: datasetToDeleteId,
-          mode: deleteMode
-        })
-        addDeletingDatasetName(deleteResponse.task_id, deleteResponse.dataset_name)
-        pendingDeleteRef.current.set(deleteResponse.task_id, idToRemove)
-
-        setShowBatchDeleteModal(false)
-        setSelectedIds(new Set())
-        toastSuccess(t('listPage.datasetDeleteStarted', { name: datasetToDeleteName }))
-        setDatasetToDeleteId(null)
-        setDatasetToDeleteName('')
-        setDatasetToDeleteFileCount(0)
-        void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-      } else {
-        const idsToDelete = Array.from(selectedIds)
-        await addDeleteWSITask(idsToDelete, deleteMode)
-        setShowBatchDeleteModal(false)
-        setSelectedIds(new Set())
-        // List will be refreshed when task completes - we can trigger a delayed refresh
-        setTimeout(() => reloadCurrentDataset(), 500)
+          setShowBatchDeleteModal(false)
+          setSelectedIds(new Set())
+          toastSuccess(t('listPage.datasetDeleteStarted', { name: datasetToDeleteName }))
+          setDatasetToDeleteId(null)
+          setDatasetToDeleteName('')
+          setDatasetToDeleteFileCount(0)
+          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+        } else {
+          const idsToDelete = Array.from(selectedIds)
+          await addDeleteWSITask(idsToDelete, deleteMode)
+          setShowBatchDeleteModal(false)
+          setSelectedIds(new Set())
+          setTimeout(() => reloadCurrentDataset(), 500)
+        }
+      } catch (err) {
+        console.error('Batch delete error:', err)
+        alert(t('listPage.failedDeleteFiles', { error: String(err) }))
       }
-    } catch (err) {
-      console.error('Batch delete error:', err)
-      alert(t('listPage.failedDeleteFiles', { error: String(err) }))
-    } finally {
-      setDeleting(false)
-    }
+    })
   }
   const handleDatasetDeleteClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string, fileCount: number) => {
     e.stopPropagation()
@@ -1002,29 +990,28 @@ export default function ListPage() {
   const handleConfirmEdit = async () => {
     if (!editingWSI) return
 
-    setUpdating(true)
-    try {
-      const age = editAge ? parseInt(editAge) : undefined
-      const event_time = editEventTime ? parseFloat(editEventTime) : undefined
-      const event_status = editEventStatus ? parseInt(editEventStatus) : undefined
+    await runUpdate(async () => {
+      try {
+        const age = editAge ? parseInt(editAge) : undefined
+        const event_time = editEventTime ? parseFloat(editEventTime) : undefined
+        const event_status = editEventStatus ? parseInt(editEventStatus) : undefined
 
-      await updateWSIMetadata(editingWSI.wsi_id, {
-        label: editLabel || undefined,
-        case_id: editCaseId || undefined,
-        age: age,
-        gender: editGender || undefined,
-        event_time: event_time,
-        event_status: event_status
-      })
-      setShowEditModal(false)
-      setEditingWSI(null)
-      await reloadCurrentDataset()
-    } catch (err) {
-      console.error('Failed to update WSI metadata:', err)
-      alert(t('listPage.failedUpdateMetadata', { error: String(err) }))
-    } finally {
-      setUpdating(false)
-    }
+        await updateWSIMetadata(editingWSI.wsi_id, {
+          label: editLabel || undefined,
+          case_id: editCaseId || undefined,
+          age: age,
+          gender: editGender || undefined,
+          event_time: event_time,
+          event_status: event_status
+        })
+        setShowEditModal(false)
+        setEditingWSI(null)
+        await reloadCurrentDataset()
+      } catch (err) {
+        console.error('Failed to update WSI metadata:', err)
+        alert(t('listPage.failedUpdateMetadata', { error: String(err) }))
+      }
+    })
   }
 
   const handleBatchEditClick = () => {
@@ -1051,36 +1038,32 @@ export default function ListPage() {
       return
     }
 
-    setBatchUpdating(true)
-    try {
-      // Prepare the request
-      const age = batchEditAge ? parseInt(batchEditAge) : undefined
-      const event_time = batchEditEventTime ? parseFloat(batchEditEventTime) : undefined
-      const event_status = batchEditEventStatus ? parseInt(batchEditEventStatus) : undefined
+    await runBatchUpdate(async () => {
+      try {
+        const age = batchEditAge ? parseInt(batchEditAge) : undefined
+        const event_time = batchEditEventTime ? parseFloat(batchEditEventTime) : undefined
+        const event_status = batchEditEventStatus ? parseInt(batchEditEventStatus) : undefined
 
-      const request = {
-        wsi_ids: Array.from(selectedIds),
-        label: batchEditLabel || undefined,
-        case_id: batchEditCaseId || undefined,
-        age: age,
-        gender: batchEditGender || undefined,
-        event_time: event_time,
-        event_status: event_status
+        const request = {
+          wsi_ids: Array.from(selectedIds),
+          label: batchEditLabel || undefined,
+          case_id: batchEditCaseId || undefined,
+          age: age,
+          gender: batchEditGender || undefined,
+          event_time: event_time,
+          event_status: event_status
+        }
+
+        await startBatchUpdateMetadataTask(request)
+
+        setShowBatchEditModal(false)
+        setSelectedIds(new Set())
+        toastSuccess(t('listPage.batchUpdateStarted', { count: request.wsi_ids.length }))
+      } catch (err) {
+        console.error('Failed to start batch edit:', err)
+        toastError(err instanceof Error ? err.message : t('listPage.failedBatchEdit', { error: String(err) }))
       }
-
-      // Start background task
-      await startBatchUpdateMetadataTask(request)
-
-      // Close modal and clear selection immediately
-      setShowBatchEditModal(false)
-      setSelectedIds(new Set())
-      toastSuccess(t('listPage.batchUpdateStarted', { count: request.wsi_ids.length }))
-    } catch (err) {
-      console.error('Failed to start batch edit:', err)
-      toastError(err instanceof Error ? err.message : t('listPage.failedBatchEdit', { error: String(err) }))
-    } finally {
-      setBatchUpdating(false)
-    }
+    })
   }
 
   // Open edit dataset modal
@@ -1115,7 +1098,6 @@ export default function ListPage() {
     setEditingDatasetOriginalSource('')
     setEditingDatasetIsPublic(false)
     setEditingDatasetOriginalIsPublic(false)
-    setEditingDatasetSaving(false)
   }
 
   const handleEditDatasetSave = async () => {
@@ -1124,52 +1106,48 @@ export default function ListPage() {
       return
     }
 
-    setEditingDatasetSaving(true)
-    try {
-      // Find the original name from datasets
-      const originalDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
-      const originalName = originalDataset?.dataset_name || ''
+    await runDatasetSave(async () => {
+      try {
+        const originalDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
+        const originalName = originalDataset?.dataset_name || ''
 
-      // Rename if name changed
-      if (editingDatasetName !== originalName) {
-        await renameDataset(editingDatasetId, editingDatasetName)
+        if (editingDatasetName !== originalName) {
+          await renameDataset(editingDatasetId, editingDatasetName)
+        }
+
+        if (editingDatasetType !== editingDatasetOriginalType) {
+          await updateDatasetType(editingDatasetId, editingDatasetType)
+        }
+
+        if (editingDatasetDataLevel !== editingDatasetOriginalDataLevel) {
+          await updateDatasetDataLevel(editingDatasetId, editingDatasetDataLevel)
+        }
+
+        const resolvedDatasetSource = resolveSourceValue(editingDatasetSourceSelection, editingDatasetSourceCustom)
+        if (resolvedDatasetSource !== editingDatasetOriginalSource) {
+          await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
+        }
+
+        if (editingDatasetIsPublic !== editingDatasetOriginalIsPublic) {
+          await updateDatasetVisibility(editingDatasetId, editingDatasetIsPublic)
+        }
+
+        void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+        await qc.invalidateQueries({ queryKey: ['page-datasets'] })
+
+        if (selectedDatasetId === editingDatasetId) {
+          setSelectedDatasetName(editingDatasetName)
+          setSelectedDatasetType(editingDatasetType)
+        }
+
+        toastSuccess(t('listPage.datasetUpdatedSuccess'))
+      } catch (err) {
+        console.error('Failed to update dataset:', err)
+        toastError(t('listPage.failedUpdateDataset', { error: String(err) }))
+      } finally {
+        handleEditDatasetCancel()
       }
-
-      // Update type if changed
-      if (editingDatasetType !== editingDatasetOriginalType) {
-        await updateDatasetType(editingDatasetId, editingDatasetType)
-      }
-
-      // Update data level if changed
-      if (editingDatasetDataLevel !== editingDatasetOriginalDataLevel) {
-        await updateDatasetDataLevel(editingDatasetId, editingDatasetDataLevel)
-      }
-
-      const resolvedDatasetSource = resolveSourceValue(editingDatasetSourceSelection, editingDatasetSourceCustom)
-      if (resolvedDatasetSource !== editingDatasetOriginalSource) {
-        await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
-      }
-
-      if (editingDatasetIsPublic !== editingDatasetOriginalIsPublic) {
-        await updateDatasetVisibility(editingDatasetId, editingDatasetIsPublic)
-      }
-
-      void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-      await qc.invalidateQueries({ queryKey: ['page-datasets'] })
-
-      // If this dataset was selected, update the displayed info
-      if (selectedDatasetId === editingDatasetId) {
-        setSelectedDatasetName(editingDatasetName)
-        setSelectedDatasetType(editingDatasetType)
-      }
-
-      toastSuccess(t('listPage.datasetUpdatedSuccess'))
-    } catch (err) {
-      console.error('Failed to update dataset:', err)
-      toastError(t('listPage.failedUpdateDataset', { error: String(err) }))
-    } finally {
-      handleEditDatasetCancel()
-    }
+    })
   }
 
   // Export labels handlers
@@ -1179,19 +1157,18 @@ export default function ListPage() {
     // Check if dataset has predefined splits
     if (dataset.has_predefined_splits) {
       // Direct export without modal
-      setExporting(true)
-      try {
-        const result = await exportDatasetLabels(dataset.dataset_id!)
-        toastSuccess(t('listPage.exportSuccess'))
-        if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
-          toastSuccess(t('listPage.exportFallbackNonStratified'))
+      await runExport(async () => {
+        try {
+          const result = await exportDatasetLabels(dataset.dataset_id!)
+          toastSuccess(t('listPage.exportSuccess'))
+          if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
+            toastSuccess(t('listPage.exportFallbackNonStratified'))
+          }
+        } catch (error) {
+          console.error('Failed to export labels:', error)
+          toastError(t('listPage.exportFailed'))
         }
-      } catch (error) {
-        console.error('Failed to export labels:', error)
-        toastError(t('listPage.exportFailed'))
-      } finally {
-        setExporting(false)
-      }
+      })
     } else {
       // Show modal for split configuration
       setExportingDataset(dataset)
@@ -1202,21 +1179,20 @@ export default function ListPage() {
   const handleExportConfirm = async (options: ExportLabelsOptions) => {
     if (!exportingDataset) return
 
-    setExporting(true)
-    try {
-      const result = await exportDatasetLabels(exportingDataset.dataset_id!, options)
-      toastSuccess(t('listPage.exportSuccess'))
-      if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
-        toastSuccess(t('listPage.exportFallbackNonStratified'))
+    await runExport(async () => {
+      try {
+        const result = await exportDatasetLabels(exportingDataset.dataset_id!, options)
+        toastSuccess(t('listPage.exportSuccess'))
+        if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
+          toastSuccess(t('listPage.exportFallbackNonStratified'))
+        }
+      } catch (error) {
+        console.error('Failed to export labels:', error)
+        toastError(t('listPage.exportFailed'))
       }
-    } catch (error) {
-      console.error('Failed to export labels:', error)
-      toastError(t('listPage.exportFailed'))
-    } finally {
-      setExporting(false)
-      setShowExportModal(false)
-      setExportingDataset(null)
-    }
+    })
+    setShowExportModal(false)
+    setExportingDataset(null)
   }
 
   const handleExportCancel = () => {
