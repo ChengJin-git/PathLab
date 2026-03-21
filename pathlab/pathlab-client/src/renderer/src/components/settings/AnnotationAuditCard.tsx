@@ -20,9 +20,11 @@ const PAGE_SIZE_OPTIONS = [
 
 const EVENT_TYPE_OPTIONS = [
   'shared_write',
+  'finalize',
   'collaborator_add',
   'collaborator_remove',
   'bulk_delete',
+  'promoted_to_training_reference',
 ] as const
 
 interface Query {
