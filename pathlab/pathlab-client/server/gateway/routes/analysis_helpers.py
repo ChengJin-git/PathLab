@@ -4,12 +4,16 @@ Analysis Helper Functions
 Shared helper utilities used across classification, survival, and external
 validation analysis modules.
 """
+
 import logging
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List
 
 from fastapi import HTTPException
 
-from backend.auth.dependencies import check_dataset_gpu_permission, check_task_access_permission
+from backend.auth.dependencies import (
+    check_dataset_gpu_permission,
+    check_task_access_permission,
+)
 from backend.database.repositories import TrainingTaskRepository, WSIRepository
 
 logger = logging.getLogger(__name__)
@@ -88,7 +92,9 @@ async def _get_task_with_access(
     """Load a task, require access, and return ``(task, dataset_id)``."""
     task = await TrainingTaskRepository.get_by_id(db, task_id)
     if not task:
-        raise HTTPException(status_code=404, detail=not_found_detail or f"Task not found: {task_id}")
+        raise HTTPException(
+            status_code=404, detail=not_found_detail or f"Task not found: {task_id}"
+        )
 
     task_dataset_id = await _require_task_access(
         user,
@@ -116,7 +122,60 @@ async def _require_task_gpu_permission(
         return task_dataset_id
 
     if not user.can_use_gpu():
-        raise HTTPException(status_code=403, detail=fallback_role_detail or forbidden_detail)
+        raise HTTPException(
+            status_code=403, detail=fallback_role_detail or forbidden_detail
+        )
 
     return None
 
+
+def _normalize_label_names(labels: List[str]) -> List[str]:
+    return sorted({str(label).strip() for label in labels if str(label).strip()})
+
+
+def _coerce_str(value: Any) -> str:
+    return value if isinstance(value, str) else str(value)
+
+
+def _coerce_str_list(values: Any) -> List[str]:
+    if not isinstance(values, list):
+        return []
+    return [str(v) for v in values if isinstance(v, (str, int, float)) or v is not None]
+
+
+def _split_case_attention_to_slides_static(
+    attention: Optional[Any],
+    case_id: str,
+    case_wsi_patch_counts: Dict[str, List[int]],
+    case_to_wsi: Dict[str, List[str]],
+) -> Dict[str, Optional[Any]]:
+    """
+    Split case-level attention weights back to individual slides.
+    Static version for use in results.py inference.
+    """
+    import numpy as np
+
+    if attention is None:
+        wsi_ids = case_to_wsi.get(case_id, [])
+        return {wsi_id: None for wsi_id in wsi_ids}
+
+    wsi_ids = case_to_wsi.get(case_id, [])
+    patch_counts = case_wsi_patch_counts.get(case_id, [])
+
+    if len(wsi_ids) != len(patch_counts):
+        return {wsi_id: None for wsi_id in wsi_ids}
+
+    slide_attentions: Dict[str, Optional["np.ndarray[Any, Any]"]] = {}
+    start_idx = 0
+
+    for wsi_id, count in zip(wsi_ids, patch_counts):
+        end_idx = start_idx + count
+        if attention.ndim == 1:
+            slide_attentions[wsi_id] = attention[start_idx:end_idx]
+        elif attention.ndim == 2:
+            slide_attentions[wsi_id] = attention[:, start_idx:end_idx]
+        else:
+            slide_attentions[wsi_id] = None
+        start_idx = end_idx
+
+    return slide_attentions
