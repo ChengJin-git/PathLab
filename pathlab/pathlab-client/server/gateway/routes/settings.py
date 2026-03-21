@@ -51,6 +51,7 @@ class GlobalSettingsResponse(BaseModel):
     resend_enabled: bool
     resend_api_key: str
     resend_admin_email: str
+    email_templates: dict
 
 
 class GlobalSettingsUpdateRequest(BaseModel):
@@ -80,6 +81,7 @@ class GlobalSettingsUpdateRequest(BaseModel):
     resend_enabled: Optional[bool] = None
     resend_api_key: Optional[str] = None
     resend_admin_email: Optional[str] = None
+    email_templates: Optional[dict] = None
 
 
 @router.get("/public")

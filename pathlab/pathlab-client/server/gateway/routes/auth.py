@@ -23,7 +23,6 @@ Endpoints:
 
 import asyncio
 import hashlib
-import base64
 import time
 import os
 import shutil
@@ -49,6 +48,7 @@ from backend.auth import (
 from backend.auth.schemas import UserReadAdmin, AdminUserUpdate
 from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
+from ..email_notifications import send_templated_email
 from ..dependencies import logger
 
 
@@ -116,173 +116,57 @@ class AccessRequest(BaseModel):
     )
 
 
-@_lru_cache(maxsize=1)
-def _load_default_email_icon_data_uri() -> str:
-    image_path = (
-        _Path(__file__).resolve().parents[3]
-        / "src"
-        / "renderer"
-        / "public"
-        / "images"
-        / "pathlab-logo.png"
-    )
-    if not image_path.exists():
-        return ""
-    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
-    return f"data:image/png;base64,{encoded}"
-
-
-def _resend_preconditions(settings: dict) -> bool:
-    return bool(settings.get("resend_enabled") and settings.get("resend_api_key"))
-
-
-def _make_logo_html() -> str:
-    logo_url = _load_default_email_icon_data_uri()
-    if not logo_url:
-        return ""
-    return (
-        f"<img src='{logo_url}' "
-        "alt='PathLab' style='height:40px;width:auto;margin-bottom:24px;' /><br>"
-    )
-
-
 async def _send_activation_email(user: "User") -> None:
     logger.info(
         f"[activation_email] triggered for user={user.email!r} "
         f"reg_email={user.registration_email!r}"
     )
-    settings = Config.get_global_settings()
-    if not _resend_preconditions(settings):
-        logger.info("[activation_email] skipped: Resend not fully configured")
-        return
     if not user.registration_email:
         logger.info(
             f"[activation_email] skipped: no registration_email for user={user.email!r}"
         )
         return
-    try:
-        import resend as _resend
-
-        _resend.api_key = settings["resend_api_key"]
-        display_name = user.nickname or user.email
-        html_body = (
-            "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>"
-            + _make_logo_html()
-            + f"<p>Dear {display_name},</p>"
-            f"<p>Your PathLab account <strong>{user.email}</strong> has been activated "
-            "by an administrator. You can now log in to the platform.</p>"
-            "<p>If you have any questions, please contact your system administrator.</p>"
-            "<p style='color:#555;'>— PathLab</p>"
-            "</div>"
-        )
-        _resend.Emails.send(
-            {
-                "from": "PathLab Admin <noreply@pathhub.org>",
-                "to": [user.registration_email],
-                "subject": "Your PathLab account has been activated",
-                "html": html_body,
-            }
-        )
-        logger.info(
-            f"Activation email sent to {user.registration_email} for user {user.email}"
-        )
-    except Exception as exc:
-        logger.warning(
-            f"Failed to send activation email to {user.registration_email}: {exc}"
-        )
+    await send_templated_email(
+        template_key="account_activated",
+        to_email=user.registration_email,
+        context={
+            "display_name": user.nickname or user.email,
+            "username": user.email,
+        },
+        for_admin=False,
+    )
 
 
 async def _send_application_received_email(user: "User") -> None:
-    settings = Config.get_global_settings()
-    if not _resend_preconditions(settings):
-        return
     if not user.registration_email:
         return
-    try:
-        import resend as _resend
-
-        _resend.api_key = settings["resend_api_key"]
-        display_name = user.nickname or user.email
-        html_body = (
-            "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>"
-            + _make_logo_html()
-            + f"<p>Dear {display_name},</p>"
-            "<p>We have received your PathLab account application. "
-            "Your request is pending administrator review — you will receive another "
-            "email once your account has been activated.</p>"
-            "<p>If you have any questions, please contact your system administrator.</p>"
-            "<p style='color:#555;'>— PathLab</p>"
-            "</div>"
-        )
-        _resend.Emails.send(
-            {
-                "from": "PathLab Admin <noreply@pathhub.org>",
-                "to": [user.registration_email],
-                "subject": "PathLab account application received",
-                "html": html_body,
-            }
-        )
-        logger.info(
-            f"Application received email sent to {user.registration_email} "
-            f"for user {user.email}"
-        )
-    except Exception as exc:
-        logger.warning(
-            f"Failed to send application received email to "
-            f"{user.registration_email}: {exc}"
-        )
+    await send_templated_email(
+        template_key="new_user_registration_notice",
+        to_email=user.registration_email,
+        context={
+            "display_name": user.nickname or user.email,
+            "username": user.email,
+            "registration_email": user.registration_email,
+        },
+        for_admin=False,
+    )
 
 
 async def _send_admin_application_email(user: "User") -> None:
     settings = Config.get_global_settings()
-    if not _resend_preconditions(settings):
-        return
     admin_email = settings.get("resend_admin_email", "")
     if not admin_email:
         return
-    try:
-        import resend as _resend
-
-        _resend.api_key = settings["resend_api_key"]
-        display_name = user.nickname or user.email
-        html_body = (
-            "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>"
-            "<p style='font-weight:600;color:#1e293b;font-size:16px;'>"
-            "New Account Application</p>"
-            "<table style='border-collapse:collapse;width:100%;margin:16px 0;'>"
-            "<tr>"
-            "<td style='padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;"
-            "font-weight:600;width:140px;'>Username</td>"
-            f"<td style='padding:8px 12px;border:1px solid #e2e8f0;'>{user.email}</td>"
-            "</tr><tr>"
-            "<td style='padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;"
-            "font-weight:600;'>Display Name</td>"
-            f"<td style='padding:8px 12px;border:1px solid #e2e8f0;'>{display_name}</td>"
-            "</tr><tr>"
-            "<td style='padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;"
-            "font-weight:600;'>Contact Email</td>"
-            f"<td style='padding:8px 12px;border:1px solid #e2e8f0;'>"
-            f"{user.registration_email or '—'}</td>"
-            "</tr>"
-            "</table>"
-            "<p>Please review and activate or reject this application in the admin panel.</p>"
-            "<p style='color:#555;'>— PathLab</p>"
-            "</div>"
-        )
-        _resend.Emails.send(
-            {
-                "from": "PathLab Agent <notify@pathub.org>",
-                "to": [admin_email],
-                "subject": f"[PathLab] New account application: {user.email}",
-                "html": html_body,
-            }
-        )
-        logger.info(
-            f"Admin notification sent to {admin_email} for new application "
-            f"from {user.email}"
-        )
-    except Exception as exc:
-        logger.warning(f"Failed to send admin notification to {admin_email}: {exc}")
+    await send_templated_email(
+        template_key="admin_new_user_registration_notice",
+        to_email=admin_email,
+        context={
+            "display_name": user.nickname or user.email,
+            "username": user.email,
+            "registration_email": user.registration_email or "-",
+        },
+        for_admin=True,
+    )
 
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:

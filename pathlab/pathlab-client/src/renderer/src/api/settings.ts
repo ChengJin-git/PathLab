@@ -3,6 +3,18 @@ import { apiFetch } from './client'
 
 // ========== Global Settings API ==========
 
+export interface EmailTemplateItem {
+  subject: string
+  html: string
+}
+
+export interface EmailTemplatesConfig {
+  new_user_registration_notice: EmailTemplateItem
+  account_activated: EmailTemplateItem
+  task_completed_notice: EmailTemplateItem
+  admin_new_user_registration_notice: EmailTemplateItem
+}
+
 /**
  * Global settings interface
  */
@@ -31,6 +43,7 @@ export interface GlobalSettings {
   resend_enabled: boolean
   resend_api_key: string
   resend_admin_email: string
+  email_templates: EmailTemplatesConfig
 }
 
 /**
