@@ -6,6 +6,20 @@ import type { EmailTemplatesConfig } from '../../api/settings'
 
 type EditorMode = 'visual' | 'source' | 'preview'
 
+const LOGO_PLACEHOLDER = '{logo_html}'
+const LOGO_PREVIEW_HTML =
+  '<span data-tpl="logo_html" contenteditable="false" style="display:block;pointer-events:none;">' +
+  '<img src="/images/pathlab-logo.png" alt="PathLab" style="height:40px;width:auto;margin-bottom:24px;display:block;" />' +
+  '</span>'
+
+function injectLogoPreview(html: string): string {
+  return html.replaceAll(LOGO_PLACEHOLDER, LOGO_PREVIEW_HTML)
+}
+
+function stripLogoPreview(html: string): string {
+  return html.replace(/<span[^>]*data-tpl="logo_html"[^>]*>[\s\S]*?<\/span>/gi, LOGO_PLACEHOLDER)
+}
+
 const TOOLBAR: Array<{ cmd: string; label: string; title: string }> = [
   { cmd: 'bold', label: 'B', title: '粗体' },
   { cmd: 'italic', label: 'I', title: '斜体' },
@@ -34,27 +48,38 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
   const [error, setError] = useState<string | null>(null)
   const [editorMode, setEditorMode] = useState<EditorMode>('visual')
   const editorRef = useRef<HTMLDivElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
+
+  const activeKeyRef = useRef(activeKey)
+  activeKeyRef.current = activeKey
+  const draftRef = useRef(draft)
+  draftRef.current = draft
+  const editorModeRef = useRef(editorMode)
+  editorModeRef.current = editorMode
 
   const current = useMemo(() => draft[activeKey], [draft, activeKey])
 
   const flushVisual = useCallback(() => {
     if (editorRef.current) {
-      const html = editorRef.current.innerHTML
-      setDraft(prev => ({ ...prev, [activeKey]: { ...prev[activeKey], html } }))
+      const html = stripLogoPreview(editorRef.current.innerHTML)
+      setDraft(prev => ({ ...prev, [activeKeyRef.current]: { ...prev[activeKeyRef.current], html } }))
     }
-  }, [activeKey])
+  }, [])
+
+  const syncEditorContent = useCallback((key: TemplateKey, mode: EditorMode) => {
+    if (mode === 'visual' && editorRef.current) {
+      editorRef.current.innerHTML = injectLogoPreview(draftRef.current[key].html)
+    }
+  }, [])
+
+  useEffect(() => { syncEditorContent(activeKey, editorModeRef.current) }, [activeKey, syncEditorContent])
+  useEffect(() => { syncEditorContent(activeKeyRef.current, editorMode) }, [editorMode, syncEditorContent])
 
   useEffect(() => {
-    if (editorMode === 'visual' && editorRef.current) {
-      editorRef.current.innerHTML = draft[activeKey].html
+    if (previewRef.current) {
+      previewRef.current.innerHTML = injectLogoPreview(current.html)
     }
-  }, [activeKey])
-
-  useEffect(() => {
-    if (editorMode === 'visual' && editorRef.current) {
-      editorRef.current.innerHTML = draft[activeKey].html
-    }
-  }, [editorMode])
+  }, [current.html])
 
   const switchMode = (next: EditorMode) => {
     if (editorMode === 'visual') flushVisual()
@@ -80,7 +105,7 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
   const handleSave = async () => {
     const html =
       editorMode === 'visual' && editorRef.current
-        ? editorRef.current.innerHTML
+        ? stripLogoPreview(editorRef.current.innerHTML)
         : current.html
     const finalDraft: EmailTemplatesConfig = {
       ...draft,
@@ -224,12 +249,10 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
                 />
               )}
 
-              {editorMode === 'preview' && (
-                <div
-                  className="flex-1 min-h-[300px] border rounded-md px-4 py-3 bg-gray-50 overflow-auto text-sm"
-                  dangerouslySetInnerHTML={{ __html: current.html }}
-                />
-              )}
+              <div
+                ref={previewRef}
+                className={`flex-1 min-h-[300px] border rounded-md px-4 py-3 bg-gray-50 overflow-auto text-sm${editorMode !== 'preview' ? ' hidden' : ''}`}
+              />
             </div>
 
             {error && (

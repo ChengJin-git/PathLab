@@ -66,6 +66,26 @@ DEFAULT_EMAIL_TEMPLATES = {
 }
 
 
+_LEGAL_FOOTER_HTML = (
+    "<hr style='border:none;border-top:1px solid #e0e0e0;margin:32px 0 16px'>"
+    "<p style='font-size:11px;color:#999;line-height:1.6;font-family:Arial,sans-serif;'>"
+    "This message contains confidential information intended for a specific individual "
+    "and purpose. If you are not the intended recipient, you should delete this message "
+    "and notify the sender, "
+    "<a href='https://smartlab.cse.ust.hk/' style='color:#999;'>SmartLab</a>, "
+    "and The Hong Kong University of Science and Technology (the University) immediately. "
+    "Any disclosure, copying, or distribution of this message, or the taking of any action "
+    "based on it, is strictly prohibited and may be unlawful.<br><br>"
+    "SmartLab and the University specifically deny any responsibility for the accuracy or "
+    "quality of information obtained through University E-mail Facilities. Any views and "
+    "opinions expressed are only those of the author(s) and do not necessarily represent "
+    "those of SmartLab or the University, and neither SmartLab nor the University accepts "
+    "liability whatsoever for any losses or damages incurred or caused to any party as a "
+    "result of the use of such information."
+    "</p>"
+)
+
+
 class _SafeMap(dict):
     def __missing__(self, key):
         return "{" + key + "}"
@@ -146,7 +166,7 @@ async def send_templated_email(
         "logo_html": _logo_html(),
     }
     subject = _render(tpl.get("subject", ""), payload)
-    html = _render(tpl.get("html", ""), payload)
+    html = _render(tpl.get("html", ""), payload) + _LEGAL_FOOTER_HTML
     if not subject.strip() or not html.strip():
         logger.info(f"[email:{template_key}] skipped: empty rendered content")
         return
