@@ -326,16 +326,16 @@ def format_user_data_context(
     template = get_user_data_context_template()
 
     data_visibility = (
-        "Can see ALL users' data (admin)"
+        "All users' datasets"
         if is_admin
-        else "Can only see OWN data, other users' PUBLIC datasets, and datasets with temporary elevated access"
+        else "Own datasets, other users' public datasets, and temporarily elevated datasets"
     )
     if is_admin:
         can_use_gpu = "Yes"
     elif can_use_gpu_base:
-        can_use_gpu = "Yes (GPU operations allowed by role, but GPU usage details are hidden for non-admin users)"
+        can_use_gpu = "Yes (GPU usage details not available)"
     else:
-        can_use_gpu = "No (GPU operations not allowed by role; GPU usage details are hidden for non-admin users)"
+        can_use_gpu = "No (contact administrator to request access)"
 
     return template.format(
         wsi_count=wsi_count,

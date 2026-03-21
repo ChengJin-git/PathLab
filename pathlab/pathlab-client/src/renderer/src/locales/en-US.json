@@ -1777,6 +1777,7 @@
         "taskType": "Task Type",
         "dataType": "Data Type",
         "dataLevel": "Data Level",
+        "visibility": "Visibility",
         "sourceOrgan": "Source Organ"
       }
     },
@@ -1786,6 +1787,7 @@
     },
     "derivedFrom": "Derived from",
     "public": "Public",
+    "private": "Private",
     "makePublic": "Make Public",
     "makePrivate": "Make Private",
     "makePublicSuccess": "Dataset is now public",

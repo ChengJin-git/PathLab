@@ -1782,6 +1782,7 @@
         "taskType": "任務類型",
         "dataType": "資料類型",
         "dataLevel": "資料層級",
+        "visibility": "可見性",
         "sourceOrgan": "來源器官"
       }
     },
@@ -1790,6 +1791,7 @@
       "listView": "列表視圖"
     },
     "derivedFrom": "匯出自",
+    "private": "私有",
     "newDataset": "新建資料集",
     "newDatasetDescription": "註冊切片以建立新資料集",
     "noFilteredDatasets": "沒有符合目前篩選條件的資料集",

@@ -25,6 +25,7 @@ type ListWSIItem = import('../api/wsi').WSISummary
 type DatasetTaskFilter = 'all' | 'classification' | 'survival' | 'segmentation'
 type DatasetTypeFilter = 'all' | 'wsi' | 'patch'
 type DatasetLevelFilter = 'all' | 'file' | 'patient'
+type DatasetVisibilityFilter = 'all' | 'public' | 'private'
 type DatasetViewMode = 'grid' | 'list'
 
 const UNKNOWN_SOURCE_ORGAN_FILTER = '__unknown__'
@@ -94,6 +95,7 @@ export default function ListPage() {
   const [datasetTaskFilter, setDatasetTaskFilter] = useState<DatasetTaskFilter>('all')
   const [datasetTypeFilter, setDatasetTypeFilter] = useState<DatasetTypeFilter>('all')
   const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
+  const [datasetVisibilityFilter, setDatasetVisibilityFilter] = useState<DatasetVisibilityFilter>('all')
   const [datasetSourceFilter, setDatasetSourceFilter] = useState<string>('all')
   const [datasetViewMode, setDatasetViewMode] = useState<DatasetViewMode>('grid')
   const [datasetCurrentPage, setDatasetCurrentPage] = useState(1)
@@ -313,6 +315,7 @@ export default function ListPage() {
         taskType: datasetTaskFilter,
         dataType: datasetTypeFilter,
         level: datasetLevelFilter,
+        visibility: datasetVisibilityFilter,
         source: datasetSourceFilter,
       },
     ],
@@ -328,6 +331,7 @@ export default function ListPage() {
             ? 'case'
             : 'file',
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+        is_public: datasetVisibilityFilter === 'all' ? undefined : datasetVisibilityFilter === 'public',
         search: datasetDebouncedSearch || undefined,
       })
 
@@ -342,6 +346,7 @@ export default function ListPage() {
             ? ('case' as const)
             : ('file' as const),
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+        is_public: datasetVisibilityFilter === 'all' ? undefined : datasetVisibilityFilter === 'public',
         search: datasetDebouncedSearch || undefined,
       }
       if (datasetCurrentPage < totalPages) {
@@ -443,7 +448,7 @@ export default function ListPage() {
   const isFilesRefreshing = wsiListQuery.isLoading && hasFileContent
 
   const hasActiveDatasetFilters =
-    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all' || datasetSearchQuery !== '' || datasetDebouncedSearch !== ''
+    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetVisibilityFilter !== 'all' || datasetSourceFilter !== 'all' || datasetSearchQuery !== '' || datasetDebouncedSearch !== ''
 
   useEffect(() => {
     setDatasetCurrentPage((prev) => clampDatasetPage(prev, datasetTotalPages, {
@@ -622,6 +627,7 @@ export default function ListPage() {
     setDatasetTaskFilter('all')
     setDatasetTypeFilter('all')
     setDatasetLevelFilter('all')
+    setDatasetVisibilityFilter('all')
     setDatasetSourceFilter('all')
     setDatasetSearchQuery('')
     setDatasetCurrentPage(1)
@@ -647,6 +653,7 @@ export default function ListPage() {
           taskType,
           dataType,
           level,
+          visibility: datasetVisibilityFilter,
           source: datasetSourceFilter,
         },
       ],
@@ -658,11 +665,12 @@ export default function ListPage() {
           aggregation_level:
             level === 'all' ? undefined : level === 'patient' ? 'case' : 'file',
           source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+          is_public: datasetVisibilityFilter === 'all' ? undefined : datasetVisibilityFilter === 'public',
           search: datasetDebouncedSearch || undefined,
         }),
       staleTime: 2 * 60 * 1000,
     })
-  }, [qc, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter, datasetViewMode, datasetListItemsPerPage, datasetDebouncedSearch])
+  }, [qc, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetVisibilityFilter, datasetSourceFilter, datasetViewMode, datasetListItemsPerPage, datasetDebouncedSearch])
 
   const renderDatasetFilterGroup = (
     label: string,
@@ -1514,6 +1522,17 @@ export default function ListPage() {
                         ],
                         (nextValue) => { setDatasetLevelFilter(nextValue as DatasetLevelFilter); setDatasetCurrentPage(1) },
                         (v) => prefetchFilteredDatasets({ level: v as DatasetLevelFilter })
+                      )}
+
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.visibility'),
+                        datasetVisibilityFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'public', label: t('listPage.public') },
+                          { value: 'private', label: t('listPage.private') },
+                        ],
+                        (nextValue) => { setDatasetVisibilityFilter(nextValue as DatasetVisibilityFilter); setDatasetCurrentPage(1) }
                       )}
 
                       <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
