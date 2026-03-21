@@ -483,21 +483,21 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
             <Construction className="w-4 h-4" />
             <span className="hidden sm:inline">{maintenanceMode ? t('settings.usersTab.endMaintenanceMode') : t('settings.usersTab.maintenanceMode')}</span>
           </Button>
-          <Button onClick={() => setShowCreateUser(true)} className="gap-2">
-            <UserPlus className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
-          </Button>
           <Button variant="outline" onClick={() => setPermissionCenterOpen(true)} className="gap-2">
             <Database className="w-4 h-4" />
             <span className="hidden sm:inline">{t('settings.usersTab.openPermissionCenter')}</span>
           </Button>
-          <Button variant="outline" onClick={loadUsers} disabled={loadingUsers} className="gap-2">
-            <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">{t('settings.usersTab.refresh')}</span>
-          </Button>
           <Button variant="outline" onClick={() => setEmailTemplateOpen(true)} className="gap-2">
             <Mail className="w-4 h-4" />
             <span className="hidden sm:inline">邮件模板</span>
+          </Button>
+          <Button onClick={() => setShowCreateUser(true)} className="gap-2">
+            <UserPlus className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
+          </Button>
+          <Button variant="outline" onClick={loadUsers} disabled={loadingUsers} className="gap-2">
+            <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">{t('settings.usersTab.refresh')}</span>
           </Button>
         </div>
       </div>
