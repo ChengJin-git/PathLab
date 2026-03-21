@@ -3515,11 +3515,12 @@
       "autoSeeded": "已将您的个人草稿导入到协作草稿",
       "autoSeedConfirmTitle": "标注内容冲突",
         "autoSeedConfirmMessage": "个人标注与协作标注均有内容。选择用个人标注覆盖协作内容，还是直接进入协作模式？",
+        "autoSeedConfirmMessageSharedEmpty": "你有个人标注内容，协作空间当前为空。是否将个人标注导入协作空间，还是直接进入？",
       "autoSeedConfirmUse": "导入协作",
         "autoSeedConfirmSkip": "直接进入",
       "removedUnsavedLost": "你已被移出协作，未保存的修改已丢失",
       "exitSharedTitle": "标注内容冲突",
-        "exitSharedMessage": "协作标注与个人标注均有内容。选择用协作标注覆盖个人内容，还是直接切回个人模式？",
+        "exitSharedMessage": "你有协作标注内容，切换到个人模式后将不再显示。是否将协作标注导入个人空间？",
       "exitSharedImport": "导入个人",
         "exitSharedDiscard": "直接进入",
       "dialog": {

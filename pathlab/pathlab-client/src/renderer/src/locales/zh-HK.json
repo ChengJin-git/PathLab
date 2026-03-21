@@ -3519,11 +3519,12 @@
       "autoSeeded": "已將您的個人草稿匯入協作草稿",
       "autoSeedConfirmTitle": "標注內容衝突",
         "autoSeedConfirmMessage": "個人標注與協作標注均有內容。選擇用個人標注覆蓋協作內容，還是直接進入協作模式？",
+        "autoSeedConfirmMessageSharedEmpty": "你有個人標注內容，協作空間當前為空。是否將個人標注匯入協作空間，還是直接進入？",
       "autoSeedConfirmUse": "導入協作",
         "autoSeedConfirmSkip": "直接進入",
       "removedUnsavedLost": "你已被移出協作，未儲存的修改已丟失",
       "exitSharedTitle": "標注內容衝突",
-        "exitSharedMessage": "協作標注與個人標注均有內容。選擇用協作標注覆蓋個人內容，還是直接切回個人模式？",
+        "exitSharedMessage": "你有協作標注內容，切換到個人模式後將不再顯示。是否將協作標注匯入個人空間？",
       "exitSharedImport": "導入個人",
         "exitSharedDiscard": "直接進入",
       "dialog": {

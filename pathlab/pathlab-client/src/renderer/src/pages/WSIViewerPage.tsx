@@ -300,6 +300,7 @@ export default function WSIViewerPage() {
   const [autoSeedConfirm, setAutoSeedConfirm] = useState<{
     draft: AnnotationsMap
     version: number
+    sharedHasContent: boolean
   } | null>(null)
   const preloadedSharedAnnotationRef = useRef<{
     annotations: AnnotationsMap
@@ -1182,13 +1183,16 @@ export default function WSIViewerPage() {
       const personalHasContent = Object.values(allAnnotations).some(
         (v) => Array.isArray(v) && v.length > 0
       )
+      const sharedHasContent =
+        !!sharedRes.annotations &&
+        Object.values(sharedRes.annotations).some((v) => Array.isArray(v) && v.length > 0)
       preloadedSharedAnnotationRef.current = {
         annotations: sharedRes.annotations ?? {},
         version: sharedRes.version,
       }
       setModeTransitioning(false)
       if (personalHasContent) {
-        setAutoSeedConfirm({ draft: allAnnotations, version: sharedRes.version })
+        setAutoSeedConfirm({ draft: allAnnotations, version: sharedRes.version, sharedHasContent })
         return
       }
       setEditingMode('shared')
@@ -2211,7 +2215,7 @@ export default function WSIViewerPage() {
               </div>
               <h3 className="text-lg font-semibold text-gray-900">{t('annotation.collab.autoSeedConfirmTitle')}</h3>
             </div>
-            <p className="px-6 py-3 text-sm text-gray-600 leading-relaxed">{t('annotation.collab.autoSeedConfirmMessage')}</p>
+            <p className="px-6 py-3 text-sm text-gray-600 leading-relaxed">{t(autoSeedConfirm.sharedHasContent ? 'annotation.collab.autoSeedConfirmMessage' : 'annotation.collab.autoSeedConfirmMessageSharedEmpty')}</p>
             <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
               <button type="button" onClick={() => handleAutoSeedConfirm(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                 {t('annotation.collab.autoSeedConfirmSkip')}
