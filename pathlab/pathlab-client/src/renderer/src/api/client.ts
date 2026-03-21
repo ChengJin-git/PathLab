@@ -6,6 +6,8 @@
  * Custom API Error class for unified error handling
  * Provides structured error information including HTTP status, error code, and details
  */
+import i18n from '../i18n'
+
 export class ApiError extends Error {
   /** HTTP status code */
   public readonly status: number
@@ -333,7 +335,7 @@ async function runApiRequest<T>(operation: () => Promise<T>, context?: string): 
 
     // Network errors (no internet, CORS, backend down)
     if (isNetworkError) {
-      const friendlyMsg = 'Cannot connect to server. Please check your network connection and ensure the backend is running.'
+      const friendlyMsg = i18n.t('errors.networkConnectionFailed')
       throw new ApiError(
         context ? `${context}: ${friendlyMsg}` : friendlyMsg,
         0,
