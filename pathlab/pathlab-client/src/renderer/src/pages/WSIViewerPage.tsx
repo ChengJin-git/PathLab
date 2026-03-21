@@ -1182,15 +1182,12 @@ export default function WSIViewerPage() {
       const personalHasContent = Object.values(allAnnotations).some(
         (v) => Array.isArray(v) && v.length > 0
       )
-      const sharedHasContent =
-        !!sharedRes.annotations &&
-        Object.values(sharedRes.annotations).some((v) => Array.isArray(v) && v.length > 0)
       preloadedSharedAnnotationRef.current = {
         annotations: sharedRes.annotations ?? {},
         version: sharedRes.version,
       }
       setModeTransitioning(false)
-      if (personalHasContent && sharedHasContent) {
+      if (personalHasContent) {
         setAutoSeedConfirm({ draft: allAnnotations, version: sharedRes.version })
         return
       }
@@ -1199,32 +1196,11 @@ export default function WSIViewerPage() {
       const sharedHasContent = Object.values(allAnnotations).some(
         (v) => Array.isArray(v) && v.length > 0
       )
-      if (!sharedHasContent || !effectiveDatasetId) {
+      if (!sharedHasContent) {
         exitSharedMode()
         return
       }
-      setModeTransitioning(true)
-      let personalAnnotations: Awaited<ReturnType<typeof listAnnotations>>
-      try {
-        personalAnnotations = await listAnnotations()
-      } catch (err) {
-        console.error('Failed to pre-check personal annotations:', err)
-        setModeTransitioning(false)
-        exitSharedMode()
-        return
-      }
-      const personalDraft = personalAnnotations.find(
-        (a) => (a.source_dataset_id ?? undefined) === effectiveDatasetId
-      )
-      const personalHasContent =
-        !!personalDraft?.annotations &&
-        Object.values(personalDraft.annotations).some((v) => Array.isArray(v) && v.length > 0)
-      setModeTransitioning(false)
-      if (personalHasContent) {
-        setShowSharedExitDialog(true)
-        return
-      }
-      exitSharedMode()
+      setShowSharedExitDialog(true)
     }
   }, [editingMode, hasUnsavedChanges, persistAnnotations, allAnnotations, effectiveDatasetId, exitSharedMode])
 
