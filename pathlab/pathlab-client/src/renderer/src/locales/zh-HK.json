@@ -3022,8 +3022,21 @@
       "updatedFiles": "已更新 {{count}} 個檔案",
       "uploadFailed": "上傳失敗",
       "datasetNotFound": "找不到資料集",
-      "cancelled": "已取消"
+      "cancelled": "已取消",
+      "analyzing": "分析中：{{name}}",
+      "training": "訓練中：{{name}}",
+      "validation": "驗證中：{{name}}"
+    },
+    "relocatingToPath": "遷移至 {{name}}",
+    "errors": {
+      "migrationFailed": "遷移失敗",
+      "notAuthenticated": "未認證",
+      "extractionFailed": "提取失敗",
+      "datasetPollingTimeout": "等待 5 分鐘後仍未找到資料集"
     }
+  },
+  "errors": {
+    "networkConnectionFailed": "無法連接到伺服器，請檢查網絡連接並確認後端服務正在運行。"
   },
   "disclaimer": {
     "title": "服務條款及醫療免責聲明",

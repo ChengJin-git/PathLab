@@ -3079,8 +3079,21 @@
       "updatedFiles": "Updated {{count}} file(s)",
       "uploadFailed": "Upload failed",
       "datasetNotFound": "Dataset not found",
-      "cancelled": "Cancelled"
+      "cancelled": "Cancelled",
+      "analyzing": "Analyzing: {{name}}",
+      "training": "Training: {{name}}",
+      "validation": "Validation: {{name}}"
+    },
+    "relocatingToPath": "Relocating to {{name}}",
+    "errors": {
+      "migrationFailed": "Migration failed",
+      "notAuthenticated": "Not authenticated",
+      "extractionFailed": "Extraction failed",
+      "datasetPollingTimeout": "Could not find dataset after 5 minutes of polling"
     }
+  },
+  "errors": {
+    "networkConnectionFailed": "Cannot connect to server. Please check your network connection and ensure the backend is running."
   },
   "disclaimer": {
     "title": "Terms of Service & Medical Disclaimer",

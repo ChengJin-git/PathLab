@@ -3018,8 +3018,21 @@
       "updatedFiles": "已更新 {{count}} 个文件",
       "uploadFailed": "上传失败",
       "datasetNotFound": "未找到数据集",
-      "cancelled": "已取消"
+      "cancelled": "已取消",
+      "analyzing": "分析中：{{name}}",
+      "training": "训练中：{{name}}",
+      "validation": "验证中：{{name}}"
+    },
+    "relocatingToPath": "迁移至 {{name}}",
+    "errors": {
+      "migrationFailed": "迁移失败",
+      "notAuthenticated": "未认证",
+      "extractionFailed": "提取失败",
+      "datasetPollingTimeout": "等待 5 分钟后仍未找到数据集"
     }
+  },
+  "errors": {
+    "networkConnectionFailed": "无法连接到服务器，请检查网络连接并确认后端服务正在运行。"
   },
   "disclaimer": {
     "title": "服务条款与医疗免责声明",
