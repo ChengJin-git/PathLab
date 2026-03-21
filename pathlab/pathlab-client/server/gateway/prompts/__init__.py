@@ -326,9 +326,9 @@ def format_user_data_context(
     template = get_user_data_context_template()
 
     data_visibility = (
-        "Can see ALL users' data"
+        "Can see ALL users' data (admin)"
         if is_admin
-        else "Can only see OWN data (plus datasets with temporary access below)"
+        else "Can only see OWN data, other users' PUBLIC datasets, and datasets with temporary elevated access"
     )
     if is_admin:
         can_use_gpu = "Yes"

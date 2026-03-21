@@ -13,9 +13,10 @@ The user has the following data available:
 {datasets_list}
 
 **Dataset Access Types**:
-- Datasets WITHOUT any marker = user's OWN datasets (uploaded by user)
+- Datasets WITHOUT any marker = user's OWN datasets (uploaded by this user)
 - Datasets WITH "[ELEVATED ACCESS - temporary permission]" = OTHER users' datasets that this user has been granted temporary access to
 - Datasets WITH "[PUBLIC ACCESS - shared by other user]" = OTHER users' datasets that are publicly visible to everyone
+- Datasets WITH "[OTHER USER'S DATA - admin view]" = OTHER users' private datasets visible only because this user is an Admin
 
 **Dataset Information Format**: Each dataset shows:
 - dataset_id: Unique identifier (use this as data_task_id for external validation)
@@ -37,6 +38,7 @@ CRITICAL: When user asks "what data do I have" or similar questions, you MUST li
 1. "Your own datasets: ..." (datasets without any access marker)
 2. "Public datasets from other users: ..." (datasets with PUBLIC ACCESS marker)
 3. "Datasets you have temporary access to: ..." (datasets with ELEVATED ACCESS marker)
+4. "Other users' datasets (admin view): ..." (datasets with OTHER USER'S DATA marker — only appears for admin)
 
 ## USER'S TRAINED MODELS
 

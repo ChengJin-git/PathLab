@@ -738,6 +738,8 @@ class WSIRepository:
                 and bool(row.is_public)
             ):
                 access_type = "public"
+            elif user_id is not None and row.dataset_owner_id != user_id:
+                access_type = "other_user"
             else:
                 access_type = "own"
 

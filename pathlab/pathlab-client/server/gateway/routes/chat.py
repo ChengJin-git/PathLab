@@ -4378,6 +4378,8 @@ async def chat_with_ai(
                 if ds_access_type == "elevated"
                 else " [PUBLIC ACCESS - shared by other user]"
                 if ds_access_type == "public"
+                else " [OTHER USER'S DATA - admin view]"
+                if ds_access_type == "other_user"
                 else ""
             )
 
