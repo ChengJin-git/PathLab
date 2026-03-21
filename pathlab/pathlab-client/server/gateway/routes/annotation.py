@@ -765,7 +765,7 @@ async def list_annotations(
     return [a.to_dict() for a in annotations]
 
 
-@router.get("/datasets/{dataset_id}/ground-truth")
+@router.get("/datasets/{dataset_id}/labels")
 async def get_dataset_ground_truth_annotations(
     dataset_id: str,
     user: User = Depends(current_active_user),
@@ -875,7 +875,7 @@ async def get_dataset_annotation_summary(
     }
 
 
-@router.get("/wsi/{wsi_id}/ground-truth")
+@router.get("/wsi/{wsi_id}/labels")
 async def get_wsi_ground_truth_annotations(
     wsi_id: str,
     user: User = Depends(current_active_user),
@@ -886,7 +886,7 @@ async def get_wsi_ground_truth_annotations(
     return payload
 
 
-@router.get("/wsi/{wsi_id}/ground-truth-thumbnail")
+@router.get("/wsi/{wsi_id}/label-thumbnail")
 async def get_wsi_ground_truth_thumbnail(
     wsi_id: str,
     size: int = Query(
@@ -1823,7 +1823,7 @@ async def remove_collaborator(
 # ── Ground-Truth DELETE ───────────────────────────────────────────────────────
 
 
-@router.delete("/datasets/{dataset_id}/ground-truth")
+@router.delete("/datasets/{dataset_id}/labels")
 async def delete_dataset_ground_truth(
     dataset_id: str,
     user: User = Depends(current_active_user),
