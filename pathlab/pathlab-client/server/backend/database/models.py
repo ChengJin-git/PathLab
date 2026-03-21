@@ -1085,6 +1085,15 @@ class SegmentationAnnotation(Base):
 
     def to_dict(self):
         """Convert to dictionary for API responses."""
+        # Derive annotation_source to distinguish externally-imported GT masks
+        # from user-drawn annotations that have been finalized as reference labels.
+        if self.source in ("import", "upload"):
+            annotation_source = "imported_gt"
+        elif self.source == "viewer" and self.status == "finalized":
+            annotation_source = "user_label"
+        else:
+            annotation_source = None
+
         return {
             "annotation_id": self.annotation_id,
             "user_id": self.user_id,
@@ -1093,6 +1102,7 @@ class SegmentationAnnotation(Base):
             "status": self.status,
             "annotation_mode": self.visibility_mode,
             "source": self.source,
+            "annotation_source": annotation_source,
             "version": self.version,
             "last_edited_by": self.last_edited_by,
             "created_at": self.created_at.isoformat() + "Z"
