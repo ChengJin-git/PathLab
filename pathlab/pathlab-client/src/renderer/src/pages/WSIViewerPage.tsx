@@ -1179,17 +1179,6 @@ export default function WSIViewerPage() {
     }
   }, [editingMode, hasUnsavedChanges, persistAnnotations, allAnnotations, exitSharedMode, effectiveDatasetId])
 
-  const handleDeleteShared = useCallback(async () => {
-    if (!effectiveDatasetId) return
-    try {
-      await deleteSharedAnnotation(effectiveDatasetId)
-      toast.success(t('annotation.collab.sharedDeleted'))
-      exitSharedMode()
-    } catch (err: any) {
-      toast.error(err?.message || t('annotation.collab.deleteFailed'))
-    }
-  }, [effectiveDatasetId, exitSharedMode, t, toast])
-
   const handleAutoSeedConfirm = useCallback(async (usePersonalDraft: boolean) => {
     if (!autoSeedConfirm || !effectiveDatasetId) { setAutoSeedConfirm(null); return }
     const { draft, emptyAnnotations, version, preDecision } = autoSeedConfirm
@@ -1893,7 +1882,6 @@ export default function WSIViewerPage() {
               sharedSaving={sharedSaving}
               hasDatasetContext={!!effectiveDatasetId}
               isDatasetOwnerOrAdmin={isDatasetOwnerOrAdmin}
-              onDeleteShared={handleDeleteShared}
               onShareManage={() => setShowShareDialog(true)}
             />
 
