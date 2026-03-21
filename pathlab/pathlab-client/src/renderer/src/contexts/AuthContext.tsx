@@ -23,6 +23,7 @@ import {
 } from '../api'
 import { useToast } from './ToastContext'
 import { useTranslation } from 'react-i18next'
+import { queryClient } from '../lib/queryClient'
 
 interface AuthContextType {
   // State
@@ -149,6 +150,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setError(null)
 
       await loginWithCredentials(username, password, turnstileToken)
+      queryClient.clear()
 
       // Refresh user info after successful login
       await refreshUser()
@@ -197,12 +199,14 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       await apiLogout()
       setUser(null)
       setElevatedDatasetIds([])
+      queryClient.clear()
     } catch (err) {
       console.error('Logout error:', err)
       // Still clear user on logout error (might be demo user)
       clearAuthToken()
       setUser(null)
       setElevatedDatasetIds([])
+      queryClient.clear()
     } finally {
       setIsLoading(false)
     }
