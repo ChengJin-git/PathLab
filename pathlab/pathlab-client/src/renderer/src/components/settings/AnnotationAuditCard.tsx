@@ -11,6 +11,7 @@ import {
   type AnnotationAuditEntry,
 } from '../../api/annotation'
 import { getAuthToken } from '../../api/client'
+import { formatDateCompact } from '../../lib/utils'
 
 const PAGE_SIZE_OPTIONS = [
   { value: '5', label: '5' },
@@ -32,12 +33,6 @@ interface Query {
   pageSize: number
   datasetFilter: string
   eventTypeFilter: string
-}
-
-function formatDateTime(iso: string): string {
-  const d = new Date(iso)
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 function formatMetadata(meta: Record<string, unknown>): string {
@@ -199,7 +194,7 @@ export function AnnotationAuditCard() {
                   {entries.map((entry) => (
                     <tr key={entry.id} className="hover:bg-gray-50/80 transition-colors">
                       <td className="px-4 py-3 text-xs text-gray-500 font-mono whitespace-nowrap align-top pt-3.5">
-                        {formatDateTime(entry.created_at)}
+                        {formatDateCompact(entry.created_at)}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-700 font-medium align-top pt-3.5 truncate max-w-[140px]" title={entry.user_id ?? undefined}>
                         {entry.user_display ?? entry.user_id ?? <span className="text-gray-400">—</span>}

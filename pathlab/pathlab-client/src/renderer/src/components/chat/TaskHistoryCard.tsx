@@ -5,6 +5,7 @@ import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle
 import { getTrainingTasks, TrainingTask, updateTrainingTaskName } from '../../api'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { formatUtcDate } from '../../lib/utils'
 
 export interface CachedTaskData {
   task_id: string
@@ -69,18 +70,6 @@ function getStatusDisplay(status: string, t: TFunction) {
     default:
       return { icon: <Clock className="w-4 h-4" />, color: 'text-gray-600 bg-gray-50', label: status }
   }
-}
-
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
 }
 
 export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCardProps) {
@@ -391,8 +380,20 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
                       )}
                     </div>
                     <div className="mt-1 text-xs text-gray-400 truncate">
-                      {t('chatComponents.taskHistory.created')}: {formatDate(task.created_at)}
-                      {task.finished_at && <span className="hidden sm:inline"> • {t('chatComponents.taskHistory.finished')}: {formatDate(task.finished_at)}</span>}
+                      {t('chatComponents.taskHistory.created')}: {formatUtcDate(task.created_at, 'zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}
+                      {task.finished_at && <span className="hidden sm:inline"> • {t('chatComponents.taskHistory.finished')}: {formatUtcDate(task.finished_at, 'zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">

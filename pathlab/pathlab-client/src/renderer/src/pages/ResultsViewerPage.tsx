@@ -33,6 +33,7 @@ import {
   DEFAULT_EXTERNAL_SEGMENTATION_CHARTS
 } from '../constants/metrics'
 import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
+import { formatDateTime } from '../lib/utils'
 
 type PageMode = 'internal-analysis' | 'external-validation'
 
@@ -654,21 +655,6 @@ export default function ResultsViewerPage() {
     )
   }
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return ''
-    
-    // Fix case where both +00:00 and Z might be present from backend
-    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
-    
-    // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+')) 
-      ? `${sanitizedDate}Z` 
-      : sanitizedDate
-      
-    const date = new Date(normalizedDate)
-    return isNaN(date.getTime()) ? dateStr : date.toLocaleString()
-  }
-
   const handleDeleteAnalysis = (analysisId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     setDeleteConfirmId(analysisId)
@@ -1214,7 +1200,7 @@ export default function ResultsViewerPage() {
                             className="flex-1 text-left"
                           >
                             <p className="font-medium text-gray-900">
-                              {formatDate(analysis.timestamp)}
+                              {formatDateTime(analysis.timestamp, '')}
                             </p>
                             <p className="text-sm text-gray-500">
                               {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
@@ -1266,7 +1252,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(currentResult.summary.timestamp)}
+                          {formatDateTime(currentResult.summary.timestamp, '')}
                         </p>
                       </div>
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
@@ -1281,7 +1267,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(extAnalyses[0].timestamp)}
+                          {formatDateTime(extAnalyses[0].timestamp, '')}
                         </p>
                       </div>
                     </div>
@@ -1339,7 +1325,7 @@ export default function ResultsViewerPage() {
                           </Badge>
                         )}
                         <span className="text-xs text-gray-400 font-medium">
-                          {formatDate(selectedTask.created_at || '')}
+                          {formatDateTime(selectedTask.created_at || '', '')}
                         </span>
                       </div>
                     )}
@@ -1416,7 +1402,7 @@ export default function ResultsViewerPage() {
                                     <span className={`text-xs transition-colors duration-200 ${
                                       selectedTaskId === task.task_id ? 'text-indigo-100' : 'text-gray-400'
                                     }`}>
-                                      {formatDate(task.created_at)}
+                                      {formatDateTime(task.created_at, '')}
                                     </span>
                                   )}
                                   {/* AI Results Status Badge */}
@@ -1654,7 +1640,7 @@ export default function ResultsViewerPage() {
                             className="flex-1 text-left"
                           >
                             <p className="font-medium text-gray-900">
-                              {formatDate(analysis.timestamp)}
+                              {formatDateTime(analysis.timestamp, '')}
                             </p>
                             <p className="text-sm text-gray-500">
                               {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
@@ -1706,7 +1692,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(currentResult.summary.timestamp)}
+                          {formatDateTime(currentResult.summary.timestamp, '')}
                         </p>
                       </div>
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
@@ -1721,7 +1707,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(analyses[0].timestamp)}
+                          {formatDateTime(analyses[0].timestamp, '')}
                         </p>
                       </div>
                     </div>

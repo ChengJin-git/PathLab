@@ -21,6 +21,7 @@ import {
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
 } from '../lib/trainingSubmissionTracker'
+import { formatDateTime } from '../lib/utils'
 
 const makeSyntheticTask = (
   taskId: string,
@@ -350,25 +351,6 @@ export default function TaskDetailPage() {
         {label}
       </span>
     )
-  }
-
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return '-'
-    // Fix case where both +00:00 and Z might be present from backend
-    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
-    // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+')) 
-      ? `${sanitizedDate}Z` 
-      : sanitizedDate
-    const date = new Date(normalizedDate)
-    if (isNaN(date.getTime())) return dateStr
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
   }
 
   const handleRerun = async () => {
@@ -705,11 +687,11 @@ export default function TaskDetailPage() {
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.created')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(displayTask.created_at)}</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.created_at)}</div>
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.updated')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(displayTask.updated_at)}</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.updated_at)}</div>
           </div>
           {isAdmin && displayTask.username && (
             <div>
