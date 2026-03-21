@@ -42,7 +42,6 @@ export interface GlobalSettings {
   turnstile_secret_key: string
   resend_enabled: boolean
   resend_api_key: string
-  resend_admin_email: string
   email_templates: EmailTemplatesConfig
 }
 

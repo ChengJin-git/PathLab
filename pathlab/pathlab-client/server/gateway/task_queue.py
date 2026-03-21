@@ -16,8 +16,12 @@ from dataclasses import dataclass, field
 from typing import Dict, Callable, Awaitable, Any, Optional, List
 from enum import Enum
 from datetime import datetime
+from sqlalchemy import select
 
 from backend.common.config import Config
+from backend.database import async_session
+from backend.auth.models import User
+from .email_notifications import send_templated_email
 
 logger = logging.getLogger("task_queue")
 
@@ -444,6 +448,7 @@ class TaskQueueManager:
             logger.info(
                 f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}"
             )
+            _ = asyncio.create_task(self._notify_task_completed(queued_task))
         except Exception as e:
             logger.error(
                 f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}"
@@ -457,6 +462,65 @@ class TaskQueueManager:
             self._gpu_assignments.pop(queued_task.task_id, None)
             await self._notify_queue_state_changed()
             self._queue.task_done()
+
+    async def _notify_task_completed(self, queued_task: QueuedTask) -> None:
+        if queued_task.task_type not in (
+            TaskType.TRAINING,
+            TaskType.INFERENCE,
+            TaskType.EXTERNAL_VALIDATION,
+        ):
+            return
+
+        user_id: str | None = queued_task.kwargs.get("user_id")
+        if not user_id:
+            try:
+                async with async_session() as db:
+                    if queued_task.task_type in (
+                        TaskType.TRAINING,
+                        TaskType.EXTERNAL_VALIDATION,
+                    ):
+                        from backend.database.repositories import TrainingTaskRepository
+
+                        task = await TrainingTaskRepository.get_by_id(
+                            db, queued_task.task_id
+                        )
+                    else:
+                        from backend.database.repositories import AITaskRepository
+
+                        task = await AITaskRepository.get_by_id(db, queued_task.task_id)
+                    user_id = task.user_id if task else None
+            except Exception as exc:
+                logger.warning(
+                    f"[TaskEmail] could not resolve user_id for task {queued_task.task_id}: {exc}"
+                )
+                return
+
+        if not user_id:
+            return
+
+        try:
+            async with async_session() as db:
+                result = await db.execute(select(User).where(User.id == user_id))
+                user = result.scalar_one_or_none()
+                if not user:
+                    return
+                to_email = user.registration_email or ""
+                display_name = user.nickname or user.email
+            await send_templated_email(
+                template_key="task_completed_notice",
+                to_email=to_email,
+                context={
+                    "display_name": display_name,
+                    "username": user.email,
+                    "task_id": queued_task.task_id,
+                    "task_status": "completed",
+                },
+                for_admin=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[TaskEmail] failed to send completion notice for task {queued_task.task_id}: {exc}"
+            )
 
     async def _invalidate_context_for_task(self, queued_task: QueuedTask) -> None:
         if queued_task.task_type not in (TaskType.TRAINING, TaskType.INFERENCE):

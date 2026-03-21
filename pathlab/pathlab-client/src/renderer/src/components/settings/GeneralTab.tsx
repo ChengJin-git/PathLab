@@ -111,7 +111,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
 
   const [resendEnabled, setResendEnabled] = useState(false)
   const [resendApiKey, setResendApiKey] = useState('')
-  const [resendAdminEmail, setResendAdminEmail] = useState('')
 
   const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
   const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('ws://127.0.0.1:8001/api-ws/v1/realtime')
@@ -173,7 +172,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setResendEnabled(s.resend_enabled || false)
       setResendApiKey(s.resend_api_key || '')
-      setResendAdminEmail(s.resend_admin_email || '')
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
       setLocalAsrModel(s.local_asr_model); setLocalAsrApiKey(s.local_asr_api_key)
       if (s.local_vllm_enabled && s.local_vllm_base_url) {
@@ -207,7 +205,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
         resend_enabled: resendEnabled, resend_api_key: resendApiKey,
-        resend_admin_email: resendAdminEmail,
       })
       localStorage.setItem('openrouter_api_key', apiKey)
       localStorage.setItem('openrouter_base_url', baseUrl)
@@ -451,16 +448,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                             </a>
                           </div>
                         </div>
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Admin Email</Label>
-                        <Input
-                          type="email"
-                          value={resendAdminEmail}
-                          onChange={(e) => setResendAdminEmail(e.target.value)}
-                          placeholder="admin@yourdomain.com"
-                          className="h-9 text-sm border-slate-300 focus:border-violet-500 focus:ring-violet-500"
-                        />
                       </div>
                     </div>
                   )}
