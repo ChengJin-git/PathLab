@@ -331,7 +331,7 @@ export function useTaskActions(params: TaskActionsParams) {
             clearInterval(pollInterval)
             updateTaskItem(taskId, 'migration_main', {
               status: 'error',
-              error: status.error || 'Migration failed'
+              error: status.error || t('backgroundTask.errors.migrationFailed')
             })
           } else {
             // Running
@@ -641,7 +641,7 @@ export function useTaskActions(params: TaskActionsParams) {
             status: 'error',
             progress: 0,
             name: t('backgroundTask.taskTitles.datasetNotFound'),
-            error: 'Could not find dataset after 5 minutes of polling'
+            error: t('backgroundTask.errors.datasetPollingTimeout')
           })
           return
         }
@@ -713,7 +713,7 @@ export function useTaskActions(params: TaskActionsParams) {
       updateTaskItem(taskId, 'extraction_main', {
         status: 'error',
         progress: 0,
-        error: 'Not authenticated'
+        error: t('backgroundTask.errors.notAuthenticated')
       })
       return taskId
     }
@@ -740,7 +740,7 @@ export function useTaskActions(params: TaskActionsParams) {
           updateTaskItem(taskId, 'extraction_main', {
             status: 'error',
             progress: 0,
-            error: 'Extraction failed'
+            error: t('backgroundTask.errors.extractionFailed')
           })
         } else if (progress === 100) {
           // Completed
@@ -763,7 +763,7 @@ export function useTaskActions(params: TaskActionsParams) {
     }
 
     return taskId
-  }, [updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
 
   // Get metadata upload result by dataset name
   const getMetadataUploadResult = useCallback((datasetName: string): MetadataUploadResult | undefined => {
