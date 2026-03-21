@@ -16,13 +16,10 @@ import httpx
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from typing import Any, Optional, Tuple
 
-import uuid
-from jose import jwt, JWTError
-from sqlalchemy import select
+from fastapi import HTTPException
 
 from ..dependencies import logger
-from backend.auth import User
-from backend.auth.users import JWT_SECRET
+from backend.auth.dependencies import _get_user_from_jwt
 from backend.common.config import Config
 from backend.database.database import async_session
 
@@ -237,29 +234,18 @@ async def asr_realtime_websocket(
         await websocket.close(code=4001)
         return
 
-    # Validate JWT token and get user
+    # Validate JWT token and get user (uses centralized _get_user_from_jwt which
+    # enforces session_nonce, ensuring revoked/stale sessions are rejected)
     try:
-        payload = jwt.decode(
-            token, JWT_SECRET, algorithms=["HS256"], audience="fastapi-users:auth"
-        )
-        user_id_str = payload.get("sub")
-        if not user_id_str:
-            raise ValueError("Invalid token: no user ID")
-
-        # Get user from database
         async with async_session() as db:
-            result = await db.execute(
-                select(User).where(User.id == uuid.UUID(user_id_str))
-            )
-            user = result.scalar_one_or_none()
-
-            if not user or not user.is_active:
-                raise ValueError("User not found or inactive")
-
-    except (JWTError, ValueError) as e:
-        logger.warning(f"WebSocket auth failed: {e}")
+            user = await _get_user_from_jwt(token, db)
+    except HTTPException as e:
+        logger.warning(f"WebSocket auth failed: {e.detail}")
         await websocket.send_json(
-            {"type": "error", "error": {"message": f"Authentication failed: {e}"}}
+            {
+                "type": "error",
+                "error": {"message": f"Authentication failed: {e.detail}"},
+            }
         )
         await websocket.close(code=4001)
         return

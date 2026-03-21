@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 VALID_ROLES = {"admin", "pathologist", "guest"}
-PUBLIC_REGISTRATION_ROLES = {"pathologist", "guest"}
+PUBLIC_REGISTRATION_ROLES = {"guest"}
 
 
 def _normalize_username(value: Optional[str]) -> Optional[str]:

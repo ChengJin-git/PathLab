@@ -56,12 +56,21 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数测试
+    ├── lib/              # 纯工具函数测试（7 个文件）
     │   ├── cache.test.ts
     │   ├── utils.test.ts
-    │   └── chatMessageParser.test.ts
-    └── contexts/         # React Context 测试
-        └── AuthContext.test.tsx
+    │   ├── chatMessageParser.test.ts
+    │   ├── datasetPagination.test.ts
+    │   ├── segmentationUploadUtils.test.ts
+    │   ├── externalValidationUtils.test.ts
+    │   └── trainingSubmissionTracker.test.ts
+    ├── contexts/         # React Context 测试
+    │   └── AuthContext.test.tsx
+    └── components/       # 组件测试（2 个文件）
+        └── settings/
+            ├── PermissionCenterModal.test.tsx
+            └── storage/
+                └── BatchScanResults.test.tsx
 ```
 
 ---
@@ -713,15 +722,20 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **对应源文件**：`src/renderer/src/api/annotation.ts`
 
-覆盖分割标注的完整 CRUD 与 ROI 提取：
+覆盖分割标注的完整 CRUD、标签读取、协作标注全流程与审计：
 
-- `saveAnnotation()` / `listAnnotations()` / `getAnnotation()` / `deleteAnnotation()`：标注增删查
-- `getDatasetGroundTruth()` / `getWSIGroundTruth()`：数据集与 WSI 级别 ground-truth 读取
-- `getGroundTruthThumbnailUrl()`：构建 ground-truth 缩略图 URL（纯函数，无网络请求）
+- `saveAnnotation()` / `listAnnotations()` / `getAnnotation()` / `deleteAnnotation()`：标注草稿增删查
+- `getDatasetLabels()` / `getWSILabels()`：数据集与 WSI 级别标签读取（原 ground-truth 接口已重命名）
+- `getLabelThumbnailUrl()`：构建标签缩略图 URL（纯函数，无网络请求）
 - `getDatasetAnnotationSummary()`：数据集标注摘要（label 分布、annotated_wsi 计数）
 - `deleteDatasetAnnotationsByLabels()`：按 label 批量删除
+- `deleteDatasetLabels()`：删除整个数据集的标签
 - `extractRegions()`：触发 ROI 提取任务
 - `getExtractProgressSSEUrl()`：获取 ROI 提取进度的 SSE 流地址（纯函数）
+- **协作标注**：`getSharedAnnotation()` / `saveSharedAnnotation()` / `deleteSharedAnnotation()` / `finalizeSharedAnnotation()` / `bulkDeleteSharedRegionsByCreator()` / `getSharedAnnotationSSEUrl()`
+- **协作者管理**：`listCollaborators()` / `addCollaborator()` / `removeCollaborator()`（含 URL 编码验证）
+- **审计日志**：`listAnnotationAudit()`（含查询参数过滤）/ `exportAnnotationAuditUrl()`（纯函数）
+- **WebSocket 协作**：`getPresenceWSUrl()`（未认证返回 null，已认证返回 ws:// 地址）
 
 ---
 
@@ -815,6 +829,58 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 - `fetchTrainingOptions()`：从 `GET /training/options` 获取全部可选项（feature_extractors、aggregators、segmentation_architectures、segmentation_backbones、segmentation_losses、optimizers）
 - 验证请求 URL 前缀正确指向 Gateway（`API_BASE`）
 - 验证错误时抛出 `ApiError`
+
+---
+
+## unit/lib/datasetPagination.test.ts
+
+**对应源文件**：`src/renderer/src/lib/datasetPagination.ts`
+**测试数量**：3 个
+
+覆盖 `clampDatasetPage()` 的三条分支：请求出错时保持当前页不变、正在加载且无数据时保持不变、数据稳定时将页码夹紧到总页数上限。
+
+---
+
+## unit/lib/segmentationUploadUtils.test.ts
+
+**对应源文件**：`src/renderer/src/lib/segmentationUploadUtils.ts`
+**测试数量**：21 个
+
+覆盖分割标注上传的文件匹配工具函数：
+
+- `getSegmentationStem(name)` — 剥离 `.json` 与其他扩展名后小写化，覆盖多种命名组合
+- `mergeSegmentationJsonFiles(existing, files)` — 合并 JSON 文件映射，检测重复 stem；验证不修改原始 Map
+- `summarizeSegmentationMatches(items, jsonMap)` — 计算已匹配、缺失 JSON、孤立 JSON、重复图像的 stem 集合；验证排序行为
+
+---
+
+## unit/lib/externalValidationUtils.test.ts
+
+**对应源文件**：`src/renderer/src/lib/externalValidationUtils.ts`
+**测试数量**：28 个
+
+覆盖外部验证的模型-数据集兼容性校验逻辑：
+
+- `isSurvivalTask()` / `isSegmentationTask()` — 任务类型判断，含边界值（undefined、空串）
+- `EXTRACTOR_EMBED_DIM` — 常量完整性（已知提取器维度、未知返回 undefined）
+- `getDatasetCompatibilityError()` — 核心兼容性逻辑，覆盖：data_type 不匹配、task_type 不匹配、分类标签集不等、提取器 embed dim 不匹配、WSI 数据泄漏检测、survival 免标签检查、分割任务特有规则（文件级数据集、架构 / backbone 元数据校验、source/target 数据集不能相同）
+- `filterCompatibleDatasets()` / `isDatasetCompatible()` — 基于 `getDatasetCompatibilityError` 的过滤包装
+
+---
+
+## unit/lib/trainingSubmissionTracker.test.ts
+
+**对应源文件**：`src/renderer/src/lib/trainingSubmissionTracker.ts`
+**测试数量**：23 个
+
+覆盖基于 localStorage 的训练提交状态机：
+
+- **状态转换**：`markTrainingSubmissionPending()` → `Created` → `Failed` → `Cancelled`，验证各转换保留 `createdAt`、携带可选 `taskName` / `error`
+- **读取**：`getTrainingSubmissionRecord()` 对未知 task 返回 null，对超出 7 天保留期的记录返回 null
+- **列表**：`listTrainingSubmissionRecords()` 支持按 state 过滤、按 `updatedAt` 降序排列
+- **超时检测**：`isTrainingSubmissionPendingTimedOut()` 基于默认（30 分钟）与自定义超时阈值
+- **清除**：`clearTrainingSubmissionRecord()` 只删除指定 task，不影响其他记录；对不存在的 task 不抛错
+- 所有测试使用 `vi.useFakeTimers()` 精确控制时间推进
 
 ---
 

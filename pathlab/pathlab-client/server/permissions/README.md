@@ -310,3 +310,69 @@ Code: `pathlab/pathlab-client/server/gateway/routes/results.py:5926`, `pathlab/p
 **Analysis submission after revocation**: the dataset and its tasks remain visible to the user. Only new analysis submissions are blocked; the frontend shows a user-friendly toast (`datasetAccessRevoked`) instead of a raw error.
 
 Key architectural point: permissions are a combination of **role capability** + **resource ownership/grants** + **task visibility ownership**.
+
+---
+
+## 12) Registered Routers Not Covered in Sections 1–11
+
+Gateway registers 17 top-level routers. The following are authenticated-user-only (require `current_active_user`) unless noted:
+
+| Router | Auth level | Notes |
+|---|---|---|
+| `stats` | authenticated user | Storage/usage stats for the current user's own data; admin sees all |
+| `gpu` | authenticated user | GPU queue status; read-only |
+| `heatmap` | `get_user_from_header_or_param` | Image endpoints accept token via `Authorization` header **or** `?token=` query param (see Section 13.2) |
+| `models` | authenticated user | Trained-model list/detail filtered by ownership (same `get_user_id_filter` pattern as training); delete requires owner/admin |
+| `ai_tasks` | authenticated user | AI task list filtered to current user unless admin |
+| `training_options` | authenticated user | Read-only endpoint returning available extractor/aggregator options; no ownership logic |
+| `asr` | `?token=` query param (WebSocket) | See Section 13.3 for dedicated auth path |
+
+`wsi_grants` is not a top-level router but an auxiliary module included by the `wsi` router. Grant creation (`POST /datasets/{dataset_id}/grants`) requires the caller to be the dataset owner or admin; the endpoint enforces ownership via `get_dataset_with_access(require_owner=True)` before writing grants.
+
+---
+
+## 13) Auth Mechanisms Not Covered Above
+
+### 13.1 User Registration Flow
+
+Two public registration paths exist:
+
+| Endpoint | Resulting state | Allowed roles | Notes |
+|---|---|---|---|
+| `POST /auth/register` | `is_active=True` (immediately usable) | `guest` only | Direct registration; `PUBLIC_REGISTRATION_ROLES = {"guest"}`: `backend/auth/schemas.py:16` |
+| `POST /auth/request-access` | `is_active=False` (admin must activate) | `guest`, `pathologist` | Self-service access request with educational email validation |
+
+Only admin can elevate a user to `pathologist` or `admin` role after creation (via `AdminUserUpdate`).
+
+Default admin account: created on first run when no users exist (`backend/database/database.py:307`). Password is taken from `DEFAULT_ADMIN_PASSWORD` env var; if unset, a random password is generated and printed once to logs at `CRITICAL` level. There is no hardcoded fallback password.
+
+### 13.2 Token-in-URL Pattern (SSE and Image Endpoints)
+
+Server-Sent Events and browser-loaded image/tile/heatmap URLs cannot set `Authorization` headers. These endpoints accept the JWT via a `?token=` query parameter:
+
+- SSE streams: training logs, results logs, storage task progress (`get_user_from_token_param`)
+- Image/tile/heatmap URLs: `get_user_from_header_or_param` (prefers `Authorization: Bearer`, falls back to `?token=`)
+
+Both helpers call the same `_get_user_from_jwt` internally, which enforces session nonce: `backend/auth/dependencies.py:315`.
+
+Security implication: tokens in URLs appear in server access logs and browser history. These endpoints are intentionally short-lived resource fetches; the JWT lifetime is the same as all other endpoints.
+
+### 13.3 ASR WebSocket Auth
+
+`GET /asr/realtime` (WebSocket) accepts `?token=` because WebSocket handshakes cannot carry `Authorization` headers in browser environments.
+
+Auth path: `gateway/routes/asr.py:240` calls `_get_user_from_jwt(token, db)` from `backend/auth/dependencies.py`, which enforces full JWT validation including session nonce. A token invalidated by a new login on another device is rejected at this endpoint identically to all REST endpoints.
+
+### 13.4 JWT Configuration
+
+`JWT_SECRET` is read from the environment at startup (`backend/auth/users.py:37`). If unset, a new random secret is generated each run, invalidating all existing sessions on restart. **Production deployments must set `JWT_SECRET` as a persistent environment variable.**
+
+JWT lifetime is controlled by `Config.JWT_LIFETIME_SECONDS`.
+
+### 13.5 CORS Policy
+
+All three services currently use `allow_origins=["*"]`. For web deployment mode, Gateway's CORS should be restricted to the known frontend origin. The Preprocessing and AI services are internal-only (listen on localhost); they do not need CORS middleware.
+
+### 13.6 `/auth/jwt/login` Status
+
+The standard FastAPI-Users login route (`POST /auth/jwt/login`) is intentionally disabled via router configuration to prevent bypassing Cloudflare Turnstile verification. The only active login path is `POST /auth/secure-login`, which validates a client-side SHA-256 hashed password and optionally enforces Turnstile: `gateway/routes/auth.py:407`.

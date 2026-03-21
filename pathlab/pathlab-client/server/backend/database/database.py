@@ -307,26 +307,32 @@ async def _create_default_admin():
             if user_count == 0:
                 logger.info("No users found, creating default admin user...")
 
-                # Create password hash - use environment variable or fallback
-                password_helper = PasswordHelper()
-                default_password = os.getenv(
-                    "DEFAULT_ADMIN_PASSWORD", "pathlab_default_password123"
-                )
-                hashed_password = password_helper.hash(default_password)
-
-                # Create SHA256 hash for secure login
                 import hashlib
-
-                password_sha256 = hashlib.sha256(default_password.encode()).hexdigest()
-
-                # Create admin user with simple username (not email format)
+                import secrets
                 import uuid
+
+                password_helper = PasswordHelper()
+                default_password = os.getenv("DEFAULT_ADMIN_PASSWORD")
+                if not default_password:
+                    default_password = secrets.token_urlsafe(16)
+                    logger.critical(
+                        f"\n{'=' * 60}\n"
+                        f"ADMIN PASSWORD (auto-generated, shown once):\n"
+                        f"  Username : admin\n"
+                        f"  Password : {default_password}\n"
+                        f"Save this now — it will not be shown again.\n"
+                        f"Set DEFAULT_ADMIN_PASSWORD env var to use a fixed password.\n"
+                        f"{'=' * 60}"
+                    )
+
+                hashed_password = password_helper.hash(default_password)
+                password_sha256 = hashlib.sha256(default_password.encode()).hexdigest()
 
                 admin_user = User(
                     id=uuid.uuid4(),
-                    email="admin",  # Using simple username, not email format
+                    email="admin",
                     hashed_password=hashed_password,
-                    password_sha256=password_sha256,  # For secure login
+                    password_sha256=password_sha256,
                     is_active=True,
                     is_superuser=True,
                     is_verified=True,
@@ -337,7 +343,7 @@ async def _create_default_admin():
                 session.add(admin_user)
                 await session.commit()
                 logger.warning(
-                    "Default admin user created (username: admin). Please change the default password after first login!"
+                    "Default admin user created (username: admin). Change the password after first login."
                 )
             else:
                 logger.info(
