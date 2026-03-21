@@ -1,4 +1,5 @@
 from typing import Any
+
 """
 PathLab Python Sidecar - Unified Entry Point
 
@@ -30,15 +31,66 @@ from backend.common.port_utils import find_free_port, announce_port
 from backend.common.config import Config
 
 
+def _detect_and_exclude_bad_gpus() -> list[int]:
+    # CUDA_VISIBLE_DEVICES only takes effect when cuInit() itself succeeds.
+    # If a faulty GPU poisons cuInit(), the operator must first unbind it at the
+    # driver level (requires root) before restarting this process:
+    #   sudo bash -c 'echo <pci_addr> > /sys/bus/pci/drivers/nvidia/unbind'
+    try:
+        import pynvml
 
-def run_service(app_module: str, port: int, name: str, workers: int = 1, limit_max_requests: int | None = None):
+        pynvml.nvmlInit()
+        num_gpus = pynvml.nvmlDeviceGetCount()
+    except Exception as e:
+        print(
+            f"[GPUCheck] pynvml unavailable ({e}), skipping GPU health probe",
+            flush=True,
+        )
+        return []
+
+    healthy: list[int] = []
+    bad: list[int] = []
+    for i in range(num_gpus):
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            pynvml.nvmlDeviceGetMemoryInfo(handle)
+            name = pynvml.nvmlDeviceGetName(handle)
+            healthy.append(i)
+            print(f"[GPUCheck]   GPU {i} ({name}): OK", flush=True)
+        except Exception as e:
+            bad.append(i)
+            print(f"[GPUCheck]   GPU {i}: FAILED — {e}", flush=True)
+
+    if bad:
+        print(
+            f"[GPUCheck] Detected {len(bad)} unhealthy GPU(s): {bad}. "
+            f"Setting CUDA_VISIBLE_DEVICES to healthy GPUs: {healthy}",
+            flush=True,
+        )
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(str(i) for i in healthy)
+    else:
+        print(f"[GPUCheck] All {num_gpus} GPU(s) passed health check.", flush=True)
+
+    return bad
+
+
+def run_service(
+    app_module: str,
+    port: int,
+    name: str,
+    workers: int = 1,
+    limit_max_requests: int | None = None,
+):
     """Run a single uvicorn service in a subprocess"""
     import uvicorn
 
     extra = ""
     if limit_max_requests:
         extra = f", limit_max_requests={limit_max_requests}"
-    print(f"[{name}] Starting on port {port} with {workers} worker(s){extra}...", flush=True)
+    print(
+        f"[{name}] Starting on port {port} with {workers} worker(s){extra}...",
+        flush=True,
+    )
 
     kwargs: dict[str, Any] = dict[str, Any](
         host="0.0.0.0",
@@ -65,7 +117,9 @@ def main():
     if debug_mode:
         # Debug mode: use fixed ports
         gateway_port = int(os.environ.get("GATEWAY_PORT", Config.DEFAULT_GATEWAY_PORT))
-        preprocessing_port = int(os.environ.get("PREPROCESSING_PORT", Config.DEFAULT_PREPROCESSING_PORT))
+        preprocessing_port = int(
+            os.environ.get("PREPROCESSING_PORT", Config.DEFAULT_PREPROCESSING_PORT)
+        )
         ai_port = int(os.environ.get("AI_PORT", Config.DEFAULT_AI_PORT))
         print("[Mode] DEBUG - Using fixed ports", flush=True)
     else:
@@ -85,7 +139,12 @@ def main():
     os.environ["PREPROCESSING_SERVICE_URL"] = f"http://127.0.0.1:{preprocessing_port}"
     os.environ["AI_SERVICE_URL"] = f"http://127.0.0.1:{ai_port}"
 
-    print(f"[Services] Gateway: {gateway_port}, Preprocessing: {preprocessing_port}, AI: {ai_port}", flush=True)
+    print(
+        f"[Services] Gateway: {gateway_port}, Preprocessing: {preprocessing_port}, AI: {ai_port}",
+        flush=True,
+    )
+
+    _detect_and_exclude_bad_gpus()
 
     # Track child processes for cleanup
     processes = []
@@ -98,15 +157,15 @@ def main():
 
         if not processes:
             return
-            
+
         print("\n[Shutdown] Stopping all services...", flush=True)
-        
+
         # Send SIGTERM to all processes first (parallel shutdown)
         for p in processes:
             if p.is_alive():
                 print(f"[Shutdown] Terminating process {p.pid}...", flush=True)
                 p.terminate()
-        
+
         # Then wait for them to exit
         for p in processes:
             if p.is_alive():
@@ -114,17 +173,17 @@ def main():
                     p.join(timeout=2)
                 except Exception:
                     pass
-                
+
                 if p.is_alive():
                     print(f"[Shutdown] Force killing process {p.pid}...", flush=True)
                     try:
                         p.kill()
                     except Exception:
                         pass
-                    
+
         processes.clear()
         print("[Shutdown] All services stopped", flush=True)
-        
+
         if not from_atexit:
             sys.exit(0)
 
@@ -141,12 +200,20 @@ def main():
     preprocessing_workers = int(os.environ.get("PREPROCESSING_WORKERS", "4"))
     # Recycle preprocessing workers every 500 requests to release C library memory leaks
     # (SdpcSlide SDK accumulates internal buffers that are not fully freed on close).
-    preprocessing_max_requests = int(os.environ.get("PREPROCESSING_MAX_REQUESTS", "500"))
+    preprocessing_max_requests = int(
+        os.environ.get("PREPROCESSING_MAX_REQUESTS", "500")
+    )
     preprocessing_proc = multiprocessing.Process(
         target=run_service,
         name="Preprocessing",
-        args=("backend.preprocessing.main:app", preprocessing_port, "Preprocessing", preprocessing_workers, preprocessing_max_requests),
-        daemon=False
+        args=(
+            "backend.preprocessing.main:app",
+            preprocessing_port,
+            "Preprocessing",
+            preprocessing_workers,
+            preprocessing_max_requests,
+        ),
+        daemon=False,
     )
     preprocessing_proc.start()
     processes.append(preprocessing_proc)
@@ -158,7 +225,7 @@ def main():
         target=run_service,
         name="AI",
         args=("backend.ai.main:app", ai_port, "AI"),
-        daemon=False
+        daemon=False,
     )
     ai_proc.start()
     processes.append(ai_proc)
@@ -169,7 +236,7 @@ def main():
         target=run_service,
         name="Gateway",
         args=("gateway.main:app", gateway_port, "Gateway"),
-        daemon=False
+        daemon=False,
     )
     gateway_proc.start()
     processes.append(gateway_proc)
@@ -179,6 +246,7 @@ def main():
     try:
         # Keep main process alive
         import time
+
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
