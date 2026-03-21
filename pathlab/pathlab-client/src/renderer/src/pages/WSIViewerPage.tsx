@@ -1276,22 +1276,20 @@ export default function WSIViewerPage() {
 
       const result = await deleteDatasetAnnotationsByLabels(effectiveDatasetId, { labels })
       setAnnotationId(result.annotation_id)
-      draftCacheRef.current = null
+      const filteredAnnotations: AnnotationsMap = {}
+      for (const [key, regions] of Object.entries(allAnnotations)) {
+        filteredAnnotations[key] = regions.filter(r => !labelSet.has(r.label))
+      }
+      updateDraftCache(result.annotation_id, filteredAnnotations)
       setDatasetAnnotationSummary(result.summary)
-      setAllAnnotations(prev => {
-        const next: typeof prev = {}
-        for (const [key, regions] of Object.entries(prev)) {
-          next[key] = regions.filter(r => !labelSet.has(r.label))
-        }
-        return next
-      })
+      setAllAnnotations(filteredAnnotations)
       setHasUnsavedChanges(false)
       toast.success(t('annotation.saved'))
     } catch (err) {
       console.error('Failed to delete dataset annotations by labels:', err)
       toast.error(t('annotation.saveFailed'))
     }
-  }, [allAnnotations, editingMode, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
+  }, [allAnnotations, editingMode, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast, updateDraftCache])
 
   const handleCreateDatasetFromAnnotations = useCallback(async ({
     datasetName,
