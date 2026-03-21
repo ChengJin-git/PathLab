@@ -103,12 +103,16 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
 - Task list/detail filtered by owner unless admin via `get_user_id_filter` and ownership checks: `pathlab/pathlab-client/server/gateway/routes/training.py:493`, `pathlab/pathlab-client/server/gateway/routes/training.py:708`, `pathlab/pathlab-client/server/backend/auth/dependencies.py:49`.
 
 ## 4.4 Internal validation (implemented as task analysis flow)
-- Internal validation trigger is `POST /results/tasks/{task_id}/analysis`: `pathlab/pathlab-client/server/gateway/routes/results.py:6006`.
+- Internal validation trigger is `POST /results/tasks/{task_id}/analysis`: `pathlab/pathlab-client/server/gateway/routes/results.py:6034`.
 - Enforced checks:
-  - `_get_task_with_access` (owner/admin visibility): `pathlab/pathlab-client/server/gateway/routes/results.py:6029`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:80`
-  - `_require_task_gpu_permission` for analysis execution path: `pathlab/pathlab-client/server/gateway/routes/results.py:6036`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:102`
+  - `_get_task_with_access` (owner/admin visibility): `pathlab/pathlab-client/server/gateway/routes/results.py:6057`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:80`
+  - dataset-level access check for non-admin users: even if a pathologist's role grants GPU capability, `run_task_analysis` additionally verifies `check_dataset_access_permission`; revoked dataset access returns HTTP 403 before the task is queued: `pathlab/pathlab-client/server/gateway/routes/results.py:6067`
+  - `_require_task_gpu_permission` for analysis execution path: `pathlab/pathlab-client/server/gateway/routes/results.py:6084`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:102`
 - Analysis visibility:
   - `GET /results/tasks/{task_id}/analysis` filters non-admin to analyses submitted by that user: `pathlab/pathlab-client/server/gateway/routes/results.py:5926`, `pathlab/pathlab-client/server/gateway/routes/results.py:5994`.
+- Frontend behaviour on revoked dataset:
+  - `AnalysisConfigCard` catches HTTP 403 from `run_task_analysis` and shows a localised toast; the task remains visible (read-only), only new analysis submissions are blocked: `pathlab/pathlab-client/src/renderer/src/components/chat/AnalysisConfigCard.tsx`.
+  - i18n key: `chatComponents.analysisConfig.datasetAccessRevoked` (en-US / zh-CN / zh-HK): `pathlab/pathlab-client/src/renderer/src/locales/en-US.json`.
 
 ## 4.5 External validation
 - Entry: `POST /results/external-validation`: `pathlab/pathlab-client/server/gateway/routes/results.py:3034`.
@@ -139,6 +143,7 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
 - Guest cannot receive GPU grants:
   - runtime guard in `_grant_or_renew_permission`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:73`
   - test coverage: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:131`.
+- `check_dataset_gpu_permission` behaviour: if `user.can_use_gpu()` is true (admin/pathologist), return immediately; otherwise **always** consult `DatasetGrantRepository.has_valid_gpu` for all roles including guest. There is no separate `is_guest()` short-circuit — the DB query is the sole gate: `pathlab/pathlab-client/server/backend/auth/dependencies.py:293`. The net result for guest is unchanged (no GPU grant is ever stored for a guest), but the code path is now uniform.
 
 ## 5.3 Revoke model and side effects
 - Single revoke endpoint: `DELETE /datasets/{dataset_id}/grants/{target_user_id}`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:546`.
@@ -148,6 +153,11 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
   - notify AI service to revoke permission on running tasks: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:136`
   - cascade revoke on child datasets: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:188`
   - audit log entries: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:575`.
+- Cross-process revocation (in-process tasks): `_notify_ai_service_permission_revocation` now calls `_local_revoke(task_id)` (via `backend.ai.permission_revocation.revoke_task_permission`) **before** the HTTP call to the AI service. This ensures that external-validation tasks running in the same Gateway process are interrupted even if the HTTP round-trip has not yet completed: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:137`, `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:141`.
+- In-flight external-validation checkpoint locations: tasks check `is_permission_revoked(task_id)` at the following points and raise `PermissionRevokedException` if revoked:
+  - `_run_external_validation_patch_segmentation`: after PATCHING 10 (`pathlab/pathlab-client/server/gateway/routes/results.py:3703`) and after inference thread returns before DB save (`pathlab/pathlab-client/server/gateway/routes/results.py:3994`). `clear_revocation(task_id)` is called in `finally`.
+  - `_run_external_validation_patch_classification`: after PATCHING 10 (`pathlab/pathlab-client/server/gateway/routes/results.py:4264`) and after inference thread returns before DB save (`pathlab/pathlab-client/server/gateway/routes/results.py:4390`). `clear_revocation(task_id)` is called in `finally`.
+  - `_run_external_validation` (survival / main body): after PATCHING 0 (`pathlab/pathlab-client/server/gateway/routes/results.py:4557`) and before TRAINING 35 (`pathlab/pathlab-client/server/gateway/routes/results.py:5198`).
 
 ## 5.4 Public->private transition side effect
 - When visibility switches public->private, non-owner running training tasks on that dataset can be stopped: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:270`.
@@ -246,18 +256,34 @@ Code: `pathlab/pathlab-client/server/gateway/routes/results.py:5926`, `pathlab/p
 
 ## 10) Tests that Anchor Current Permission Behavior
 
-- Guest cannot gain GPU via dataset grant: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:49`.
+### Existing anchors
+- Guest cannot gain GPU via dataset grant (no valid DB grant → denied): `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:49`.
 - Shared annotation requires explicit collaborator even for public dataset: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:71`.
 - Non-owner cannot read personal draft via repository permission API: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:96`.
 - Dataset/WSI access ancestor grant logic: `pathlab/pathlab-client/server/tests/test_permission_logic.py:73`, `pathlab/pathlab-client/server/tests/test_permission_logic.py:116`.
 - Upload CSV route gate is authenticated-user (guest-capable) regression check: `pathlab/pathlab-client/server/tests/test_permission_closure_regressions.py:245`.
 
+### New anchors (`test_permission_revocation_fixes.py`)
+- `check_dataset_gpu_permission` reaches `has_valid_gpu` DB query for all `can_use_gpu()=False` users (Fix 3): `test_gpu_permission_reaches_has_valid_gpu_when_can_use_gpu_false`.
+- Pathologist (role-level GPU) never hits DB in `check_dataset_gpu_permission`: `test_gpu_permission_pathologist_never_hits_db`.
+- Non-GPU user without a valid DB grant is denied: `test_gpu_permission_denied_when_no_grant_and_can_use_gpu_false`.
+- `_notify_ai_service_permission_revocation` marks task revoked in-process before HTTP call succeeds (Fix 2a): `test_notify_revocation_marks_task_revoked_in_process`.
+- Local revoke fires even when HTTP call to AI service fails (Fix 2a): `test_notify_revocation_marks_task_even_when_http_fails`.
+- `run_task_analysis` raises HTTP 403 when dataset access has been revoked (Fix 1a): `test_run_task_analysis_raises_403_when_dataset_access_revoked`.
+- Admin bypasses dataset access check in `run_task_analysis` (Fix 1a): `test_run_task_analysis_admin_skips_dataset_access_check`.
+- `revoke_task_permission` / `clear_revocation` lifecycle: `test_revoke_marks_task_and_clear_removes_it`, `test_revoke_affects_only_named_task`, `test_clear_revocation_is_idempotent`.
+- `PermissionRevokedException` is an `Exception` subclass: `test_permission_revoked_exception_is_exception_subclass`.
+
 ---
 
 ## 11) Practical Summary (Current State)
 
-- **Guest**: can upload and access permitted/public data; cannot perform GPU-required flows (training/external validation/internal analysis requiring GPU), cannot access admin settings.
-- **Pathologist**: can use GPU flows and non-admin product functions under dataset/task ownership/grant boundaries.
-- **Admin**: full access, plus global settings and grant/revoke controls.
+- **Guest**: can upload and access permitted/public data; cannot perform GPU-required flows (training/external validation/internal analysis requiring GPU), cannot access admin settings. `check_dataset_gpu_permission` no longer has a dedicated `is_guest()` short-circuit — the DB query (`has_valid_gpu`) is the uniform gate, which still returns false for guest because no GPU grant is ever stored for guest accounts.
+- **Pathologist**: can use GPU flows and non-admin product functions under dataset/task ownership/grant boundaries. Role-level `can_use_gpu()` bypasses the DB grant check, but `run_task_analysis` now enforces an additional `check_dataset_access_permission` check so that a revoked dataset grant blocks new analysis submissions even for pathologists.
+- **Admin**: full access, plus global settings and grant/revoke controls. Admin bypasses the dataset access check in `run_task_analysis`.
+
+**Revocation semantics for in-flight tasks**: on grant revocation the system (a) performs a local in-process revoke synchronously, then (b) notifies the AI service over HTTP. In-flight external-validation tasks across all three paths (patch-segmentation, patch-classification, survival) check `is_permission_revoked` at multiple checkpoints and abort before committing results to the database.
+
+**Analysis submission after revocation**: the dataset and its tasks remain visible to the user. Only new analysis submissions are blocked; the frontend shows a user-friendly toast (`datasetAccessRevoked`) instead of a raw error.
 
 Key architectural point: permissions are a combination of **role capability** + **resource ownership/grants** + **task visibility ownership**.
