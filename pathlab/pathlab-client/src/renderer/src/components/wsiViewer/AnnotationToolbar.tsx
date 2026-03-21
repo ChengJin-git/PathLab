@@ -30,6 +30,7 @@ interface AnnotationToolbarProps {
   // Collaborative features
   editingMode?: 'personal' | 'shared'
   onToggleEditingMode?: () => void
+  modeTransitioning?: boolean
   hasDatasetContext?: boolean
   isDatasetOwnerOrAdmin?: boolean
   onShareManage?: () => void
@@ -44,6 +45,7 @@ export function AnnotationToolbar({
   onDropdownOpenChange,
   editingMode = 'personal',
   onToggleEditingMode,
+  modeTransitioning = false,
   hasDatasetContext,
   isDatasetOwnerOrAdmin,
   onShareManage,
@@ -106,28 +108,40 @@ export function AnnotationToolbar({
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 border border-gray-200">
                 <button
                   type="button"
-                  onClick={editingMode !== 'personal' ? onToggleEditingMode : undefined}
+                  onClick={editingMode !== 'personal' && !modeTransitioning ? onToggleEditingMode : undefined}
+                  disabled={modeTransitioning && editingMode !== 'shared'}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
                     editingMode === 'personal'
                       ? 'bg-white shadow-sm text-indigo-600'
-                      : 'text-gray-500 hover:text-gray-700'
+                      : modeTransitioning
+                        ? 'text-gray-300 cursor-wait'
+                        : 'text-gray-500 hover:text-gray-700'
                   }`}
                   title={t('annotation.collab.personalDraft')}
                 >
-                  <User className="w-3.5 h-3.5" />
+                  {modeTransitioning && editingMode === 'shared'
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <User className="w-3.5 h-3.5" />
+                  }
                   <span>{t('annotation.collab.personalDraft')}</span>
                 </button>
                 <button
                   type="button"
-                  onClick={editingMode !== 'shared' ? onToggleEditingMode : undefined}
+                  onClick={editingMode !== 'shared' && !modeTransitioning ? onToggleEditingMode : undefined}
+                  disabled={modeTransitioning && editingMode !== 'personal'}
                   className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium transition-all ${
                     editingMode === 'shared'
                       ? 'bg-white shadow-sm text-indigo-600'
-                      : 'text-gray-500 hover:text-gray-700'
+                      : modeTransitioning
+                        ? 'text-gray-300 cursor-wait'
+                        : 'text-gray-500 hover:text-gray-700'
                   }`}
                   title={t('annotation.collab.collaborativeShare')}
                 >
-                  <Users className="w-3.5 h-3.5" />
+                  {modeTransitioning && editingMode === 'personal'
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <Users className="w-3.5 h-3.5" />
+                  }
                   <span>{t('annotation.collab.collaborativeShare')}</span>
                 </button>
               </div>

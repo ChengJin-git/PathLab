@@ -297,13 +297,15 @@ export default function WSIViewerPage() {
     annotationId: null as string | null,
     sharedVersion: 0,
   })
-  const pendingSeedDecisionRef = useRef<{ usePersonalDraft: boolean; draft: AnnotationsMap } | null>(null)
   const [autoSeedConfirm, setAutoSeedConfirm] = useState<{
     draft: AnnotationsMap
-    emptyAnnotations: AnnotationsMap
     version: number
-    preDecision?: true
   } | null>(null)
+  const preloadedSharedAnnotationRef = useRef<{
+    annotations: AnnotationsMap
+    version: number
+  } | null>(null)
+  const [modeTransitioning, setModeTransitioning] = useState(false)
   const [showSharedExitDialog, setShowSharedExitDialog] = useState(false)
   const annotationIdRef = useRef<string | null>(null)
   const saveRequestRef = useRef<Promise<boolean> | null>(null)
@@ -1163,56 +1165,92 @@ export default function WSIViewerPage() {
         const saved = await persistAnnotations({ showToast: false })
         if (!saved) return
       }
-      const hasPersonalDraft = Object.values(allAnnotations).some(v => Array.isArray(v) && v.length > 0)
-      if (hasPersonalDraft && effectiveDatasetId) {
-        setAutoSeedConfirm({ draft: allAnnotations, emptyAnnotations: {}, version: 0, preDecision: true })
+      if (!effectiveDatasetId) {
+        setEditingMode('shared')
+        return
+      }
+      setModeTransitioning(true)
+      let sharedRes: Awaited<ReturnType<typeof getSharedAnnotation>>
+      try {
+        sharedRes = await getSharedAnnotation(effectiveDatasetId)
+      } catch (err) {
+        console.error('Failed to pre-check shared annotations:', err)
+        setModeTransitioning(false)
+        setEditingMode('shared')
+        return
+      }
+      const personalHasContent = Object.values(allAnnotations).some(
+        (v) => Array.isArray(v) && v.length > 0
+      )
+      const sharedHasContent =
+        !!sharedRes.annotations &&
+        Object.values(sharedRes.annotations).some((v) => Array.isArray(v) && v.length > 0)
+      preloadedSharedAnnotationRef.current = {
+        annotations: sharedRes.annotations ?? {},
+        version: sharedRes.version,
+      }
+      setModeTransitioning(false)
+      if (personalHasContent && sharedHasContent) {
+        setAutoSeedConfirm({ draft: allAnnotations, version: sharedRes.version })
         return
       }
       setEditingMode('shared')
     } else {
-      const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
-      if (totalRegions === 0) {
+      const sharedHasContent = Object.values(allAnnotations).some(
+        (v) => Array.isArray(v) && v.length > 0
+      )
+      if (!sharedHasContent || !effectiveDatasetId) {
         exitSharedMode()
-      } else {
-        setShowSharedExitDialog(true)
+        return
       }
+      setModeTransitioning(true)
+      let personalAnnotations: Awaited<ReturnType<typeof listAnnotations>>
+      try {
+        personalAnnotations = await listAnnotations()
+      } catch (err) {
+        console.error('Failed to pre-check personal annotations:', err)
+        setModeTransitioning(false)
+        exitSharedMode()
+        return
+      }
+      const personalDraft = personalAnnotations.find(
+        (a) => (a.source_dataset_id ?? undefined) === effectiveDatasetId
+      )
+      const personalHasContent =
+        !!personalDraft?.annotations &&
+        Object.values(personalDraft.annotations).some((v) => Array.isArray(v) && v.length > 0)
+      setModeTransitioning(false)
+      if (personalHasContent) {
+        setShowSharedExitDialog(true)
+        return
+      }
+      exitSharedMode()
     }
-  }, [editingMode, hasUnsavedChanges, persistAnnotations, allAnnotations, exitSharedMode, effectiveDatasetId])
+  }, [editingMode, hasUnsavedChanges, persistAnnotations, allAnnotations, effectiveDatasetId, exitSharedMode])
 
   const handleAutoSeedConfirm = useCallback(async (usePersonalDraft: boolean) => {
     if (!autoSeedConfirm || !effectiveDatasetId) { setAutoSeedConfirm(null); return }
-    const { draft, emptyAnnotations, version, preDecision } = autoSeedConfirm
+    const { draft, version } = autoSeedConfirm
     setAutoSeedConfirm(null)
 
-    if (preDecision) {
-      pendingSeedDecisionRef.current = { usePersonalDraft, draft }
-      setEditingMode('shared')
-      return
-    }
-
     if (usePersonalDraft) {
+      preloadedSharedAnnotationRef.current = null
       setSharedSaving(true)
       try {
         const saved = await saveSharedAnnotation(effectiveDatasetId, { version, annotations: draft })
-        setSharedVersion(saved.version)
+        preloadedSharedAnnotationRef.current = { annotations: draft, version: saved.version }
         toast.info(t('annotation.collab.autoSeeded'))
       } catch (err: any) {
         if (err instanceof ApiError && err.status === 409) {
           const fresh = await getSharedAnnotation(effectiveDatasetId)
-          setAllAnnotations(fresh.annotations)
-          mergeLabelColorsFromAnnotations(fresh.annotations)
-          setSharedVersion(fresh.version)
+          preloadedSharedAnnotationRef.current = { annotations: fresh.annotations, version: fresh.version }
         }
       } finally {
         setSharedSaving(false)
       }
-    } else {
-      setAllAnnotations(emptyAnnotations)
-      if (Object.keys(emptyAnnotations).length > 0) {
-        mergeLabelColorsFromAnnotations(emptyAnnotations)
-      }
     }
-  }, [autoSeedConfirm, effectiveDatasetId, mergeLabelColorsFromAnnotations, t, toast])
+    setEditingMode('shared')
+  }, [autoSeedConfirm, effectiveDatasetId, t, toast])
 
   const handleSharedExitChoice = useCallback((importToPersonal: boolean) => {
     setShowSharedExitDialog(false)
@@ -1312,18 +1350,37 @@ export default function WSIViewerPage() {
     }
   }, [addExtractionTask, allAnnotations, annotationId, editingMode, effectiveDatasetId, handleManualSave, hasUnsavedChanges, t, toast])
 
-  // Collaborative Mode: Enter shared mode (load initial state + determine ownership)
   useEffect(() => {
     if (editingMode !== 'shared' || !effectiveDatasetId) return
 
     let cancelled = false
+
+    const preloaded = preloadedSharedAnnotationRef.current
+    preloadedSharedAnnotationRef.current = null
+
+    if (preloaded) {
+      setAllAnnotations(preloaded.annotations)
+      if (Object.keys(preloaded.annotations).length > 0) {
+        mergeLabelColorsFromAnnotations(preloaded.annotations)
+      }
+      setSharedVersion(preloaded.version)
+      setHasUnsavedChanges(false)
+
+      listCollaborators(effectiveDatasetId).catch(() => null).then(collabRes => {
+        if (cancelled) return
+        if (collabRes) {
+          const isAdmin = user?.role === 'admin'
+          const isOwner = collabRes.members.some(m => m.role === 'owner' && m.user_id === user?.id)
+          setIsDatasetOwnerOrAdmin(isAdmin || isOwner)
+        } else {
+          setIsDatasetOwnerOrAdmin(user?.role === 'admin')
+        }
+      })
+
+      return () => { cancelled = true }
+    }
+
     setSharedSaving(true)
-
-    const seedDecision = pendingSeedDecisionRef.current
-    pendingSeedDecisionRef.current = null
-    const personalDraft = seedDecision?.draft ?? allAnnotations
-
-    let seedingStarted = false
 
     Promise.all([
       getSharedAnnotation(effectiveDatasetId),
@@ -1331,56 +1388,15 @@ export default function WSIViewerPage() {
     ]).then(([res, collabRes]) => {
       if (cancelled) return
 
-      const sharedIsEmpty = !res.annotations || Object.values(res.annotations).every(v => !Array.isArray(v) || v.length === 0)
-
-      if (seedDecision !== null) {
-        if (seedDecision.usePersonalDraft && sharedIsEmpty && !res.is_prepopulated) {
-          seedingStarted = true
-          setSharedSaving(true)
-          saveSharedAnnotation(effectiveDatasetId, { version: res.version, annotations: seedDecision.draft })
-            .then(saved => {
-              if (!cancelled) {
-                setSharedVersion(saved.version)
-                toast.info(t('annotation.collab.autoSeeded'))
-              }
-            })
-            .catch(async err => {
-              if (cancelled) return
-              if (err instanceof ApiError && err.status === 409) {
-                const fresh = await getSharedAnnotation(effectiveDatasetId)
-                setAllAnnotations(fresh.annotations)
-                mergeLabelColorsFromAnnotations(fresh.annotations)
-                setSharedVersion(fresh.version)
-              }
-            })
-            .finally(() => { if (!cancelled) setSharedSaving(false) })
-        } else {
-          if (res.is_prepopulated) toast.info(t('annotation.collab.sharedLoaded'))
-          const sharedContent = res.annotations ?? {}
-          setAllAnnotations(sharedContent)
-          if (Object.keys(sharedContent).length > 0) {
-            mergeLabelColorsFromAnnotations(sharedContent)
-          }
-          setSharedVersion(res.version)
-        }
-      } else {
-        const hasPersonalDraft = Object.values(personalDraft).some(v => Array.isArray(v) && v.length > 0)
-        const shouldAutoSeed = sharedIsEmpty && !res.is_prepopulated && hasPersonalDraft
-
-        if (shouldAutoSeed) {
-          setSharedVersion(res.version)
-          setAutoSeedConfirm({ draft: personalDraft, emptyAnnotations: res.annotations || {}, version: res.version })
-        } else {
-          if (res.is_prepopulated) toast.info(t('annotation.collab.sharedLoaded'))
-          if (res.annotations) {
-            setAllAnnotations(res.annotations)
-            mergeLabelColorsFromAnnotations(res.annotations)
-          }
-          setSharedVersion(res.version)
-        }
+      if (res.is_prepopulated) toast.info(t('annotation.collab.sharedLoaded'))
+      const sharedContent = res.annotations ?? {}
+      setAllAnnotations(sharedContent)
+      if (Object.keys(sharedContent).length > 0) {
+        mergeLabelColorsFromAnnotations(sharedContent)
       }
-
+      setSharedVersion(res.version)
       setHasUnsavedChanges(false)
+
       if (collabRes) {
         const isAdmin = user?.role === 'admin'
         const isOwner = collabRes.members.some(m => m.role === 'owner' && m.user_id === user?.id)
@@ -1398,11 +1414,10 @@ export default function WSIViewerPage() {
       }
       exitSharedMode()
     }).finally(() => {
-      if (!cancelled && !seedingStarted) setSharedSaving(false)
+      if (!cancelled) setSharedSaving(false)
     })
 
     return () => { cancelled = true }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editingMode, effectiveDatasetId, exitSharedMode, mergeLabelColorsFromAnnotations, t, toast, user?.id, user?.role])
 
   // Collaborative Mode: SSE
@@ -1879,6 +1894,7 @@ export default function WSIViewerPage() {
               onDropdownOpenChange={setIsLabelDropdownOpen}
               editingMode={editingMode}
               onToggleEditingMode={handleToggleEditingMode}
+              modeTransitioning={modeTransitioning}
               sharedSaving={sharedSaving}
               hasDatasetContext={!!effectiveDatasetId}
               isDatasetOwnerOrAdmin={isDatasetOwnerOrAdmin}
