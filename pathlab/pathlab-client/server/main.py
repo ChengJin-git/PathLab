@@ -105,6 +105,22 @@ def run_service(
         # such as the SdpcSlide SDK which can leak internal decoder buffers.
         kwargs["limit_max_requests"] = limit_max_requests
 
+    # uvicorn uses multiprocessing.get_context("spawn") for workers, which exec()s a
+    # fresh interpreter that doesn't inherit fds. uvicorn/_subprocess.py passes
+    # stdin_fileno to each worker, which calls os.fdopen(stdin_fileno) — if fd 0 is
+    # not inheritable (common under nohup), every worker crashes with EBADF → 503.
+    # Redirect fd 0 to /dev/null + mark inheritable; fall back to None so uvicorn
+    # skips stdin setup entirely (it guards with `if stdin_fileno is not None`).
+    try:
+        fd = os.open(os.devnull, os.O_RDONLY)
+        if fd != 0:
+            os.dup2(fd, 0)
+            os.close(fd)
+        os.set_inheritable(0, True)
+        sys.stdin = os.fdopen(0, "r", closefd=False)
+    except Exception:
+        sys.stdin = None
+
     uvicorn.run(app_module, **kwargs)
 
 
