@@ -105,6 +105,7 @@ class TaskQueueManager:
         self._gpu_assignments: Dict[
             str, int
         ] = {}  # task_id -> GPU index for running tasks
+        self._bad_gpus: set = set()  # GPU indices confirmed to have hardware failures
         self._condition: Optional[asyncio.Condition] = (
             None  # For dynamic concurrency control
         )
@@ -181,6 +182,19 @@ class TaskQueueManager:
             f"Queue size: {self._queue.qsize()}, Running: {len(self._running_tasks)}"
         )
 
+    def mark_gpu_bad(self, gpu_index: int) -> None:
+        """Mark a GPU as unhealthy so it is excluded from future task scheduling."""
+        if gpu_index not in self._bad_gpus:
+            self._bad_gpus.add(gpu_index)
+            logger.warning(
+                f"GPU {gpu_index} marked as unhealthy and excluded from task scheduling. "
+                f"Total bad GPUs: {sorted(self._bad_gpus)}"
+            )
+
+    def get_bad_gpus(self) -> frozenset:
+        """Return a snapshot of GPU indices currently marked as unhealthy."""
+        return frozenset(self._bad_gpus)
+
     def _select_optimal_gpu(self) -> int:
         """
         Select the optimal GPU for a new task.
@@ -205,15 +219,16 @@ class TaskQueueManager:
         if not gpu_info_list:
             return -1
 
-        # Get set of GPUs currently running tasks
         gpus_with_tasks = set(self._gpu_assignments.values())
 
-        # Strategy 1: Find GPU without running tasks that meets VRAM requirement
+        # Strategy 1: idle GPU (no running tasks) that is healthy and meets VRAM requirement
         best_idle_gpu = -1
         best_idle_free_mb = 0.0
         for info in gpu_info_list:
             gpu_idx = info["index"]
             free_mb = info["free_mb"]
+            if gpu_idx in self._bad_gpus:
+                continue
             if gpu_idx not in gpus_with_tasks and free_mb >= self.min_vram_mb:
                 if free_mb > best_idle_free_mb:
                     best_idle_free_mb = free_mb
@@ -222,23 +237,25 @@ class TaskQueueManager:
         if best_idle_gpu >= 0:
             logger.debug(
                 f"Selected idle GPU {best_idle_gpu} with {best_idle_free_mb:.0f} MB free VRAM "
-                f"(GPUs with tasks: {gpus_with_tasks})"
+                f"(GPUs with tasks: {gpus_with_tasks}, bad GPUs: {self._bad_gpus})"
             )
             return best_idle_gpu
 
-        # Strategy 2: All GPUs have tasks, select the one with most free VRAM
+        # Strategy 2: all healthy GPUs have tasks — pick the one with most free VRAM
         best_gpu = -1
         best_free_mb = 0.0
         for info in gpu_info_list:
             gpu_idx = info["index"]
             free_mb = info["free_mb"]
+            if gpu_idx in self._bad_gpus:
+                continue
             if free_mb >= self.min_vram_mb and free_mb > best_free_mb:
                 best_free_mb = free_mb
                 best_gpu = gpu_idx
 
         if best_gpu >= 0:
             logger.debug(
-                f"All GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
+                f"All healthy GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
             )
         return best_gpu
 
@@ -453,6 +470,8 @@ class TaskQueueManager:
             logger.error(
                 f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}"
             )
+            if queued_task.assigned_gpu is not None and "CUDA error" in str(e):
+                self.mark_gpu_bad(queued_task.assigned_gpu)
             await self._ensure_task_failed(
                 queued_task.task_id, queued_task.task_type, str(e)
             )
@@ -660,6 +679,7 @@ class TaskQueueManager:
             "max_concurrent": self.max_concurrent,
             "min_vram_mb": self.min_vram_mb,
             "gpu_count": self.gpu_count,
+            "bad_gpus": sorted(self._bad_gpus),
             "running_count": len(self._running_tasks),
             "pending_count": len(self._pending_tasks),
             "queue_size": self._queue.qsize() if self._queue else 0,

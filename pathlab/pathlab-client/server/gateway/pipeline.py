@@ -1048,6 +1048,19 @@ async def run_training_pipeline(
                 except Exception:
                     pass
 
+        if (
+            "CUDA error" in err_msg
+            and assigned_device
+            and assigned_device.startswith("cuda:")
+        ):
+            try:
+                from .task_queue import get_task_queue as _get_tq
+
+                _gpu_idx = int(assigned_device.split(":")[-1])
+                _get_tq().mark_gpu_bad(_gpu_idx)
+            except Exception:
+                pass
+
         async with logger_manager.session() as (logger, db):
             await logger.error(
                 f"Training pipeline failed: [{err_type}] {err_msg}",
