@@ -284,6 +284,9 @@ def format_user_data_context(
     is_admin: bool,
     can_use_gpu_base: bool,
     temp_perms_list: str,
+    own_public_datasets_count: int,
+    own_private_datasets_count: int,
+    elevated_datasets_count: int,
     current_datetime: str,
 ) -> str:
     """
@@ -311,6 +314,9 @@ def format_user_data_context(
         is_admin: Whether user is admin
         can_use_gpu_base: Whether user can use GPU by default
         temp_perms_list: Formatted list of temporary permissions
+        own_public_datasets_count: Number of user's own public datasets
+        own_private_datasets_count: Number of user's own private datasets
+        elevated_datasets_count: Number of temporarily elevated-access datasets
         current_datetime: Current datetime string in the user's local timezone
 
     Returns:
@@ -352,5 +358,8 @@ def format_user_data_context(
         data_visibility=data_visibility,
         can_use_gpu=can_use_gpu,
         temp_perms_list=temp_perms_list,
+        own_public_datasets_count=own_public_datasets_count,
+        own_private_datasets_count=own_private_datasets_count,
+        elevated_datasets_count=elevated_datasets_count,
         current_datetime=current_datetime,
     )

@@ -4403,6 +4403,20 @@ async def chat_with_ai(
     else:
         data_types_info = "None"
 
+    own_public_datasets_count = 0
+    own_private_datasets_count = 0
+    elevated_datasets_count = 0
+    if not user.is_admin():
+        for d in stats_datasets:
+            access_type = d.get("access_type", "own")
+            if access_type == "elevated":
+                elevated_datasets_count += 1
+                continue
+            if bool(d.get("is_public")):
+                own_public_datasets_count += 1
+            else:
+                own_private_datasets_count += 1
+
     if trained_models:
         model_summaries = []
         # Batch query all training tasks to get detailed info with eager loading
@@ -4922,6 +4936,9 @@ async def chat_with_ai(
         is_admin=user.is_admin(),
         can_use_gpu_base=can_use_gpu_base,
         temp_perms_list=temp_perms_list,
+        own_public_datasets_count=own_public_datasets_count,
+        own_private_datasets_count=own_private_datasets_count,
+        elevated_datasets_count=elevated_datasets_count,
         current_datetime=current_datetime,
     )
 
@@ -4942,6 +4959,9 @@ async def chat_with_ai(
                 "inference_tasks_completed": inference_tasks_completed,
                 "inference_tasks_running": inference_tasks_running,
                 "inference_tasks_list": inference_tasks_list,
+                "own_public_datasets_count": own_public_datasets_count,
+                "own_private_datasets_count": own_private_datasets_count,
+                "elevated_datasets_count": elevated_datasets_count,
             }
         )
     elif _ctx_cached is None and elevated_dataset_ids is None:
@@ -4962,6 +4982,9 @@ async def chat_with_ai(
                 "inference_tasks_completed": inference_tasks_completed,
                 "inference_tasks_running": inference_tasks_running,
                 "inference_tasks_list": inference_tasks_list,
+                "own_public_datasets_count": own_public_datasets_count,
+                "own_private_datasets_count": own_private_datasets_count,
+                "elevated_datasets_count": elevated_datasets_count,
             },
         )
 
@@ -4994,6 +5017,9 @@ async def chat_with_ai(
             is_admin=user.is_admin(),
             can_use_gpu_base=can_use_gpu_base,
             temp_perms_list=temp_perms_list,
+            own_public_datasets_count=_ctx_cached.get("own_public_datasets_count", 0),
+            own_private_datasets_count=_ctx_cached.get("own_private_datasets_count", 0),
+            elevated_datasets_count=_ctx_cached.get("elevated_datasets_count", 0),
             current_datetime=current_datetime,
         )
 

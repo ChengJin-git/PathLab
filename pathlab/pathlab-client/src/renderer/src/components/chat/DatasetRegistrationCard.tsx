@@ -10,6 +10,7 @@ import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTask
 import { isSupportedName, isTmapDataFile, getBaseName } from '../../constants/fileTypes'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 import { Select } from '../ui/select'
+import { organSources, organSourceKeyMap } from '../upload/types'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
   const match = content.match(/\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/)
@@ -39,6 +40,7 @@ interface LocalItem {
 interface DatasetRegistrationConfig {
   dataset_id?: string
   dataset_name?: string
+  source_organ?: string
   upload_mode?: 'classification' | 'survival' | 'segmentation'
   aggregation_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
@@ -82,6 +84,8 @@ export function DatasetRegistrationCard({
   const [loadingDatasets, setLoadingDatasets] = useState(false)
   const [selectedDatasetId, setSelectedDatasetId] = useState<string>(config?.dataset_id || '')
   const [newDatasetName, setNewDatasetName] = useState(config?.dataset_name || '')
+  const [datasetSourceSelection, setDatasetSourceSelection] = useState<string>(config?.source_organ || '')
+  const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
   const [isPublic, setIsPublic] = useState<boolean>(Boolean(config?.is_public))
   const isSegmentation = config?.upload_mode === 'segmentation'
   const [dataLevel, setDataLevel] = useState<'file' | 'case'>(isSegmentation ? 'file' : (config?.aggregation_level || 'file'))
@@ -117,6 +121,13 @@ export function DatasetRegistrationCard({
     () => datasets.find(dataset => dataset.dataset_id === selectedDatasetId),
     [datasets, selectedDatasetId]
   )
+
+  const isOtherSource = datasetSourceSelection === 'Other'
+
+  const getResolvedDatasetSource = () => {
+    if (isOtherSource) return datasetSourceCustom.trim()
+    return datasetSourceSelection.trim()
+  }
 
   const getDatasetSource = (dataset?: DatasetSummary | null) => {
     const source = dataset?.source_organ?.trim()
@@ -165,6 +176,20 @@ export function DatasetRegistrationCard({
       segmentationDuplicateJsonStems.size > 0
     )
   }, [isSegmentation, localItems, mode, segmentationJsonFiles, segmentationDuplicateJsonStems])
+
+  useEffect(() => {
+    const configuredSource = config?.source_organ?.trim()
+    if (!configuredSource) return
+
+    if (organSources.includes(configuredSource)) {
+      setDatasetSourceSelection(configuredSource)
+      setDatasetSourceCustom('')
+      return
+    }
+
+    setDatasetSourceSelection('Other')
+    setDatasetSourceCustom(configuredSource)
+  }, [config?.source_organ])
 
   const loadDatasets = async () => {
     try {
@@ -424,6 +449,7 @@ export function DatasetRegistrationCard({
           }
         }))
         : localItems.map(item => {
+          const resolvedDatasetSource = getResolvedDatasetSource()
           const matchedSegmentationJson = isSegmentation
             ? segmentationJsonFiles.get(getSegmentationStem(item.name))
             : undefined
@@ -436,6 +462,7 @@ export function DatasetRegistrationCard({
               metadata: {
                 dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
                 dataset_name: mode === 'new' ? newDatasetName : undefined,
+                source_organ: mode === 'new' ? (resolvedDatasetSource || undefined) : undefined,
                 aggregation_level: dataLevel,
                 is_public: mode === 'new' ? isPublic : undefined,
                 task_type: config?.upload_mode || 'classification',
@@ -683,6 +710,45 @@ export function DatasetRegistrationCard({
                     </button>
                 </div>
               </div>
+
+              {mode === 'new' && (
+                <div className="w-full">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('uploadComponents.datasetConfig.sourceOrganTissue')}
+                  </label>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    <Select
+                      value={datasetSourceSelection}
+                      onChange={setDatasetSourceSelection}
+                      options={[
+                        ...organSources.filter((source) => source !== 'Other').map((source) => ({
+                          value: source,
+                          label: t(`organSources.${organSourceKeyMap[source]}`),
+                        })),
+                        { value: 'Other', label: t('organSources.other') },
+                      ]}
+                      placeholder={t('uploadComponents.datasetConfig.selectDatasetSource')}
+                    />
+                    <input
+                      type="text"
+                      value={isOtherSource ? datasetSourceCustom : ''}
+                      onChange={(e) => setDatasetSourceCustom(e.target.value)}
+                      disabled={!isOtherSource}
+                      placeholder={isOtherSource
+                        ? t('uploadComponents.datasetConfig.otherSourcePlaceholder')
+                        : t('uploadComponents.datasetConfig.selectDatasetSource')}
+                      className={`w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-primary-100 h-[38px] ${
+                        !isOtherSource
+                          ? 'bg-gray-100 border-gray-200 cursor-not-allowed opacity-60'
+                          : 'bg-white border-gray-200'
+                      }`}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">
+                    {t('uploadComponents.datasetConfig.datasetSourceDescription')}
+                  </p>
+                </div>
+              )}
 
               {mode === 'new' && (
                 <div className="w-full">

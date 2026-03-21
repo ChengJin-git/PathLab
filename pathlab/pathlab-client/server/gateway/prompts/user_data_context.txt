@@ -8,6 +8,7 @@
 The user has the following data available:
 - **Total images**: {wsi_count}
 - **Data types (overall)**: {data_types_info}
+- **Dataset visibility breakdown**: own public={own_public_datasets_count}, own private={own_private_datasets_count}, temporary elevated={elevated_datasets_count}
 - **Datasets** (IMPORTANT - includes BOTH user's own datasets AND datasets with temporary elevated access):
 {datasets_list}
 
