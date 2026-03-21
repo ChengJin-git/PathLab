@@ -4,7 +4,7 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { Trans, useTranslation } from 'react-i18next'
+import { useTranslation } from 'react-i18next'
 import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
 import {
   Microscope, Brain, Shield, Zap, ArrowRight, Upload,
@@ -59,21 +59,6 @@ function Navbar({ goToLogin }: { goToLogin: () => void }) {
             {t('introduction.signIn')}
           </Button>
         </div>
-      </div>
-      <div className="border-t border-slate-200/70 bg-slate-50/80">
-        <p className="max-w-6xl mx-auto px-4 sm:px-6 py-2 text-center text-[11px] sm:text-xs text-slate-600">
-          <Trans
-            i18nKey="introduction.inviteOnlyNoticeWithContact"
-            components={{
-              contactLink: (
-                <a
-                  href="mailto:cjinag@connect.ust.hk"
-                  className="font-medium underline underline-offset-2 text-blue-700 hover:text-blue-800 transition-colors"
-                />
-              ),
-            }}
-          />
-        </p>
       </div>
     </nav>
   )

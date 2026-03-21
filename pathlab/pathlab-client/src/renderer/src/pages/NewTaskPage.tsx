@@ -299,6 +299,9 @@ export default function NewTaskPage() {
     if (errorLower.includes('wsi') || errorLower.includes('slide')) {
       return t('newTask.errors.invalidLabels')
     }
+    if (errorLower.includes('pathologist access') || errorLower.includes('elevated permission')) {
+      return t('newTask.errors.gpuPermissionRequired')
+    }
     if (errorLower.includes('gpu') || errorLower.includes('cuda')) {
       return t('newTask.errors.gpuRequired')
     }
