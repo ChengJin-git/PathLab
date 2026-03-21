@@ -287,6 +287,7 @@ def format_user_data_context(
     own_public_datasets_count: int,
     own_private_datasets_count: int,
     elevated_datasets_count: int,
+    other_public_datasets_count: int,
     current_datetime: str,
 ) -> str:
     """
@@ -361,5 +362,6 @@ def format_user_data_context(
         own_public_datasets_count=own_public_datasets_count,
         own_private_datasets_count=own_private_datasets_count,
         elevated_datasets_count=elevated_datasets_count,
+        other_public_datasets_count=other_public_datasets_count,
         current_datetime=current_datetime,
     )

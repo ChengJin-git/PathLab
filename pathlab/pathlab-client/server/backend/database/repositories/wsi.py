@@ -459,12 +459,24 @@ class WSIRepository:
             Dict with total_count, labels (dict), data_types (dict), datasets (list)
             Each dataset in the list has an "access_type" field: "own" or "elevated"
         """
-        from sqlalchemy import case, and_
+        from sqlalchemy import case, and_, or_
 
         is_wsi, is_patch = WSIRepository._build_file_level_data_type_conditions()
         user_filter = WSIRepository._build_visibility_filter(
             user_id, elevated_dataset_ids
         )
+
+        # Extend visibility to include other users' public datasets (for AI chat context)
+        if user_filter is not None:
+            from ..models import Dataset as _Dataset
+
+            _public_dataset_condition = and_(
+                WSISlide.dataset_id.isnot(None),
+                _Dataset.is_public.is_(True),
+            )
+            dataset_visibility_filter = or_(user_filter, _public_dataset_condition)
+        else:
+            dataset_visibility_filter = None
 
         # Single query for total count and data type distribution
         stats_query = select(
@@ -509,6 +521,7 @@ class WSIRepository:
                 Dataset.dataset_id,
                 Dataset.name.label("dataset_name"),
                 Dataset.user_id.label("dataset_owner_id"),
+                Dataset.is_public.label("is_public"),
                 DataGroup.data_type.label("group_data_type"),
                 DataGroup.task_type.label("group_task_type"),
                 func.count(WSISlide.id).label("file_count"),
@@ -520,13 +533,14 @@ class WSIRepository:
             .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
         )
 
-        if user_filter is not None:
-            datasets_query = datasets_query.where(user_filter)
+        if dataset_visibility_filter is not None:
+            datasets_query = datasets_query.where(dataset_visibility_filter)
 
         datasets_query = datasets_query.group_by(
             Dataset.dataset_id,
             Dataset.name,
             Dataset.user_id,
+            Dataset.is_public,
             DataGroup.data_type,
             DataGroup.task_type,
         ).order_by(Dataset.name)
@@ -543,8 +557,10 @@ class WSIRepository:
             .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
         )
 
-        if user_filter is not None:
-            labels_per_dataset_query = labels_per_dataset_query.where(user_filter)
+        if dataset_visibility_filter is not None:
+            labels_per_dataset_query = labels_per_dataset_query.where(
+                dataset_visibility_filter
+            )
 
         labels_per_dataset_query = labels_per_dataset_query.where(
             WSISlide.label.isnot(None)
@@ -569,8 +585,10 @@ class WSIRepository:
             .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
         )
 
-        if user_filter is not None:
-            survival_per_dataset_query = survival_per_dataset_query.where(user_filter)
+        if dataset_visibility_filter is not None:
+            survival_per_dataset_query = survival_per_dataset_query.where(
+                dataset_visibility_filter
+            )
 
         # Only count records that have both event_time and event_status
         survival_per_dataset_query = survival_per_dataset_query.where(
@@ -632,8 +650,10 @@ class WSIRepository:
             .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
         )
 
-        if user_filter is not None:
-            splits_per_dataset_query = splits_per_dataset_query.where(user_filter)
+        if dataset_visibility_filter is not None:
+            splits_per_dataset_query = splits_per_dataset_query.where(
+                dataset_visibility_filter
+            )
 
         splits_per_dataset_query = splits_per_dataset_query.group_by(Dataset.dataset_id)
         splits_per_dataset_result = await db.execute(splits_per_dataset_query)
@@ -662,9 +682,9 @@ class WSIRepository:
             .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
         )
 
-        if user_filter is not None:
+        if dataset_visibility_filter is not None:
             event_status_per_dataset_query = event_status_per_dataset_query.where(
-                user_filter
+                dataset_visibility_filter
             )
 
         # Only count records that have both event_time and event_status
@@ -704,7 +724,6 @@ class WSIRepository:
             )
             event_status_dist = dataset_event_status_map.get(row.dataset_id, {})
 
-            # Determine access_type: "own" if user owns it, "elevated" if via temporary permission
             if (
                 user_id is not None
                 and row.dataset_owner_id != user_id
@@ -713,6 +732,12 @@ class WSIRepository:
                 )
             ):
                 access_type = "elevated"
+            elif (
+                user_id is not None
+                and row.dataset_owner_id != user_id
+                and bool(row.is_public)
+            ):
+                access_type = "public"
             else:
                 access_type = "own"
 
@@ -722,17 +747,18 @@ class WSIRepository:
                     "dataset_name": row.dataset_name or "Uncategorized",
                     "file_count": row.file_count,
                     "data_type": data_type,
-                    "group_task_type": row.group_task_type,  # DataGroup task_type: 'classification', 'survival', 'segmentation'
+                    "group_task_type": row.group_task_type,
                     "labels": ds_labels,
-                    "survival_count": survival_count,  # Number of records with survival data
-                    "event_status": event_status_dist,  # Distribution of event_status: {'event': count, 'censored': count}
+                    "survival_count": survival_count,
+                    "event_status": event_status_dist,
                     "has_predefined_splits": splits_info["has_predefined_splits"],
                     "predefined_split_counts": {
                         "train": splits_info["train"],
                         "val": splits_info["val"],
                         "test": splits_info["test"],
                     },
-                    "access_type": access_type,  # "own" or "elevated"
+                    "is_public": bool(row.is_public or False),
+                    "access_type": access_type,
                 }
             )
 
@@ -1157,7 +1183,6 @@ class WSIRepository:
         )
         return result.scalars().first()
 
-    @staticmethod
     @staticmethod
     def _file_sort_expr(sort_by: Optional[str] = None, sort_order: str = "asc"):
         _COL_MAP = {

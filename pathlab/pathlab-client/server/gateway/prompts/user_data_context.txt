@@ -8,13 +8,14 @@
 The user has the following data available:
 - **Total images**: {wsi_count}
 - **Data types (overall)**: {data_types_info}
-- **Dataset visibility breakdown**: own public={own_public_datasets_count}, own private={own_private_datasets_count}, temporary elevated={elevated_datasets_count}
-- **Datasets** (IMPORTANT - includes BOTH user's own datasets AND datasets with temporary elevated access):
+- **Dataset visibility breakdown**: own public={own_public_datasets_count}, own private={own_private_datasets_count}, other users' public={other_public_datasets_count}, temporary elevated={elevated_datasets_count}
+- **Datasets** (IMPORTANT - includes user's own datasets, other users' public datasets, AND datasets with temporary elevated access):
 {datasets_list}
 
 **Dataset Access Types**:
-- Datasets WITHOUT "[ELEVATED ACCESS]" marker = user's OWN datasets (uploaded by user)
+- Datasets WITHOUT any marker = user's OWN datasets (uploaded by user)
 - Datasets WITH "[ELEVATED ACCESS - temporary permission]" = OTHER users' datasets that this user has been granted temporary access to
+- Datasets WITH "[PUBLIC ACCESS - shared by other user]" = OTHER users' datasets that are publicly visible to everyone
 
 **Dataset Information Format**: Each dataset shows:
 - dataset_id: Unique identifier (use this as data_task_id for external validation)
@@ -33,8 +34,9 @@ CRITICAL: If a dataset line includes `predefined_split_distribution(...)`, you M
 CRITICAL: Whenever you mention, compare, recommend, or present datasets from the user's current data, include that dataset's `source` in the response or option text.
 
 CRITICAL: When user asks "what data do I have" or similar questions, you MUST list ALL datasets shown above, clearly distinguishing:
-1. "Your own datasets: ..." (datasets without ELEVATED ACCESS marker)
-2. "Datasets you have temporary access to: ..." (datasets with ELEVATED ACCESS marker)
+1. "Your own datasets: ..." (datasets without any access marker)
+2. "Public datasets from other users: ..." (datasets with PUBLIC ACCESS marker)
+3. "Datasets you have temporary access to: ..." (datasets with ELEVATED ACCESS marker)
 
 ## USER'S TRAINED MODELS
 

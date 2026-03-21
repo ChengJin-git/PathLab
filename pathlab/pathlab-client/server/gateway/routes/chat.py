@@ -4368,17 +4368,16 @@ async def chat_with_ai(
                     features_root, dataset_wsi_ids[0]
                 )
                 if available_extractors:
-                    available_extractors_str = (
-                        f", available_extractors=[{', '.join(available_extractors)}]"
-                    )
+                    available_extractors_str = f", available_feature_extractors=[{', '.join(available_extractors)}]"
             # Store for model compatibility lookup
             available_extractors_per_dataset[ds_id] = available_extractors
             d["available_feature_extractors"] = available_extractors
 
-            # Add access type marker for elevated (temporary permission) datasets
             access_marker = (
                 " [ELEVATED ACCESS - temporary permission]"
                 if ds_access_type == "elevated"
+                else " [PUBLIC ACCESS - shared by other user]"
+                if ds_access_type == "public"
                 else ""
             )
 
@@ -4406,11 +4405,15 @@ async def chat_with_ai(
     own_public_datasets_count = 0
     own_private_datasets_count = 0
     elevated_datasets_count = 0
+    other_public_datasets_count = 0
     if not user.is_admin():
         for d in stats_datasets:
             access_type = d.get("access_type", "own")
             if access_type == "elevated":
                 elevated_datasets_count += 1
+                continue
+            if access_type == "public":
+                other_public_datasets_count += 1
                 continue
             if bool(d.get("is_public")):
                 own_public_datasets_count += 1
@@ -4939,6 +4942,7 @@ async def chat_with_ai(
         own_public_datasets_count=own_public_datasets_count,
         own_private_datasets_count=own_private_datasets_count,
         elevated_datasets_count=elevated_datasets_count,
+        other_public_datasets_count=other_public_datasets_count,
         current_datetime=current_datetime,
     )
 
@@ -4962,6 +4966,7 @@ async def chat_with_ai(
                 "own_public_datasets_count": own_public_datasets_count,
                 "own_private_datasets_count": own_private_datasets_count,
                 "elevated_datasets_count": elevated_datasets_count,
+                "other_public_datasets_count": other_public_datasets_count,
             }
         )
     elif _ctx_cached is None and elevated_dataset_ids is None:
@@ -4985,6 +4990,7 @@ async def chat_with_ai(
                 "own_public_datasets_count": own_public_datasets_count,
                 "own_private_datasets_count": own_private_datasets_count,
                 "elevated_datasets_count": elevated_datasets_count,
+                "other_public_datasets_count": other_public_datasets_count,
             },
         )
 
@@ -5020,6 +5026,9 @@ async def chat_with_ai(
             own_public_datasets_count=_ctx_cached.get("own_public_datasets_count", 0),
             own_private_datasets_count=_ctx_cached.get("own_private_datasets_count", 0),
             elevated_datasets_count=_ctx_cached.get("elevated_datasets_count", 0),
+            other_public_datasets_count=_ctx_cached.get(
+                "other_public_datasets_count", 0
+            ),
             current_datetime=current_datetime,
         )
 
