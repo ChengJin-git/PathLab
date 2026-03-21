@@ -285,7 +285,7 @@ class Config:
             "turnstile_secret_key": turnstile_secret_key,
             "resend_enabled": data.get("resend_enabled", False),
             "resend_api_key": data.get("resend_api_key", ""),
-            "resend_from_email": data.get("resend_from_email", ""),
+            "resend_admin_email": data.get("resend_admin_email", ""),
         }
 
     @classmethod
@@ -324,7 +324,7 @@ class Config:
             "turnstile_secret_key",
             "resend_enabled",
             "resend_api_key",
-            "resend_from_email",
+            "resend_admin_email",
         }
         filtered = {k: v for k, v in settings.items() if k in allowed_keys}
         if filtered:

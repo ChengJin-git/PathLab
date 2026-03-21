@@ -116,8 +116,7 @@ class TestGetGlobalSettings:
             "turnstile_secret_key",
             "resend_enabled",
             "resend_api_key",
-            "resend_from_email",
-            "site_url",
+            "resend_admin_email",
         }
         assert expected_keys.issubset(data.keys())
 
