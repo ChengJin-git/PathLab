@@ -460,6 +460,11 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
                 "annotations": roi_map,
                 "record_count": 1,
                 "source": "ground_truth",
+                "annotation_source": (
+                    "imported_gt"
+                    if record.source in ("import", "upload")
+                    else "user_label"
+                ),
                 "width": gt_width or wsi.width,
                 "height": gt_height or wsi.height,
             }
@@ -473,6 +478,7 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
             "annotations": {},
             "record_count": 0,
             "source": "ground_truth",
+            "annotation_source": None,
             "width": wsi.width,
             "height": wsi.height,
         },
@@ -774,6 +780,7 @@ async def get_dataset_ground_truth_annotations(
             "annotations": {},
             "record_count": 0,
             "source": "ground_truth",
+            "annotation_source": None,
         }
 
     merged_annotations, used_record_count = await _get_dataset_ground_truth_roi_map(
@@ -785,13 +792,21 @@ async def get_dataset_ground_truth_annotations(
             "annotations": {},
             "record_count": 0,
             "source": "ground_truth",
+            "annotation_source": None,
         }
+
+    gt_records = await SegmentationAnnotationRepository.get_all_by_dataset(
+        db, dataset_id, include_drafts=False
+    )
+    has_imported = any(r.source in ("import", "upload") for r in gt_records)
+    annotation_source = "imported_gt" if has_imported else "user_label"
 
     return {
         "dataset_id": dataset_id,
         "annotations": merged_annotations,
         "record_count": used_record_count,
         "source": "ground_truth",
+        "annotation_source": annotation_source,
     }
 
 
@@ -818,6 +833,7 @@ async def get_dataset_annotation_summary(
             "has_wsi_sources": False,
             "source": "effective_dataset",
             "annotation_id": None,
+            "label_annotation_source": None,
         }
 
     wsi_key = await WSIRepository.get_dataset_cache_key(db, dataset_id)
@@ -841,11 +857,21 @@ async def get_dataset_annotation_summary(
         "labels": {},
         "has_wsi_sources": False,
     }
+    finalized_records = await SegmentationAnnotationRepository.get_all_by_dataset(
+        db, dataset_id, include_drafts=False
+    )
+    if finalized_records:
+        has_imported = any(r.source in ("import", "upload") for r in finalized_records)
+        label_annotation_source = "imported_gt" if has_imported else "user_label"
+    else:
+        label_annotation_source = None
+
     return {
         "dataset_id": dataset_id,
         **draft_summary,
         "source": "effective_dataset",
         "annotation_id": annotation_id,
+        "label_annotation_source": label_annotation_source,
     }
 
 
@@ -1192,6 +1218,25 @@ async def extract_regions(
     )
 
     await set_task_owner(task_id, user_id)
+
+    if req.source_dataset_id:
+        try:
+            await AnnotationAuditLogRepository.log(
+                db,
+                req.source_dataset_id,
+                user_id,
+                "promoted_to_training_reference",
+                {
+                    "task_id": task_id,
+                    "annotation_mode": req.annotation_mode or "personal",
+                    "dataset_name": req.dataset_name,
+                },
+            )
+            await db.commit()
+        except Exception as audit_err:
+            logger.warning(
+                f"Failed to write promoted_to_training_reference audit: {audit_err}"
+            )
 
     return {"task_id": task_id, "status": "started"}
 
