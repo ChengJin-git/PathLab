@@ -20,6 +20,24 @@ function stripLogoPreview(html: string): string {
   return html.replace(/<span[^>]*data-tpl="logo_html"[^>]*>[\s\S]*?<\/span>/gi, LOGO_PLACEHOLDER)
 }
 
+const LEGAL_FOOTER_HTML =
+  "<hr style='border:none;border-top:1px solid #e0e0e0;margin:32px 0 16px'>" +
+  "<p style='font-size:11px;color:#999;line-height:1.6;font-family:Arial,sans-serif;'>" +
+  "This message contains confidential information intended for a specific individual " +
+  "and purpose. If you are not the intended recipient, you should delete this message " +
+  "and notify the sender, " +
+  "<a href='https://smartlab.cse.ust.hk/' style='color:#999;'>SmartLab</a>, " +
+  "and The Hong Kong University of Science and Technology (the University) immediately. " +
+  "Any disclosure, copying, or distribution of this message, or the taking of any action " +
+  "based on it, is strictly prohibited and may be unlawful.<br><br>" +
+  "SmartLab and the University specifically deny any responsibility for the accuracy or " +
+  "quality of information obtained through University E-mail Facilities. Any views and " +
+  "opinions expressed are only those of the author(s) and do not necessarily represent " +
+  "those of SmartLab or the University, and neither SmartLab nor the University accepts " +
+  "liability whatsoever for any losses or damages incurred or caused to any party as a " +
+  "result of the use of such information." +
+  "</p>"
+
 const TOOLBAR: Array<{ cmd: string; label: string; title: string }> = [
   { cmd: 'bold', label: 'B', title: '粗体' },
   { cmd: 'italic', label: 'I', title: '斜体' },
@@ -77,7 +95,7 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
 
   useEffect(() => {
     if (previewRef.current) {
-      previewRef.current.innerHTML = injectLogoPreview(current.html)
+      previewRef.current.innerHTML = injectLogoPreview(current.html) + LEGAL_FOOTER_HTML
     }
   }, [current.html])
 
