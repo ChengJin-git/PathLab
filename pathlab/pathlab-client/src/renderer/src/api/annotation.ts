@@ -40,11 +40,14 @@ export interface SegmentationAnnotation {
   updated_at: string
 }
 
+export type AnnotationSource = 'imported_gt' | 'user_label'
+
 export interface DatasetGroundTruthResponse {
   dataset_id: string
   annotations: AnnotationsMap
   record_count: number
   source: 'ground_truth'
+  annotation_source?: AnnotationSource | null
   width?: number | null
   height?: number | null
 }
@@ -63,6 +66,7 @@ export interface DatasetAnnotationSummaryResponse {
   has_wsi_sources: boolean
   source: 'effective_dataset'
   annotation_id?: string | null
+  label_annotation_source?: AnnotationSource | null
 }
 
 /**
