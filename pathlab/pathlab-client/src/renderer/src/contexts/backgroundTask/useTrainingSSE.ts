@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { getAuthToken, getCurrentUser, TrainingTaskDetail } from '../../api'
 import { API_BASE } from '../../config'
 import { mapTrainingStatus } from './helpers'
@@ -13,6 +14,7 @@ import type { BackgroundTask, TaskType, TrainingTaskStatus, ServerTaskType } fro
  * Returns the converted BackgroundTask[] and raw TrainingTaskDetail[] for downstream consumers.
  */
 export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
+  const { t } = useTranslation()
   const [trainingTasks, setTrainingTasks] = useState<BackgroundTask[]>([])
   const [rawTrainingTasks, setRawTrainingTasks] = useState<TrainingTaskDetail[] | null>(null)
 
@@ -73,7 +75,9 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
 
             // Use appropriate prefix based on task type
             const taskPrefix = isExternalValidation ? 'extval' : 'training'
-            const itemNamePrefix = isExternalValidation ? 'Validation' : 'Training'
+            const itemName = isExternalValidation
+              ? t('backgroundTask.taskTitles.validation', { name: task.task_name })
+              : t('backgroundTask.taskTitles.training', { name: task.task_name })
 
             return {
               id: `${taskPrefix}_${task.task_id}`,
@@ -81,7 +85,7 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
               title: task.task_name,
               items: [{
                 id: task.task_id,
-                name: `${itemNamePrefix}: ${task.task_name}`,
+                name: itemName,
                 status: mapTrainingStatus(task.status),
                 progress: displayProgress
               }],
@@ -119,7 +123,7 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
     return () => {
       eventSource.close()
     }
-  }, [isLoggedIn, enabled])  // Re-connect SSE when login state or subscription changes
+  }, [isLoggedIn, enabled, t])  // Re-connect SSE when login state or subscription changes
 
   return { trainingTasks, rawTrainingTasks }
 }
