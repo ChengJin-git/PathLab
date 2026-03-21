@@ -101,6 +101,11 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
   - request task/data type must match dataset contracts: `pathlab/pathlab-client/server/gateway/routes/training.py:370`
   - GPU permission check by dataset for non-GPU users: `pathlab/pathlab-client/server/gateway/routes/training.py:381`
 - Task list/detail filtered by owner unless admin via `get_user_id_filter` and ownership checks: `pathlab/pathlab-client/server/gateway/routes/training.py:493`, `pathlab/pathlab-client/server/gateway/routes/training.py:708`, `pathlab/pathlab-client/server/backend/auth/dependencies.py:49`.
+- **Rerun** (failed or cancelled training tasks):
+  - Frontend shows the rerun button for both `failed` and `cancelled` task statuses: `pathlab/pathlab-client/src/renderer/src/pages/TaskDetailPage.tsx`.
+  - Non-admin rerun: submits a new task owned by the current user; `rerun_from_task_id` is not sent. All standard permission checks (WSI access, GPU) apply to the requester.
+  - Admin rerun: frontend passes `rerun_from_task_id = source_task_id`; backend sets `effective_task_owner_user_id = source_task.user_id` so the new task is owned by the **original task's user**, not the admin: `pathlab/pathlab-client/server/gateway/routes/training.py:280`. Admin bypasses per-WSI access checks and GPU permission checks during submission.
+  - `rerun_from_task_id` is silently ignored if the caller is not admin (backend gate: `user.is_admin() and req.rerun_from_task_id`): `pathlab/pathlab-client/server/gateway/routes/training.py:280`.
 
 ## 4.4 Internal validation (implemented as task analysis flow)
 - Internal validation trigger is `POST /results/tasks/{task_id}/analysis`: `pathlab/pathlab-client/server/gateway/routes/results.py:6034`.
@@ -122,6 +127,11 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
   - dataset GPU permission: `pathlab/pathlab-client/server/gateway/routes/results.py:3108`
   - model/dataset compatibility (`data_type/task_type/aggregation_level/labels/features`): `pathlab/pathlab-client/server/gateway/routes/results.py:3115`
 - Auto-triggers post-inference analysis, but task visibility still follows owner/admin model: `pathlab/pathlab-client/server/gateway/routes/results.py:5721`, `pathlab/pathlab-client/server/gateway/routes/results.py:5781`.
+- **Rerun** (failed or cancelled external validation tasks):
+  - Frontend shows the rerun button for both `failed` and `cancelled` task statuses: `pathlab/pathlab-client/src/renderer/src/pages/TaskDetailPage.tsx`.
+  - Non-admin rerun: submits a new external validation owned by the current user; `rerun_from_task_id` is not sent. All standard permission checks (model access, dataset access, GPU) apply to the requester.
+  - Admin rerun: frontend passes `rerun_from_task_id = source_task_id`; backend sets `effective_task_owner_user_id = source_task.user_id` so the new task is owned by the **original task's user**, not the admin: `pathlab/pathlab-client/server/gateway/routes/results.py:3055`. All permission checks (model, dataset, GPU) are still evaluated against the **requesting admin user**, not the effective owner.
+  - `rerun_from_task_id` is silently ignored if the caller is not admin (backend gate: `user.is_admin() and req.rerun_from_task_id`): `pathlab/pathlab-client/server/gateway/routes/results.py:3055`.
 
 ## 4.6 AI chat
 - Chat page is protected by login route guard (`/dashboard`): `pathlab/pathlab-client/src/renderer/src/App.tsx:39`.

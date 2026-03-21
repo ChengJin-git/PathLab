@@ -597,7 +597,7 @@ export default function TaskDetailPage() {
                 {t('taskDetail.viewAnalysis')}
               </Button>
             )}
-            {!waitingForCreation && task?.status === 'failed' && (
+            {!waitingForCreation && (task?.status === 'failed' || task?.status === 'cancelled') && (
               <Button
                 variant="outline"
                 onClick={handleRerun}

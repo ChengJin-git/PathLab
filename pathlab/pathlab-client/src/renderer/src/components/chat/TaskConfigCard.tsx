@@ -238,7 +238,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   // Dataset selection state
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialConfig.dataset_id || null)
   const [availableDatasets, setAvailableDatasets] = useState<DatasetSummary[]>([])
-  const [isLoadingDatasets, setIsLoadingDatasets] = useState(false)
+  const [isLoadingDatasets, setIsLoadingDatasets] = useState(true)
 
   // Split strategy state - use agent's recommendation if provided
   const [splitStrategy, setSplitStrategy] = useState<'random' | 'k_fold' | 'manual'>(
