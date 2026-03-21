@@ -189,11 +189,18 @@ Test: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:64`
 
 ## 6.3 Shared finalize
 - Only owner/admin can finalize shared annotation into GT: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1417`.
-- Finalize writes `annot_{dataset_id}` as `status=finalized`, then removes shared draft: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1441`.
+- Finalize writes `label_{dataset_id}` as `status=finalized`, then removes shared draft: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1441`.
 
 ## 6.4 Collaborator management
 - Add/remove collaborator requires owner/admin (`can_finalize`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1633`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1697`.
 - Removing collaborator cascades child-dataset collaborator revoke behavior and emits collaboration revocation events (`access_revoked`, `force_disconnect`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1736`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1767`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1770`.
+
+## 6.5 Annotation source semantics
+- `annotation_source` is a **derived read-only field** computed at query time; it is never stored as a column.
+- Value is `"imported_gt"` when the effective annotation record was imported externally (mask GT import flow), `"user_label"` when it originated from user-drawn or finalized shared annotation.
+- Derivation logic lives in `GET /datasets/{dataset_id}/labels` summary endpoint: `pathlab/pathlab-client/server/gateway/routes/annotation.py:865`.
+- `SegmentationAnnotation.to_dict()` also exposes `annotation_source` per-record for the WSI-viewer GT overlay: `pathlab/pathlab-client/server/backend/database/models.py`.
+- Frontend `AnnotationSource` type mirrors the two values: `pathlab/pathlab-client/src/renderer/src/api/annotation.ts`.
 
 ---
 
@@ -235,6 +242,12 @@ Code: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1176`.
 ## 8.4 Finalization as closed-loop stabilization
 - Shared finalize persists GT into finalized record and removes draft, stabilizing produced annotation state before downstream extraction: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1417`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1441`.
 
+## 8.5 Extraction audit: promoted_to_training_reference
+- When extraction succeeds, a `promoted_to_training_reference` audit event is written to `permission_audit_logs` recording the source annotation ID and new dataset ID.
+- This closes the data loop traceability: the audit log links the annotation that was promoted to a training dataset.
+
+Code: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1228`.
+
 ---
 
 ## 9) Boundary Conditions and Safety Handling
@@ -253,8 +266,8 @@ Code: `pathlab/pathlab-client/server/backend/database/repositories/annotation.py
 ## 9.3 Empty finalize guard
 - Shared finalize rejects empty annotations unless `force=true`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1433`.
 
-## 9.4 GT deletion guard with active training
-- Ground-truth delete endpoint blocks when active training tasks exist: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1796`.
+## 9.4 Label deletion guard with active training
+- Label delete endpoint (`DELETE /datasets/{dataset_id}/labels`) blocks when active training tasks exist: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1826`.
 - Note: the guard is system-wide — any active training task (regardless of dataset) will block deletion.
 
 ## 9.5 Task access and analysis visibility boundary

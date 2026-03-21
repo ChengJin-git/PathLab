@@ -83,6 +83,21 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - 包含管理员批量启用 / 禁用 / 删除用户接口
 - 当前代码里没有单独暴露的 `AccessToken` ORM 模型 README 记录，认证主要依赖 JWT
 
+## 标注路由（annotation router）
+
+`routes/annotation.py` 当前提供的核心公开端点包括：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/datasets/{dataset_id}/labels` | 获取数据集的有效标注（GT + 个人覆盖层合并），含 `label_annotation_source` 派生字段 |
+| `GET` | `/wsi/{wsi_id}/labels` | 获取单张 WSI 的个人标注草稿 |
+| `GET` | `/datasets/{dataset_id}/labels/summary` | 获取标注汇总统计，含 `label_annotation_source` 字段 |
+| `DELETE` | `/datasets/{dataset_id}/labels` | 删除数据集标注（活跃训练任务时拦截） |
+| `POST` | `/datasets/{dataset_id}/delete-by-labels` | 按 label 类别删除标注 |
+| `POST` | `/annotation/extract` | 提取标注 ROI 到新数据集（触发 `promoted_to_training_reference` 审计） |
+
+注意：`/ground-truth` 路径已在 v1.0.3 本轮重构中改名为 `/labels`，旧路径不再有效。
+
 ## 存储路由补充说明
 
 `routes/storage.py` 自身提供 `/storage/stats`、`/storage/disk-space`、`/storage/check-upload-space`、`/storage/config`、`/storage/migrate`、`/storage/migration/status`、`/storage/orphaned` 等入口，并进一步组合：

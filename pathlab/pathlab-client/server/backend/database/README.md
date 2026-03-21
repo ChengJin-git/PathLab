@@ -6,11 +6,12 @@
 
 ## 当前组成
 
-- `database.py`：异步 engine / session 工厂
+- `database.py`：异步 engine / session 工厂（启动时自动调用 `migrate_rename_annot_to_label.py` 幂等迁移）
 - `models.py`：业务 ORM 模型
 - `init_db.py`：初始化与建表逻辑
 - `repositories/`：按业务拆分的数据访问对象
 - `migrate_unify_annotations.py`：标注相关迁移脚本
+- `migrate_rename_annot_to_label.py`：将 `annotation_id` 中 `annot_` 前缀统一重命名为 `label_` 的幂等迁移脚本
 
 ## 当前 ORM 表现状
 
@@ -52,9 +53,30 @@
 - `agreement_accepted_at` / `agreement_ip`
 - `notice_acknowledged_at`
 
+## annotation_id 命名规范
+
+`segmentation_annotations.annotation_id` 字段当前遵循以下命名规范：
+
+| 类型 | 格式 | 说明 |
+|------|------|------|
+| 数据集级别标注（GT/labels） | `label_{dataset_id}` | 由 finalize 或 GT 导入写入 |
+| 个人/共享草稿 | UUID | 由草稿写入逻辑生成 |
+
+`migrate_rename_annot_to_label.py` 负责将旧格式 `annot_{dataset_id}` 批量迁移为 `label_{dataset_id}`，在 Gateway 启动时通过 `init_db()` 自动调用（幂等）。
+
+## annotation_source 派生字段
+
+`annotation_source` 不是数据库列，而是**在查询时计算的派生字段**：
+
+- 取值 `"imported_gt"`：标注来源于外部导入的 mask GT
+- 取值 `"user_label"`：标注来源于用户手绘或共享标注 finalize
+- 计算逻辑：`GET /datasets/{dataset_id}/labels` 端点（annotation.py）读取 effective annotation 记录并根据 `source` 字段判断
+- `SegmentationAnnotation.to_dict()` 也会在单条记录序列化时输出此字段（供 WSI viewer GT overlay 使用）
+
 ## 与旧文档相比的关键变化
 
 - 标注表当前是 `segmentation_annotations`，不是旧文档里的 `annotation_drafts`
+- `annotation_id` 中的 `annot_` 前缀已全部迁移为 `label_` 前缀（由幂等迁移脚本保障）
 - 当前 README 不再把 `accesstoken` 记作项目里明确可见的独立 ORM 模型
 - 认证更贴近"JWT + users + nonce 控制"的实现方式
 - 当前权限体系已统一到 `dataset_grants` / `permission_audit_logs`，旧表 `dataset_permissions` 与 `annotation_collaborators` 不再作为 ORM 模型存在
