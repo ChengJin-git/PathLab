@@ -981,6 +981,10 @@
     "hidePredictionMask": "Hide Predicted Annotation",
     "showGT": "Show GT Annotation",
     "hideGT": "Hide GT Annotation",
+    "gtSource": {
+      "imported": "Imported",
+      "userLabel": "User label"
+    },
     "opacity": "Opacity",
     "activation": "Activation",
     "lowToHigh": "Low → High",

@@ -270,6 +270,7 @@ export default function WSIViewerPage() {
   // Annotation state
   const [annotationMode, setAnnotationMode] = useState(false)
   const [showGT, setShowGT] = useState(false)
+  const [gtAnnotationSource, setGtAnnotationSource] = useState<import('../api/annotation').AnnotationSource | null>(null)
   const [gtRegions, setGtRegions] = useState<AnnotationRegion[]>([])
   const [drawingTool, setDrawingTool] = useState<'rect' | 'polygon'>('rect')
   const [currentLabel, setCurrentLabel] = useState('')
@@ -611,12 +612,14 @@ export default function WSIViewerPage() {
   useEffect(() => {
     if (!showGT || !wsi_id) {
       setGtRegions([])
+      setGtAnnotationSource(null)
       return
     }
     let cancelled = false
     getWSIGroundTruth(wsi_id).then(gt => {
       if (cancelled) return
       setGtRegions(gt.annotations[wsi_id] ?? [])
+      setGtAnnotationSource(gt.annotation_source ?? null)
     }).catch(err => console.error('Failed to load GT:', err))
     return () => { cancelled = true }
   }, [showGT, wsi_id])
@@ -669,6 +672,7 @@ export default function WSIViewerPage() {
       if (!prev) {
         setShowSegMask(false)
         setShowGT(false)
+        setGtAnnotationSource(null)
       }
       return !prev
     })
@@ -679,6 +683,7 @@ export default function WSIViewerPage() {
       if (!prev) {
         setShowHeatmap(false)
         setShowGT(false)
+        setGtAnnotationSource(null)
       }
       return !prev
     })
@@ -2087,6 +2092,7 @@ export default function WSIViewerPage() {
               segmentationClasses={segmentationClasses}
               canShowGT={isSegmentationTask}
               showGT={showGT}
+              gtAnnotationSource={gtAnnotationSource}
               onToggleGT={handleToggleGT}
             />
           )}

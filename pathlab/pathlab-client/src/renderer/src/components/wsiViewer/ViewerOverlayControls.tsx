@@ -16,6 +16,7 @@ interface ViewerOverlayControlsProps {
   segmentationClasses: string[]
   canShowGT: boolean
   showGT: boolean
+  gtAnnotationSource?: import('../../api/annotation').AnnotationSource | null
   onToggleGT: () => void
 }
 
@@ -33,6 +34,7 @@ export function ViewerOverlayControls({
   segmentationClasses,
   canShowGT,
   showGT,
+  gtAnnotationSource,
   onToggleGT,
 }: ViewerOverlayControlsProps) {
   const { t } = useTranslation()
@@ -61,7 +63,9 @@ export function ViewerOverlayControls({
         key: 'gt',
         active: showGT,
         onClick: onToggleGT,
-        label: showGT ? t('wsiViewer.hideGT') : t('wsiViewer.showGT'),
+        label: showGT
+          ? `${t('wsiViewer.hideGT')}${gtAnnotationSource === 'imported_gt' ? ` · ${t('wsiViewer.gtSource.imported')}` : gtAnnotationSource === 'user_label' ? ` · ${t('wsiViewer.gtSource.userLabel')}` : ''}`
+          : t('wsiViewer.showGT'),
         activeClassName: 'bg-amber-100 text-amber-700 border border-amber-300',
       }
       : null,
