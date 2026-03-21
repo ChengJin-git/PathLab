@@ -185,7 +185,7 @@ async def _load_segmentation_coco_payloads(db, dataset_id: str) -> List[dict[str
         return []
 
     dataset_level_record = next(
-        (record for record in records if record.annotation_id == f"annot_{dataset_id}"),
+        (record for record in records if record.annotation_id == f"label_{dataset_id}"),
         None,
     )
     payloads = (

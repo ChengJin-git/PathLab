@@ -427,7 +427,7 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
 
     direct_record = await SegmentationAnnotationRepository.get_with_permission(
         db,
-        f"annot_{wsi_id}",
+        f"label_{wsi_id}",
         str(user.id),
         is_admin=user.is_admin(),
         elevated_dataset_ids=elevated_dataset_ids,
@@ -438,7 +438,7 @@ async def _resolve_wsi_ground_truth_payload(wsi_id: str, user: User, db: AsyncSe
     if wsi.dataset_id:
         dataset_record = await SegmentationAnnotationRepository.get_with_permission(
             db,
-            f"annot_{wsi.dataset_id}",
+            f"label_{wsi.dataset_id}",
             str(user.id),
             is_admin=user.is_admin(),
             elevated_dataset_ids=elevated_dataset_ids,
@@ -539,7 +539,7 @@ async def _get_dataset_ground_truth_roi_map(
         (
             record
             for record in gt_records
-            if record.annotation_id == f"annot_{dataset_id}"
+            if record.annotation_id == f"label_{dataset_id}"
         ),
         None,
     )
@@ -1479,7 +1479,7 @@ async def finalize_shared_annotation(
     if total_regions == 0 and not req.force:
         raise HTTPException(status_code=422, detail="empty_annotation")
 
-    gt_annotation_id = f"annot_{dataset_id}"
+    gt_annotation_id = f"label_{dataset_id}"
     owner_user_id = dataset.user_id or str(user.id)
 
     try:
@@ -1849,7 +1849,7 @@ async def delete_dataset_ground_truth(
         )
 
     result = await db.execute(
-        sa_delete(SAModel).where(SAModel.annotation_id == f"annot_{dataset_id}")
+        sa_delete(SAModel).where(SAModel.annotation_id == f"label_{dataset_id}")
     )
     await db.flush()
     if result.rowcount == 0:
@@ -1859,7 +1859,7 @@ async def delete_dataset_ground_truth(
 
     try:
         await rebuild_draft_annotation_summary_cache(
-            db, f"annot_{dataset_id}", dataset.user_id or "", dataset_id
+            db, f"label_{dataset_id}", dataset.user_id or "", dataset_id
         )
     except Exception:
         pass

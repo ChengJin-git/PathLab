@@ -362,7 +362,7 @@ async def rebuild_dataset_annotation_summary_cache(
     )
     if gt_records and wsis:
         dataset_level_record: Any = None
-        target_annotation_id = f"annot_{dataset_id}"
+        target_annotation_id = f"label_{dataset_id}"
         for record in gt_records:
             record_annotation_id = getattr(record, "annotation_id", None)
             if (

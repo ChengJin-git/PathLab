@@ -559,7 +559,7 @@ async def _run_batch_import_task(
 
                     # For segmentation tasks: import matched COCO JSON annotation file
                     if task_type == "segmentation":
-                        annotation_id = f"annot_{wsi_id}"
+                        annotation_id = f"label_{wsi_id}"
                         await SegmentationAnnotationRepository.upsert(
                             db,
                             annotation_id=annotation_id,

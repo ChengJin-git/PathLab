@@ -1528,7 +1528,7 @@ async def _extract_segmentation_dataset(
 
         await SegmentationAnnotationRepository.upsert(
             db,
-            annotation_id=f"annot_{dataset_id}",
+            annotation_id=f"label_{dataset_id}",
             user_id=user_id,
             annotations=coco_json,
             source_dataset_id=dataset_id,

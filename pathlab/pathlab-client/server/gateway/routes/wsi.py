@@ -339,8 +339,8 @@ async def _get_segmentation_annotation_presence_map(
     exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
     for record in page_records:
         annotation_id = str(getattr(record, "annotation_id", "") or "")
-        if annotation_id.startswith("annot_"):
-            inferred_wsi_id = annotation_id[len("annot_") :]
+        if annotation_id.startswith("label_"):
+            inferred_wsi_id = annotation_id[len("label_") :]
             if inferred_wsi_id in presence_map:
                 presence_map[inferred_wsi_id] = True
         _mark_coco_image_matches(
@@ -367,7 +367,7 @@ async def _load_segmentation_multilabels(
         return {}
 
     dataset_level_record = next(
-        (record for record in records if record.annotation_id == f"annot_{dataset_id}"),
+        (record for record in records if record.annotation_id == f"label_{dataset_id}"),
         None,
     )
     payloads = (

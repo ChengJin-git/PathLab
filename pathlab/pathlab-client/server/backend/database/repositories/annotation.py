@@ -284,8 +284,8 @@ class SegmentationAnnotationRepository:
         Returns per-WSI records like ``annot_{wsi_id}`` plus the optional
         dataset-level record ``annot_{dataset_id}``.
         """
-        target_ids = [f"annot_{wsi_id}" for wsi_id in wsi_ids if wsi_id]
-        target_ids.append(f"annot_{dataset_id}")
+        target_ids = [f"label_{wsi_id}" for wsi_id in wsi_ids if wsi_id]
+        target_ids.append(f"label_{dataset_id}")
 
         query = (
             select(SegmentationAnnotation)

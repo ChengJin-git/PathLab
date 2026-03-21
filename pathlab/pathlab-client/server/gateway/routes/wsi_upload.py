@@ -144,7 +144,7 @@ async def _append_segmentation_annotation_to_existing_dataset(
 
     await SegmentationAnnotationRepository.upsert(
         db,
-        annotation_id=f"annot_{matched_wsi.wsi_id}",
+        annotation_id=f"label_{matched_wsi.wsi_id}",
         user_id=user_id,
         annotations=annotation_payload,
         source_dataset_id=dataset_id,
@@ -708,7 +708,7 @@ async def upload_wsi_file(
             ):
                 await SegmentationAnnotationRepository.upsert(
                     db,
-                    annotation_id=f"annot_{wsi_id}",
+                    annotation_id=f"label_{wsi_id}",
                     user_id=str(user.id),
                     annotations=segmentation_annotation,
                     source_dataset_id=resolved_dataset_id,
@@ -1130,7 +1130,7 @@ async def upload_wsi_by_path(
             ):
                 await SegmentationAnnotationRepository.upsert(
                     db,
-                    annotation_id=f"annot_{wsi_id}",
+                    annotation_id=f"label_{wsi_id}",
                     user_id=str(user.id),
                     annotations=segmentation_annotation,
                     source_dataset_id=resolved_dataset_id,
