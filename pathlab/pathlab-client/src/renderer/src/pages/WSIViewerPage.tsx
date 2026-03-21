@@ -271,6 +271,7 @@ export default function WSIViewerPage() {
   const [annotationMode, setAnnotationMode] = useState(false)
   const [showGT, setShowGT] = useState(false)
   const [gtRegions, setGtRegions] = useState<AnnotationRegion[]>([])
+  const [hasGTAnnotations, setHasGTAnnotations] = useState(false)
   const [drawingTool, setDrawingTool] = useState<'rect' | 'polygon'>('rect')
   const [currentLabel, setCurrentLabel] = useState('')
   const [labelColors, setLabelColors] = useState<Record<string, string>>({})
@@ -620,6 +621,18 @@ export default function WSIViewerPage() {
     }).catch(err => console.error('Failed to load GT:', err))
     return () => { cancelled = true }
   }, [showGT, wsi_id])
+
+  useEffect(() => {
+    setHasGTAnnotations(false)
+    if (!wsi_id) return
+    let cancelled = false
+    getWSILabels(wsi_id).then(gt => {
+      if (cancelled) return
+      const regions = gt?.annotations?.[wsi_id] ?? []
+      setHasGTAnnotations(regions.length > 0)
+    }).catch(() => { if (!cancelled) setHasGTAnnotations(false) })
+    return () => { cancelled = true }
+  }, [wsi_id])
 
   // Load patch CAM data when selecting a patch-level task
   useEffect(() => {
@@ -1356,9 +1369,10 @@ export default function WSIViewerPage() {
             .finally(() => { if (!cancelled) setSharedSaving(false) })
         } else {
           if (res.is_prepopulated) toast.info(t('annotation.collab.sharedLoaded'))
-          if (res.annotations) {
-            setAllAnnotations(res.annotations)
-            mergeLabelColorsFromAnnotations(res.annotations)
+          const sharedContent = res.annotations ?? {}
+          setAllAnnotations(sharedContent)
+          if (Object.keys(sharedContent).length > 0) {
+            mergeLabelColorsFromAnnotations(sharedContent)
           }
           setSharedVersion(res.version)
         }
@@ -2072,7 +2086,7 @@ export default function WSIViewerPage() {
             </>
           )}
 
-          {availableHeatmaps.length > 0 && shouldShowOverlayControls && (
+          {(availableHeatmaps.length > 0 && shouldShowOverlayControls || hasGTAnnotations) && (
             <ViewerOverlayControls
               canShowHeatmapOverlay={canShowHeatmapOverlay}
               showHeatmap={showHeatmap}
@@ -2085,7 +2099,7 @@ export default function WSIViewerPage() {
               segMaskOpacity={segMaskOpacity}
               onSegMaskOpacityChange={setSegMaskOpacity}
               segmentationClasses={segmentationClasses}
-              canShowGT={isSegmentationTask}
+              canShowGT={isSegmentationTask || hasGTAnnotations}
               showGT={showGT}
               onToggleGT={handleToggleGT}
             />
@@ -2261,7 +2275,7 @@ export default function WSIViewerPage() {
         allAnnotations={allAnnotations}
         summary={effectiveDatasetId && editingMode !== 'shared' ? datasetAnnotationSummary : null}
         labelColors={labelColors}
-        hasWsiSources={datasetAnnotationSummary?.has_wsi_sources ?? hasWsiSources}
+        hasWsiSources={editingMode === 'shared' ? hasWsiSources : (datasetAnnotationSummary?.has_wsi_sources ?? hasWsiSources)}
         defaultSource={detail?.meta?.source ?? null}
         onSubmitCreateDataset={handleCreateDatasetFromAnnotations}
       />

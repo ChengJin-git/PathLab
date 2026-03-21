@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
@@ -248,6 +248,9 @@ export default function ListPage() {
 
   const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
   const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
+  // Maps task_id → dataset_id for deletes that have been signaled as done by SSE but
+  // not yet confirmed absent from the server response. Overlay stays until confirmed.
+  const pendingDeleteRef = useRef<Map<string, string>>(new Map())
 
   // Export labels - stores dataset for export modal
   const [exportingDataset, setExportingDataset] = useState<DatasetSummary | null>(null)
@@ -363,6 +366,7 @@ export default function ListPage() {
     },
     enabled: !selectedDatasetId,
     staleTime: 2 * 60 * 1000,
+    placeholderData: keepPreviousData,
   })
 
   useEffect(() => {
@@ -473,7 +477,7 @@ export default function ListPage() {
   const datasetPaginationEnd = Math.min(datasetEndIndex, (datasetsQuery.data?.total ?? 0))
   const hasDatasetContent = visibleDatasets.length > 0 || (datasetsQuery.data?.total ?? 0) > 0
   const showInitialDatasetLoading = datasetsQuery.isLoading && !hasDatasetContent
-  const isDatasetRefreshing = datasetsQuery.isLoading && hasDatasetContent
+  const isDatasetRefreshing = datasetsQuery.isFetching && hasDatasetContent
 
   const hasFileContent = (wsiListQuery.data?.items ?? []).length > 0 || (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) > 0 || (wsiListQuery.data?.total_cases ?? 0) > 0
   const showInitialFilesLoading = wsiListQuery.isLoading && !hasFileContent
@@ -517,13 +521,33 @@ export default function ListPage() {
     if (justCompletedDeleteTasks.length === 0) return
     for (const task of justCompletedDeleteTasks) {
       completedDeleteTaskIdsRef.current.add(task.id)
-      removeDeletingDatasetByTaskId(task.id.replace(/^delete_dataset_/, ''))
     }
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
     setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
-    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
-  }, [tasks, qc, removeDeletingDatasetByTaskId])
+    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 6000)
+    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 15000)
+  }, [tasks, qc])
+
+  useEffect(() => {
+    if (pendingDeleteRef.current.size === 0) return
+    const fetchedIds = new Set(
+      (datasetsQuery.data?.items ?? []).map((d: DatasetSummary) => d.dataset_id).filter(Boolean)
+    )
+    let hasStillPending = false
+    for (const [taskId, datasetId] of pendingDeleteRef.current) {
+      if (!fetchedIds.has(datasetId)) {
+        pendingDeleteRef.current.delete(taskId)
+        removeDeletingDatasetByTaskId(taskId)
+      } else {
+        hasStillPending = true
+      }
+    }
+    if (hasStillPending) {
+      const timer = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [datasetsQuery.data, removeDeletingDatasetByTaskId, qc])
 
   useEffect(() => {
     if (selectedDatasetId) return
@@ -912,13 +936,13 @@ export default function ListPage() {
 
     try {
       if (datasetToDeleteId) {
+        const idToRemove = datasetToDeleteId
         const deleteResponse = await startDeleteDatasetTask({
           dataset_id: datasetToDeleteId,
           mode: deleteMode
         })
         addDeletingDatasetName(deleteResponse.task_id, deleteResponse.dataset_name)
-        setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
-        setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 15000)
+        pendingDeleteRef.current.set(deleteResponse.task_id, idToRemove)
 
         setShowBatchDeleteModal(false)
         setSelectedIds(new Set())

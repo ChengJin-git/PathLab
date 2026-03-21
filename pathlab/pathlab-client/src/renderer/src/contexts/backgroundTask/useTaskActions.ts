@@ -6,6 +6,7 @@
  */
 
 import React, { useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import {
   uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask,
@@ -40,6 +41,7 @@ export interface TaskActionsParams {
 
 export function useTaskActions(params: TaskActionsParams) {
   const { t } = useTranslation()
+  const qc = useQueryClient()
   const {
     setLocalTasks, setIsPanelExpanded, setDismissedServerTasks,
     setMetadataUploadResults, cancelledTasksRef, abortControllersRef,
@@ -734,6 +736,8 @@ export function useTaskActions(params: TaskActionsParams) {
           // Task finished (cleared from Redis)
           eventSource.close()
           updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
+          void qc.invalidateQueries({ queryKey: ['page-datasets'] })
+          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
         } else if (progress < 0) {
           // Error
           eventSource.close()
@@ -746,6 +750,8 @@ export function useTaskActions(params: TaskActionsParams) {
           // Completed
           eventSource.close()
           updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
+          void qc.invalidateQueries({ queryKey: ['page-datasets'] })
+          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
         } else {
           // In progress
           updateTaskItem(taskId, 'extraction_main', { status: 'running', progress })
@@ -763,7 +769,7 @@ export function useTaskActions(params: TaskActionsParams) {
     }
 
     return taskId
-  }, [t, updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, qc])
 
   // Get metadata upload result by dataset name
   const getMetadataUploadResult = useCallback((datasetName: string): MetadataUploadResult | undefined => {
