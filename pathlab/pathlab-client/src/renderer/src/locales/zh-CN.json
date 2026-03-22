@@ -868,7 +868,12 @@
     "emailRequired": "邮箱不能为空",
     "emailInvalid": "请输入有效的邮箱地址",
     "emailTaken": "该邮箱已被其他账号使用",
-    "genericError": "邮箱更新失败"
+    "genericError": "邮箱更新失败",
+    "notifications": "邮件通知",
+    "notifyHint": "当任务达到以下状态时发送邮件：",
+    "notifySuccess": "成功完成",
+    "notifyFailed": "失败",
+    "notifyCancelled": "被取消"
   },
   "changePassword": {
     "title": "修改密码",

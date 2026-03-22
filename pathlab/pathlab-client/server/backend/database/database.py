@@ -249,6 +249,26 @@ async def init_db():
 
         await conn.execute(
             text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "notify_on_success BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "notify_on_failed BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "notify_on_cancelled BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        logger.info("users.notify_on_* columns ensured")
+
+        await conn.execute(
+            text(
                 "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
                 "is_public BOOLEAN NOT NULL DEFAULT FALSE"
             )

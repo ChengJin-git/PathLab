@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Mail, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
-import { updateCurrentUser, ApiError } from '../api'
+import { updateCurrentUser, ApiError, CurrentUserUpdateRequest } from '../api'
 import { useAuth } from '../contexts/AuthContext'
 
 interface SetEmailModalProps {
@@ -15,21 +15,30 @@ interface SetEmailModalProps {
 export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
   const { t } = useTranslation()
   const { user, refreshUser } = useAuth()
+  
   const [email, setEmail] = useState('')
+  const [notifySuccess, setNotifySuccess] = useState(true)
+  const [notifyFailed, setNotifyFailed] = useState(false)
+  const [notifyCancelled, setNotifyCancelled] = useState(false)
+  
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
 
+  useEffect(() => {
+    if (isOpen && user) {
+      setEmail('')
+      setNotifySuccess(user.notify_on_success ?? true)
+      setNotifyFailed(user.notify_on_failed ?? false)
+      setNotifyCancelled(user.notify_on_cancelled ?? false)
+      setError(null)
+      setSuccess(false)
+    }
+  }, [isOpen, user])
+
   if (!isOpen) return null
 
-  const resetForm = () => {
-    setEmail('')
-    setError(null)
-    setSuccess(false)
-  }
-
   const handleClose = () => {
-    resetForm()
     onClose()
   }
 
@@ -38,20 +47,24 @@ export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
     setError(null)
 
     const trimmed = email.trim()
-    if (!trimmed) {
-      setError(t('setEmail.emailRequired'))
-      return
+    const updateData: CurrentUserUpdateRequest = {
+      notify_on_success: notifySuccess,
+      notify_on_failed: notifyFailed,
+      notify_on_cancelled: notifyCancelled
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    if (!emailRegex.test(trimmed)) {
-      setError(t('setEmail.emailInvalid'))
-      return
+    if (trimmed) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+      if (!emailRegex.test(trimmed)) {
+        setError(t('setEmail.emailInvalid'))
+        return
+      }
+      updateData.email = trimmed
     }
 
     setIsSubmitting(true)
     try {
-      await updateCurrentUser({ email: trimmed })
+      await updateCurrentUser(updateData)
       await refreshUser()
       setSuccess(true)
       setTimeout(() => {
@@ -100,9 +113,58 @@ export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
                 placeholder={t('setEmail.emailPlaceholder')}
                 className="h-9 text-sm"
                 autoComplete="email"
-                required
                 disabled={isSubmitting || success}
               />
+            </div>
+
+            <div className="border-t border-slate-100 pt-4">
+              <Label className="text-xs font-semibold text-slate-700 uppercase tracking-wide block mb-0.5">
+                {t('setEmail.notifications')}
+              </Label>
+              <p className="text-xs text-slate-400 mb-2">
+                {t('setEmail.notifyHint')}
+              </p>
+              
+              <div className="space-y-1">
+                <label className="flex items-center gap-2.5 py-1 cursor-pointer group">
+                  <input 
+                    type="checkbox"
+                    checked={notifySuccess}
+                    onChange={(e) => setNotifySuccess(e.target.checked)}
+                    disabled={isSubmitting || success}
+                    className="w-4 h-4 rounded accent-primary-600 cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-700 group-hover:text-slate-900 transition-colors">
+                    {t('setEmail.notifySuccess')}
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-2.5 py-1 cursor-pointer group">
+                  <input 
+                    type="checkbox"
+                    checked={notifyFailed}
+                    onChange={(e) => setNotifyFailed(e.target.checked)}
+                    disabled={isSubmitting || success}
+                    className="w-4 h-4 rounded accent-primary-600 cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-700 group-hover:text-slate-900 transition-colors">
+                    {t('setEmail.notifyFailed')}
+                  </span>
+                </label>
+
+                <label className="flex items-center gap-2.5 py-1 cursor-pointer group">
+                  <input 
+                    type="checkbox"
+                    checked={notifyCancelled}
+                    onChange={(e) => setNotifyCancelled(e.target.checked)}
+                    disabled={isSubmitting || success}
+                    className="w-4 h-4 rounded accent-primary-600 cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-700 group-hover:text-slate-900 transition-colors">
+                    {t('setEmail.notifyCancelled')}
+                  </span>
+                </label>
+              </div>
             </div>
 
             {error && (

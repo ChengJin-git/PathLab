@@ -465,9 +465,15 @@ class TaskQueueManager:
             logger.info(
                 f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}"
             )
-            _ = asyncio.create_task(
-                self._notify_task_completed(queued_task, status="completed")
+            asyncio.create_task(
+                self._notify_task_status_change(queued_task, "completed")
             )
+        except asyncio.CancelledError:
+            logger.info(f"Task {queued_task.task_id} was cancelled")
+            asyncio.create_task(
+                self._notify_task_status_change(queued_task, "cancelled")
+            )
+            raise
         except Exception as e:
             logger.error(
                 f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}"
@@ -477,6 +483,7 @@ class TaskQueueManager:
             await self._ensure_task_failed(
                 queued_task.task_id, queued_task.task_type, str(e)
             )
+            asyncio.create_task(self._notify_task_status_change(queued_task, "failed"))
         finally:
             await self._invalidate_context_for_task(queued_task)
             self._running_tasks.pop(queued_task.task_id, None)
@@ -484,8 +491,24 @@ class TaskQueueManager:
             await self._notify_queue_state_changed()
             self._queue.task_done()
 
-    async def _notify_task_completed(
-        self, queued_task: QueuedTask, status: str = "completed"
+    _STATUS_SUBJECT = {
+        "completed": "completed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+    }
+    _STATUS_DESC = {
+        "completed": "completed successfully",
+        "failed": "failed",
+        "cancelled": "been cancelled",
+    }
+    _STATUS_PREF = {
+        "completed": "notify_on_success",
+        "failed": "notify_on_failed",
+        "cancelled": "notify_on_cancelled",
+    }
+
+    async def _notify_task_status_change(
+        self, queued_task: QueuedTask, status: str
     ) -> None:
         if queued_task.task_type not in (
             TaskType.TRAINING,
@@ -513,14 +536,11 @@ class TaskQueueManager:
                     task = await AITaskRepository.get_by_id(db, queued_task.task_id)
 
                 if not task:
-                    logger.warning(
-                        f"[TaskEmail] task {queued_task.task_id} not found in DB, skipping email"
-                    )
                     return
 
-                if task.status != "completed":
+                if status == "completed" and task.status != "completed":
                     logger.info(
-                        f"[TaskEmail] task {queued_task.task_id} status={task.status!r}, skipping email"
+                        f"[TaskEmail] task {queued_task.task_id} DB status={task.status!r}, skipping"
                     )
                     return
 
@@ -529,7 +549,7 @@ class TaskQueueManager:
                 task_name = getattr(task, "task_name", None) or queued_task.task_id
         except Exception as exc:
             logger.warning(
-                f"[TaskEmail] could not resolve task info for task {queued_task.task_id}: {exc}"
+                f"[TaskEmail] could not resolve task info for {queued_task.task_id}: {exc}"
             )
             return
 
@@ -542,8 +562,14 @@ class TaskQueueManager:
                 user = result.scalar_one_or_none()
                 if not user:
                     return
+
+                pref_attr = self._STATUS_PREF.get(status)
+                if not pref_attr or not getattr(user, pref_attr, False):
+                    return
+
                 to_email = user.registration_email or ""
                 display_name = user.nickname or user.email
+
             await send_templated_email(
                 template_key="task_completed_notice",
                 to_email=to_email,
@@ -551,12 +577,14 @@ class TaskQueueManager:
                     "display_name": display_name,
                     "username": user.email,
                     "task_name": task_name,
+                    "task_status": self._STATUS_SUBJECT.get(status, status),
+                    "task_status_desc": self._STATUS_DESC.get(status, status),
                 },
                 for_admin=False,
             )
         except Exception as exc:
             logger.warning(
-                f"[TaskEmail] failed to send completion notice for task {queued_task.task_id}: {exc}"
+                f"[TaskEmail] failed to send notice for task {queued_task.task_id}: {exc}"
             )
 
     async def _invalidate_context_for_task(self, queued_task: QueuedTask) -> None:
@@ -761,8 +789,9 @@ class TaskQueueManager:
         if task_id not in self._pending_tasks:
             return False
 
-        self._pending_tasks.pop(task_id, None)
+        queued_task = self._pending_tasks.pop(task_id)
         logger.info(f"Task {task_id} removed from pending queue")
+        asyncio.create_task(self._notify_task_status_change(queued_task, "cancelled"))
         await self._notify_queue_state_changed()
         return True
 

@@ -33,12 +33,12 @@ DEFAULT_EMAIL_TEMPLATES = {
         ),
     },
     "task_completed_notice": {
-        "subject": "[PathLab] Task completed: {task_name}",
+        "subject": "[PathLab] Task {task_status}: {task_name}",
         "html": (
             "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>"
             "{logo_html}"
             "<p>Dear {display_name},</p>"
-            "<p>Your task <strong>{task_name}</strong> has completed successfully.</p>"
+            "<p>Your task <strong>{task_name}</strong> has {task_status_desc}.</p>"
             "<p style='color:#555;'>- PathLab</p>"
             "</div>"
         ),

@@ -20,6 +20,9 @@ export interface AuthUser {
   agreement_ip?: string | null
   notice_acknowledged_at?: string | null
   registration_email?: string | null
+  notify_on_success?: boolean
+  notify_on_failed?: boolean
+  notify_on_cancelled?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -87,6 +90,9 @@ export interface CurrentUserUpdateRequest {
   email?: string
   nickname?: string
   password?: string
+  notify_on_success?: boolean
+  notify_on_failed?: boolean
+  notify_on_cancelled?: boolean
 }
 
 export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {

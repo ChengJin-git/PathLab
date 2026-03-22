@@ -868,7 +868,12 @@
     "emailRequired": "電郵不能為空",
     "emailInvalid": "請輸入有效的電郵地址",
     "emailTaken": "此電郵已被其他帳號使用",
-    "genericError": "電郵更新失敗"
+    "genericError": "電郵更新失敗",
+    "notifications": "電郵通知",
+    "notifyHint": "當任務達到以下狀態時發送電郵：",
+    "notifySuccess": "成功完成",
+    "notifyFailed": "失敗",
+    "notifyCancelled": "被取消"
   },
   "changePassword": {
     "title": "修改密碼",

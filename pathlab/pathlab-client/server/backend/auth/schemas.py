@@ -70,6 +70,9 @@ class UserRead(BaseModel):
     registration_email: Optional[str] = Field(
         default=None, description="Educational email provided during self-registration"
     )
+    notify_on_success: bool = Field(default=True)
+    notify_on_failed: bool = Field(default=False)
+    notify_on_cancelled: bool = Field(default=False)
     created_at: Optional[datetime] = Field(
         default=None, description="Account creation time"
     )
@@ -121,6 +124,9 @@ class UserUpdate(BaseModel):
         default=None, description="Username (stored in email field)"
     )
     nickname: Optional[str] = Field(default=None, description="Display name")
+    notify_on_success: Optional[bool] = None
+    notify_on_failed: Optional[bool] = None
+    notify_on_cancelled: Optional[bool] = None
 
     @field_validator("email")
     @classmethod

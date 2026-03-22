@@ -121,6 +121,16 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         default=None,
     )
 
+    notify_on_success: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+    notify_on_failed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    notify_on_cancelled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+
     # Maintenance notice acknowledgment tracking
     notice_acknowledged_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,

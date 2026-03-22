@@ -868,7 +868,12 @@
     "emailRequired": "Email cannot be empty",
     "emailInvalid": "Please enter a valid email address",
     "emailTaken": "This email is already in use by another account",
-    "genericError": "Failed to update email"
+    "genericError": "Failed to update email",
+    "notifications": "EMAIL NOTIFICATIONS",
+    "notifyHint": "Send me an email when my task:",
+    "notifySuccess": "Completes successfully",
+    "notifyFailed": "Fails",
+    "notifyCancelled": "Is cancelled"
   },
   "changePassword": {
     "title": "Change Password",
