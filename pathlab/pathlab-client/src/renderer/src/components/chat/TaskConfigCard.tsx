@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, ThumbsUp, ThumbsDown } from 'lucide-react'
+import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, UploadCloud, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import { useAuth } from '../../contexts/AuthContext'
@@ -535,12 +535,26 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       // Build full TrainingTaskConfig using constants for defaults
       // Send dataset_id instead of wsi_ids — backend resolves WSI IDs from dataset
       const normalizedSegLossConfig = normalizeSegmentationLossConfig(config.seg_loss_names, config.seg_loss_weights)
+
+      const resolvedEncoder = config.encoder ?? DEFAULT_EXTRACTOR
+      const resolvedAggregator = config.aggregator ?? DEFAULT_AGGREGATOR
+      const resolvedClassifier = config.classifier ?? DEFAULT_PATCH_CLASSIFIER
+      let autoDescription: string
+      if (config.task_type === 'segmentation') {
+        autoDescription = `Segmentation: ${resolvedSegArchitecture} + ${resolvedSegBackbone}`
+      } else if (normalizedDataType === 'wsi') {
+        const taskLabel = config.task_type === 'survival' ? 'Survival prediction' : 'WSI classification'
+        autoDescription = `${taskLabel}: ${resolvedEncoder} + ${resolvedAggregator}`
+      } else {
+        autoDescription = `Patch classification: ${resolvedEncoder} + ${resolvedClassifier}`
+      }
+
       const fullConfig: TrainingTaskConfig = {
         task_id: taskId,
         task_name: config.task_name,
         task_type: config.task_type as 'classification' | 'survival' | 'segmentation',
         data_type: normalizedDataType,
-        task_description: config.task_description || `Created by PathLab Agent`,
+        task_description: autoDescription,
         dataset_id: selectedDatasetId,
         preprocessing: {
           // Note: tile_size removed - auto-determined by PrePATH-style tiling
@@ -548,7 +562,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           // Feature extraction
           feature_extractor: config.task_type === 'segmentation'
             ? resolvedSegBackbone
-            : (config.encoder ?? DEFAULT_EXTRACTOR),
+            : resolvedEncoder,
           feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
           use_gpu: canUseGpuForDataset(selectedDatasetId ?? ''),
           // Tissue segmentation parameters (WSI only)
@@ -744,6 +758,115 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
              <p className="text-xs text-red-500 mt-1">{getFieldError('dataset_id')}</p>
            )}
          </div>
+
+         {/* Data Split Strategy */}
+         {selectedDatasetId && (
+           <div>
+             <label className="block text-sm font-medium text-gray-700 mb-2 flex items-center gap-1.5">
+               <Layers className="w-4 h-4 text-gray-400" />
+               {t('training.dataSplit.title')}
+             </label>
+              <div className={`grid gap-2 ${supportsKFold ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}>
+               {/* Random Split */}
+               <button
+                 type="button"
+                 disabled={isFormDisabled}
+                 onClick={() => !isFormDisabled && setSplitStrategy('random')}
+                 className={`p-2.5 rounded-lg border text-left transition-all ${
+                   splitStrategy === 'random'
+                     ? 'bg-primary-50 border-primary-400 ring-1 ring-primary-400'
+                     : 'bg-white border-gray-200 hover:border-primary-300'
+                 } ${isFormDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+               >
+                 <div className="flex items-center gap-1.5 mb-1">
+                   <div className={`w-3 h-3 shrink-0 rounded-full border flex items-center justify-center ${
+                     splitStrategy === 'random' ? 'border-primary-500' : 'border-gray-300'
+                   }`}>
+                     {splitStrategy === 'random' && <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />}
+                   </div>
+                   <span className="text-xs font-medium text-gray-800">{t('training.dataSplit.randomSplit')}</span>
+                 </div>
+                 <p className="text-[10px] text-gray-400 pl-4">70 / 10 / 20</p>
+               </button>
+
+               {/* K-Fold */}
+               {supportsKFold && (
+                 <button
+                   type="button"
+                   disabled={isFormDisabled}
+                   onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
+                   className={`p-2.5 rounded-lg border text-left transition-all ${
+                     splitStrategy === 'k_fold'
+                       ? 'bg-primary-50 border-primary-400 ring-1 ring-primary-400'
+                       : 'bg-white border-gray-200 hover:border-primary-300'
+                   } ${isFormDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                 >
+                   <div className="flex items-center gap-1.5 mb-1">
+                     <div className={`w-3 h-3 shrink-0 rounded-full border flex items-center justify-center ${
+                       splitStrategy === 'k_fold' ? 'border-primary-500' : 'border-gray-300'
+                     }`}>
+                       {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />}
+                     </div>
+                     <span className="text-xs font-medium text-gray-800">{t('training.dataSplit.kFoldCV')}</span>
+                   </div>
+                   {splitStrategy === 'k_fold' ? (
+                     <div className="pl-4 flex items-center gap-1.5">
+                       <input
+                         type="number"
+                         min={2}
+                         max={10}
+                         value={kFoldSplits}
+                         onClick={(e) => e.stopPropagation()}
+                         onChange={(e) => setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))}
+                         disabled={isFormDisabled}
+                         className="w-11 px-1 py-0.5 border border-gray-300 rounded text-xs"
+                       />
+                       <span className="text-[10px] text-gray-500">folds</span>
+                     </div>
+                   ) : (
+                     <p className="text-[10px] text-gray-400 pl-4">{t('training.dataSplit.kFoldCVDesc')}</p>
+                   )}
+                 </button>
+               )}
+
+               {/* Predefined Split or Upload Prompt */}
+               {hasPreDefinedSplits ? (
+                 <button
+                   type="button"
+                   disabled={isFormDisabled}
+                   onClick={() => !isFormDisabled && setSplitStrategy('manual')}
+                   className={`p-2.5 rounded-lg border text-left transition-all ${
+                     splitStrategy === 'manual'
+                       ? 'bg-primary-50 border-primary-400 ring-1 ring-primary-400'
+                       : 'bg-white border-gray-200 hover:border-primary-300'
+                   } ${isFormDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                 >
+                   <div className="flex items-center gap-1.5 mb-1">
+                     <div className={`w-3 h-3 shrink-0 rounded-full border flex items-center justify-center ${
+                       splitStrategy === 'manual' ? 'border-primary-500' : 'border-gray-300'
+                     }`}>
+                       {splitStrategy === 'manual' && <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />}
+                     </div>
+                     <span className="text-xs font-medium text-gray-800">{t('training.dataSplit.customSplit')}</span>
+                   </div>
+                   <div className="pl-4 flex gap-2 text-[10px] font-medium">
+                     <span className="text-green-700">{t('training.dataSplit.train')}:{predefinedSplitCounts.train}</span>
+                     <span className="text-blue-600">{t('training.dataSplit.val')}:{predefinedSplitCounts.val}</span>
+                     <span className="text-amber-600">{t('training.dataSplit.test')}:{predefinedSplitCounts.test}</span>
+                   </div>
+                 </button>
+               ) : (
+                 <div className="p-2.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/80">
+                   <div className="flex items-center gap-1.5 mb-0.5">
+                     <UploadCloud className="w-3 h-3 text-gray-400" />
+                     <span className="text-xs font-medium text-gray-500">{t('training.dataSplit.uploadSplits')}</span>
+                   </div>
+                   <p className="text-[10px] text-blue-500 pl-4">{t('training.dataSplit.noSplitsFound')}</p>
+                 </div>
+               )}
+             </div>
+           </div>
+         )}
 
          {/* Segmentation: Architecture & Backbone | Others: Encoder & Model */}
          {config.task_type === 'segmentation' ? (

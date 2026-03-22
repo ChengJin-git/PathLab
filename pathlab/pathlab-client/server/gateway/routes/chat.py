@@ -4238,8 +4238,16 @@ async def chat_with_ai(
                 else:
                     _fb_own_private += 1
                 _d_marker = ""
+            _d_split_suffix = ""
+            if _d.get("has_predefined_splits"):
+                _d_sc = _d.get("predefined_split_counts", {})
+                _d_unit = "cases" if _d.get("aggregation_level") == "case" else "slides"
+                _d_split_suffix = (
+                    f", predefined_split_distribution({_d_unit}):"
+                    f" train={_d_sc.get('train', 0)}, val={_d_sc.get('val', 0)}, test={_d_sc.get('test', 0)}"
+                )
             _fb_datasets_details.append(
-                f"  - {_d_name} (dataset_id={_d_id}): {_d_fc} files, type={_d_type}{_d_marker}"
+                f"  - {_d_name} (dataset_id={_d_id}): {_d_fc} files, type={_d_type}{_d_marker}{_d_split_suffix}"
             )
         _fb_datasets_list = (
             "\n".join(_fb_datasets_details) if _fb_datasets_details else "  None"

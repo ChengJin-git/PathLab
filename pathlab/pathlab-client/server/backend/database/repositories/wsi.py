@@ -524,6 +524,7 @@ class WSIRepository:
                 Dataset.is_public.label("is_public"),
                 DataGroup.data_type.label("group_data_type"),
                 DataGroup.task_type.label("group_task_type"),
+                DataGroup.aggregation_level.label("aggregation_level"),
                 func.count(WSISlide.id).label("file_count"),
                 func.sum(is_wsi_case).label("wsi_count"),
                 func.sum(is_patch_case).label("patch_count"),
@@ -543,6 +544,7 @@ class WSIRepository:
             Dataset.is_public,
             DataGroup.data_type,
             DataGroup.task_type,
+            DataGroup.aggregation_level,
         ).order_by(Dataset.name)
         datasets_result = await db.execute(datasets_query)
 
@@ -750,6 +752,7 @@ class WSIRepository:
                     "file_count": row.file_count,
                     "data_type": data_type,
                     "group_task_type": row.group_task_type,
+                    "aggregation_level": row.aggregation_level or "file",
                     "labels": ds_labels,
                     "survival_count": survival_count,
                     "event_status": event_status_dist,

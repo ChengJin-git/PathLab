@@ -126,8 +126,16 @@ async def _build_chat_context_cache_for_user(user_id: str | None) -> dict[str, A
             else:
                 own_private_datasets_count += 1
             marker = ""
+        split_suffix = ""
+        if d.get("has_predefined_splits"):
+            sc = d.get("predefined_split_counts", {})
+            unit = "cases" if d.get("aggregation_level") == "case" else "slides"
+            split_suffix = (
+                f", predefined_split_distribution({unit}):"
+                f" train={sc.get('train', 0)}, val={sc.get('val', 0)}, test={sc.get('test', 0)}"
+            )
         datasets_details.append(
-            f"  - {name} (dataset_id={did}): {fc} files, type={dt}{marker}"
+            f"  - {name} (dataset_id={did}): {fc} files, type={dt}{marker}{split_suffix}"
         )
     if datasets_details:
         datasets_list = "\n".join(datasets_details)
