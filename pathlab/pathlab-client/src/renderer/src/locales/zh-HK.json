@@ -3521,7 +3521,6 @@
       "collaborativeShare": "協作共享",
       "manageCollaborators": "管理協作者",
       "deleteSharedDraft": "刪除共享草稿",
-      "sharedLoaded": "已載入預置標註作為協作草稿",
       "sharedLoadFailed": "載入協作標註失敗",
       "sharedLoadFailedNoPermission": "無訪問權限，該帳號未被授權訪問此數據集的協作標註",
       "submitted": "標註已提交為 GT",

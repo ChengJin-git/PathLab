@@ -1368,7 +1368,6 @@ export default function WSIViewerPage() {
     ]).then(([res, collabRes]) => {
       if (cancelled) return
 
-      if (res.is_prepopulated) toast.info(t('annotation.collab.sharedLoaded'))
       const sharedContent = res.annotations ?? {}
       setAllAnnotations(sharedContent)
       if (Object.keys(sharedContent).length > 0) {

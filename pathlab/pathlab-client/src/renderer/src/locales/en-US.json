@@ -3522,7 +3522,6 @@
       "collaborativeShare": "Collaborative",
       "manageCollaborators": "Manage Collaborators",
       "deleteSharedDraft": "Delete Shared Draft",
-      "sharedLoaded": "Prepopulated annotations loaded as collaborative draft",
       "sharedLoadFailed": "Failed to load collaborative annotations",
       "sharedLoadFailedNoPermission": "Access denied. This account is not authorized to access collaborative annotations for this dataset.",
       "submitted": "Annotations submitted as GT",

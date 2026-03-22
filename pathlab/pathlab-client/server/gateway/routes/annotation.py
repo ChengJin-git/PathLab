@@ -1334,19 +1334,6 @@ async def get_shared_annotation(
             "is_prepopulated": False,
         }
 
-    gt_annotations, gt_record_count = await _get_dataset_ground_truth_roi_map(
-        dataset_id, db
-    )
-    if gt_record_count > 0:
-        return {
-            "annotation_id": None,
-            "annotations": gt_annotations,
-            "version": 0,
-            "last_edited_by": None,
-            "updated_at": None,
-            "is_prepopulated": True,
-        }
-
     return {
         "annotation_id": None,
         "annotations": {},
