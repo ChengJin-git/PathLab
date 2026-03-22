@@ -153,9 +153,13 @@ async def _send_application_received_email(user: "User") -> None:
 
 
 async def _send_admin_application_email(user: "User") -> None:
+    from backend.common.config import Config
+
+    settings = Config.get_global_settings()
+    admin_notify_email = settings.get("admin_notify_email", "")
     await send_templated_email(
         template_key="admin_new_user_registration_notice",
-        to_email="",
+        to_email=admin_notify_email,
         context={
             "display_name": user.nickname or user.email,
             "username": user.email,

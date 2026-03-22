@@ -465,7 +465,9 @@ class TaskQueueManager:
             logger.info(
                 f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}"
             )
-            _ = asyncio.create_task(self._notify_task_completed(queued_task))
+            _ = asyncio.create_task(
+                self._notify_task_completed(queued_task, status="completed")
+            )
         except Exception as e:
             logger.error(
                 f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}"
@@ -482,7 +484,9 @@ class TaskQueueManager:
             await self._notify_queue_state_changed()
             self._queue.task_done()
 
-    async def _notify_task_completed(self, queued_task: QueuedTask) -> None:
+    async def _notify_task_completed(
+        self, queued_task: QueuedTask, status: str = "completed"
+    ) -> None:
         if queued_task.task_type not in (
             TaskType.TRAINING,
             TaskType.INFERENCE,
@@ -532,7 +536,7 @@ class TaskQueueManager:
                     "display_name": display_name,
                     "username": user.email,
                     "task_id": queued_task.task_id,
-                    "task_status": "completed",
+                    "task_status": status,
                 },
                 for_admin=False,
             )
