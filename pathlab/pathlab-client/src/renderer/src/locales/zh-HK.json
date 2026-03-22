@@ -3475,6 +3475,7 @@
     "createDatasetTitle": "從標註建立資料集",
     "datasetName": "資料集名稱",
     "datasetNamePlaceholder": "請輸入資料集名稱...",
+    "datasetNameRequired": "資料集名稱不能為空",
     "taskType": "任務類型",
     "classification": "分類",
     "segmentation": "分割",

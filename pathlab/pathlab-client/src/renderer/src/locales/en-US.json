@@ -3475,6 +3475,7 @@
     "createDatasetTitle": "Create Dataset from Annotations",
     "datasetName": "Dataset Name",
     "datasetNamePlaceholder": "Enter dataset name...",
+    "datasetNameRequired": "Dataset name is required",
     "taskType": "Task Type",
     "classification": "Classification",
     "segmentation": "Segmentation",

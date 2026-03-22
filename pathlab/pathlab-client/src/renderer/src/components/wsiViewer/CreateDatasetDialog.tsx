@@ -23,6 +23,7 @@ export function CreateDatasetDialog({
 }: CreateDatasetDialogProps) {
   const { t } = useTranslation()
   const [datasetName, setDatasetName] = useState('')
+  const [nameError, setNameError] = useState(false)
   const [taskType, setTaskType] = useState<'classification' | 'segmentation'>('classification')
   const [sourceSelection, setSourceSelection] = useState('')
   const [sourceCustom, setSourceCustom] = useState('')
@@ -64,6 +65,7 @@ export function CreateDatasetDialog({
   useEffect(() => {
     if (show) {
       setDatasetName('')
+      setNameError(false)
       setTaskType('classification')
       setSubmitting(false)
       const normalized = defaultSource?.trim() || ''
@@ -116,11 +118,19 @@ export function CreateDatasetDialog({
               id="create-dataset-name"
               type="text"
               value={datasetName}
-              onChange={e => setDatasetName(e.target.value)}
+              onChange={e => { setDatasetName(e.target.value); if (e.target.value.trim()) setNameError(false) }}
+              onBlur={() => setNameError(!datasetName.trim())}
               placeholder={t('annotation.datasetNamePlaceholder')}
-              className="w-full px-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none"
+              className={`w-full px-3 py-2 text-sm border rounded-lg outline-none focus:ring-1 ${
+                nameError
+                  ? 'border-red-400 focus:ring-red-500 focus:border-red-500'
+                  : 'border-gray-200 focus:ring-indigo-500 focus:border-indigo-500'
+              }`}
               disabled={submitting}
             />
+            {nameError && (
+              <p className="mt-1 text-xs text-red-600">{t('annotation.datasetNameRequired')}</p>
+            )}
           </div>
 
           <fieldset className="mb-4">

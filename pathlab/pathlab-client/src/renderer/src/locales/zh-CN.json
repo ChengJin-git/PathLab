@@ -3470,6 +3470,7 @@
     "createDatasetTitle": "从标注创建数据集",
     "datasetName": "数据集名称",
     "datasetNamePlaceholder": "请输入数据集名称...",
+    "datasetNameRequired": "数据集名称不能为空",
     "taskType": "任务类型",
     "classification": "分类",
     "segmentation": "分割",
