@@ -1236,6 +1236,7 @@ export default function WSIViewerPage() {
     setShowSharedExitDialog(false)
     if (importToPersonal) {
       clearPendingSaveTimer()
+      locallyModifiedWsiIdsRef.current.clear()
       setEditingMode('personal')
       setHasUnsavedChanges(true)
     } else {
@@ -1668,6 +1669,7 @@ export default function WSIViewerPage() {
   // Annotation: recovery when entering annotation mode
   useEffect(() => {
     if (!annotationMode) return
+    if (editingMode === 'shared') return
     if (!datasetId && !detail) return
     // Recover per current WSI instead of blocking on any previously loaded slide.
     // If the current key exists (even with an empty array), treat it as already loaded.
@@ -1722,7 +1724,7 @@ export default function WSIViewerPage() {
     return () => {
       cancelled = true
     }
-  }, [annotationMode, allAnnotations, datasetId, detail, draftCacheKey, effectiveDatasetId, mergeLabelColorsFromAnnotations, wsi_id])
+  }, [annotationMode, editingMode, allAnnotations, datasetId, detail, draftCacheKey, effectiveDatasetId, mergeLabelColorsFromAnnotations, wsi_id])
 
   useEffect(() => {
     const handler = () => {
