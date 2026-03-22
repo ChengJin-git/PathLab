@@ -854,7 +854,21 @@
     "user": "用户",
     "profileMenu": "个人菜单",
     "switchLanguage": "切换语言",
-    "changePassword": "修改密码"
+    "changePassword": "修改密码",
+    "setEmail": "设置邮箱"
+  },
+  "setEmail": {
+    "title": "设置邮箱",
+    "currentEmail": "当前邮箱：",
+    "newEmail": "新邮箱",
+    "emailPlaceholder": "user@example.com",
+    "submit": "更新邮箱",
+    "submitting": "更新中...",
+    "success": "邮箱更新成功",
+    "emailRequired": "邮箱不能为空",
+    "emailInvalid": "请输入有效的邮箱地址",
+    "emailTaken": "该邮箱已被其他账号使用",
+    "genericError": "邮箱更新失败"
   },
   "changePassword": {
     "title": "修改密码",

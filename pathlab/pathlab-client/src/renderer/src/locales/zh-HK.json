@@ -854,7 +854,21 @@
     "user": "使用者",
     "profileMenu": "個人選單",
     "switchLanguage": "切換語言",
-    "changePassword": "修改密碼"
+    "changePassword": "修改密碼",
+    "setEmail": "設定電郵"
+  },
+  "setEmail": {
+    "title": "設定電郵",
+    "currentEmail": "目前電郵：",
+    "newEmail": "新電郵",
+    "emailPlaceholder": "user@example.com",
+    "submit": "更新電郵",
+    "submitting": "更新中...",
+    "success": "電郵更新成功",
+    "emailRequired": "電郵不能為空",
+    "emailInvalid": "請輸入有效的電郵地址",
+    "emailTaken": "此電郵已被其他帳號使用",
+    "genericError": "電郵更新失敗"
   },
   "changePassword": {
     "title": "修改密碼",

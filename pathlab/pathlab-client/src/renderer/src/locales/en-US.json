@@ -854,7 +854,21 @@
     "user": "User",
     "profileMenu": "Profile Menu",
     "switchLanguage": "Switch Language",
-    "changePassword": "Change Password"
+    "changePassword": "Change Password",
+    "setEmail": "Set Email"
+  },
+  "setEmail": {
+    "title": "Set Email",
+    "currentEmail": "Current email:",
+    "newEmail": "New Email",
+    "emailPlaceholder": "user@example.com",
+    "submit": "Update Email",
+    "submitting": "Updating...",
+    "success": "Email updated successfully",
+    "emailRequired": "Email cannot be empty",
+    "emailInvalid": "Please enter a valid email address",
+    "emailTaken": "This email is already in use by another account",
+    "genericError": "Failed to update email"
   },
   "changePassword": {
     "title": "Change Password",
