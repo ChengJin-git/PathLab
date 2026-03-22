@@ -26,6 +26,14 @@ from backend.database.database import async_session
 router = APIRouter(tags=["ASR"])
 
 
+def _ws_is_open(ws: Any) -> bool:
+    if hasattr(ws, "closed"):
+        return not ws.closed
+    if hasattr(ws, "state"):
+        return ws.state.name == "OPEN"
+    return False
+
+
 # ============================================================================
 # Local ASR Connection Pre-Warming
 # ============================================================================
@@ -107,7 +115,7 @@ class _LocalASRWarmup:
     ) -> Tuple[Optional[Any], Optional[str]]:
         async with self._lock:
             if self._ws is not None and self._url == url:
-                if not self._ws.closed:
+                if _ws_is_open(self._ws):
                     ws, msg = self._ws, self._session_created_msg
                     self._ws = None
                     self._session_created_msg = None

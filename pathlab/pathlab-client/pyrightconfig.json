@@ -36,5 +36,6 @@
   "reportImplicitRelativeImport": "warning",
   "reportOptionalIterable": "warning",
   "reportPrivateImportUsage": "warning",
-  "reportRedeclaration": "warning"
+  "reportRedeclaration": "warning",
+  "reportInvalidTypeForm": "warning"
 }
