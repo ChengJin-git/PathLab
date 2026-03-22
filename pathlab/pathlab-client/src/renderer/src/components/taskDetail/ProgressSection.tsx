@@ -52,11 +52,11 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center space-x-2">
                   <span className={
-                    (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                    (task.status === 'extracting' || task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? 'text-green-600' :
                     (task.status === 'patching') ? 'text-blue-600' :
                     (task.status === 'failed' && task.progress < 30) ? 'text-red-600' : 'text-gray-400'
                   }>
-                    { (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                    { (task.status === 'extracting' || task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
                       (task.status === 'patching') ? <Loader2 className="w-4 h-4 animate-spin" /> :
                       (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
                   </span>
@@ -69,15 +69,15 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center space-x-2">
                   <span className={
-                    (task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                    (task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? 'text-green-600' :
                     (task.status === 'extracting') ? 'text-blue-600' :
                     (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? 'text-red-600' : 'text-gray-400'
                   }>
-                    { (task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                    { (task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
                       (task.status === 'extracting') ? <Loader2 className="w-4 h-4 animate-spin" /> :
                       (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
                   </span>
-                  <span className={(task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-gray-900' : 'text-gray-500'}>
+                  <span className={(task.status === 'extracting' || task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? 'text-gray-900' : 'text-gray-500'}>
                     {t('taskDetail.progressSection.featureExtraction')}
                   </span>
                 </div>
@@ -89,14 +89,14 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
             <div className="flex items-center space-x-2">
               <span className={
                 (task.status === 'completed') ? 'text-green-600' :
-                (task.status === 'training') ? 'text-blue-600' :
+                (task.status === 'training' || task.status === 'resuming') ? 'text-blue-600' :
                 (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
               }>
                 { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                  (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                  (task.status === 'training' || task.status === 'resuming') ? <Loader2 className="w-4 h-4 animate-spin" /> :
                   (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
-              <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+              <span className={(task.status === 'completed' || task.status === 'training' || task.status === 'resuming') ? 'text-gray-900' : 'text-gray-500'}>
                 {t('taskDetail.progressSection.runningInference')}
               </span>
             </div>
@@ -108,11 +108,11 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
             <div className="flex items-center space-x-2">
               <span className={
                 (task.status === 'patching') ? 'text-blue-600' :
-                (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                (task.status === 'extracting' || task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? 'text-green-600' :
                 (task.status === 'failed' && task.progress < 30) ? 'text-red-600' : 'text-gray-400'
               }>
                 { (task.status === 'patching') ? <Loader2 className="w-4 h-4 animate-spin" /> :
-                  (task.status === 'extracting' || task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                  (task.status === 'extracting' || task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
                   (task.status === 'failed' && task.progress < 30) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
               <span className={(task.status !== 'pending' && task.status !== 'creating') ? 'text-gray-900' : 'text-gray-500'}>
@@ -127,15 +127,15 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
           <div className="flex items-center justify-between text-sm">
             <div className="flex items-center space-x-2">
               <span className={
-                (task.status === 'training' || task.status === 'completed') ? 'text-green-600' :
+                (task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? 'text-green-600' :
                 (task.status === 'extracting') ? 'text-blue-600' :
                 (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? 'text-red-600' : 'text-gray-400'
               }>
-                { (task.status === 'training' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
+                { (task.status === 'training' || task.status === 'resuming' || task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
                   (task.status === 'extracting') ? <Loader2 className="w-4 h-4 animate-spin" /> :
                   (task.status === 'failed' && task.progress >= 30 && task.progress < 70) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
               </span>
-              <span className={(task.status === 'training' || task.status === 'completed' || task.status === 'extracting') ? 'text-gray-900' : 'text-gray-500'}>
+              <span className={(task.status === 'training' || task.status === 'resuming' || task.status === 'completed' || task.status === 'extracting') ? 'text-gray-900' : 'text-gray-500'}>
                 {t('taskDetail.progressSection.featureExtraction')}
               </span>
             </div>
@@ -163,18 +163,18 @@ export const ProgressSection: React.FC<ProgressSectionProps> = ({
           <div className="flex items-center space-x-2">
             <span className={
               (task.status === 'completed') ? 'text-green-600' :
-              (task.status === 'training') ? 'text-purple-600' :
+              (task.status === 'training' || task.status === 'resuming') ? 'text-purple-600' :
               (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? 'text-red-600' : 'text-gray-400'
             }>
               { (task.status === 'completed') ? <CheckCircle2 className="w-4 h-4" /> :
-                (task.status === 'training') ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                (task.status === 'training' || task.status === 'resuming') ? <Loader2 className="w-4 h-4 animate-spin" /> :
                 (task.status === 'failed' && (isPatchLevel || task.progress >= 70)) ? <XCircle className="w-4 h-4" /> : <Circle className="w-4 h-4" /> }
             </span>
-            <span className={(task.status === 'completed' || task.status === 'training') ? 'text-gray-900' : 'text-gray-500'}>
+            <span className={(task.status === 'completed' || task.status === 'training' || task.status === 'resuming') ? 'text-gray-900' : 'text-gray-500'}>
               {t('taskDetail.progressSection.modelTraining')}
             </span>
           </div>
-          {task.status === 'training' && task.current_epoch && (
+          {(task.status === 'training' || task.status === 'resuming') && task.current_epoch && (
             <span className="text-gray-600">Epoch {task.current_epoch}/{task.model_config.epochs}</span>
           )}
         </div>

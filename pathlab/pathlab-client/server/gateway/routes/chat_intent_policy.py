@@ -11,6 +11,7 @@ Detection priority in detect_conversation_mode:
   4. Keyword / prompt-text fallback
   5. Default                   → GENERAL_CHAT
 """
+
 from __future__ import annotations
 
 import json
@@ -30,6 +31,8 @@ from .chat_training_recommendation import (
     looks_like_analysis_prompt,
     looks_like_image_visualization_prompt,
     is_heatmap_visualization_followup,
+    looks_like_model_card_query,
+    looks_like_system_capability_query,
 )
 
 
@@ -42,6 +45,8 @@ class ConversationMode(str, Enum):
     EXTERNAL_EVALUATION = "external_evaluation"
     ANALYSIS_RESULTS = "analysis_results"
     LITERATURE_RESEARCH = "literature_research"
+    MODEL_CARD = "model_card"
+    SYSTEM_INQUIRY = "system_inquiry"
 
 
 class SearchPolicy(str, Enum):
@@ -51,23 +56,25 @@ class SearchPolicy(str, Enum):
 
 
 SEARCH_POLICY: Dict[ConversationMode, SearchPolicy] = {
-    ConversationMode.GENERAL_CHAT:             SearchPolicy.ALLOW_IF_MODEL_REQUESTS,
-    ConversationMode.TRAINING_RECOMMENDATION:  SearchPolicy.REQUIRE_BEFORE_RECOMMENDATION,
-    ConversationMode.IMAGE_VISUALIZATION:      SearchPolicy.DENY,
-    ConversationMode.PATCH_INFERENCE:          SearchPolicy.DENY,
-    ConversationMode.INTERNAL_EVALUATION:      SearchPolicy.DENY,
-    ConversationMode.EXTERNAL_EVALUATION:      SearchPolicy.DENY,
-    ConversationMode.ANALYSIS_RESULTS:         SearchPolicy.DENY,
-    ConversationMode.LITERATURE_RESEARCH:      SearchPolicy.ALLOW_IF_MODEL_REQUESTS,
+    ConversationMode.GENERAL_CHAT: SearchPolicy.ALLOW_IF_MODEL_REQUESTS,
+    ConversationMode.TRAINING_RECOMMENDATION: SearchPolicy.REQUIRE_BEFORE_RECOMMENDATION,
+    ConversationMode.IMAGE_VISUALIZATION: SearchPolicy.DENY,
+    ConversationMode.PATCH_INFERENCE: SearchPolicy.DENY,
+    ConversationMode.INTERNAL_EVALUATION: SearchPolicy.DENY,
+    ConversationMode.EXTERNAL_EVALUATION: SearchPolicy.DENY,
+    ConversationMode.ANALYSIS_RESULTS: SearchPolicy.DENY,
+    ConversationMode.LITERATURE_RESEARCH: SearchPolicy.ALLOW_IF_MODEL_REQUESTS,
+    ConversationMode.MODEL_CARD: SearchPolicy.DENY,
+    ConversationMode.SYSTEM_INQUIRY: SearchPolicy.DENY,
 }
 
-_ANALYSIS_CONFIG_RE = re.compile(r'\[ANALYSIS_CONFIG\]([\s\S]*?)\[/ANALYSIS_CONFIG\]')
+_ANALYSIS_CONFIG_RE = re.compile(r"\[ANALYSIS_CONFIG\]([\s\S]*?)\[/ANALYSIS_CONFIG\]")
 
 _BLOCK_MODE_MAP: List[tuple[str, ConversationMode]] = [
-    ("[IMAGE_RECOMMENDATION]",  ConversationMode.IMAGE_VISUALIZATION),
-    ("[PATCH_INFERENCE]",       ConversationMode.PATCH_INFERENCE),
-    ("[METRIC_CONFIG]",         ConversationMode.ANALYSIS_RESULTS),
-    ("[CHART_CONFIG]",          ConversationMode.ANALYSIS_RESULTS),
+    ("[IMAGE_RECOMMENDATION]", ConversationMode.IMAGE_VISUALIZATION),
+    ("[PATCH_INFERENCE]", ConversationMode.PATCH_INFERENCE),
+    ("[METRIC_CONFIG]", ConversationMode.ANALYSIS_RESULTS),
+    ("[CHART_CONFIG]", ConversationMode.ANALYSIS_RESULTS),
     ("[QUICK_ANALYSIS_CONFIG]", ConversationMode.ANALYSIS_RESULTS),
 ]
 
@@ -131,7 +138,9 @@ def detect_conversation_mode(messages: List[Dict[str, Any]]) -> ConversationMode
         return ConversationMode.LITERATURE_RESEARCH
 
     # 2. Image attachment or image-analysis phrasing → patch inference
-    if _message_content_has_image(last_user_message.get("content")) or looks_like_image_analysis_query(latest_user_text):
+    if _message_content_has_image(
+        last_user_message.get("content")
+    ) or looks_like_image_analysis_query(latest_user_text):
         return ConversationMode.PATCH_INFERENCE
 
     # 3. Structural block in the previous assistant message (primary signal)
@@ -149,13 +158,25 @@ def detect_conversation_mode(messages: List[Dict[str, Any]]) -> ConversationMode
     if looks_like_image_visualization_query(latest_user_text):
         return ConversationMode.IMAGE_VISUALIZATION
 
-    if looks_like_validation_query(latest_user_text) or looks_like_metric_or_result_display_query(latest_user_text):
+    if looks_like_validation_query(
+        latest_user_text
+    ) or looks_like_metric_or_result_display_query(latest_user_text):
         return ConversationMode.ANALYSIS_RESULTS
 
+    if looks_like_model_card_query(latest_user_text):
+        return ConversationMode.MODEL_CARD
+
+    if looks_like_system_capability_query(latest_user_text):
+        return ConversationMode.SYSTEM_INQUIRY
+
     if previous_assistant_text:
-        if looks_like_image_visualization_prompt(previous_assistant_text) and looks_like_local_flow_followup(latest_user_text):
+        if looks_like_image_visualization_prompt(
+            previous_assistant_text
+        ) and looks_like_local_flow_followup(latest_user_text):
             return ConversationMode.IMAGE_VISUALIZATION
-        if looks_like_analysis_prompt(previous_assistant_text) and looks_like_local_flow_followup(latest_user_text):
+        if looks_like_analysis_prompt(
+            previous_assistant_text
+        ) and looks_like_local_flow_followup(latest_user_text):
             return ConversationMode.ANALYSIS_RESULTS
 
     return ConversationMode.GENERAL_CHAT

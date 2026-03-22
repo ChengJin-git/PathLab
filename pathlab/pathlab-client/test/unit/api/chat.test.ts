@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ok, errResp, createSSEStream } from '../../helpers/apiHelpers'
 
 vi.mock('@renderer/config', () => ({
   API_BASE: 'http://localhost:6100',
@@ -23,37 +24,6 @@ import { setAuthToken } from '@renderer/api/client'
 
 const mockFetch = vi.mocked(fetch)
 
-function ok(data: unknown, status = 200): Response {
-  return {
-    ok: true,
-    status,
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response
-}
-
-function errResp(data: unknown, status: number): Response {
-  return {
-    ok: false,
-    status,
-    statusText: 'Error',
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response
-}
-
-function createSSEStream(lines: string[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder()
-  const full = lines.join('\n') + '\n'
-  return new ReadableStream({
-    start(controller) {
-      controller.enqueue(encoder.encode(full))
-      controller.close()
-    },
-  })
-}
 
 const MOCK_CONVERSATION = {
   conversation_id: 'conv_001',

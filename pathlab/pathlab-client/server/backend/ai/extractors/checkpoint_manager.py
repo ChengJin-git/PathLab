@@ -1,9 +1,10 @@
-
 from huggingface_hub import hf_hub_download, snapshot_download
 import os
 
 # set the dir where this file is located, and create a subdir 'checkpoints' to save the downloaded checkpoints
-FEATURE_EXTRACTOR_CKPT_SAVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
+FEATURE_EXTRACTOR_CKPT_SAVE_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "checkpoints"
+)
 os.makedirs(FEATURE_EXTRACTOR_CKPT_SAVE_DIR, exist_ok=True)
 
 
@@ -97,7 +98,7 @@ def virchow2(hf_token: str) -> str:
 
 def plip(hf_token: str) -> str:
     """Download and return the local path to the PLIP model checkpoint.
-    
+
     Downloads all files from the PLIP repository including:
     - pytorch_model.bin (model weights)
     - config.json (model configuration)
@@ -106,11 +107,11 @@ def plip(hf_token: str) -> str:
     """
     local_dir = os.path.join(FEATURE_EXTRACTOR_CKPT_SAVE_DIR, "PLIP")
     os.makedirs(local_dir, exist_ok=True)
-    
+
     # Check if repo is already downloaded (look for key config files)
     config_path = os.path.join(local_dir, "config.json")
     model_path = os.path.join(local_dir, "pytorch_model.bin")
-    
+
     if not os.path.exists(config_path) or not os.path.exists(model_path):
         # Download the entire PLIP repository from Hugging Face Hub
         # This ensures all necessary files (config, processor config, tokenizer, etc.) are available
@@ -119,7 +120,7 @@ def plip(hf_token: str) -> str:
             local_dir=local_dir,
             token=hf_token,
         )
-    
+
     return local_dir
 
 
@@ -162,7 +163,7 @@ def patho_clip(hf_token: str) -> str:
             local_dir=local_dir,
             token=hf_token,
         )
-        
+
     ckpt_path = os.path.join(local_dir, "Patho-CLIP-L.pt")
     return ckpt_path
 
@@ -170,7 +171,7 @@ def patho_clip(hf_token: str) -> str:
 def openmidnight(hf_token: str) -> str:
     """Download and return the local path to the OpenMidnight model checkpoint."""
     local_dir = os.path.join(FEATURE_EXTRACTOR_CKPT_SAVE_DIR, "OpenMidnight")
-    file_name = 'teacher_checkpoint_load.pt'
+    file_name = "teacher_checkpoint_load.pt"
     os.makedirs(local_dir, exist_ok=True)
     if not os.path.exists(os.path.join(local_dir, file_name)):
         # Download the checkpoint from Hugging Face Hub
@@ -290,6 +291,19 @@ def smartcyto(hf_token: str) -> str:
     return local_ckpt_path
 
 
+def cytofm(hf_token: str) -> str:
+    """Return the local path to the CytoFM model checkpoint."""
+    ckpt_filename = "vitl-16-cytofm-v1.pth"
+    local_dir = os.path.join(FEATURE_EXTRACTOR_CKPT_SAVE_DIR, "CytoFM")
+    local_ckpt_path = os.path.join(local_dir, ckpt_filename)
+    if not os.path.exists(local_ckpt_path):
+        raise FileNotFoundError(
+            f"CytoFM checkpoint not found at {local_ckpt_path}. "
+            "Please place vitl-16-cytofm-v1.pth in the CytoFM checkpoints directory."
+        )
+    return local_ckpt_path
+
+
 __supported_extractors = {
     "CONCH": conch,
     "UNI": uni,
@@ -300,7 +314,7 @@ __supported_extractors = {
     "Phikon": phikon,
     "Phikon2": phikon2,
     "PathoCLIP": patho_clip,
-    'OpenMidnight': openmidnight,
+    "OpenMidnight": openmidnight,
     "CONCH15": conch15,
     "H-Optimus-1": h_optimus_1,
     "H-Optimus-0": h_optimus_0,
@@ -308,6 +322,7 @@ __supported_extractors = {
     "GPFM": gpfm,
     "SmartCCS": smartccs,
     "SmartCyto": smartcyto,
+    "CytoFM": cytofm,
 }
 
 
@@ -316,4 +331,3 @@ def get_ckpt_path(extractor_name: str, hf_token: str) -> str:
     if extractor_name not in __supported_extractors:
         raise ValueError(f"Extractor '{extractor_name}' is not supported.")
     return __supported_extractors[extractor_name](hf_token)
-    

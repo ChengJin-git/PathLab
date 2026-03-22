@@ -37,6 +37,39 @@ const LossFunctionList: React.FC<{
   )
 }
 
+const formatSplitMethod = (
+  splitConfig: TaskDetail['preprocessing_config']['split_config'],
+  t: ReturnType<typeof useTranslation>['t']
+): string => {
+  if (!splitConfig) return 'N/A'
+  const { strategy } = splitConfig
+  if (strategy === 'random') {
+    const label = t('taskDetail.configuration.splitRandom')
+    if (splitConfig.ratios) {
+      const { train, val, test } = splitConfig.ratios
+      return `${label} (${Math.round(train * 100)}% / ${Math.round(val * 100)}% / ${Math.round(test * 100)}%)`
+    }
+    return label
+  }
+  if (strategy === 'k_fold') {
+    const n = splitConfig.n_splits ?? 'K'
+    return `${n}${t('taskDetail.configuration.splitKFold')}`
+  }
+  if (strategy === 'manual') {
+    const label = t('taskDetail.configuration.splitManual')
+    if (splitConfig.manual_splits && Object.keys(splitConfig.manual_splits).length > 0) {
+      const counts: Record<string, number> = {}
+      for (const splitType of Object.values(splitConfig.manual_splits)) {
+        counts[splitType] = (counts[splitType] ?? 0) + 1
+      }
+      const parts = Object.entries(counts).map(([type, count]) => `${type}: ${count}`)
+      return `${label} (${parts.join(' / ')})`
+    }
+    return label
+  }
+  return strategy
+}
+
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
   const { t } = useTranslation()
   const isExternalValidation = task.task_type === 'external_validation'
@@ -131,7 +164,9 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
               <Activity className="w-3.5 h-3.5 text-blue-600" />
               {isSegmentation
                 ? (segIsFm ? t('taskDetail.configuration.featureExtractor') : t('taskDetail.configuration.architecture'))
-                : t('taskDetail.configuration.preprocessing')}
+                : task.data_type === 'patch'
+                  ? t('taskDetail.configuration.dataConfig')
+                  : t('taskDetail.configuration.preprocessing')}
             </h4>
             <div className="space-y-3">
               {isSegmentation ? (
@@ -173,6 +208,27 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                     weights={task.model_config.loss_weights}
                     weightLabel={t('taskDetail.configuration.lossWeight')}
                   />
+                </>
+              ) : task.data_type === 'patch' ? (
+                <>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.extractor')}</span>
+                    <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded border border-blue-100 shadow-sm">
+                      {task.preprocessing_config.feature_extractor || 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.featureBatchSize')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {task.preprocessing_config.feature_batch_size ?? 'N/A'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {formatSplitMethod(task.preprocessing_config.split_config, t)}
+                    </span>
+                  </div>
                 </>
               ) : (
                 <>
@@ -253,12 +309,21 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                   {task.model_config.optimizer || 'N/A'}
                 </span>
               </div>
-              <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.trainingBatchSize')}</span>
-                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                  {task.model_config.batch_size ?? 'N/A'}
-                </span>
-              </div>
+              {!isSegmentation && task.data_type === 'wsi' ? (
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {formatSplitMethod(task.preprocessing_config.split_config, t)}
+                  </span>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.trainingBatchSize')}</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {task.model_config.batch_size ?? 'N/A'}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         </div>

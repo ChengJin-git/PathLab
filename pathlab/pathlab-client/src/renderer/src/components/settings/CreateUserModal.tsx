@@ -3,10 +3,11 @@ import { UserPlus } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { Select } from '../ui/select'
 
 export interface CreateUserModalProps {
-  createForm: { username: string; password: string; nickname: string; role: string }
-  onCreateFormChange: (form: { username: string; password: string; nickname: string; role: string }) => void
+  createForm: { username: string; password: string; nickname: string; role: string; registration_email: string }
+  onCreateFormChange: (form: { username: string; password: string; nickname: string; role: string; registration_email: string }) => void
   onSubmit: () => void
   onClose: () => void
   isCreating: boolean
@@ -61,18 +62,29 @@ export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onCl
             />
           </div>
           <div>
-            <Label className="text-sm text-gray-600">{t('settings.createUserModal.role')}</Label>
-            <select
-              value={createForm.role}
-              onChange={(e) => onCreateFormChange({ ...createForm, role: e.target.value })}
-              className="mt-1 w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+            <Label className="text-sm text-gray-600">{t('settings.createUserModal.email')}</Label>
+            <Input
+              value={createForm.registration_email}
+              onChange={(e) => onCreateFormChange({ ...createForm, registration_email: e.target.value })}
+              className="mt-1"
+              placeholder={t('settings.createUserModal.emailPlaceholder')}
               disabled={isCreating}
-            >
-              <option value="admin">{t('settings.createUserModal.roleAdmin')}</option>
-              <option value="pathologist">{t('settings.createUserModal.rolePathologist')}</option>
-              <option value="guest">{t('settings.createUserModal.roleGuest')}</option>
-            </select>
+              type="email"
+            />
           </div>
+           <div>
+             <Label className="text-sm text-gray-600">{t('settings.createUserModal.role')}</Label>
+             <Select
+               value={createForm.role}
+               onChange={(v) => onCreateFormChange({ ...createForm, role: v })}
+               options={[
+                 { value: 'admin', label: t('settings.createUserModal.roleAdmin') },
+                 { value: 'pathologist', label: t('settings.createUserModal.rolePathologist') },
+                 { value: 'guest', label: t('settings.createUserModal.roleGuest') },
+               ]}
+               disabled={isCreating}
+             />
+           </div>
         </div>
         <div className="flex justify-end gap-3 mt-6">
           <Button variant="outline" onClick={onClose} disabled={isCreating}>

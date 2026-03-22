@@ -22,6 +22,7 @@ export default function StorageManagementPage() {
 
   // Orphaned files state
   const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
+  const [, setError] = useState<string | null>(null)
   const [loadingOrphaned, setLoadingOrphaned] = useState(false)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())

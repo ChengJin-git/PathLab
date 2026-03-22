@@ -37,7 +37,7 @@ export function AttentionClassSelector({
           >
             <div className="flex flex-col items-start gap-1">
               <span className="text-gray-900 font-semibold text-sm tracking-tight text-left">
-                {selectedClassIdx !== undefined && heatmapData.classes[selectedClassIdx]
+                {selectedClassIdx !== undefined && heatmapData.classes?.[selectedClassIdx]
                   ? heatmapData.classes[selectedClassIdx]
                   : t('wsiViewerComponents.attentionClassSelector.selectAClass')}
               </span>
@@ -59,7 +59,7 @@ export function AttentionClassSelector({
               />
               <div className="absolute z-20 w-full mt-2 bg-white/90 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl shadow-purple-500/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top ring-1 ring-black/5">
                 <div className="max-h-[320px] overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-gray-200">
-                  {heatmapData.classes.map((cls, idx) => (
+                  {(heatmapData.classes ?? []).map((cls, idx) => (
                     <button
                       key={idx}
                       onClick={() => {

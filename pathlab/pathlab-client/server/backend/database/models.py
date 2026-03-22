@@ -908,6 +908,159 @@ class SegmentationAnnotation(Base):
         }
 
 
+class AnnotationAuditLog(Base):
+    __tablename__ = "annotation_audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(String(255), nullable=True)
+    event_type = Column(String(50), nullable=False)
+    event_metadata = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_audit_log_dataset_created", "dataset_id", "created_at"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "user_id": self.user_id,
+            "event_type": self.event_type,
+            "event_metadata": self.event_metadata,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+        }
+
+
+class AnalysisRun(Base):
+    """
+    Analysis Run table.
+    Tracks internal analysis runs (statistical analysis on training task results).
+    """
+    __tablename__ = "analysis_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    analysis_id = Column(String(255), unique=True, nullable=False, index=True)
+    task_id = Column(String(255), nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    def to_dict(self):
+        return {
+            "analysis_id": self.analysis_id,
+            "task_id": self.task_id,
+            "user_id": self.user_id,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+        }
+
+
+class DatasetStats(Base):
+    __tablename__ = "dataset_stats"
+
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        primary_key=True,
+        nullable=False,
+    )
+    file_count = Column(Integer, nullable=False, server_default="0")
+    total_size = Column(BigInteger, nullable=False, server_default="0")
+    split_train_count = Column(Integer, nullable=False, server_default="0")
+    split_val_count = Column(Integer, nullable=False, server_default="0")
+    split_test_count = Column(Integer, nullable=False, server_default="0")
+    updated_at = Column(DateTime, default=utc_now, nullable=False)
+
+
+class DatasetGrant(Base):
+    __tablename__ = "dataset_grants"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(String(255), nullable=False, index=True)
+    granted_by = Column(String(255), nullable=False)
+    can_read = Column(Boolean, default=True, nullable=False)
+    can_collaborate = Column(Boolean, default=False, nullable=False)
+    can_use_gpu = Column(Boolean, default=False, nullable=False)
+    expires_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_dataset_grants_user_dataset", "user_id", "dataset_id", unique=True),
+    )
+
+    def is_expired(self) -> bool:
+        if self.expires_at is None:
+            return False
+        return datetime.now(timezone.utc).replace(tzinfo=None) > self.expires_at
+
+    def is_valid(self) -> bool:
+        return not self.is_expired()
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "user_id": self.user_id,
+            "granted_by": self.granted_by,
+            "can_read": self.can_read,
+            "can_collaborate": self.can_collaborate,
+            "can_use_gpu": self.can_use_gpu,
+            "expires_at": self.expires_at.isoformat() + "Z" if self.expires_at else None,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+            "is_expired": self.is_expired(),
+            "is_valid": self.is_valid(),
+        }
+
+
+class PermissionAuditLog(Base):
+    __tablename__ = "permission_audit_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    dataset_id = Column(
+        String(255),
+        ForeignKey("datasets.dataset_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    actor_id = Column(String(255), nullable=False)
+    target_user_id = Column(String(255), nullable=False)
+    action = Column(String(50), nullable=False)
+    extra_metadata = Column("metadata", JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("idx_perm_audit_dataset_created", "dataset_id", "created_at"),
+    )
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "dataset_id": self.dataset_id,
+            "actor_id": self.actor_id,
+            "target_user_id": self.target_user_id,
+            "action": self.action,
+            "metadata": self.extra_metadata,
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+        }
+
+
 class ResearchJob(Base):
     """
     Research Job table.

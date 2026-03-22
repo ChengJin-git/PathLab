@@ -190,24 +190,24 @@ export function ChartCard({ config, onError }: ChartCardProps) {
       {/* Charts */}
       <div className="p-5 space-y-4">
         {config.charts.includes('roc_curve') && chartData.roc_curve && (
-          <RocCurveChart data={chartData.roc_curve} title={t('chatComponents.chartCard.rocCurve')} />
+          <RocCurveChart data={chartData.roc_curve} title={t('chatComponents.chartCard.rocCurve')} compact={true} />
         )}
         {config.charts.includes('confusion_matrix') && chartData.confusion_matrix && (
-          <ConfusionMatrixChart data={chartData.confusion_matrix} title={t('chatComponents.chartCard.confusionMatrix')} />
+          <ConfusionMatrixChart data={chartData.confusion_matrix} title={t('chatComponents.chartCard.confusionMatrix')} compact={true} />
         )}
         {config.charts.includes('loss_curve') && chartData.loss_curve && (
           'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
-            ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title={t('chatComponents.chartCard.trainingLossKFold')} />
-            : <LossCurveChart data={chartData.loss_curve as LossCurveData} title={t('chatComponents.chartCard.trainingLoss')} />
+            ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title={t('chatComponents.chartCard.trainingLossKFold')} compact={true} />
+            : <LossCurveChart data={chartData.loss_curve as LossCurveData} title={t('chatComponents.chartCard.trainingLoss')} compact={true} />
         )}
         {config.charts.includes('km_curve') && chartData.km_curve && (
-          <KMCurveChart data={chartData.km_curve} title={t('chatComponents.chartCard.kmCurve')} />
+          <KMCurveChart data={chartData.km_curve} title={t('chatComponents.chartCard.kmCurve')} compact={true} />
         )}
         {config.charts.includes('iou_curve') && chartData.iou_curve && (
-          <MetricCurveChart data={chartData.iou_curve} title={t('chatComponents.chartCard.iouCurve')} />
+          <MetricCurveChart data={chartData.iou_curve} title={t('chatComponents.chartCard.iouCurve')} compact={true} />
         )}
         {config.charts.includes('dice_curve') && chartData.dice_curve && (
-          <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.chartCard.diceCurve')} />
+          <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.chartCard.diceCurve')} compact={true} />
         )}
       </div>
     </div>

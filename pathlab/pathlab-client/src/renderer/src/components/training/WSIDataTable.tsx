@@ -354,11 +354,11 @@ function SlideRow({
   isPatchDataset: boolean
   handleEditClick: (item: WSIItem) => void
   handleDeleteClick: (wsiId: string, label?: string, filename?: string) => void
-  getFileType: (fileExtension: string, size: number) => 'WSI' | 'Patch'
+  getFileType: (fileExtension: string | null, size: number | null, authoritativeDataType?: 'wsi' | 'patch' | null) => 'WSI' | 'Patch'
   nested?: boolean
 }) {
   const { t } = useTranslation()
-  const fileType = getFileType(item.file_extension || '', item.file_size || 0, item.data_type)
+  const fileType = getFileType(item.file_extension ?? null, item.file_size ?? null, item.data_type)
 
   return (
     <tr

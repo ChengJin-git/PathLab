@@ -5,6 +5,7 @@ Handles storage statistics, orphaned file detection and cleanup.
 Batch task operations are in storage_tasks.py.
 Directory scanning and external file management are in storage_scan.py.
 """
+
 import asyncio
 import shutil
 import os
@@ -32,7 +33,7 @@ router = APIRouter(prefix="/storage", tags=["Storage Management"])
 async def start_migration(
     request: MigrationRequest,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Start migrating data to a new storage location.
@@ -49,7 +50,9 @@ async def start_migration(
             raise HTTPException(status_code=400, detail="Target path is required")
 
         if os.path.abspath(current_uploads_dir) == os.path.abspath(target_dir):
-             raise HTTPException(status_code=400, detail="Target path is same as current path")
+            raise HTTPException(
+                status_code=400, detail="Target path is same as current path"
+            )
 
         # Validate target directory
         target_path_obj = Path(target_dir)
@@ -58,38 +61,51 @@ async def start_migration(
                 # Try to create it to check permissions
                 target_path_obj.mkdir(parents=True, exist_ok=True)
             except Exception:
-                raise HTTPException(status_code=400, detail=f"Target directory does not exist and cannot be created: {target_dir}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Target directory does not exist and cannot be created: {target_dir}",
+                )
 
         if not os.access(target_dir, os.W_OK):
-            raise HTTPException(status_code=400, detail=f"Target directory is not writable: {target_dir}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target directory is not writable: {target_dir}",
+            )
 
         # Start migration
         success = await migration_manager.start_migration(
             source=current_uploads_dir,
             destination=target_dir,
-            delete_source=request.delete_source
+            delete_source=request.delete_source,
         )
 
         if not success:
             status = migration_manager.get_status()
             if status["status"] == "running":
-                raise HTTPException(status_code=409, detail="Migration already in progress")
+                raise HTTPException(
+                    status_code=409, detail="Migration already in progress"
+                )
             else:
-                 raise HTTPException(status_code=500, detail="Failed to start migration")
+                raise HTTPException(status_code=500, detail="Failed to start migration")
 
-        return {"message": "Migration started", "source": current_uploads_dir, "destination": target_dir}
+        return {
+            "message": "Migration started",
+            "source": current_uploads_dir,
+            "destination": target_dir,
+        }
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to start migration: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to start migration: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start migration: {str(e)}"
+        )
 
 
 @router.get("/migration/status")
 async def get_migration_status(
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """
     Get the status of the current migration task.
@@ -110,9 +126,7 @@ async def get_migration_status(
 
             # 1. Update DB
             await migration_manager.update_database_paths(
-                db,
-                status["source"],
-                status["destination"]
+                db, status["source"], status["destination"]
             )
 
             # 2. Update Config
@@ -130,7 +144,7 @@ async def get_migration_status(
             return {
                 "status": "success",
                 "message": "Migration completed and applied successfully",
-                "new_path": status["destination"]
+                "new_path": status["destination"],
             }
 
         except Exception as e:
@@ -138,15 +152,16 @@ async def get_migration_status(
             return {
                 "status": "error",
                 "error": f"Migration files copied but finalization failed: {str(e)}",
-                "progress": 100
+                "progress": 100,
             }
 
     return status
 
+
 @router.get("/stats")
 async def get_storage_stats(
     refresh: bool = Query(False, description="Force refresh cache"),
-    user: User = Depends(current_active_user)
+    user: User = Depends(require_admin),
 ):
     """
     Get overall storage statistics with caching.
@@ -176,20 +191,24 @@ async def get_storage_stats(
     """
     try:
         # Run in thread pool to avoid blocking event loop for large directories
-        stats = await asyncio.to_thread(storage_manager.get_total_storage_stats, refresh)
+        stats = await asyncio.to_thread(
+            storage_manager.get_total_storage_stats, refresh
+        )
 
         # Add human-readable sizes
-        stats["total_size_mb"] = stats["total_size"] / (1024 ** 2)
-        stats["total_size_gb"] = stats["total_size"] / (1024 ** 3)
+        stats["total_size_mb"] = stats["total_size"] / (1024**2)
+        stats["total_size_gb"] = stats["total_size"] / (1024**3)
 
         return stats
     except Exception as e:
         logger.error(f"Failed to get storage stats: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get storage stats: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get storage stats: {str(e)}"
+        )
 
 
 @router.get("/disk-space")
-async def get_disk_space(user: User = Depends(current_active_user)):
+async def get_disk_space(user: User = Depends(require_admin)):
     """
     Get disk space information for the uploads directory.
 
@@ -211,29 +230,30 @@ async def get_disk_space(user: User = Depends(current_active_user)):
         uploads_dir = Config.get_uploads_dir()
         disk_usage = shutil.disk_usage(uploads_dir)
 
-        free_gb = disk_usage.free / (1024 ** 3)
+        free_gb = disk_usage.free / (1024**3)
 
         return {
             "uploads_dir": str(uploads_dir),
             "total": disk_usage.total,
             "used": disk_usage.used,
             "free": disk_usage.free,
-            "total_gb": disk_usage.total / (1024 ** 3),
-            "used_gb": disk_usage.used / (1024 ** 3),
+            "total_gb": disk_usage.total / (1024**3),
+            "used_gb": disk_usage.used / (1024**3),
             "free_gb": free_gb,
             "usage_percent": (disk_usage.used / disk_usage.total) * 100,
             "warning": free_gb < 10,  # Warning if less than 10GB free
-            "critical": free_gb < 1   # Critical if less than 1GB free
+            "critical": free_gb < 1,  # Critical if less than 1GB free
         }
     except Exception as e:
         logger.error(f"Failed to get disk space: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get disk space: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get disk space: {str(e)}"
+        )
 
 
 @router.get("/check-upload-space")
 async def check_upload_space(
-    required_bytes: int,
-    user: User = Depends(current_active_user)
+    required_bytes: int, user: User = Depends(current_active_user)
 ):
     """
     Check if there is enough disk space for an upload.
@@ -257,20 +277,20 @@ async def check_upload_space(
         disk_usage = shutil.disk_usage(uploads_dir)
 
         free_bytes = disk_usage.free
-        free_gb = free_bytes / (1024 ** 3)
-        required_gb = required_bytes / (1024 ** 3)
+        free_gb = free_bytes / (1024**3)
+        required_gb = required_bytes / (1024**3)
 
         # Reserve 1GB safety margin
-        safety_margin = 1 * (1024 ** 3)  # 1GB
+        safety_margin = 1 * (1024**3)  # 1GB
         available_for_upload = free_bytes - safety_margin
 
         can_upload = required_bytes <= available_for_upload
-        remaining_after_upload = (free_bytes - required_bytes) / (1024 ** 3)
+        remaining_after_upload = (free_bytes - required_bytes) / (1024**3)
 
         if can_upload:
             message = f"Sufficient space available. {remaining_after_upload:.2f} GB will remain after upload."
         else:
-            shortage_gb = (required_bytes - available_for_upload) / (1024 ** 3)
+            shortage_gb = (required_bytes - available_for_upload) / (1024**3)
             message = f"Insufficient disk space. Need {shortage_gb:.2f} GB more space (1GB safety margin applied)."
 
         return {
@@ -280,15 +300,17 @@ async def check_upload_space(
             "free_bytes": free_bytes,
             "free_gb": free_gb,
             "remaining_after_upload_gb": remaining_after_upload,
-            "message": message
+            "message": message,
         }
     except Exception as e:
         logger.error(f"Failed to check upload space: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to check upload space: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to check upload space: {str(e)}"
+        )
 
 
 @router.get("/config")
-async def get_storage_config(user: User = Depends(current_active_user)):
+async def get_storage_config(user: User = Depends(require_admin)):
     """Get storage configuration (uploads directory)."""
     return {
         "uploads_dir": str(Config.get_uploads_dir()),
@@ -298,8 +320,7 @@ async def get_storage_config(user: User = Depends(current_active_user)):
 
 @router.post("/config")
 async def update_storage_config(
-    request: StorageConfigRequest,
-    user: User = Depends(require_admin)
+    request: StorageConfigRequest, user: User = Depends(require_admin)
 ):
     """Update storage configuration (uploads directory). Admin only."""
     try:
@@ -313,14 +334,16 @@ async def update_storage_config(
         }
     except Exception as e:
         logger.error(f"Failed to update storage config: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to update storage config: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to update storage config: {str(e)}"
+        )
 
 
 @router.get("/wsi/{wsi_id}")
 async def get_wsi_storage_info(
     wsi_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get storage information for a specific WSI.
@@ -336,32 +359,35 @@ async def get_wsi_storage_info(
 
         # Check ownership
         if not check_data_ownership(wsi.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to view this WSI's storage info")
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view this WSI's storage info",
+            )
 
         # Run file operations in thread pool to avoid blocking event loop
         info = await asyncio.to_thread(
-            storage_manager.get_wsi_storage_info,
-            wsi_id,
-            wsi.wsi_path
+            storage_manager.get_wsi_storage_info, wsi_id, wsi.wsi_path
         )
 
         # Add human-readable sizes
-        info["total_size_mb"] = info["total_size"] / (1024 ** 2)
-        info["total_size_gb"] = info["total_size"] / (1024 ** 3)
+        info["total_size_mb"] = info["total_size"] / (1024**2)
+        info["total_size_gb"] = info["total_size"] / (1024**3)
 
         return info
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get WSI storage info: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get WSI storage info: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get WSI storage info: {str(e)}"
+        )
 
 
 @router.get("/training/{task_id}")
 async def get_training_task_storage_info(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get storage information for a specific training task.
@@ -373,39 +399,46 @@ async def get_training_task_storage_info(
         # Get training task from database
         task = await TrainingTaskRepository.get_by_id(db, task_id)
         if not task:
-            raise HTTPException(status_code=404, detail=f"Training task not found: {task_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Training task not found: {task_id}"
+            )
 
         # Check ownership
         if not check_data_ownership(task.user_id, user):
-            raise HTTPException(status_code=403, detail="You don't have permission to view this task's storage info")
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to view this task's storage info",
+            )
 
         # Get trained models
         trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)
-        model_paths = [model.model_path for model in trained_models] if trained_models else []
+        model_paths = (
+            [model.model_path for model in trained_models] if trained_models else []
+        )
 
         # Run file operations in thread pool to avoid blocking event loop
         info = await asyncio.to_thread(
-            storage_manager.get_training_task_storage_info,
-            task_id,
-            model_paths
+            storage_manager.get_training_task_storage_info, task_id, model_paths
         )
 
         # Add human-readable sizes
-        info["total_size_mb"] = info["total_size"] / (1024 ** 2)
-        info["total_size_gb"] = info["total_size"] / (1024 ** 3)
+        info["total_size_mb"] = info["total_size"] / (1024**2)
+        info["total_size_gb"] = info["total_size"] / (1024**3)
 
         return info
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Failed to get training task storage info: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get training task storage info: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get training task storage info: {str(e)}",
+        )
 
 
 @router.get("/orphaned")
 async def detect_orphaned_files(
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """
     Detect orphaned files (files that exist in filesystem but not in database).
@@ -442,24 +475,26 @@ async def detect_orphaned_files(
             storage_manager.find_orphaned_files,
             existing_wsi_ids,
             existing_task_ids,
-            existing_model_ids
+            existing_model_ids,
         )
 
         # Add human-readable sizes
-        orphaned["total_orphaned_size_mb"] = orphaned["total_orphaned_size"] / (1024 ** 2)
-        orphaned["total_orphaned_size_gb"] = orphaned["total_orphaned_size"] / (1024 ** 3)
+        orphaned["total_orphaned_size_mb"] = orphaned["total_orphaned_size"] / (1024**2)
+        orphaned["total_orphaned_size_gb"] = orphaned["total_orphaned_size"] / (1024**3)
 
         return orphaned
     except Exception as e:
         logger.error(f"Failed to detect orphaned files: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to detect orphaned files: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to detect orphaned files: {str(e)}"
+        )
 
 
 @router.post("/orphaned/cleanup")
 async def cleanup_orphaned_files(
     request: OrphanedCleanupRequest,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Clean up orphaned files.
@@ -496,28 +531,27 @@ async def cleanup_orphaned_files(
             storage_manager.find_orphaned_files,
             existing_wsi_ids,
             existing_task_ids,
-            existing_model_ids
+            existing_model_ids,
         )
 
         # Clean up - also run in thread pool
         result = await asyncio.to_thread(
-            storage_manager.cleanup_orphaned_files,
-            orphaned,
-            request.categories
+            storage_manager.cleanup_orphaned_files, orphaned, request.categories
         )
 
-        logger.info(result['summary'])
+        logger.info(result["summary"])
 
         return result
     except Exception as e:
         logger.error(f"Failed to cleanup orphaned files: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned files: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to cleanup orphaned files: {str(e)}"
+        )
 
 
 @router.get("/orphaned-records")
 async def detect_orphaned_records(
-    user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)
 ):
     """
     Detect orphaned database records (records whose referenced entities no longer exist).
@@ -535,7 +569,7 @@ async def detect_orphaned_records(
             "orphaned_training_logs": [...],
             "orphaned_trained_models": [...],
             "orphaned_message_feedbacks": [...],
-            "orphaned_dataset_permissions": [...],
+            "orphaned_dataset_grants": [...],
             "total_orphaned_count": int,
             "summary": {category: count, ...}
         }
@@ -545,14 +579,16 @@ async def detect_orphaned_records(
         return result
     except Exception as e:
         logger.error(f"Failed to detect orphaned records: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to detect orphaned records: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to detect orphaned records: {str(e)}"
+        )
 
 
 @router.post("/orphaned-records/cleanup")
 async def cleanup_orphaned_records(
     request: OrphanedCleanupRequest,
     user: User = Depends(require_admin),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Clean up orphaned database records.
@@ -562,7 +598,7 @@ async def cleanup_orphaned_records(
         {
             "categories": ["ai_tasks", "ai_results", "training_task_wsi",
                           "training_logs", "trained_models",
-                          "message_feedbacks", "dataset_permissions"]  // optional
+                          "message_feedbacks", "dataset_grants"]
         }
 
     Returns:
@@ -574,16 +610,17 @@ async def cleanup_orphaned_records(
     """
     try:
         result = await OrphanedRecordsRepository.cleanup_orphaned_records(
-            db,
-            categories=request.categories
+            db, categories=request.categories
         )
         await db.commit()
-        logger.info(result['summary'])
+        logger.info(result["summary"])
         return result
     except Exception as e:
         logger.error(f"Failed to cleanup orphaned records: {e}")
         await db.rollback()
-        raise HTTPException(status_code=500, detail=f"Failed to cleanup orphaned records: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to cleanup orphaned records: {str(e)}"
+        )
 
 
 # ==============================================================================

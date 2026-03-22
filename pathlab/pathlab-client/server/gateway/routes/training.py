@@ -47,6 +47,23 @@ from backend.common.chat_context_cache import invalidate_chat_context
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
 
+async def _has_wsi_training_access(user: User, wsi: Any, db: AsyncSession) -> bool:
+    dataset_is_public = bool(wsi.dataset and getattr(wsi.dataset, "is_public", False))
+    parent_dataset_id = (
+        wsi.dataset.parent_dataset_id
+        if wsi.dataset and getattr(wsi.dataset, "parent_dataset_id", None)
+        else None
+    )
+    return await check_wsi_access_permission(
+        user,
+        wsi.dataset_id,
+        wsi.user_id,
+        db,
+        dataset_is_public=dataset_is_public,
+        parent_dataset_id=parent_dataset_id,
+    )
+
+
 async def _check_file_accessibility(
     paths_to_check: list[tuple[Any, ...]],
     uploads_dir: str,
@@ -296,25 +313,9 @@ async def create_training_task(
                             (wsi_id, wsi.wsi_path, wsi.original_filename)
                         )
             else:
-                # Non-admin: batch-fetch all user permissions upfront, then check in-memory
-                from backend.database.repositories import DatasetPermissionRepository
-
-                user_permissions = await DatasetPermissionRepository.get_valid_by_user(
-                    db, str(user.id)
-                )
-                elevated_dataset_ids = {
-                    p.dataset_id for p in user_permissions if p.is_valid()
-                }
-
                 for wsi_id in wsi_ids:
                     wsi = wsi_map[wsi_id]
-                    # In-memory permission check (no DB query per WSI)
-                    has_access = (
-                        wsi.user_id == str(user.id)  # Owner
-                        or (
-                            wsi.dataset_id and wsi.dataset_id in elevated_dataset_ids
-                        )  # Elevated permission
-                    )
+                    has_access = await _has_wsi_training_access(user, wsi, db)
                     if not has_access:
                         raise HTTPException(
                             status_code=403,
@@ -564,7 +565,13 @@ async def list_training_tasks(
             task_dict = task.to_dict()
 
         task_id = task_dict["task_id"]
-        task_dict["wsi_count"] = wsi_counts.get(task_id, 0)
+        junction_count = wsi_counts.get(task_id, 0)
+        if junction_count == 0 and task_dict.get("task_type") == "external_validation":
+            task_dict["wsi_count"] = (task_dict.get("model_config") or {}).get(
+                "total_wsi", 0
+            )
+        else:
+            task_dict["wsi_count"] = junction_count
         task_dict["source_dataset_id"] = source_dataset_ids.get(task_id)
         if task_id in file_progress:
             task_dict["progress"] = file_progress[task_id]

@@ -29,6 +29,7 @@ from backend.database.repositories import (
     DataGroupRepository,
     AIResultRepository,
     SegmentationAnnotationRepository,
+    DatasetStatsRepository,
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.auth import current_active_user, User
@@ -64,11 +65,9 @@ from ..utils import (
 
 router = APIRouter(prefix="/wsi", tags=["WSI Management"])
 
-# Include permissions sub-router FIRST — routes like /my-permissions must be
-# registered before /{wsi_id} to avoid path parameter conflicts.
-from .wsi_permissions import router as wsi_permissions_router
+from .wsi_grants import router as wsi_grants_router
 
-router.include_router(wsi_permissions_router)
+router.include_router(wsi_grants_router)
 
 
 def _normalize_annotation_file_key(file_name: Optional[str]) -> Optional[str]:
@@ -340,8 +339,8 @@ async def _get_segmentation_annotation_presence_map(
     exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
     for record in page_records:
         annotation_id = str(getattr(record, "annotation_id", "") or "")
-        if annotation_id.startswith("annot_"):
-            inferred_wsi_id = annotation_id[len("annot_") :]
+        if annotation_id.startswith("label_"):
+            inferred_wsi_id = annotation_id[len("label_") :]
             if inferred_wsi_id in presence_map:
                 presence_map[inferred_wsi_id] = True
         _mark_coco_image_matches(
@@ -368,7 +367,7 @@ async def _load_segmentation_multilabels(
         return {}
 
     dataset_level_record = next(
-        (record for record in records if record.annotation_id == f"annot_{dataset_id}"),
+        (record for record in records if record.annotation_id == f"label_{dataset_id}"),
         None,
     )
     payloads = (
@@ -447,6 +446,14 @@ async def list_wsi(
         le=10000,
         description="Number of case groups per page. 0 = return all (no pagination).",
     ),
+    sort_by: Optional[str] = Query(
+        None,
+        description="Sort field: original_filename, label, event_time, event_status",
+    ),
+    sort_order: str = Query(
+        "asc",
+        description="Sort direction: asc or desc",
+    ),
     user: User = Depends(current_active_user),
     user_id_filter: Optional[str] = Depends(get_user_id_filter),
     db: AsyncSession = Depends(get_db),
@@ -485,6 +492,8 @@ async def list_wsi(
                 data_type=data_type,
                 search=search,
                 elevated_dataset_ids=elevated_dataset_ids,
+                sort_by=sort_by,
+                sort_order=sort_order,
             )
             total = await WSIRepository.count_by_dataset(
                 db,
@@ -528,6 +537,9 @@ async def list_wsi(
             user_id=user_id_filter,
             data_type=data_type,
             elevated_dataset_ids=elevated_dataset_ids,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            named_count=case_meta["named_case_count"],
         )
 
         items = await _serialize_dataset_wsi_items(
@@ -688,18 +700,8 @@ async def list_datasets(
     # Get elevated dataset IDs for non-admin users
     elevated_dataset_ids = await get_permitted_dataset_ids(user, db)
     skip = 0 if page_size == 0 else (page - 1) * page_size
-    total = await WSIRepository.count_datasets(
-        db,
-        data_type=data_type,
-        user_id=user_id_filter,
-        elevated_dataset_ids=elevated_dataset_ids,
-        search=search,
-        task_type=task_type,
-        aggregation_level=aggregation_level,
-        source_organ=source_organ,
-    )
 
-    datasets = await WSIRepository.get_datasets(
+    datasets, total = await WSIRepository.get_datasets_with_total(
         db,
         data_type=data_type,
         user_id=user_id_filter,
@@ -1078,12 +1080,17 @@ async def update_dataset_source(
         )
 
         from sqlalchemy import update as sql_update
-        from backend.database.models import WSISlide
+        from backend.database.models import WSISlide, Dataset
 
         normalized_source = req.source.strip() if isinstance(req.source, str) else None
         if normalized_source == "":
             normalized_source = None
 
+        await db.execute(
+            sql_update(Dataset)
+            .where(Dataset.dataset_id == dataset_id)
+            .values(source_organ=normalized_source)
+        )
         result = await db.execute(
             sql_update(WSISlide)
             .where(WSISlide.dataset_id == dataset_id)
@@ -1238,6 +1245,7 @@ async def delete_wsi(
         )
 
         wsi_path = wsi.wsi_path
+        dataset_id = wsi.dataset_id
 
         # Delete all associated data before deleting the WSI
         # Using raw SQL for efficiency
@@ -1257,6 +1265,8 @@ async def delete_wsi(
 
         # Delete WSI from database
         await WSIRepository.delete(db, wsi_id)
+        if dataset_id:
+            await DatasetStatsRepository.recompute(db, dataset_id)
         await db.commit()
         await invalidate_chat_context(str(wsi.user_id or user.id))
 
@@ -1468,9 +1478,9 @@ async def upload_dataset_splits(
     if len(content) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
 
-    # Decode as UTF-8
+    # Decode as UTF-8 (utf-8-sig strips BOM if present — Excel often adds BOM to CSV)
     try:
-        text = content.decode("utf-8")
+        text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise HTTPException(
             status_code=400, detail="Invalid CSV file: not valid UTF-8 encoding"
@@ -1773,7 +1783,8 @@ async def export_dataset_labels(
     """
     Export dataset labels as CSV file.
 
-    Admin only. Non-blocking operation using StreamingResponse.
+    Available to dataset owners and users with elevated access permissions.
+    Non-blocking operation using StreamingResponse.
 
     If dataset has predefined splits, exports them directly.
     If generate_split=True and no predefined splits, generates splits using the same
@@ -1785,14 +1796,14 @@ async def export_dataset_labels(
     - Survival (file-level): filename, event_time, event_status, case_id, age, gender, split
     - Survival (case-level): case_id, event_time, event_status, file_count, age, gender, split, filenames
     """
-    # Admin only
-    if not user.is_admin():
-        raise HTTPException(status_code=403, detail="Admin access required")
-
-    # Get dataset
-    dataset = await DatasetRepository.get_by_id(db, dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
+    dataset = await get_dataset_with_access(
+        dataset_id,
+        user,
+        db,
+        require_owner=False,
+        not_found_detail="Dataset not found",
+        forbidden_detail="You don't have permission to export this dataset",
+    )
 
     aggregation_level = (
         dataset.data_group.aggregation_level if dataset.data_group else "file"

@@ -4,7 +4,8 @@
  * Uses custom hooks for state management and step components for UI rendering.
  */
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { clearDraftKeys } from '../lib/useDraftState'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
@@ -195,6 +196,13 @@ export default function NewTaskPage() {
     }
   }, [wizard.taskType])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: clearDraftKeys is a pure utility; currentStep is the only trigger
+  useEffect(() => {
+    if (wizard.currentStep === 6) {
+      clearDraftKeys('draft:wizard:')
+    }
+  }, [wizard.currentStep])
+
   // Poll for task status in Step 6
   useEffect(() => {
     let intervalId: NodeJS.Timeout
@@ -290,6 +298,9 @@ export default function NewTaskPage() {
     }
     if (errorLower.includes('wsi') || errorLower.includes('slide')) {
       return t('newTask.errors.invalidLabels')
+    }
+    if (errorLower.includes('pathologist access') || errorLower.includes('elevated permission')) {
+      return t('newTask.errors.gpuPermissionRequired')
     }
     if (errorLower.includes('gpu') || errorLower.includes('cuda')) {
       return t('newTask.errors.gpuRequired')
@@ -672,6 +683,13 @@ export default function NewTaskPage() {
     t,
   ])
 
+  // ========== Step Click Navigation ==========
+  const handleStepClick = useCallback((step: number) => {
+    if (step > wizard.currentStep) return
+    if (step === 6 && !wizard.submittedTaskId) return
+    wizard.setCurrentStep(step)
+  }, [wizard.currentStep, wizard.submittedTaskId, wizard.setCurrentStep])
+
   const canProceedStep1 = useMemo(() => {
     return wizard.taskName.trim().length > 0 && wizard.taskDescription.trim().length > 0
   }, [wizard.taskName, wizard.taskDescription])
@@ -725,7 +743,7 @@ export default function NewTaskPage() {
           </div>
 
           {/* Progress Steps */}
-          <StepProgressBar currentStep={wizard.currentStep} dataLevel={wizard.dataLevel} />
+          <StepProgressBar currentStep={wizard.currentStep} dataLevel={wizard.dataLevel} onStepClick={handleStepClick} />
 
           {/* Step 1: Task Setup */}
           {wizard.currentStep === 1 && (

@@ -8,7 +8,7 @@ all running tasks that depend on that permission should be terminated.
 This is kept separate from training routes to avoid circular imports.
 
 Usage:
-- Gateway calls revoke_task_permission(task_id) when admin revokes dataset permission
+- Gateway calls revoke_task_permission(task_id) when admin revokes dataset grant
 - Trainers call is_permission_revoked(task_id) in their training loops (same checkpoints as cancellation)
 - Training endpoints call clear_revocation(task_id) in their finally blocks
 """
@@ -31,7 +31,7 @@ def revoke_task_permission(task_id: str) -> bool:
     """
     Mark a task as having its permission revoked.
 
-    Called by Gateway when admin revokes a user's dataset permission
+    Called by Gateway when admin revokes a user's dataset grant
     and there are running tasks that depend on that permission.
 
     Args:

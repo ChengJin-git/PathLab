@@ -1,6 +1,6 @@
 # PathLab Gateway
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.4`
 
 Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
 
@@ -18,13 +18,14 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
   - 清理过期完成任务
   - 清理过期 PDF 缓存
   - 异步预热训练推荐所需的 embedding 模型与 bundled knowledge 源
+  - 异步预热所有非管理员用户的聊天上下文缓存（`_startup_prewarm_chat_context_cache`）
   - 注册所有顶层 router
   - 在存在前端构建产物时挂载静态资源
   - 始终挂载 `/avatars`
 
 ## 当前直接注册的 router
 
-`main.py` 里当前直接注册了 16 个顶层 router：
+`main.py` 里当前直接注册了 **17 个顶层 router**：
 
 1. `auth`
 2. `stats`
@@ -42,6 +43,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 14. `settings`
 15. `gpu`
 16. `annotation`
+17. `training_options`
 
 这些 router 覆盖了当前主要公开能力：
 
@@ -55,16 +57,17 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **32 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **34 个路由模块文件**（不含 `__init__.py`）。
 
-除了上面 16 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
+除了上面 17 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
 - 分析辅助：`analysis_helpers.py`、`analysis_metrics.py`、`analysis_state.py`
-- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`
+- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`、`chat_intent_policy.py`
+- 训练辅助：`training_options.py`（为 `training_options_router` 提供 `/training/options` 接口）
 - 运行时辅助：`transformers_runtime.py`
 - 存储辅助：`storage_scan.py`、`storage_tasks.py`
-- WSI 权限辅助：`wsi_permissions.py`
+- WSI 权限辅助：`wsi_grants.py`
 
 这些文件通常通过导入被组合到顶层 router，而不是单独挂载；当前也没有额外单列的 `deep-research` router 入口。
 
@@ -79,6 +82,21 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - 支持维护模式、维护公告确认、分页用户列表与批量用户启停删
 - 包含管理员批量启用 / 禁用 / 删除用户接口
 - 当前代码里没有单独暴露的 `AccessToken` ORM 模型 README 记录，认证主要依赖 JWT
+
+## 标注路由（annotation router）
+
+`routes/annotation.py` 当前提供的核心公开端点包括：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/datasets/{dataset_id}/labels` | 获取数据集的有效标注（GT + 个人覆盖层合并），含 `label_annotation_source` 派生字段 |
+| `GET` | `/wsi/{wsi_id}/labels` | 获取单张 WSI 的个人标注草稿 |
+| `GET` | `/datasets/{dataset_id}/labels/summary` | 获取标注汇总统计，含 `label_annotation_source` 字段 |
+| `DELETE` | `/datasets/{dataset_id}/labels` | 删除数据集标注（活跃训练任务时拦截） |
+| `POST` | `/datasets/{dataset_id}/delete-by-labels` | 按 label 类别删除标注 |
+| `POST` | `/annotation/extract` | 提取标注 ROI 到新数据集（触发 `promoted_to_training_reference` 审计） |
+
+注意：`/ground-truth` 路径已在 v1.0.4 之前的重构中改名为 `/labels`，旧路径不再有效。
 
 ## 存储路由补充说明
 

@@ -7,8 +7,8 @@ import { LogEntry } from './types'
 
 interface LogViewerProps {
   logs: LogEntry[]
-  logsContainerRef: React.RefObject<HTMLDivElement | null>
-  logsEndRef: React.RefObject<HTMLDivElement | null>
+  logsContainerRef: React.RefObject<HTMLDivElement>
+  logsEndRef: React.RefObject<HTMLDivElement>
 }
 
 export const LogViewer: React.FC<LogViewerProps> = ({

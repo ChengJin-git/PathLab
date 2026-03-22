@@ -94,8 +94,8 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
     })
   }, [data.data, showPercent, rowTotals])
 
-  // Dynamic chart height: give each class ~28 px of row height when there are many classes
-  const chartHeight = compact ? 300 : isLarge ? Math.max(500, n * 28 + 160) : 420
+  // Dynamic chart height: give each class ~35 px of row height when there are many classes
+  const chartHeight = compact ? 300 : isLarge ? Math.max(500, n * 35 + 160) : 450
 
   const option: EChartsOption = useMemo(() => {
     const maxValue = Math.max(...displayData.map(d => d[2]))
@@ -109,29 +109,35 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
     const showCellLabel = !compact
     const cellLabelBold = n <= 15
 
-    // X-axis rotation: 45° when there are many classes so labels don't overlap
-    const xRotate = compact ? 30 : isLarge ? 45 : 0
+    // Always rotate X-axis labels to prevent overlap, especially on mobile or with long labels
+    const xRotate = compact ? 45 : (n > 4 || maxLabelLen > 8) ? 45 : 0
 
-    // Grid margins computed from longest class name length
-    const leftMargin = compact ? 60 : isLarge ? Math.min(maxLabelLen * 7 + 10, 180) : '25%'
-    const bottomMargin = compact ? 125 : isLarge ? Math.max(80, Math.min(maxLabelLen * 5 + 20, 150)) : 100
-    const nameGapY = compact ? 35 : isLarge ? Math.min(maxLabelLen * 7 + 5, 175) : 85
-    const nameGapX = compact ? 80 : isLarge ? Math.max(60, Math.min(maxLabelLen * 4 + 50, 150)) : 60
+    // Use containLabel: true for the grid, allowing ECharts to compute exact margins
+    // nameGap values are still important to space out the axis names from the labels
+    const nameGapY = compact ? 40 : Math.min(maxLabelLen * 6 + 20, 160)
+    const nameGapX = compact ? 70 : Math.min(maxLabelLen * 5 + 40, 120)
 
     // Shared label formatter: word-wrap for Y axis, truncate for rotated X axis
     const makeFormatter = (rotated: boolean) => (value: string) => {
-      const maxLen = compact ? 10 : 14
+      const maxLen = compact ? 12 : 16
       if (value.length <= maxLen) return value
-      if (rotated) return value.slice(0, maxLen) + '…'
-      const words = value.split(/[\s-]+/)
+      if (rotated) return value.length > 20 ? value.slice(0, 20) + '…' : value
+
+      // Custom word wrap preserving separators like underscores and dashes
+      const parts = value.split(/([\s\-_]+)/)
       const lines: string[] = []
       let line = ''
-      for (const word of words) {
-        if ((line + ' ' + word).trim().length <= maxLen) {
-          line = (line + ' ' + word).trim()
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]
+        if (i % 2 !== 0) { // separator
+          line += part
+          continue
+        }
+        if (!line || (line + part).length <= maxLen) {
+          line += part
         } else {
-          if (line) lines.push(line)
-          line = word
+          lines.push(line)
+          line = part
         }
       }
       if (line) lines.push(line)
@@ -151,9 +157,13 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
           return `${t('analysisCharts.trueLabel')}: ${data.classes[actual]}<br/>${t('analysisCharts.predictedLabel')}: ${data.classes[pred]}<br/>${t('analysisCharts.count')}: ${count} (${pct}%)`
         }
       },
-      grid: compact
-        ? { left: 60, right: 35, top: 40, bottom: 125, containLabel: false }
-        : { left: leftMargin, right: 110, top: 60, bottom: bottomMargin, containLabel: false },
+      grid: {
+        containLabel: true,
+        left: compact ? 10 : 30,
+        right: compact ? 10 : 120, // keep room for vertical visualMap on the right
+        top: compact ? 40 : 60,
+        bottom: compact ? 70 : 60 // space for horizontal visualMap when compact
+      },
       xAxis: {
         type: 'category',
         data: data.classes,
@@ -161,7 +171,14 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
         nameLocation: 'middle',
         nameGap: nameGapX,
         nameTextStyle: { fontSize: compact ? 11 : 12 },
-        axisLabel: { fontSize: axisLabelFontSize, rotate: xRotate, interval: 0, formatter: makeFormatter(xRotate > 0) },
+        axisLabel: {
+          fontSize: axisLabelFontSize,
+          rotate: xRotate,
+          interval: 0,
+          formatter: makeFormatter(xRotate > 0),
+          width: compact ? 65 : 100,
+          overflow: 'truncate'
+        },
         splitArea: { show: true }
       },
       yAxis: {
@@ -171,7 +188,13 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
         nameLocation: 'middle',
         nameGap: nameGapY,
         nameTextStyle: { fontSize: compact ? 11 : 12 },
-        axisLabel: { fontSize: axisLabelFontSize, interval: 0, formatter: makeFormatter(false) },
+        axisLabel: {
+          fontSize: axisLabelFontSize,
+          interval: 0,
+          formatter: makeFormatter(false),
+          width: compact ? 80 : 130,
+          overflow: 'truncate'
+        },
         splitArea: { show: true },
         inverse: true
       },
@@ -213,11 +236,10 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
           {!compact && (
             <button
               onClick={() => setShowPercent(v => !v)}
-              className={`text-xs px-2 py-0.5 rounded border transition-colors ${
-                showPercent
-                  ? 'bg-indigo-600 text-white border-indigo-600'
-                  : 'text-gray-500 border-gray-300 hover:border-indigo-400 hover:text-indigo-600'
-              }`}
+              className={`text-xs px-2 py-0.5 rounded border transition-colors ${showPercent
+                ? 'bg-indigo-600 text-white border-indigo-600'
+                : 'text-gray-500 border-gray-300 hover:border-indigo-400 hover:text-indigo-600'
+                }`}
             >
               {showPercent ? t('analysisCharts.showCount') : t('analysisCharts.showPercent')}
             </button>

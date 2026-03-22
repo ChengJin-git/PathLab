@@ -9,6 +9,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { TFunction } from 'i18next'
+import { useNavigate } from 'react-router-dom'
 import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus } from '../contexts/BackgroundTaskContext'
 import { cn } from '../lib/utils'
 import {
@@ -131,13 +132,22 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
   }
 }
 
+function getNavigableTaskId(task: BackgroundTask): string | null {
+  if (!task.isServerTask) return null
+  if (task.type === 'training') return task.id.replace(/^training_/, '')
+  if (task.type === 'external_validation') return task.id.replace(/^extval_/, '')
+  if (task.type === 'analysis') return task.trainingTaskId || null
+  return null
+}
+
 const TaskCard: React.FC<{
   task: BackgroundTask;
   onCancel: () => void;
   onCancelServer: () => Promise<boolean>;
-  onRemove: () => void
+  onRemove: () => void;
+  onNavigate?: () => void;
 }> = ({
-  task, onCancel, onCancelServer, onRemove
+  task, onCancel, onCancelServer, onRemove, onNavigate
 }) => {
     const { t } = useTranslation()
     const [isCancelling, setIsCancelling] = React.useState(false)
@@ -216,10 +226,10 @@ const TaskCard: React.FC<{
                     )}
                   </div>
                 </div>
-                {task.title.startsWith('Relocating to ') ? (
+                {task.type === 'migration' ? (
                   <div className="flex flex-col text-sm font-medium text-left w-full">
                     <span className="text-gray-500 text-xs">{t('backgroundTask.relocatingTo')}</span>
-                    <span className="break-words text-gray-700 leading-tight">{task.title.replace('Relocating to ', '')}</span>
+                    <span className="break-words text-gray-700 leading-tight">{task.title}</span>
                   </div>
                 ) : (
                   <div className="text-sm font-semibold text-gray-900 break-words text-left leading-normal w-full">
@@ -278,6 +288,17 @@ const TaskCard: React.FC<{
             )}
           </div>
           <div className={cn("flex flex-row items-center gap-1 h-5", expanded ? "self-start mt-0.5 h-auto" : "")}>
+            {onNavigate && !showCancelConfirm && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onNavigate() }}
+                className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-primary-600"
+                title={t('backgroundTask.viewDetail')}
+              >
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </button>
+            )}
             {isActiveTask && !showCancelConfirm && (
               <button
                 onClick={async (e) => {
@@ -379,6 +400,7 @@ const TaskCard: React.FC<{
 
 export function BackgroundTaskPanel(): React.ReactElement | null {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { tasks, isProcessing, cancelTask, cancelServerTask, removeTask, clearCompletedTasks, subscribeTrainingSSE, subscribeAnalysisSSE, subscribeStorageSSE } = useBackgroundTask()
   const [isOpen, setIsOpen] = React.useState(false)
   const panelRef = React.useRef<HTMLDivElement>(null)
@@ -480,15 +502,22 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
             </div>
           ) : (
             <div className="flex-1 overflow-y-auto p-2 space-y-2 bg-gray-50/50">
-              {tasks.map(task => (
-                <TaskCard
-                  key={task.id}
-                  task={task}
-                  onCancel={() => cancelTask(task.id)}
-                  onCancelServer={() => cancelServerTask(task)}
-                  onRemove={() => removeTask(task)}
-                />
-              ))}
+              {tasks.map(task => {
+                const navigableId = getNavigableTaskId(task)
+                return (
+                  <TaskCard
+                    key={task.id}
+                    task={task}
+                    onCancel={() => cancelTask(task.id)}
+                    onCancelServer={() => cancelServerTask(task)}
+                    onRemove={() => removeTask(task)}
+                    onNavigate={navigableId ? () => {
+                      setIsOpen(false)
+                      navigate(`/task/${navigableId}`)
+                    } : undefined}
+                  />
+                )
+              })}
             </div>
           )}
         </div>

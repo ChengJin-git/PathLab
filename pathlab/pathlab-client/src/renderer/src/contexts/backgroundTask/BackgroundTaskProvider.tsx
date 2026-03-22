@@ -9,6 +9,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react'
+import { useTranslation } from 'react-i18next'
 import { getAuthToken, getDiskSpace, getMigrationStatus } from '../../api'
 import { useAuth } from '../AuthContext'
 import { DISMISSED_TASKS_KEY, generateId } from './helpers'
@@ -34,6 +35,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const [metadataUploadResults, setMetadataUploadResults] = useState<Map<string, MetadataUploadResult>>(new Map())
   const [diskSpace, setDiskSpace] = useState<DiskSpaceInfo | null>(null)
 
+  const { t } = useTranslation()
   // Get auth context for role checks and login state
   const { isAdmin, isLoggedIn } = useAuth()
 
@@ -42,6 +44,25 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
 
   // Ref to store AbortController for each running upload task (key: taskId)
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map())
+
+  const [deletingDatasetNames, setDeletingDatasetNames] = useState<Set<string>>(new Set())
+  const deletingTaskNameMapRef = useRef<Map<string, string>>(new Map())
+
+  const addDeletingDatasetName = useCallback((taskId: string, name: string) => {
+    deletingTaskNameMapRef.current.set(taskId, name)
+    setDeletingDatasetNames(prev => new Set([...prev, name]))
+  }, [])
+
+  const removeDeletingDatasetByTaskId = useCallback((taskId: string) => {
+    const name = deletingTaskNameMapRef.current.get(taskId)
+    if (!name) return
+    deletingTaskNameMapRef.current.delete(taskId)
+    setDeletingDatasetNames(prev => {
+      const next = new Set(prev)
+      next.delete(name)
+      return next
+    })
+  }, [])
 
   // SSE on-demand subscription: subscriber ref counts + enabled states
   const trainingSubCount = useRef(0)
@@ -146,7 +167,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
             serverTaskStatus: analysisTask.serverTaskStatus,
             items: [{
               ...task.items[0],
-              name: `Analyzing: ${task.title}`,
+              name: t('backgroundTask.taskTitles.analyzing', { name: task.title }),
               status: analysisTask.status,
               progress: analysisTask.totalProgress
             }],
@@ -172,7 +193,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
         title: record.taskName || record.taskId,
         items: [{
           id: record.taskId,
-          name: `Training: ${record.taskName || record.taskId}`,
+          name: t('backgroundTask.taskTitles.training', { name: record.taskName || record.taskId }),
           status: 'pending',
           progress: 0,
         }],
@@ -193,7 +214,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
       ...internalAnalysisTasks,
       ...filteredStorageTasks
     ]
-  }, [localTasks, trainingTasks, analysisTasks, storageTasks, dismissedServerTasks])
+  }, [localTasks, trainingTasks, analysisTasks, storageTasks, dismissedServerTasks, t])
 
   const isProcessing = tasks.some(t => t.status === 'running' || t.status === 'pending')
 
@@ -235,10 +256,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
           const task: BackgroundTask = {
             id: taskId,
             type: 'migration',
-            title: `Relocating to ${destName}`,
+            title: t('backgroundTask.relocatingToPath', { name: destName }),
             items: [{
               id: 'migration_main',
-              name: `Moving data to ${status.destination}`,
+              name: t('backgroundTask.taskTitles.movingData', { path: status.destination }),
               status: 'running',
               progress: Math.round(status.progress)
             }],
@@ -262,40 +283,40 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
               const currentStatus = await getMigrationStatus()
 
               setLocalTasks(prev => {
-                return prev.map(t => {
-                  if (t.id !== taskId) return t
+                return prev.map(task => {
+                  if (task.id !== taskId) return task
 
                   if (currentStatus.status === 'completed') {
                     clearInterval(pollInterval)
                     refreshDiskSpace()
                     return {
-                      ...t,
+                      ...task,
                       status: 'success',
                       completedAt: new Date(),
                       totalProgress: 100,
                       successCount: 1,
-                      items: t.items.map(i => ({ ...i, status: 'success', progress: 100 }))
+                      items: task.items.map(i => ({ ...i, status: 'success', progress: 100 }))
                     }
                   } else if (currentStatus.status === 'failed') {
                     clearInterval(pollInterval)
                     return {
-                      ...t,
+                      ...task,
                       status: 'error',
                       completedAt: new Date(),
                       failedCount: 1,
-                      items: t.items.map(i => ({
+                      items: task.items.map(i => ({
                         ...i,
                         status: 'error',
-                        error: currentStatus.error || 'Migration failed'
+                        error: currentStatus.error || t('backgroundTask.errors.migrationFailed')
                       }))
                     }
                   } else {
                     // Still running
                     const progress = Math.round(currentStatus.progress)
                     return {
-                      ...t,
+                      ...task,
                       totalProgress: progress,
-                      items: t.items.map(i => ({ ...i, progress }))
+                      items: task.items.map(i => ({ ...i, progress }))
                     }
                   }
                 })
@@ -316,7 +337,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     }
 
     checkActiveMigration()
-  }, [refreshDiskSpace, isAdmin])
+  }, [refreshDiskSpace, isAdmin, t])
 
   // Task action callbacks
   const {
@@ -356,7 +377,10 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     subscribeTrainingSSE,
     subscribeAnalysisSSE,
     subscribeStorageSSE,
-    hasUploadingTasks
+    hasUploadingTasks,
+    deletingDatasetNames,
+    addDeletingDatasetName,
+    removeDeletingDatasetByTaskId,
   }
 
   return (

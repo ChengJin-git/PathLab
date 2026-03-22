@@ -15,7 +15,7 @@ import {
   loginWithCredentials,
   clearAuthToken,
   acceptAgreement as apiAcceptAgreement,
-  getMyDatasetPermissions,
+  getMyDatasetGrants,
   getClientIP,
   getMaintenanceNotice,
   acknowledgeNotice as apiAcknowledgeNotice,
@@ -23,6 +23,7 @@ import {
 } from '../api'
 import { useToast } from './ToastContext'
 import { useTranslation } from 'react-i18next'
+import { queryClient } from '../lib/queryClient'
 
 interface AuthContextType {
   // State
@@ -39,7 +40,7 @@ interface AuthContextType {
   login: (username: string, password: string, turnstileToken?: string) => Promise<boolean>
   logout: () => Promise<void>
   refreshUser: () => Promise<void>
-  refreshDatasetPermissions: () => Promise<void>  // Refresh elevated dataset permissions
+  refreshDatasetGrants: () => Promise<void>  // Refresh elevated dataset grants
   acceptAgreement: () => Promise<boolean>  // Accept terms of service
   acknowledgeMaintenanceNotice: () => Promise<boolean>  // Acknowledge maintenance notice
   clearError: () => void
@@ -96,13 +97,13 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
   }, [i18n, toast])
 
-  // Refresh dataset permissions (for temporary elevated access)
-  const refreshDatasetPermissions = useCallback(async () => {
+  // Refresh dataset grants (for temporary elevated access)
+  const refreshDatasetGrants = useCallback(async () => {
     try {
-      const response = await getMyDatasetPermissions()
+      const response = await getMyDatasetGrants()
       setElevatedDatasetIds(response.elevated_dataset_ids)
     } catch (err) {
-      console.error('Failed to get dataset permissions:', err)
+      console.error('Failed to get dataset grants:', err)
       setElevatedDatasetIds([])
     }
   }, [])
@@ -116,8 +117,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
 
       if (response.is_logged_in && response.user) {
         setUser(response.user)
-        // Also refresh dataset permissions when refreshing user
-        await refreshDatasetPermissions()
+        // Also refresh dataset grants when refreshing user
+        await refreshDatasetGrants()
       } else {
         setUser(null)
         setElevatedDatasetIds([])
@@ -130,7 +131,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     } finally {
       setIsLoading(false)
     }
-  }, [refreshDatasetPermissions])
+  }, [refreshDatasetGrants])
 
   // Initialize - check current user on mount
   useEffect(() => {
@@ -149,6 +150,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setError(null)
 
       await loginWithCredentials(username, password, turnstileToken)
+      queryClient.clear()
 
       // Refresh user info after successful login
       await refreshUser()
@@ -165,6 +167,8 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       } else if (errorLower.includes('maintenance_mode')) {
         // System is in maintenance mode - non-admin users cannot log in
         errorMessage = 'System is under maintenance. Please try again later or contact administrator.'
+      } else if (errorLower.includes('login_user_pending_approval')) {
+        errorMessage = i18n.t('auth.accountPendingApproval')
       } else if (errorLower.includes('login_user_not_active') ||
           errorLower.includes('inactive') ||
           errorLower.includes('not active') ||
@@ -182,7 +186,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       setIsLoading(false)
       return false
     }
-  }, [refreshUser])
+  }, [refreshUser, i18n])
 
   // Logout
   const logout = useCallback(async () => {
@@ -195,12 +199,14 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
       await apiLogout()
       setUser(null)
       setElevatedDatasetIds([])
+      queryClient.clear()
     } catch (err) {
       console.error('Logout error:', err)
       // Still clear user on logout error (might be demo user)
       clearAuthToken()
       setUser(null)
       setElevatedDatasetIds([])
+      queryClient.clear()
     } finally {
       setIsLoading(false)
     }
@@ -292,7 +298,7 @@ export function AuthProvider({ children }: AuthProviderProps): React.ReactElemen
     login,
     logout,
     refreshUser,
-    refreshDatasetPermissions,
+    refreshDatasetGrants,
     acceptAgreement,
     acknowledgeMaintenanceNotice,
     clearError,

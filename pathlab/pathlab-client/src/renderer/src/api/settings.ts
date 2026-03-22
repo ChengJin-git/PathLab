@@ -3,6 +3,18 @@ import { apiFetch } from './client'
 
 // ========== Global Settings API ==========
 
+export interface EmailTemplateItem {
+  subject: string
+  html: string
+}
+
+export interface EmailTemplatesConfig {
+  new_user_registration_notice: EmailTemplateItem
+  account_activated: EmailTemplateItem
+  task_completed_notice: EmailTemplateItem
+  admin_new_user_registration_notice: EmailTemplateItem
+}
+
 /**
  * Global settings interface
  */
@@ -36,6 +48,9 @@ export interface GlobalSettings {
   turnstile_enabled: boolean
   turnstile_site_key: string
   turnstile_secret_key: string
+  resend_enabled: boolean
+  resend_api_key: string
+  email_templates: EmailTemplatesConfig
 }
 
 /**

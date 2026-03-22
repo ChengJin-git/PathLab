@@ -11,6 +11,7 @@ Usage:
     cam_extractor = get_cam_extractor("resnet50")  # or "uni", "virchow", etc.
     cam_map = cam_extractor.extract_cam(model, input_tensor, target_class=1)
 """
+
 from __future__ import annotations
 
 import logging
@@ -29,18 +30,21 @@ logger = logging.getLogger(__name__)
 # Data Classes
 # =============================================================================
 
+
 @dataclass
 class PatchCAMResult:
     """Result of CAM extraction for a single patch."""
-    coord: Tuple[int, int]    # WSI level0 coordinates (x, y)
-    pred: int                  # Predicted class index
-    prob: float                # Prediction probability
-    cam: np.ndarray[Any, Any]           # CAM heatmap (H, W), e.g., (14, 14) or (7, 7)
+
+    coord: Tuple[int, int]  # WSI level0 coordinates (x, y)
+    pred: int  # Predicted class index
+    prob: float  # Prediction probability
+    cam: np.ndarray[Any, Any]  # CAM heatmap (H, W), e.g., (14, 14) or (7, 7)
 
 
 # =============================================================================
 # Base Class
 # =============================================================================
+
 
 class BaseCAMExtractor(ABC):
     """
@@ -86,6 +90,7 @@ class BaseCAMExtractor(ABC):
 # =============================================================================
 # ResNet CAM Extractor (Grad-CAM)
 # =============================================================================
+
 
 class ResNetCAMExtractor(BaseCAMExtractor):
     """
@@ -137,7 +142,7 @@ class ResNetCAMExtractor(BaseCAMExtractor):
         # Structure: [conv1, bn1, relu, maxpool, layer1, layer2, layer3, layer4, avgpool]
         #             [0]    [1]  [2]   [3]      [4]     [5]     [6]     [7]     [8]
         target_layers = None
-        if hasattr(backbone, 'feature_extractor'):
+        if hasattr(backbone, "feature_extractor"):
             # ResNet50Extractor structure - layer4 is at index 7
             fe_children = list(backbone.feature_extractor.children())
 
@@ -147,7 +152,7 @@ class ResNetCAMExtractor(BaseCAMExtractor):
                 module = fe_children[i]
                 if isinstance(module, nn.Sequential):
                     children = list(module.children())
-                    if len(children) > 0 and hasattr(children[0], 'conv3'):
+                    if len(children) > 0 and hasattr(children[0], "conv3"):
                         # Found layer4 (or the last layer block with Bottleneck)
                         # Use the last Bottleneck in this layer
                         target_layers = [children[-1]]
@@ -156,7 +161,7 @@ class ResNetCAMExtractor(BaseCAMExtractor):
         if target_layers is None:
             # Fallback: try to find layer4 by name
             for name, module in backbone.named_modules():
-                if 'layer4' in name and hasattr(module, 'conv3'):
+                if "layer4" in name and hasattr(module, "conv3"):
                     target_layers = [module]
                     # Don't break - we want the last one (layer4.2 for ResNet50)
 
@@ -209,6 +214,7 @@ class ResNetCAMExtractor(BaseCAMExtractor):
 # Transformer CAM Extractor (CLS Attention)
 # =============================================================================
 
+
 class TransformerCAMExtractor(BaseCAMExtractor):
     """
     CAM extractor for Vision Transformer backbones using CLS attention.
@@ -236,6 +242,7 @@ class TransformerCAMExtractor(BaseCAMExtractor):
 
     def _get_attention_hook(self):
         """Create a hook function to capture attention weights."""
+
         def hook_fn(_module, _input, output):
             # output can be attention weights or (output, weights)
             if isinstance(output, tuple):
@@ -243,6 +250,7 @@ class TransformerCAMExtractor(BaseCAMExtractor):
             else:
                 attn = output
             self._attention_maps.append(attn.detach())
+
         return hook_fn
 
     def _find_attention_module(self, backbone: nn.Module) -> Optional[nn.Module]:
@@ -254,42 +262,42 @@ class TransformerCAMExtractor(BaseCAMExtractor):
         # Try different ViT architectures
 
         # 1. timm ViT structure: model.blocks[-1].attn
-        if hasattr(backbone, 'blocks'):
+        if hasattr(backbone, "blocks"):
             last_block = backbone.blocks[-1]
-            if hasattr(last_block, 'attn'):
+            if hasattr(last_block, "attn"):
                 return last_block.attn
 
         # 2. timm ViT with backbone attribute
-        if hasattr(backbone, 'backbone'):
+        if hasattr(backbone, "backbone"):
             inner = backbone.backbone
-            if hasattr(inner, 'blocks'):
+            if hasattr(inner, "blocks"):
                 last_block = inner.blocks[-1]
-                if hasattr(last_block, 'attn'):
+                if hasattr(last_block, "attn"):
                     return last_block.attn
 
         # 3. HuggingFace ViT: model.encoder.layer[-1].attention
-        if hasattr(backbone, 'encoder'):
-            if hasattr(backbone.encoder, 'layer'):
+        if hasattr(backbone, "encoder"):
+            if hasattr(backbone.encoder, "layer"):
                 last_layer = backbone.encoder.layer[-1]
-                if hasattr(last_layer, 'attention'):
+                if hasattr(last_layer, "attention"):
                     return last_layer.attention
 
         # 4. CLIP-based models
-        if hasattr(backbone, 'visual'):
+        if hasattr(backbone, "visual"):
             visual = backbone.visual
-            if hasattr(visual, 'transformer'):
+            if hasattr(visual, "transformer"):
                 transformer = visual.transformer
-                if hasattr(transformer, 'resblocks'):
+                if hasattr(transformer, "resblocks"):
                     last_block = transformer.resblocks[-1]
-                    if hasattr(last_block, 'attn'):
+                    if hasattr(last_block, "attn"):
                         return last_block.attn
 
         # 5. Direct trunk attribute (CONCH 1.5)
-        if hasattr(backbone, 'trunk'):
+        if hasattr(backbone, "trunk"):
             trunk = backbone.trunk
-            if hasattr(trunk, 'blocks'):
+            if hasattr(trunk, "blocks"):
                 last_block = trunk.blocks[-1]
-                if hasattr(last_block, 'attn'):
+                if hasattr(last_block, "attn"):
                     return last_block.attn
 
         return None
@@ -309,7 +317,7 @@ class TransformerCAMExtractor(BaseCAMExtractor):
         # to modify the model to output them
 
         # Check if the attention module has a way to output attention weights
-        if hasattr(attn_module, 'fused_attn'):
+        if hasattr(attn_module, "fused_attn"):
             # timm uses fused attention - need different approach
             # We'll use forward hook on the softmax output
             pass
@@ -394,6 +402,7 @@ class TransformerCAMExtractor(BaseCAMExtractor):
 # GradCAM-based CAM for Vision Transformers (Official Recommended Method)
 # =============================================================================
 
+
 class TimmViTCAMExtractor(BaseCAMExtractor):
     """
     CAM extractor for ViT models using GradCAM with reshape_transform.
@@ -415,7 +424,9 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         self.patch_size = patch_size
         self.num_registers = num_registers
 
-    def _create_reshape_transform(self, height: int, width: int, num_prefix_tokens: int = 1):
+    def _create_reshape_transform(
+        self, height: int, width: int, num_prefix_tokens: int = 1
+    ):
         """
         Create reshape_transform function for GradCAM.
 
@@ -427,6 +438,7 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
             width: Spatial width (e.g., 14 for 224/16)
             num_prefix_tokens: Number of prefix tokens (CLS + registers)
         """
+
         def reshape_transform(tensor):
             # tensor shape: (B, N, C) where N = num_prefix_tokens + H*W
             # Remove prefix tokens (CLS + registers)
@@ -460,7 +472,9 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
 
         return reshape_transform
 
-    def _find_target_layer(self, backbone: nn.Module) -> Tuple[Optional[nn.Module], str]:
+    def _find_target_layer(
+        self, backbone: nn.Module
+    ) -> Tuple[Optional[nn.Module], str]:
         """
         Find the target layer for GradCAM in ViT.
 
@@ -472,79 +486,79 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
             (target_layer, vit_type) where vit_type is 'timm', 'torchvision', etc.
         """
         # Unwrap the backbone if needed
-        if hasattr(backbone, 'backbone'):
+        if hasattr(backbone, "backbone"):
             vit = backbone.backbone
-        elif hasattr(backbone, 'trunk'):
+        elif hasattr(backbone, "trunk"):
             vit = backbone.trunk
-        elif hasattr(backbone, 'model'):
+        elif hasattr(backbone, "model"):
             vit = backbone.model
         else:
             vit = backbone
 
         # 1. Try timm structure: vit.blocks[-1].norm1
-        if hasattr(vit, 'blocks'):
+        if hasattr(vit, "blocks"):
             last_block = vit.blocks[-1]
-            if hasattr(last_block, 'norm1'):
-                return last_block.norm1, 'timm'
+            if hasattr(last_block, "norm1"):
+                return last_block.norm1, "timm"
 
         # 2. Try CONCH15 / custom VisionTransformer with trunk: vit.trunk.blocks[-1].norm1
-        if hasattr(vit, 'trunk'):
+        if hasattr(vit, "trunk"):
             trunk = vit.trunk
-            if hasattr(trunk, 'blocks'):
+            if hasattr(trunk, "blocks"):
                 last_block = trunk.blocks[-1]
-                if hasattr(last_block, 'norm1'):
-                    return last_block.norm1, 'conch15'
+                if hasattr(last_block, "norm1"):
+                    return last_block.norm1, "conch15"
 
         # 3. Try OpenCLIP / CONCH / PathoCLIP: vit.visual.transformer.resblocks[-1].ln_1
-        if hasattr(vit, 'visual'):
+        if hasattr(vit, "visual"):
             visual = vit.visual
             # OpenCLIP structure
-            if hasattr(visual, 'transformer'):
+            if hasattr(visual, "transformer"):
                 transformer = visual.transformer
-                if hasattr(transformer, 'resblocks') and len(transformer.resblocks) > 0:
+                if hasattr(transformer, "resblocks") and len(transformer.resblocks) > 0:
                     last_block = transformer.resblocks[-1]
-                    if hasattr(last_block, 'ln_1'):
-                        return last_block.ln_1, 'openclip'
+                    if hasattr(last_block, "ln_1"):
+                        return last_block.ln_1, "openclip"
             # CONCH structure: visual.trunk.blocks[-1].norm1
-            if hasattr(visual, 'trunk'):
+            if hasattr(visual, "trunk"):
                 trunk = visual.trunk
-                if hasattr(trunk, 'blocks'):
+                if hasattr(trunk, "blocks"):
                     last_block = trunk.blocks[-1]
-                    if hasattr(last_block, 'norm1'):
-                        return last_block.norm1, 'conch'
+                    if hasattr(last_block, "norm1"):
+                        return last_block.norm1, "conch"
 
         # 4. Try HuggingFace CLIPModel: vit.vision_model.encoder.layers[-1].layer_norm1
-        if hasattr(vit, 'vision_model'):
+        if hasattr(vit, "vision_model"):
             vision_model = vit.vision_model
-            if hasattr(vision_model, 'encoder'):
+            if hasattr(vision_model, "encoder"):
                 encoder = vision_model.encoder
-                if hasattr(encoder, 'layers') and len(encoder.layers) > 0:
+                if hasattr(encoder, "layers") and len(encoder.layers) > 0:
                     last_layer = encoder.layers[-1]
-                    if hasattr(last_layer, 'layer_norm1'):
-                        return last_layer.layer_norm1, 'huggingface_clip'
+                    if hasattr(last_layer, "layer_norm1"):
+                        return last_layer.layer_norm1, "huggingface_clip"
 
         # 5. Try torchvision structure: vit.encoder.layers[-1].ln_1
-        if hasattr(vit, 'encoder'):
+        if hasattr(vit, "encoder"):
             encoder = vit.encoder
-            if hasattr(encoder, 'layers') and len(encoder.layers) > 0:
+            if hasattr(encoder, "layers") and len(encoder.layers) > 0:
                 last_layer = encoder.layers[-1]
                 # torchvision uses ln_1 (LayerNorm before self-attention)
-                if hasattr(last_layer, 'ln_1'):
-                    return last_layer.ln_1, 'torchvision'
+                if hasattr(last_layer, "ln_1"):
+                    return last_layer.ln_1, "torchvision"
 
             # 6. Try HuggingFace ViT/DINOv2 structure
             # HuggingFace ViTModel: encoder.layer[-1].layernorm_before (e.g., Phikon)
             # HuggingFace Dinov2Model: encoder.layer[-1].norm1 (e.g., Phikon2)
-            if hasattr(encoder, 'layer') and len(encoder.layer) > 0:
+            if hasattr(encoder, "layer") and len(encoder.layer) > 0:
                 last_layer = encoder.layer[-1]
                 # HuggingFace ViTModel uses layernorm_before
-                if hasattr(last_layer, 'layernorm_before'):
-                    return last_layer.layernorm_before, 'huggingface_vit'
+                if hasattr(last_layer, "layernorm_before"):
+                    return last_layer.layernorm_before, "huggingface_vit"
                 # HuggingFace Dinov2Model uses norm1 (not layer_norm1)
-                if hasattr(last_layer, 'norm1'):
-                    return last_layer.norm1, 'huggingface_dinov2'
+                if hasattr(last_layer, "norm1"):
+                    return last_layer.norm1, "huggingface_dinov2"
 
-        return None, 'unknown'
+        return None, "unknown"
 
     def extract_cam(
         self,
@@ -590,9 +604,13 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
                 f"Could not find target layer for GradCAM in ViT model. "
                 f"Falling back to uniform CAM."
             )
-            return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
+            return np.ones((B, input_size, input_size), dtype=np.float32) / (
+                input_size * input_size
+            )
 
-        logger.debug(f"Using {vit_type} ViT target layer: {type(target_layer).__name__}")
+        logger.debug(
+            f"Using {vit_type} ViT target layer: {type(target_layer).__name__}"
+        )
 
         # Calculate number of prefix tokens (CLS + registers)
         num_prefix_tokens = 1 + self.num_registers
@@ -622,13 +640,15 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
                 with GradCAM(
                     model=model,
                     target_layers=[target_layer],
-                    reshape_transform=reshape_transform
+                    reshape_transform=reshape_transform,
                 ) as cam:
                     grayscale_cam = cam(input_tensor=input_tensor, targets=targets)
 
             if grayscale_cam is None:
                 logger.warning("GradCAM returned None for ViT")
-                return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
+                return np.ones((B, input_size, input_size), dtype=np.float32) / (
+                    input_size * input_size
+                )
 
             if np.allclose(grayscale_cam, 0):
                 logger.warning(
@@ -641,7 +661,9 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
 
         except Exception as e:
             logger.error(f"Error in ViT GradCAM extraction: {e}")
-            return np.ones((B, input_size, input_size), dtype=np.float32) / (input_size * input_size)
+            return np.ones((B, input_size, input_size), dtype=np.float32) / (
+                input_size * input_size
+            )
 
         finally:
             # Restore original requires_grad states
@@ -658,7 +680,6 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
         return (input_size, input_size)
 
 
-
 # =============================================================================
 # Extractor Configuration
 # =============================================================================
@@ -667,29 +688,54 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
 _EXTRACTOR_CAM_CONFIG = {
     # CNN-based
     "resnet50": {"type": "cnn"},
-
     # Transformer-based (patch_size=16)
     "vit_l_16": {"type": "vit", "patch_size": 16},
     "uni": {"type": "vit", "patch_size": 16},
     "phikon": {"type": "vit", "patch_size": 16},
-    "phikon2": {"type": "vit", "patch_size": 16},  # Dinov2Model with patch_size=16 (197 tokens)
+    "phikon2": {
+        "type": "vit",
+        "patch_size": 16,
+    },  # Dinov2Model with patch_size=16 (197 tokens)
     "conch": {"type": "vit", "patch_size": 16},
     "conch15": {"type": "vit", "patch_size": 16},
     "mSTAR": {"type": "vit", "patch_size": 16},
     "SmartCyto": {"type": "vit", "patch_size": 16, "num_registers": 4},
-
     # Transformer-based (patch_size=14)
     "patho_clip": {"type": "vit", "patch_size": 14},  # OpenCLIP ViT-L-14
     "GPFM": {"type": "vit", "patch_size": 14},  # DINOv2-based with patch_size=14
-    "virchow": {"type": "vit", "patch_size": 14, "num_registers": 0},  # No register tokens
-
+    "SmartCCS": {"type": "vit", "patch_size": 14},
+    "CytoFM": {"type": "vit", "patch_size": 14},
+    "virchow": {
+        "type": "vit",
+        "patch_size": 14,
+        "num_registers": 0,
+    },  # No register tokens
     # Transformer-based (patch_size=14 with registers)
-    "uni2": {"type": "vit", "patch_size": 14, "num_registers": 8},  # ViT-giant with 8 reg_tokens
-    "virchow2": {"type": "vit", "patch_size": 14, "num_registers": 4},  # 4 register tokens
-    "openmidnight": {"type": "vit", "patch_size": 14, "num_registers": 4},  # DINOv2-g with 4 reg_tokens
-    "H-Optimus-0": {"type": "vit", "patch_size": 14, "num_registers": 4},  # 4 register tokens
-    "H-Optimus-1": {"type": "vit", "patch_size": 14, "num_registers": 4},  # 4 register tokens
-
+    "uni2": {
+        "type": "vit",
+        "patch_size": 14,
+        "num_registers": 8,
+    },  # ViT-giant with 8 reg_tokens
+    "virchow2": {
+        "type": "vit",
+        "patch_size": 14,
+        "num_registers": 4,
+    },  # 4 register tokens
+    "openmidnight": {
+        "type": "vit",
+        "patch_size": 14,
+        "num_registers": 4,
+    },  # DINOv2-g with 4 reg_tokens
+    "H-Optimus-0": {
+        "type": "vit",
+        "patch_size": 14,
+        "num_registers": 4,
+    },  # 4 register tokens
+    "H-Optimus-1": {
+        "type": "vit",
+        "patch_size": 14,
+        "num_registers": 4,
+    },  # 4 register tokens
     # Transformer-based (patch_size=32)
     "plip": {"type": "vit", "patch_size": 32},  # CLIP ViT-B/32
 }
@@ -698,6 +744,7 @@ _EXTRACTOR_CAM_CONFIG = {
 # =============================================================================
 # Factory Function
 # =============================================================================
+
 
 def get_cam_extractor(extractor_name: str) -> BaseCAMExtractor:
     """
@@ -731,7 +778,7 @@ def get_cam_extractor(extractor_name: str) -> BaseCAMExtractor:
         # ViT-based
         return TimmViTCAMExtractor(
             patch_size=config.get("patch_size", 16),
-            num_registers=config.get("num_registers", 0)
+            num_registers=config.get("num_registers", 0),
         )
 
 

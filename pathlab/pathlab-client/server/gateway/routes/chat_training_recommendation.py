@@ -36,81 +36,278 @@ _LOCAL_SOURCE_LOCKS: Dict[str, asyncio.Lock] = {}
 _LOCAL_INDEX_READY: set[str] = set()
 
 _TRAINING_ACTION_KEYWORDS = (
-    "train", "training", "submit", "create", "start", "launch", "task",
-    "训练", "提交", "创建", "新建", "任务", "建一个", "建個",
+    "train",
+    "training",
+    "submit",
+    "create",
+    "start",
+    "launch",
+    "task",
+    "训练",
+    "提交",
+    "创建",
+    "新建",
+    "任务",
+    "建一个",
+    "建個",
 )
 _RECOMMENDATION_KEYWORDS = (
-    "recommend", "recommended", "best", "suitable", "architecture", "backbone",
-    "feature extractor", "hyperparameter", "config", "recipe",
-    "推荐", "建議", "最适合", "最適合", "架构", "架構", "特征提取器", "特徵提取器", "参数", "參數",
+    "recommend",
+    "recommended",
+    "best",
+    "suitable",
+    "architecture",
+    "backbone",
+    "feature extractor",
+    "hyperparameter",
+    "config",
+    "recipe",
+    "推荐",
+    "建議",
+    "最适合",
+    "最適合",
+    "架构",
+    "架構",
+    "特征提取器",
+    "特徵提取器",
+    "参数",
+    "參數",
 )
 _TASK_CONTEXT_KEYWORDS = (
-    "classification", "segmentation", "survival", "pathology", "histology", "cytology",
-    "wsi", "patch", "dataset", "mil", "foundation model",
-    "分类", "分類", "分割", "生存", "病理", "细胞", "細胞", "数据集", "資料集",
+    "classification",
+    "segmentation",
+    "survival",
+    "pathology",
+    "histology",
+    "cytology",
+    "wsi",
+    "patch",
+    "dataset",
+    "mil",
+    "foundation model",
+    "分类",
+    "分類",
+    "分割",
+    "生存",
+    "病理",
+    "细胞",
+    "細胞",
+    "数据集",
+    "資料集",
 )
 _MODEL_COMPONENT_KEYWORDS = (
-    "encoder", "feature extractor", "extractor", "aggregator", "classifier", "mil",
-    "backbone", "seg_backbone", "segmentation backbone",
-    "编码器", "編碼器", "特征提取器", "特徵提取器", "聚合器", "分类头", "分類頭",
-    "骨干", "骨幹",
+    "encoder",
+    "feature extractor",
+    "extractor",
+    "aggregator",
+    "classifier",
+    "mil",
+    "backbone",
+    "seg_backbone",
+    "segmentation backbone",
+    "编码器",
+    "編碼器",
+    "特征提取器",
+    "特徵提取器",
+    "聚合器",
+    "分类头",
+    "分類頭",
+    "骨干",
+    "骨幹",
 )
 _CERVICAL_KEYWORDS = (
-    "cervical", "宫颈", "宮頸", "ccs", "cervix",
-    "gynecologic", "gynaecologic", "gyn", "妇科", "婦科",
+    "cervical",
+    "宫颈",
+    "宮頸",
+    "ccs",
+    "cervix",
+    "gynecologic",
+    "gynaecologic",
+    "gyn",
+    "妇科",
+    "婦科",
 )
 _CYTOLOGY_KEYWORDS = ("cytology", "细胞学", "細胞學", "细胞", "細胞")
 _SEGMENTATION_KEYWORDS = ("segmentation", "分割")
-_DATASET_HINT_KEYWORDS = ("bracs", "luad", "lusc", "tcga", "crc", "camelyon", "prostate", "kidney")
+_DATASET_HINT_KEYWORDS = (
+    "bracs",
+    "luad",
+    "lusc",
+    "tcga",
+    "crc",
+    "camelyon",
+    "prostate",
+    "kidney",
+)
 _HEATMAP_KEYWORDS = (
-    "heatmap", "attention map", "attention maps", "attention", "cam",
-    "热力图", "熱力圖", "注意力图", "注意力圖",
+    "heatmap",
+    "attention map",
+    "attention maps",
+    "attention",
+    "cam",
+    "热力图",
+    "熱力圖",
+    "注意力图",
+    "注意力圖",
 )
 _VISUALIZATION_ACTION_KEYWORDS = (
-    "show", "view", "display", "browse", "see", "visualize", "visualization",
-    "显示", "顯示", "查看", "檢視", "看", "看看", "浏览", "瀏覽", "可视化", "可視化",
+    "show",
+    "view",
+    "display",
+    "browse",
+    "see",
+    "visualize",
+    "visualization",
+    "显示",
+    "顯示",
+    "查看",
+    "檢視",
+    "看",
+    "看看",
+    "浏览",
+    "瀏覽",
+    "可视化",
+    "可視化",
 )
 _EXISTING_MODEL_VISUALIZATION_KEYWORDS = (
-    "trained model", "trained models", "existing trained model", "existing trained models",
-    "已有训练模型", "已有訓練模型", "已训练模型", "已訓練模型",
-    "可显示热力图", "可顯示熱力圖", "可看热力图", "可看熱力圖",
+    "trained model",
+    "trained models",
+    "existing trained model",
+    "existing trained models",
+    "已有训练模型",
+    "已有訓練模型",
+    "已训练模型",
+    "已訓練模型",
+    "可显示热力图",
+    "可顯示熱力圖",
+    "可看热力图",
+    "可看熱力圖",
 )
 _EXPLICIT_TRAINING_CREATION_KEYWORDS = (
-    "train a", "start training", "submit training", "create training", "launch training",
-    "训练一个", "訓練一個", "开始训练", "開始訓練", "提交训练", "提交訓練", "新建训练", "新建訓練",
+    "train a",
+    "start training",
+    "submit training",
+    "create training",
+    "launch training",
+    "训练一个",
+    "訓練一個",
+    "开始训练",
+    "開始訓練",
+    "提交训练",
+    "提交訓練",
+    "新建训练",
+    "新建訓練",
 )
 _TRAINING_STATUS_KEYWORDS = (
-    "trained model", "trained models", "you trained", "you have trained",
-    "existing trained model", "existing trained models",
-    "已有训练模型", "已有訓練模型", "已训练模型", "已訓練模型",
-    "您训练了", "你训练了", "训练了", "您訓練了", "你訓練了", "訓練了",
+    "trained model",
+    "trained models",
+    "you trained",
+    "you have trained",
+    "existing trained model",
+    "existing trained models",
+    "已有训练模型",
+    "已有訓練模型",
+    "已训练模型",
+    "已訓練模型",
+    "您训练了",
+    "你训练了",
+    "训练了",
+    "您訓練了",
+    "你訓練了",
+    "訓練了",
 )
 _HEATMAP_SELECTION_PROMPT_KEYWORDS = (
-    "which dataset", "what dataset", "which one", "which wsi dataset",
-    "available heatmap", "available attention heatmap", "available attention map",
-    "please choose", "please select", "select the dataset", "choose the dataset",
-    "您想查看哪个数据集", "您想看哪个数据集", "您想查看哪個資料集", "您想看哪個資料集",
-    "请选择", "請選擇", "选择您想查看", "選擇您想查看",
-    "有可用的注意力热力图", "有可用的注意力圖", "有可用的热力图", "有可用的熱力圖",
+    "which dataset",
+    "what dataset",
+    "which one",
+    "which wsi dataset",
+    "available heatmap",
+    "available attention heatmap",
+    "available attention map",
+    "please choose",
+    "please select",
+    "select the dataset",
+    "choose the dataset",
+    "您想查看哪个数据集",
+    "您想看哪个数据集",
+    "您想查看哪個資料集",
+    "您想看哪個資料集",
+    "请选择",
+    "請選擇",
+    "选择您想查看",
+    "選擇您想查看",
+    "有可用的注意力热力图",
+    "有可用的注意力圖",
+    "有可用的热力图",
+    "有可用的熱力圖",
 )
 _DATASET_OPTION_HINT_KEYWORDS = (
-    "tcga", "cohort", "wsi", "dataset", "model",
-    "数据集", "資料集", "模型",
+    "tcga",
+    "cohort",
+    "wsi",
+    "dataset",
+    "model",
+    "数据集",
+    "資料集",
+    "模型",
 )
 _SEARCH_KEYWORDS = ("search", "web search", "搜索", "搜尋", "检索", "檢索")
 _SELECTION_VERB_KEYWORDS = (
-    "choose", "select", "pick", "which", "what dataset",
-    "请选择", "請選擇", "选择", "選擇", "哪个", "哪個", "哪一个", "哪一個",
+    "choose",
+    "select",
+    "pick",
+    "which",
+    "what dataset",
+    "请选择",
+    "請選擇",
+    "选择",
+    "選擇",
+    "哪个",
+    "哪個",
+    "哪一个",
+    "哪一個",
 )
 _MODEL_SELECTION_INTENT_KEYWORDS = (
-    "which", "or", "vs", "versus", "compare", "comparison", "better", "best",
-    "choose", "select", "pick", "should i use",
-    "还是", "比較", "比较", "哪个好", "哪個好", "怎么选", "怎麼選", "选哪个", "選哪個",
+    "which",
+    "or",
+    "vs",
+    "versus",
+    "compare",
+    "comparison",
+    "better",
+    "best",
+    "choose",
+    "select",
+    "pick",
+    "should i use",
+    "还是",
+    "比較",
+    "比较",
+    "哪个好",
+    "哪個好",
+    "怎么选",
+    "怎麼選",
+    "选哪个",
+    "選哪個",
 )
 _VISUALIZATION_TARGET_KEYWORDS = (
-    "image", "images", "visualization", "visualize", "view",
-    "图像", "影像", "图片", "圖像", "圖", "展示", "查看", "檢視", "浏览", "瀏覽",
-    "结果", "結果",
+    "image",
+    "images",
+    "visualization",
+    "visualize",
+    "view",
+    "图像",
+    "影像",
+    "图片",
+    "圖像",
+    "圖",
+    "展示",
+    "查看",
+    "檢視",
+    "浏览",
+    "瀏覽",
+    "结果",
+    "結果",
 )
 _NO_SEARCH_BLOCK_TAGS = (
     "[IMAGE_RECOMMENDATION]",
@@ -121,84 +318,508 @@ _NO_SEARCH_BLOCK_TAGS = (
     "[QUICK_ANALYSIS_CONFIG]",
 )
 _VALIDATION_KEYWORDS = (
-    "internal validation", "external validation",
-    "内部验证", "內部驗證", "外部验证", "外部驗證",
+    "internal validation",
+    "external validation",
+    "内部验证",
+    "內部驗證",
+    "外部验证",
+    "外部驗證",
 )
 _ANALYSIS_PROMPT_KEYWORDS = (
-    "which validation", "what validation", "show metrics", "show charts", "show results",
-    "full analysis", "analysis result", "analysis results",
-    "哪种验证", "哪種驗證", "内部验证", "內部驗證", "外部验证", "外部驗證",
-    "显示指标", "顯示指標", "显示图表", "顯示圖表", "显示结果", "顯示結果",
-    "完整分析", "分析结果", "分析結果",
+    "which validation",
+    "what validation",
+    "show metrics",
+    "show charts",
+    "show results",
+    "full analysis",
+    "analysis result",
+    "analysis results",
+    "哪种验证",
+    "哪種驗證",
+    "内部验证",
+    "內部驗證",
+    "外部验证",
+    "外部驗證",
+    "显示指标",
+    "顯示指標",
+    "显示图表",
+    "顯示圖表",
+    "显示结果",
+    "顯示結果",
+    "完整分析",
+    "分析结果",
+    "分析結果",
 )
 _RESULT_ACTION_KEYWORDS = (
-    "show", "view", "display", "check", "see", "what is", "how much", "give me",
-    "显示", "顯示", "查看", "檢視", "展示", "看", "看看", "看一下", "多少", "给我看", "給我看",
+    "show",
+    "view",
+    "display",
+    "check",
+    "see",
+    "what is",
+    "how much",
+    "give me",
+    "显示",
+    "顯示",
+    "查看",
+    "檢視",
+    "展示",
+    "看",
+    "看看",
+    "看一下",
+    "多少",
+    "给我看",
+    "給我看",
 )
 _LOCAL_RESULT_CONTEXT_KEYWORDS = (
-    "this task", "that task", "my task", "this model", "that model", "my model",
-    "task result", "analysis result", "validation result", "trained model",
-    "这个任务", "這個任務", "该任务", "該任務", "我的任务", "我的任務",
-    "这个模型", "這個模型", "该模型", "該模型", "我的模型", "已训练模型", "已訓練模型",
-    "这个结果", "這個結果", "该结果", "該結果", "分析结果", "分析結果", "验证结果", "驗證結果",
+    "this task",
+    "that task",
+    "my task",
+    "this model",
+    "that model",
+    "my model",
+    "task result",
+    "analysis result",
+    "validation result",
+    "trained model",
+    "这个任务",
+    "這個任務",
+    "该任务",
+    "該任務",
+    "我的任务",
+    "我的任務",
+    "这个模型",
+    "這個模型",
+    "该模型",
+    "該模型",
+    "我的模型",
+    "已训练模型",
+    "已訓練模型",
+    "这个结果",
+    "這個結果",
+    "该结果",
+    "該結果",
+    "分析结果",
+    "分析結果",
+    "验证结果",
+    "驗證結果",
 )
 _METRIC_RESULT_KEYWORDS = (
-    "metric", "metrics", "chart", "charts", "roc", "roc curve", "auc", "accuracy",
-    "precision", "recall", "sensitivity", "specificity", "f1", "weighted kappa", "kappa",
-    "confusion matrix", "loss curve", "survival curve", "km curve", "c-index", "c index",
-    "integrated brier score", "brier score", "confidence interval", "95% ci",
-    "指标", "指標", "图表", "圖表", "roc曲线", "roc 曲线", "roc 曲線", "auc",
-    "准确率", "準確率", "精确率", "精確率", "召回率", "灵敏度", "靈敏度", "特异度", "特異度",
-    "混淆矩阵", "混淆矩陣", "损失曲线", "損失曲線", "生存曲线", "生存曲線",
-    "c-index", "c指数", "brier", "置信区间", "置信區間", "95%置信区间", "95% 置信区间",
+    "metric",
+    "metrics",
+    "chart",
+    "charts",
+    "roc",
+    "roc curve",
+    "auc",
+    "accuracy",
+    "precision",
+    "recall",
+    "sensitivity",
+    "specificity",
+    "f1",
+    "weighted kappa",
+    "kappa",
+    "confusion matrix",
+    "loss curve",
+    "survival curve",
+    "km curve",
+    "c-index",
+    "c index",
+    "integrated brier score",
+    "brier score",
+    "confidence interval",
+    "95% ci",
+    "指标",
+    "指標",
+    "图表",
+    "圖表",
+    "roc曲线",
+    "roc 曲线",
+    "roc 曲線",
+    "auc",
+    "准确率",
+    "準確率",
+    "精确率",
+    "精確率",
+    "召回率",
+    "灵敏度",
+    "靈敏度",
+    "特异度",
+    "特異度",
+    "混淆矩阵",
+    "混淆矩陣",
+    "损失曲线",
+    "損失曲線",
+    "生存曲线",
+    "生存曲線",
+    "c-index",
+    "c指数",
+    "brier",
+    "置信区间",
+    "置信區間",
+    "95%置信区间",
+    "95% 置信区间",
 )
 _FULL_RESULT_KEYWORDS = (
-    "full analysis", "full results", "analysis results", "analysis dashboard",
-    "完整分析", "完整结果", "完整結果", "分析结果", "分析結果", "分析详情", "分析詳情",
+    "full analysis",
+    "full results",
+    "analysis results",
+    "analysis dashboard",
+    "完整分析",
+    "完整结果",
+    "完整結果",
+    "分析结果",
+    "分析結果",
+    "分析详情",
+    "分析詳情",
 )
 _IMAGE_ANALYSIS_KEYWORDS = (
-    "analyze this image", "analyse this image", "classify this image", "segment this image",
-    "image inference", "run inference on this image", "run classification on this image",
-    "run segmentation on this image", "image analysis",
-    "分析这张图", "分析這張圖", "分析这个图", "分析這個圖", "分析图片", "分析圖片",
-    "图像分析", "圖像分析", "图片分析", "圖片分析", "图像推理", "圖像推理",
-    "图片推理", "圖片推理", "对这张图分类", "對這張圖分類", "对这张图分割", "對這張圖分割",
+    "analyze this image",
+    "analyse this image",
+    "classify this image",
+    "segment this image",
+    "image inference",
+    "run inference on this image",
+    "run classification on this image",
+    "run segmentation on this image",
+    "image analysis",
+    "分析这张图",
+    "分析這張圖",
+    "分析这个图",
+    "分析這個圖",
+    "分析图片",
+    "分析圖片",
+    "图像分析",
+    "圖像分析",
+    "图片分析",
+    "圖片分析",
+    "图像推理",
+    "圖像推理",
+    "图片推理",
+    "圖片推理",
+    "对这张图分类",
+    "對這張圖分類",
+    "对这张图分割",
+    "對這張圖分割",
 )
 _IMAGE_VISUALIZATION_KEYWORDS = (
-    "annotation", "annotations", "annotated", "manual annotation", "human annotation",
-    "ground truth", "gt", "mask", "masks", "prediction mask", "prediction masks",
-    "ai prediction", "ai predictions", "model prediction", "model predictions",
-    "model output", "ai output", "overlay", "overlays", "region", "regions",
-    "人工标注", "人工標註", "标注", "標註", "真实标注", "真實標註", "真值",
-    "掩膜", "mask", "标注区域", "標註區域", "标签区域", "標籤區域",
-    "ai 预测", "ai 預測", "ai 识别", "ai 識別", "模型预测", "模型預測",
-    "预测区域", "預測區域", "识别区域", "識別區域", "圈出的区域", "圈出的區域",
+    "annotation",
+    "annotations",
+    "annotated",
+    "manual annotation",
+    "human annotation",
+    "ground truth",
+    "gt",
+    "mask",
+    "masks",
+    "prediction mask",
+    "prediction masks",
+    "ai prediction",
+    "ai predictions",
+    "model prediction",
+    "model predictions",
+    "model output",
+    "ai output",
+    "overlay",
+    "overlays",
+    "region",
+    "regions",
+    "人工标注",
+    "人工標註",
+    "标注",
+    "標註",
+    "真实标注",
+    "真實標註",
+    "真值",
+    "掩膜",
+    "mask",
+    "标注区域",
+    "標註區域",
+    "标签区域",
+    "標籤區域",
+    "ai 预测",
+    "ai 預測",
+    "ai 识别",
+    "ai 識別",
+    "模型预测",
+    "模型預測",
+    "预测区域",
+    "預測區域",
+    "识别区域",
+    "識別區域",
+    "圈出的区域",
+    "圈出的區域",
 )
 _IMAGE_VISUALIZATION_PROMPT_KEYWORDS = (
-    "which model", "what model", "choose model", "select model", "pick a model",
-    "latest model", "use latest model", "use the latest model",
-    "which source", "mask source", "ground truth or prediction", "gt or prediction",
-    "use newest model", "which one should i use",
-    "哪个模型", "哪個模型", "选择模型", "選擇模型", "用哪个模型", "用哪個模型",
-    "最新模型", "使用最新模型", "请选择模型", "請選擇模型",
-    "看人工标注", "看人工標註", "看 ai 预测", "看 ai 預測", "看 ai 识别", "看 ai 識別",
-    "看标注区域", "看標註區域", "看预测区域", "看預測區域",
+    "which model",
+    "what model",
+    "choose model",
+    "select model",
+    "pick a model",
+    "latest model",
+    "use latest model",
+    "use the latest model",
+    "which source",
+    "mask source",
+    "ground truth or prediction",
+    "gt or prediction",
+    "use newest model",
+    "which one should i use",
+    "哪个模型",
+    "哪個模型",
+    "选择模型",
+    "選擇模型",
+    "用哪个模型",
+    "用哪個模型",
+    "最新模型",
+    "使用最新模型",
+    "请选择模型",
+    "請選擇模型",
+    "看人工标注",
+    "看人工標註",
+    "看 ai 预测",
+    "看 ai 預測",
+    "看 ai 识别",
+    "看 ai 識別",
+    "看标注区域",
+    "看標註區域",
+    "看预测区域",
+    "看預測區域",
 )
 _SHORT_FOLLOWUP_KEYWORDS = (
-    "start", "run", "submit", "continue", "confirm", "yes", "ok", "okay",
-    "classify", "classification", "segment", "segmentation", "internal", "external",
-    "开始", "開始", "运行", "運行", "提交", "继续", "繼續", "确认", "確認",
-    "可以", "好的", "就这个", "就這個", "这个", "這個", "那个", "那個",
-    "分类", "分類", "分割", "内部", "內部", "外部",
+    "start",
+    "run",
+    "submit",
+    "continue",
+    "confirm",
+    "yes",
+    "ok",
+    "okay",
+    "classify",
+    "classification",
+    "segment",
+    "segmentation",
+    "internal",
+    "external",
+    "开始",
+    "開始",
+    "运行",
+    "運行",
+    "提交",
+    "继续",
+    "繼續",
+    "确认",
+    "確認",
+    "可以",
+    "好的",
+    "就这个",
+    "就這個",
+    "这个",
+    "這個",
+    "那个",
+    "那個",
+    "分类",
+    "分類",
+    "分割",
+    "内部",
+    "內部",
+    "外部",
 )
 _SEARCH_ACTION_KEYWORDS = (
-    "search", "web search", "look up", "find", "查", "搜", "搜索", "搜尋", "检索", "檢索",
+    "search",
+    "web search",
+    "look up",
+    "find",
+    "查",
+    "搜",
+    "搜索",
+    "搜尋",
+    "检索",
+    "檢索",
 )
 _RESEARCH_OBJECT_KEYWORDS = (
-    "paper", "papers", "article", "articles", "literature", "pubmed", "arxiv",
-    "reference", "references", "citation", "citations", "论文", "論文", "文献", "文獻",
-    "参考文献", "參考文獻", "引用", "最新研究",
+    "paper",
+    "papers",
+    "article",
+    "articles",
+    "literature",
+    "pubmed",
+    "arxiv",
+    "reference",
+    "references",
+    "citation",
+    "citations",
+    "论文",
+    "論文",
+    "文献",
+    "文獻",
+    "参考文献",
+    "參考文獻",
+    "引用",
+    "最新研究",
 )
+_MODEL_CARD_DIRECT_KEYWORDS = (
+    "model card",
+    "modelcard",
+    "模型卡",
+    "模型卡片",
+)
+_MODEL_CARD_INFO_KEYWORDS = (
+    "model info",
+    "model information",
+    "model details",
+    "model detail",
+    "model summary",
+    "model overview",
+    "model description",
+    "model architecture",
+    "model config",
+    "model configuration",
+    "about this model",
+    "about my model",
+    "about the model",
+    "模型信息",
+    "模型資訊",
+    "模型详情",
+    "模型詳情",
+    "模型描述",
+    "模型说明",
+    "模型說明",
+    "模型简介",
+    "模型概况",
+    "模型概況",
+    "模型架构",
+    "模型架構",
+    "模型配置",
+)
+_MODEL_CARD_LOCAL_KEYWORDS = (
+    "this model",
+    "that model",
+    "my model",
+    "the model",
+    "current model",
+    "trained model",
+    "selected model",
+    "这个模型",
+    "這個模型",
+    "该模型",
+    "該模型",
+    "我的模型",
+    "当前模型",
+    "當前模型",
+    "已训练模型",
+    "已訓練模型",
+    "选中的模型",
+    "選中的模型",
+)
+_SYSTEM_CAPABILITY_QUERY_VERBS = (
+    # English
+    "what",
+    "which",
+    "list",
+    "show all",
+    "available",
+    "supported",
+    "support",
+    "options",
+    # Chinese simplified
+    "有哪些",
+    "有什么",
+    "支持哪些",
+    "支持什么",
+    "列出",
+    "可以用哪些",
+    "能用哪些",
+    "可用的",
+    "都有哪些",
+    "有什么样的",
+    # Chinese traditional
+    "有什麼",
+    "支持什麼",
+    "支援哪些",
+    "支援什麼",
+    "可用的",
+    "都有哪些",
+)
+_SYSTEM_CAPABILITY_NOUNS = (
+    # English
+    "extractor",
+    "extractors",
+    "feature extractor",
+    "feature extractors",
+    "aggregator",
+    "aggregators",
+    "classifier",
+    "classifiers",
+    "architecture",
+    "architectures",
+    "seg architecture",
+    "backbone",
+    "backbones",
+    "optimizer",
+    "optimizers",
+    "loss function",
+    "loss functions",
+    "task type",
+    "task types",
+    "model type",
+    "model types",
+    # Chinese simplified
+    "特征提取器",
+    "提取器",
+    "聚合器",
+    "分类头",
+    "分割架构",
+    "骨干",
+    "优化器",
+    "损失函数",
+    "任务类型",
+    "模型类型",
+    # Chinese traditional
+    "特徵提取器",
+    "聚合器",
+    "分類頭",
+    "分割架構",
+    "骨幹",
+    "優化器",
+    "損失函數",
+    "任務類型",
+    "模型類型",
+)
+
+
+def looks_like_model_card_query(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+    if _contains_any_keyword(normalized, _MODEL_CARD_DIRECT_KEYWORDS):
+        return True
+    has_info = _contains_any_keyword(normalized, _MODEL_CARD_INFO_KEYWORDS)
+    has_local = _contains_any_keyword(normalized, _MODEL_CARD_LOCAL_KEYWORDS)
+    return bool(has_info and has_local)
+
+
+def looks_like_system_capability_query(text: str) -> bool:
+    normalized = (text or "").strip().lower()
+    if not normalized:
+        return False
+
+    has_query_verb = _contains_any_keyword(normalized, _SYSTEM_CAPABILITY_QUERY_VERBS)
+    has_capability_noun = _contains_any_keyword(normalized, _SYSTEM_CAPABILITY_NOUNS)
+    if not (has_query_verb and has_capability_noun):
+        return False
+
+    has_recommendation = _contains_any_keyword(normalized, _RECOMMENDATION_KEYWORDS)
+    has_training_action = _contains_any_keyword(normalized, _TRAINING_ACTION_KEYWORDS)
+    if has_recommendation and has_training_action:
+        return False
+
+    has_local_model = _contains_any_keyword(normalized, _MODEL_CARD_LOCAL_KEYWORDS)
+    if has_local_model:
+        return False
+
+    return True
 
 
 def _message_content_to_text(content: Any) -> str:
@@ -250,11 +871,20 @@ def looks_like_image_visualization_query(text: str) -> bool:
     if not normalized:
         return False
 
-    has_visualization_action = _contains_any_keyword(normalized, _VISUALIZATION_ACTION_KEYWORDS) or _contains_any_keyword(normalized, _RESULT_ACTION_KEYWORDS)
-    has_visualization_target = _contains_any_keyword(normalized, _VISUALIZATION_TARGET_KEYWORDS) or _contains_any_keyword(normalized, _HEATMAP_KEYWORDS)
-    has_visualization_payload = _contains_any_keyword(normalized, _IMAGE_VISUALIZATION_KEYWORDS)
+    has_visualization_action = _contains_any_keyword(
+        normalized, _VISUALIZATION_ACTION_KEYWORDS
+    ) or _contains_any_keyword(normalized, _RESULT_ACTION_KEYWORDS)
+    has_visualization_target = _contains_any_keyword(
+        normalized, _VISUALIZATION_TARGET_KEYWORDS
+    ) or _contains_any_keyword(normalized, _HEATMAP_KEYWORDS)
+    has_visualization_payload = _contains_any_keyword(
+        normalized, _IMAGE_VISUALIZATION_KEYWORDS
+    )
 
-    return bool((has_visualization_action or has_visualization_target) and has_visualization_payload)
+    return bool(
+        (has_visualization_action or has_visualization_target)
+        and has_visualization_payload
+    )
 
 
 def looks_like_validation_query(text: str) -> bool:
@@ -271,7 +901,9 @@ def looks_like_metric_or_result_display_query(text: str) -> bool:
 
     has_metric = _contains_any_keyword(normalized, _METRIC_RESULT_KEYWORDS)
     has_action = _contains_any_keyword(normalized, _RESULT_ACTION_KEYWORDS)
-    has_local_context = _contains_any_keyword(normalized, _LOCAL_RESULT_CONTEXT_KEYWORDS)
+    has_local_context = _contains_any_keyword(
+        normalized, _LOCAL_RESULT_CONTEXT_KEYWORDS
+    )
     has_full_results = _contains_any_keyword(normalized, _FULL_RESULT_KEYWORDS)
 
     return bool(
@@ -290,12 +922,29 @@ def looks_like_local_flow_followup(text: str) -> bool:
     has_local_entity = _contains_any_keyword(
         normalized,
         (
-            "task", "dataset", "model", "result", "analysis", "validation",
-            "任务", "任務", "数据集", "資料集", "模型", "结果", "結果", "分析", "验证", "驗證",
+            "task",
+            "dataset",
+            "model",
+            "result",
+            "analysis",
+            "validation",
+            "任务",
+            "任務",
+            "数据集",
+            "資料集",
+            "模型",
+            "结果",
+            "結果",
+            "分析",
+            "验证",
+            "驗證",
         ),
     )
 
-    return bool(len(normalized) <= 220 and (has_option_shape or has_short_followup or has_local_entity))
+    return bool(
+        len(normalized) <= 220
+        and (has_option_shape or has_short_followup or has_local_entity)
+    )
 
 
 def looks_like_analysis_prompt(text: str) -> bool:
@@ -321,7 +970,10 @@ def looks_like_image_visualization_prompt(text: str) -> bool:
     has_selection_prompt = (
         "[OPTIONS]" in text
         or _contains_any_keyword(normalized, _IMAGE_VISUALIZATION_PROMPT_KEYWORDS)
-        or (_contains_any_keyword(normalized, _SELECTION_VERB_KEYWORDS) and _contains_any_keyword(normalized, _VISUALIZATION_TARGET_KEYWORDS))
+        or (
+            _contains_any_keyword(normalized, _SELECTION_VERB_KEYWORDS)
+            and _contains_any_keyword(normalized, _VISUALIZATION_TARGET_KEYWORDS)
+        )
     )
 
     return bool(has_visualization_context and has_selection_prompt)
@@ -336,7 +988,9 @@ def looks_like_heatmap_visualization_query(text: str) -> bool:
     if not has_heatmap:
         return False
 
-    has_visualization_action = any(keyword in normalized for keyword in _VISUALIZATION_ACTION_KEYWORDS)
+    has_visualization_action = any(
+        keyword in normalized for keyword in _VISUALIZATION_ACTION_KEYWORDS
+    )
     has_existing_model_visualization = any(
         keyword in normalized for keyword in _EXISTING_MODEL_VISUALIZATION_KEYWORDS
     )
@@ -356,10 +1010,21 @@ def looks_like_heatmap_dataset_selection_prompt(text: str) -> bool:
         return False
 
     has_heatmap = any(keyword in normalized for keyword in _HEATMAP_KEYWORDS)
-    has_selection_prompt = any(keyword in normalized for keyword in _HEATMAP_SELECTION_PROMPT_KEYWORDS)
-    has_selection_verb = any(keyword in normalized for keyword in _SELECTION_VERB_KEYWORDS)
-    has_visualization_target = any(keyword in normalized for keyword in _VISUALIZATION_TARGET_KEYWORDS)
-    return bool(has_heatmap and ((has_selection_prompt) or (has_selection_verb and has_visualization_target)))
+    has_selection_prompt = any(
+        keyword in normalized for keyword in _HEATMAP_SELECTION_PROMPT_KEYWORDS
+    )
+    has_selection_verb = any(
+        keyword in normalized for keyword in _SELECTION_VERB_KEYWORDS
+    )
+    has_visualization_target = any(
+        keyword in normalized for keyword in _VISUALIZATION_TARGET_KEYWORDS
+    )
+    return bool(
+        has_heatmap
+        and (
+            (has_selection_prompt) or (has_selection_verb and has_visualization_target)
+        )
+    )
 
 
 def looks_like_heatmap_dataset_option_selection(text: str) -> bool:
@@ -368,14 +1033,20 @@ def looks_like_heatmap_dataset_option_selection(text: str) -> bool:
         return False
 
     has_heatmap = any(keyword in normalized for keyword in _HEATMAP_KEYWORDS)
-    has_dataset_hint = any(keyword in normalized for keyword in _DATASET_HINT_KEYWORDS) or any(
-        keyword in normalized for keyword in _DATASET_OPTION_HINT_KEYWORDS
-    )
+    has_dataset_hint = any(
+        keyword in normalized for keyword in _DATASET_HINT_KEYWORDS
+    ) or any(keyword in normalized for keyword in _DATASET_OPTION_HINT_KEYWORDS)
     has_option_shape = any(token in text for token in ("(", ")", "（", "）"))
-    has_training_creation = any(keyword in normalized for keyword in _EXPLICIT_TRAINING_CREATION_KEYWORDS)
-    has_training_status = any(keyword in normalized for keyword in _TRAINING_STATUS_KEYWORDS)
+    has_training_creation = any(
+        keyword in normalized for keyword in _EXPLICIT_TRAINING_CREATION_KEYWORDS
+    )
+    has_training_status = any(
+        keyword in normalized for keyword in _TRAINING_STATUS_KEYWORDS
+    )
     has_search = any(keyword in normalized for keyword in _SEARCH_KEYWORDS)
-    has_recommendation = any(keyword in normalized for keyword in _RECOMMENDATION_KEYWORDS)
+    has_recommendation = any(
+        keyword in normalized for keyword in _RECOMMENDATION_KEYWORDS
+    )
 
     if has_training_creation or has_search or has_recommendation:
         return False
@@ -405,7 +1076,9 @@ def is_heatmap_visualization_followup(messages: List[Dict[str, Any]]) -> bool:
     if last_user_idx is None:
         return False
 
-    latest_user_text = _message_content_to_text(messages[last_user_idx].get("content", ""))
+    latest_user_text = _message_content_to_text(
+        messages[last_user_idx].get("content", "")
+    )
     if looks_like_heatmap_visualization_query(latest_user_text):
         return True
     if not looks_like_heatmap_dataset_option_selection(latest_user_text):
@@ -414,7 +1087,9 @@ def is_heatmap_visualization_followup(messages: List[Dict[str, Any]]) -> bool:
     previous_assistant_text = ""
     for idx in range(last_user_idx - 1, -1, -1):
         if messages[idx].get("role") == "assistant":
-            previous_assistant_text = _message_content_to_text(messages[idx].get("content", ""))
+            previous_assistant_text = _message_content_to_text(
+                messages[idx].get("content", "")
+            )
             break
 
     return looks_like_heatmap_dataset_selection_prompt(previous_assistant_text)
@@ -446,10 +1121,14 @@ def detect_no_web_search_mode(messages: List[Dict[str, Any]]) -> str | None:
     previous_assistant_text = ""
     for idx in range(last_user_idx - 1, -1, -1):
         if messages[idx].get("role") == "assistant":
-            previous_assistant_text = _message_content_to_text(messages[idx].get("content", ""))
+            previous_assistant_text = _message_content_to_text(
+                messages[idx].get("content", "")
+            )
             break
 
-    if _message_content_has_image(last_user_message.get("content")) or looks_like_image_analysis_query(latest_user_text):
+    if _message_content_has_image(
+        last_user_message.get("content")
+    ) or looks_like_image_analysis_query(latest_user_text):
         return "patch_inference"
 
     if looks_like_image_visualization_query(latest_user_text):
@@ -458,19 +1137,31 @@ def detect_no_web_search_mode(messages: List[Dict[str, Any]]) -> str | None:
     if is_heatmap_visualization_followup(messages):
         return "image_visualization"
 
-    if looks_like_validation_query(latest_user_text) or looks_like_metric_or_result_display_query(latest_user_text):
+    if looks_like_validation_query(
+        latest_user_text
+    ) or looks_like_metric_or_result_display_query(latest_user_text):
         return "analysis_results"
 
-    if "[PATCH_INFERENCE]" in previous_assistant_text and looks_like_local_flow_followup(latest_user_text):
+    if (
+        "[PATCH_INFERENCE]" in previous_assistant_text
+        and looks_like_local_flow_followup(latest_user_text)
+    ):
         return "patch_inference"
 
-    if "[IMAGE_RECOMMENDATION]" in previous_assistant_text and looks_like_local_flow_followup(latest_user_text):
+    if (
+        "[IMAGE_RECOMMENDATION]" in previous_assistant_text
+        and looks_like_local_flow_followup(latest_user_text)
+    ):
         return "image_visualization"
 
-    if looks_like_image_visualization_prompt(previous_assistant_text) and looks_like_local_flow_followup(latest_user_text):
+    if looks_like_image_visualization_prompt(
+        previous_assistant_text
+    ) and looks_like_local_flow_followup(latest_user_text):
         return "image_visualization"
 
-    if looks_like_analysis_prompt(previous_assistant_text) and looks_like_local_flow_followup(latest_user_text):
+    if looks_like_analysis_prompt(
+        previous_assistant_text
+    ) and looks_like_local_flow_followup(latest_user_text):
         return "analysis_results"
 
     return None
@@ -484,16 +1175,38 @@ def looks_like_training_recommendation_query(text: str) -> bool:
         return False
     if looks_like_image_visualization_query(normalized):
         return False
-    has_training_status = any(keyword in normalized for keyword in _TRAINING_STATUS_KEYWORDS)
-    has_training_action = any(keyword in normalized for keyword in _TRAINING_ACTION_KEYWORDS) and not has_training_status
-    has_recommendation = any(keyword in normalized for keyword in _RECOMMENDATION_KEYWORDS)
+    has_training_status = any(
+        keyword in normalized for keyword in _TRAINING_STATUS_KEYWORDS
+    )
+    has_training_action = (
+        any(keyword in normalized for keyword in _TRAINING_ACTION_KEYWORDS)
+        and not has_training_status
+    )
+    has_recommendation = any(
+        keyword in normalized for keyword in _RECOMMENDATION_KEYWORDS
+    )
     has_task_context = any(keyword in normalized for keyword in _TASK_CONTEXT_KEYWORDS)
-    has_model_component = any(keyword in normalized for keyword in _MODEL_COMPONENT_KEYWORDS)
+    has_model_component = any(
+        keyword in normalized for keyword in _MODEL_COMPONENT_KEYWORDS
+    )
     has_dataset_hint = any(keyword in normalized for keyword in _DATASET_HINT_KEYWORDS)
-    has_model_selection_intent = any(keyword in normalized for keyword in _MODEL_SELECTION_INTENT_KEYWORDS)
+    has_model_selection_intent = any(
+        keyword in normalized for keyword in _MODEL_SELECTION_INTENT_KEYWORDS
+    )
     return bool(
-        (has_training_action and (has_task_context or has_dataset_hint or has_model_component))
-        or (has_recommendation and (has_task_context or has_dataset_hint or has_training_action or has_model_component))
+        (
+            has_training_action
+            and (has_task_context or has_dataset_hint or has_model_component)
+        )
+        or (
+            has_recommendation
+            and (
+                has_task_context
+                or has_dataset_hint
+                or has_training_action
+                or has_model_component
+            )
+        )
         or (has_model_component and has_dataset_hint and has_model_selection_intent)
     )
 
@@ -516,7 +1229,11 @@ def get_training_recommendation_source_urls(profile: str) -> List[str]:
         source_ids = ["pathbench"]
     else:
         source_ids = []
-    return [str(BUNDLED_TRAINING_PDF_SOURCES[source_id]["url"]) for source_id in source_ids if source_id in BUNDLED_TRAINING_PDF_SOURCES]
+    return [
+        str(BUNDLED_TRAINING_PDF_SOURCES[source_id]["url"])
+        for source_id in source_ids
+        if source_id in BUNDLED_TRAINING_PDF_SOURCES
+    ]
 
 
 def get_bundled_training_knowledge_status() -> Dict[str, bool]:
@@ -526,8 +1243,13 @@ def get_bundled_training_knowledge_status() -> Dict[str, bool]:
         url_hash = get_url_hash(url)
         marker_ready = _get_bundled_markdown(url) is not None
         structured_ready = _get_bundled_structured_content(url) is not None
-        vector_ready = bool(url_hash in _LOCAL_INDEX_READY or is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR))
-        status[str(source["id"])] = bool(marker_ready and structured_ready and vector_ready)
+        vector_ready = bool(
+            url_hash in _LOCAL_INDEX_READY
+            or is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR)
+        )
+        status[str(source["id"])] = bool(
+            marker_ready and structured_ready and vector_ready
+        )
     return status
 
 
@@ -557,13 +1279,19 @@ async def prewarm_training_recommendation_sources(
             source_id = str(source["id"])
             source_url = str(source["url"])
             logger.info(f"[BundledTrainingRAG] Preparing source: {source_id}")
-            results[source_id] = await _ensure_local_source_ready(source_url, force_upgrade=force_upgrade)
+            results[source_id] = await _ensure_local_source_ready(
+                source_url, force_upgrade=force_upgrade
+            )
     return results
 
 
-async def build_training_recommendation_evidence_context(text: str, detected_lang: str) -> str:
+async def build_training_recommendation_evidence_context(
+    text: str, detected_lang: str
+) -> str:
     profile = detect_training_recommendation_profile(text)
-    urls = await ensure_training_recommendation_sources_for_query(text, force_upgrade=False)
+    urls = await ensure_training_recommendation_sources_for_query(
+        text, force_upgrade=False
+    )
     sections: list[str] = []
 
     prior_lines = _build_profile_prior_lines(profile, detected_lang)
@@ -607,7 +1335,11 @@ async def _ensure_local_source_ready(url: str, *, force_upgrade: bool = False) -
             None,
             upgrade_url=None,
         )
-        if marker_result is None or not marker_result.markdown.strip() or marker_result.markdown.startswith("[Error"):
+        if (
+            marker_result is None
+            or not marker_result.markdown.strip()
+            or marker_result.markdown.startswith("[Error")
+        ):
             logger.warning(f"Bundled training recommendation parse failed: {path}")
             return False
 
@@ -641,7 +1373,9 @@ async def _ensure_vector_index(
     url_hash = get_url_hash(url)
     if not force and url_hash in _LOCAL_INDEX_READY:
         return
-    if not force and is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR):
+    if not force and is_pdf_indexed(
+        url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR
+    ):
         _LOCAL_INDEX_READY.add(url_hash)
         return
     await asyncio.to_thread(
@@ -666,8 +1400,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
         if profile == "general_cytology":
             return [
                 "## 任务相关证据约束",
-                "- 非宫颈 / 非妇科或通用细胞学任务优先把 SmartCyto 作为细胞学 encoder 选项。",
-                "- 如果公开搜索没有直接命中 SmartCyto，不要把它当成反证；改用同任务公开证据来校准 encoder、MIL 或 segmentation 方案。",
+                "- 非宫颈 / 非妇科或通用细胞学任务，SmartCyto（视觉-语言预训练）和 CytoFM（纯视觉自监督，DINOv2 ViT-L/14）均为优先细胞学 encoder 候选。",
+                "- 如果公开搜索没有直接命中 SmartCyto 或 CytoFM，不要把它当成反证；改用同任务公开证据来校准 encoder、MIL 或 segmentation 方案。",
             ]
         if profile == "segmentation":
             return [
@@ -691,8 +1425,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
         if profile == "general_cytology":
             return [
                 "## 任務相關證據約束",
-                "- 非宮頸 / 非婦科或通用細胞學任務優先把 SmartCyto 作為細胞學 encoder 選項。",
-                "- 如果公開搜索沒有直接命中 SmartCyto，不要把它當成反證；改用同任務公開證據來校準 encoder、MIL 或 segmentation 方案。",
+                "- 非宮頸 / 非婦科或通用細胞學任務，SmartCyto（視覺-語言預訓練）和 CytoFM（純視覺自監督，DINOv2 ViT-L/14）均為優先細胞學 encoder 候選。",
+                "- 如果公開搜索沒有直接命中 SmartCyto 或 CytoFM，不要把它當成反證；改用同任務公開證據來校準 encoder、MIL 或 segmentation 方案。",
             ]
         if profile == "segmentation":
             return [
@@ -715,8 +1449,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
     if profile == "general_cytology":
         return [
             "## Task-specific Evidence Constraints",
-            "- For non-cervical, non-gynecologic, or general cytology tasks, keep SmartCyto as the preferred cytology encoder option.",
-            "- If public search does not directly surface SmartCyto, do not treat that as counter-evidence; use task-matched public evidence to calibrate encoder, MIL, or segmentation choices.",
+            "- For non-cervical, non-gynecologic, or general cytology tasks, both SmartCyto (vision-language pretrained) and CytoFM (pure vision self-supervised, DINOv2 ViT-L/14) are preferred cytology encoder candidates.",
+            "- If public search does not directly surface SmartCyto or CytoFM, do not treat that as counter-evidence; use task-matched public evidence to calibrate encoder, MIL, or segmentation choices.",
         ]
     if profile == "segmentation":
         return [
@@ -731,7 +1465,9 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
     ]
 
 
-def _build_bundled_evidence_lines(query: str, urls: list[str], detected_lang: str) -> list[str]:
+def _build_bundled_evidence_lines(
+    query: str, urls: list[str], detected_lang: str
+) -> list[str]:
     if detected_lang == "zh-CN":
         header = "## 内部检索线索（仅供内部判断，不可直接向用户引用）"
         guard_lines = [
@@ -782,11 +1518,17 @@ def _build_bundled_evidence_lines(query: str, urls: list[str], detected_lang: st
             break
     if not found_any:
         if detected_lang == "zh-CN":
-            lines.append("- 当前没有检索到匹配片段，但仍应保留上述任务约束，并继续联网搜索。")
+            lines.append(
+                "- 当前没有检索到匹配片段，但仍应保留上述任务约束，并继续联网搜索。"
+            )
         elif detected_lang == "zh-HK":
-            lines.append("- 當前沒有檢索到匹配片段，但仍應保留上述任務約束，並繼續聯網搜索。")
+            lines.append(
+                "- 當前沒有檢索到匹配片段，但仍應保留上述任務約束，並繼續聯網搜索。"
+            )
         else:
-            lines.append("- No matching bundled excerpts were retrieved, but you should still preserve the task-specific constraints above and continue with web search.")
+            lines.append(
+                "- No matching bundled excerpts were retrieved, but you should still preserve the task-specific constraints above and continue with web search."
+            )
     return lines
 
 
@@ -811,7 +1553,9 @@ def _get_bundled_markdown(url: str) -> str | None:
 
 
 def _get_bundled_structured_content(url: str) -> dict[str, Any] | None:
-    structured_path = _get_bundled_cache_dir() / f"{get_url_hash(url)}{STRUCTURED_CACHE_SUFFIX}"
+    structured_path = (
+        _get_bundled_cache_dir() / f"{get_url_hash(url)}{STRUCTURED_CACHE_SUFFIX}"
+    )
     if not structured_path.exists():
         return None
     try:
@@ -831,7 +1575,9 @@ def _save_bundled_marker_cache(
 ) -> None:
     cache_dir = _get_bundled_cache_dir()
     url_hash = get_url_hash(url)
-    (cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}").write_text(markdown, encoding="utf-8")
+    (cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}").write_text(
+        markdown, encoding="utf-8"
+    )
     structured_path = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
     structured_path.write_text(
         json.dumps(structured_content or {}, ensure_ascii=False, indent=2),
@@ -871,7 +1617,8 @@ def _clean_excerpt(text: str, max_chars: int = 380) -> str:
 def _sanitize_bundled_evidence_excerpt(text: str) -> str:
     compact = _clean_excerpt(text, max_chars=280)
     compact = re.sub(r"^\[Section:[^\]]+\]\s*", "", compact, flags=re.IGNORECASE)
-    compact = re.sub(r"\b(?:p\.?|page)\s*\d+(?:\s*[-–]\s*\d+)?\b", "", compact, flags=re.IGNORECASE)
+    compact = re.sub(
+        r"\b(?:p\.?|page)\s*\d+(?:\s*[-–]\s*\d+)?\b", "", compact, flags=re.IGNORECASE
+    )
     compact = re.sub(r"\s+", " ", compact).strip(" -:;,.，；：")
     return compact
-

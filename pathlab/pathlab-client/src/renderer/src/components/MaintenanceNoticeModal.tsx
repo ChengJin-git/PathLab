@@ -6,10 +6,11 @@ import { Button } from './ui/button'
 interface MaintenanceNoticeModalProps {
   isOpen: boolean
   message: string
-  onAcknowledge: () => Promise<void>
+  onAcknowledge?: () => Promise<void>
+  onDismiss?: () => void
 }
 
-export function MaintenanceNoticeModal({ isOpen, message, onAcknowledge }: MaintenanceNoticeModalProps) {
+export function MaintenanceNoticeModal({ isOpen, message, onAcknowledge, onDismiss }: MaintenanceNoticeModalProps) {
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
 
@@ -18,7 +19,7 @@ export function MaintenanceNoticeModal({ isOpen, message, onAcknowledge }: Maint
   const handleAcknowledge = async () => {
     setIsLoading(true)
     try {
-      await onAcknowledge()
+      await onAcknowledge!()
     } finally {
       setIsLoading(false)
     }
@@ -37,25 +38,36 @@ export function MaintenanceNoticeModal({ isOpen, message, onAcknowledge }: Maint
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 sm:p-4 text-amber-900 whitespace-pre-wrap text-xs sm:text-sm">
             {message}
           </div>
-          <p className="text-xs text-slate-500">
-            {t('maintenanceNotice.pleaseAcknowledge')}
-          </p>
+          {onAcknowledge && (
+            <p className="text-xs text-slate-500">
+              {t('maintenanceNotice.pleaseAcknowledge')}
+            </p>
+          )}
         </div>
         <div className="p-4 sm:p-6 bg-gray-50 flex justify-end gap-3 border-t border-gray-100 flex-shrink-0">
-          <Button
-            onClick={handleAcknowledge}
-            disabled={isLoading}
-            className="bg-amber-600 hover:bg-amber-700 text-white shadow-md hover:shadow-lg transition-all text-sm sm:text-base"
-          >
-            {isLoading ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                {t('maintenanceNotice.processing')}
-              </>
-            ) : (
-              t('maintenanceNotice.acknowledge')
-            )}
-          </Button>
+          {onAcknowledge ? (
+            <Button
+              onClick={handleAcknowledge}
+              disabled={isLoading}
+              className="bg-amber-600 hover:bg-amber-700 text-white shadow-md hover:shadow-lg transition-all text-sm sm:text-base"
+            >
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  {t('maintenanceNotice.processing')}
+                </>
+              ) : (
+                t('maintenanceNotice.acknowledge')
+              )}
+            </Button>
+          ) : (
+            <Button
+              onClick={onDismiss}
+              className="bg-amber-600 hover:bg-amber-700 text-white shadow-md hover:shadow-lg transition-all text-sm sm:text-base"
+            >
+              {t('maintenanceNotice.close')}
+            </Button>
+          )}
         </div>
       </div>
     </div>

@@ -16,10 +16,16 @@ from .export import ExportTaskRepository
 from .training import TrainingTaskRepository
 from .trained_model import TrainedModelRepository
 from .training_log import TrainingLogRepository
-from .permissions import DatasetPermissionRepository
 from .storage_task import StorageTaskRepository
 from .orphaned import OrphanedRecordsRepository
-from .annotation import SegmentationAnnotationRepository
+from .annotation import (
+    SegmentationAnnotationRepository,
+    VersionConflictError,
+    AnnotationOwnershipConflictError,
+)
+from .annotation_audit import AnnotationAuditLogRepository
+from .dataset_stats import DatasetStatsRepository
+from .dataset_grant import DatasetGrantRepository, PermissionAuditLogRepository
 from .research_job import ResearchJobRepository
 
 __all__ = [
@@ -34,9 +40,14 @@ __all__ = [
     "TrainingTaskRepository",
     "TrainedModelRepository",
     "TrainingLogRepository",
-    "DatasetPermissionRepository",
     "StorageTaskRepository",
     "OrphanedRecordsRepository",
     "SegmentationAnnotationRepository",
+    "VersionConflictError",
+    "AnnotationOwnershipConflictError",
+    "AnnotationAuditLogRepository",
+    "DatasetStatsRepository",
+    "DatasetGrantRepository",
+    "PermissionAuditLogRepository",
     "ResearchJobRepository",
 ]

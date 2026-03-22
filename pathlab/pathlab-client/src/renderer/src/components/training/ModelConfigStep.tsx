@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { CheckCircle2, Settings, Search } from 'lucide-react'
+import { Select } from '../ui/select'
 import {
   DataLevel,
   TaskType,
@@ -580,15 +581,11 @@ export function ModelConfigStep({
 
             <div>
               <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest mb-1.5">{t('training.modelConfig.optimizer')}</label>
-              <select
-                className="w-full px-3 py-1.5 sm:py-2 text-[11px] sm:text-sm border border-gray-200 rounded-lg focus:ring-1 focus:ring-primary-500 outline-none"
+              <Select
                 value={optimizer}
-                onChange={(e) => setOptimizer(e.target.value)}
-              >
-                {OPTIMIZERS.map(opt => (
-                  <option key={opt.value} value={opt.value}>{opt.label}</option>
-                ))}
-              </select>
+                onChange={setOptimizer}
+                options={OPTIMIZERS}
+              />
             </div>
 
             <div className="pt-3 border-t border-gray-50 space-y-3">

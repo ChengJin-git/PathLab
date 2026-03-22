@@ -1,6 +1,7 @@
 """
 OrphanedRecordsRepository - Data Access Layer
 """
+
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -8,7 +9,6 @@ from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
-
 
 
 class OrphanedRecordsRepository:
@@ -32,15 +32,23 @@ class OrphanedRecordsRepository:
                 "orphaned_training_logs": [{"id": int, "task_id": str}, ...],
                 "orphaned_trained_models": [{"model_id": str, "task_id": str}, ...],
                 "orphaned_message_feedbacks": [{"id": int, "message_id": int}, ...],
-                "orphaned_dataset_permissions": [{"id": int, "dataset_id": str}, ...],
+                "orphaned_dataset_grants": [{"id": int, "dataset_id": str}, ...],
                 "total_orphaned_count": int,
                 "summary": {category: count, ...}
             }
         """
         from ..models import (
-            AITask, AIResult, TrainingTaskWSI, TrainingLog, TrainedModel,
-            MessageFeedback, DatasetPermission, WSISlide, TrainingTask,
-            ChatMessage, Dataset
+            AITask,
+            AIResult,
+            TrainingTaskWSI,
+            TrainingLog,
+            TrainedModel,
+            MessageFeedback,
+            DatasetGrant,
+            WSISlide,
+            TrainingTask,
+            ChatMessage,
+            Dataset,
         )
 
         result = {
@@ -50,9 +58,9 @@ class OrphanedRecordsRepository:
             "orphaned_training_logs": [],
             "orphaned_trained_models": [],
             "orphaned_message_feedbacks": [],
-            "orphaned_dataset_permissions": [],
+            "orphaned_dataset_grants": [],
             "total_orphaned_count": 0,
-            "summary": {}
+            "summary": {},
         }
 
         # 1. AI Tasks with non-existent WSI
@@ -105,9 +113,9 @@ class OrphanedRecordsRepository:
         for item in orphaned_by_task + orphaned_by_wsi:
             if item.id not in seen_ids:
                 seen_ids.add(item.id)
-                orphaned_training_task_wsi.append({
-                    "id": item.id, "task_id": item.task_id, "wsi_id": item.wsi_id
-                })
+                orphaned_training_task_wsi.append(
+                    {"id": item.id, "task_id": item.task_id, "wsi_id": item.wsi_id}
+                )
         result["orphaned_training_task_wsi"] = orphaned_training_task_wsi
 
         # 4. Training Logs with non-existent training task
@@ -118,8 +126,7 @@ class OrphanedRecordsRepository:
         )
         orphaned_logs = orphaned_logs_query.scalars().all()
         result["orphaned_training_logs"] = [
-            {"id": l.id, "task_id": l.task_id, "level": l.level}
-            for l in orphaned_logs
+            {"id": l.id, "task_id": l.task_id, "level": l.level} for l in orphaned_logs
         ]
 
         # 5. Trained Models with non-existent training task
@@ -146,14 +153,13 @@ class OrphanedRecordsRepository:
             for f in orphaned_feedbacks
         ]
 
-        # 7. Dataset Permissions with non-existent dataset
         orphaned_permissions_query = await db.execute(
-            select(DatasetPermission)
-            .outerjoin(Dataset, DatasetPermission.dataset_id == Dataset.dataset_id)
+            select(DatasetGrant)
+            .outerjoin(Dataset, DatasetGrant.dataset_id == Dataset.dataset_id)
             .where(Dataset.dataset_id == None)
         )
         orphaned_permissions = orphaned_permissions_query.scalars().all()
-        result["orphaned_dataset_permissions"] = [
+        result["orphaned_dataset_grants"] = [
             {"id": p.id, "dataset_id": p.dataset_id, "user_id": p.user_id}
             for p in orphaned_permissions
         ]
@@ -166,7 +172,7 @@ class OrphanedRecordsRepository:
             "training_logs": len(result["orphaned_training_logs"]),
             "trained_models": len(result["orphaned_trained_models"]),
             "message_feedbacks": len(result["orphaned_message_feedbacks"]),
-            "dataset_permissions": len(result["orphaned_dataset_permissions"]),
+            "dataset_grants": len(result["orphaned_dataset_grants"]),
         }
         result["total_orphaned_count"] = sum(result["summary"].values())
 
@@ -174,8 +180,7 @@ class OrphanedRecordsRepository:
 
     @staticmethod
     async def cleanup_orphaned_records(
-        db: AsyncSession,
-        categories: Optional[List[str]] = None
+        db: AsyncSession, categories: Optional[List[str]] = None
     ) -> Dict[str, Any]:
         """
         Clean up orphaned records from the database.
@@ -186,7 +191,7 @@ class OrphanedRecordsRepository:
                        If None, clean up all categories.
                        Options: ["ai_tasks", "ai_results", "training_task_wsi",
                                 "training_logs", "trained_models",
-                                "message_feedbacks", "dataset_permissions"]
+                                "message_feedbacks", "dataset_grants"]
 
         Returns:
             {
@@ -196,16 +201,28 @@ class OrphanedRecordsRepository:
             }
         """
         from ..models import (
-            AITask, AIResult, TrainingTaskWSI, TrainingLog, TrainedModel,
-            MessageFeedback, DatasetPermission, WSISlide, TrainingTask,
-            ChatMessage, Dataset
+            AITask,
+            AIResult,
+            TrainingTaskWSI,
+            TrainingLog,
+            TrainedModel,
+            MessageFeedback,
+            DatasetGrant,
+            WSISlide,
+            TrainingTask,
+            ChatMessage,
+            Dataset,
         )
 
         if categories is None:
             categories = [
-                "ai_tasks", "ai_results", "training_task_wsi",
-                "training_logs", "trained_models",
-                "message_feedbacks", "dataset_permissions"
+                "ai_tasks",
+                "ai_results",
+                "training_task_wsi",
+                "training_logs",
+                "trained_models",
+                "message_feedbacks",
+                "dataset_grants",
             ]
 
         deleted_counts = {}
@@ -248,7 +265,9 @@ class OrphanedRecordsRepository:
             # By missing task
             orphaned_by_task = await db.execute(
                 select(TrainingTaskWSI.id)
-                .outerjoin(TrainingTask, TrainingTaskWSI.task_id == TrainingTask.task_id)
+                .outerjoin(
+                    TrainingTask, TrainingTaskWSI.task_id == TrainingTask.task_id
+                )
                 .where(TrainingTask.task_id == None)
             )
             ids_by_task = [row[0] for row in orphaned_by_task.fetchall()]
@@ -318,21 +337,20 @@ class OrphanedRecordsRepository:
             else:
                 deleted_counts["message_feedbacks"] = 0
 
-        # 7. Delete orphaned Dataset Permissions
-        if "dataset_permissions" in categories:
+        if "dataset_grants" in categories:
             orphaned_query = await db.execute(
-                select(DatasetPermission.id)
-                .outerjoin(Dataset, DatasetPermission.dataset_id == Dataset.dataset_id)
+                select(DatasetGrant.id)
+                .outerjoin(Dataset, DatasetGrant.dataset_id == Dataset.dataset_id)
                 .where(Dataset.dataset_id == None)
             )
             orphaned_ids = [row[0] for row in orphaned_query.fetchall()]
             if orphaned_ids:
                 result = await db.execute(
-                    delete(DatasetPermission).where(DatasetPermission.id.in_(orphaned_ids))
+                    delete(DatasetGrant).where(DatasetGrant.id.in_(orphaned_ids))
                 )
-                deleted_counts["dataset_permissions"] = result.rowcount
+                deleted_counts["dataset_grants"] = result.rowcount
             else:
-                deleted_counts["dataset_permissions"] = 0
+                deleted_counts["dataset_grants"] = 0
 
         total_deleted = sum(deleted_counts.values())
 
@@ -349,5 +367,5 @@ class OrphanedRecordsRepository:
         return {
             "deleted_counts": deleted_counts,
             "total_deleted": total_deleted,
-            "summary": summary
+            "summary": summary,
         }

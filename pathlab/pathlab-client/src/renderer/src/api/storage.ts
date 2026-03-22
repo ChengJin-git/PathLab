@@ -3,6 +3,64 @@ import { createPersistentCache, PERSISTENT_CACHE_TTL } from '../lib/cache'
 import { apiFetch } from './client'
 
 // ============================================================================
+// Storage Configuration & Migration
+// ============================================================================
+
+export interface StorageConfig {
+  uploads_dir: string
+  source?: 'env' | 'config' | 'default' | string
+}
+
+export async function getStorageConfig(): Promise<StorageConfig> {
+  return apiFetch<StorageConfig>(`${API_BASE}/storage/config`, undefined, 'Failed to load storage config')
+}
+
+export async function updateStorageConfig(
+  uploads_dir: string
+): Promise<{ uploads_dir: string; restart_required: boolean; message?: string }> {
+  return apiFetch(
+    `${API_BASE}/storage/config`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uploads_dir }),
+    },
+    'Failed to update storage config'
+  )
+}
+
+export interface MigrationStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed' | 'success' | 'error'
+  source: string | null
+  destination: string | null
+  progress: number
+  error: string | null
+  delete_source: boolean
+  message?: string
+  new_path?: string
+}
+
+export async function startMigration(targetPath: string, deleteSource: boolean = false): Promise<void> {
+  await apiFetch<{ message: string }>(
+    `${API_BASE}/storage/migrate`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target_path: targetPath, delete_source: deleteSource }),
+    },
+    'Failed to start migration'
+  )
+}
+
+export async function getMigrationStatus(): Promise<MigrationStatus> {
+  return apiFetch<MigrationStatus>(
+    `${API_BASE}/storage/migration/status`,
+    undefined,
+    'Failed to get migration status'
+  )
+}
+
+// ============================================================================
 // Storage Management APIs
 // ============================================================================
 
@@ -231,6 +289,7 @@ export async function detectOrphanedFiles(): Promise<OrphanedFilesInfo> {
 export interface CleanupResult {
   deleted_files: string[]
   deleted_dirs: string[]
+  deleted_empty_dirs: string[]
   failed: [string, string][]
   total_size: number
   summary: string
@@ -292,7 +351,7 @@ export interface OrphanedMessageFeedback {
   feedback_type: string
 }
 
-export interface OrphanedDatasetPermission {
+export interface OrphanedDatasetGrant {
   id: number
   dataset_id: string
   user_id: string
@@ -305,7 +364,7 @@ export interface OrphanedRecordsInfo {
   orphaned_training_logs: OrphanedTrainingLog[]
   orphaned_trained_models: OrphanedTrainedModel[]
   orphaned_message_feedbacks: OrphanedMessageFeedback[]
-  orphaned_dataset_permissions: OrphanedDatasetPermission[]
+  orphaned_dataset_grants: OrphanedDatasetGrant[]
   total_orphaned_count: number
   summary: Record<string, number>
 }
@@ -446,11 +505,12 @@ export interface BatchRegisterRequest {
   select_all_valid?: boolean
   selected_paths?: string[]
   excluded_paths?: string[]
-  aggregation_level?: 'case' | 'file'  // Default: 'file' - how to organize data
-  task_type?: 'classification' | 'survival' | 'segmentation'  // Default: 'classification'
-  default_label?: string  // Optional default label for classification
-  default_event_time?: number  // For survival
-  default_event_status?: number  // For survival (1 = event occurred, 0 = censored)
+  aggregation_level?: 'case' | 'file'
+  task_type?: 'classification' | 'survival' | 'segmentation'
+  is_public?: boolean
+  default_label?: string
+  default_event_time?: number
+  default_event_status?: number
 }
 
 /**
@@ -800,4 +860,3 @@ export async function startBatchUpdateMetadataTask(
     'Failed to start batch update metadata task'
   )
 }
-

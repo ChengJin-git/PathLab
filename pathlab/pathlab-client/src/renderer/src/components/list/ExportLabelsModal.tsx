@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { X, AlertCircle } from 'lucide-react'
 import { Button } from '../ui/button'
+import { Select } from '../ui/select'
 import type { DatasetSummary, ExportLabelsOptions } from '../../api'
 
 export type { ExportLabelsOptions } from '../../api'
@@ -86,14 +87,14 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 {t('chatComponents.taskConfig.splitStrategy')}
               </label>
-              <select
+              <Select
                 value={strategy}
-                onChange={(e) => setStrategy(e.target.value as 'random' | 'k_fold')}
-                className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              >
-                <option value="random">{t('chatComponents.taskConfig.splitRandom')}</option>
-                <option value="k_fold">{t('chatComponents.taskConfig.splitKFold')}</option>
-              </select>
+                onChange={(v) => setStrategy(v as 'random' | 'k_fold')}
+                options={[
+                  { value: 'random', label: t('chatComponents.taskConfig.splitRandom') },
+                  { value: 'k_fold', label: t('chatComponents.taskConfig.splitKFold') },
+                ]}
+              />
             </div>
           )}
 

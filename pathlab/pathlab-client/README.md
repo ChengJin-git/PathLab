@@ -1,6 +1,6 @@
 # PathLab Client
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.4`
 
 `pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar，以及固定端口部署所需的运维脚本。
 
@@ -12,7 +12,9 @@
 - `src/preload/index.ts`：向渲染层暴露后端端口发现能力
 - `src/renderer/vite.config.ts`：独立 Web 构建入口
 - `server/main.py`：Python sidecar 统一入口
-- `build-python.sh`、`main.spec`、`server/main.spec`：Python 侧打包辅助文件
+- `scripts/build-python.sh`：Python sidecar 打包脚本（PyInstaller onedir 模式）
+- `scripts/prepare-redis.sh`：嵌入式 Redis 二进制准备脚本
+- `server/main.spec`：PyInstaller spec（onedir 模式，含完整依赖配置）
 - `deploy/start.sh` / `deploy/hot-reload.sh`：固定端口部署与热更新脚本
 - `package.json`：Electron 开发 / 构建脚本定义（`dev`、`build`、`start` 等）
 
@@ -23,19 +25,29 @@ pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
 ├── logs/                   # 固定端口脚本输出日志
 ├── server/                 # Python sidecar
+│   ├── tests/              # 后端单元测试（pytest）
+│   │   ├── conftest.py     # fixtures（auth mock、app factory）
+│   │   ├── test_config.py
+│   │   ├── test_settings.py
+│   │   ├── test_queue_config.py
+│   │   ├── test_ai_models.py
+│   │   └── test_ai_extractors_pretrained.py
+│   ├── pytest.ini          # asyncio_mode = auto
+│   └── requirements-test.txt
 ├── src/
 │   ├── main/               # Electron 主进程
 │   ├── preload/            # Electron preload
 │   └── renderer/           # React + Vite 前端
 ├── test/                   # 前端单元测试（Vitest）
 │   ├── setup.ts            # 全局 mock 初始化
-│   ├── unit/api/           # API 客户端层测试（10 个文件）
+│   ├── unit/api/           # API 客户端层测试（19 个文件）
 │   ├── unit/lib/           # 工具函数测试（3 个文件）
 │   └── unit/contexts/      # React Context 测试（1 个文件）
+├── scripts/                # 构建辅助脚本
+│   ├── build-python.sh     # Python sidecar 打包（PyInstaller）
+│   └── prepare-redis.sh    # 嵌入式 Redis 二进制准备
 ├── vitest.config.ts        # Vitest 配置
-├── build-python.sh
 ├── electron.vite.config.ts
-├── main.spec
 ├── package.json
 └── README.md
 ```
@@ -80,14 +92,16 @@ pathlab-client/
 
 ## 当前已确认的实现事实
 
-- Gateway 当前直接注册 16 个顶层 router；`server/gateway/routes/` 目录里实际共有 32 个路由模块文件，其中一部分作为分析 / 聊天 / 存储辅助模块被复用
-- 数据库当前可见 ORM 表为 17 个，其中标注表为 `segmentation_annotations`
+- Gateway 当前直接注册 17 个顶层 router；`server/gateway/routes/` 目录里实际共有 34 个路由模块文件，其中一部分作为分析 / 聊天 / 存储 / 训练辅助模块被复用
+- 数据库当前可见 ORM 表为 21 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
 - 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口
 
-## 单元测试
+## 测试
 
-前端测试基于 **Vitest** + **@testing-library/react**，覆盖全部 API 客户端模块、工具函数库和 AuthContext。
+### 前端测试（Vitest）
+
+基于 **Vitest** + **@testing-library/react**，覆盖全部 API 客户端模块、工具函数库和 AuthContext。
 
 ```bash
 npm run test:run      # 单次全量运行
@@ -95,7 +109,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前共 **345 个测试**，分布在 **14 个测试文件**：
+当前共 **29 个测试文件**：
 
 | 分类 | 文件 | 覆盖内容 |
 |------|------|---------|
@@ -109,18 +123,66 @@ npm run test:coverage # 生成覆盖率报告
 | 业务 API | `unit/api/chat.test.ts` | AI 对话会话 CRUD、SSE 流式请求、PDF 管理 |
 | 业务 API | `unit/api/heatmap.test.ts` | 热图列表、数据获取、URL 构建、缓存失效 |
 | 业务 API | `unit/api/users.test.ts` | 管理员用户 CRUD、权限、维护公告 |
+| 业务 API | `unit/api/analysis.test.ts` | 外部验证提交、分析触发、分析状态轮询 |
+| 业务 API | `unit/api/annotation.test.ts` | 标注草稿 CRUD、标签读取（/labels）、协作标注全流程、协作者管理、审计日志、WebSocket 协作 URL |
+| 业务 API | `unit/api/export.test.ts` | 异步导出任务创建、状态轮询、文件下载 |
+| 业务 API | `unit/api/feedback.test.ts` | 消息反馈提交 / 删除、管理员查看、统计导出 |
+| 业务 API | `unit/api/grants.test.ts` | 数据集临时提权授权 / 撤销、批量操作 |
+| 业务 API | `unit/api/queue.test.ts` | GPU 队列状态、配置读写、任务取消 |
+| 业务 API | `unit/api/settings.test.ts` | 公开设置读取、全局设置读写 |
+| 业务 API | `unit/api/storage.test.ts` | 存储配置、统计、孤立项、迁移、扫描、批量任务 |
+| 业务 API | `unit/api/trainingOptions.test.ts` | 训练选项读取（提取器、聚合器、分割架构等）|
 | 工具函数 | `unit/lib/cache.test.ts` | TTL 缓存、键值缓存、持久化缓存、并发去重 |
 | 工具函数 | `unit/lib/utils.test.ts` | cn()、formatBytes()、formatFileSize() |
 | 工具函数 | `unit/lib/chatMessageParser.test.ts` | AI 消息净化、PDF 上下文检测 |
+| 工具函数 | `unit/lib/datasetPagination.test.ts` | clampDatasetPage() 翻页边界逻辑 |
+| 工具函数 | `unit/lib/segmentationUploadUtils.test.ts` | stem 提取、JSON 文件合并、图像 / JSON 匹配摘要 |
+| 工具函数 | `unit/lib/externalValidationUtils.test.ts` | 任务类型判断、提取器维度表、数据集兼容性过滤 |
+| 工具函数 | `unit/lib/trainingSubmissionTracker.test.ts` | localStorage 训练提交状态机（pending / created / failed / cancelled / 过期清理）|
 | React Context | `unit/contexts/AuthContext.test.tsx` | 认证状态机、角色判断、协议签署、维护公告 |
+| 组件 | `unit/components/settings/PermissionCenterModal.test.tsx` | 权限中心弹窗数据集选择与展示逻辑 |
+| 组件 | `unit/components/settings/storage/BatchScanResults.test.tsx` | 存储批量扫描结果展示组件 |
 
-详细说明见 [test/README.md](test/README.md)。
+全部 API 测试文件均使用 `test/helpers/apiHelpers.ts` 中的工具函数（`ok` / `errResp` / `noContent` / `blobResp` / `createSSEStream`）构造 Response mock，详细说明见 [test/README.md](test/README.md)。
+
+### 后端测试（pytest）
+
+基于 **pytest** + **pytest-asyncio** + **httpx**，覆盖配置层、Gateway 路由以及 AI 模型推理（含 GPU smoke test）。
+
+```bash
+# 安装测试依赖
+pip install -r server/requirements-test.txt
+
+# 运行全部后端测试（跳过预训练模型）
+python -m pytest server/tests/ -v -k "not pretrained"
+
+# 运行预训练模型测试（需 GPU，耗时较长）
+python -m pytest server/tests/test_ai_extractors_pretrained.py -v
+```
+
+当前共 **116 个常规测试 + ~144 个预训练模型测试**，分布在 **10 个测试文件**：
+
+| 文件 | 测试数 | 覆盖内容 |
+|------|--------|---------|
+| `server/tests/test_config.py` | 28 | Config 全局设置、任务超时、并发数、维护模式 |
+| `server/tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm |
+| `server/tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id} |
+| `server/tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
+| `server/tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载与推理验证 |
+| `server/tests/test_permission_logic.py` | — | 权限判断核心逻辑 |
+| `server/tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归 |
+| `server/tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证 |
+| `server/tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试 |
+| `server/tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
+
+详细说明见 [server/README.md](server/README.md)。
 
 ## 推荐阅读顺序
 
 1. [server/README.md](server/README.md)
-2. [server/gateway/README.md](server/gateway/README.md)
-3. [server/backend/database/README.md](server/backend/database/README.md)
-4. [src/renderer/README.md](src/renderer/README.md)
-5. [deploy/README.md](deploy/README.md)
-6. [test/README.md](test/README.md)
+2. [server/permissions/README.md](server/permissions/README.md)
+3. [server/gateway/README.md](server/gateway/README.md)
+4. [server/backend/database/README.md](server/backend/database/README.md)
+5. [src/renderer/README.md](src/renderer/README.md)
+6. [deploy/README.md](deploy/README.md)
+7. [test/README.md](test/README.md)

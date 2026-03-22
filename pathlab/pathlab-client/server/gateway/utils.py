@@ -1,6 +1,7 @@
 """
 Utility functions for Gateway service
 """
+
 import asyncio
 from collections import defaultdict
 import inspect
@@ -21,9 +22,17 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.tasks.feature_cache import compute_params_hash
-from backend.ai.tasks.patch_cache import acquire_coords_lock, find_valid_cached_coords_summary
+from backend.ai.tasks.patch_cache import (
+    acquire_coords_lock,
+    find_valid_cached_coords_summary,
+)
 from backend.common.config import Config
-from backend.database.repositories import DataGroupRepository, DatasetRepository, StorageTaskRepository
+from sqlalchemy import text as sa_text
+from backend.database.repositories import (
+    DataGroupRepository,
+    DatasetRepository,
+    StorageTaskRepository,
+)
 from backend.common.file_types import (
     PATCH_EXTENSIONS,
     TIF_EXTENSIONS,
@@ -88,7 +97,54 @@ def get_file_size_safe(file_path: str | Path) -> int:
         return 0
 
 
-def build_default_wsi_properties(file_path: str | Path, file_size: Optional[int] = None) -> dict[str, Any]:
+def get_wsi_effective_file_size(file_path: str | Path) -> int:
+    """
+    Return the effective on-disk size of a WSI, including associated data:
+    - .mrxs : main file + all files inside the same-stem data directory (always present)
+    - .tmap : main file + any same-stem .DT<n> sibling files (may or may not exist)
+    - others: main file only
+    """
+    path = Path(file_path)
+    try:
+        total = path.stat().st_size
+    except OSError:
+        return 0
+
+    ext = path.suffix.lower()
+
+    if ext == ".mrxs":
+        data_folder = path.parent / path.stem
+        if data_folder.is_dir():
+            try:
+                for root, _dirs, files in os.walk(data_folder):
+                    for f in files:
+                        try:
+                            total += os.path.getsize(os.path.join(root, f))
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+
+    elif ext == ".tmap":
+        try:
+            for sibling in path.parent.iterdir():
+                if not sibling.is_file() or sibling.stem != path.stem:
+                    continue
+                sext = sibling.suffix.lower()
+                if sext.startswith(".dt") and len(sext) > 3 and sext[3:].isdigit():
+                    try:
+                        total += sibling.stat().st_size
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+    return total
+
+
+def build_default_wsi_properties(
+    file_path: str | Path, file_size: Optional[int] = None
+) -> dict[str, Any]:
     if file_size is None:
         file_size = get_file_size_safe(file_path)
     return {
@@ -101,7 +157,12 @@ def build_default_wsi_properties(file_path: str | Path, file_size: Optional[int]
     }
 
 
-def resolve_file_data_type(file_path: str | Path, *, cached_file_data_type: Optional[str] = None, file_size: Optional[int] = None) -> str:
+def resolve_file_data_type(
+    file_path: str | Path,
+    *,
+    cached_file_data_type: Optional[str] = None,
+    file_size: Optional[int] = None,
+) -> str:
     suffix = Path(file_path).suffix.lower()
 
     if suffix in PATCH_EXTENSIONS:
@@ -117,7 +178,9 @@ def resolve_file_data_type(file_path: str | Path, *, cached_file_data_type: Opti
     return get_file_data_type(file_path, file_size)
 
 
-def should_extract_wsi_properties(file_path: str | Path, *, file_data_type: Optional[str] = None) -> bool:
+def should_extract_wsi_properties(
+    file_path: str | Path, *, file_data_type: Optional[str] = None
+) -> bool:
     suffix = Path(file_path).suffix.lower()
 
     if suffix in PATCH_EXTENSIONS:
@@ -160,7 +223,9 @@ def infer_dataset_data_type_from_paths(file_paths: Iterable[str | Path]) -> str:
     return "patch"
 
 
-def find_first_path_for_data_type(file_paths: Iterable[str | Path], target_data_type: str) -> Optional[str]:
+def find_first_path_for_data_type(
+    file_paths: Iterable[str | Path], target_data_type: str
+) -> Optional[str]:
     for file_path in file_paths:
         path_obj = Path(file_path)
         file_size = path_obj.stat().st_size if path_obj.exists() else 0
@@ -181,7 +246,9 @@ async def align_dataset_data_type_for_file(
 ) -> Any:
     data_group = getattr(dataset, "data_group", None)
     if data_group is None:
-        raise HTTPException(status_code=400, detail=f"{context}: dataset has no associated DataGroup")
+        raise HTTPException(
+            status_code=400, detail=f"{context}: dataset has no associated DataGroup"
+        )
 
     if data_group.data_type == file_data_type:
         return dataset
@@ -207,6 +274,14 @@ async def align_dataset_data_type_for_file(
         )
         dataset.group_id = target_group.group_id
         await db.flush()
+        await db.execute(
+            sa_text(
+                "UPDATE wsi_slides SET data_type = 'wsi', updated_at = NOW()"
+                " WHERE dataset_id = :did AND data_type = 'patch'"
+                " AND (LOWER(wsi_path) LIKE '%.tif' OR LOWER(wsi_path) LIKE '%.tiff')"
+            ),
+            {"did": dataset.dataset_id},
+        )
         logger.info(
             "Promoted dataset %s to wsi during %s because TIFF/TIFF files contained a WSI",
             dataset.dataset_id,
@@ -229,7 +304,9 @@ def get_effective_wsi_data_type(wsi: Any) -> str:
     data_group = getattr(dataset, "data_group", None) if dataset else None
     if data_group and data_group.data_type in {"wsi", "patch"}:
         return data_group.data_type
-    return get_file_data_type(getattr(wsi, "wsi_path", ""), getattr(wsi, "file_size", 0) or 0)
+    return get_file_data_type(
+        getattr(wsi, "wsi_path", ""), getattr(wsi, "file_size", 0) or 0
+    )
 
 
 def ensure_segmentation_contract(
@@ -243,7 +320,10 @@ def ensure_segmentation_contract(
     if task_type != SEGMENTATION_TASK_TYPE:
         return
 
-    if data_type != SEGMENTATION_DATA_TYPE or aggregation_level != SEGMENTATION_AGGREGATION_LEVEL:
+    if (
+        data_type != SEGMENTATION_DATA_TYPE
+        or aggregation_level != SEGMENTATION_AGGREGATION_LEVEL
+    ):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -253,11 +333,15 @@ def ensure_segmentation_contract(
         )
 
 
-def ensure_dataset_segmentation_contract(dataset: Any, *, context: str, expected_task_type: Optional[str] = None) -> Any:
+def ensure_dataset_segmentation_contract(
+    dataset: Any, *, context: str, expected_task_type: Optional[str] = None
+) -> Any:
     """Validate a dataset's loaded data_group against the segmentation contract."""
     data_group = getattr(dataset, "data_group", None)
     if data_group is None:
-        raise HTTPException(status_code=400, detail=f"{context}: dataset has no associated DataGroup")
+        raise HTTPException(
+            status_code=400, detail=f"{context}: dataset has no associated DataGroup"
+        )
 
     if expected_task_type and data_group.task_type != expected_task_type:
         raise HTTPException(
@@ -274,7 +358,9 @@ def ensure_dataset_segmentation_contract(dataset: Any, *, context: str, expected
     return data_group
 
 
-def build_segmentation_annotation_index(search_root: str | Path) -> dict[str, list[Path]]:
+def build_segmentation_annotation_index(
+    search_root: str | Path,
+) -> dict[str, list[Path]]:
     """Build a case-insensitive stem -> COCO JSON paths index under a directory tree."""
     root_path = Path(search_root)
     index: dict[str, list[Path]] = defaultdict(list)
@@ -284,13 +370,13 @@ def build_segmentation_annotation_index(search_root: str | Path) -> dict[str, li
 
     try:
         if root_path.is_file():
-            candidates = [root_path] if root_path.suffix.lower() == '.json' else []
+            candidates = [root_path] if root_path.suffix.lower() == ".json" else []
         else:
             candidates = []
             for current_root, _dirs, files in os.walk(root_path):
                 for filename in files:
                     candidate = Path(current_root) / filename
-                    if candidate.suffix.lower() == '.json':
+                    if candidate.suffix.lower() == ".json":
                         candidates.append(candidate)
     except Exception:
         return {}
@@ -324,7 +410,9 @@ def resolve_segmentation_annotation_match(
             raw_candidates.extend(
                 sibling
                 for sibling in path_obj.parent.iterdir()
-                if sibling.is_file() and sibling.suffix.lower() == '.json' and sibling.stem.lower() == image_stem
+                if sibling.is_file()
+                and sibling.suffix.lower() == ".json"
+                and sibling.stem.lower() == image_stem
             )
         except Exception:
             return None, None
@@ -334,11 +422,16 @@ def resolve_segmentation_annotation_match(
         candidate_path = Path(candidate)
         if not candidate_path.exists() or not candidate_path.is_file():
             continue
-        if candidate_path.suffix.lower() != '.json' or candidate_path.stem.lower() != image_stem:
+        if (
+            candidate_path.suffix.lower() != ".json"
+            or candidate_path.stem.lower() != image_stem
+        ):
             continue
         unique_candidates.setdefault(str(candidate_path).lower(), candidate_path)
 
-    ordered_candidates = sorted(unique_candidates.values(), key=lambda path: str(path).lower())
+    ordered_candidates = sorted(
+        unique_candidates.values(), key=lambda path: str(path).lower()
+    )
     if not ordered_candidates:
         return None, None
     if len(ordered_candidates) > 1:
@@ -349,18 +442,26 @@ def resolve_segmentation_annotation_match(
     return ordered_candidates[0], None
 
 
-def find_matching_segmentation_annotation_path(image_path: str | Path) -> Optional[Path]:
+def find_matching_segmentation_annotation_path(
+    image_path: str | Path,
+) -> Optional[Path]:
     """Find a same-stem COCO JSON annotation beside an image path."""
     match_path, _error = resolve_segmentation_annotation_match(image_path)
     return match_path
 
 
-def validate_coco_annotation_payload(payload: Any, *, source_name: str) -> dict[str, Any]:
+def validate_coco_annotation_payload(
+    payload: Any, *, source_name: str
+) -> dict[str, Any]:
     """Validate the minimum COCO structure required by PathLab segmentation."""
     if not isinstance(payload, dict):
-        raise HTTPException(status_code=400, detail=f"{source_name}: annotation must be a JSON object")
+        raise HTTPException(
+            status_code=400, detail=f"{source_name}: annotation must be a JSON object"
+        )
 
-    missing_keys = [key for key in ("images", "annotations", "categories") if key not in payload]
+    missing_keys = [
+        key for key in ("images", "annotations", "categories") if key not in payload
+    ]
     if missing_keys:
         raise HTTPException(
             status_code=400,
@@ -375,9 +476,13 @@ def load_coco_annotation_bytes(raw_bytes: bytes, *, source_name: str) -> dict[st
     try:
         payload = json.loads(raw_bytes.decode("utf-8"))
     except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"{source_name}: annotation must be UTF-8 JSON") from exc
+        raise HTTPException(
+            status_code=400, detail=f"{source_name}: annotation must be UTF-8 JSON"
+        ) from exc
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"{source_name}: invalid JSON annotation") from exc
+        raise HTTPException(
+            status_code=400, detail=f"{source_name}: invalid JSON annotation"
+        ) from exc
 
     return validate_coco_annotation_payload(payload, source_name=source_name)
 
@@ -388,9 +493,13 @@ def load_coco_annotation_file(annotation_path: str | Path) -> dict[str, Any]:
     try:
         payload = json.loads(path_obj.read_text(encoding="utf-8"))
     except UnicodeDecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"{path_obj.name}: annotation must be UTF-8 JSON") from exc
+        raise HTTPException(
+            status_code=400, detail=f"{path_obj.name}: annotation must be UTF-8 JSON"
+        ) from exc
     except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail=f"{path_obj.name}: invalid JSON annotation") from exc
+        raise HTTPException(
+            status_code=400, detail=f"{path_obj.name}: invalid JSON annotation"
+        ) from exc
 
     return validate_coco_annotation_payload(payload, source_name=path_obj.name)
 
@@ -415,9 +524,13 @@ async def cancel_ai_service_training(task_id: str) -> None:
             await client.delete(f"{AI_SERVICE_URL}/api/ai/training/{task_id}")
             logger.info(f"Sent cancellation request to AI service for task {task_id}")
     except httpx.TimeoutException:
-        logger.info(f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)")
+        logger.info(
+            f"Cancellation request sent to AI service for task {task_id} (fire-and-forget)"
+        )
     except Exception as e:
-        logger.warning(f"Failed to send cancellation to AI service for task {task_id}: {e}")
+        logger.warning(
+            f"Failed to send cancellation to AI service for task {task_id}: {e}"
+        )
 
 
 async def request_preprocessing_service(
@@ -510,11 +623,15 @@ async def proxy_preprocessing_binary(
     )
 
 
-def normalize_compute_patches_params(params: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
+def normalize_compute_patches_params(
+    params: Optional[Mapping[str, Any]] = None,
+) -> dict[str, Any]:
     """Normalize compute_patches params to preprocessing-service defaults."""
     normalized = dict(PREPROCESSING_COMPUTE_PATCHES_DEFAULTS)
     if params:
-        normalized.update({key: value for key, value in params.items() if value is not None})
+        normalized.update(
+            {key: value for key, value in params.items() if value is not None}
+        )
     return normalized
 
 
@@ -619,7 +736,9 @@ async def ensure_coords_ready(
         if on_lock_wait is None:
             return
         try:
-            asyncio.get_running_loop().create_task(_maybe_call(on_lock_wait, wait_seconds))
+            asyncio.get_running_loop().create_task(
+                _maybe_call(on_lock_wait, wait_seconds)
+            )
         except RuntimeError:
             logger.warning(
                 "Unable to schedule preprocessing lock-wait callback for WSI %s",
@@ -651,7 +770,9 @@ async def ensure_coords_ready(
                     if attempt >= max_retries:
                         raise
                     wait_secs = attempt * retry_backoff_seconds
-                    await _maybe_call(on_retry, attempt, max_retries, retry_err, wait_secs)
+                    await _maybe_call(
+                        on_retry, attempt, max_retries, retry_err, wait_secs
+                    )
                     await asyncio.sleep(wait_secs)
 
 
@@ -667,11 +788,8 @@ def extract_wsi_properties(wsi_path: str) -> dict[str, Any]:
         logger.warning(f"WSI file not found: {wsi_path}")
         return default_props
 
-    # Get file size first - this works even if slide reading fails
-    try:
-        file_size = os.path.getsize(wsi_path)
-    except Exception:
-        file_size = 0
+    # Get effective file size (includes associated data dir for .mrxs, .DT* for .tmap)
+    file_size = get_wsi_effective_file_size(wsi_path)
 
     if not _ASLIDE_AVAILABLE:
         logger.warning("Aslide not available (KFB library not supported on this platform), returning default WSI properties")
@@ -699,7 +817,7 @@ def extract_wsi_properties(wsi_path: str) -> dict[str, Any]:
 
             # 2. Vendor
             try:
-                vendor = slide.properties.get('openslide.vendor', 'Unknown')
+                vendor = slide.properties.get("openslide.vendor", "Unknown")
                 props["vendor"] = vendor if vendor else "Unknown"
             except Exception:
                 props["vendor"] = default_props["vendor"]
@@ -715,7 +833,7 @@ def extract_wsi_properties(wsi_path: str) -> dict[str, Any]:
 
             # 4. Magnification (objective power)
             try:
-                mag = slide.properties.get('openslide.objective-power')
+                mag = slide.properties.get("openslide.objective-power")
                 if mag:
                     props["magnification"] = int(float(mag))
                 else:
@@ -723,10 +841,12 @@ def extract_wsi_properties(wsi_path: str) -> dict[str, Any]:
             except Exception:
                 props["magnification"] = default_props["magnification"]
 
-            logger.info(f"✓ Extracted properties from {os.path.basename(wsi_path)}: "
-                       f"mpp={props['mpp']:.3f}, vendor={props['vendor']}, "
-                       f"size={props['width']}x{props['height']}, mag={props['magnification']}x, "
-                       f"file_size={props['file_size']} bytes")
+            logger.info(
+                f"✓ Extracted properties from {os.path.basename(wsi_path)}: "
+                f"mpp={props['mpp']:.3f}, vendor={props['vendor']}, "
+                f"size={props['width']}x{props['height']}, mag={props['magnification']}x, "
+                f"file_size={props['file_size']} bytes"
+            )
 
             return props
 
@@ -735,4 +855,3 @@ def extract_wsi_properties(wsi_path: str) -> dict[str, Any]:
         # Still return file_size even if slide reading failed
         default_props["file_size"] = file_size
         return default_props
-

@@ -19,6 +19,10 @@ export interface AuthUser {
   agreement_accepted_at?: string | null
   agreement_ip?: string | null
   notice_acknowledged_at?: string | null
+  registration_email?: string | null
+  notify_on_success?: boolean
+  notify_on_failed?: boolean
+  notify_on_cancelled?: boolean
   created_at?: string
   updated_at?: string
 }
@@ -71,12 +75,24 @@ export interface RegisterRequest {
   password: string
   nickname?: string
   role?: 'pathologist' | 'guest'
+  registration_email?: string
+}
+
+export interface AccessRequest {
+  username: string
+  password: string
+  registration_email: string
+  nickname?: string
+  turnstile_token?: string
 }
 
 export interface CurrentUserUpdateRequest {
   email?: string
   nickname?: string
   password?: string
+  notify_on_success?: boolean
+  notify_on_failed?: boolean
+  notify_on_cancelled?: boolean
 }
 
 export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
@@ -84,6 +100,7 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
   is_active?: boolean
   is_superuser?: boolean
   is_verified?: boolean
+  registration_email?: string
 }
 
 /**
@@ -198,11 +215,41 @@ export async function getCurrentUser(): Promise<UserInfoResponse> {
 }
 
 /**
- * Update current user info
- * @param data - Update data
- * @returns Updated user
- * @throws {ApiError} If update fails
+ * Submit a public access request (self-registration).
+ * The account is created as inactive and must be activated by an admin.
+ * @param data - Registration data including educational email
+ * @returns Created (inactive) user
+ * @throws {ApiError} If registration fails
  */
+export async function requestAccess(data: AccessRequest): Promise<AuthUser> {
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/request-access`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    },
+    'Access request failed'
+  )
+}
+
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string
+): Promise<AuthUser> {
+  const currentPasswordSha256 = await sha256(currentPassword)
+  const newPasswordSha256 = await sha256(newPassword)
+  return apiFetch<AuthUser>(
+    `${API_BASE}/auth/me/change-password`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current_password_sha256: currentPasswordSha256, new_password_sha256: newPasswordSha256 })
+    },
+    'Failed to change password'
+  )
+}
+
 export async function updateCurrentUser(data: CurrentUserUpdateRequest): Promise<AuthUser> {
   return apiFetch<AuthUser>(
     `${API_BASE}/auth/me`,

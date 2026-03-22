@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X, Database } from 'lucide-react'
+import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X, Database, Mail } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
@@ -9,7 +9,8 @@ import {
   listUsersPaged, updateUser, deleteUser, registerUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
-  getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi
+  getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
+  getGlobalSettings, updateGlobalSettings
 } from '../../api'
 import type { AdminUserUpdateRequest, RegisterRequest } from '../../api/auth'
 import type { UserListItem } from '../../api/users'
@@ -17,8 +18,31 @@ import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
 import { CreateUserModal } from './CreateUserModal'
 import { PermissionCenterModal } from './PermissionCenterModal'
+import { EmailTemplateModal } from './EmailTemplateModal'
+import { AnnotationAuditCard } from './AnnotationAuditCard'
+import type { EmailTemplatesConfig } from '../../api/settings'
+import { useAuth } from '../../contexts/AuthContext'
 
 type PermissionMode = 'user' | 'dataset'
+
+const DEFAULT_TEMPLATES: EmailTemplatesConfig = {
+  new_user_registration_notice: {
+    subject: 'PathLab account application received',
+    html: "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>{logo_html}<p>Dear {display_name},</p><p>We have received your PathLab account application. Your request is pending administrator review. You will receive another email once your account is activated.</p><p style='color:#555;'>- PathLab</p></div>"
+  },
+  account_activated: {
+    subject: 'Your PathLab account has been activated',
+    html: "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>{logo_html}<p>Dear {display_name},</p><p>Your PathLab account <strong>{username}</strong> has been activated. You can now log in to the platform.</p><p style='color:#555;'>- PathLab</p></div>"
+  },
+  task_completed_notice: {
+    subject: '[PathLab] Task completed: {task_id}',
+    html: "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'>{logo_html}<p>Dear {display_name},</p><p>Your task <strong>{task_id}</strong> has completed with status <strong>{task_status}</strong>.</p><p style='color:#555;'>- PathLab</p></div>"
+  },
+  admin_new_user_registration_notice: {
+    subject: '[PathLab] New account application: {username}',
+    html: "<div style='font-family:Arial,sans-serif;max-width:600px;margin:0 auto;'><p style='font-weight:600;color:#1e293b;font-size:16px;'>New Account Application</p><table style='border-collapse:collapse;width:100%;margin:16px 0;'><tr><td style='padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;font-weight:600;width:140px;'>Username</td><td style='padding:8px 12px;border:1px solid #e2e8f0;'>{username}</td></tr><tr><td style='padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;font-weight:600;'>Display Name</td><td style='padding:8px 12px;border:1px solid #e2e8f0;'>{display_name}</td></tr><tr><td style='padding:8px 12px;background:#f8fafc;border:1px solid #e2e8f0;font-weight:600;'>Contact Email</td><td style='padding:8px 12px;border:1px solid #e2e8f0;'>{registration_email}</td></tr></table><p>Please review and activate or reject this application in the admin panel.</p><p style='color:#555;'>- PathLab</p></div>"
+  }
+}
 
 export interface UsersTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -37,18 +61,17 @@ function getRoleBadgeColor(role: string) {
 
 export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId }: UsersTabProps) {
   const { t } = useTranslation()
+  const { isAdmin } = useAuth()
 
   // User management state
   const [users, setUsers] = useState<UserListItem[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const [usersError, setUsersError] = useState<string | null>(null)
   const [editingUser, setEditingUser] = useState<UserListItem | null>(null)
-  const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string }>({ nickname: '', role: '', password: '' })
-  const [editError, setEditError] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string; registration_email: string }>({ nickname: '', role: '', password: '', registration_email: '' })
   const [showCreateUser, setShowCreateUser] = useState(false)
-  const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string }>({ username: '', password: '', nickname: '', role: 'pathologist' })
+  const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string; registration_email: string }>({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
   const [creatingUser, setCreatingUser] = useState(false)
-  const [createError, setCreateError] = useState<string | null>(null)
   const [maintenanceMode, setMaintenanceMode] = useState(false)
   const [noticeMessage, setNoticeMessage] = useState('')
   const [currentNotice, setCurrentNotice] = useState<string | null>(null)
@@ -57,6 +80,8 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
 
   const [permissionCenterOpen, setPermissionCenterOpen] = useState(false)
   const [permissionCenterMode, setPermissionCenterMode] = useState<PermissionMode>('user')
+  const [emailTemplateOpen, setEmailTemplateOpen] = useState(false)
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplatesConfig>(DEFAULT_TEMPLATES)
 
   // Batch selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
@@ -117,11 +142,47 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     loadMaintenanceNotice()
   }, [loadUsers, loadMaintenanceMode, loadMaintenanceNotice])
 
+  useEffect(() => {
+    const loadTemplateSettings = async () => {
+      try {
+        const settings = await getGlobalSettings()
+        const raw = settings.email_templates as Partial<EmailTemplatesConfig> | undefined
+        if (!raw) return
+        setEmailTemplates({
+          ...DEFAULT_TEMPLATES,
+          new_user_registration_notice: {
+            ...DEFAULT_TEMPLATES.new_user_registration_notice,
+            ...(raw.new_user_registration_notice || {})
+          },
+          account_activated: {
+            ...DEFAULT_TEMPLATES.account_activated,
+            ...(raw.account_activated || {})
+          },
+          task_completed_notice: {
+            ...DEFAULT_TEMPLATES.task_completed_notice,
+            ...(raw.task_completed_notice || {})
+          },
+          admin_new_user_registration_notice: {
+            ...DEFAULT_TEMPLATES.admin_new_user_registration_notice,
+            ...(raw.admin_new_user_registration_notice || {})
+          }
+        })
+      } catch {
+      }
+    }
+    loadTemplateSettings()
+  }, [])
+
+  const handleSaveEmailTemplates = async (nextTemplates: EmailTemplatesConfig) => {
+    await updateGlobalSettings({ email_templates: nextTemplates })
+    setEmailTemplates(nextTemplates)
+  }
+
   // --- User CRUD handlers ---
   const handleSaveUser = async () => {
     if (!editingUser) return
     if (editForm.password && editForm.password.length < 6) {
-      setEditError(t('settings.usersTab.passwordMinLength'))
+      setUsersError(t('settings.usersTab.passwordMinLength'))
       return
     }
     try {
@@ -129,38 +190,39 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
       if (editForm.nickname !== (editingUser.nickname || '')) updateData.nickname = editForm.nickname
       if (editForm.role !== editingUser.role) updateData.role = editForm.role as 'admin' | 'pathologist' | 'guest'
       if (editForm.password) updateData.password = editForm.password
+      if (editForm.registration_email !== (editingUser.registration_email || '')) updateData.registration_email = editForm.registration_email || undefined
       await updateUser(editingUser.id, updateData)
       setEditingUser(null)
-      setEditError(null)
+      setUsersError(null)
       loadUsers()
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : t('settings.usersTab.failedToUpdateUser'))
+      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToUpdateUser'))
     }
   }
 
   const handleCreateUser = async () => {
-    if (!createForm.username || !createForm.password) { setCreateError(t('settings.usersTab.usernamePasswordRequired')); return }
-    if (createForm.password.length < 6) { setCreateError(t('settings.usersTab.passwordMinLength')); return }
+    if (!createForm.username || !createForm.password) { setUsersError(t('settings.usersTab.usernamePasswordRequired')); return }
+    if (createForm.password.length < 6) { setUsersError(t('settings.usersTab.passwordMinLength')); return }
     try {
       setCreatingUser(true)
-      setCreateError(null)
+      setUsersError(null)
       const requestedRole = createForm.role as 'admin' | 'pathologist' | 'guest'
       const data: RegisterRequest = {
         email: createForm.username,
         password: createForm.password,
         nickname: createForm.nickname || undefined,
-        role: requestedRole === 'guest' ? 'guest' : 'pathologist'
+        role: requestedRole === 'guest' ? 'guest' : 'pathologist',
+        registration_email: createForm.registration_email || undefined
       }
       const createdUser = await registerUser(data)
       if (requestedRole === 'admin') {
         await updateUser(createdUser.id, { role: 'admin' })
       }
       setShowCreateUser(false)
-      setCreateError(null)
-      setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
+      setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
       loadUsers()
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser'))
+      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser'))
     } finally {
       setCreatingUser(false)
     }
@@ -215,12 +277,16 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     if (allSelectableSelected) {
       // Deselect current page items
       const newSet = new Set(selectedUserIds)
-      selectableUsers.forEach(u => newSet.delete(u.id))
+      selectableUsers.forEach(u => {
+        newSet.delete(u.id)
+      })
       setSelectedUserIds(newSet)
     } else {
       // Select current page items
       const newSet = new Set(selectedUserIds)
-      selectableUsers.forEach(u => newSet.add(u.id))
+      selectableUsers.forEach(u => {
+        newSet.add(u.id)
+      })
       setSelectedUserIds(newSet)
     }
   }
@@ -417,13 +483,17 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
             <Construction className="w-4 h-4" />
             <span className="hidden sm:inline">{maintenanceMode ? t('settings.usersTab.endMaintenanceMode') : t('settings.usersTab.maintenanceMode')}</span>
           </Button>
-          <Button onClick={() => setShowCreateUser(true)} className="gap-2">
-            <UserPlus className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
-          </Button>
           <Button variant="outline" onClick={() => setPermissionCenterOpen(true)} className="gap-2">
             <Database className="w-4 h-4" />
             <span className="hidden sm:inline">{t('settings.usersTab.openPermissionCenter')}</span>
+          </Button>
+          <Button variant="outline" onClick={() => setEmailTemplateOpen(true)} className="gap-2">
+            <Mail className="w-4 h-4" />
+            <span className="hidden sm:inline">邮件模板</span>
+          </Button>
+          <Button onClick={() => setShowCreateUser(true)} className="gap-2">
+            <UserPlus className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('settings.usersTab.createUser')}</span>
           </Button>
           <Button variant="outline" onClick={loadUsers} disabled={loadingUsers} className="gap-2">
             <RefreshCw className={`w-4 h-4 ${loadingUsers ? 'animate-spin' : ''}`} />
@@ -496,6 +566,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
               <tr className="border-b border-gray-200">
                 <th className="w-10 py-3 px-2">
                   <button
+                    type="button"
                     onClick={toggleSelectAll}
                     className="p-1 rounded hover:bg-gray-100 transition-colors"
                     title={allSelectableSelected ? t('settings.usersTab.deselectAll') : t('settings.usersTab.selectAll')}
@@ -512,6 +583,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                 <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600 hidden xs:table-cell sm:table-cell">{t('settings.usersTab.columnNickname')}</th>
                 <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnRole')}</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600 hidden sm:table-cell">{t('settings.usersTab.columnStatus')}</th>
+                <th className="text-left py-3 px-4 font-medium text-gray-600 hidden md:table-cell">{t('settings.usersTab.columnEmail')}</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600 hidden md:table-cell">{t('settings.usersTab.columnAgreement')}</th>
                 <th className="text-left py-3 px-4 font-medium text-gray-600 hidden lg:table-cell">{t('settings.usersTab.columnConsentIP')}</th>
                 <th className="text-right py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnActions')}</th>
@@ -526,6 +598,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                     <td className="py-3 px-2">
                       {isSelectable ? (
                         <button
+                          type="button"
                           onClick={() => toggleSelectUser(user.id)}
                           className="p-1 rounded hover:bg-gray-100 transition-colors"
                         >
@@ -557,6 +630,27 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                       </span>
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell">
+                      {user.registration_email ? (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }}
+                          className="text-xs text-blue-600 font-mono hover:underline cursor-pointer"
+                          title={t('settings.usersTab.editUser')}
+                        >
+                          {user.registration_email}
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: '' }) }}
+                          className="text-xs text-gray-400 hover:text-blue-600 hover:underline cursor-pointer"
+                          title={t('settings.usersTab.editUser')}
+                        >
+                          -
+                        </button>
+                      )}
+                    </td>
+                    <td className="py-3 px-4 hidden md:table-cell">
                       {user.role === 'admin' ? (
                         <span className="text-xs text-gray-500 italic">{t('settings.usersTab.autoAccepted')}</span>
                       ) : user.agreement_accepted_at ? (
@@ -578,7 +672,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                     </td>
                     <td className="py-3 px-2 sm:px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
+                        <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
                           <Edit className="w-4 h-4" />
                         </Button>
                         {(!currentUserId || user.id !== currentUserId) && user.email !== 'admin' && (
@@ -607,7 +701,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
               })}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="py-8 text-center text-gray-500">
+                  <td colSpan={9} className="py-8 text-center text-gray-500">
                     {searchQuery ? t('settings.usersTab.noUsersMatchingSearch') : t('settings.usersTab.noUsersFound')}
                   </td>
                 </tr>
@@ -668,6 +762,8 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
       )}
     </Card>
 
+      {isAdmin && <AnnotationAuditCard />}
+
       {/* Edit User Modal */}
       {editingUser && (
         <EditUserModal
@@ -675,8 +771,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           editForm={editForm}
           onEditFormChange={setEditForm}
           onSave={handleSaveUser}
-          onClose={() => { setEditingUser(null); setEditError(null) }}
-          error={editError}
+          onClose={() => setEditingUser(null)}
         />
       )}
 
@@ -688,11 +783,10 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           onSubmit={handleCreateUser}
           onClose={() => {
             setShowCreateUser(false)
-            setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist' })
-            setCreateError(null)
+            setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
+            setUsersError(null)
           }}
           isCreating={creatingUser}
-          error={createError}
         />
       )}
 
@@ -703,6 +797,14 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           showConfirmDialog={showConfirmDialog}
           closeConfirmDialog={closeConfirmDialog}
           onClose={closePermissionCenter}
+        />
+      )}
+
+      {emailTemplateOpen && (
+        <EmailTemplateModal
+          templates={emailTemplates}
+          onSave={handleSaveEmailTemplates}
+          onClose={() => setEmailTemplateOpen(false)}
         />
       )}
     </>

@@ -1,6 +1,6 @@
 # PathLab Frontend
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.4`
 
 `src/renderer/` 是当前前端打包与浏览器构建目录，既服务 Electron 渲染进程，也支持独立 Web 构建。
 
@@ -68,7 +68,7 @@ src/renderer/
 
 ## API 客户端现状
 
-`src/api/` 当前已经按业务拆分为 19 个 TypeScript 模块文件，包括：
+`src/api/` 当前已经按业务拆分为 **20 个 TypeScript 模块文件**，包括：
 
 - `analysis`
 - `annotation`
@@ -77,13 +77,14 @@ src/renderer/
 - `export`
 - `feedback`
 - `heatmap`
-- `permissions`
+- `grants`
 - `queue`
 - `results`
 - `settings`
 - `stats`
 - `storage`
 - `training`
+- `trainingOptions`
 - `users`
 - `wsi`
 - 以及 `client` / `crypto` / `index` 等公共封装

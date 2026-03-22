@@ -15,6 +15,7 @@ import logging
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
+from sqlalchemy import text
 from backend.common.config import Config
 from .migrate_chat_conversations_schema import ensure_chat_conversations_schema
 from .models import Base
@@ -135,28 +136,193 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db():
-    """
-    Initialize database: create all tables.
-
-    This should be called on application startup.
-    PostgreSQL tables are created automatically if they don't exist.
-    """
-    # Mask password in URL for logging
     import re
-    safe_url = re.sub(r'://([^:]+):([^@]+)@', r'://\1:***@', DATABASE_URL)
+
+    safe_url = re.sub(r"://([^:]+):([^@]+)@", r"://\1:***@", DATABASE_URL)
     logger.info(f"Using PostgreSQL: {safe_url}")
-    # Import all models to register them in Base.metadata BEFORE create_all.
-    # User model lives in backend.auth.models but shares the same Base.
-    # Without this import, the "users" table won't be created.
     import backend.auth.models  # noqa: F401
 
     async with engine.begin() as conn:
-        # Create all tables
         await conn.run_sync(Base.metadata.create_all)
         await ensure_chat_conversations_schema(conn)
         logger.info("All tables created/verified successfully")
+        await conn.execute(
+            text(
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE segmentation_annotations "
+                "ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) NOT NULL DEFAULT 'personal'"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE wsi_slides ADD COLUMN IF NOT EXISTS data_type VARCHAR(20)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_wsi_user_type"
+                " ON wsi_slides (user_id, data_type)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_type"
+                " ON wsi_slides (dataset_id, data_type)"
+            )
+        )
+        logger.info("wsi_slides.data_type column and indexes ensured")
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS dataset_stats ("
+                "    dataset_id   VARCHAR(255) PRIMARY KEY"
+                "        REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                "    file_count        INTEGER   NOT NULL DEFAULT 0,"
+                "    total_size        BIGINT    NOT NULL DEFAULT 0,"
+                "    split_train_count INTEGER   NOT NULL DEFAULT 0,"
+                "    split_val_count   INTEGER   NOT NULL DEFAULT 0,"
+                "    split_test_count  INTEGER   NOT NULL DEFAULT 0,"
+                "    updated_at        TIMESTAMP NOT NULL DEFAULT NOW()"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO dataset_stats"
+                " (dataset_id, file_count, total_size,"
+                "  split_train_count, split_val_count, split_test_count, updated_at)"
+                " SELECT w.dataset_id, COUNT(*), COALESCE(SUM(w.file_size), 0),"
+                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'train' THEN"
+                "     CASE WHEN dg.aggregation_level = 'case'"
+                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) IN ('val','validation') THEN"
+                "     CASE WHEN dg.aggregation_level = 'case'"
+                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'test' THEN"
+                "     CASE WHEN dg.aggregation_level = 'case'"
+                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                "   NOW()"
+                " FROM wsi_slides w"
+                " JOIN datasets d ON w.dataset_id = d.dataset_id"
+                " JOIN data_groups dg ON d.group_id = dg.group_id"
+                " GROUP BY w.dataset_id"
+                " ON CONFLICT (dataset_id) DO NOTHING"
+            )
+        )
+        logger.info("dataset_stats table ensured and pre-populated")
 
-    # Create default admin user if no users exist
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "registration_email VARCHAR(320) DEFAULT NULL"
+            )
+        )
+        logger.info("users.registration_email column ensured")
+
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "first_activated_at TIMESTAMP DEFAULT NULL"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE users SET first_activated_at = NOW() "
+                "WHERE first_activated_at IS NULL"
+            )
+        )
+        logger.info("users.first_activated_at column ensured and backfilled")
+
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "notify_on_success BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "notify_on_failed BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "notify_on_cancelled BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        logger.info("users.notify_on_* columns ensured")
+
+        await conn.execute(
+            text(
+                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                "is_public BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        logger.info("datasets.is_public column ensured")
+
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS dataset_grants ("
+                "    id           SERIAL PRIMARY KEY,"
+                "    dataset_id   VARCHAR(255) NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                "    user_id      VARCHAR(255) NOT NULL,"
+                "    granted_by   VARCHAR(255) NOT NULL,"
+                "    can_collaborate BOOLEAN NOT NULL DEFAULT FALSE,"
+                "    can_use_gpu  BOOLEAN NOT NULL DEFAULT FALSE,"
+                "    expires_at   TIMESTAMP,"
+                "    created_at   TIMESTAMP NOT NULL DEFAULT NOW()"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_dataset_grants_user_dataset"
+                " ON dataset_grants (user_id, dataset_id)"
+            )
+        )
+        logger.info("dataset_grants table ensured")
+
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS permission_audit_logs ("
+                "    id              SERIAL PRIMARY KEY,"
+                "    dataset_id      VARCHAR(255) NOT NULL REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                "    actor_id        VARCHAR(255) NOT NULL,"
+                "    target_user_id  VARCHAR(255) NOT NULL,"
+                "    action          VARCHAR(50) NOT NULL,"
+                "    metadata        JSONB NOT NULL DEFAULT '{}',"
+                "    created_at      TIMESTAMP NOT NULL DEFAULT NOW()"
+                ")"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_perm_audit_dataset_created"
+                " ON permission_audit_logs (dataset_id, created_at)"
+            )
+        )
+        logger.info("permission_audit_logs table ensured")
+
+        await conn.execute(text("DROP TABLE IF EXISTS annotation_collaborators"))
+        await conn.execute(text("DROP TABLE IF EXISTS dataset_permissions"))
+
     await _create_default_admin()
 
 
@@ -177,22 +343,32 @@ async def _create_default_admin():
             if user_count == 0:
                 logger.info("No users found, creating default admin user...")
 
-                # Create password hash - use environment variable or fallback
-                password_helper = PasswordHelper()
-                default_password = os.getenv("DEFAULT_ADMIN_PASSWORD", "pathlab_default_password123")
-                hashed_password = password_helper.hash(default_password)
-
-                # Create SHA256 hash for secure login
                 import hashlib
+                import secrets
+                import uuid
+
+                password_helper = PasswordHelper()
+                default_password = os.getenv("DEFAULT_ADMIN_PASSWORD")
+                if not default_password:
+                    default_password = secrets.token_urlsafe(16)
+                    logger.critical(
+                        f"\n{'=' * 60}\n"
+                        f"ADMIN PASSWORD (auto-generated, shown once):\n"
+                        f"  Username : admin\n"
+                        f"  Password : {default_password}\n"
+                        f"Save this now — it will not be shown again.\n"
+                        f"Set DEFAULT_ADMIN_PASSWORD env var to use a fixed password.\n"
+                        f"{'=' * 60}"
+                    )
+
+                hashed_password = password_helper.hash(default_password)
                 password_sha256 = hashlib.sha256(default_password.encode()).hexdigest()
 
-                # Create admin user with simple username (not email format)
-                import uuid
                 admin_user = User(
                     id=uuid.uuid4(),
-                    email="admin",  # Using simple username, not email format
+                    email="admin",
                     hashed_password=hashed_password,
-                    password_sha256=password_sha256,  # For secure login
+                    password_sha256=password_sha256,
                     is_active=True,
                     is_superuser=True,
                     is_verified=True,
@@ -202,9 +378,13 @@ async def _create_default_admin():
 
                 session.add(admin_user)
                 await session.commit()
-                logger.warning("Default admin user created (username: admin). Please change the default password after first login!")
+                logger.warning(
+                    "Default admin user created (username: admin). Change the password after first login."
+                )
             else:
-                logger.info(f"Found {user_count} existing user(s), skipping default admin creation")
+                logger.info(
+                    f"Found {user_count} existing user(s), skipping default admin creation"
+                )
     except Exception as e:
         logger.error(f"Could not create default admin user: {e}")
 
@@ -226,4 +406,3 @@ async def close_db():
     """
     await engine.dispose()
     print("[Database] Database connections closed")
-

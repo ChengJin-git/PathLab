@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, BarChart3, FileText, ThumbsUp, ThumbsDown, ArrowRight, FlaskConical } from 'lucide-react'
-import { runTaskAnalysis, getTrainingTasks, startExternalValidation, getTrainedModels, fetchDatasetsForValidation } from '../../api'
+import { runTaskAnalysis, getTrainingTasks, startExternalValidation, getTrainedModels, fetchDatasetsForValidation, ApiError } from '../../api'
 import { getDatasetCompatibilityError, isDatasetCompatible } from '../../lib/externalValidationUtils'
+import { useToast } from '../../contexts/ToastContext'
 
 // Config from Agent - supports both internal and external analysis
 export interface AgentAnalysisConfig {
@@ -76,6 +77,7 @@ export function AnalysisConfigCard({
   savedHelpfulnessFeedback
 }: AnalysisConfigCardProps) {
   const { t } = useTranslation()
+  const toast = useToast()
   const [config, setConfig] = useState<AgentAnalysisConfig>(initialConfig)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'success' | 'error'>(
@@ -257,10 +259,18 @@ export function AnalysisConfigCard({
         onSubmitSuccess?.(result.task_id, result.analysis_id)
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : t('chatComponents.analysisConfig.failedToRunAnalysis')
-      setSubmitStatus('error')
-      setErrorMessage(msg)
-      onSubmitError?.(msg)
+      if (error instanceof ApiError && error.status === 403) {
+        const msg = t('chatComponents.analysisConfig.datasetAccessRevoked')
+        toast.warning(msg)
+        setSubmitStatus('error')
+        setErrorMessage(msg)
+        onSubmitError?.(msg)
+      } else {
+        const msg = error instanceof Error ? error.message : t('chatComponents.analysisConfig.failedToRunAnalysis')
+        setSubmitStatus('error')
+        setErrorMessage(msg)
+        onSubmitError?.(msg)
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -304,10 +314,18 @@ export function AnalysisConfigCard({
         onSubmitSuccess?.(result.task_id, result.analysis_id)
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : t('chatComponents.analysisConfig.failedToRunAnalysis')
-      setSubmitStatus('error')
-      setErrorMessage(msg)
-      onSubmitError?.(msg)
+      if (error instanceof ApiError && error.status === 403) {
+        const msg = t('chatComponents.analysisConfig.datasetAccessRevoked')
+        toast.warning(msg)
+        setSubmitStatus('error')
+        setErrorMessage(msg)
+        onSubmitError?.(msg)
+      } else {
+        const msg = error instanceof Error ? error.message : t('chatComponents.analysisConfig.failedToRunAnalysis')
+        setSubmitStatus('error')
+        setErrorMessage(msg)
+        onSubmitError?.(msg)
+      }
     } finally {
       setIsSubmitting(false)
     }

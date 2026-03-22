@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useDraftState } from '../lib/useDraftState'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -6,6 +7,7 @@ import { Download, Settings, FileSpreadsheet, FileDown, FileText, ArrowLeft } fr
 import { PageHeader } from '../components/PageHeader'
 import { Card, CardContent } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { Select } from '../components/ui/select'
 import { downloadBlobFile, fetchAllResults } from '../api'
 
 interface ReportConfig {
@@ -20,6 +22,7 @@ interface ReportConfig {
 
 interface WSIResult {
   wsi_id: string
+  original_filename: string
   case_id: string
   label: string
   pred: string | null
@@ -40,7 +43,7 @@ interface Stats {
 export default function ReportGeneratorPage() {
   const navigate = useNavigate()
   const { t } = useTranslation()
-  const [config, setConfig] = useState<ReportConfig>({
+  const [config, setConfig] = useDraftState<ReportConfig>('draft:report:config', {
     title: `PathLab Analysis Report - ${new Date().toLocaleDateString()}`,
     includeStats: true,
     includeResults: true,
@@ -60,6 +63,7 @@ export default function ReportGeneratorPage() {
         const confidence = item.probs && item.pred ? item.probs[item.pred] : undefined
         return {
           wsi_id: item.wsi_id,
+          original_filename: item.original_filename || item.wsi_id,
           case_id: item.case_id || '',
           label: item.label || '',
           pred: item.pred || null,
@@ -139,9 +143,9 @@ export default function ReportGeneratorPage() {
     // Results
     if (config.includeResults) {
       csv += `# ${t('reportPage.analysisResults')}\n`
-      csv += `${t('reportPage.colWsiId')},${t('reportPage.colCaseId')},${t('reportPage.colTrueLabel')},${t('reportPage.colPrediction')},${t('reportPage.colConfidence')},${t('reportPage.colCorrect')}\n`
+      csv += `${t('reportPage.colFilename')},${t('reportPage.colCaseId')},${t('reportPage.colTrueLabel')},${t('reportPage.colPrediction')},${t('reportPage.colConfidence')},${t('reportPage.colCorrect')}\n`
       filteredData.forEach(r => {
-        csv += `${r.wsi_id},${r.case_id},${r.label},${r.pred || t('reportPage.na')},${
+        csv += `${r.original_filename},${r.case_id},${r.label},${r.pred || t('reportPage.na')},${
           r.confidence ? r.confidence.toFixed(4) : t('reportPage.na')
         },${r.is_correct === null ? t('reportPage.pending') : (r.is_correct ? t('reportPage.yes') : t('reportPage.no'))}\n`
       })
@@ -176,6 +180,7 @@ export default function ReportGeneratorPage() {
 
     if (config.includeResults) {
       report.results = filteredData.map(r => ({
+        filename: r.original_filename,
         wsi_id: r.wsi_id,
         case_id: r.case_id,
         true_label: r.label,
@@ -232,10 +237,10 @@ export default function ReportGeneratorPage() {
 
     if (config.includeResults) {
       md += `## ${t('reportPage.analysisResults')}\n\n`
-      md += `| ${t('reportPage.colWsiId')} | ${t('reportPage.colCaseId')} | ${t('reportPage.colTrueLabel')} | ${t('reportPage.colPrediction')} | ${t('reportPage.colConfidence')} | ${t('reportPage.colCorrect')} |\n`
+      md += `| ${t('reportPage.colFilename')} | ${t('reportPage.colCaseId')} | ${t('reportPage.colTrueLabel')} | ${t('reportPage.colPrediction')} | ${t('reportPage.colConfidence')} | ${t('reportPage.colCorrect')} |\n`
       md += `|--------|---------|------------|------------|------------|----------|\n`
       filteredData.forEach(r => {
-        md += `| ${r.wsi_id} | ${r.case_id} | ${r.label} | ${r.pred || t('reportPage.na')} | ${
+        md += `| ${r.original_filename} | ${r.case_id} | ${r.label} | ${r.pred || t('reportPage.na')} | ${
           r.confidence ? (r.confidence * 100).toFixed(1) + '%' : t('reportPage.na')
         } | ${r.is_correct === null ? t('reportPage.pending') : (r.is_correct ? t('reportPage.yes') : t('reportPage.no'))} |\n`
       })
@@ -366,22 +371,20 @@ export default function ReportGeneratorPage() {
             </div>
           </div>
 
-          {/* Filter */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              {t('reportPage.filterByLabel')}
-            </label>
-            <select
-              value={config.filterLabel}
-              onChange={(e) => setConfig({ ...config, filterLabel: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-            >
-              <option value="all">{t('reportPage.allLabels')}</option>
-              {uniqueLabels.map(label => (
-                <option key={label} value={label}>{label}</option>
-              ))}
-            </select>
-          </div>
+           {/* Filter */}
+           <div>
+             <label className="block text-sm font-medium text-gray-700 mb-2">
+               {t('reportPage.filterByLabel')}
+             </label>
+             <Select
+               value={config.filterLabel}
+               onChange={(v) => setConfig({ ...config, filterLabel: v })}
+               options={[
+                 { value: 'all', label: t('reportPage.allLabels') },
+                 ...uniqueLabels.map(label => ({ value: label, label })),
+               ]}
+             />
+           </div>
 
           {/* Include Options */}
           <div>

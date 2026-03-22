@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
+import { createKeyedCache, ACTIVITY_CACHE_TTL } from '../lib/cache'
 import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken, type DownloadApiFileResult } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
@@ -39,6 +39,8 @@ export interface WSISummary {
   updated_at?: string | null
   // Parent WSI reference (cropped region source)
   parent_wsi_id?: string | null
+  parent_wsi_name?: string | null
+  parent_dataset_name?: string | null
   // Permission flag - whether user can delete this WSI
   can_delete?: boolean
 }
@@ -143,8 +145,8 @@ export async function checkDuplicateFilenames(filenames: string[]): Promise<Chec
 }
 
 // Cache for fetchWSIList (keyed by datasetId + query params)
-const wsiListCache = createKeyedCache<WSIListResponse>(DEFAULT_CACHE_TTL)
-const datasetsListCache = createKeyedCache<DatasetsListResponse>(DEFAULT_CACHE_TTL)
+const wsiListCache = createKeyedCache<WSIListResponse>(ACTIVITY_CACHE_TTL)
+const datasetsListCache = createKeyedCache<DatasetsListResponse>(ACTIVITY_CACHE_TTL)
 
 /**
  * Pagination options for fetchWSIList.
@@ -157,6 +159,8 @@ export interface WSIListPaginationOptions {
   page_size: number
   search?: string
   forceRefresh?: boolean
+  sort_by?: string
+  sort_order?: 'asc' | 'desc'
 }
 
 function buildWSIListCacheKey(
@@ -170,6 +174,8 @@ function buildWSIListCacheKey(
     page: options?.page ?? null,
     page_size: options?.page_size ?? 0,
     search: options?.search ?? null,
+    sort_by: options?.sort_by ?? null,
+    sort_order: options?.sort_order ?? null,
   })
 }
 
@@ -198,6 +204,13 @@ export async function fetchWSIList(
   if (options) {
     if (options.search) {
       params.set('search', options.search)
+    }
+
+    if (options.sort_by) {
+      params.set('sort_by', options.sort_by)
+    }
+    if (options.sort_order) {
+      params.set('sort_order', options.sort_order)
     }
 
     if (options.page_size === 0) {
@@ -270,11 +283,14 @@ export interface DatasetSummary {
   user_id: string | null  // Dataset owner
   username?: string | null  // Username of dataset owner (only for admin users)
   source_organ?: string | null
+  parent_dataset_id?: string | null
+  parent_dataset_name?: string | null
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
   task_type: 'classification' | 'survival' | 'segmentation' // Task type: classification, survival, or segmentation
   aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
+  is_public?: boolean
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
   // Pre-defined split information (from CSV upload)
@@ -302,6 +318,7 @@ export interface DatasetListQueryOptions {
   task_type?: 'classification' | 'survival' | 'segmentation'
   aggregation_level?: 'file' | 'case'
   source_organ?: string
+  is_public?: boolean
   forceRefresh?: boolean
 }
 
@@ -312,6 +329,7 @@ function buildDatasetListCacheKey(dataLevel?: string, options?: DatasetListQuery
     task_type: options?.task_type ?? null,
     aggregation_level: options?.aggregation_level ?? null,
     source_organ: options?.source_organ ?? null,
+    is_public: options?.is_public ?? null,
     page_size: options?.page_size ?? null,
     page: options?.page_size !== undefined ? (options.page ?? 1) : null,
   })
@@ -332,6 +350,7 @@ export async function fetchDatasets(
     task_type: options?.task_type,
     aggregation_level: options?.aggregation_level,
     source_organ: options?.source_organ,
+    is_public: options?.is_public,
     page_size: options?.page_size,
     page: options?.page_size !== undefined ? (options.page ?? 1) : undefined,
   })
@@ -594,7 +613,9 @@ export async function uploadWSIFile(
   options?: {
     dataset_id?: string
     dataset_name?: string
+    source_organ?: string
     aggregation_level?: 'case' | 'file'
+    is_public?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
@@ -613,7 +634,9 @@ export async function uploadWSIFile(
 
   if (options?.dataset_id) formData.append('dataset_id', options.dataset_id)
   if (options?.dataset_name) formData.append('dataset_name', options.dataset_name)
+  if (options?.source_organ) formData.append('source_organ', options.source_organ)
   if (options?.aggregation_level) formData.append('aggregation_level', options.aggregation_level)
+  if (options?.is_public !== undefined) formData.append('is_public', options.is_public.toString())
   if (options?.task_type) formData.append('task_type', options.task_type)
   if (options?.label) formData.append('label', options.label)
   if (options?.case_id) formData.append('case_id', options.case_id)
@@ -698,7 +721,9 @@ export async function uploadWSIByPath(
   options?: {
     dataset_id?: string
     dataset_name?: string
+    source_organ?: string
     aggregation_level?: 'case' | 'file'
+    is_public?: boolean
     task_type?: 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
@@ -719,7 +744,9 @@ export async function uploadWSIByPath(
         wsi_path,
         dataset_id: options?.dataset_id,
         dataset_name: options?.dataset_name,
+        source_organ: options?.source_organ,
         aggregation_level: options?.aggregation_level,
+        is_public: options?.is_public,
         task_type: options?.task_type,
         label: options?.label,
         case_id: options?.case_id,
@@ -735,72 +762,6 @@ export async function uploadWSIByPath(
   )
   invalidateWSIListCache()
   return result
-}
-
-export interface StorageConfig {
-  uploads_dir: string
-  source?: 'env' | 'config' | 'default' | string
-}
-
-/**
- * Get storage configuration
- * @throws {ApiError} If the request fails
- */
-export async function getStorageConfig(): Promise<StorageConfig> {
-  return apiFetch<StorageConfig>(`${API_BASE}/storage/config`, undefined, 'Failed to load storage config')
-}
-
-/**
- * Update storage configuration
- * @throws {ApiError} If the request fails
- */
-export async function updateStorageConfig(
-  uploads_dir: string
-): Promise<{ uploads_dir: string; restart_required: boolean; message?: string }> {
-  return apiFetch(
-    `${API_BASE}/storage/config`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ uploads_dir })
-    },
-    'Failed to update storage config'
-  )
-}
-
-export interface MigrationStatus {
-  status: 'idle' | 'running' | 'completed' | 'failed' | 'success' | 'error'
-  source: string | null
-  destination: string | null
-  progress: number
-  error: string | null
-  delete_source: boolean
-  message?: string
-  new_path?: string
-}
-
-/**
- * Start storage migration to a new location
- * @throws {ApiError} If the request fails
- */
-export async function startMigration(targetPath: string, deleteSource: boolean = false): Promise<void> {
-  await apiFetch<{ message: string }>(
-    `${API_BASE}/storage/migrate`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target_path: targetPath, delete_source: deleteSource })
-    },
-    'Failed to start migration'
-  )
-}
-
-/**
- * Get migration status
- * @throws {ApiError} If the request fails
- */
-export async function getMigrationStatus(): Promise<MigrationStatus> {
-  return apiFetch<MigrationStatus>(`${API_BASE}/storage/migration/status`, undefined, 'Failed to get migration status')
 }
 
 /**
@@ -935,4 +896,3 @@ export async function uploadWSIByCSV(file: File): Promise<BatchUploadResult> {
   invalidateWSIListCache()
   return result
 }
-

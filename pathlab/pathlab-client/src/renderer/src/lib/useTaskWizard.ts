@@ -6,6 +6,9 @@
 
 import { useState, useCallback, useMemo } from 'react'
 import { TaskType, DataLevel, TrainingStatus } from '../constants/training'
+import { useDraftState } from './useDraftState'
+
+const D = 'draft:wizard:'
 
 export interface UseTaskWizardReturn {
   // Step navigation
@@ -40,16 +43,12 @@ export interface UseTaskWizardReturn {
 }
 
 export function useTaskWizard(): UseTaskWizardReturn {
-  // Step navigation
-  const [currentStep, setCurrentStep] = useState(1)
+  const [currentStep, setCurrentStep] = useDraftState(`${D}step`, 1)
+  const [taskName, setTaskName] = useDraftState(`${D}taskName`, '')
+  const [taskType, setTaskType] = useDraftState<TaskType>(`${D}taskType`, 'classification')
+  const [dataLevel, setDataLevel] = useDraftState<DataLevel>(`${D}dataLevel`, 'wsi')
+  const [taskDescription, setTaskDescription] = useDraftState(`${D}taskDescription`, '')
 
-  // Step 1: Task Configuration
-  const [taskName, setTaskName] = useState('')
-  const [taskType, setTaskType] = useState<TaskType>('classification')
-  const [dataLevel, setDataLevel] = useState<DataLevel>('wsi')
-  const [taskDescription, setTaskDescription] = useState('')
-
-  // Step 5-6: Training status
   const [trainingStatus, setTrainingStatus] = useState<TrainingStatus>('idle')
   const [submittedTaskId, setSubmittedTaskId] = useState('')
   const [submitError, setSubmitError] = useState('')
@@ -60,11 +59,11 @@ export function useTaskWizard(): UseTaskWizardReturn {
   // Navigation helpers
   const goToNextStep = useCallback(() => {
     setCurrentStep((prev) => Math.min(prev + 1, totalSteps))
-  }, [totalSteps])
+  }, [totalSteps, setCurrentStep])
 
   const goToPreviousStep = useCallback(() => {
     setCurrentStep((prev) => Math.max(prev - 1, 1))
-  }, [])
+  }, [setCurrentStep])
 
   // Step 1 validation
   const canProceedStep1 = useMemo(() => {
@@ -74,28 +73,23 @@ export function useTaskWizard(): UseTaskWizardReturn {
   // Handle dataLevel change - reset taskType if needed
   const handleSetDataLevel = useCallback((level: DataLevel) => {
     setDataLevel(level)
-    // If switching to WSI and taskType is segmentation, reset to classification (segmentation is patch-only)
     if (level === 'wsi' && taskType === 'segmentation') {
       setTaskType('classification')
     }
-    // If switching to patch and taskType is survival, reset to classification (survival is WSI-only)
     if (level === 'patch' && taskType === 'survival') {
       setTaskType('classification')
     }
-  }, [taskType])
+  }, [taskType, setDataLevel, setTaskType])
 
-  // Handle taskType change
   const handleSetTaskType = useCallback((type: TaskType) => {
-    // Survival prediction is only available for WSI level
     if (type === 'survival' && dataLevel === 'patch') {
       return
     }
-    // Segmentation is only available for patch level
     if (type === 'segmentation' && dataLevel === 'wsi') {
       return
     }
     setTaskType(type)
-  }, [dataLevel])
+  }, [dataLevel, setTaskType])
 
   return {
     // Step navigation

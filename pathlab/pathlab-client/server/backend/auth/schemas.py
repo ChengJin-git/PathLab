@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 VALID_ROLES = {"admin", "pathologist", "guest"}
-PUBLIC_REGISTRATION_ROLES = {"pathologist", "guest"}
+PUBLIC_REGISTRATION_ROLES = {"guest"}
 
 
 def _normalize_username(value: Optional[str]) -> Optional[str]:
@@ -43,18 +43,39 @@ class UserRead(BaseModel):
     Note: We use 'email' field name for compatibility with FastAPI-Users,
     but it actually stores username (no email validation).
     """
+
     id: uuid.UUID
-    email: str = Field(description="Username (stored in email field for FastAPI-Users compatibility)")
+    email: str = Field(
+        description="Username (stored in email field for FastAPI-Users compatibility)"
+    )
     is_active: bool = True
     is_superuser: bool = False
     is_verified: bool = False
-    role: str = Field(default="guest", description="User role: admin, pathologist, guest")
+    role: str = Field(
+        default="guest", description="User role: admin, pathologist, guest"
+    )
     nickname: Optional[str] = Field(default=None, description="Display name")
-    avatar_url: Optional[str] = Field(default=None, description="URL to user's avatar image")
-    agreement_accepted_at: Optional[datetime] = Field(default=None, description="When user accepted the terms of service")
-    agreement_ip: Optional[str] = Field(default=None, description="IP address when user accepted the terms of service")
-    notice_acknowledged_at: Optional[datetime] = Field(default=None, description="When user last acknowledged a maintenance notice")
-    created_at: Optional[datetime] = Field(default=None, description="Account creation time")
+    avatar_url: Optional[str] = Field(
+        default=None, description="URL to user's avatar image"
+    )
+    agreement_accepted_at: Optional[datetime] = Field(
+        default=None, description="When user accepted the terms of service"
+    )
+    agreement_ip: Optional[str] = Field(
+        default=None, description="IP address when user accepted the terms of service"
+    )
+    notice_acknowledged_at: Optional[datetime] = Field(
+        default=None, description="When user last acknowledged a maintenance notice"
+    )
+    registration_email: Optional[str] = Field(
+        default=None, description="Educational email provided during self-registration"
+    )
+    notify_on_success: bool = Field(default=True)
+    notify_on_failed: bool = Field(default=False)
+    notify_on_cancelled: bool = Field(default=False)
+    created_at: Optional[datetime] = Field(
+        default=None, description="Account creation time"
+    )
     updated_at: Optional[datetime] = Field(default=None, description="Last update time")
 
     class Config:
@@ -69,12 +90,16 @@ class UserCreate(BaseModel):
     Note: 'email' field is actually username (no email validation).
     Self-registration may only create non-admin accounts.
     """
+
     model_config = ConfigDict(extra="forbid")
 
     email: str = Field(description="Username (stored in email field)")
     password: str = Field(description="User password")
     role: str = Field(default="guest", description="User role: pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
+    registration_email: Optional[str] = Field(
+        default=None, description="Contact email for the user"
+    )
 
     @field_validator("role")
     @classmethod
@@ -91,11 +116,17 @@ class UserCreate(BaseModel):
 
 class UserUpdate(BaseModel):
     """Schema for current user self-service updates."""
+
     model_config = ConfigDict(extra="forbid")
 
     password: Optional[str] = Field(default=None, description="New password")
-    email: Optional[str] = Field(default=None, description="Username (stored in email field)")
+    email: Optional[str] = Field(
+        default=None, description="Username (stored in email field)"
+    )
     nickname: Optional[str] = Field(default=None, description="Display name")
+    notify_on_success: Optional[bool] = None
+    notify_on_failed: Optional[bool] = None
+    notify_on_cancelled: Optional[bool] = None
 
     @field_validator("email")
     @classmethod
@@ -106,12 +137,18 @@ class UserUpdate(BaseModel):
 
 class AdminUserUpdate(UserUpdate):
     """Schema for admin-managed updates to user accounts."""
+
     model_config = ConfigDict(extra="forbid")
 
     is_active: Optional[bool] = None
     is_superuser: Optional[bool] = None
     is_verified: Optional[bool] = None
-    role: Optional[str] = Field(default=None, description="User role: admin, pathologist, guest")
+    role: Optional[str] = Field(
+        default=None, description="User role: admin, pathologist, guest"
+    )
+    registration_email: Optional[str] = Field(
+        default=None, description="Contact email for the user"
+    )
 
     @field_validator("role")
     @classmethod
@@ -125,5 +162,5 @@ class UserReadAdmin(UserRead):
 
     Same as UserRead since we already include all fields.
     """
-    pass
 
+    pass

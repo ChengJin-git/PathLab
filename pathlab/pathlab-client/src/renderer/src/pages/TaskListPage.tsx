@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react'
+import { flushSync } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Layers, Timer, Activity, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
-import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES, CancellableStatus } from '../constants/status'
+import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
-import { Card, CardContent } from '../components/ui/card'
+import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
+import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -42,7 +44,7 @@ function isTaskCancellable(task: Task): boolean {
     ? VALIDATION_CANCELLABLE_STATUSES
     : TRAINING_CANCELLABLE_STATUSES
 
-  return cancellableStatuses.includes(task.status as CancellableStatus)
+  return (cancellableStatuses as readonly string[]).includes(task.status)
 }
 
 export default function TaskListPage() {
@@ -56,6 +58,7 @@ export default function TaskListPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageInput, setPageInput] = useState('1')
   const [itemsPerPage, setItemsPerPage] = useState(5)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
@@ -64,7 +67,7 @@ export default function TaskListPage() {
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
   const [selectedTasks, setSelectedTasks] = useState<string[]>([])
   const [isBatchDelete, setIsBatchDelete] = useState(false)
-  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
@@ -210,14 +213,19 @@ export default function TaskListPage() {
 
   const handleDeleteTask = async (taskId: string, e: React.MouseEvent) => {
     e.stopPropagation() // Prevent card click
-    setTaskToDelete(taskId)
-    setTaskStorageInfo(null)
-    setDeleteError(null)
-    setDeleteMode('standard')
-    setShowDeleteModal(true)
 
-    // Load storage info
-    setLoadingStorageInfo(true)
+    // flushSync: React 18 automatic batching would defer setShowDeleteModal until
+    // after the await below resolves, making the dialog appear frozen. Force flush
+    // so the modal renders immediately before the network request starts.
+    flushSync(() => {
+      setTaskToDelete(taskId)
+      setTaskStorageInfo(null)
+      setDeleteError(null)
+      setDeleteMode('standard')
+      setShowDeleteModal(true)
+      setLoadingStorageInfo(true)
+    })
+
     try {
       const info = await getTrainingTaskStorageInfo(taskId)
       setTaskStorageInfo(info)
@@ -368,25 +376,6 @@ export default function TaskListPage() {
     )
   }
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return '-'
-    // Fix case where both +00:00 and Z might be present from backend
-    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
-    // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+'))
-      ? `${sanitizedDate}Z`
-      : sanitizedDate
-    const date = new Date(normalizedDate)
-    if (isNaN(date.getTime())) return dateStr
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-
   const calculateDuration = (start: string | null, end: string | null, status: Task['status']) => {
     if (!start || !end) return t('taskList.na')
     if (isActiveStatus(status) || status === 'pending') return t('taskList.inProgress')
@@ -405,6 +394,20 @@ export default function TaskListPage() {
   useEffect(() => {
     setCurrentPage(prev => Math.min(prev, totalPages))
   }, [totalPages])
+
+  useEffect(() => {
+    setPageInput(String(currentPage))
+  }, [currentPage])
+
+  const commitPageInput = (rawValue: string) => {
+    const trimmed = rawValue.trim()
+    if (!trimmed) { setPageInput(String(currentPage)); return }
+    const parsed = Number.parseInt(trimmed, 10)
+    if (Number.isNaN(parsed)) { setPageInput(String(currentPage)); return }
+    const nextPage = Math.min(Math.max(parsed, 1), totalPages)
+    setCurrentPage(nextPage)
+    setPageInput(String(nextPage))
+  }
 
   return (
     <div className="w-full">
@@ -634,19 +637,7 @@ export default function TaskListPage() {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            if (navigator.clipboard && navigator.clipboard.writeText) {
-                              navigator.clipboard.writeText(task.task_id)
-                            } else {
-                              // Fallback for Electron or non-secure contexts
-                              const textArea = document.createElement('textarea')
-                              textArea.value = task.task_id
-                              textArea.style.position = 'fixed'
-                              textArea.style.opacity = '0'
-                              document.body.appendChild(textArea)
-                              textArea.select()
-                              document.execCommand('copy')
-                              document.body.removeChild(textArea)
-                            }
+                            navigator.clipboard.writeText(task.task_id).catch(() => {})
                             setCopiedId(task.task_id)
                             setTimeout(() => setCopiedId(null), 2000)
                           }}
@@ -861,32 +852,55 @@ export default function TaskListPage() {
                 )}
               </div>
 
-              <div className="flex items-center gap-2 sm:gap-3">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                  disabled={currentPage === 1}
-                  className="h-8 px-2 sm:px-3"
-                >
-                  <ChevronLeft className="w-4 h-4 sm:mr-1" />
-                  <span className="hidden sm:inline">{t('common.previous')}</span>
-                </Button>
+              <div className="flex flex-col sm:flex-row items-center gap-3 sm:gap-4">
+                {totalPages > 1 && (
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">
+                      {t('taskList.pagination.goToPage')}
+                    </span>
+                    <Input
+                      value={pageInput}
+                      onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
+                      onBlur={() => commitPageInput(pageInput)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') { e.preventDefault(); commitPageInput(pageInput) }
+                        if (e.key === 'Escape') setPageInput(String(currentPage))
+                      }}
+                      inputMode="numeric"
+                      aria-label={t('taskList.pagination.goToPage')}
+                      className="h-8 w-16 px-2 text-center text-xs sm:text-sm"
+                    />
+                    <span className="text-xs sm:text-sm text-gray-500 whitespace-nowrap">/ {totalPages}</span>
+                  </div>
+                )}
 
-                <span className="text-xs sm:text-sm font-semibold text-gray-600 min-w-[88px] text-center">
-                  {t('taskList.pagination.pageInfo', { current: currentPage, total: totalPages })}
-                </span>
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                    disabled={currentPage === 1}
+                    className="h-8 px-2 sm:px-3"
+                  >
+                    <ChevronLeft className="w-4 h-4 sm:mr-1" />
+                    <span className="hidden sm:inline">{t('common.previous')}</span>
+                  </Button>
 
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                  disabled={currentPage === totalPages}
-                  className="h-8 px-2 sm:px-3"
-                >
-                  <span className="hidden sm:inline">{t('common.next')}</span>
-                  <ChevronRight className="w-4 h-4 sm:ml-1" />
-                </Button>
+                  <span className="text-xs sm:text-sm font-semibold text-gray-600 min-w-[88px] text-center">
+                    {t('taskList.pagination.pageInfo', { current: currentPage, total: totalPages })}
+                  </span>
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                    disabled={currentPage === totalPages}
+                    className="h-8 px-2 sm:px-3"
+                  >
+                    <span className="hidden sm:inline">{t('common.next')}</span>
+                    <ChevronRight className="w-4 h-4 sm:ml-1" />
+                  </Button>
+                </div>
               </div>
             </div>
           </Card>

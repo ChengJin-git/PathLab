@@ -55,6 +55,9 @@ export interface TrainedModel {
   is_default: boolean
   is_active: boolean
   created_at: string
+  task_name?: string | null
+  task_type?: string | null
+  task_classes?: string[] | null
 }
 
 /**

@@ -6,6 +6,8 @@
  */
 
 import React, { useCallback } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
+import { useTranslation } from 'react-i18next'
 import {
   uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask,
   checkUploadSpace, cancelQueueTask, cancelStorageTask,
@@ -38,6 +40,8 @@ export interface TaskActionsParams {
 }
 
 export function useTaskActions(params: TaskActionsParams) {
+  const { t } = useTranslation()
+  const qc = useQueryClient()
   const {
     setLocalTasks, setIsPanelExpanded, setDismissedServerTasks,
     setMetadataUploadResults, cancelledTasksRef, abortControllersRef,
@@ -104,7 +108,7 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'upload',
-      title: `Uploading ${files.length} file${files.length > 1 ? 's' : ''}`,
+      title: t('backgroundTask.taskTitles.uploading', { count: files.length }),
       items: files.map(f => ({
         id: f.key,
         name: f.name,
@@ -124,6 +128,7 @@ export function useTaskActions(params: TaskActionsParams) {
     // Create AbortController for this task
     const abortController = new AbortController()
     abortControllersRef.current.set(taskId, abortController)
+    ;(window as any).__activeUploadCount = ((window as any).__activeUploadCount || 0) + 1
 
     // Process files sequentially (background)
     const processFiles = async () => {
@@ -136,52 +141,69 @@ export function useTaskActions(params: TaskActionsParams) {
 
         updateTaskItem(taskId, file.key, { status: 'running' })
 
-        try {
-          if (file.path) {
-            await uploadWSIByPath(file.path, {
-              dataset_id: file.metadata?.dataset_id,
-              dataset_name: file.metadata?.dataset_name,
-              aggregation_level: file.metadata?.aggregation_level,
-              task_type: file.metadata?.task_type,
-              label: file.metadata?.label,
-              case_id: file.metadata?.case_id,
-              age: file.metadata?.age,
-              gender: file.metadata?.gender,
-              event_time: file.metadata?.event_time,
-              event_status: file.metadata?.event_status,
-              signal: abortController.signal
-            })
-          } else if (file.file) {
-            await uploadWSIFile(file.file, {
-              dataset_id: file.metadata?.dataset_id,
-              dataset_name: file.metadata?.dataset_name,
-              aggregation_level: file.metadata?.aggregation_level,
-              task_type: file.metadata?.task_type,
-              label: file.metadata?.label,
-              case_id: file.metadata?.case_id,
-              age: file.metadata?.age,
-              gender: file.metadata?.gender,
-              event_time: file.metadata?.event_time,
-              event_status: file.metadata?.event_status,
-              associatedFiles: file.associatedFiles,
-              onProgress: (progress) => {
-                updateTaskItem(taskId, file.key, { progress })
-              },
-              signal: abortController.signal
-            })
-          }
-          updateTaskItem(taskId, file.key, { status: 'success', progress: 100 })
-        } catch (err) {
-          // If aborted, mark as cancelled instead of error
-          const isAborted = err instanceof Error && (err.message.includes('aborted') || err.message.includes('abort'))
-          if (isAborted || cancelledTasksRef.current.has(taskId)) {
+        const MAX_RETRIES = 2
+        const RETRY_BASE_DELAY_MS = 1500
+        for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+          if (cancelledTasksRef.current.has(taskId) || abortController.signal.aborted) {
             updateTaskItem(taskId, file.key, { status: 'cancelled', progress: 0 })
-          } else {
-            updateTaskItem(taskId, file.key, {
-              status: 'error',
-              progress: 0,
-              error: err instanceof Error ? err.message : String(err)
-            })
+            break
+          }
+          try {
+            if (file.path) {
+              await uploadWSIByPath(file.path, {
+                dataset_id: file.metadata?.dataset_id,
+                dataset_name: file.metadata?.dataset_name,
+                source_organ: file.metadata?.source_organ,
+                aggregation_level: file.metadata?.aggregation_level,
+                is_public: file.metadata?.is_public,
+                task_type: file.metadata?.task_type,
+                label: file.metadata?.label,
+                case_id: file.metadata?.case_id,
+                age: file.metadata?.age,
+                gender: file.metadata?.gender,
+                event_time: file.metadata?.event_time,
+                event_status: file.metadata?.event_status,
+                signal: abortController.signal
+              })
+            } else if (file.file) {
+              await uploadWSIFile(file.file, {
+                dataset_id: file.metadata?.dataset_id,
+                dataset_name: file.metadata?.dataset_name,
+                source_organ: file.metadata?.source_organ,
+                aggregation_level: file.metadata?.aggregation_level,
+                is_public: file.metadata?.is_public,
+                task_type: file.metadata?.task_type,
+                label: file.metadata?.label,
+                case_id: file.metadata?.case_id,
+                age: file.metadata?.age,
+                gender: file.metadata?.gender,
+                event_time: file.metadata?.event_time,
+                event_status: file.metadata?.event_status,
+                associatedFiles: file.associatedFiles,
+                onProgress: (progress) => {
+                  updateTaskItem(taskId, file.key, { progress })
+                },
+                signal: abortController.signal
+              })
+            }
+            updateTaskItem(taskId, file.key, { status: 'success', progress: 100 })
+            break
+          } catch (err) {
+            const isAborted = err instanceof Error && (err.message.includes('aborted') || err.message.includes('abort'))
+            if (isAborted || cancelledTasksRef.current.has(taskId)) {
+              updateTaskItem(taskId, file.key, { status: 'cancelled', progress: 0 })
+              break
+            }
+            if (attempt < MAX_RETRIES) {
+              await new Promise(resolve => setTimeout(resolve, RETRY_BASE_DELAY_MS * (attempt + 1)))
+              updateTaskItem(taskId, file.key, { status: 'running', progress: 0 })
+            } else {
+              updateTaskItem(taskId, file.key, {
+                status: 'error',
+                progress: 0,
+                error: err instanceof Error ? err.message : String(err)
+              })
+            }
           }
         }
       }
@@ -194,12 +216,19 @@ export function useTaskActions(params: TaskActionsParams) {
 
       // Call completion callback
       options?.onComplete?.()
+
+      const remaining = Math.max(0, ((window as any).__activeUploadCount || 1) - 1)
+      ;(window as any).__activeUploadCount = remaining
+      if (remaining === 0 && (window as any).__pendingSWReload) {
+        ;(window as any).__pendingSWReload = false
+        window.location.reload()
+      }
     }
 
     processFiles()
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, abortControllersRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, abortControllersRef])
 
   // Add delete WSI task
   const addDeleteWSITask = useCallback(async (wsiIds: string[], mode: 'standard' | 'complete'): Promise<string> => {
@@ -207,7 +236,7 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'delete_wsi',
-      title: `Deleting ${wsiIds.length} file${wsiIds.length > 1 ? 's' : ''}`,
+      title: t('backgroundTask.taskTitles.deletingFiles', { count: wsiIds.length }),
       items: wsiIds.map(id => ({
         id,
         name: id,
@@ -253,7 +282,7 @@ export function useTaskActions(params: TaskActionsParams) {
     processDeletes()
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
 
   // Add migration task
   const addMigrationTask = useCallback(async (targetPath: string, deleteSource: boolean): Promise<string> => {
@@ -262,10 +291,10 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'migration',
-      title: `Relocating to ${targetDirName}`,
+      title: targetDirName,
       items: [{
         id: 'migration_main',
-        name: `Moving data to ${targetPath}`,
+        name: t('backgroundTask.taskTitles.movingData', { path: targetPath }),
         status: 'pending' as TaskStatus,
         progress: 0
       }],
@@ -304,7 +333,7 @@ export function useTaskActions(params: TaskActionsParams) {
             clearInterval(pollInterval)
             updateTaskItem(taskId, 'migration_main', {
               status: 'error',
-              error: status.error || 'Migration failed'
+              error: status.error || t('backgroundTask.errors.migrationFailed')
             })
           } else {
             // Running
@@ -328,7 +357,7 @@ export function useTaskActions(params: TaskActionsParams) {
     }
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
 
   // Add delete training task
   const addDeleteTrainingTask = useCallback(async (taskIds: string[], mode: 'standard' | 'complete'): Promise<string> => {
@@ -336,7 +365,7 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'delete_task',
-      title: `Deleting ${taskIds.length} training task${taskIds.length > 1 ? 's' : ''}`,
+      title: t('backgroundTask.taskTitles.deletingTasks', { count: taskIds.length }),
       items: taskIds.map(id => ({
         id,
         name: id,
@@ -378,7 +407,7 @@ export function useTaskActions(params: TaskActionsParams) {
     refreshDiskSpace()
 
     return taskId
-  }, [updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
 
   // Cancel a running task
   const cancelTask = useCallback((taskId: string) => {
@@ -552,10 +581,10 @@ export function useTaskActions(params: TaskActionsParams) {
     const task: BackgroundTask = {
       id: taskId,
       type: 'metadata_upload',
-      title: `Metadata: ${config.datasetName}`,
+      title: t('backgroundTask.taskTitles.metadata', { name: config.datasetName }),
       items: [{
         id: 'metadata_main',
-        name: config.datasetId ? 'Uploading metadata...' : 'Waiting for dataset...',
+        name: config.datasetId ? t('backgroundTask.taskTitles.uploadingMetadata') : t('backgroundTask.taskTitles.waitingForDataset'),
         status: 'running' as TaskStatus,
         progress: config.datasetId ? 50 : 10
       }],
@@ -580,7 +609,7 @@ export function useTaskActions(params: TaskActionsParams) {
 
         while (attempts < maxAttempts) {
           if (cancelledTasksRef.current.has(taskId)) {
-            updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: 'Cancelled' })
+            updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: t('backgroundTask.taskTitles.cancelled') })
             return
           }
 
@@ -593,7 +622,7 @@ export function useTaskActions(params: TaskActionsParams) {
             if (found && found.dataset_id) {
               datasetId = found.dataset_id
               updateTaskItem(taskId, 'metadata_main', {
-                name: 'Uploading metadata...',
+                name: t('backgroundTask.taskTitles.uploadingMetadata'),
                 progress: 50
               })
               break
@@ -613,8 +642,8 @@ export function useTaskActions(params: TaskActionsParams) {
           updateTaskItem(taskId, 'metadata_main', {
             status: 'error',
             progress: 0,
-            name: 'Dataset not found',
-            error: 'Could not find dataset after 5 minutes of polling'
+            name: t('backgroundTask.taskTitles.datasetNotFound'),
+            error: t('backgroundTask.errors.datasetPollingTimeout')
           })
           return
         }
@@ -622,13 +651,13 @@ export function useTaskActions(params: TaskActionsParams) {
 
       // Check if cancelled
       if (cancelledTasksRef.current.has(taskId)) {
-        updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: 'Cancelled' })
+        updateTaskItem(taskId, 'metadata_main', { status: 'cancelled', progress: 0, name: t('backgroundTask.taskTitles.cancelled') })
         return
       }
 
       // Upload CSV
       try {
-        updateTaskItem(taskId, 'metadata_main', { name: 'Uploading metadata...', progress: 70 })
+        updateTaskItem(taskId, 'metadata_main', { name: t('backgroundTask.taskTitles.uploadingMetadata'), progress: 70 })
         const result = await uploadDatasetSplits(datasetId, config.csvFile)
 
         // Store result for retrieval by MetadataUploadCard
@@ -641,13 +670,13 @@ export function useTaskActions(params: TaskActionsParams) {
         updateTaskItem(taskId, 'metadata_main', {
           status: 'success',
           progress: 100,
-          name: `Updated ${result.updated_count} files`
+          name: t('backgroundTask.taskTitles.updatedFiles', { count: result.updated_count })
         })
       } catch (err) {
         updateTaskItem(taskId, 'metadata_main', {
           status: 'error',
           progress: 0,
-          name: 'Upload failed',
+          name: t('backgroundTask.taskTitles.uploadFailed'),
           error: err instanceof Error ? err.message : String(err)
         })
       }
@@ -655,7 +684,7 @@ export function useTaskActions(params: TaskActionsParams) {
 
     processMetadataUpload()
     return taskId
-  }, [updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, setMetadataUploadResults])
+  }, [t, updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, setMetadataUploadResults])
 
   // Add extraction task (per-task SSE for annotation ROI extraction progress)
   const addExtractionTask = useCallback((serverTaskId: string, datasetName: string): string => {
@@ -686,7 +715,7 @@ export function useTaskActions(params: TaskActionsParams) {
       updateTaskItem(taskId, 'extraction_main', {
         status: 'error',
         progress: 0,
-        error: 'Not authenticated'
+        error: t('backgroundTask.errors.notAuthenticated')
       })
       return taskId
     }
@@ -707,18 +736,22 @@ export function useTaskActions(params: TaskActionsParams) {
           // Task finished (cleared from Redis)
           eventSource.close()
           updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
+          void qc.invalidateQueries({ queryKey: ['page-datasets'] })
+          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
         } else if (progress < 0) {
           // Error
           eventSource.close()
           updateTaskItem(taskId, 'extraction_main', {
             status: 'error',
             progress: 0,
-            error: 'Extraction failed'
+            error: t('backgroundTask.errors.extractionFailed')
           })
         } else if (progress === 100) {
           // Completed
           eventSource.close()
           updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
+          void qc.invalidateQueries({ queryKey: ['page-datasets'] })
+          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
         } else {
           // In progress
           updateTaskItem(taskId, 'extraction_main', { status: 'running', progress })
@@ -736,7 +769,7 @@ export function useTaskActions(params: TaskActionsParams) {
     }
 
     return taskId
-  }, [updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+  }, [t, updateTaskItem, setLocalTasks, setIsPanelExpanded, cancelledTasksRef, qc])
 
   // Get metadata upload result by dataset name
   const getMetadataUploadResult = useCallback((datasetName: string): MetadataUploadResult | undefined => {

@@ -1,6 +1,6 @@
 # PathLab Backend Services
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.4`
 
 `server/backend/` 存放 Gateway 共享的核心后端模块、两个内部 FastAPI 服务（Preprocessing / AI）的具体实现，以及一个当前未纳入默认 sidecar 启动链的 `deep-research/` 代码树。
 
@@ -63,7 +63,7 @@ backend/
 - ORM 模型：`database/models.py`
 - 仓储导出：`database/repositories/__init__.py`
 - 初始化：`database/init_db.py`
-- 当前已确认 ORM 表共 17 个
+- 当前已确认 ORM 表共 21 个，权限相关模型已统一为 `dataset_grants` 与 `permission_audit_logs`
 
 ### Redis / 配置
 

@@ -5,6 +5,7 @@ import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle
 import { getTrainingTasks, TrainingTask, updateTrainingTaskName } from '../../api'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../contexts/AuthContext'
+import { formatUtcDate } from '../../lib/utils'
 
 export interface CachedTaskData {
   task_id: string
@@ -33,8 +34,6 @@ interface TaskHistoryCardProps {
   config: AgentTaskHistoryConfig
   onError?: (error: string) => void
   onDataLoaded?: (tasks: CachedTaskData[]) => void
-  navigationSource?: 'ai-chat' | 'deep-research'
-  deepResearchConversationId?: string
 }
 
 export function parseTaskHistoryConfig(content: string): AgentTaskHistoryConfig | null {
@@ -73,25 +72,7 @@ function getStatusDisplay(status: string, t: TFunction) {
   }
 }
 
-function formatDate(dateStr: string | null): string {
-  if (!dateStr) return '-'
-  const date = new Date(dateStr)
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit'
-  })
-}
-
-export function TaskHistoryCard({
-  config,
-  onError,
-  onDataLoaded,
-  navigationSource = 'ai-chat',
-  deepResearchConversationId
-}: TaskHistoryCardProps) {
+export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCardProps) {
   const { t } = useTranslation()
   const cachedTasks = Array.isArray(config.cached_tasks) ? config.cached_tasks : []
   const hasCachedData = cachedTasks.length > 0
@@ -274,28 +255,15 @@ export function TaskHistoryCard({
   }
 
   const handleTaskClick = (taskId: string) => {
-    if (navigationSource === 'ai-chat') {
-      const messagesContainer = document.querySelector('[data-chat-messages-container]')
-      if (messagesContainer) {
-        sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
-      }
-      const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
-      if (conversationId) {
-        sessionStorage.setItem('ai-chat-conversation-id', conversationId)
-      }
+    const messagesContainer = document.querySelector('[data-chat-messages-container]')
+    if (messagesContainer) {
+      sessionStorage.setItem('ai-chat-scroll-position', String(messagesContainer.scrollTop))
     }
-
-    const state: Record<string, unknown> = {}
-    if (navigationSource === 'deep-research') {
-      state.fromDeepResearch = true
-      if (deepResearchConversationId) {
-        state.deepResearchConversationId = deepResearchConversationId
-      }
-    } else {
-      state.fromAIChat = true
+    const conversationId = document.querySelector('[data-current-conversation-id]')?.getAttribute('data-current-conversation-id')
+    if (conversationId) {
+      sessionStorage.setItem('ai-chat-conversation-id', conversationId)
     }
-
-    navigate(`/results?task=${taskId}`, { state })
+    navigate(`/results?task=${taskId}`, { state: { fromAIChat: true } })
   }
 
   if (isLoading) {
@@ -412,8 +380,20 @@ export function TaskHistoryCard({
                       )}
                     </div>
                     <div className="mt-1 text-xs text-gray-400 truncate">
-                      {t('chatComponents.taskHistory.created')}: {formatDate(task.created_at)}
-                      {task.finished_at && <span className="hidden sm:inline"> • {t('chatComponents.taskHistory.finished')}: {formatDate(task.finished_at)}</span>}
+                      {t('chatComponents.taskHistory.created')}: {formatUtcDate(task.created_at, 'zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}
+                      {task.finished_at && <span className="hidden sm:inline"> • {t('chatComponents.taskHistory.finished')}: {formatUtcDate(task.finished_at, 'zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">

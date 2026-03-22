@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Cloud, Server, Key, Info, CheckCircle, Mic, Search, Power, Globe } from 'lucide-react'
+import { Cloud, Server, Key, Info, CheckCircle, Mic, Globe, Mail } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
+import { Select } from '../ui/select'
 import { getGlobalSettings, updateGlobalSettings, buildAuthRequestInit } from '../../api'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
@@ -31,6 +32,7 @@ function StatusBadge({ status }: { status: 'online' | 'offline' | 'checking' }) 
 function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
   return (
     <button
+      type="button"
       onClick={onChange}
       className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 ${
         enabled ? 'bg-emerald-600 ring-emerald-500' : 'bg-slate-300 ring-slate-400'
@@ -53,24 +55,32 @@ export interface ModelOption {
   id: string
   label: string
   multimodal: boolean
+  closedSource?: boolean
 }
 
 export const MODEL_OPTIONS: ModelOption[] = [
   // Multimodal models (support image input)
   { id: 'qwen/qwen3.5-plus-02-15', label: 'Qwen3.5-Plus-02-15', multimodal: true },
   { id: 'moonshotai/kimi-k2.5', label: 'Kimi-K2.5', multimodal: true },
+  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
+  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
   // Text-only models
   { id: 'z-ai/glm-5', label: 'GLM-5', multimodal: false },
   { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
   { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
-  { id: 'z-ai/glm-4.7-flash', label: 'GLM-4.7-Flash', multimodal: false },
-  { id: 'moonshotai/kimi-k2-0905', label: 'Kimi-K2-Instruct-0905', multimodal: false },
+  { id: 'minimax/minimax-m2.7', label: 'Minimax-M2.7', multimodal: false },
+  { id: 'xiaomi/mimo-v2-pro', label: 'MIMO-V2-Pro', multimodal: false },
 ]
 
-/** Quick lookup: is a given model ID multimodal? */
+export const CUSTOM_MODEL_SENTINEL = '__custom__'
+
 export const MULTIMODAL_MODELS = new Set(
   MODEL_OPTIONS.filter(m => m.multimodal).map(m => m.id)
 )
+
+function isCustomModelId(id: string): boolean {
+  return !!id && id !== CUSTOM_MODEL_SENTINEL && !MODEL_OPTIONS.some(m => m.id === id)
+}
 
 export interface GeneralTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -83,6 +93,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
   const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
+  const [isCustomMode, setIsCustomMode] = useState(false)
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
   // Kaggle credentials
@@ -102,16 +113,18 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [localVllmStatus, setLocalVllmStatus] = useState<'checking' | 'online' | 'offline'>('offline')
   const [localVllmDetectedModel, setLocalVllmDetectedModel] = useState<string | null>(null)
 
-  // Local ASR state
+  const [resendEnabled, setResendEnabled] = useState(false)
+  const [resendApiKey, setResendApiKey] = useState('')
+
   const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
-  const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('http://127.0.0.1:8001/v1')
+  const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('ws://127.0.0.1:8001/api-ws/v1/realtime')
   const [localAsrModel, setLocalAsrModel] = useState('')
   const [localAsrApiKey, setLocalAsrApiKey] = useState('')
   const [localAsrStatus, setLocalAsrStatus] = useState<'checking' | 'online' | 'offline'>('offline')
   const [localAsrDetectedModel, setLocalAsrDetectedModel] = useState<string | null>(null)
 
   // Check local vLLM status
-  const checkLocalVllmStatusWithParams = async (bUrl: string, aKey: string) => {
+  const checkLocalVllmStatusWithParams = useCallback(async (bUrl: string, aKey: string) => {
     if (!bUrl) { setLocalVllmStatus('offline'); setLocalVllmDetectedModel(null); return }
     setLocalVllmStatus('checking')
     setLocalVllmDetectedModel(null)
@@ -127,10 +140,10 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         if (data.online && data.model) setLocalVllmDetectedModel(data.model)
       } else { setLocalVllmStatus('offline') }
     } catch { setLocalVllmStatus('offline') }
-  }
+  }, [])
 
   // Check local ASR status
-  const checkLocalAsrStatusWithParams = async (bUrl: string, aKey: string, m?: string) => {
+  const checkLocalAsrStatusWithParams = useCallback(async (bUrl: string, aKey: string, m?: string) => {
     if (!bUrl) { setLocalAsrStatus('offline'); setLocalAsrDetectedModel(null); return }
     setLocalAsrStatus('checking')
     setLocalAsrDetectedModel(null)
@@ -146,19 +159,25 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         if (data.online && data.model) setLocalAsrDetectedModel(data.model)
       } else { setLocalAsrStatus('offline') }
     } catch { setLocalAsrStatus('offline') }
-  }
+  }, [])
 
   // Load global settings
   const loadGlobalSettings = useCallback(async () => {
     try {
       const s = await getGlobalSettings()
       setApiKey(s.openrouter_api_key); setBaseUrl(s.openrouter_base_url); setModel(s.openrouter_model)
+      setIsCustomMode(isCustomModelId(s.openrouter_model))
+      localStorage.setItem('openrouter_api_key', s.openrouter_api_key)
+      localStorage.setItem('openrouter_base_url', s.openrouter_base_url)
+      localStorage.setItem('openrouter_model', s.openrouter_model)
       setHuggingfaceToken(s.huggingface_token); setDashscopeApiKey(s.dashscope_api_key)
       setKaggleUsername(s.kaggle_username || ''); setKaggleKey(s.kaggle_key || '')
       setExaApiKey(s.exa_api_key || '')
       setTavilyApiKey(s.tavily_api_key || '')
       setLocalVllmEnabled(s.local_vllm_enabled); setLocalVllmBaseUrl(s.local_vllm_base_url)
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
+      setResendEnabled(s.resend_enabled || false)
+      setResendApiKey(s.resend_api_key || '')
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
       setLocalAsrModel(s.local_asr_model); setLocalAsrApiKey(s.local_asr_api_key)
       if (s.local_vllm_enabled && s.local_vllm_base_url) {
@@ -168,7 +187,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         checkLocalAsrStatusWithParams(s.local_asr_base_url, s.local_asr_api_key, s.local_asr_model)
       }
     } catch (err) { console.error('Failed to load global settings:', err) }
-  }, [])
+  }, [checkLocalAsrStatusWithParams, checkLocalVllmStatusWithParams])
 
   useEffect(() => { loadGlobalSettings() }, [loadGlobalSettings])
 
@@ -192,7 +211,11 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_vllm_model: localVllmModel, local_vllm_api_key: localVllmApiKey,
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
+        resend_enabled: resendEnabled, resend_api_key: resendApiKey,
       })
+      localStorage.setItem('openrouter_api_key', apiKey)
+      localStorage.setItem('openrouter_base_url', baseUrl)
+      localStorage.setItem('openrouter_model', model)
       setAiSaved(true)
       setTimeout(() => setAiSaved(false), 3000)
     } catch (err) {
@@ -260,22 +283,45 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       </div>
                       <div className="space-y-2">
                         <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.model')}</Label>
-                        <select
-                          value={model}
-                          onChange={(e) => setModel(e.target.value)}
-                          className="h-9 w-full px-2.5 border border-slate-300 rounded-md bg-white text-xs text-slate-900 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                        >
-                          <optgroup label={t('settings.general.multimodalModels')}>
-                            {MODEL_OPTIONS.filter(m => m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                          <optgroup label={t('settings.general.textModels')}>
-                            {MODEL_OPTIONS.filter(m => !m.multimodal).map(m => (
-                              <option key={m.id} value={m.id}>{m.label}</option>
-                            ))}
-                          </optgroup>
-                        </select>
+                        <Select
+                          value={isCustomMode ? CUSTOM_MODEL_SENTINEL : model}
+                          onChange={(val) => {
+                            if (val === CUSTOM_MODEL_SENTINEL) {
+                              setIsCustomMode(true)
+                              if (!isCustomMode) setModel('')
+                            } else {
+                              setIsCustomMode(false)
+                              setModel(val)
+                            }
+                          }}
+                          options={[
+                            {
+                              group: t('settings.general.multimodalModels'),
+                              options: MODEL_OPTIONS.filter(m => m.multimodal && !m.closedSource).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.textModels'),
+                              options: MODEL_OPTIONS.filter(m => !m.multimodal && !m.closedSource).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.closedSourceModels'),
+                              options: MODEL_OPTIONS.filter(m => m.closedSource).map(m => ({ value: m.id, label: m.label })),
+                            },
+                            {
+                              group: t('settings.general.customModel'),
+                              options: [{ value: CUSTOM_MODEL_SENTINEL, label: `${t('settings.general.customModel')}...` }],
+                            },
+                          ]}
+                        />
+                        {isCustomMode && (
+                          <Input
+                            value={model}
+                            onChange={(e) => setModel(e.target.value)}
+                            placeholder={t('settings.general.customModelPlaceholder')}
+                            className="h-9 font-mono text-xs border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                            autoFocus
+                          />
+                        )}
                       </div>
                     </div>
                   </div>
@@ -363,7 +409,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                         className="h-9 text-sm border-slate-300 focus:border-orange-500 focus:ring-orange-500 pr-20"
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                        <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" className="text-xs text-orange-600 hover:text-orange-700 font-medium hover:underline">
+                          <a href="https://dashscope.console.aliyun.com/apiKey" target="_blank" rel="noopener noreferrer" className="text-xs text-orange-600 hover:text-orange-700 font-medium hover:underline">
                           {t('common.getKey')}
                         </a>
                       </div>
@@ -391,7 +437,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                         className="h-9 text-sm border-slate-300 focus:border-amber-500 focus:ring-amber-500 pr-20"
                       />
                       <div className="absolute right-2 top-1/2 -translate-y-1/2">
-                        <a href="https://huggingface.co/settings/tokens" target="_blank" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
+                          <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" className="text-xs text-amber-600 hover:text-amber-700 font-medium hover:underline">
                           {t('common.getToken')}
                         </a>
                       </div>
@@ -426,6 +472,43 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                       </div>
                     </div>
                   </div>
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-violet-100 rounded-md">
+                        <Mail className="w-4 h-4 text-violet-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-slate-900">{t('settings.general.resendEmailCard')}</h3>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Resend</span>
+                      </div>
+                    </div>
+                    <ToggleSwitch enabled={resendEnabled} onChange={() => setResendEnabled(!resendEnabled)} />
+                  </div>
+
+                  {resendEnabled && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">{t('settings.general.resendApiKey')}</Label>
+                        <div className="relative">
+                          <Input
+                            type="password"
+                            value={resendApiKey}
+                            onChange={(e) => setResendApiKey(e.target.value)}
+                            placeholder="re_..."
+                            className="h-9 text-sm border-slate-300 focus:border-violet-500 focus:ring-violet-500 pr-20"
+                          />
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2">
+                            <a href="https://resend.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-xs text-violet-600 hover:text-violet-700 font-medium hover:underline">
+                              {t('common.getKey')}
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

@@ -33,6 +33,7 @@ import {
   DEFAULT_EXTERNAL_SEGMENTATION_CHARTS
 } from '../constants/metrics'
 import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
+import { formatDateTime } from '../lib/utils'
 
 type PageMode = 'internal-analysis' | 'external-validation'
 
@@ -153,11 +154,15 @@ export default function ResultsViewerPage() {
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [datasetId, setDatasetId] = useState<string | null>(null)
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
+  const [modelSearchQuery, setModelSearchQuery] = useState('')
   const [isDataDropdownOpen, setIsDataDropdownOpen] = useState(false)
   const [validationProgress, setValidationProgress] = useState<ValidationProgress | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const selectedTaskIdRef = useRef<string | null>(selectedTaskId)
+  const [extValidationPendingTaskId, setExtValidationPendingTaskId] = useState<string | null>(null)
+  // Track previous selectedModelId to detect user-initiated model changes (vs initial load)
+  const prevModelIdForDatasetRef = useRef<string | null>(null)
 
   interface CompletedExtValTask {
     task_id: string
@@ -182,7 +187,7 @@ export default function ResultsViewerPage() {
       const data = await response.json()
       return (data.items || []) as TrainingTask[]
     },
-    staleTime: 30 * 1000,
+    staleTime: 2 * 60 * 1000,
   })
 
   const { data: trainedModels = [] as TrainedModel[] } = useQuery({
@@ -192,6 +197,7 @@ export default function ResultsViewerPage() {
       return data.items.filter(m => m.is_active) as TrainedModel[]
     },
     staleTime: 2 * 60 * 1000,
+    enabled: pageMode === 'external-validation',
   })
 
   const { data: validationDatasets = [] as ValidationDataset[] } = useQuery({
@@ -201,6 +207,7 @@ export default function ResultsViewerPage() {
       return (data.items || []) as ValidationDataset[]
     },
     staleTime: 5 * 60 * 1000,
+    enabled: pageMode === 'external-validation',
   })
 
   const { data: completedExtValTasks = [] as CompletedExtValTask[] } = useQuery({
@@ -212,6 +219,7 @@ export default function ResultsViewerPage() {
       return (data.items || []) as CompletedExtValTask[]
     },
     staleTime: 30 * 1000,
+    enabled: pageMode === 'external-validation',
   })
 
   const { data: analyses = [] as AnalysisSummary[] } = useQuery({
@@ -302,6 +310,11 @@ export default function ResultsViewerPage() {
     }
   }, [selectedTaskId, tasks])
 
+  useEffect(() => {
+    setCurrentResult(null)
+    setAnalysisError(null)
+  }, [selectedTaskId])
+
   // Reset metrics/charts selection when external model changes
   useEffect(() => {
     if (pageMode !== 'external-validation' || !selectedModelId) return
@@ -321,6 +334,18 @@ export default function ResultsViewerPage() {
       setBootstrapCIMetrics([])
     }
   }, [pageMode, selectedModelId, trainedModels, tasks])
+
+  useEffect(() => {
+    if (pageMode !== 'external-validation') return
+    const prevModelId = prevModelIdForDatasetRef.current
+    prevModelIdForDatasetRef.current = selectedModelId
+    if (prevModelId !== null && prevModelId !== selectedModelId) {
+      setDatasetId(null)
+      setValidationProgress(null)
+      setExtValQueryTaskId(null)
+      setExtValidationPendingTaskId(null)
+    }
+  }, [pageMode, selectedModelId])
 
   // Auto-select most recent completed external validation task's model+dataset
   // when entering external validation mode with nothing selected
@@ -385,6 +410,7 @@ export default function ResultsViewerPage() {
         // Check if this is an external validation analysis
         if (task.analysisType === 'external' && task.trainingTaskId) {
           setExtValQueryTaskId(task.trainingTaskId)
+          setExtValidationPendingTaskId(null)
           void qc.invalidateQueries({ queryKey: ['completed-ext-val-tasks'] })
         } else {
           if (currentResult?._pending) {
@@ -404,8 +430,15 @@ export default function ResultsViewerPage() {
   }, [selectedTaskId])
 
   useEffect(() => {
-    if (tasks.length > 0 && !selectedTaskIdRef.current) {
-      setSelectedTaskId(tasks[0].task_id)
+    if (tasks.length > 0) {
+      if (!selectedTaskIdRef.current) {
+        setSelectedTaskId(tasks[0].task_id)
+      } else {
+        const taskExists = tasks.some(t => t.task_id === selectedTaskIdRef.current)
+        if (!taskExists) {
+          setSelectedTaskId(tasks[0].task_id)
+        }
+      }
     }
   }, [tasks])
 
@@ -422,12 +455,14 @@ export default function ResultsViewerPage() {
     if (!selectedModelId || !datasetId || selectedMetrics.length === 0) return
 
     const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
-    if (!selectedModel) return
+    if (!selectedModel) {
+      setValidationError(t('resultsPage.modelNoLongerAvailable'))
+      return
+    }
 
     setRunning(true)
     setValidationError(null)
     try {
-      // Pass metrics/charts/bootstrapCI so backend auto-triggers analysis after inference
       const result = await apiStartExternalValidation(
         selectedModelId,
         datasetId,
@@ -436,14 +471,9 @@ export default function ResultsViewerPage() {
         bootstrapCIMetrics.length > 0
       )
 
-      // Handle different response statuses from backend:
-      // 1. status === 'completed' — both inference and analysis already exist
-      // 2. status === 'analysis_started' — inference exists, analysis auto-triggered
-      // 3. status === 'pending' — new task queued for GPU inference
       const responseStatus = (result as unknown as Record<string, unknown>).status as string
 
       if (responseStatus === 'completed') {
-        // Both inference and analysis already exist — load results directly
         setValidationProgress({
           validation_id: result.task_id,
           status: 'completed',
@@ -451,13 +481,12 @@ export default function ResultsViewerPage() {
           total_wsi: result.total_wsi || 0,
           processed_wsi: result.total_wsi || 0,
           model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
+          model_task_id: selectedModel?.task_id || '',
           dataset_id: datasetId,
           error: null,
         })
         setExtValQueryTaskId(result.task_id)
       } else if (responseStatus === 'analysis_started') {
-        // Inference results exist, analysis auto-triggered — wait for SSE
         setValidationProgress({
           validation_id: result.task_id,
           status: 'completed',
@@ -465,25 +494,12 @@ export default function ResultsViewerPage() {
           total_wsi: result.total_wsi || 0,
           processed_wsi: result.total_wsi || 0,
           model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
+          model_task_id: selectedModel?.task_id || '',
           dataset_id: datasetId,
           error: null,
         })
-        // Analysis is running — SSE handler will pick it up
       } else {
-        // New task submitted — show pending status and start polling
-        setValidationProgress({
-          validation_id: result.task_id,
-          status: 'pending',
-          progress: 0,
-          total_wsi: result.total_wsi || 0,
-          processed_wsi: 0,
-          model_id: selectedModelId,
-          model_task_id: selectedModel.task_id,
-          dataset_id: datasetId,
-          error: null,
-        })
-        startPolling(result.task_id)
+        setExtValidationPendingTaskId(result.task_id)
       }
     } catch (error) {
       console.error('Failed to start external validation:', error)
@@ -550,7 +566,21 @@ export default function ResultsViewerPage() {
   }, [])
 
   const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
-  const modelTask = selectedModel ? tasks.find(t => t.task_id === selectedModel.task_id) : null
+  const rawModelTask = selectedModel ? tasks.find(t => t.task_id === selectedModel.task_id) : null
+
+  const { data: modelTaskWsiIds = [] } = useQuery({
+    queryKey: ['task-wsi-ids', selectedModel?.task_id],
+    queryFn: async () => {
+      const response = await fetch(`${API_BASE}/results/tasks/${selectedModel!.task_id}/wsi-ids`, buildAuthRequestInit())
+      if (!response.ok) return []
+      const data = await response.json()
+      return (data.wsi_ids || []) as string[]
+    },
+    enabled: pageMode === 'external-validation' && !!selectedModel,
+    staleTime: 10 * 60 * 1000,
+  })
+
+  const modelTask = rawModelTask ? { ...rawModelTask, wsi_ids: modelTaskWsiIds } : null
   const selectedDataset = validationDatasets.find(ds => ds.dataset_id === datasetId)
 
   const runAnalysis = async () => {
@@ -627,21 +657,6 @@ export default function ResultsViewerPage() {
     )
   }
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return ''
-    
-    // Fix case where both +00:00 and Z might be present from backend
-    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
-    
-    // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+')) 
-      ? `${sanitizedDate}Z` 
-      : sanitizedDate
-      
-    const date = new Date(normalizedDate)
-    return isNaN(date.getTime()) ? dateStr : date.toLocaleString()
-  }
-
   const handleDeleteAnalysis = (analysisId: string, e: React.MouseEvent) => {
     e.stopPropagation()
     setDeleteConfirmId(analysisId)
@@ -699,10 +714,30 @@ export default function ResultsViewerPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mx-auto mb-4" />
-          <p className="text-gray-600">{t('resultsPage.loadingTasks')}</p>
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6">
+        <PageHeader
+          title={t('resultsPage.title')}
+          description={t('resultsPage.description')}
+        >
+          <Button variant="outline" onClick={() => navigate('/dashboard')} className="gap-2">
+            <ArrowLeft className="w-4 h-4" />
+            {t('resultsPage.backToDashboard')}
+          </Button>
+        </PageHeader>
+        <div className="flex flex-wrap gap-2 mb-6">
+          <div className="h-10 w-40 bg-gray-100 rounded-lg animate-pulse" />
+          <div className="h-10 w-40 bg-gray-100 rounded-lg animate-pulse" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="lg:col-span-1 space-y-4">
+            <div className="h-40 bg-gray-100 rounded-xl animate-pulse" />
+            <div className="h-56 bg-gray-100 rounded-xl animate-pulse" />
+            <div className="h-32 bg-gray-100 rounded-xl animate-pulse" />
+          </div>
+          <div className="lg:col-span-3 space-y-4">
+            <div className="h-8 w-48 bg-gray-100 rounded animate-pulse" />
+            <div className="h-96 bg-gray-100 rounded-xl animate-pulse" />
+          </div>
         </div>
       </div>
     )
@@ -777,7 +812,7 @@ export default function ResultsViewerPage() {
               <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('resultsPage.selectModel')}</h3>
               <div className="relative">
                 <button
-                  onClick={() => { setIsModelDropdownOpen(!isModelDropdownOpen); setIsDataDropdownOpen(false); }}
+                  onClick={() => { setIsModelDropdownOpen(prev => { if (prev) setModelSearchQuery(''); return !prev }); setIsDataDropdownOpen(false); }}
                   className={`w-full flex items-center justify-between px-4 py-3 bg-white border rounded-xl shadow-sm transition-all duration-200 ${
                     isModelDropdownOpen ? 'border-orange-500 ring-4 ring-orange-500/10' : 'border-gray-200 hover:border-orange-300'
                   }`}
@@ -797,55 +832,77 @@ export default function ResultsViewerPage() {
 
                 {isModelDropdownOpen && (
                   <>
-                    <div className="fixed inset-0 z-10" onClick={() => setIsModelDropdownOpen(false)} />
-                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl max-h-80 overflow-y-auto">
-                      {trainedModels.map(model => {
-                        const trainTask = tasks.find(t => t.task_id === model.task_id)
-                        const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
-                        const isSegmentation = isSegmentationTask(trainTask?.task_type)
-                        const metrics = model.val_metrics as Record<string, number> | undefined
-                        const metricValue = isSurvival
-                          ? metrics?.c_index
-                          : isSegmentation
-                            ? (metrics?.miou ?? metrics?.iou ?? metrics?.dice)
-                            : (metrics?.macro_auc || metrics?.auc)
-                        const metricLabel = isSurvival
-                          ? t('resultsPage.cIndex')
-                          : isSegmentation
-                            ? (metrics?.miou != null ? 'mIoU' : 'IoU')
-                            : t('resultsPage.auc')
+                    <div className="fixed inset-0 z-10" onClick={() => { setIsModelDropdownOpen(false); setModelSearchQuery('') }} />
+                    <div className="absolute z-20 w-full mt-2 bg-white border border-gray-200 rounded-xl shadow-xl overflow-hidden">
+                      <div className="px-3 py-2 border-b border-gray-100">
+                        <input
+                          type="text"
+                          value={modelSearchQuery}
+                          onChange={e => setModelSearchQuery(e.target.value)}
+                          placeholder={t('resultsPage.searchModels', { defaultValue: 'Search models...' })}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400"
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
+                      <div className="max-h-72 overflow-y-auto">
+                        {(() => {
+                          const q = modelSearchQuery.trim().toLowerCase()
+                          const filtered = q
+                            ? trainedModels.filter(m => m.model_name.toLowerCase().includes(q))
+                            : trainedModels
+                          if (filtered.length === 0) {
+                            return (
+                              <div className="px-4 py-8 text-center text-gray-500">
+                                {trainedModels.length === 0 ? t('resultsPage.noActiveModels') : t('resultsPage.noMatchingModels', { defaultValue: 'No models match your search' })}
+                              </div>
+                            )
+                          }
+                          return filtered.map(model => {
+                            const trainTask = tasks.find(t => t.task_id === model.task_id)
+                            const isSurvival = isSurvivalTask(trainTask?.task_type) || model.aggregator === 'survival'
+                            const isSegmentation = isSegmentationTask(trainTask?.task_type)
+                            const metrics = model.val_metrics as Record<string, number> | undefined
+                            const metricValue = isSurvival
+                              ? metrics?.c_index
+                              : isSegmentation
+                                ? (metrics?.miou ?? metrics?.iou ?? metrics?.dice)
+                                : (metrics?.macro_auc || metrics?.auc)
+                            const metricLabel = isSurvival
+                              ? t('resultsPage.cIndex')
+                              : isSegmentation
+                                ? (metrics?.miou != null ? 'mIoU' : 'IoU')
+                                : t('resultsPage.auc')
 
-                        return (
-                          <button
-                            key={model.model_id}
-                            onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); }}
-                            className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
-                              selectedModelId === model.model_id ? 'bg-orange-50' : ''
-                            }`}
-                          >
-                            <div className="flex-1 min-w-0">
-                              <div className="font-medium text-gray-900 flex items-center gap-2">
-                                {model.model_name}
-                                {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
-                              </div>
-                              <div className="text-xs text-gray-500 truncate">
-                                {t('resultsPage.trainedOn', { name: trainTask?.name || t('resultsPage.unknown') })}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3 ml-2">
-                              {metricValue !== undefined && (
-                                <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
-                                  {metricLabel}: {(metricValue * 100).toFixed(1)}%
-                                </span>
-                              )}
-                              {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-orange-600 flex-shrink-0" />}
-                            </div>
-                          </button>
-                        )
-                      })}
-                      {trainedModels.length === 0 && (
-                        <div className="px-4 py-8 text-center text-gray-500">{t('resultsPage.noActiveModels')}</div>
-                      )}
+                            return (
+                              <button
+                                key={model.model_id}
+                                onClick={() => { setSelectedModelId(model.model_id); setIsModelDropdownOpen(false); setModelSearchQuery('') }}
+                                className={`w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center justify-between ${
+                                  selectedModelId === model.model_id ? 'bg-orange-50' : ''
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-medium text-gray-900 flex items-center gap-2">
+                                    {model.model_name}
+                                    {model.is_default && <Star className="w-3 h-3 text-gray-500 flex-shrink-0" />}
+                                  </div>
+                                  <div className="text-xs text-gray-500 truncate">
+                                    {t('resultsPage.trainedOn', { name: trainTask?.name || t('resultsPage.unknown') })}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-3 ml-2">
+                                  {metricValue !== undefined && (
+                                    <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
+                                      {metricLabel}: {(metricValue * 100).toFixed(1)}%
+                                    </span>
+                                  )}
+                                  {selectedModelId === model.model_id && <CheckCircle2 className="w-4 h-4 text-orange-600 flex-shrink-0" />}
+                                </div>
+                              </button>
+                            )
+                          })
+                        })()}
+                      </div>
                     </div>
                   </>
                 )}
@@ -1022,7 +1079,7 @@ export default function ResultsViewerPage() {
               {/* Submit Button */}
               <Button
                 onClick={startExternalValidation}
-                disabled={running || !selectedModelId || !datasetId || selectedMetrics.length === 0 || (validationProgress?.status === 'running') || (validationProgress?.status === 'pending')}
+                disabled={running || !selectedModelId || !datasetId || selectedMetrics.length === 0 || (validationProgress?.status === 'running') || !!extValidationPendingTaskId}
                 className="w-full bg-orange-600 hover:bg-orange-700 text-white py-4 gap-2 text-base font-bold shadow-lg shadow-orange-500/20 rounded-xl"
               >
                 {running ? (
@@ -1030,7 +1087,12 @@ export default function ResultsViewerPage() {
                     <Loader2 className="w-5 h-5 animate-spin" />
                     {t('resultsPage.submitting')}
                   </>
-                ) : validationProgress?.status === 'running' || validationProgress?.status === 'pending' ? (
+                ) : extValidationPendingTaskId ? (
+                  <>
+                    <CheckCircle className="w-5 h-5" />
+                    {t('resultsPage.extValidationSubmitted')}
+                  </>
+                ) : validationProgress?.status === 'running' ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
                     {t('resultsPage.validationInProgressBtn')}
@@ -1042,6 +1104,23 @@ export default function ResultsViewerPage() {
                   </>
                 )}
               </Button>
+
+              {extValidationPendingTaskId && (
+                <Card className="p-4 bg-blue-50 border-blue-200">
+                  <div className="flex items-center gap-3">
+                    <CheckCircle className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                    <p className="text-sm text-blue-700">
+                      {t('resultsPage.extValidationSubmittedInfo')}{' '}
+                      <button
+                        onClick={() => navigate(`/task/${extValidationPendingTaskId}`)}
+                        className="underline font-medium hover:text-blue-900"
+                      >
+                        {t('resultsPage.viewTaskDetail')}
+                      </button>
+                    </p>
+                  </div>
+                </Card>
+              )}
 
               {validationError && (
                 <Card className="p-4 bg-red-50 border-red-200">
@@ -1133,7 +1212,7 @@ export default function ResultsViewerPage() {
                             className="flex-1 text-left"
                           >
                             <p className="font-medium text-gray-900">
-                              {formatDate(analysis.timestamp)}
+                              {formatDateTime(analysis.timestamp, '')}
                             </p>
                             <p className="text-sm text-gray-500">
                               {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
@@ -1185,7 +1264,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(currentResult.summary.timestamp)}
+                          {formatDateTime(currentResult.summary.timestamp, '')}
                         </p>
                       </div>
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
@@ -1200,7 +1279,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(extAnalyses[0].timestamp)}
+                          {formatDateTime(extAnalyses[0].timestamp, '')}
                         </p>
                       </div>
                     </div>
@@ -1258,7 +1337,7 @@ export default function ResultsViewerPage() {
                           </Badge>
                         )}
                         <span className="text-xs text-gray-400 font-medium">
-                          {formatDate(selectedTask.created_at || '')}
+                          {formatDateTime(selectedTask.created_at || '', '')}
                         </span>
                       </div>
                     )}
@@ -1284,6 +1363,20 @@ export default function ResultsViewerPage() {
                             onClick={() => {
                               setSelectedTaskId(task.task_id)
                               setIsTaskDropdownOpen(false)
+                            }}
+                            onMouseEnter={() => {
+                              if (task.task_id !== selectedTaskId) {
+                                void qc.prefetchQuery({
+                                  queryKey: ['analyses', task.task_id],
+                                  queryFn: async () => {
+                                    const response = await fetch(`${API_BASE}/results/tasks/${task.task_id}/analysis`, buildAuthRequestInit())
+                                    if (!response.ok) throw new Error('Failed to load analyses')
+                                    const data = await response.json()
+                                    return (data.analyses || []) as AnalysisSummary[]
+                                  },
+                                  staleTime: 30 * 1000,
+                                })
+                              }
                             }}
                             className="w-full text-left px-2 py-1 mx-2 rounded-lg transition-all duration-200 group/item flex items-center mb-1 last:mb-0 relative overflow-hidden max-w-[calc(100%-16px)]"
                           >
@@ -1321,7 +1414,7 @@ export default function ResultsViewerPage() {
                                     <span className={`text-xs transition-colors duration-200 ${
                                       selectedTaskId === task.task_id ? 'text-indigo-100' : 'text-gray-400'
                                     }`}>
-                                      {formatDate(task.created_at)}
+                                      {formatDateTime(task.created_at, '')}
                                     </span>
                                   )}
                                   {/* AI Results Status Badge */}
@@ -1559,7 +1652,7 @@ export default function ResultsViewerPage() {
                             className="flex-1 text-left"
                           >
                             <p className="font-medium text-gray-900">
-                              {formatDate(analysis.timestamp)}
+                              {formatDateTime(analysis.timestamp, '')}
                             </p>
                             <p className="text-sm text-gray-500">
                               {t('resultsPage.samples', { count: analysis.num_samples })}{analysis.classes && ` • ${t('resultsPage.classesCount', { count: analysis.classes.length })}`}
@@ -1611,7 +1704,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.analysisComplete')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(currentResult.summary.timestamp)}
+                          {formatDateTime(currentResult.summary.timestamp, '')}
                         </p>
                       </div>
                       <CheckCircle2 className="w-6 h-6 text-green-500" />
@@ -1626,7 +1719,7 @@ export default function ResultsViewerPage() {
                       <div>
                         <h4 className="font-semibold text-gray-900">{t('resultsPage.latestAnalysis')}</h4>
                         <p className="text-sm text-gray-500">
-                          {formatDate(analyses[0].timestamp)}
+                          {formatDateTime(analyses[0].timestamp, '')}
                         </p>
                       </div>
                     </div>

@@ -10,6 +10,7 @@ Cleanup: key deleted when task completes/fails.
 
 Both AI Service and Gateway import this module (lives in backend.common).
 """
+
 import logging
 from typing import Dict, Optional
 
@@ -43,7 +44,7 @@ async def get_all_progress() -> Dict[str, int]:
         r = get_redis()
         prefix = make_key("progress", "")
         async for key in r.scan_iter(match=prefix + "*", count=100):
-            task_id = key[len(prefix):]
+            task_id = key[len(prefix) :]
             val = await r.get(key)
             if val is not None:
                 try:
@@ -63,6 +64,23 @@ async def clear_progress(task_id: str) -> None:
         pass
 
 
+async def set_task_owner(task_id: str, user_id: str) -> None:
+    try:
+        r = get_redis()
+        await r.set(make_key("task_owner", task_id), user_id, ex=PROGRESS_TTL)
+    except Exception as e:
+        logger.warning(f"Failed to write task owner to Redis (task={task_id}): {e}")
+
+
+async def get_task_owner(task_id: str) -> str | None:
+    try:
+        r = get_redis()
+        val = await r.get(make_key("task_owner", task_id))
+        return val.decode() if isinstance(val, bytes) else val
+    except Exception:
+        return None
+
+
 async def cleanup_all_progress() -> int:
     count = 0
     try:
@@ -78,4 +96,3 @@ async def cleanup_all_progress() -> int:
     if count > 0:
         logger.info(f"Cleaned up {count} stale progress key(s) from Redis")
     return count
-

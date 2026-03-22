@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ok, errResp as err } from '../../helpers/apiHelpers'
 
 vi.mock('@renderer/config', () => ({
   API_BASE: 'http://localhost:6100',
@@ -26,26 +27,6 @@ import { invalidateRecentActivityCache } from '@renderer/api/stats'
 
 const mockFetch = vi.mocked(fetch)
 
-function ok(data: unknown, status = 200): Response {
-  return {
-    ok: true,
-    status,
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response
-}
-
-function err(data: unknown, status: number): Response {
-  return {
-    ok: false,
-    status,
-    statusText: 'Error',
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response
-}
 
 const MOCK_USER = {
   id: 'user_1',

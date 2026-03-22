@@ -4,11 +4,14 @@
  * Manages dataset and file selection state for Step 2.
  */
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { fetchDatasets, fetchWSIList, DatasetSummary } from '../api'
 import { getFileType } from '../constants/fileTypes'
 import { DataLevel, TaskType } from '../constants/training'
 import { WSIItem } from '../types/training'
+import { useDraftState } from './useDraftState'
+
+const D = 'draft:wizard:'
 
 export interface UseDataSelectionProps {
   dataLevel: DataLevel
@@ -82,11 +85,12 @@ export function useDataSelection({
   dataLevel,
   taskType,
 }: UseDataSelectionProps): UseDataSelectionReturn {
-  // Dataset state
+  const isFirstMountRef = useRef(true)
+
   const [datasets, setDatasets] = useState<DatasetSummary[]>([])
   const [datasetsLoading, setDatasetsLoading] = useState(false)
-  const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null)
-  const [selectedDatasetName, setSelectedDatasetName] = useState('')
+  const [selectedDatasetId, setSelectedDatasetId] = useDraftState<string | null>(`${D}datasetId`, null)
+  const [selectedDatasetName, setSelectedDatasetName] = useDraftState(`${D}datasetName`, '')
 
   // File state
   const [items, setItems] = useState<WSIItem[]>([])
@@ -152,7 +156,6 @@ export function useDataSelection({
       setHasPreDefinedSplits(false)
       setPredefinedSplitCounts({ train: 0, val: 0, test: 0 })
     } else {
-      // Get split info immediately from dataset summary (no need to wait for WSI list)
       const selectedDataset = datasets.find(d => d.dataset_id === id)
       if (selectedDataset) {
         const hasSplits = selectedDataset.has_predefined_splits ?? false
@@ -161,7 +164,7 @@ export function useDataSelection({
         setPredefinedSplitCounts(counts)
       }
     }
-  }, [datasets])
+  }, [datasets, setSelectedDatasetId, setSelectedDatasetName])
 
   // Expand files: load and show file list for the selected dataset
   const expandFiles = useCallback(() => {
@@ -178,14 +181,18 @@ export function useDataSelection({
     setSelectedIds(new Set())
   }, [])
 
-  // Reset selection when dataLevel or taskType changes
+  // biome-ignore lint/correctness/useExhaustiveDependencies: dataLevel/taskType are change triggers; the callback only calls stable setters so biome incorrectly flags them as unused deps
   useEffect(() => {
+    if (isFirstMountRef.current) {
+      isFirstMountRef.current = false
+      return
+    }
     setSelectedDatasetId(null)
     setSelectedDatasetName('')
     setFilesExpanded(false)
     setItems([])
     setSelectedIds(new Set())
-  }, [dataLevel, taskType])
+  }, [dataLevel, taskType, setSelectedDatasetId, setSelectedDatasetName])
 
   // Filter datasets by task type
   // Segmentation tasks may be stored as 'segmentation' or 'patch_segmentation' in backend
@@ -317,9 +324,9 @@ export function useDataSelection({
     setSelectedIds((prev) => {
       const next = new Set(prev)
       if (allPageSelected) {
-        pageSlides.forEach((s) => next.delete(s.wsi_id))
+        for (const s of pageSlides) next.delete(s.wsi_id)
       } else {
-        pageSlides.forEach((s) => next.add(s.wsi_id))
+        for (const s of pageSlides) next.add(s.wsi_id)
       }
       return next
     })

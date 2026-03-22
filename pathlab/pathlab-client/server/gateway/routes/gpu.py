@@ -21,6 +21,7 @@ from backend.common.gpu_utils import (
     get_optimal_device,
     NoGPUAvailableError,
 )
+from ..task_queue import get_task_queue
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,7 @@ class GPUInfo(BaseModel):
     free_mb: float
     utilization_percent: float
     is_optimal: bool = False
+    is_healthy: bool = True
 
 
 class GPUStatusResponse(BaseModel):
@@ -45,6 +47,7 @@ class GPUStatusResponse(BaseModel):
     available: bool
     error: Optional[str] = None
     gpu_count: int = 0
+    bad_gpu_count: int = 0
     gpus: List[GPUInfo] = []
     optimal_device: Optional[str] = None
     optimal_device_index: Optional[int] = None
@@ -99,6 +102,8 @@ async def get_gpu_info(
             cuda_version=cuda_version,
         )
 
+    bad_gpus = get_task_queue().get_bad_gpus()
+
     # Collect info for all GPUs
     gpus: List[GPUInfo] = []
     for i in range(num_gpus):
@@ -115,12 +120,14 @@ async def get_gpu_info(
                 free_mb=round(free_mb, 2),
                 utilization_percent=round(utilization, 2),
                 is_optimal=(i == optimal_device_idx),
+                is_healthy=(i not in bad_gpus),
             )
         )
 
     return GPUStatusResponse(
         available=True,
         gpu_count=num_gpus,
+        bad_gpu_count=len(bad_gpus),
         gpus=gpus,
         optimal_device=optimal_device_str,
         optimal_device_index=optimal_device_idx,

@@ -118,6 +118,9 @@ pymupdf4llm
 kagglehub>=0.3.0
 GEOparse>=2.0.0
 
+# Email Notifications
+resend>=2.0.0
+
 # Logging
 loguru>=0.7.3
 coloredlogs>=15.0.1

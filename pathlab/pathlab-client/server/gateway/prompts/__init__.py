@@ -268,6 +268,8 @@ def format_user_data_context(
     datasets_list: str,
     models_count: int,
     models_list: str,
+    models_shown: int,
+    models_selection_note: str,
     training_tasks_total: int,
     training_tasks_completed: int,
     training_tasks_running: int,
@@ -282,6 +284,10 @@ def format_user_data_context(
     is_admin: bool,
     can_use_gpu_base: bool,
     temp_perms_list: str,
+    own_public_datasets_count: int,
+    own_private_datasets_count: int,
+    elevated_datasets_count: int,
+    other_public_datasets_count: int,
     current_datetime: str,
 ) -> str:
     """
@@ -293,6 +299,8 @@ def format_user_data_context(
         datasets_list: Formatted list of datasets
         models_count: Number of trained models
         models_list: Formatted list of models
+        models_shown: Number of model entries shown in context
+        models_selection_note: Human-readable selection strategy note
         training_tasks_total: Total number of training tasks
         training_tasks_completed: Number of completed training tasks
         training_tasks_running: Number of running training tasks
@@ -307,6 +315,9 @@ def format_user_data_context(
         is_admin: Whether user is admin
         can_use_gpu_base: Whether user can use GPU by default
         temp_perms_list: Formatted list of temporary permissions
+        own_public_datasets_count: Number of user's own public datasets
+        own_private_datasets_count: Number of user's own private datasets
+        elevated_datasets_count: Number of temporarily elevated-access datasets
         current_datetime: Current datetime string in the user's local timezone
 
     Returns:
@@ -315,16 +326,16 @@ def format_user_data_context(
     template = get_user_data_context_template()
 
     data_visibility = (
-        "Can see ALL users' data"
+        "All users' datasets"
         if is_admin
-        else "Can only see OWN data (plus datasets with temporary access below)"
+        else "Own datasets, other users' public datasets, and temporarily elevated datasets"
     )
     if is_admin:
         can_use_gpu = "Yes"
     elif can_use_gpu_base:
-        can_use_gpu = "Yes (GPU operations allowed by role, but GPU usage details are hidden for non-admin users)"
+        can_use_gpu = "Yes (GPU usage details not available)"
     else:
-        can_use_gpu = "No (GPU operations not allowed by role; GPU usage details are hidden for non-admin users)"
+        can_use_gpu = "No (contact administrator to request access)"
 
     return template.format(
         wsi_count=wsi_count,
@@ -332,6 +343,8 @@ def format_user_data_context(
         datasets_list=datasets_list,
         models_count=models_count,
         models_list=models_list,
+        models_shown=models_shown,
+        models_selection_note=models_selection_note,
         training_tasks_total=training_tasks_total,
         training_tasks_completed=training_tasks_completed,
         training_tasks_running=training_tasks_running,
@@ -346,5 +359,9 @@ def format_user_data_context(
         data_visibility=data_visibility,
         can_use_gpu=can_use_gpu,
         temp_perms_list=temp_perms_list,
+        own_public_datasets_count=own_public_datasets_count,
+        own_private_datasets_count=own_private_datasets_count,
+        elevated_datasets_count=elevated_datasets_count,
+        other_public_datasets_count=other_public_datasets_count,
         current_datetime=current_datetime,
     )

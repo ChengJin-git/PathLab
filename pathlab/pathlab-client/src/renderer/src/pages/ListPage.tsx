@@ -1,10 +1,11 @@
-import React, { useEffect, useState, useRef, useMemo } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import React, { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useToast } from '../contexts/ToastContext'
-import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, uploadDatasetSplits, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
-import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, AlertCircle, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List } from 'lucide-react'
+import { fetchWSIList, fetchWSIIds, fetchDatasets, fetchDatasetSummary, renameDataset, updateDatasetVisibility, updateDatasetType, updateDatasetDataLevel, updateDatasetSource, uploadWSIFile, updateWSIMetadata, getWSIStorageInfo, WSIStorageInfo, DatasetSummary, startBatchUpdateMetadataTask, startDeleteDatasetTask, invalidateWSIListCache, exportDatasetLabels, prefetchDatasets, prefetchWSIList } from '../api'
+import { ApiError } from '../api/client'
+import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, ChevronLeft, ChevronRight, ChevronDown, Search, FolderOpen, ArrowLeft, Database, LayoutGrid, Pencil, Users, FileImage, User, Download, List, ArrowUp, ArrowDown, ChevronsUpDown, GitMerge, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
@@ -13,13 +14,19 @@ import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
 import { formatBytes } from '../lib/utils'
+import { clampDatasetPage } from '../lib/datasetPagination'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
-import { organSources } from '../components/upload/types'
+import { organSources, organSourceKeyMap } from '../components/upload/types'
+
+
+type ListWSIItem = import('../api/wsi').WSISummary
 
 type DatasetTaskFilter = 'all' | 'classification' | 'survival' | 'segmentation'
 type DatasetTypeFilter = 'all' | 'wsi' | 'patch'
 type DatasetLevelFilter = 'all' | 'file' | 'patient'
+type DatasetVisibilityFilter = 'all' | 'public' | 'private'
 type DatasetViewMode = 'grid' | 'list'
 
 const UNKNOWN_SOURCE_ORGAN_FILTER = '__unknown__'
@@ -39,13 +46,28 @@ const getDatasetVisualType = (dataset: DatasetSummary): 'slides' | 'images' => {
   return avgSize > 20 * 1024 * 1024 ? 'slides' : 'images'
 }
 
-const getDatasetLevelFilterValue = (
-  aggregationLevel: DatasetSummary['aggregation_level']
-): Exclude<DatasetLevelFilter, 'all'> => aggregationLevel === 'case' ? 'patient' : 'file'
-
 const getDatasetSourceOrganFilterValue = (sourceOrgan?: string | null): string => {
   const normalized = sourceOrgan?.trim()
   return normalized || UNKNOWN_SOURCE_ORGAN_FILTER
+}
+
+const getVisiblePaginationPages = (currentPage: number, totalPages: number): number[] => {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  return Array.from(new Set([1, currentPage - 1, currentPage, currentPage + 1, totalPages]))
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((left, right) => left - right)
+}
+
+type SortColumn = 'filename' | 'label' | 'event_time' | 'event_status'
+
+const SORT_FIELD_MAP: Record<SortColumn, string> = {
+  filename: 'original_filename',
+  label: 'label',
+  event_time: 'event_time',
+  event_status: 'event_status',
 }
 
 export default function ListPage() {
@@ -55,8 +77,8 @@ export default function ListPage() {
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
   const initialDatasetId = (location.state as { dataset_id?: string } | null)?.dataset_id
   const { error: toastError, success: toastSuccess } = useToast()
-  const { addDeleteWSITask } = useBackgroundTask()
-  const { isAdmin } = useAuth()
+  const { addDeleteWSITask, tasks, subscribeStorageSSE, deletingDatasetNames, addDeletingDatasetName, removeDeletingDatasetByTaskId } = useBackgroundTask()
+  const { isAdmin, user } = useAuth()
   const qc = useQueryClient()
 
   // Dataset view state - null means showing dataset list, otherwise showing files in that dataset
@@ -69,11 +91,13 @@ export default function ListPage() {
   // Search and Filter state
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+  const [datasetSearchQuery, setDatasetSearchQuery] = useState('')
+  const [datasetDebouncedSearch, setDatasetDebouncedSearch] = useState('')
   const [datasetTaskFilter, setDatasetTaskFilter] = useState<DatasetTaskFilter>('all')
   const [datasetTypeFilter, setDatasetTypeFilter] = useState<DatasetTypeFilter>('all')
   const [datasetLevelFilter, setDatasetLevelFilter] = useState<DatasetLevelFilter>('all')
+  const [datasetVisibilityFilter, setDatasetVisibilityFilter] = useState<DatasetVisibilityFilter>('all')
   const [datasetSourceFilter, setDatasetSourceFilter] = useState<string>('all')
-  const [availableDatasetSources, setAvailableDatasetSources] = useState<string[]>([])
   const [datasetViewMode, setDatasetViewMode] = useState<DatasetViewMode>('grid')
   const [datasetCurrentPage, setDatasetCurrentPage] = useState(1)
   const [datasetPageInput, setDatasetPageInput] = useState('1')
@@ -81,10 +105,11 @@ export default function ListPage() {
 
   // File list pagination state
   const [currentPage, setCurrentPage] = useState(1)
+  const [filePageInput, setFilePageInput] = useState('1')
   const itemsPerPage = 10
 
   // Upload functionality
-  const [uploading, setUploading] = useState(false)
+  const [uploading, runUpload] = useAsyncAction()
   const [uploadingFiles, setUploadingFiles] = useState<Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>>(new Map())
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -101,7 +126,7 @@ export default function ListPage() {
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [wsiToDelete, setWsiToDelete] = useState<{ wsi_id: string; label: string; original_filename?: string } | null>(null)
   const [wsiStorageInfo, setWsiStorageInfo] = useState<WSIStorageInfo | null>(null)
-  const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
+  const [loadingStorageInfo, runStorageInfo] = useAsyncAction()
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
 
   // Batch selection for deletion
@@ -125,7 +150,7 @@ export default function ListPage() {
   const [editGender, setEditGender] = useState('')
   const [editEventTime, setEditEventTime] = useState('')
   const [editEventStatus, setEditEventStatus] = useState('')
-  const [updating, setUpdating] = useState(false)
+  const [updating, runUpdate] = useAsyncAction()
 
   // Batch edit metadata
   const [showBatchEditModal, setShowBatchEditModal] = useState(false)
@@ -135,10 +160,54 @@ export default function ListPage() {
   const [batchEditGender, setBatchEditGender] = useState('')
   const [batchEditEventTime, setBatchEditEventTime] = useState('')
   const [batchEditEventStatus, setBatchEditEventStatus] = useState('')
-  const [batchUpdating, setBatchUpdating] = useState(false)
+  const [batchUpdating, runBatchUpdate] = useAsyncAction()
 
   // Case grouping - tracks which case_ids are expanded
   const [expandedCases, setExpandedCases] = useState<Set<string>>(new Set())
+
+  const [sortColumn, setSortColumn] = useState<SortColumn | null>(null)
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
+
+  const handleSort = useCallback((col: SortColumn) => {
+    if (sortColumn === col) {
+      if (sortDirection === 'asc') {
+        setSortDirection('desc')
+      } else {
+        setSortColumn(null)
+        setSortDirection('asc')
+      }
+    } else {
+      setSortColumn(col)
+      setSortDirection('asc')
+    }
+    setCurrentPage(1)
+  }, [sortColumn, sortDirection])
+
+  const prefetchSort = useCallback((col: SortColumn) => {
+    if (!selectedDatasetId) return
+    const nextSortBy = SORT_FIELD_MAP[col]
+    let nextOrder: 'asc' | 'desc'
+    if (sortColumn === col) {
+      if (sortDirection === 'asc') {
+        nextOrder = 'desc'
+      } else {
+        return
+      }
+    } else {
+      nextOrder = 'asc'
+    }
+    void qc.prefetchQuery({
+      queryKey: ['wsi-list', selectedDatasetId, { page: 1, search: debouncedSearch, sort_by: nextSortBy, sort_order: nextOrder }],
+      queryFn: () => fetchWSIList(selectedDatasetId!, undefined, {
+        page: 1,
+        page_size: itemsPerPage,
+        search: debouncedSearch || undefined,
+        sort_by: nextSortBy,
+        sort_order: nextOrder,
+      }),
+      staleTime: 2 * 60 * 1000,
+    })
+  }, [qc, selectedDatasetId, sortColumn, sortDirection, debouncedSearch])
 
   // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
@@ -150,7 +219,9 @@ export default function ListPage() {
   const [editingDatasetSourceSelection, setEditingDatasetSourceSelection] = useState('')
   const [editingDatasetSourceCustom, setEditingDatasetSourceCustom] = useState('')
   const [editingDatasetOriginalSource, setEditingDatasetOriginalSource] = useState('')
-  const [editingDatasetSaving, setEditingDatasetSaving] = useState(false)
+  const [editingDatasetIsPublic, setEditingDatasetIsPublic] = useState(false)
+  const [editingDatasetOriginalIsPublic, setEditingDatasetOriginalIsPublic] = useState(false)
+  const [editingDatasetSaving, runDatasetSave] = useAsyncAction()
 
   const resolveSourceValue = (selection: string, custom: string) => selection === 'Other' ? custom.trim() : selection.trim()
 
@@ -171,14 +242,18 @@ export default function ListPage() {
   const [datasetToDeleteId, setDatasetToDeleteId] = useState<string | null>(null)
   const [datasetToDeleteName, setDatasetToDeleteName] = useState<string>('')
   const [datasetToDeleteFileCount, setDatasetToDeleteFileCount] = useState<number>(0)
-  const [deleting, setDeleting] = useState(false)
-  // Optimistically hide datasets that are being deleted in background
-  const [optimisticallyDeletedDatasetIds, setOptimisticallyDeletedDatasetIds] = useState<Set<string>>(new Set())
+  const [deleting, runDelete] = useAsyncAction()
+
+  const completedDeleteTaskIdsRef = useRef<Set<string>>(new Set())
+  const completedUploadTaskIdsRef = useRef<Set<string>>(new Set())
+  // Maps task_id → dataset_id for deletes that have been signaled as done by SSE but
+  // not yet confirmed absent from the server response. Overlay stays until confirmed.
+  const pendingDeleteRef = useRef<Map<string, string>>(new Map())
 
   // Export labels - stores dataset for export modal
   const [exportingDataset, setExportingDataset] = useState<DatasetSummary | null>(null)
   const [showExportModal, setShowExportModal] = useState(false)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, runExport] = useAsyncAction()
 
   const isSegmentationDataset = selectedDatasetType === 'segmentation'
   const labelColumnTitle = isSegmentationDataset ? t('listPage.annotationStatus') : t('listPage.label')
@@ -240,9 +315,11 @@ export default function ListPage() {
       {
         page: datasetCurrentPage,
         pageSize: datasetItemsPerPage,
+        search: datasetDebouncedSearch,
         taskType: datasetTaskFilter,
         dataType: datasetTypeFilter,
         level: datasetLevelFilter,
+        visibility: datasetVisibilityFilter,
         source: datasetSourceFilter,
       },
     ],
@@ -258,6 +335,8 @@ export default function ListPage() {
             ? 'case'
             : 'file',
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+        is_public: datasetVisibilityFilter === 'all' ? undefined : datasetVisibilityFilter === 'public',
+        search: datasetDebouncedSearch || undefined,
       })
 
       const totalPages = Math.max(1, Math.ceil((d.total || 0) / datasetItemsPerPage))
@@ -271,12 +350,8 @@ export default function ListPage() {
             ? ('case' as const)
             : ('file' as const),
         source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
-      }
-      if (datasetCurrentPage > 1) {
-        void prefetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
-          ...prefetchBase,
-          page: datasetCurrentPage - 1,
-        })
+        is_public: datasetVisibilityFilter === 'all' ? undefined : datasetVisibilityFilter === 'public',
+        search: datasetDebouncedSearch || undefined,
       }
       if (datasetCurrentPage < totalPages) {
         void prefetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
@@ -289,34 +364,34 @@ export default function ListPage() {
     },
     enabled: !selectedDatasetId,
     staleTime: 2 * 60 * 1000,
-    placeholderData: (prev) => prev,
+    placeholderData: keepPreviousData,
   })
 
+  const activeSortBy = sortColumn ? SORT_FIELD_MAP[sortColumn] : undefined
+  const activeSortOrder = activeSortBy ? sortDirection : undefined
+
   const wsiListQuery = useQuery({
-    queryKey: ['wsi-list', selectedDatasetId, { page: currentPage, search: debouncedSearch }],
+    queryKey: ['wsi-list', selectedDatasetId, { page: currentPage, search: debouncedSearch, sort_by: activeSortBy, sort_order: activeSortOrder }],
     queryFn: async () => {
       const d = await fetchWSIList(selectedDatasetId!, undefined, {
         page: currentPage,
         page_size: itemsPerPage,
         search: debouncedSearch || undefined,
+        sort_by: activeSortBy,
+        sort_order: activeSortOrder,
       })
 
       const totalUnits =
         (d.total_cases ?? 0) > 0 ? (d.total_cases ?? 0) : (d.total ?? d.items?.length ?? 0)
       const totalPages = Math.max(1, Math.ceil(totalUnits / itemsPerPage))
 
-      if (currentPage > 1) {
-        void prefetchWSIList(selectedDatasetId!, undefined, {
-          page: currentPage - 1,
-          page_size: itemsPerPage,
-          search: debouncedSearch || undefined,
-        })
-      }
       if (currentPage < totalPages) {
         void prefetchWSIList(selectedDatasetId!, undefined, {
           page: currentPage + 1,
           page_size: itemsPerPage,
           search: debouncedSearch || undefined,
+          sort_by: activeSortBy,
+          sort_order: activeSortOrder,
         })
       }
 
@@ -324,15 +399,27 @@ export default function ListPage() {
     },
     enabled: !!selectedDatasetId,
     staleTime: 2 * 60 * 1000,
-    placeholderData: (prev) => prev,
+  })
+
+  const sourceOptionsQuery = useQuery({
+    queryKey: ['dataset-source-options'],
+    queryFn: async () => {
+      const response = await fetchDatasets(undefined, { page_size: 0 })
+      return Array.from(new Set(
+        (response.items ?? []).map(d => getDatasetSourceOrganFilterValue(d.source_organ))
+      ))
+    },
+    enabled: !selectedDatasetId,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
   })
 
   const visibleDatasets = useMemo(() => {
-    return (datasetsQuery.data?.items ?? []).filter(d => !d.dataset_id || !optimisticallyDeletedDatasetIds.has(d.dataset_id))
-  }, [datasetsQuery.data?.items, optimisticallyDeletedDatasetIds])
+    return datasetsQuery.data?.items ?? []
+  }, [datasetsQuery.data?.items])
 
   const datasetSourceOptions = useMemo(() => {
-    const sourceValues = [...availableDatasetSources].sort((left, right) => {
+    const sourceValues = [...(sourceOptionsQuery.data ?? [])].sort((left, right) => {
       if (left === UNKNOWN_SOURCE_ORGAN_FILTER) return 1
       if (right === UNKNOWN_SOURCE_ORGAN_FILTER) return -1
       return left.localeCompare(right)
@@ -342,10 +429,14 @@ export default function ListPage() {
       { value: 'all', label: t('common.all') },
       ...sourceValues.map((value) => ({
         value,
-        label: value === UNKNOWN_SOURCE_ORGAN_FILTER ? t('listPage.filters.unknownSourceOrgan') : value,
+        label: value === UNKNOWN_SOURCE_ORGAN_FILTER
+          ? t('listPage.filters.unknownSourceOrgan')
+          : organSourceKeyMap[value]
+            ? t(`organSources.${organSourceKeyMap[value]}`)
+            : value,
       })),
     ]
-  }, [availableDatasetSources, t])
+  }, [sourceOptionsQuery.data, t])
 
   const datasetTotalPages = Math.max(1, Math.ceil((datasetsQuery.data?.total ?? 0) / datasetItemsPerPage))
   const datasetStartIndex = (datasetCurrentPage - 1) * datasetItemsPerPage
@@ -355,38 +446,93 @@ export default function ListPage() {
   const datasetPaginationEnd = Math.min(datasetEndIndex, (datasetsQuery.data?.total ?? 0))
   const hasDatasetContent = visibleDatasets.length > 0 || (datasetsQuery.data?.total ?? 0) > 0
   const showInitialDatasetLoading = datasetsQuery.isLoading && !hasDatasetContent
-  const isDatasetRefreshing = datasetsQuery.isLoading && hasDatasetContent
+  const isDatasetRefreshing = datasetsQuery.isFetching && hasDatasetContent
 
   const hasFileContent = (wsiListQuery.data?.items ?? []).length > 0 || (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) > 0 || (wsiListQuery.data?.total_cases ?? 0) > 0
   const showInitialFilesLoading = wsiListQuery.isLoading && !hasFileContent
   const isFilesRefreshing = wsiListQuery.isLoading && hasFileContent
 
   const hasActiveDatasetFilters =
-    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetSourceFilter !== 'all'
+    datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetVisibilityFilter !== 'all' || datasetSourceFilter !== 'all' || datasetSearchQuery !== '' || datasetDebouncedSearch !== ''
 
   useEffect(() => {
-    setDatasetCurrentPage(1)
-  }, [datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetSourceFilter, datasetViewMode])
-
-  useEffect(() => {
-    setDatasetCurrentPage(prev => Math.min(prev, datasetTotalPages))
-  }, [datasetTotalPages])
+    setDatasetCurrentPage((prev) => clampDatasetPage(prev, datasetTotalPages, {
+      isError: datasetsQuery.isError,
+      isFetching: datasetsQuery.isFetching,
+      hasQueryData: Boolean(datasetsQuery.data),
+    }))
+  }, [datasetTotalPages, datasetsQuery.isError, datasetsQuery.isFetching, datasetsQuery.data])
 
   useEffect(() => {
     setDatasetPageInput(String(datasetCurrentPage))
   }, [datasetCurrentPage])
 
   useEffect(() => {
-    if (datasetSourceFilter !== 'all' && !availableDatasetSources.includes(datasetSourceFilter)) {
-      setDatasetSourceFilter('all')
-    }
-  }, [availableDatasetSources, datasetSourceFilter])
+    setFilePageInput(String(currentPage))
+  }, [currentPage])
 
   useEffect(() => {
-    if (!selectedDatasetId) {
-      loadDatasetSourceOptions()
+    const sources = sourceOptionsQuery.data ?? []
+    if (datasetSourceFilter !== 'all' && sources.length > 0 && !sources.includes(datasetSourceFilter)) {
+      setDatasetSourceFilter('all')
     }
-  }, [selectedDatasetId, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter])
+  }, [sourceOptionsQuery.data, datasetSourceFilter])
+
+  useEffect(() => {
+    if (selectedDatasetId) return
+    return subscribeStorageSSE()
+  }, [selectedDatasetId, subscribeStorageSSE])
+
+  useEffect(() => {
+    const justCompletedDeleteTasks = tasks.filter(
+      t => t.type === 'delete_dataset' && t.status === 'success' && !completedDeleteTaskIdsRef.current.has(t.id)
+    )
+    if (justCompletedDeleteTasks.length === 0) return
+    for (const task of justCompletedDeleteTasks) {
+      completedDeleteTaskIdsRef.current.add(task.id)
+    }
+    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
+    void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
+    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 6000)
+    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 15000)
+  }, [tasks, qc])
+
+  useEffect(() => {
+    if (pendingDeleteRef.current.size === 0) return
+    const fetchedIds = new Set(
+      (datasetsQuery.data?.items ?? []).map((d: DatasetSummary) => d.dataset_id).filter(Boolean)
+    )
+    let hasStillPending = false
+    for (const [taskId, datasetId] of pendingDeleteRef.current) {
+      if (!fetchedIds.has(datasetId)) {
+        pendingDeleteRef.current.delete(taskId)
+        removeDeletingDatasetByTaskId(taskId)
+      } else {
+        hasStillPending = true
+      }
+    }
+    if (hasStillPending) {
+      const timer = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
+      return () => clearTimeout(timer)
+    }
+  }, [datasetsQuery.data, removeDeletingDatasetByTaskId, qc])
+
+  useEffect(() => {
+    if (selectedDatasetId) return
+    const justCompleted = tasks.filter(
+      t => (t.type === 'upload' || t.type === 'batch_import') &&
+        t.status === 'success' &&
+        !completedUploadTaskIdsRef.current.has(t.id)
+    )
+    if (justCompleted.length === 0) return
+    for (const task of justCompleted) {
+      completedUploadTaskIdsRef.current.add(task.id)
+    }
+    qc.removeQueries({ queryKey: ['page-datasets'] })
+    setDatasetCurrentPage(1)
+    void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+  }, [tasks, qc, selectedDatasetId])
 
   useEffect(() => {
     if (selectedDatasetId && !selectedDatasetSummary) {
@@ -403,35 +549,23 @@ export default function ListPage() {
     }
   }, [selectedDatasetId, selectedDatasetSummary])
 
-  // Debounce search input → debouncedSearch (300ms)
+  // Debounce search input → debouncedSearch (800ms)
   useEffect(() => {
     const timer = setTimeout(() => {
+      setCurrentPage((previousPage) => (previousPage === 1 ? previousPage : 1))
       setDebouncedSearch(searchQuery)
-    }, 300)
+    }, 800)
     return () => clearTimeout(timer)
   }, [searchQuery])
 
-  const loadDatasetSourceOptions = async () => {
-    try {
-      const response = await fetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
-        page_size: 0,
-        task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
-        aggregation_level: datasetLevelFilter === 'all'
-          ? undefined
-          : datasetLevelFilter === 'patient'
-            ? 'case'
-            : 'file',
-      })
-
-      const nextSources = Array.from(new Set(
-        (response.items || []).map((dataset) => getDatasetSourceOrganFilterValue(dataset.source_organ))
-      ))
-
-      setAvailableDatasetSources(nextSources)
-    } catch {
-      setAvailableDatasetSources([])
-    }
-  }
+  // Debounce dataset search input → datasetDebouncedSearch (800ms)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDatasetCurrentPage((previousPage) => (previousPage === 1 ? previousPage : 1))
+      setDatasetDebouncedSearch(datasetSearchQuery)
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [datasetSearchQuery])
 
   const commitDatasetPageInput = (rawValue: string) => {
     const trimmed = rawValue.trim()
@@ -451,6 +585,29 @@ export default function ListPage() {
     setDatasetPageInput(String(nextPage))
   }
 
+  const commitFilePageInput = (rawValue: string, totalPages: number) => {
+    const trimmed = rawValue.trim()
+    if (!trimmed) {
+      setFilePageInput(String(currentPage))
+      return
+    }
+
+    if (!/^\d+$/.test(trimmed)) {
+      setFilePageInput(String(currentPage))
+      return
+    }
+
+    const parsedPage = Number.parseInt(trimmed, 10)
+    if (Number.isNaN(parsedPage)) {
+      setFilePageInput(String(currentPage))
+      return
+    }
+
+    const nextPage = Math.min(Math.max(parsedPage, 1), totalPages)
+    setCurrentPage(nextPage)
+    setFilePageInput(String(nextPage))
+  }
+
   const handleBackToDatasets = () => {
     // If we came from AI Chat, go back to AI Chat
     if (fromAIChat) {
@@ -467,6 +624,8 @@ export default function ListPage() {
     setCurrentPage(1)
     setSelectedIds(new Set())
     setExpandedCases(new Set())
+    setSortColumn(null)
+    setSortDirection('asc')
   }
 
   const handleDatasetClick = (dataset: DatasetSummary) => {
@@ -478,6 +637,8 @@ export default function ListPage() {
     setSearchQuery('')
     setDebouncedSearch('')
     setExpandedCases(new Set())
+    setSortColumn(null)
+    setSortDirection('asc')
   }
 
   // Reload current dataset files (for use after edits/deletes)
@@ -491,14 +652,57 @@ export default function ListPage() {
     setDatasetTaskFilter('all')
     setDatasetTypeFilter('all')
     setDatasetLevelFilter('all')
+    setDatasetVisibilityFilter('all')
     setDatasetSourceFilter('all')
+    setDatasetSearchQuery('')
+    setDatasetCurrentPage(1)
   }
+
+  const prefetchFilteredDatasets = useCallback((overrides: {
+    taskType?: DatasetTaskFilter
+    dataType?: DatasetTypeFilter
+    level?: DatasetLevelFilter
+  }) => {
+    const taskType = overrides.taskType ?? datasetTaskFilter
+    const dataType = overrides.dataType ?? datasetTypeFilter
+    const level = overrides.level ?? datasetLevelFilter
+    const pageSize = datasetViewMode === 'grid' ? 8 : datasetListItemsPerPage
+
+    void qc.prefetchQuery({
+      queryKey: [
+        'page-datasets',
+        {
+          page: 1,
+          pageSize,
+          search: datasetDebouncedSearch,
+          taskType,
+          dataType,
+          level,
+          visibility: datasetVisibilityFilter,
+          source: datasetSourceFilter,
+        },
+      ],
+      queryFn: () =>
+        fetchDatasets(dataType === 'all' ? undefined : dataType, {
+          page: 1,
+          page_size: pageSize,
+          task_type: taskType === 'all' ? undefined : (taskType as 'classification' | 'survival' | 'segmentation'),
+          aggregation_level:
+            level === 'all' ? undefined : level === 'patient' ? 'case' : 'file',
+          source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
+          is_public: datasetVisibilityFilter === 'all' ? undefined : datasetVisibilityFilter === 'public',
+          search: datasetDebouncedSearch || undefined,
+        }),
+      staleTime: 2 * 60 * 1000,
+    })
+  }, [qc, datasetTaskFilter, datasetTypeFilter, datasetLevelFilter, datasetVisibilityFilter, datasetSourceFilter, datasetViewMode, datasetListItemsPerPage, datasetDebouncedSearch])
 
   const renderDatasetFilterGroup = (
     label: string,
     value: string,
     options: Array<{ value: string; label: string }>,
-    onChange: (value: string) => void
+    onChange: (value: string) => void,
+    onHover?: (value: string) => void
   ) => (
     <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
       <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
@@ -513,6 +717,7 @@ export default function ListPage() {
               key={option.value}
               type="button"
               onClick={() => onChange(option.value)}
+              onMouseEnter={!selected ? () => onHover?.(option.value) : undefined}
               className={`px-2.5 sm:px-3 py-1 rounded-lg text-[11px] sm:text-xs font-semibold transition-all whitespace-nowrap border ${selected
                 ? 'bg-gray-900 text-white border-gray-900 shadow-sm'
                 : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300 hover:text-gray-900 hover:bg-gray-50'
@@ -539,7 +744,7 @@ export default function ListPage() {
       metadata.set(file.name, { label: '', case_id: '', age: '', gender: '' })
     })
     setFileMetadata(metadata)
-    const dataset = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === selectedDatasetId)
+    const dataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === selectedDatasetId)
     const sourceState = toSourceSelectionState(dataset?.source_organ)
     setUploadDatasetSourceSelection(sourceState.selection)
     setUploadDatasetSourceCustom(sourceState.custom)
@@ -552,85 +757,82 @@ export default function ListPage() {
     if (selectedFiles.length === 0) return
 
     setShowFileMetadataModal(false)
-    setUploading(true)
 
-    // Initialize upload tracking for all files
     const newUploadingFiles = new Map<string, { progress: number; status: 'uploading' | 'success' | 'error'; error?: string }>()
     selectedFiles.forEach(file => {
       newUploadingFiles.set(file.name, { progress: 0, status: 'uploading' })
     })
     setUploadingFiles(newUploadingFiles)
 
-    try {
-      let successCount = 0
-      let failedCount = 0
-      const resolvedDatasetSource = resolveSourceValue(uploadDatasetSourceSelection, uploadDatasetSourceCustom)
+    await runUpload(async () => {
+      try {
+        let successCount = 0
+        let failedCount = 0
+        const resolvedDatasetSource = resolveSourceValue(uploadDatasetSourceSelection, uploadDatasetSourceCustom)
 
-      if (selectedDatasetId) {
-        const currentDataset = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === selectedDatasetId)
-        const currentSource = currentDataset?.source_organ?.trim() || ''
-        if (resolvedDatasetSource !== currentSource) {
-          await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
+        if (selectedDatasetId) {
+          const currentDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === selectedDatasetId)
+          const currentSource = currentDataset?.source_organ?.trim() || ''
+          if (resolvedDatasetSource !== currentSource) {
+            await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
+            void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+          }
         }
-      }
 
-      for (let i = 0; i < selectedFiles.length; i++) {
-        const file = selectedFiles[i]
-        const metadata = fileMetadata.get(file.name)
+        for (let i = 0; i < selectedFiles.length; i++) {
+          const file = selectedFiles[i]
+          const metadata = fileMetadata.get(file.name)
 
-        try {
-          const age = metadata?.age ? parseInt(metadata.age) : undefined
-          await uploadWSIFile(file, {
-            label: selectedDatasetType === 'classification' ? (metadata?.label || undefined) : undefined,
-            case_id: metadata?.case_id || undefined,
-            age: age,
-            gender: metadata?.gender || undefined,
-            onProgress: (progress) => {
-              setUploadingFiles(prev => {
-                const updated = new Map(prev)
-                updated.set(file.name, { progress, status: 'uploading' })
-                return updated
-              })
-            }
-          })
+          try {
+            const age = metadata?.age ? parseInt(metadata.age) : undefined
+            await uploadWSIFile(file, {
+              label: selectedDatasetType === 'classification' ? (metadata?.label || undefined) : undefined,
+              case_id: metadata?.case_id || undefined,
+              age: age,
+              gender: metadata?.gender || undefined,
+              onProgress: (progress) => {
+                setUploadingFiles(prev => {
+                  const updated = new Map(prev)
+                  updated.set(file.name, { progress, status: 'uploading' })
+                  return updated
+                })
+              }
+            })
 
-          // Mark as success
-          setUploadingFiles(prev => {
-            const updated = new Map(prev)
-            updated.set(file.name, { progress: 100, status: 'success' })
-            return updated
-          })
-          successCount++
-        } catch (err) {
-          console.error(`Failed to upload ${file.name}:`, err)
+            setUploadingFiles(prev => {
+              const updated = new Map(prev)
+              updated.set(file.name, { progress: 100, status: 'success' })
+              return updated
+            })
+            successCount++
+          } catch (err) {
+            console.error(`Failed to upload ${file.name}:`, err)
 
-          // Mark as error
-          setUploadingFiles(prev => {
-            const updated = new Map(prev)
-            updated.set(file.name, { progress: 100, status: 'error', error: String(err) })
-            return updated
-          })
-          failedCount++
+            setUploadingFiles(prev => {
+              const updated = new Map(prev)
+              updated.set(file.name, { progress: 100, status: 'error', error: String(err) })
+              return updated
+            })
+            failedCount++
+          }
         }
-      }
 
-      await reloadCurrentDataset()
+        await reloadCurrentDataset()
 
-      // Clear upload tracking after 3 seconds
-      setTimeout(() => {
-        setUploadingFiles(new Map())
-      }, 3000)
-    } catch (err) {
-      console.error(err)
-    } finally {
-      setUploading(false)
-      setSelectedFiles([])
-      setFileMetadata(new Map())
-      setUploadDatasetSourceSelection('')
-      setUploadDatasetSourceCustom('')
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
+        setTimeout(() => {
+          setUploadingFiles(new Map())
+        }, 3000)
+      } catch (err) {
+        console.error(err)
       }
+    })
+
+    setSelectedFiles([])
+    setFileMetadata(new Map())
+    setUploadDatasetSourceSelection('')
+    setUploadDatasetSourceCustom('')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
     }
   }
 
@@ -647,15 +849,9 @@ export default function ListPage() {
     setShowDeleteModal(true)
 
     // Load storage info
-    setLoadingStorageInfo(true)
-    try {
-      const info = await getWSIStorageInfo(wsi_id)
-      setWsiStorageInfo(info)
-    } catch (err) {
-      console.error('Failed to load storage info:', err)
-    } finally {
-      setLoadingStorageInfo(false)
-    }
+    await runStorageInfo(async () => {
+      setWsiStorageInfo(await getWSIStorageInfo(wsi_id))
+    })
   }
 
   const handleConfirmDelete = async () => {
@@ -695,38 +891,36 @@ export default function ListPage() {
   }
 
   const handleConfirmBatchDelete = async () => {
-    setDeleting(true)
+    await runDelete(async () => {
+      try {
+        if (datasetToDeleteId) {
+          const idToRemove = datasetToDeleteId
+          const deleteResponse = await startDeleteDatasetTask({
+            dataset_id: datasetToDeleteId,
+            mode: deleteMode
+          })
+          addDeletingDatasetName(deleteResponse.task_id, deleteResponse.dataset_name)
+          pendingDeleteRef.current.set(deleteResponse.task_id, idToRemove)
 
-    try {
-      if (datasetToDeleteId) {
-        await startDeleteDatasetTask({
-          dataset_id: datasetToDeleteId,
-          mode: deleteMode
-        })
-
-        // Optimistically hide from UI immediately
-        setOptimisticallyDeletedDatasetIds(prev => new Set(prev).add(datasetToDeleteId))
-        setShowBatchDeleteModal(false)
-        setSelectedIds(new Set())
-        toastSuccess(t('listPage.datasetDeleteStarted', { name: datasetToDeleteName }))
-        setDatasetToDeleteId(null)
-        setDatasetToDeleteName('')
-        setDatasetToDeleteFileCount(0)
-        await qc.invalidateQueries({ queryKey: ['page-datasets'] })
-      } else {
-        const idsToDelete = Array.from(selectedIds)
-        await addDeleteWSITask(idsToDelete, deleteMode)
-        setShowBatchDeleteModal(false)
-        setSelectedIds(new Set())
-        // List will be refreshed when task completes - we can trigger a delayed refresh
-        setTimeout(() => reloadCurrentDataset(), 500)
+          setShowBatchDeleteModal(false)
+          setSelectedIds(new Set())
+          toastSuccess(t('listPage.datasetDeleteStarted', { name: datasetToDeleteName }))
+          setDatasetToDeleteId(null)
+          setDatasetToDeleteName('')
+          setDatasetToDeleteFileCount(0)
+          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+        } else {
+          const idsToDelete = Array.from(selectedIds)
+          await addDeleteWSITask(idsToDelete, deleteMode)
+          setShowBatchDeleteModal(false)
+          setSelectedIds(new Set())
+          setTimeout(() => reloadCurrentDataset(), 500)
+        }
+      } catch (err) {
+        console.error('Batch delete error:', err)
+        alert(t('listPage.failedDeleteFiles', { error: String(err) }))
       }
-    } catch (err) {
-      console.error('Batch delete error:', err)
-      alert(t('listPage.failedDeleteFiles', { error: String(err) }))
-    } finally {
-      setDeleting(false)
-    }
+    })
   }
   const handleDatasetDeleteClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string, fileCount: number) => {
     e.stopPropagation()
@@ -764,29 +958,28 @@ export default function ListPage() {
   const handleConfirmEdit = async () => {
     if (!editingWSI) return
 
-    setUpdating(true)
-    try {
-      const age = editAge ? parseInt(editAge) : undefined
-      const event_time = editEventTime ? parseFloat(editEventTime) : undefined
-      const event_status = editEventStatus ? parseInt(editEventStatus) : undefined
+    await runUpdate(async () => {
+      try {
+        const age = editAge ? parseInt(editAge) : undefined
+        const event_time = editEventTime ? parseFloat(editEventTime) : undefined
+        const event_status = editEventStatus ? parseInt(editEventStatus) : undefined
 
-      await updateWSIMetadata(editingWSI.wsi_id, {
-        label: editLabel || undefined,
-        case_id: editCaseId || undefined,
-        age: age,
-        gender: editGender || undefined,
-        event_time: event_time,
-        event_status: event_status
-      })
-      setShowEditModal(false)
-      setEditingWSI(null)
-      await reloadCurrentDataset()
-    } catch (err) {
-      console.error('Failed to update WSI metadata:', err)
-      alert(t('listPage.failedUpdateMetadata', { error: String(err) }))
-    } finally {
-      setUpdating(false)
-    }
+        await updateWSIMetadata(editingWSI.wsi_id, {
+          label: editLabel || undefined,
+          case_id: editCaseId || undefined,
+          age: age,
+          gender: editGender || undefined,
+          event_time: event_time,
+          event_status: event_status
+        })
+        setShowEditModal(false)
+        setEditingWSI(null)
+        await reloadCurrentDataset()
+      } catch (err) {
+        console.error('Failed to update WSI metadata:', err)
+        alert(t('listPage.failedUpdateMetadata', { error: String(err) }))
+      }
+    })
   }
 
   const handleBatchEditClick = () => {
@@ -813,36 +1006,32 @@ export default function ListPage() {
       return
     }
 
-    setBatchUpdating(true)
-    try {
-      // Prepare the request
-      const age = batchEditAge ? parseInt(batchEditAge) : undefined
-      const event_time = batchEditEventTime ? parseFloat(batchEditEventTime) : undefined
-      const event_status = batchEditEventStatus ? parseInt(batchEditEventStatus) : undefined
+    await runBatchUpdate(async () => {
+      try {
+        const age = batchEditAge ? parseInt(batchEditAge) : undefined
+        const event_time = batchEditEventTime ? parseFloat(batchEditEventTime) : undefined
+        const event_status = batchEditEventStatus ? parseInt(batchEditEventStatus) : undefined
 
-      const request = {
-        wsi_ids: Array.from(selectedIds),
-        label: batchEditLabel || undefined,
-        case_id: batchEditCaseId || undefined,
-        age: age,
-        gender: batchEditGender || undefined,
-        event_time: event_time,
-        event_status: event_status
+        const request = {
+          wsi_ids: Array.from(selectedIds),
+          label: batchEditLabel || undefined,
+          case_id: batchEditCaseId || undefined,
+          age: age,
+          gender: batchEditGender || undefined,
+          event_time: event_time,
+          event_status: event_status
+        }
+
+        await startBatchUpdateMetadataTask(request)
+
+        setShowBatchEditModal(false)
+        setSelectedIds(new Set())
+        toastSuccess(t('listPage.batchUpdateStarted', { count: request.wsi_ids.length }))
+      } catch (err) {
+        console.error('Failed to start batch edit:', err)
+        toastError(err instanceof Error ? err.message : t('listPage.failedBatchEdit', { error: String(err) }))
       }
-
-      // Start background task
-      await startBatchUpdateMetadataTask(request)
-
-      // Close modal and clear selection immediately
-      setShowBatchEditModal(false)
-      setSelectedIds(new Set())
-      toastSuccess(t('listPage.batchUpdateStarted', { count: request.wsi_ids.length }))
-    } catch (err) {
-      console.error('Failed to start batch edit:', err)
-      toastError(err instanceof Error ? err.message : t('listPage.failedBatchEdit', { error: String(err) }))
-    } finally {
-      setBatchUpdating(false)
-    }
+    })
   }
 
   // Open edit dataset modal
@@ -860,6 +1049,9 @@ export default function ListPage() {
     setEditingDatasetSourceSelection(sourceState.selection)
     setEditingDatasetSourceCustom(sourceState.custom)
     setEditingDatasetOriginalSource(dataset.source_organ || '')
+    const isPublic = dataset.is_public || false
+    setEditingDatasetIsPublic(isPublic)
+    setEditingDatasetOriginalIsPublic(isPublic)
   }
 
   const handleEditDatasetCancel = () => {
@@ -872,7 +1064,8 @@ export default function ListPage() {
     setEditingDatasetSourceSelection('')
     setEditingDatasetSourceCustom('')
     setEditingDatasetOriginalSource('')
-    setEditingDatasetSaving(false)
+    setEditingDatasetIsPublic(false)
+    setEditingDatasetOriginalIsPublic(false)
   }
 
   const handleEditDatasetSave = async () => {
@@ -881,47 +1074,48 @@ export default function ListPage() {
       return
     }
 
-    setEditingDatasetSaving(true)
-    try {
-      // Find the original name from datasets
-      const originalDataset = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
-      const originalName = originalDataset?.dataset_name || ''
+    await runDatasetSave(async () => {
+      try {
+        const originalDataset = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
+        const originalName = originalDataset?.dataset_name || ''
 
-      // Rename if name changed
-      if (editingDatasetName !== originalName) {
-        await renameDataset(editingDatasetId, editingDatasetName)
+        if (editingDatasetName !== originalName) {
+          await renameDataset(editingDatasetId, editingDatasetName)
+        }
+
+        if (editingDatasetType !== editingDatasetOriginalType) {
+          await updateDatasetType(editingDatasetId, editingDatasetType)
+        }
+
+        if (editingDatasetDataLevel !== editingDatasetOriginalDataLevel) {
+          await updateDatasetDataLevel(editingDatasetId, editingDatasetDataLevel)
+        }
+
+        const resolvedDatasetSource = resolveSourceValue(editingDatasetSourceSelection, editingDatasetSourceCustom)
+        if (resolvedDatasetSource !== editingDatasetOriginalSource) {
+          await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
+        }
+
+        if (editingDatasetIsPublic !== editingDatasetOriginalIsPublic) {
+          await updateDatasetVisibility(editingDatasetId, editingDatasetIsPublic)
+        }
+
+        void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+        await qc.invalidateQueries({ queryKey: ['page-datasets'] })
+
+        if (selectedDatasetId === editingDatasetId) {
+          setSelectedDatasetName(editingDatasetName)
+          setSelectedDatasetType(editingDatasetType)
+        }
+
+        toastSuccess(t('listPage.datasetUpdatedSuccess'))
+      } catch (err) {
+        console.error('Failed to update dataset:', err)
+        toastError(t('listPage.failedUpdateDataset', { error: String(err) }))
+      } finally {
+        handleEditDatasetCancel()
       }
-
-      // Update type if changed
-      if (editingDatasetType !== editingDatasetOriginalType) {
-        await updateDatasetType(editingDatasetId, editingDatasetType)
-      }
-
-      // Update data level if changed
-      if (editingDatasetDataLevel !== editingDatasetOriginalDataLevel) {
-        await updateDatasetDataLevel(editingDatasetId, editingDatasetDataLevel)
-      }
-
-      const resolvedDatasetSource = resolveSourceValue(editingDatasetSourceSelection, editingDatasetSourceCustom)
-      if (resolvedDatasetSource !== editingDatasetOriginalSource) {
-        await updateDatasetSource(editingDatasetId, resolvedDatasetSource)
-      }
-
-      await qc.invalidateQueries({ queryKey: ['page-datasets'] })
-
-      // If this dataset was selected, update the displayed info
-      if (selectedDatasetId === editingDatasetId) {
-        setSelectedDatasetName(editingDatasetName)
-        setSelectedDatasetType(editingDatasetType)
-      }
-
-      toastSuccess(t('listPage.datasetUpdatedSuccess'))
-    } catch (err) {
-      console.error('Failed to update dataset:', err)
-      toastError(t('listPage.failedUpdateDataset', { error: String(err) }))
-    } finally {
-      handleEditDatasetCancel()
-    }
+    })
   }
 
   // Export labels handlers
@@ -931,19 +1125,18 @@ export default function ListPage() {
     // Check if dataset has predefined splits
     if (dataset.has_predefined_splits) {
       // Direct export without modal
-      setExporting(true)
-      try {
-        const result = await exportDatasetLabels(dataset.dataset_id!)
-        toastSuccess(t('listPage.exportSuccess'))
-        if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
-          toastSuccess(t('listPage.exportFallbackNonStratified'))
+      await runExport(async () => {
+        try {
+          const result = await exportDatasetLabels(dataset.dataset_id!)
+          toastSuccess(t('listPage.exportSuccess'))
+          if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
+            toastSuccess(t('listPage.exportFallbackNonStratified'))
+          }
+        } catch (error) {
+          console.error('Failed to export labels:', error)
+          toastError(t('listPage.exportFailed'))
         }
-      } catch (error) {
-        console.error('Failed to export labels:', error)
-        toastError(t('listPage.exportFailed'))
-      } finally {
-        setExporting(false)
-      }
+      })
     } else {
       // Show modal for split configuration
       setExportingDataset(dataset)
@@ -954,33 +1147,25 @@ export default function ListPage() {
   const handleExportConfirm = async (options: ExportLabelsOptions) => {
     if (!exportingDataset) return
 
-    setExporting(true)
-    try {
-      const result = await exportDatasetLabels(exportingDataset.dataset_id!, options)
-      toastSuccess(t('listPage.exportSuccess'))
-      if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
-        toastSuccess(t('listPage.exportFallbackNonStratified'))
+    await runExport(async () => {
+      try {
+        const result = await exportDatasetLabels(exportingDataset.dataset_id!, options)
+        toastSuccess(t('listPage.exportSuccess'))
+        if (result.headers.get('X-PathLab-Export-Split-Fallback') === 'non_stratified') {
+          toastSuccess(t('listPage.exportFallbackNonStratified'))
+        }
+      } catch (error) {
+        console.error('Failed to export labels:', error)
+        toastError(t('listPage.exportFailed'))
       }
-    } catch (error) {
-      console.error('Failed to export labels:', error)
-      toastError(t('listPage.exportFailed'))
-    } finally {
-      setExporting(false)
-      setShowExportModal(false)
-      setExportingDataset(null)
-    }
+    })
+    setShowExportModal(false)
+    setExportingDataset(null)
   }
 
   const handleExportCancel = () => {
     setShowExportModal(false)
     setExportingDataset(null)
-  }
-
-  // Legacy inline rename functions (kept for compatibility)
-  const handleRenameClick = (e: React.MouseEvent, datasetId: string | null, datasetName: string) => {
-    e.stopPropagation()
-    setRenamingDatasetId(datasetId)
-    setRenameDatasetNewName(datasetName)
   }
 
   const handleRenameCancel = () => {
@@ -996,6 +1181,7 @@ export default function ListPage() {
 
     try {
       await renameDataset(renamingDatasetId, renameDatasetNewName)
+      void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
       await qc.invalidateQueries({ queryKey: ['page-datasets'] })
 
       // If the renamed dataset was selected, update the displayed name
@@ -1010,12 +1196,14 @@ export default function ListPage() {
     }
   }
 
+  const sortedItems = wsiListQuery.data?.items ?? []
+
   // Group items by case_id (for display within current page)
   const groupedByCaseId = React.useMemo(() => {
-    const groups = new Map<string, { slides: any[]; isNoCase: boolean; order: number }>()
+    const groups = new Map<string, { slides: ListWSIItem[]; isNoCase: boolean; order: number }>()
     const NO_CASE = '__no_case__'
 
-    ;(wsiListQuery.data?.items ?? []).forEach((item, index) => {
+    sortedItems.forEach((item: ListWSIItem, index: number) => {
       const normalizedCaseId = item.case_id?.trim()
       const isNoCase = !normalizedCaseId
       const groupKey = isNoCase ? `${NO_CASE}:${item.wsi_id}` : normalizedCaseId
@@ -1030,21 +1218,16 @@ export default function ListPage() {
     return Array.from(groups.entries())
       .sort(([, left], [, right]) => {
         if (left.isNoCase !== right.isNoCase) return left.isNoCase ? 1 : -1
-        if (left.isNoCase) return left.order - right.order
-
-        const leftCaseId = left.slides[0]?.case_id || ''
-        const rightCaseId = right.slides[0]?.case_id || ''
-        return leftCaseId.localeCompare(rightCaseId)
+        return left.order - right.order
       })
       .map(([groupKey, group]) => [groupKey, group.slides] as const)
-  }, [wsiListQuery.data?.items])
+  }, [sortedItems])
 
-  // Check if this is a patch dataset (majority of files are patches)
   const isPatchDataset = React.useMemo(() => {
-    if ((wsiListQuery.data?.items ?? []).length === 0) return false
-    const patchCount = (wsiListQuery.data?.items ?? []).filter(item => getFileType(item.file_extension, item.file_size, item.data_type) === 'Patch').length
-    return patchCount > (wsiListQuery.data?.items ?? []).length / 2
-  }, [wsiListQuery.data?.items])
+    if (sortedItems.length === 0) return false
+    const patchCount = sortedItems.filter((item: ListWSIItem) => getFileType(item.file_extension, item.file_size, item.data_type) === 'Patch').length
+    return patchCount > sortedItems.length / 2
+  }, [sortedItems])
 
   const useCaseGroupedView = Boolean(selectedDatasetId) && (
     selectedDatasetSummary?.data_type === 'wsi' || (!selectedDatasetSummary && !isPatchDataset)
@@ -1056,14 +1239,14 @@ export default function ListPage() {
   }, [selectedDatasetSummary, isPatchDataset])
 
   // Server-side pagination: dataset view is case-paginated for WSI datasets
-  const totalPages = useCaseGroupedView
+  const totalPages = Math.max(1, useCaseGroupedView
     ? Math.ceil((wsiListQuery.data?.total_cases ?? 0) / itemsPerPage)
-    : Math.ceil((wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) / itemsPerPage)
+    : Math.ceil((wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) / itemsPerPage))
   const startIndex = (currentPage - 1) * itemsPerPage
 
   // All current-page items are already the "paginated" items (server-side pagination)
   const paginatedCases = useCaseGroupedView ? groupedByCaseId : null
-  const paginatedItems = useCaseGroupedView ? [] : (wsiListQuery.data?.items ?? [])
+  const paginatedItems = useCaseGroupedView ? [] : sortedItems
 
   // Batch selection logic — operates on current page items
   const pageSlides = useMemo(() => {
@@ -1073,10 +1256,16 @@ export default function ListPage() {
     return paginatedItems || []
   }, [useCaseGroupedView, paginatedCases, paginatedItems])
 
-  const allPageSelected = pageSlides.length > 0 && pageSlides.every(s => selectedIds.has(s.wsi_id))
+  const allPageSelected = pageSlides.length > 0 && pageSlides.every((s: ListWSIItem) => selectedIds.has(s.wsi_id))
 
   // Check if all items across all pages are selected (based on totalCount)
   const allFilteredSelected = selectedIds.size > 0 && selectedIds.size === (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0)
+
+  const visibleFilePages = useMemo(() => getVisiblePaginationPages(currentPage, totalPages), [currentPage, totalPages])
+
+  useEffect(() => {
+    setCurrentPage((previousPage) => Math.min(previousPage, totalPages))
+  }, [totalPages])
 
   const handleSelectPage = () => {
     if (allFilteredSelected) {
@@ -1086,9 +1275,9 @@ export default function ListPage() {
 
     const newSelected = new Set(selectedIds)
     if (allPageSelected) {
-      pageSlides.forEach(s => newSelected.delete(s.wsi_id))
+      pageSlides.forEach((s: ListWSIItem) => { newSelected.delete(s.wsi_id) })
     } else {
-      pageSlides.forEach(s => newSelected.add(s.wsi_id))
+      pageSlides.forEach((s: ListWSIItem) => { newSelected.add(s.wsi_id) })
     }
     setSelectedIds(newSelected)
   }
@@ -1134,7 +1323,9 @@ export default function ListPage() {
                   (wsiListQuery.error ? String(wsiListQuery.error) : undefined) && !hasFileContent ? t('listPage.errorLoadingFiles') :
                     <span className="flex items-center gap-2">
                       <FolderOpen className="w-4 h-4" />
-                      {t('listPage.filesInDataset', { count: (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) })}
+                      {debouncedSearch
+                        ? t('listPage.searchResultsInDataset', { count: (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) })
+                        : t('listPage.filesInDataset', { count: (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) })}
                       {isFilesRefreshing && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
                     </span>
               ) : (
@@ -1238,23 +1429,20 @@ export default function ListPage() {
       {/* === DATASETS VIEW (when no dataset is selected) === */}
       {!selectedDatasetId && (
         <>
-          {/* Datasets Loading State */}
-          {showInitialDatasetLoading && (
-            <div className="flex items-center justify-center py-12">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
-            </div>
-          )}
-
           {/* Datasets Error State */}
           {(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && !showInitialDatasetLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
               <p className="font-medium">{t('listPage.errorLoadingDatasets')}</p>
-              <p className="text-sm">{datasetsQuery.error ? String(datasetsQuery.error) : undefined}</p>
+              <p className="text-sm">
+                {datasetsQuery.error instanceof ApiError && (datasetsQuery.error.isServerError() || datasetsQuery.error.isNetworkError())
+                  ? t('listPage.errorServiceUnavailable')
+                  : String(datasetsQuery.error)}
+              </p>
             </div>
           )}
 
           {/* Datasets Empty State */}
-          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && (datasetsQuery.data?.total ?? 0) === 0 && (
+          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && (datasetsQuery.data?.total ?? 0) === 0 && !hasActiveDatasetFilters && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Database className="w-8 h-8 text-gray-400" />
@@ -1266,66 +1454,107 @@ export default function ListPage() {
             </div>
           )}
 
-          {/* Dataset Filters */}
-          {(datasetsQuery.data?.total ?? 0) > 0 && (
-            <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
-              <div className="px-4 py-3 sm:px-5 sm:py-3.5">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 xl:flex-1">
-                    {renderDatasetFilterGroup(
-                      t('listPage.filters.groups.taskType'),
-                      datasetTaskFilter,
-                      [
-                        { value: 'all', label: t('common.all') },
-                        { value: 'classification', label: t('listPage.classification') },
-                        { value: 'survival', label: t('listPage.survival') },
-                        { value: 'segmentation', label: t('listPage.segmentation') },
-                      ],
-                      (nextValue) => setDatasetTaskFilter(nextValue as DatasetTaskFilter)
-                    )}
+          {/* Dataset Filters & Search */}
+          {((datasetsQuery.data?.total ?? 0) > 0 || hasActiveDatasetFilters) && (
+            <div className="flex flex-col gap-4">
+              {/* Search Box */}
+              <div className="relative w-full max-w-md transition-all duration-300 focus-within:ring-1 focus-within:ring-primary-500 focus-within:border-primary-500 rounded-lg">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Search className="h-4 sm:h-5 w-4 sm:w-5 text-gray-400" />
+                </div>
+                <input
+                  type="text"
+                  className="block w-full h-10 pl-10 pr-10 py-2 border border-gray-200 hover:border-gray-300 rounded-lg bg-white focus:bg-white placeholder-gray-400 focus:outline-none focus:ring-1 text-sm transition-colors shadow-sm"
+                  placeholder={t('listPage.searchDatasetPlaceholder')}
+                  value={datasetSearchQuery}
+                  onChange={(e) => setDatasetSearchQuery(e.target.value)}
+                />
+                {datasetSearchQuery && (
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center"
+                    onClick={() => setDatasetSearchQuery('')}
+                  >
+                    <X className="h-4 w-4 text-gray-400 hover:text-gray-600" />
+                  </button>
+                )}
+              </div>
 
-                    {renderDatasetFilterGroup(
-                      t('listPage.filters.groups.dataType'),
-                      datasetTypeFilter,
-                      [
-                        { value: 'all', label: t('common.all') },
-                        { value: 'wsi', label: t('listPage.wholeSlideImaging') },
-                        { value: 'patch', label: t('listPage.patchCollection') },
-                      ],
-                      (nextValue) => setDatasetTypeFilter(nextValue as DatasetTypeFilter)
-                    )}
+              {/* Filters Card */}
+              <Card className="relative z-20 border-gray-100 shadow-sm bg-white/80 backdrop-blur-sm">
+                <div className="px-4 py-3 sm:px-5 sm:py-3.5">
+                  <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                    {/* Left Side: Filters */}
+                    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-3 xl:flex-1">
+                      {/* Filters */}
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.taskType'),
+                        datasetTaskFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'classification', label: t('listPage.classification') },
+                          { value: 'survival', label: t('listPage.survival') },
+                          { value: 'segmentation', label: t('listPage.segmentation') },
+                        ],
+                        (nextValue) => { setDatasetTaskFilter(nextValue as DatasetTaskFilter); setDatasetCurrentPage(1) },
+                        (v) => prefetchFilteredDatasets({ taskType: v as DatasetTaskFilter })
+                      )}
 
-                    {renderDatasetFilterGroup(
-                      t('listPage.filters.groups.dataLevel'),
-                      datasetLevelFilter,
-                      [
-                        { value: 'all', label: t('common.all') },
-                        { value: 'file', label: t('listPage.fileLevel') },
-                        { value: 'patient', label: t('listPage.patientLevel') },
-                      ],
-                      (nextValue) => setDatasetLevelFilter(nextValue as DatasetLevelFilter)
-                    )}
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.dataType'),
+                        datasetTypeFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'wsi', label: t('listPage.wholeSlideImaging') },
+                          { value: 'patch', label: t('listPage.patchCollection') },
+                        ],
+                        (nextValue) => { setDatasetTypeFilter(nextValue as DatasetTypeFilter); setDatasetCurrentPage(1) },
+                        (v) => prefetchFilteredDatasets({ dataType: v as DatasetTypeFilter })
+                      )}
 
-                    <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
-                      <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
-                        {t('listPage.filters.groups.sourceOrgan')}
-                      </p>
-                      <Select
-                        value={datasetSourceFilter}
-                        onChange={setDatasetSourceFilter}
-                        options={datasetSourceOptions}
-                        placeholder={t('listPage.filters.selectSourceOrgan')}
-                        className="w-full min-w-[160px] sm:min-w-[180px] lg:w-[180px] xl:w-[200px]"
-                        triggerClassName="h-8 px-2.5 text-xs sm:text-sm"
-                      />
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.dataLevel'),
+                        datasetLevelFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'file', label: t('listPage.fileLevel') },
+                          { value: 'patient', label: t('listPage.patientLevel') },
+                        ],
+                        (nextValue) => { setDatasetLevelFilter(nextValue as DatasetLevelFilter); setDatasetCurrentPage(1) },
+                        (v) => prefetchFilteredDatasets({ level: v as DatasetLevelFilter })
+                      )}
+
+                      {renderDatasetFilterGroup(
+                        t('listPage.filters.groups.visibility'),
+                        datasetVisibilityFilter,
+                        [
+                          { value: 'all', label: t('common.all') },
+                          { value: 'public', label: t('listPage.public') },
+                          { value: 'private', label: t('listPage.private') },
+                        ],
+                        (nextValue) => { setDatasetVisibilityFilter(nextValue as DatasetVisibilityFilter); setDatasetCurrentPage(1) }
+                      )}
+
+                      <div className="flex min-w-0 flex-col gap-1.5 sm:gap-2 lg:flex-row lg:items-center lg:gap-2.5">
+                        <p className="text-[10px] sm:text-[11px] font-semibold uppercase tracking-[0.16em] leading-none text-gray-400 whitespace-nowrap">
+                          {t('listPage.filters.groups.sourceOrgan')}
+                        </p>
+                        <Select
+                          value={datasetSourceFilter}
+                          onChange={(v) => { setDatasetSourceFilter(v); setDatasetCurrentPage(1) }}
+                          options={datasetSourceOptions}
+                          placeholder={t('listPage.filters.selectSourceOrgan')}
+                          className="w-full min-w-[160px] sm:min-w-[180px] lg:w-[180px] xl:w-[200px]"
+                          triggerClassName="h-8 px-2.5 text-xs sm:text-sm"
+                        />
+                      </div>
                     </div>
-                  </div>
 
                   <div className="flex shrink-0 items-center gap-2 sm:gap-3 self-start xl:ml-4 xl:self-center">
                     <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 shadow-inner">
                       <button
                         type="button"
-                        onClick={() => setDatasetViewMode('grid')}
+                        onClick={() => { setDatasetViewMode('grid'); setDatasetCurrentPage(1) }}
                         aria-label={t('listPage.view.iconView')}
                         title={t('listPage.view.iconView')}
                         className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'grid'
@@ -1337,7 +1566,7 @@ export default function ListPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setDatasetViewMode('list')}
+                        onClick={() => { setDatasetViewMode('list'); setDatasetCurrentPage(1) }}
                         aria-label={t('listPage.view.listView')}
                         title={t('listPage.view.listView')}
                         className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'list'
@@ -1369,10 +1598,14 @@ export default function ListPage() {
                 </div>
               </div>
             </Card>
+            </div>
           )}
-
+          
           {/* Filtered Empty State */}
-          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && (datasetsQuery.data?.total ?? 0) > 0 && visibleDatasets.length === 0 && (
+          {!datasetsQuery.isLoading && !(datasetsQuery.error ? String(datasetsQuery.error) : undefined) && hasActiveDatasetFilters && (
+            ((datasetsQuery.data?.total ?? 0) === 0) ||
+            ((datasetsQuery.data?.total ?? 0) > 0 && visibleDatasets.length === 0)
+          ) && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Search className="w-8 h-8 text-gray-400" />
@@ -1387,23 +1620,42 @@ export default function ListPage() {
             </div>
           )}
 
+          {showInitialDatasetLoading && (
+            <div className="flex items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600"></div>
+            </div>
+          )}
+
           {/* Datasets Grid */}
           {visibleDatasets.length > 0 && datasetViewMode === 'grid' && (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6 p-1">
-              {paginatedDatasets.map((dataset) => {
+              {paginatedDatasets.map((dataset: DatasetSummary) => {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
-                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                const rawSource = dataset.source_organ?.trim()
+                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER || !rawSource
                   ? t('listPage.filters.unknownSourceOrgan')
-                  : dataset.source_organ?.trim() || t('listPage.filters.unknownSourceOrgan')
+                  : organSourceKeyMap[rawSource]
+                    ? t(`organSources.${organSourceKeyMap[rawSource]}`)
+                    : rawSource
+
+                const isDeleting = deletingDatasetNames.has(dataset.dataset_name)
 
                 return (
                   <Card
                     key={dataset.dataset_id ?? dataset.dataset_name}
-                    className="group relative overflow-hidden transition-all duration-300 hover:shadow-xl hover:-translate-y-1 border-slate-200 bg-white"
-                    onClick={() => handleDatasetClick(dataset)}
+                    className={`group relative overflow-hidden transition-all duration-300 border-slate-200 bg-white ${isDeleting ? 'pointer-events-none' : 'hover:shadow-xl hover:-translate-y-1'}`}
+                    onClick={isDeleting ? undefined : () => handleDatasetClick(dataset)}
                   >
+                    {isDeleting && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[2px] rounded-xl">
+                        <div className="flex flex-col items-center gap-2">
+                          <Loader2 className="w-6 h-6 animate-spin text-red-400" />
+                          <span className="text-xs font-medium text-red-500">{t('listPage.datasetDeleting')}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
                       }`} />
                     <div className="p-4 sm:p-6">
@@ -1423,7 +1675,7 @@ export default function ListPage() {
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between mb-0.5 sm:mb-1 min-w-0 relative z-10" onClick={e => renamingDatasetId === dataset.dataset_id && e.stopPropagation()}>
+                      <div className="flex items-center justify-between mb-0.5 sm:mb-1 min-w-0 relative z-10">
                         {renamingDatasetId === dataset.dataset_id ? (
                           <div className="flex items-center gap-2 w-full animate-in fade-in duration-200">
                             <input
@@ -1431,7 +1683,7 @@ export default function ListPage() {
                               value={renameDatasetNewName}
                               onChange={(e) => setRenameDatasetNewName(e.target.value)}
                               className="flex-1 px-1 sm:px-2 py-0.5 text-base sm:text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
-                              autoFocus
+                              ref={el => { if (el) el.focus() }}
                               onClick={e => e.stopPropagation()}
                               onKeyDown={(e) => {
                                 if (e.key === 'Enter') handleRenameConfirm()
@@ -1466,42 +1718,40 @@ export default function ListPage() {
                             <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
                               {dataset.dataset_name}
                             </h3>
-                            {dataset.can_delete && (
-                              <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
-                                {isAdmin && (
+                              {dataset.can_delete && (
+                               <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
+                                 <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
+                                     onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                     title={t('listPage.exportLabels')}
+                                     disabled={exporting}
+                                   >
+                                     {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                     ) : (
+                                       <Download className="w-3.5 h-3.5" />
+                                     )}
+                                   </Button>
                                   <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
-                                    onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                    title={t('listPage.exportLabels')}
-                                    disabled={exporting}
-                                  >
-                                    {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                    ) : (
-                                      <Download className="w-3.5 h-3.5" />
-                                    )}
-                                  </Button>
-                                )}
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                  onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                   variant="ghost"
+                                   size="icon"
+                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
+                                   onClick={(e) => handleEditDatasetClick(e, dataset)}
                   title={t('listPage.editDataset')}
                                 >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                  title={t('listPage.deleteDataset')}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </Button>
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
+                                   variant="ghost"
+                                   size="icon"
+                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
+                                   onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                   title={t('listPage.deleteDataset')}
+                                 >
+                                   <Trash2 className="w-3.5 h-3.5" />
+                                 </Button>
                               </div>
                             )}
                           </div>
@@ -1534,16 +1784,36 @@ export default function ListPage() {
                             )}
                           </span>
                         )}
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                          sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
-                            ? 'bg-slate-50 text-slate-600 border border-slate-200/70'
-                            : 'bg-cyan-50 text-cyan-700 border border-cyan-100/70'
-                        }`}>
-                          {sourceOrganLabel}
-                        </span>
-                      </div>
+                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
+                           sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                             ? 'bg-slate-50 text-slate-600 border border-slate-200/70'
+                             : 'bg-cyan-50 text-cyan-700 border border-cyan-100/70'
+                         }`}>
+                           {sourceOrganLabel}
+                         </span>
+                         {dataset.is_public ? (
+                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100/70">
+                             <Globe className="w-2.5 h-2.5" />{t('listComponents.editModals.public')}
+                           </span>
+                         ) : (
+                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200/70">
+                             <Lock className="w-2.5 h-2.5" />{t('listComponents.editModals.private')}
+                           </span>
+                         )}
 
-                      <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
+                       </div>
+
+                       {dataset.parent_dataset_name && (
+                         <div className="flex items-center gap-1.5 mb-3 sm:mb-4 text-[10px] sm:text-xs text-slate-500">
+                           <GitMerge className="w-3 h-3 text-slate-400 flex-shrink-0" />
+                           <span className="truncate" title={dataset.parent_dataset_name}>
+                             <span className="text-slate-400">{t('listPage.derivedFrom')}</span>{' '}
+                             <span className="font-medium text-slate-600">{dataset.parent_dataset_name}</span>
+                           </span>
+                         </div>
+                       )}
+
+                       <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
                         <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
                           <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
                           {dataset.file_count}<span className="hidden sm:inline ml-1">{itemType}</span>
@@ -1565,38 +1835,54 @@ export default function ListPage() {
               })}
 
               {/* Add New Dataset Card */}
-              <button
-                onClick={() => navigate('/register')}
-                className="flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-300 group min-h-[220px]"
-              >
-                <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-4 group-hover:bg-white group-hover:shadow-md transition-all">
-                  <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
-                </div>
-                <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">{t('listPage.newDataset')}</h3>
-                <p className="text-sm text-slate-400 text-center mt-2 group-hover:text-slate-500">
-                  {t('listPage.newDatasetDescription')}
-                </p>
-              </button>
+              {datasetCurrentPage === datasetTotalPages && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/register')}
+                  className="flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-300 group min-h-[220px]"
+                >
+                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center mb-4 group-hover:bg-white group-hover:shadow-md transition-all">
+                    <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
+                  </div>
+                  <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">{t('listPage.newDataset')}</h3>
+                  <p className="text-sm text-slate-400 text-center mt-2 group-hover:text-slate-500">
+                    {t('listPage.newDatasetDescription')}
+                  </p>
+                </button>
+              )}
             </div>
           )}
 
           {/* Datasets List */}
           {visibleDatasets.length > 0 && datasetViewMode === 'list' && (
             <div className="space-y-3 p-1">
-              {paginatedDatasets.map((dataset) => {
+              {paginatedDatasets.map((dataset: DatasetSummary) => {
                 const itemType = getDatasetVisualType(dataset)
                 const normalizedTaskType = getNormalizedDatasetTaskType(dataset.task_type)
                 const sourceOrganValue = getDatasetSourceOrganFilterValue(dataset.source_organ)
-                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
+                const rawSource = dataset.source_organ?.trim()
+                const sourceOrganLabel = sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER || !rawSource
                   ? t('listPage.filters.unknownSourceOrgan')
-                  : dataset.source_organ?.trim() || t('listPage.filters.unknownSourceOrgan')
+                  : organSourceKeyMap[rawSource]
+                    ? t(`organSources.${organSourceKeyMap[rawSource]}`)
+                    : rawSource
+
+                const isDeleting = deletingDatasetNames.has(dataset.dataset_name)
 
                 return (
                   <Card
                     key={dataset.dataset_id ?? dataset.dataset_name}
-                    className="group border-slate-200 bg-white transition-all duration-200 hover:shadow-md"
-                    onClick={() => handleDatasetClick(dataset)}
+                    className={`group border-slate-200 bg-white transition-all duration-200 relative overflow-hidden ${isDeleting ? 'pointer-events-none' : 'hover:shadow-md'}`}
+                    onClick={isDeleting ? undefined : () => handleDatasetClick(dataset)}
                   >
+                    {isDeleting && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[2px] rounded-xl">
+                        <div className="flex items-center gap-2">
+                          <Loader2 className="w-5 h-5 animate-spin text-red-400" />
+                          <span className="text-sm font-medium text-red-500">{t('listPage.datasetDeleting')}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="p-4 sm:p-5 flex flex-col gap-4">
                       <div className="flex items-start gap-4 min-w-0">
                         <div className={`p-3 rounded-2xl ${itemType === 'slides' ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
@@ -1646,49 +1932,64 @@ export default function ListPage() {
                                 }`}>
                                   {sourceOrganLabel}
                                 </span>
+                                {dataset.is_public ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100/70">
+                                    <Globe className="w-2.5 h-2.5" />{t('listComponents.editModals.public')}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200/70">
+                                    <Lock className="w-2.5 h-2.5" />{t('listComponents.editModals.private')}
+                                  </span>
+                                )}
+                                {dataset.parent_dataset_name && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-medium bg-slate-50 text-slate-600 border border-slate-200/70">
+                                    <GitMerge className="w-2.5 h-2.5 text-slate-400 flex-shrink-0" />
+                                    <span className="text-slate-400">{t('listPage.derivedFrom')}</span>
+                                    {' '}
+                                    <span className="font-semibold text-slate-700 truncate max-w-[120px]" title={dataset.parent_dataset_name}>{dataset.parent_dataset_name}</span>
+                                  </span>
+                                )}
                               </div>
                             </div>
 
                             <div className="hidden xl:flex items-center gap-1">
                               {dataset.can_delete && (
-                                <>
-                                  {isAdmin && (
+                                 <>
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                     onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                     title={t('listPage.exportLabels')}
+                                     disabled={exporting}
+                                   >
+                                     {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                       <Loader2 className="w-4 h-4 animate-spin" />
+                                     ) : (
+                                       <Download className="w-4 h-4" />
+                                     )}
+                                   </Button>
+                                   <Button
+                                     variant="ghost"
+                                     size="icon"
+                                     className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                     onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                     title={t('listPage.editDataset')}
+                                    >
+                                      <Pencil className="w-4 h-4" />
+                                    </Button>
                                     <Button
                                       variant="ghost"
                                       size="icon"
-                                      className="h-8 w-8 text-slate-400 hover:text-green-600"
-                                      onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                      title={t('listPage.exportLabels')}
-                                      disabled={exporting}
+                                      className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                      onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                      title={t('listPage.deleteDataset')}
                                     >
-                                      {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                        <Loader2 className="w-4 h-4 animate-spin" />
-                                      ) : (
-                                        <Download className="w-4 h-4" />
-                                      )}
+                                      <Trash2 className="w-4 h-4" />
                                     </Button>
-                                  )}
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                    onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                    title={t('listPage.editDataset')}
-                                  >
-                                    <Pencil className="w-4 h-4" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                    onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                    title={t('listPage.deleteDataset')}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </Button>
-                                </>
-                              )}
-                              <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                                  </>
+                                )}
+                               <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
                             </div>
                           </div>
 
@@ -1713,69 +2014,70 @@ export default function ListPage() {
 
                       <div className="flex xl:hidden items-center justify-between pt-3 border-t border-slate-100">
                         <div className="flex items-center gap-1">
-                          {dataset.can_delete && (
-                            <>
-                              {isAdmin && (
+                           {dataset.can_delete && (
+                             <>
+                               <Button
+                                 variant="ghost"
+                                 size="icon"
+                                 className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                 onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                 title={t('listPage.exportLabels')}
+                                 disabled={exporting}
+                               >
+                                 {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                   <Loader2 className="w-4 h-4 animate-spin" />
+                                 ) : (
+                                   <Download className="w-4 h-4" />
+                                 )}
+                               </Button>
+                               <Button
+                                 variant="ghost"
+                                 size="icon"
+                                 className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                 onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                 title={t('listPage.editDataset')}
+                               >
+                                  <Pencil className="w-4 h-4" />
+                                </Button>
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  className="h-8 w-8 text-slate-400 hover:text-green-600"
-                                  onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                  title={t('listPage.exportLabels')}
-                                  disabled={exporting}
+                                  className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                  title={t('listPage.deleteDataset')}
                                 >
-                                  {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                  ) : (
-                                    <Download className="w-4 h-4" />
-                                  )}
+                                  <Trash2 className="w-4 h-4" />
                                 </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                title={t('listPage.editDataset')}
-                              >
-                                <Pencil className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                title={t('listPage.deleteDataset')}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </>
-                          )}
-                        </div>
-                        <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
+                              </>
+                            )}
+                         </div>
+                         <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
                       </div>
                     </div>
                   </Card>
                 )
               })}
 
-              <button
-                onClick={() => navigate('/register')}
-                className="flex items-center justify-between gap-4 w-full p-5 rounded-xl border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-300 group"
-              >
-                <div className="flex items-center gap-4 min-w-0 text-left">
-                  <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-white group-hover:shadow-md transition-all">
-                    <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
+              {datasetCurrentPage === datasetTotalPages && (
+                <button
+                  type="button"
+                  onClick={() => navigate('/register')}
+                  className="flex items-center justify-between gap-4 w-full p-5 rounded-xl border-2 border-dashed border-slate-200 hover:border-blue-400 hover:bg-blue-50/50 transition-all duration-300 group"
+                >
+                  <div className="flex items-center gap-4 min-w-0 text-left">
+                    <div className="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center group-hover:bg-white group-hover:shadow-md transition-all">
+                      <Upload className="w-6 h-6 text-slate-400 group-hover:text-blue-600" />
+                    </div>
+                    <div className="min-w-0">
+                      <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">{t('listPage.newDataset')}</h3>
+                      <p className="text-sm text-slate-400 group-hover:text-slate-500 truncate">
+                        {t('listPage.newDatasetDescription')}
+                      </p>
+                    </div>
                   </div>
-                  <div className="min-w-0">
-                    <h3 className="text-lg font-bold text-slate-600 group-hover:text-blue-700">{t('listPage.newDataset')}</h3>
-                    <p className="text-sm text-slate-400 group-hover:text-slate-500 truncate">
-                      {t('listPage.newDatasetDescription')}
-                    </p>
-                  </div>
-                </div>
-                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-blue-500 transition-colors" />
-              </button>
+                  <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-blue-500 transition-colors" />
+                </button>
+              )}
             </div>
           )}
 
@@ -1890,7 +2192,11 @@ export default function ListPage() {
           {(wsiListQuery.error ? String(wsiListQuery.error) : undefined) && !showInitialFilesLoading && (
             <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
               <p className="font-medium">{t('listPage.errorLoadingFiles')}</p>
-              <p className="text-sm">{wsiListQuery.error ? String(wsiListQuery.error) : undefined}</p>
+              <p className="text-sm">
+                {wsiListQuery.error instanceof ApiError && (wsiListQuery.error.isServerError() || wsiListQuery.error.isNetworkError())
+                  ? t('listPage.errorServiceUnavailable')
+                  : String(wsiListQuery.error)}
+              </p>
             </div>
           )}
 
@@ -1923,15 +2229,14 @@ export default function ListPage() {
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value)
-                setCurrentPage(1) // Reset to first page on search
               }}
             />
             {searchQuery && (
               <button
+                type="button"
                 className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 onClick={() => {
                   setSearchQuery('')
-                  setCurrentPage(1)
                 }}
               >
                 <X className="h-4 w-4 text-gray-400 hover:text-gray-600" />
@@ -1940,7 +2245,7 @@ export default function ListPage() {
           </div>
 
           {selectedIds.size > 0 && (
-            // Hidden visually but kept in DOM if needed for accessibility or other screen readers? 
+            // Hidden visually but kept in DOM if needed for accessibility or other screen readers?
             // Actually let's just remove the visual rendering here since we move it to table header.
             // But ListPage has Edit/Delete specific actions which NewTaskPage doesn't have.
             // We should put these actions into the header as well.
@@ -1988,24 +2293,27 @@ export default function ListPage() {
                               </span>
                               {!allFilteredSelected && (
                                  <button
-                                  onClick={() => setSelectedIds(new Set())}
-                                  className="text-[10px] sm:text-xs font-medium text-gray-500 hover:text-gray-700 underline"
-                                >
+                                   type="button"
+                                   onClick={() => setSelectedIds(new Set())}
+                                   className="text-[10px] sm:text-xs font-medium text-gray-500 hover:text-gray-700 underline"
+                                 >
                                    {t('listPage.clearSelection')}
                                 </button>
                               )}
                             </div>
                             <div className="flex items-center gap-3">
-                              <button
-                                onClick={handleBatchEditClick}
-                                className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
+                               <button
+                                 type="button"
+                                 onClick={handleBatchEditClick}
+                                 className="text-blue-600 hover:text-blue-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
                               >
                                 <Edit className="w-3.5 h-3.5" />
                                  {t('listPage.edit')}
                               </button>
-                              <button
-                                onClick={handleBatchDeleteClick}
-                                className="text-red-600 hover:text-red-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
+                               <button
+                                 type="button"
+                                 onClick={handleBatchDeleteClick}
+                                 className="text-red-600 hover:text-red-700 text-xs sm:text-sm font-semibold flex items-center gap-1"
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                                  {t('listPage.delete')}
@@ -2015,16 +2323,37 @@ export default function ListPage() {
                         </th>
                       ) : (
                         <>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.slideId')}</th>
-                          <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.type')}</th>
-                          {selectedDatasetType === 'survival' ? (
-                            <>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.timeMonths')}</th>
-                              <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.status')}</th>
-                            </>
-                          ) : (
-                            <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{labelColumnTitle}</th>
-                          )}
+                          {([
+                            'filename',
+                            ...(selectedDatasetType === 'survival' ? ['event_time', 'event_status'] : ['label']),
+                          ] as SortColumn[]).map((col, i) => {
+                            const labels: Record<SortColumn, string> = {
+                              filename: t('listPage.slideId'),
+                              label: labelColumnTitle,
+                              event_time: t('listPage.timeMonths'),
+                              event_status: t('listPage.status'),
+                            }
+                            const isActive = sortColumn === col
+                            const Icon = isActive ? (sortDirection === 'asc' ? ArrowUp : ArrowDown) : ChevronsUpDown
+                            return (
+                              <React.Fragment key={col}>
+                                <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleSort(col)}
+                                    onMouseEnter={() => prefetchSort(col)}
+                                    className={`inline-flex items-center gap-1 rounded hover:text-gray-800 transition-colors ${isActive ? 'text-primary-600' : ''}`}
+                                  >
+                                    {labels[col]}
+                                    <Icon className={`w-3 h-3 ${isActive ? 'text-primary-500' : 'text-gray-400'}`} />
+                                  </button>
+                                </th>
+                                {i === 0 && (
+                                  <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.type')}</th>
+                                )}
+                              </React.Fragment>
+                            )
+                          })}
                           <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.patientInfo')}</th>
                           <th className="px-3 sm:px-6 py-3 text-right text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('listPage.action')}</th>
                         </>
@@ -2037,7 +2366,8 @@ export default function ListPage() {
                         <tr className="bg-blue-50/50">
                           <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
                             <span className="font-medium">{t('listPage.allPageSelected', { count: pageSlides.length })}</span>
-                            <button
+                             <button
+                              type="button"
                               onClick={handleSelectAllFiltered}
                               className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
                             >
@@ -2051,11 +2381,12 @@ export default function ListPage() {
                         <tr className="bg-blue-50/50">
                           <td colSpan={100} className="px-4 py-2 text-center text-xs sm:text-sm text-gray-700 border-b border-blue-100">
                             <span className="font-medium">{t('listPage.allItemsSelected', { count: (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) })}</span>
-                            <button
-                              onClick={() => setSelectedIds(new Set())}
-                              className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
-                            >
-                              {t('listPage.clearSelection')}
+                             <button
+                               type="button"
+                               onClick={() => setSelectedIds(new Set())}
+                               className="ml-2 font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none"
+                             >
+                               {t('listPage.clearSelection')}
                             </button>
                           </td>
                         </tr>
@@ -2103,17 +2434,38 @@ export default function ListPage() {
                                     </div>
                                     <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                                     <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.wsi_id}>{it.wsi_id}</span>
-                                  {it.parent_wsi_id && (
-                                    <Link
-                                      to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                      state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                      className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
-                                      title={t('annotation.viewSource')}
-                                      onClick={(e) => e.stopPropagation()}
-                                    >
-                                      {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
-                                    </Link>
-                                  )}
+                                   {it.parent_wsi_id && (
+                                     <Link
+                                       to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                       state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                       className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
+                                       title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
+                                       onClick={(e) => e.stopPropagation()}
+                                     >
+                                       <div className="flex items-center gap-1 flex-wrap">
+                                         <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
+                                           {t('annotation.croppedFrom')}
+                                         </span>
+                                         {it.parent_wsi_name && it.parent_dataset_name ? (
+                                           <>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
+                                               <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_dataset_name}</span>
+                                             </span>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
+                                               <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_wsi_name}</span>
+                                             </span>
+                                           </>
+                                         ) : (
+                                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
+                                             <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
+                                             {it.parent_wsi_id.slice(0, 8)}…
+                                           </span>
+                                         )}
+                                       </div>
+                                     </Link>
+                                   )}
                                   </div>
                                 </div>
                               </td>
@@ -2157,9 +2509,9 @@ export default function ListPage() {
                                     <span className="text-gray-300 text-[10px] sm:text-sm italic">{t('listPage.notSpecified')}</span>
                                   ) : (
                                     <>
-                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{it.source}</span></span>}
+                                      {it.source && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap"><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[it.source] ? String(t(`organSources.${organSourceKeyMap[it.source]}`)) : it.source}</span></span>}
                                       {it.age && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
-                                      {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                      {it.gender && <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{String(t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender))}</span>}
                                     </>
                                   )}
                                 </div>
@@ -2193,7 +2545,7 @@ export default function ListPage() {
                               className={`group transition-all duration-200 border-l-2 cursor-pointer ${someSelected ? 'bg-blue-50/40 border-primary-500' : 'hover:bg-gray-50/60 border-transparent hover:border-blue-200'}`}
                               onClick={() => toggleCaseExpansion(caseKey)}
                             >
-                              <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12" onClick={(e) => e.stopPropagation()}>
+                              <td className="px-3 sm:px-6 py-4 sm:py-5 w-10 sm:w-12" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
                                 <input
                                   type="checkbox"
                                   checked={allSelected}
@@ -2201,9 +2553,9 @@ export default function ListPage() {
                                   onChange={(e) => {
                                     const newSelected = new Set(selectedIds)
                                     if (e.target.checked) {
-                                      slides.forEach(s => newSelected.add(s.wsi_id))
+                                      slides.forEach(s => { newSelected.add(s.wsi_id) })
                                     } else {
-                                      slides.forEach(s => newSelected.delete(s.wsi_id))
+                                      slides.forEach(s => { newSelected.delete(s.wsi_id) })
                                     }
                                     setSelectedIds(newSelected)
                                   }}
@@ -2285,7 +2637,7 @@ export default function ListPage() {
                                       <>
                                         {sources.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                            {sources.length === 1 ? <><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{sources[0]}</span></> : t('listPage.sourcesCount', { count: sources.length })}
+                                            {sources.length === 1 ? <><span className="hidden sm:inline">{t('listPage.sourcePrefix')}</span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[sources[0]] ? t(`organSources.${organSourceKeyMap[sources[0]]}`) : sources[0]}</span></> : t('listPage.sourcesCount', { count: sources.length })}
                                           </span>
                                         )}
                                         {ages.length > 0 && (
@@ -2295,7 +2647,7 @@ export default function ListPage() {
                                         )}
                                         {genders.length > 0 && (
                                           <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                            {genders.length === 1 ? genders[0] : t('listPage.mixed')}
+                                            {genders.length === 1 ? t(`listComponents.editModals.${genders[0].toLowerCase()}`, genders[0]) : t('listPage.mixed')}
                                           </span>
                                         )}
                                       </>
@@ -2328,17 +2680,38 @@ export default function ListPage() {
                                     <div className="flex flex-col min-w-[120px] sm:min-w-[150px] pl-4 sm:pl-6 min-h-[3rem] justify-center">
                                       <span className="text-xs sm:text-sm font-medium text-gray-700 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                       <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
-                                      {it.parent_wsi_id && (
-                                        <Link
-                                          to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                          state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                          className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
-                                          title={t('annotation.viewSource')}
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
-                                        </Link>
-                                      )}
+                                       {it.parent_wsi_id && (
+                                         <Link
+                                           to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                           state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                           className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
+                                           title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
+                                           onClick={(e) => e.stopPropagation()}
+                                         >
+                                           <div className="flex items-center gap-1 flex-wrap">
+                                             <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
+                                               {t('annotation.croppedFrom')}
+                                             </span>
+                                             {it.parent_wsi_name && it.parent_dataset_name ? (
+                                               <>
+                                                 <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
+                                                   <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                                   <span className="truncate">{it.parent_dataset_name}</span>
+                                                 </span>
+                                                 <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
+                                                   <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                                   <span className="truncate">{it.parent_wsi_name}</span>
+                                                 </span>
+                                               </>
+                                             ) : (
+                                               <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
+                                                 <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
+                                                 {it.parent_wsi_id.slice(0, 8)}…
+                                               </span>
+                                             )}
+                                           </div>
+                                         </Link>
+                                       )}
                                     </div>
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4">
@@ -2381,9 +2754,9 @@ export default function ListPage() {
                                         <span className="text-gray-300 text-[10px] italic">-</span>
                                       ) : (
                                         <>
-                                          {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{it.source}</span>}
+                                          {it.source && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">{organSourceKeyMap[it.source] ? String(t(`organSources.${organSourceKeyMap[it.source]}`)) : it.source}</span>}
                                           {it.age && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.age}y</span>}
-                                          {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{it.gender}</span>}
+                                          {it.gender && <span className="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">{String(t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender))}</span>}
                                         </>
                                       )}
                                     </div>
@@ -2413,7 +2786,7 @@ export default function ListPage() {
                       })
                     ) : (
                       // Flat view - no multi-slide cases
-                      paginatedItems.map((it) => {
+                      paginatedItems.map((it: ListWSIItem) => {
                         const isSelected = selectedIds.has(it.wsi_id)
                         return (
                           <tr
@@ -2432,17 +2805,38 @@ export default function ListPage() {
                               <div className="flex flex-col min-w-[120px] sm:min-w-[150px] min-h-[3.5rem] sm:min-h-[4rem] justify-center">
                                 <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                 <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
-                                {it.parent_wsi_id && (
-                                  <Link
-                                    to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                    state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                    className="text-[10px] sm:text-xs text-orange-600 hover:text-orange-700 hover:underline mt-0.5 truncate max-w-[150px] sm:max-w-[200px]"
-                                    title={t('annotation.viewSource')}
-                                    onClick={(e) => e.stopPropagation()}
-                                  >
-                                    {t('annotation.croppedFrom')} {it.parent_wsi_id.slice(0, 8)}...
-                                  </Link>
-                                )}
+                                   {it.parent_wsi_id && (
+                                     <Link
+                                       to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                       state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                       className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
+                                       title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
+                                       onClick={(e) => e.stopPropagation()}
+                                     >
+                                       <div className="flex items-center gap-1 flex-wrap">
+                                         <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
+                                           {t('annotation.croppedFrom')}
+                                         </span>
+                                         {it.parent_wsi_name && it.parent_dataset_name ? (
+                                           <>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
+                                               <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_dataset_name}</span>
+                                             </span>
+                                             <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
+                                               <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                               <span className="truncate">{it.parent_wsi_name}</span>
+                                             </span>
+                                           </>
+                                         ) : (
+                                           <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
+                                             <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
+                                             {it.parent_wsi_id.slice(0, 8)}…
+                                           </span>
+                                         )}
+                                       </div>
+                                     </Link>
+                                   )}
                                 {it.case_id && !isPatchDataset && (
                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
                                      {t('listPage.caseLabel', { caseId: it.case_id })}
@@ -2501,7 +2895,7 @@ export default function ListPage() {
                                   <>
                                     {it.source && (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-blue-50 text-blue-700 border border-blue-100 whitespace-nowrap">
-                                        <span className="hidden sm:inline">{t('listPage.sourcePrefix')} </span><span className="sm:ml-1 text-blue-900">{it.source}</span>
+                                        <span className="hidden sm:inline">{t('listPage.sourcePrefix')} </span><span className="sm:ml-1 text-blue-900">{organSourceKeyMap[it.source] ? t(`organSources.${organSourceKeyMap[it.source]}`) : it.source}</span>
                                       </span>
                                     )}
                                     {it.age && (
@@ -2511,7 +2905,7 @@ export default function ListPage() {
                                     )}
                                     {it.gender && (
                                       <span className="inline-flex items-center px-2 sm:px-3 py-0.5 sm:py-1 rounded-md text-[10px] sm:text-sm font-medium bg-gray-50 text-gray-700 border border-gray-200 whitespace-nowrap">
-                                        {it.gender}
+                                        {String(t(`listComponents.editModals.${it.gender.toLowerCase()}`, it.gender))}
                                       </span>
                                     )}
                                   </>
@@ -2598,11 +2992,18 @@ export default function ListPage() {
                         type="number"
                         min={1}
                         max={totalPages}
-                        value={currentPage}
+                        value={filePageInput}
                         onChange={(e) => {
-                          const val = parseInt(e.target.value)
-                          if (!isNaN(val)) {
-                            setCurrentPage(Math.min(Math.max(1, val), totalPages))
+                          setFilePageInput(e.target.value)
+                        }}
+                        onBlur={() => commitFilePageInput(filePageInput, totalPages)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            commitFilePageInput(filePageInput, totalPages)
+                          }
+                          if (event.key === 'Escape') {
+                            setFilePageInput(String(currentPage))
                           }
                         }}
                         className="w-10 sm:w-16 h-7 sm:h-9 px-1 sm:px-2 border border-gray-200 rounded-lg text-xs sm:text-sm text-center focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all font-semibold"
@@ -2622,8 +3023,7 @@ export default function ListPage() {
                       </Button>
 
                       <div className="flex items-center gap-1">
-                        {Array.from({ length: totalPages }, (_, i) => i + 1)
-                          .filter(p => p === 1 || p === totalPages || (p >= currentPage - 1 && p <= currentPage + 1))
+                        {visibleFilePages
                           .map((page, index, array) => (
                             <React.Fragment key={page}>
                               {index > 0 && array[index - 1] !== page - 1 && (
@@ -2790,14 +3190,21 @@ export default function ListPage() {
           editingDatasetOriginalDataLevel={editingDatasetOriginalDataLevel}
           editingDatasetSourceSelection={editingDatasetSourceSelection}
           editingDatasetSourceCustom={editingDatasetSourceCustom}
+          editingDatasetIsPublic={editingDatasetIsPublic}
+          editingDatasetOriginalIsPublic={editingDatasetOriginalIsPublic}
           editingDatasetSaving={editingDatasetSaving}
           isSlideDataset={(() => {
-            const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
+            const ds = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
             return ds ? getDatasetVisualType(ds) === 'slides' : false
           })()}
           canSelectSegmentation={editingDatasetDataLevel === 'file' && (() => {
-            const ds = (datasetsQuery.data?.items ?? []).find(d => d.dataset_id === editingDatasetId)
+            const ds = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
             return ds ? getDatasetVisualType(ds) !== 'slides' : false
+          })()}
+          canEditVisibility={(() => {
+            const ds = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
+            if (!ds) return false
+            return ds.user_id === user?.id || user?.role === 'admin'
           })()}
           onNameChange={setEditingDatasetName}
           onTypeChange={setEditingDatasetType}
@@ -2807,6 +3214,7 @@ export default function ListPage() {
             if (value !== 'Other') setEditingDatasetSourceCustom('')
           }}
           onSourceCustomChange={setEditingDatasetSourceCustom}
+          onIsPublicChange={setEditingDatasetIsPublic}
           onCancel={handleEditDatasetCancel}
           onSave={handleEditDatasetSave}
         />

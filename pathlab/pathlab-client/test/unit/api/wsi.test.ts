@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { ok, errResp } from '../../helpers/apiHelpers'
 
 vi.mock('@renderer/config', () => ({
   API_BASE: 'http://localhost:6100',
@@ -34,27 +35,6 @@ import { setAuthToken } from '@renderer/api/client'
 
 const mockFetch = vi.mocked(fetch)
 
-function ok(data: unknown, status = 200): Response {
-  return {
-    ok: true,
-    status,
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-    blob: () => Promise.resolve(new Blob([JSON.stringify(data)])),
-  } as unknown as Response
-}
-
-function errResp(data: unknown, status: number): Response {
-  return {
-    ok: false,
-    status,
-    statusText: 'Error',
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: () => Promise.resolve(data),
-    text: () => Promise.resolve(JSON.stringify(data)),
-  } as unknown as Response
-}
 
 const MOCK_WSI_SUMMARY = {
   wsi_id: 'wsi_001',
@@ -215,6 +195,35 @@ describe('fetchDatasets', () => {
     await fetchDatasets(undefined, { search: 'tcga' })
     const [url] = mockFetch.mock.calls[0]
     expect(url).toContain('search=tcga')
+  })
+
+  it('includes is_public=false filter for private datasets', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, { is_public: false })
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('is_public=false')
+  })
+
+  it('includes is_public=true filter for public datasets', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, { is_public: true })
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('is_public=true')
+  })
+
+  it('does not include is_public when omitted', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, {})
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).not.toContain('is_public=')
+  })
+
+  it('uses separate cache entries for private and public filters', async () => {
+    mockFetch.mockResolvedValue(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, { is_public: false })
+    await fetchDatasets(undefined, { is_public: false })
+    await fetchDatasets(undefined, { is_public: true })
+    expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
   it('caches results', async () => {

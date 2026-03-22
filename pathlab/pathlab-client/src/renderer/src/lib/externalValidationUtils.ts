@@ -166,9 +166,11 @@ export function getDatasetCompatibilityError(
 
   if (modelDataType === 'wsi' && modelExtractor && modelEmbedDim > 0) {
     const dsExtractors = dataset.available_feature_extractors || []
-    const hasSameDim = dsExtractors.some(e => (EXTRACTOR_EMBED_DIM[e] ?? 0) === modelEmbedDim)
-    if (!hasSameDim) {
-      return 'Feature extractor embedding dimensions do not match.'
+    if (dsExtractors.length > 0) {
+      const hasSameDim = dsExtractors.some(e => (EXTRACTOR_EMBED_DIM[e] ?? 0) === modelEmbedDim)
+      if (!hasSameDim) {
+        return 'Feature extractor embedding dimensions do not match.'
+      }
     }
   }
 

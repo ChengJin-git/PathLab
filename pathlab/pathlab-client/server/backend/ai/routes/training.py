@@ -16,6 +16,7 @@ Cancellation Mechanism:
 - Trainers check is_task_cancelled() in their training loops
 - When cancelled, trainers raise TrainingCancelledException and cleanup GPU
 """
+
 from __future__ import annotations
 
 import gc
@@ -49,12 +50,14 @@ from backend.common.config import Config
 
 logger = logging.getLogger("training_routes")
 
-_UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS = frozenset({
-    "ce",
-    "softcrossentropyloss",
-    "crossentropy",
-    "crossentropyloss",
-})
+_UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS = frozenset(
+    {
+        "ce",
+        "softcrossentropyloss",
+        "crossentropy",
+        "crossentropyloss",
+    }
+)
 
 
 def _normalize_patch_segmentation_loss_name(loss_name: str) -> str:
@@ -63,8 +66,10 @@ def _normalize_patch_segmentation_loss_name(loss_name: str) -> str:
 
 def _validate_patch_segmentation_loss_names(loss_names: List[str]) -> None:
     unsupported_losses = [
-        loss_name for loss_name in loss_names
-        if _normalize_patch_segmentation_loss_name(loss_name) in _UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS
+        loss_name
+        for loss_name in loss_names
+        if _normalize_patch_segmentation_loss_name(loss_name)
+        in _UNSUPPORTED_PATCH_SEGMENTATION_LOSS_TOKENS
     ]
     if unsupported_losses:
         unsupported_display = ", ".join(sorted(set(unsupported_losses)))
@@ -76,6 +81,7 @@ def _validate_patch_segmentation_loss_names(loss_names: List[str]) -> None:
                 "please use Dice/Jaccard/Tversky/Focal/Lovasz/BCE/MCC losses instead."
             ),
         )
+
 
 # Paths
 UPLOADS_DIR = Config.get_uploads_dir()
@@ -117,7 +123,7 @@ async def cancel_training_task(task_id: str):
     request_cancellation(task_id)
     return {
         "cancelled": True,
-        "message": f"Cancellation requested for task {task_id}. Training will stop at next checkpoint."
+        "message": f"Cancellation requested for task {task_id}. Training will stop at next checkpoint.",
     }
 
 
@@ -138,16 +144,12 @@ async def revoke_training_permission(task_id: str):
     revoke_task_permission(task_id)
     return {
         "revoked": True,
-        "message": f"Permission revoked for task {task_id}. Training will stop at next iteration."
+        "message": f"Permission revoked for task {task_id}. Training will stop at next iteration.",
     }
 
 
 async def _safe_update_status(
-    db,
-    task_id: str,
-    new_status: str,
-    progress: int = None,
-    error_message: str = None
+    db, task_id: str, new_status: str, progress: int = None, error_message: str = None
 ) -> bool:
     """
     Safely update task status, but only if the task has not been cancelled.
@@ -168,11 +170,15 @@ async def _safe_update_status(
         return False
 
     # Update status
-    await TrainingTaskRepository.update_status(db, task_id, new_status, progress=progress, error_message=error_message)
+    await TrainingTaskRepository.update_status(
+        db, task_id, new_status, progress=progress, error_message=error_message
+    )
     return True
 
 
-def _get_split_strategy_description(splits_map: dict[str, Any], preprocessing_config: dict[str, Any] = None) -> str:
+def _get_split_strategy_description(
+    splits_map: dict[str, Any], preprocessing_config: dict[str, Any] = None
+) -> str:
     """
     Generate a human-readable description of the split strategy.
 
@@ -265,7 +271,7 @@ def cleanup_gpu_memory():
         # Get memory before cleanup for logging
         try:
             device_idx = torch.cuda.current_device()
-            mem_before = torch.cuda.memory_allocated(device_idx) / (1024 ** 2)
+            mem_before = torch.cuda.memory_allocated(device_idx) / (1024**2)
         except Exception:
             mem_before = 0
 
@@ -282,8 +288,10 @@ def cleanup_gpu_memory():
 
         # Log memory status
         try:
-            mem_after = torch.cuda.memory_allocated(device_idx) / (1024 ** 2)
-            logger.info(f"GPU memory cleaned up: {mem_before:.1f} MB -> {mem_after:.1f} MB")
+            mem_after = torch.cuda.memory_allocated(device_idx) / (1024**2)
+            logger.info(
+                f"GPU memory cleaned up: {mem_before:.1f} MB -> {mem_after:.1f} MB"
+            )
         except Exception:
             logger.info("GPU memory cleaned up")
     else:
@@ -295,7 +303,7 @@ async def handle_training_error_scoped(
     e: Exception,
     task_id: str,
     scoped_session: ScopedSession,
-    operation_name: str = "Training"
+    operation_name: str = "Training",
 ) -> None:
     """
     Handle training errors with consistent logging and status updates.
@@ -323,15 +331,25 @@ async def handle_training_error_scoped(
     if isinstance(e, FileNotFoundError):
         logger.error(f"{operation_name} failed - File not found: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
-            await training_logger.error(f"{operation_name} failed - File not found", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e))
+            await training_logger.error(
+                f"{operation_name} failed - File not found",
+                {"error": str(e), "traceback": tb},
+            )
+            await _safe_update_status(
+                db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e)
+            )
         raise HTTPException(status_code=404, detail=f"File not found: {e}")
 
     elif isinstance(e, ValueError):
         logger.error(f"{operation_name} failed - Invalid data: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
-            await training_logger.error(f"{operation_name} failed - Invalid data", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e))
+            await training_logger.error(
+                f"{operation_name} failed - Invalid data",
+                {"error": str(e), "traceback": tb},
+            )
+            await _safe_update_status(
+                db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e)
+            )
         raise HTTPException(status_code=400, detail=f"Invalid data: {e}")
 
     elif isinstance(e, HTTPException):
@@ -344,15 +362,24 @@ async def handle_training_error_scoped(
         full_error = f"{error_detail}\n\nTraceback:\n{tb}"
         logger.error(f"{operation_name} failed - CUDA OOM: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
-            await training_logger.error(f"{operation_name} failed - CUDA out of memory", {"error": error_detail, "traceback": tb})
-            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=full_error)
+            await training_logger.error(
+                f"{operation_name} failed - CUDA out of memory",
+                {"error": error_detail, "traceback": tb},
+            )
+            await _safe_update_status(
+                db, task_id, TaskStatus.FAILED, progress=0, error_message=full_error
+            )
         raise HTTPException(status_code=500, detail=full_error)
 
     else:
         logger.error(f"{operation_name} failed: {e}\n{tb}")
         async with scoped_session.session() as (training_logger, db):
-            await training_logger.error(f"{operation_name} failed", {"error": str(e), "traceback": tb})
-            await _safe_update_status(db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e))
+            await training_logger.error(
+                f"{operation_name} failed", {"error": str(e), "traceback": tb}
+            )
+            await _safe_update_status(
+                db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e)
+            )
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -383,8 +410,10 @@ async def list_ai_extractors():
 # Feature Extraction (Unified Entry)
 # =============================================================================
 
+
 class FeatureExtractionRequest(BaseModel):
     """Feature extraction request"""
+
     task_id: str
     wsi_ids: List[str]
     feature_extractor: str = "resnet50"
@@ -409,13 +438,20 @@ async def extract_features(req: FeatureExtractionRequest):
         async with scoped_session.session() as (training_logger, db):
             task = await TrainingTaskRepository.get_by_id(db, req.task_id)
             if not task:
-                raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+                raise HTTPException(
+                    status_code=404, detail=f"Training task not found: {req.task_id}"
+                )
             preprocessing_config = task.preprocessing_config or {}
             await training_logger.info(
                 f"[Step 2/3] Starting feature extraction for {len(req.wsi_ids)} WSI",
-                {"feature_extractor": req.feature_extractor, "batch_size": req.batch_size}
+                {
+                    "feature_extractor": req.feature_extractor,
+                    "batch_size": req.batch_size,
+                },
             )
-            await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.EXTRACTING, progress=33)
+            await TrainingTaskRepository.update_status(
+                db, req.task_id, TaskStatus.EXTRACTING, progress=33
+            )
         # Session closed here - connection released
 
         # Use WSI Classification Trainer with session_maker
@@ -436,7 +472,9 @@ async def extract_features(req: FeatureExtractionRequest):
             preprocessing_config=preprocessing_config,
         )
 
-        await scoped_logger.info(f"Feature extraction completed for all {len(req.wsi_ids)} WSI")
+        await scoped_logger.info(
+            f"Feature extraction completed for all {len(req.wsi_ids)} WSI"
+        )
 
         # Prepare response data before any cleanup
         response_data = results.model_dump()
@@ -446,12 +484,16 @@ async def extract_features(req: FeatureExtractionRequest):
     except TrainingCancelledException as e:
         await scoped_logger.info(f"Feature extraction cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.CANCELLED, error_message=str(e)
+            )
         cleanup_gpu_memory()
         return {"status": TaskStatus.CANCELLED, "results": [], "error_message": str(e)}
 
     except Exception as e:
-        await handle_training_error_scoped(e, req.task_id, scoped_session, "Feature extraction")
+        await handle_training_error_scoped(
+            e, req.task_id, scoped_session, "Feature extraction"
+        )
         cleanup_gpu_memory()
         raise
     finally:
@@ -462,8 +504,10 @@ async def extract_features(req: FeatureExtractionRequest):
 # WSI Classification Training (Unified Entry)
 # =============================================================================
 
+
 class WSIClassificationTrainRequest(BaseModel):
     """WSI classification training request"""
+
     task_id: str
     epochs: int = 50
     lr: float = 2e-4
@@ -491,7 +535,9 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
     async with scoped_session.session() as (training_logger, db):
         task = await TrainingTaskRepository.get_by_id(db, req.task_id)
         if not task:
-            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Training task not found: {req.task_id}"
+            )
 
         classes: List[str] = task.classes or []
         if not classes:
@@ -499,13 +545,17 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
 
         splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, req.task_id)
         if not splits_map:
-            raise HTTPException(status_code=400, detail="No WSI data associated with this task")
+            raise HTTPException(
+                status_code=400, detail="No WSI data associated with this task"
+            )
 
         # K-Fold validation
         fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
         if fold_keys:
             num_folds = len(fold_keys)
-            wsi_with_labels = await TrainingTaskRepository.get_wsi_with_labels(db, req.task_id)
+            wsi_with_labels = await TrainingTaskRepository.get_wsi_with_labels(
+                db, req.task_id
+            )
             class_distribution: Dict[str, int] = {}
             for wsi in wsi_with_labels:
                 label = wsi.get("label")
@@ -515,20 +565,27 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
             if len(class_distribution) < 2:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"K-Fold cross-validation requires at least 2 classes. Found: {len(class_distribution)} class(es)."
+                    detail=f"K-Fold cross-validation requires at least 2 classes. Found: {len(class_distribution)} class(es).",
                 )
 
             min_class_name = min(class_distribution, key=class_distribution.get)
             min_class_count = class_distribution[min_class_name]
             if min_class_count < num_folds:
-                class_info = ", ".join([f"{label}: {count}" for label, count in sorted(class_distribution.items())])
+                class_info = ", ".join(
+                    [
+                        f"{label}: {count}"
+                        for label, count in sorted(class_distribution.items())
+                    ]
+                )
                 raise HTTPException(
                     status_code=400,
-                    detail=f"{num_folds}-Fold requires at least {num_folds} samples per class. Class '{min_class_name}' has {min_class_count}. [{class_info}]"
+                    detail=f"{num_folds}-Fold requires at least {num_folds} samples per class. Class '{min_class_name}' has {min_class_count}. [{class_info}]",
                 )
         else:
             # Random split validation
-            wsi_with_labels = await TrainingTaskRepository.get_wsi_with_labels(db, req.task_id)
+            wsi_with_labels = await TrainingTaskRepository.get_wsi_with_labels(
+                db, req.task_id
+            )
             class_distribution: Dict[str, int] = {}
             for wsi in wsi_with_labels:
                 label = wsi.get("label")
@@ -536,32 +593,56 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
                     class_distribution[label] = class_distribution.get(label, 0) + 1
 
             if len(class_distribution) < 2:
-                raise HTTPException(status_code=400, detail=f"Classification requires at least 2 classes. Found: {len(class_distribution)}.")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Classification requires at least 2 classes. Found: {len(class_distribution)}.",
+                )
 
             min_class_name = min(class_distribution, key=class_distribution.get)
             min_class_count = class_distribution[min_class_name]
             if min_class_count < 10:
-                class_info = ", ".join([f"{label}: {count}" for label, count in sorted(class_distribution.items())])
+                class_info = ", ".join(
+                    [
+                        f"{label}: {count}"
+                        for label, count in sorted(class_distribution.items())
+                    ]
+                )
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Random 7:1:2 split requires at least 10 samples per class. Class '{min_class_name}' has {min_class_count}. [{class_info}]"
+                    detail=f"Random 7:1:2 split requires at least 10 samples per class. Class '{min_class_name}' has {min_class_count}. [{class_info}]",
                 )
 
         num_classes = len(classes)
         preprocessing_config = task.preprocessing_config
         user_id = task.user_id
 
-        # Mark task as training and log start
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
-        split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
+        # Mark task as training; preserve progress if resuming from checkpoint
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 66
+        )
+        await TrainingTaskRepository.update_status(
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
+        )
+        split_strategy_desc = _get_split_strategy_description(
+            splits_map, preprocessing_config
+        )
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
             f"[Training] Starting WSI Classification ({req.aggregator.upper()})",
-            {"task_type": "wsi_classification", "aggregator": req.aggregator, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+            {
+                "task_type": "wsi_classification",
+                "aggregator": req.aggregator,
+                "epochs": req.epochs,
+                "lr": req.lr,
+                "num_classes": num_classes,
+            },
         )
         await training_logger.info(
             f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
-            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
+            {
+                "strategy": split_strategy_desc,
+                "splits": {k: len(v) for k, v in splits_map.items()},
+            },
         )
     # Session closed here - connection released before training starts
 
@@ -590,34 +671,55 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
 
         # Phase 3: Save results - short-lived session
         async with scoped_session.session() as (training_logger, db):
-            await TrainedModelRepository.create(db, {
-                "model_id": result.model_id,
-                "task_id": req.task_id,
-                "user_id": user_id,
-                "model_name": f"{req.feature_extractor}+{req.aggregator}",
-                "model_path": result.checkpoint_path,
-                "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
-                "classes": classes,
-                "feature_extractor": req.feature_extractor,
-                "aggregator": req.aggregator,
-                "train_metrics": sanitize_for_json({"loss": result.metrics.loss_history}) if result.metrics else {},
-                "val_metrics": sanitize_for_json(result.metrics.val_metrics) if result.metrics else None,
-                "is_default": False,
-                "is_active": True,
-            })
-            await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
-            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
+            await TrainedModelRepository.create(
+                db,
+                {
+                    "model_id": result.model_id,
+                    "task_id": req.task_id,
+                    "user_id": user_id,
+                    "model_name": f"{req.feature_extractor}+{req.aggregator}",
+                    "model_path": result.checkpoint_path,
+                    "config_path": str(
+                        Path(result.checkpoint_path).parent / "config.json"
+                    ),
+                    "classes": classes,
+                    "feature_extractor": req.feature_extractor,
+                    "aggregator": req.aggregator,
+                    "train_metrics": sanitize_for_json(
+                        {"loss": result.metrics.loss_history}
+                    )
+                    if result.metrics
+                    else {},
+                    "val_metrics": sanitize_for_json(result.metrics.val_metrics)
+                    if result.metrics
+                    else None,
+                    "is_default": False,
+                    "is_active": True,
+                },
+            )
+            await training_logger.info(
+                "Training completed. Model saved.", {"model_id": result.model_id}
+            )
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.COMPLETED, progress=100
+            )
 
         return result
 
     except TrainingCancelledException as e:
         await scoped_logger.info(f"WSI Classification training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
-        return TrainResponse.cancelled(req.task_id, TaskType.WSI_CLASSIFICATION, message=str(e))
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.CANCELLED, error_message=str(e)
+            )
+        return TrainResponse.cancelled(
+            req.task_id, TaskType.WSI_CLASSIFICATION, message=str(e)
+        )
 
     except Exception as e:
-        await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Classification")
+        await handle_training_error_scoped(
+            e, req.task_id, scoped_session, "WSI Classification"
+        )
 
     finally:
         await scoped_logger.close()
@@ -628,8 +730,10 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
 # WSI Survival Training
 # =============================================================================
 
+
 class WSISurvivalTrainRequest(BaseModel):
     """WSI survival training request"""
+
     task_id: str
     epochs: int = 30
     lr: float = 0.0002
@@ -657,26 +761,46 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
     async with scoped_session.session() as (training_logger, db):
         task = await TrainingTaskRepository.get_by_id(db, req.task_id)
         if not task:
-            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Training task not found: {req.task_id}"
+            )
 
         splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, req.task_id)
         if not splits_map:
-            raise HTTPException(status_code=400, detail="No WSI data associated with this task")
+            raise HTTPException(
+                status_code=400, detail="No WSI data associated with this task"
+            )
 
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config
 
-        # Mark task as training and log start
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=66)
-        split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
+        # Mark task as training; preserve progress if resuming from checkpoint
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 66
+        )
+        await TrainingTaskRepository.update_status(
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
+        )
+        split_strategy_desc = _get_split_strategy_description(
+            splits_map, preprocessing_config
+        )
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
             f"[Training] Starting WSI Survival ({req.aggregator.upper()})",
-            {"task_type": "wsi_survival", "aggregator": req.aggregator, "epochs": req.epochs, "lr": req.lr, "num_bins": req.num_bins}
+            {
+                "task_type": "wsi_survival",
+                "aggregator": req.aggregator,
+                "epochs": req.epochs,
+                "lr": req.lr,
+                "num_bins": req.num_bins,
+            },
         )
         await training_logger.info(
             f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
-            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
+            {
+                "strategy": split_strategy_desc,
+                "splits": {k: len(v) for k, v in splits_map.items()},
+            },
         )
     # Session closed here - connection released before training starts
 
@@ -704,34 +828,55 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
 
         # Phase 3: Save results - short-lived session
         async with scoped_session.session() as (training_logger, db):
-            await TrainedModelRepository.create(db, {
-                "model_id": result.model_id,
-                "task_id": req.task_id,
-                "user_id": user_id,
-                "model_name": f"{req.feature_extractor}+{req.aggregator}_survival",
-                "model_path": result.checkpoint_path,
-                "config_path": str(Path(result.checkpoint_path).parent / "config.json"),
-                "classes": [f"Bin {i}" for i in range(req.num_bins)],
-                "feature_extractor": req.feature_extractor,
-                "aggregator": req.aggregator,
-                "train_metrics": sanitize_for_json({"loss": result.metrics.loss_history}) if result.metrics else {},
-                "val_metrics": sanitize_for_json(result.metrics.val_metrics) if result.metrics else None,
-                "is_default": False,
-                "is_active": True,
-            })
-            await training_logger.info("Training completed. Model saved.", {"model_id": result.model_id})
-            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
+            await TrainedModelRepository.create(
+                db,
+                {
+                    "model_id": result.model_id,
+                    "task_id": req.task_id,
+                    "user_id": user_id,
+                    "model_name": f"{req.feature_extractor}+{req.aggregator}_survival",
+                    "model_path": result.checkpoint_path,
+                    "config_path": str(
+                        Path(result.checkpoint_path).parent / "config.json"
+                    ),
+                    "classes": [f"Bin {i}" for i in range(req.num_bins)],
+                    "feature_extractor": req.feature_extractor,
+                    "aggregator": req.aggregator,
+                    "train_metrics": sanitize_for_json(
+                        {"loss": result.metrics.loss_history}
+                    )
+                    if result.metrics
+                    else {},
+                    "val_metrics": sanitize_for_json(result.metrics.val_metrics)
+                    if result.metrics
+                    else None,
+                    "is_default": False,
+                    "is_active": True,
+                },
+            )
+            await training_logger.info(
+                "Training completed. Model saved.", {"model_id": result.model_id}
+            )
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.COMPLETED, progress=100
+            )
 
         return result
 
     except TrainingCancelledException as e:
         await scoped_logger.info(f"WSI Survival training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
-        return TrainResponse.cancelled(req.task_id, TaskType.WSI_SURVIVAL, message=str(e))
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.CANCELLED, error_message=str(e)
+            )
+        return TrainResponse.cancelled(
+            req.task_id, TaskType.WSI_SURVIVAL, message=str(e)
+        )
 
     except Exception as e:
-        await handle_training_error_scoped(e, req.task_id, scoped_session, "WSI Survival")
+        await handle_training_error_scoped(
+            e, req.task_id, scoped_session, "WSI Survival"
+        )
 
     finally:
         await scoped_logger.close()
@@ -742,8 +887,10 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
 # Patch Classification Training
 # =============================================================================
 
+
 class PatchClassificationTrainRequest(BaseModel):
     """Patch classification training request - aligned with WSI classification style"""
+
     task_id: str
     epochs: int = 50
     lr: float = 0.0002
@@ -759,7 +906,9 @@ class PatchClassificationTrainRequest(BaseModel):
 
 
 @router.post("/patch_classification")
-async def train_patch_classification(req: PatchClassificationTrainRequest) -> TrainResponse:
+async def train_patch_classification(
+    req: PatchClassificationTrainRequest,
+) -> TrainResponse:
     """
     Patch Classification Training Unified Entry.
 
@@ -775,31 +924,55 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
     async with scoped_session.session() as (training_logger, db):
         task = await TrainingTaskRepository.get_by_id(db, req.task_id)
         if not task:
-            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Training task not found: {req.task_id}"
+            )
 
         classes: List[str] = task.classes or []
         if not classes:
-            raise HTTPException(status_code=400, detail="No classes found for training task. Please ensure WSI slides have labels.")
+            raise HTTPException(
+                status_code=400,
+                detail="No classes found for training task. Please ensure WSI slides have labels.",
+            )
 
         splits_map = await TrainingTaskRepository.get_wsi_ids_by_split(db, req.task_id)
         if not splits_map:
-            raise HTTPException(status_code=400, detail="No data associated with this task")
+            raise HTTPException(
+                status_code=400, detail="No data associated with this task"
+            )
 
         num_classes = len(classes)
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config
 
         # Mark task as training from 0% and let the trainer advance it to 100%.
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=0)
-        split_strategy_desc = _get_split_strategy_description(splits_map, preprocessing_config)
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 0
+        )
+        await TrainingTaskRepository.update_status(
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
+        )
+        split_strategy_desc = _get_split_strategy_description(
+            splits_map, preprocessing_config
+        )
         splits_count_desc = _format_splits_count(splits_map)
         await training_logger.info(
             f"[Training] Starting Patch Classification ({req.feature_extractor.upper()}, classifier={req.classifier})",
-            {"task_type": "patch_classification", "feature_extractor": req.feature_extractor, "classifier": req.classifier, "epochs": req.epochs, "lr": req.lr, "num_classes": num_classes}
+            {
+                "task_type": "patch_classification",
+                "feature_extractor": req.feature_extractor,
+                "classifier": req.classifier,
+                "epochs": req.epochs,
+                "lr": req.lr,
+                "num_classes": num_classes,
+            },
         )
         await training_logger.info(
             f"[Data Split] {split_strategy_desc} | {splits_count_desc}",
-            {"strategy": split_strategy_desc, "splits": {k: len(v) for k, v in splits_map.items()}}
+            {
+                "strategy": split_strategy_desc,
+                "splits": {k: len(v) for k, v in splits_map.items()},
+            },
         )
     # Session closed here - connection released before training starts
 
@@ -831,35 +1004,56 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
         # Phase 3: Save results - short-lived session
         if result.status == "success" and result.model_id:
             async with scoped_session.session() as (training_logger, db):
-                await TrainedModelRepository.create(db, {
-                    "model_id": result.model_id,
-                    "task_id": req.task_id,
-                    "user_id": user_id,
-                    "model_name": f"{req.feature_extractor}+linear_probe",
-                    "model_path": result.checkpoint_path or "",
-                    "config_path": str(Path(result.checkpoint_path).parent / "config.json") if result.checkpoint_path else "",
-                    "classes": classes,
-                    "feature_extractor": req.feature_extractor,
-                    "aggregator": "linear_probe",
-                    "train_metrics": sanitize_for_json({"loss": result.metrics.loss_history}) if result.metrics else {},
-                    "val_metrics": sanitize_for_json(result.metrics.val_metrics) if result.metrics else None,
-                    "is_default": False,
-                    "is_active": True,
-                })
+                await TrainedModelRepository.create(
+                    db,
+                    {
+                        "model_id": result.model_id,
+                        "task_id": req.task_id,
+                        "user_id": user_id,
+                        "model_name": f"{req.feature_extractor}+linear_probe",
+                        "model_path": result.checkpoint_path or "",
+                        "config_path": str(
+                            Path(result.checkpoint_path).parent / "config.json"
+                        )
+                        if result.checkpoint_path
+                        else "",
+                        "classes": classes,
+                        "feature_extractor": req.feature_extractor,
+                        "aggregator": "linear_probe",
+                        "train_metrics": sanitize_for_json(
+                            {"loss": result.metrics.loss_history}
+                        )
+                        if result.metrics
+                        else {},
+                        "val_metrics": sanitize_for_json(result.metrics.val_metrics)
+                        if result.metrics
+                        else None,
+                        "is_default": False,
+                        "is_active": True,
+                    },
+                )
 
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.COMPLETED, progress=100
+            )
 
         return result
 
     except TrainingCancelledException as e:
         await scoped_logger.info(f"Patch Classification training cancelled: {e}")
         async with scoped_session.session() as (training_logger, db):
-            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
-        return TrainResponse.cancelled(req.task_id, TaskType.PATCH_CLASSIFICATION, message=str(e))
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.CANCELLED, error_message=str(e)
+            )
+        return TrainResponse.cancelled(
+            req.task_id, TaskType.PATCH_CLASSIFICATION, message=str(e)
+        )
 
     except Exception as e:
-        await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Classification")
+        await handle_training_error_scoped(
+            e, req.task_id, scoped_session, "Patch Classification"
+        )
 
     finally:
         await scoped_logger.close()
@@ -870,8 +1064,10 @@ async def train_patch_classification(req: PatchClassificationTrainRequest) -> Tr
 # Patch Segmentation Training
 # =============================================================================
 
+
 class PatchSegmentationTrainRequest(BaseModel):
     """Patch segmentation training request - aligned with other training endpoints"""
+
     task_id: str
     architecture: str = "unet"
     backbone: str = "resnet50"
@@ -897,7 +1093,6 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
     The SegmentationTrainer is synchronous, so it runs in a thread pool.
     """
     import asyncio
-    import uuid as uuid_mod
     from backend.ai.tasks import SegmentationTrainer
 
     _validate_patch_segmentation_loss_names(req.loss_names)
@@ -908,17 +1103,29 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
     async with scoped_session.session() as (training_logger, db):
         task = await TrainingTaskRepository.get_by_id(db, req.task_id)
         if not task:
-            raise HTTPException(status_code=404, detail=f"Training task not found: {req.task_id}")
+            raise HTTPException(
+                status_code=404, detail=f"Training task not found: {req.task_id}"
+            )
 
         user_id = task.user_id
         preprocessing_config = task.preprocessing_config or {}
 
         # Mark task as training from 0% and let the trainer advance it through the training phase.
-        await TrainingTaskRepository.update_status(db, req.task_id, TaskStatus.TRAINING, progress=0)
+        _training_start_progress = (
+            task.progress if task.status == TaskStatus.RESUMING else 0
+        )
+        await TrainingTaskRepository.update_status(
+            db, req.task_id, TaskStatus.TRAINING, progress=_training_start_progress
+        )
         await training_logger.info(
             f"[Training] Starting Patch Segmentation ({req.architecture}/{req.backbone})",
-            {"task_type": "patch_segmentation", "architecture": req.architecture,
-             "backbone": req.backbone, "epochs": req.epochs, "lr": req.lr}
+            {
+                "task_type": "patch_segmentation",
+                "architecture": req.architecture,
+                "backbone": req.backbone,
+                "epochs": req.epochs,
+                "lr": req.lr,
+            },
         )
     # Session closed here - connection released before training starts
 
@@ -926,7 +1133,13 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
 
     try:
         # Phase 2: Build config and run training in thread pool
-        save_dir = str(UPLOADS_DIR / req.task_id / "checkpoints")
+        # Use a deterministic model_id derived from task_id so that
+        # resume_checkpoint.pth written in a previous run can be found
+        # when the task is restarted after a crash/disconnect.
+        model_id = f"seg_{req.task_id}"
+        model_dir = UPLOADS_DIR / "models" / model_id
+        model_dir.mkdir(parents=True, exist_ok=True)
+        save_dir = str(model_dir)
         config = {
             "architecture": req.architecture,
             "backbone": req.backbone,
@@ -963,11 +1176,13 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         config["dataset"] = segmentation_dataset
         # Always apply num_classes from request (overrides default of 1)
         config.setdefault("dataset", {})["classes"] = req.num_classes
-        segmentation_class_names = list(dict.fromkeys(
-            str(label).strip()
-            for label in (task.classes or [])
-            if str(label).strip()
-        ))
+        segmentation_class_names = list(
+            dict.fromkeys(
+                str(label).strip()
+                for label in (task.classes or [])
+                if str(label).strip()
+            )
+        )
         if segmentation_class_names:
             config.setdefault("dataset", {})["class_names"] = segmentation_class_names
 
@@ -985,8 +1200,7 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         )
 
         # Build TrainResponse from results dict
-        model_id = str(uuid_mod.uuid4())
-        checkpoint_path = str(Path(save_dir) / "best_model.pth")
+        checkpoint_path = str(model_dir / "best_model.pth")
 
         metrics = TrainMetrics(
             loss_history=results.get("history", {}).get("train_loss", []),
@@ -1004,9 +1218,17 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
             metrics=metrics,
         )
 
-        # Save full training history to metrics.json for analysis module
-        # This follows the same pattern as patch_classification's _save_final_metrics
         history = results.get("history", {})
+        training_config_info = {
+            "architecture": req.architecture,
+            "backbone": req.backbone,
+            "task_id": req.task_id,
+            "classes": segmentation_class_names,
+            "num_classes": req.num_classes,
+        }
+        (model_dir / "config.json").write_text(
+            json.dumps(training_config_info, ensure_ascii=False, indent=2)
+        )
         metrics_data = {
             "history": {
                 "train_loss": history.get("train_loss", []),
@@ -1018,46 +1240,64 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
             "best_epoch": results.get("best_epoch"),
             "best_val_metrics": sanitize_for_json(results.get("best_val_metrics", {})),
             "test_metrics": sanitize_for_json(results.get("test_metrics")),
-            "config": {
-                "architecture": req.architecture,
-                "backbone": req.backbone,
-                "task_id": req.task_id,
-                "classes": segmentation_class_names,
-            },
+            "config": training_config_info,
         }
-        metrics_json_path = Path(save_dir) / "metrics.json"
-        metrics_json_path.write_text(json.dumps(metrics_data, ensure_ascii=False, indent=2))
+        (model_dir / "metrics.json").write_text(
+            json.dumps(metrics_data, ensure_ascii=False, indent=2)
+        )
+        for _epoch_ckpt in model_dir.glob("checkpoint_epoch_*.pth"):
+            _epoch_ckpt.unlink(missing_ok=True)
+        _regular_ckpt = model_dir / "checkpoint.pth"
+        if _regular_ckpt.exists():
+            _regular_ckpt.unlink()
 
         # Phase 3: Save model - short-lived session
         async with scoped_session.session() as (training_logger, db):
-            await TrainedModelRepository.create(db, {
-                "model_id": model_id,
-                "task_id": req.task_id,
-                "user_id": user_id,
-                "model_name": f"{req.architecture}+{req.backbone}",
-                "model_path": checkpoint_path,
-                "config_path": str(Path(checkpoint_path).parent / "config.json"),
-                "classes": segmentation_class_names,
-                "feature_extractor": req.backbone,
-                "aggregator": req.architecture,
-                "train_metrics": sanitize_for_json({"loss": history.get("train_loss", [])}),
-                "val_metrics": sanitize_for_json(results.get("best_val_metrics", {})),
-                "is_default": False,
-                "is_active": True,
-            })
-            await training_logger.info("Training completed. Model saved.", {"model_id": model_id})
-            await _safe_update_status(db, req.task_id, TaskStatus.COMPLETED, progress=100)
+            await TrainedModelRepository.create(
+                db,
+                {
+                    "model_id": model_id,
+                    "task_id": req.task_id,
+                    "user_id": user_id,
+                    "model_name": f"{req.architecture}+{req.backbone}",
+                    "model_path": checkpoint_path,
+                    "config_path": str(Path(checkpoint_path).parent / "config.json"),
+                    "classes": segmentation_class_names,
+                    "feature_extractor": req.backbone,
+                    "aggregator": req.architecture,
+                    "train_metrics": sanitize_for_json(
+                        {"loss": history.get("train_loss", [])}
+                    ),
+                    "val_metrics": sanitize_for_json(
+                        results.get("best_val_metrics", {})
+                    ),
+                    "is_default": False,
+                    "is_active": True,
+                },
+            )
+            await training_logger.info(
+                "Training completed. Model saved.", {"model_id": model_id}
+            )
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.COMPLETED, progress=100
+            )
 
         return result
 
     except TrainingCancelledException as e:
         async with scoped_session.session() as (training_logger, db):
             await training_logger.info(f"Patch Segmentation training cancelled: {e}")
-            await _safe_update_status(db, req.task_id, TaskStatus.CANCELLED, error_message=str(e))
-        return TrainResponse.cancelled(req.task_id, TaskType.PATCH_SEGMENTATION, message=str(e))
+            await _safe_update_status(
+                db, req.task_id, TaskStatus.CANCELLED, error_message=str(e)
+            )
+        return TrainResponse.cancelled(
+            req.task_id, TaskType.PATCH_SEGMENTATION, message=str(e)
+        )
 
     except Exception as e:
-        await handle_training_error_scoped(e, req.task_id, scoped_session, "Patch Segmentation")
+        await handle_training_error_scoped(
+            e, req.task_id, scoped_session, "Patch Segmentation"
+        )
 
     finally:
         if trainer is not None:

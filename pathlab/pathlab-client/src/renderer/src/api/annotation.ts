@@ -18,6 +18,7 @@ export interface AnnotationRegion {
   label: string
   color: string           // hex color for display
   points?: number[][]     // polygon vertices [[x,y], ...] (polygon only)
+  created_by?: string
 }
 
 /**
@@ -39,11 +40,14 @@ export interface SegmentationAnnotation {
   updated_at: string
 }
 
+export type AnnotationSource = 'imported_gt' | 'user_label'
+
 export interface DatasetGroundTruthResponse {
   dataset_id: string
   annotations: AnnotationsMap
   record_count: number
   source: 'ground_truth'
+  annotation_source?: AnnotationSource | null
   width?: number | null
   height?: number | null
 }
@@ -62,6 +66,7 @@ export interface DatasetAnnotationSummaryResponse {
   has_wsi_sources: boolean
   source: 'effective_dataset'
   annotation_id?: string | null
+  label_annotation_source?: AnnotationSource | null
 }
 
 /**
@@ -81,10 +86,10 @@ export interface ExtractRegionsRequest {
   annotations?: AnnotationsMap
   dataset_name: string
   task_type: string
-  /** For segmentation: reuse existing dataset instead of creating a new one */
   source_dataset_id?: string
-  /** Resolve the whole dataset on the backend using GT + saved draft overlay */
   dataset_scope?: boolean
+  source_organ?: string
+  annotation_mode?: 'personal' | 'shared'
 }
 
 export interface DeleteDatasetAnnotationsByLabelsRequest {
@@ -97,22 +102,60 @@ export interface DeleteDatasetAnnotationsByLabelsResponse {
   summary: DatasetAnnotationSummaryResponse
 }
 
-/**
- * Response from extract endpoint
- */
 export interface ExtractRegionsResponse {
   task_id: string
   status: string
 }
 
-/**
- * SSE progress event data
- */
 export interface ExtractProgressEvent {
   task_id: string
   progress: number | null
   done?: boolean
 }
+
+export interface SharedAnnotationResponse {
+  annotation_id: string | null
+  annotations: AnnotationsMap
+  version: number
+  last_edited_by: string | null
+  updated_at: string | null
+  is_prepopulated: boolean
+}
+
+export interface SharedAnnotationSaveResponse {
+  annotation_id: string
+  version: number
+  updated_at: string | null
+}
+
+export interface FinalizeSharedAnnotationResponse {
+  gt_annotation_id: string
+  version: number
+  region_count: number
+}
+
+export interface CollaboratorMember {
+  user_id: string
+  email: string | null
+  nickname: string | null
+  role: 'owner' | 'implicit_admin' | 'collaborator'
+  added_by?: string
+  created_at?: string
+}
+
+export interface CollaboratorsResponse {
+  dataset_id: string
+  members: CollaboratorMember[]
+}
+
+export type SharedAnnotationEvent =
+  | { type: 'updated'; version: number; changed_by: string; annotations?: AnnotationsMap }
+  | { type: 'finalized'; version: number; gt_annotation_id: string }
+  | { type: 'gt_updated' }
+  | { type: 'gt_deleted' }
+  | { type: 'collaborator_removed'; user_id: string }
+  | { type: 'shared_deleted' }
+  | { type: 'keepalive' }
 
 // ============================================================================
 // Segmentation Annotation APIs
@@ -169,31 +212,31 @@ export async function deleteAnnotation(annotationId: string): Promise<{ ok: bool
 /**
  * Get dataset ground-truth annotations converted to viewer ROI format.
  */
-export async function getDatasetGroundTruth(datasetId: string): Promise<DatasetGroundTruthResponse> {
+export async function getDatasetLabels(datasetId: string): Promise<DatasetGroundTruthResponse> {
   return apiFetch<DatasetGroundTruthResponse>(
-    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/ground-truth`,
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/labels`,
     {},
-    'Failed to load dataset ground truth'
+    'Failed to load dataset labels'
   )
 }
 
 /**
  * Get ground-truth annotations for the current WSI/patch only.
  */
-export async function getWSIGroundTruth(wsiId: string): Promise<DatasetGroundTruthResponse> {
+export async function getWSILabels(wsiId: string): Promise<DatasetGroundTruthResponse> {
   return apiFetch<DatasetGroundTruthResponse>(
-    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/ground-truth`,
+    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/labels`,
     {},
-    'Failed to load WSI ground truth'
+    'Failed to load WSI labels'
   )
 }
 
 /**
  * Get a cached GT thumbnail image URL for recommendation card previews.
  */
-export function getGroundTruthThumbnailUrl(wsiId: string, size: number = 160): string {
+export function getLabelThumbnailUrl(wsiId: string, size: number = 160): string {
   return withAuthTokenQuery(
-    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/ground-truth-thumbnail?size=${encodeURIComponent(String(size))}`
+    `${API_BASE}/annotation/wsi/${encodeURIComponent(wsiId)}/label-thumbnail?size=${encodeURIComponent(String(size))}`
   )
 }
 
@@ -245,12 +288,177 @@ export async function extractRegions(req: ExtractRegionsRequest): Promise<Extrac
   )
 }
 
-/**
- * Get the SSE URL for streaming extraction progress.
- * Returns null if not authenticated.
- */
 export function getExtractProgressSSEUrl(taskId: string): string | null {
   const baseUrl = `${API_BASE}/annotation/extract/${encodeURIComponent(taskId)}/stream`
   const authedUrl = withAuthTokenQuery(baseUrl)
   return authedUrl === baseUrl ? null : authedUrl
+}
+
+// ============================================================================
+// Shared Annotation (Collaborative) APIs
+// ============================================================================
+
+export async function getSharedAnnotation(datasetId: string): Promise<SharedAnnotationResponse> {
+  return apiFetch<SharedAnnotationResponse>(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/shared`,
+    {},
+    'Failed to load shared annotation'
+  )
+}
+
+export async function saveSharedAnnotation(
+  datasetId: string,
+  req: { annotations: AnnotationsMap; version: number }
+): Promise<SharedAnnotationSaveResponse> {
+  return apiFetch<SharedAnnotationSaveResponse>(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/shared`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    },
+    'Failed to save shared annotation'
+  )
+}
+
+export async function deleteSharedAnnotation(datasetId: string): Promise<{ ok: boolean; deleted_regions: number }> {
+  return apiFetch(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/shared`,
+    { method: 'DELETE' },
+    'Failed to delete shared annotation'
+  )
+}
+
+export async function finalizeSharedAnnotation(
+  datasetId: string,
+  force = false
+): Promise<FinalizeSharedAnnotationResponse> {
+  return apiFetch<FinalizeSharedAnnotationResponse>(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/shared/finalize`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ force }),
+    },
+    'Failed to finalize shared annotation'
+  )
+}
+
+export async function bulkDeleteSharedRegionsByCreator(
+  datasetId: string,
+  userId: string
+): Promise<{ deleted_count: number }> {
+  return apiFetch(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/shared/regions/bulk-delete`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    },
+    'Failed to bulk delete regions'
+  )
+}
+
+export function getSharedAnnotationSSEUrl(datasetId: string): string | null {
+  const baseUrl = `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/shared/stream`
+  const authedUrl = withAuthTokenQuery(baseUrl)
+  return authedUrl === baseUrl ? null : authedUrl
+}
+
+// ============================================================================
+// Collaborator Management APIs
+// ============================================================================
+
+export async function listCollaborators(datasetId: string): Promise<CollaboratorsResponse> {
+  return apiFetch<CollaboratorsResponse>(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/collaborators`,
+    {},
+    'Failed to list collaborators'
+  )
+}
+
+export async function addCollaborator(
+  datasetId: string,
+  userId: string
+): Promise<{ collaborator: CollaboratorMember }> {
+  return apiFetch(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/collaborators`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId }),
+    },
+    'Failed to add collaborator'
+  )
+}
+
+export async function removeCollaborator(
+  datasetId: string,
+  targetUserId: string
+): Promise<{ ok: boolean; residual_region_count: number }> {
+  return apiFetch(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/collaborators/${encodeURIComponent(targetUserId)}`,
+    { method: 'DELETE' },
+    'Failed to remove collaborator'
+  )
+}
+
+export async function deleteDatasetLabels(datasetId: string): Promise<{ ok: boolean }> {
+  return apiFetch(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/labels`,
+    { method: 'DELETE' },
+    'Failed to delete labels'
+  )
+}
+
+// ============================================================================
+// Annotation Audit Log APIs (admin only)
+// ============================================================================
+
+export interface AnnotationAuditEntry {
+  id: number
+  dataset_id: string
+  dataset_name: string | null
+  user_id: string | null
+  user_display: string | null
+  event_type: 'shared_write' | 'collaborator_add' | 'collaborator_remove' | 'bulk_delete'
+  event_metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface AnnotationAuditResponse {
+  entries: AnnotationAuditEntry[]
+  count: number
+}
+
+export async function listAnnotationAudit(params: {
+  dataset_id?: string
+  event_type?: string
+  limit?: number
+  offset?: number
+}): Promise<AnnotationAuditResponse> {
+  const q = new URLSearchParams()
+  if (params.dataset_id) q.set('dataset_id', params.dataset_id)
+  if (params.event_type) q.set('event_type', params.event_type)
+  if (params.limit !== undefined) q.set('limit', String(params.limit))
+  if (params.offset !== undefined) q.set('offset', String(params.offset))
+  return apiFetch<AnnotationAuditResponse>(
+    `${API_BASE}/annotation/audit?${q}`,
+    {},
+    'Failed to fetch audit log'
+  )
+}
+
+export function exportAnnotationAuditUrl(params: { dataset_id?: string; event_type?: string }): string {
+  const q = new URLSearchParams()
+  if (params.dataset_id) q.set('dataset_id', params.dataset_id)
+  if (params.event_type) q.set('event_type', params.event_type)
+  return `${API_BASE}/annotation/audit/export?${q}`
+}
+
+export function getPresenceWSUrl(datasetId: string): string | null {
+  const httpUrl = `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/presence`
+  const authedUrl = withAuthTokenQuery(httpUrl)
+  if (authedUrl === httpUrl) return null
+  return authedUrl.replace(/^https/, 'wss').replace(/^http/, 'ws')
 }

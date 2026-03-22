@@ -22,15 +22,21 @@ logger = logging.getLogger(__name__)
 _nvml_available = False
 try:
     import pynvml
+
     pynvml.nvmlInit()
     _nvml_available = True
-    logger.info("pynvml (nvidia-ml-py) initialized successfully - using system-level GPU memory detection")
+    logger.info(
+        "pynvml (nvidia-ml-py) initialized successfully - using system-level GPU memory detection"
+    )
 except Exception as e:
-    logger.warning(f"pynvml not available ({e}), falling back to PyTorch memory detection")
+    logger.warning(
+        f"pynvml not available ({e}), falling back to PyTorch memory detection"
+    )
 
 
 class NoGPUAvailableError(Exception):
     """Raised when no GPU is available but GPU is required."""
+
     pass
 
 
@@ -53,18 +59,20 @@ def get_gpu_memory_info(device_index: int) -> Tuple[float, float, float]:
         try:
             handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
             info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            total_mb = info.total / (1024 ** 2)
-            used_mb = info.used / (1024 ** 2)
-            free_mb = info.free / (1024 ** 2)
+            total_mb = info.total / (1024**2)
+            used_mb = info.used / (1024**2)
+            free_mb = info.free / (1024**2)
             return (used_mb, free_mb, total_mb)
         except Exception as e:
-            logger.warning(f"pynvml failed for GPU {device_index}: {e}, falling back to PyTorch")
+            logger.warning(
+                f"pynvml failed for GPU {device_index}: {e}, falling back to PyTorch"
+            )
 
     # Fallback to PyTorch (only tracks current process)
     props = torch.cuda.get_device_properties(device_index)
-    total_mb = props.total_memory / (1024 ** 2)
-    allocated_mb = torch.cuda.memory_allocated(device_index) / (1024 ** 2)
-    reserved_mb = torch.cuda.memory_reserved(device_index) / (1024 ** 2)
+    total_mb = props.total_memory / (1024**2)
+    allocated_mb = torch.cuda.memory_allocated(device_index) / (1024**2)
+    reserved_mb = torch.cuda.memory_reserved(device_index) / (1024**2)
     # Free = Total - Reserved (reserved includes allocated + cached)
     free_mb = total_mb - reserved_mb
 
@@ -109,13 +117,15 @@ def get_optimal_device() -> torch.device:
     for i in range(num_gpus):
         name = torch.cuda.get_device_name(i)
         allocated_mb, free_mb, total_mb = get_gpu_memory_info(i)
-        gpu_info.append({
-            "index": i,
-            "name": name,
-            "allocated_mb": allocated_mb,
-            "free_mb": free_mb,
-            "total_mb": total_mb,
-        })
+        gpu_info.append(
+            {
+                "index": i,
+                "name": name,
+                "allocated_mb": allocated_mb,
+                "free_mb": free_mb,
+                "total_mb": total_mb,
+            }
+        )
 
         if free_mb > best_free_mb:
             best_free_mb = free_mb
@@ -199,12 +209,99 @@ def get_gpu_summary_for_prompt() -> str:
         name = torch.cuda.get_device_name(i)
         _, free_mb, total_mb = get_gpu_memory_info(i)
         utilization = ((total_mb - free_mb) / total_mb) * 100
-        gpu_lines.append(f"  - cuda:{i}: {name} ({free_mb:.0f}/{total_mb:.0f} MB free, {utilization:.0f}% used)")
+        gpu_lines.append(
+            f"  - cuda:{i}: {name} ({free_mb:.0f}/{total_mb:.0f} MB free, {utilization:.0f}% used)"
+        )
         if free_mb > best_free:
             best_free = free_mb
             best_idx = i
 
-    return f"**GPU Status**: {num_gpus} GPUs available (auto-selecting cuda:{best_idx} with most free VRAM)\n" + "\n".join(gpu_lines)
+    return (
+        f"**GPU Status**: {num_gpus} GPUs available (auto-selecting cuda:{best_idx} with most free VRAM)\n"
+        + "\n".join(gpu_lines)
+    )
+
+
+def is_gpu_healthy(gpu_index: int) -> bool:
+    """
+    Return True if gpu_index can execute a minimal CUDA kernel, False otherwise.
+
+    torch.cuda.device_count() still lists a GPU even after a hardware failure;
+    this function catches those failures by running a tiny tensor op and forcing
+    a CPU sync (which surfaces asynchronous CUDA errors).
+    """
+    try:
+        with torch.cuda.device(gpu_index):
+            device = torch.device(f"cuda:{gpu_index}")
+            t = torch.zeros(4, device=device)
+            _ = (
+                (t + 1.0).sum().item()
+            )  # .item() forces CUDA sync — surfaces async errors
+        return True
+    except Exception as e:
+        logger.warning(f"GPU {gpu_index} health check FAILED: {type(e).__name__}: {e}")
+        return False
+
+
+def probe_all_gpu_health() -> dict:
+    """
+    Return {gpu_index: is_healthy} for every GPU visible to this process.
+
+    When CUDA is available, runs a tiny kernel on each device (the only way
+    to surface hardware faults that torch.cuda.device_count() hides).
+    When CUDA init itself failed (e.g. one faulty GPU poisoned cuInit), falls
+    back to pynvml: a GPU is considered healthy if its memory info is readable.
+    """
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        results: dict = {}
+        logger.info(f"Running GPU health probe on {num_gpus} GPU(s)...")
+        for i in range(num_gpus):
+            healthy = is_gpu_healthy(i)
+            results[i] = healthy
+            name = torch.cuda.get_device_name(i)
+            logger.info(f"  cuda:{i} ({name}): {'OK' if healthy else 'FAILED'}")
+        bad = [i for i, ok in results.items() if not ok]
+        if bad:
+            logger.warning(
+                f"Detected {len(bad)} unhealthy GPU(s): {['cuda:' + str(i) for i in bad]}. "
+                f"These GPUs will be excluded from task scheduling."
+            )
+        else:
+            logger.info("All GPUs passed health check.")
+        return results
+
+    if not _nvml_available:
+        return {}
+
+    try:
+        num_gpus = pynvml.nvmlDeviceGetCount()
+        results = {}
+        logger.info(
+            f"CUDA unavailable; running pynvml health probe on {num_gpus} GPU(s)..."
+        )
+        for i in range(num_gpus):
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                pynvml.nvmlDeviceGetMemoryInfo(handle)
+                name = pynvml.nvmlDeviceGetName(handle)
+                results[i] = True
+                logger.info(f"  cuda:{i} ({name}): OK")
+            except Exception as e:
+                results[i] = False
+                logger.warning(f"  cuda:{i}: FAILED via pynvml — {e}")
+        bad = [i for i, ok in results.items() if not ok]
+        if bad:
+            logger.warning(
+                f"Detected {len(bad)} unhealthy GPU(s): {['cuda:' + str(i) for i in bad]}. "
+                f"These GPUs will be excluded from task scheduling."
+            )
+        else:
+            logger.info("All GPUs passed pynvml health check.")
+        return results
+    except Exception as e:
+        logger.warning(f"pynvml GPU health probe failed: {e}")
+        return {}
 
 
 def get_max_available_vram_mb() -> float:
@@ -277,13 +374,13 @@ def check_vram_available(min_vram_mb: float) -> Tuple[bool, float, str]:
         return (
             True,
             max_free_mb,
-            f"VRAM available: {max_free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+            f"VRAM available: {max_free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)",
         )
     else:
         return (
             False,
             max_free_mb,
-            f"VRAM insufficient: {max_free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+            f"VRAM insufficient: {max_free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)",
         )
 
 
@@ -294,9 +391,17 @@ def get_gpu_count() -> int:
     Returns:
         int: Number of CUDA devices available. Returns 0 if no GPU.
     """
-    if not torch.cuda.is_available():
-        return 0
-    return torch.cuda.device_count()
+    if torch.cuda.is_available():
+        return torch.cuda.device_count()
+    # cuInit() can fail when a hardware-failed GPU poisons CUDA initialisation for
+    # the whole process (CUDA_ERROR_UNKNOWN).  pynvml uses the driver API and is
+    # unaffected, so fall back to it for headcount.
+    if _nvml_available:
+        try:
+            return pynvml.nvmlDeviceGetCount()
+        except Exception:
+            pass
+    return 0
 
 
 def get_all_gpu_info() -> list[Any]:
@@ -317,27 +422,58 @@ def get_all_gpu_info() -> list[Any]:
         ]
         Returns empty list if no GPU available.
     """
-    if not torch.cuda.is_available():
+    if torch.cuda.is_available():
+        num_gpus = torch.cuda.device_count()
+        gpu_info = []
+        for i in range(num_gpus):
+            name = torch.cuda.get_device_name(i)
+            allocated_mb, free_mb, total_mb = get_gpu_memory_info(i)
+            gpu_info.append(
+                {
+                    "index": i,
+                    "name": name,
+                    "allocated_mb": allocated_mb,
+                    "free_mb": free_mb,
+                    "total_mb": total_mb,
+                }
+            )
+        return gpu_info
+
+    # CUDA runtime unavailable — fall back to pynvml.
+    # GPUs that fail the pynvml query (e.g. hardware-failed GPU 0) are silently
+    # skipped; the caller's _bad_gpus filter handles any that were pre-marked.
+    if not _nvml_available:
+        return []
+    try:
+        num_gpus = pynvml.nvmlDeviceGetCount()
+        gpu_info = []
+        for i in range(num_gpus):
+            try:
+                handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+                name = pynvml.nvmlDeviceGetName(handle)
+                mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                total_mb = mem.total / (1024**2)
+                free_mb = mem.free / (1024**2)
+                used_mb = mem.used / (1024**2)
+                gpu_info.append(
+                    {
+                        "index": i,
+                        "name": name,
+                        "allocated_mb": used_mb,
+                        "free_mb": free_mb,
+                        "total_mb": total_mb,
+                    }
+                )
+            except Exception:
+                pass  # hardware-failed GPU — skip, don't include in scheduling pool
+        return gpu_info
+    except Exception:
         return []
 
-    num_gpus = torch.cuda.device_count()
-    gpu_info = []
 
-    for i in range(num_gpus):
-        name = torch.cuda.get_device_name(i)
-        allocated_mb, free_mb, total_mb = get_gpu_memory_info(i)
-        gpu_info.append({
-            "index": i,
-            "name": name,
-            "allocated_mb": allocated_mb,
-            "free_mb": free_mb,
-            "total_mb": total_mb,
-        })
-
-    return gpu_info
-
-
-def check_gpu_vram_available(gpu_index: int, min_vram_mb: float) -> Tuple[bool, float, str]:
+def check_gpu_vram_available(
+    gpu_index: int, min_vram_mb: float
+) -> Tuple[bool, float, str]:
     """
     Check if a specific GPU has enough VRAM available.
 
@@ -352,7 +488,19 @@ def check_gpu_vram_available(gpu_index: int, min_vram_mb: float) -> Tuple[bool, 
         - message: Human-readable status message
     """
     if not torch.cuda.is_available():
-        return (False, 0.0, "No GPU available")
+        if not _nvml_available:
+            return (False, 0.0, "No GPU available")
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_index)
+            mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            name = pynvml.nvmlDeviceGetName(handle)
+            free_mb = mem.free / (1024**2)
+            total_mb = mem.total / (1024**2)
+            ok = free_mb >= min_vram_mb
+            msg = f"cuda:{gpu_index} ({name}): {free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+            return (ok, free_mb, msg)
+        except Exception as e:
+            return (False, 0.0, f"cuda:{gpu_index} unavailable: {e}")
 
     num_gpus = torch.cuda.device_count()
     if gpu_index < 0 or gpu_index >= num_gpus:
@@ -360,19 +508,9 @@ def check_gpu_vram_available(gpu_index: int, min_vram_mb: float) -> Tuple[bool, 
 
     _, free_mb, total_mb = get_gpu_memory_info(gpu_index)
     name = torch.cuda.get_device_name(gpu_index)
-
-    if free_mb >= min_vram_mb:
-        return (
-            True,
-            free_mb,
-            f"cuda:{gpu_index} ({name}): {free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
-        )
-    else:
-        return (
-            False,
-            free_mb,
-            f"cuda:{gpu_index} ({name}): {free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
-        )
+    ok = free_mb >= min_vram_mb
+    msg = f"cuda:{gpu_index} ({name}): {free_mb:.0f}/{total_mb:.0f} MB free (required: {min_vram_mb:.0f} MB)"
+    return (ok, free_mb, msg)
 
 
 def select_optimal_gpu_for_task(min_vram_mb: float = 0) -> Tuple[int, float]:

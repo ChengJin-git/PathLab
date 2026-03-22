@@ -16,8 +16,12 @@ from dataclasses import dataclass, field
 from typing import Dict, Callable, Awaitable, Any, Optional, List
 from enum import Enum
 from datetime import datetime
+from sqlalchemy import select
 
 from backend.common.config import Config
+from backend.database import async_session
+from backend.auth.models import User
+from .email_notifications import send_templated_email
 
 logger = logging.getLogger("task_queue")
 
@@ -101,6 +105,7 @@ class TaskQueueManager:
         self._gpu_assignments: Dict[
             str, int
         ] = {}  # task_id -> GPU index for running tasks
+        self._bad_gpus: set = set()  # GPU indices confirmed to have hardware failures
         self._condition: Optional[asyncio.Condition] = (
             None  # For dynamic concurrency control
         )
@@ -181,6 +186,19 @@ class TaskQueueManager:
             f"Queue size: {self._queue.qsize()}, Running: {len(self._running_tasks)}"
         )
 
+    def mark_gpu_bad(self, gpu_index: int) -> None:
+        """Mark a GPU as unhealthy so it is excluded from future task scheduling."""
+        if gpu_index not in self._bad_gpus:
+            self._bad_gpus.add(gpu_index)
+            logger.warning(
+                f"GPU {gpu_index} marked as unhealthy and excluded from task scheduling. "
+                f"Total bad GPUs: {sorted(self._bad_gpus)}"
+            )
+
+    def get_bad_gpus(self) -> frozenset:
+        """Return a snapshot of GPU indices currently marked as unhealthy."""
+        return frozenset(self._bad_gpus)
+
     def _select_optimal_gpu(self) -> int:
         """
         Select the optimal GPU for a new task.
@@ -205,15 +223,16 @@ class TaskQueueManager:
         if not gpu_info_list:
             return -1
 
-        # Get set of GPUs currently running tasks
         gpus_with_tasks = set(self._gpu_assignments.values())
 
-        # Strategy 1: Find GPU without running tasks that meets VRAM requirement
+        # Strategy 1: idle GPU (no running tasks) that is healthy and meets VRAM requirement
         best_idle_gpu = -1
         best_idle_free_mb = 0.0
         for info in gpu_info_list:
             gpu_idx = info["index"]
             free_mb = info["free_mb"]
+            if gpu_idx in self._bad_gpus:
+                continue
             if gpu_idx not in gpus_with_tasks and free_mb >= self.min_vram_mb:
                 if free_mb > best_idle_free_mb:
                     best_idle_free_mb = free_mb
@@ -222,23 +241,25 @@ class TaskQueueManager:
         if best_idle_gpu >= 0:
             logger.debug(
                 f"Selected idle GPU {best_idle_gpu} with {best_idle_free_mb:.0f} MB free VRAM "
-                f"(GPUs with tasks: {gpus_with_tasks})"
+                f"(GPUs with tasks: {gpus_with_tasks}, bad GPUs: {self._bad_gpus})"
             )
             return best_idle_gpu
 
-        # Strategy 2: All GPUs have tasks, select the one with most free VRAM
+        # Strategy 2: all healthy GPUs have tasks — pick the one with most free VRAM
         best_gpu = -1
         best_free_mb = 0.0
         for info in gpu_info_list:
             gpu_idx = info["index"]
             free_mb = info["free_mb"]
+            if gpu_idx in self._bad_gpus:
+                continue
             if free_mb >= self.min_vram_mb and free_mb > best_free_mb:
                 best_free_mb = free_mb
                 best_gpu = gpu_idx
 
         if best_gpu >= 0:
             logger.debug(
-                f"All GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
+                f"All healthy GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
             )
         return best_gpu
 
@@ -448,19 +469,127 @@ class TaskQueueManager:
             logger.info(
                 f"Task {queued_task.task_id} completed successfully on GPU {queued_task.assigned_gpu}"
             )
+            asyncio.create_task(
+                self._notify_task_status_change(queued_task, "completed")
+            )
+        except asyncio.CancelledError:
+            logger.info(f"Task {queued_task.task_id} was cancelled")
+            asyncio.create_task(
+                self._notify_task_status_change(queued_task, "cancelled")
+            )
+            raise
         except Exception as e:
             logger.error(
                 f"Task {queued_task.task_id} failed on GPU {queued_task.assigned_gpu}: {e}"
             )
+            if queued_task.assigned_gpu is not None and "CUDA error" in str(e):
+                self.mark_gpu_bad(queued_task.assigned_gpu)
             await self._ensure_task_failed(
                 queued_task.task_id, queued_task.task_type, str(e)
             )
+            asyncio.create_task(self._notify_task_status_change(queued_task, "failed"))
         finally:
             await self._invalidate_context_for_task(queued_task)
             self._running_tasks.pop(queued_task.task_id, None)
             self._gpu_assignments.pop(queued_task.task_id, None)
             await self._notify_queue_state_changed()
             self._queue.task_done()
+
+    _STATUS_SUBJECT = {
+        "completed": "completed",
+        "failed": "failed",
+        "cancelled": "cancelled",
+    }
+    _STATUS_DESC = {
+        "completed": "completed successfully",
+        "failed": "failed",
+        "cancelled": "been cancelled",
+    }
+    _STATUS_PREF = {
+        "completed": "notify_on_success",
+        "failed": "notify_on_failed",
+        "cancelled": "notify_on_cancelled",
+    }
+
+    async def _notify_task_status_change(
+        self, queued_task: QueuedTask, status: str
+    ) -> None:
+        if queued_task.task_type not in (
+            TaskType.TRAINING,
+            TaskType.INFERENCE,
+            TaskType.EXTERNAL_VALIDATION,
+        ):
+            return
+
+        user_id: str | None = queued_task.kwargs.get("user_id")
+        task_name: str = queued_task.task_id
+        try:
+            async with async_session() as db:
+                if queued_task.task_type in (
+                    TaskType.TRAINING,
+                    TaskType.EXTERNAL_VALIDATION,
+                ):
+                    from backend.database.repositories import TrainingTaskRepository
+
+                    task = await TrainingTaskRepository.get_by_id(
+                        db, queued_task.task_id
+                    )
+                else:
+                    from backend.database.repositories import AITaskRepository
+
+                    task = await AITaskRepository.get_by_id(db, queued_task.task_id)
+
+                if not task:
+                    return
+
+                if status == "completed" and task.status != "completed":
+                    logger.info(
+                        f"[TaskEmail] task {queued_task.task_id} DB status={task.status!r}, skipping"
+                    )
+                    return
+
+                if not user_id:
+                    user_id = task.user_id
+                task_name = getattr(task, "task_name", None) or queued_task.task_id
+        except Exception as exc:
+            logger.warning(
+                f"[TaskEmail] could not resolve task info for {queued_task.task_id}: {exc}"
+            )
+            return
+
+        if not user_id:
+            return
+
+        try:
+            async with async_session() as db:
+                result = await db.execute(select(User).where(User.id == user_id))
+                user = result.scalar_one_or_none()
+                if not user:
+                    return
+
+                pref_attr = self._STATUS_PREF.get(status)
+                if not pref_attr or not getattr(user, pref_attr, False):
+                    return
+
+                to_email = user.registration_email or ""
+                display_name = user.nickname or user.email
+
+            await send_templated_email(
+                template_key="task_completed_notice",
+                to_email=to_email,
+                context={
+                    "display_name": display_name,
+                    "username": user.email,
+                    "task_name": task_name,
+                    "task_status": self._STATUS_SUBJECT.get(status, status),
+                    "task_status_desc": self._STATUS_DESC.get(status, status),
+                },
+                for_admin=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                f"[TaskEmail] failed to send notice for task {queued_task.task_id}: {exc}"
+            )
 
     async def _invalidate_context_for_task(self, queued_task: QueuedTask) -> None:
         if queued_task.task_type not in (TaskType.TRAINING, TaskType.INFERENCE):
@@ -553,6 +682,22 @@ class TaskQueueManager:
                             TaskStatus.FAILED,
                             error_message=f"Task failed (safety net): {error_msg}",
                         )
+                elif task_type == TaskType.EXTERNAL_VALIDATION:
+                    # External validation reuses TrainingTask table
+                    from backend.database.repositories import TrainingTaskRepository
+
+                    task = await TrainingTaskRepository.get_by_id(db, task_id)
+                    if task and task.status in NON_TERMINAL:
+                        logger.warning(
+                            f"Safety net: task {task_id} still in '{task.status}' after exception, "
+                            f"forcing to 'failed'"
+                        )
+                        await TrainingTaskRepository.update_status(
+                            db,
+                            task_id,
+                            TaskStatus.FAILED,
+                            error_message=f"Task failed (safety net): {error_msg}",
+                        )
                 await db.commit()
         except Exception as fallback_err:
             # Last resort: if even the safety net fails, just log it.
@@ -584,6 +729,7 @@ class TaskQueueManager:
             "max_concurrent": self.max_concurrent,
             "min_vram_mb": self.min_vram_mb,
             "gpu_count": self.gpu_count,
+            "bad_gpus": sorted(self._bad_gpus),
             "running_count": len(self._running_tasks),
             "pending_count": len(self._pending_tasks),
             "queue_size": self._queue.qsize() if self._queue else 0,
@@ -647,8 +793,9 @@ class TaskQueueManager:
         if task_id not in self._pending_tasks:
             return False
 
-        self._pending_tasks.pop(task_id, None)
+        queued_task = self._pending_tasks.pop(task_id)
         logger.info(f"Task {task_id} removed from pending queue")
+        asyncio.create_task(self._notify_task_status_change(queued_task, "cancelled"))
         await self._notify_queue_state_changed()
         return True
 

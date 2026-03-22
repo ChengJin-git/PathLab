@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User } from 'lucide-react'
+import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3 } from 'lucide-react'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
-import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery } from '../api'
+import { createTrainingTask, getTrainingTask, getAuthToken, cancelQueueTask, ApiError, withAuthTokenQuery, startExternalValidation } from '../api'
 import { TASK_DETAIL_STATUS_BADGES, isActiveStatus, VALIDATION_CANCELLABLE_STATUSES, ANALYSIS_CANCELLABLE_STATUSES } from '../constants/status'
 import { useAuth } from '../contexts/AuthContext'
 import { TaskDetail, LogEntry } from '../components/taskDetail/types'
@@ -21,6 +21,7 @@ import {
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
 } from '../lib/trainingSubmissionTracker'
+import { formatDateTime } from '../lib/utils'
 
 const makeSyntheticTask = (
   taskId: string,
@@ -354,27 +355,41 @@ export default function TaskDetailPage() {
     )
   }
 
-  const formatDate = (dateStr: string) => {
-    if (!dateStr) return '-'
-    // Fix case where both +00:00 and Z might be present from backend
-    const sanitizedDate = dateStr.replace(/\+00:00Z$/, 'Z')
-    // Ensure the date string is treated as UTC if no timezone is specified
-    const normalizedDate = (!sanitizedDate.endsWith('Z') && !sanitizedDate.includes('+')) 
-      ? `${sanitizedDate}Z` 
-      : sanitizedDate
-    const date = new Date(normalizedDate)
-    if (isNaN(date.getTime())) return dateStr
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    })
-  }
-
   const handleRerun = async () => {
     setRerunError(null)
+
+    if (task?.task_type === 'external_validation') {
+      const modelId = task.model_config?.model_id
+      const datasetId = task.model_config?.dataset_id
+      if (!modelId || !datasetId) {
+        setRerunError(t('taskDetail.rerunErrorMissingConfig'))
+        return
+      }
+      setRerunning(true)
+      try {
+        const result = await startExternalValidation(
+          modelId,
+          datasetId,
+          (task.model_config as any)?.analysis_metrics,
+          (task.model_config as any)?.analysis_charts,
+          ((task.model_config as any)?.bootstrap_ci_metrics?.length ?? 0) > 0,
+          isAdmin ? task.task_id : undefined
+        )
+        navigate(`/task/${result.task_id}`)
+      } catch (error: any) {
+        const errMsg = error?.message || error?.detail || String(error)
+        const parsed = parseTaskError(errMsg)
+        if (parsed.isStorageError) {
+          setRerunError(parsed.userFriendlyMessage + ' ' + (parsed.suggestion || ''))
+        } else {
+          setRerunError(t('taskDetail.rerunErrorGeneric'))
+        }
+      } finally {
+        setRerunning(false)
+      }
+      return
+    }
+
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
       setRerunError(t('taskDetail.rerunErrorMissingWsi'))
       return
@@ -576,7 +591,20 @@ export default function TaskDetailPage() {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {getStatusBadge(displayTask.status, displayTask.task_type)}
-            {!waitingForCreation && task?.status === 'failed' && (
+            {displayTask.status === 'completed' && (
+              <Button
+                variant="default"
+                onClick={() => {
+                  const mode = isExternalValidation ? 'external-validation' : 'internal-analysis'
+                  navigate('/results', { state: { pageMode: mode, selectedTaskId: displayTask.task_id } })
+                }}
+                className="flex items-center gap-2 h-9 px-4 rounded-full font-bold shadow-sm transition-all"
+              >
+                <BarChart3 className="w-4 h-4" />
+                {t('taskDetail.viewAnalysis')}
+              </Button>
+            )}
+            {!waitingForCreation && (task?.status === 'failed' || task?.status === 'cancelled') && (
               <Button
                 variant="outline"
                 onClick={handleRerun}
@@ -684,11 +712,11 @@ export default function TaskDetailPage() {
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.created')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(displayTask.created_at)}</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.created_at)}</div>
           </div>
           <div>
             <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.updated')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDate(displayTask.updated_at)}</div>
+            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.updated_at)}</div>
           </div>
           {isAdmin && displayTask.username && (
             <div>

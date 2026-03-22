@@ -10,7 +10,7 @@ import asyncio
 import httpx
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
-from sqlalchemy import select
+from sqlalchemy import select, text
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -58,6 +58,7 @@ from .routes import (
     annotation_router,
     research_chat_router,
     dataset_download_router,
+    training_options_router,
 )
 from backend.common.config import Config
 
@@ -704,5 +705,6 @@ app.include_router(gpu_router)
 app.include_router(annotation_router)
 app.include_router(research_chat_router)
 app.include_router(dataset_download_router)
+app.include_router(training_options_router)
 
 logger.info("Gateway service initialized with all route modules")

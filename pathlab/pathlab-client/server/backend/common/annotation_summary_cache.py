@@ -11,7 +11,9 @@ from backend.common.coco_utils import coco_to_roi_annotations
 from backend.common.file_types import is_patch_file
 
 
-CACHE_VERSION = 2
+CACHE_VERSION = (
+    3  # bumped: wsi lookup now includes original_filename (fixes uuid-path mismatch)
+)
 
 
 def _to_isoformat(value: Any) -> Optional[str]:
@@ -145,14 +147,45 @@ def is_draft_annotation_summary_cache_valid(
 def _build_dataset_wsi_lookups(
     wsis: Iterable[Any],
 ) -> tuple[Dict[str, str], Dict[str, str]]:
+    """Build normalized exact/stem filename lookups for COCO file_name → wsi_id matching.
+
+    Candidates are taken from ``original_filename`` first (the name the user uploaded
+    and the name referenced by COCO ``images[].file_name``), then from the ``wsi_path``
+    basename (which is UUID-based for privacy-protected uploads).  All keys are
+    lowercased to match ``_normalize_file_key`` used by ``coco_to_roi_annotations``.
+    """
     exact_lookup: Dict[str, str] = {}
-    stem_lookup: Dict[str, str] = {}
+    stem_candidates: Dict[str, set[str]] = {}
+
     for wsi in wsis:
-        file_name = Path(str(getattr(wsi, "wsi_path", "") or "")).name
-        if not file_name:
-            continue
-        exact_lookup[file_name] = wsi.wsi_id
-        stem_lookup[Path(file_name).stem] = wsi.wsi_id
+        candidate_names: set[str] = set()
+
+        # original_filename is the canonical name that COCO file_name references
+        original_filename = str(getattr(wsi, "original_filename", "") or "").strip()
+        if original_filename:
+            name = Path(original_filename).name.strip().lower()
+            if name:
+                candidate_names.add(name)
+
+        # wsi_path basename as secondary candidate (UUID-based for uploaded files)
+        wsi_path_str = str(getattr(wsi, "wsi_path", "") or "").strip()
+        if wsi_path_str:
+            name = Path(wsi_path_str).name.strip().lower()
+            if name:
+                candidate_names.add(name)
+
+        for name in candidate_names:
+            exact_lookup.setdefault(name, wsi.wsi_id)
+            stem = Path(name).stem
+            if stem:
+                stem_candidates.setdefault(stem, set()).add(wsi.wsi_id)
+
+    # Only keep stems that map unambiguously to a single WSI
+    stem_lookup = {
+        stem: next(iter(wsi_ids))
+        for stem, wsi_ids in stem_candidates.items()
+        if len(wsi_ids) == 1
+    }
     return exact_lookup, stem_lookup
 
 
@@ -329,7 +362,7 @@ async def rebuild_dataset_annotation_summary_cache(
     )
     if gt_records and wsis:
         dataset_level_record: Any = None
-        target_annotation_id = f"annot_{dataset_id}"
+        target_annotation_id = f"label_{dataset_id}"
         for record in gt_records:
             record_annotation_id = getattr(record, "annotation_id", None)
             if (

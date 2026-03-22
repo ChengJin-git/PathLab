@@ -1,6 +1,6 @@
 # PathLab Client 单元测试
 
-> 适用版本：`PathLab v1.0.1`
+> 适用版本：`PathLab v1.0.4`
 
 本目录包含 PathLab 前端的完整单元测试套件，覆盖全部业务逻辑模块。
 
@@ -33,8 +33,10 @@ npm run test:coverage
 ```text
 test/
 ├── setup.ts              # 全局测试初始化
+├── helpers/              # 测试工具函数
+│   └── apiHelpers.ts     # ok() / errResp() / noContent() / blobResp() / createSSEStream()
 └── unit/
-    ├── api/              # API 客户端层测试
+    ├── api/              # API 客户端层测试（19 个文件）
     │   ├── client.test.ts
     │   ├── crypto.test.ts
     │   ├── auth.test.ts
@@ -44,14 +46,48 @@ test/
     │   ├── stats.test.ts
     │   ├── chat.test.ts
     │   ├── heatmap.test.ts
-    │   └── users.test.ts
-    ├── lib/              # 纯工具函数测试
+    │   ├── users.test.ts
+    │   ├── analysis.test.ts
+    │   ├── annotation.test.ts
+    │   ├── export.test.ts
+    │   ├── feedback.test.ts
+    │   ├── grants.test.ts
+    │   ├── queue.test.ts
+    │   ├── settings.test.ts
+    │   ├── storage.test.ts
+    │   └── trainingOptions.test.ts
+    ├── lib/              # 纯工具函数测试（7 个文件）
     │   ├── cache.test.ts
     │   ├── utils.test.ts
-    │   └── chatMessageParser.test.ts
-    └── contexts/         # React Context 测试
-        └── AuthContext.test.tsx
+    │   ├── chatMessageParser.test.ts
+    │   ├── datasetPagination.test.ts
+    │   ├── segmentationUploadUtils.test.ts
+    │   ├── externalValidationUtils.test.ts
+    │   └── trainingSubmissionTracker.test.ts
+    ├── contexts/         # React Context 测试
+    │   └── AuthContext.test.tsx
+    └── components/       # 组件测试（2 个文件）
+        └── settings/
+            ├── PermissionCenterModal.test.tsx
+            └── storage/
+                └── BatchScanResults.test.tsx
 ```
+
+---
+
+## helpers/apiHelpers.ts — 测试工具函数
+
+**对应源文件**：无（纯测试基础设施）
+
+提供 5 个工厂函数，用于快速构造 `Response` mock 对象，消除各测试文件中的重复样板代码：
+
+- `ok(data, status?)` — 成功响应（默认 200，Content-Type: application/json）
+- `errResp(data, status)` — 错误响应（ok=false）
+- `noContent()` — 204 No Content
+- `blobResp(content, type?)` — 二进制 / 文件下载响应
+- `createSSEStream(lines)` — 构造 SSE 流用于流式 AI 对话测试
+
+新增的 API 测试文件全部通过 `import { ok, errResp } from '../../helpers/apiHelpers'` 使用这些工具，替代了旧测试文件中手写 Response mock 的方式。
 
 ---
 
@@ -427,7 +463,7 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **`fetchExtractors()`**
 
-- 获取可用特征提取器列表（UNI、CONCH 等）
+- 获取可用特征提取器列表（UNI、CONCH、CytoFM 等）
 
 ---
 
@@ -577,7 +613,7 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **权限与维护**
 
-- `getMyDatasetPermissions()`：获取当前用户的临时提权数据集 ID 列表
+- `getMyDatasetGrants()`：获取当前用户的临时提权数据集 ID 列表
 - `getClientIP()`：获取客户端 IP（用于协议签署记录）
 - `getMaintenanceNotice()`：获取当前维护公告（含 `active`、`message`、`needs_acknowledgment`）
 - `acknowledgeNotice()`：标记用户已读维护公告
@@ -657,7 +693,7 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 - 有用户会话时收到事件：调用 `toast.warning()`，`user` 清为 `null`
 - 无用户（未登录）时收到事件：不触发 toast（避免误报）
 
-**`refreshDatasetPermissions()`**
+**`refreshDatasetGrants()`**
 
 - 成功：更新 `elevatedDatasetIds`
 - 失败：重置为空数组
@@ -665,6 +701,186 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 **Provider 边界检查**
 
 - `useAuth()` 在 `AuthProvider` 外调用时抛出 `'useAuth must be used within an AuthProvider'`
+
+---
+
+## unit/api/analysis.test.ts
+
+**对应源文件**：`src/renderer/src/api/analysis.ts`
+
+覆盖外部验证与分析相关接口：
+
+- `fetchDatasetsForValidation()`：获取可用于外部验证的数据集列表（含标签分布、可用提取器信息）
+- `startExternalValidation()`：提交外部验证任务（含模型 ID、数据集 ID 等参数）
+- `runTaskAnalysis()`：为指定任务触发完整分析流程
+- `getTaskQuickAnalysis()`：获取任务快速分析摘要（含 `has_analysis`、`task_type`、指标数等）
+- `getAnalysisStatus()`：轮询分析任务状态，覆盖 running / completed / failed 三态
+
+---
+
+## unit/api/annotation.test.ts
+
+**对应源文件**：`src/renderer/src/api/annotation.ts`
+
+覆盖分割标注的完整 CRUD、标签读取、协作标注全流程与审计：
+
+- `saveAnnotation()` / `listAnnotations()` / `getAnnotation()` / `deleteAnnotation()`：标注草稿增删查
+- `getDatasetLabels()` / `getWSILabels()`：数据集与 WSI 级别标签读取（原 ground-truth 接口已重命名）
+- `getLabelThumbnailUrl()`：构建标签缩略图 URL（纯函数，无网络请求）
+- `getDatasetAnnotationSummary()`：数据集标注摘要（label 分布、annotated_wsi 计数）
+- `deleteDatasetAnnotationsByLabels()`：按 label 批量删除
+- `deleteDatasetLabels()`：删除整个数据集的标签
+- `extractRegions()`：触发 ROI 提取任务
+- `getExtractProgressSSEUrl()`：获取 ROI 提取进度的 SSE 流地址（纯函数）
+- **协作标注**：`getSharedAnnotation()` / `saveSharedAnnotation()` / `deleteSharedAnnotation()` / `finalizeSharedAnnotation()` / `bulkDeleteSharedRegionsByCreator()` / `getSharedAnnotationSSEUrl()`
+- **协作者管理**：`listCollaborators()` / `addCollaborator()` / `removeCollaborator()`（含 URL 编码验证）
+- **审计日志**：`listAnnotationAudit()`（含查询参数过滤）/ `exportAnnotationAuditUrl()`（纯函数）
+- **WebSocket 协作**：`getPresenceWSUrl()`（未认证返回 null，已认证返回 ws:// 地址）
+
+---
+
+## unit/api/export.test.ts
+
+**对应源文件**：`src/renderer/src/api/export.ts`
+
+覆盖异步导出任务管理：
+
+- `startAsyncExport()`：发起异步导出任务（支持 feedbacks 等类型，指定 `file_format`）
+- `getExportTaskStatus()`：轮询导出任务状态（pending → running → completed）
+- `downloadExportFile()`：下载已完成的导出文件（Blob 响应，触发浏览器下载）
+
+---
+
+## unit/api/feedback.test.ts
+
+**对应源文件**：`src/renderer/src/api/feedback.ts`
+
+覆盖 AI 对话消息反馈的完整功能：
+
+- `submitMessageFeedback()` / `deleteMessageFeedback()`：用户提交 / 撤回对单条消息的反馈
+- `getConversationFeedbacks()`：获取会话内的所有反馈记录
+- `getAdminFeedbacks()`：管理员分页获取全量反馈（含筛选参数）
+- `getFeedbackStats()`：获取反馈统计摘要（thumbs_up / thumbs_down 计数等）
+- `exportFeedbacks()`：导出反馈数据（Blob 下载）
+- `resetAllFeedbacks()`：管理员清空全部反馈记录
+
+---
+
+## unit/api/grants.test.ts
+
+**对应源文件**：`src/renderer/src/api/grants.ts`
+
+覆盖数据集临时提权管理：
+
+- `getMyDatasetGrants()`：获取当前用户已获得临时提权的数据集 ID 列表
+- `grantDatasetGrant()` / `revokeDatasetGrant()`：单条授权 / 撤销
+- `getUserDatasetGrants()`：获取指定用户的所有权限记录
+- `listDatasetGrants()`：管理员分页列出全量权限记录（含过期状态）
+- `batchGrantDatasetGrants()` / `batchRevokeDatasetGrants()`：批量授权 / 批量撤销
+
+---
+
+## unit/api/queue.test.ts
+
+**对应源文件**：`src/renderer/src/api/queue.ts`
+
+覆盖 GPU 任务队列管理接口：
+
+- `getQueueStatus()`：获取当前队列状态（running_count、pending_count、GPU 信息等）
+- `getQueueConfig()` / `updateQueueConfig()`：读取 / 修改 `max_concurrent` 等队列配置
+- `cancelQueueTask()`：取消指定排队任务，并验证 `invalidateTrainingTasksCache()` 被调用
+
+---
+
+## unit/api/settings.test.ts
+
+**对应源文件**：`src/renderer/src/api/settings.ts`
+
+覆盖系统设置接口：
+
+- `getPublicSettings()`：获取公开设置（`turnstile_enabled`、`turnstile_site_key` 等，无需认证）
+- `getGlobalSettings()`：管理员获取全部全局设置（API keys、vLLM、ASR 等配置项）
+- `updateGlobalSettings()`：管理员 PATCH 更新全局设置，验证请求体字段
+
+---
+
+## unit/api/storage.test.ts
+
+**对应源文件**：`src/renderer/src/api/storage.ts`
+
+覆盖 `/storage` 全部接口，是测试用例数最多的单文件：
+
+- **配置与空间**：`getStorageConfig()` / `updateStorageConfig()` / `getDiskSpace()` / `checkUploadSpace()`
+- **统计**：`getStorageStats()` / `getWSIStorageInfo()` / `getTrainingTaskStorageInfo()`
+- **孤立项**：`detectOrphanedFiles()` / `cleanupOrphanedFiles()` / `detectOrphanedRecords()` / `cleanupOrphanedRecords()`
+- **迁移**：`startMigration()` / `getMigrationStatus()`
+- **外部扫描**：`scanDirectory()` / `getExternalDatasets()` / `invalidateExternalDatasetsCache()` / `getExternalDatasetsCachedSync()`
+- **后台任务**：`startBatchImportTask()` / `startDeleteExternalTask()` / `startBatchUpdateMetadataTask()` / `getStorageTaskStatus()` / `cancelStorageTask()`
+- **派生数据**：`resetDerivedData()`
+
+---
+
+## unit/api/trainingOptions.test.ts
+
+**对应源文件**：`src/renderer/src/api/trainingOptions.ts`
+
+覆盖训练配置选项接口：
+
+- `fetchTrainingOptions()`：从 `GET /training/options` 获取全部可选项（feature_extractors、aggregators、segmentation_architectures、segmentation_backbones、segmentation_losses、optimizers）
+- 验证请求 URL 前缀正确指向 Gateway（`API_BASE`）
+- 验证错误时抛出 `ApiError`
+
+---
+
+## unit/lib/datasetPagination.test.ts
+
+**对应源文件**：`src/renderer/src/lib/datasetPagination.ts`
+**测试数量**：3 个
+
+覆盖 `clampDatasetPage()` 的三条分支：请求出错时保持当前页不变、正在加载且无数据时保持不变、数据稳定时将页码夹紧到总页数上限。
+
+---
+
+## unit/lib/segmentationUploadUtils.test.ts
+
+**对应源文件**：`src/renderer/src/lib/segmentationUploadUtils.ts`
+**测试数量**：21 个
+
+覆盖分割标注上传的文件匹配工具函数：
+
+- `getSegmentationStem(name)` — 剥离 `.json` 与其他扩展名后小写化，覆盖多种命名组合
+- `mergeSegmentationJsonFiles(existing, files)` — 合并 JSON 文件映射，检测重复 stem；验证不修改原始 Map
+- `summarizeSegmentationMatches(items, jsonMap)` — 计算已匹配、缺失 JSON、孤立 JSON、重复图像的 stem 集合；验证排序行为
+
+---
+
+## unit/lib/externalValidationUtils.test.ts
+
+**对应源文件**：`src/renderer/src/lib/externalValidationUtils.ts`
+**测试数量**：28 个
+
+覆盖外部验证的模型-数据集兼容性校验逻辑：
+
+- `isSurvivalTask()` / `isSegmentationTask()` — 任务类型判断，含边界值（undefined、空串）
+- `EXTRACTOR_EMBED_DIM` — 常量完整性（已知提取器维度、未知返回 undefined）
+- `getDatasetCompatibilityError()` — 核心兼容性逻辑，覆盖：data_type 不匹配、task_type 不匹配、分类标签集不等、提取器 embed dim 不匹配、WSI 数据泄漏检测、survival 免标签检查、分割任务特有规则（文件级数据集、架构 / backbone 元数据校验、source/target 数据集不能相同）
+- `filterCompatibleDatasets()` / `isDatasetCompatible()` — 基于 `getDatasetCompatibilityError` 的过滤包装
+
+---
+
+## unit/lib/trainingSubmissionTracker.test.ts
+
+**对应源文件**：`src/renderer/src/lib/trainingSubmissionTracker.ts`
+**测试数量**：23 个
+
+覆盖基于 localStorage 的训练提交状态机：
+
+- **状态转换**：`markTrainingSubmissionPending()` → `Created` → `Failed` → `Cancelled`，验证各转换保留 `createdAt`、携带可选 `taskName` / `error`
+- **读取**：`getTrainingSubmissionRecord()` 对未知 task 返回 null，对超出 7 天保留期的记录返回 null
+- **列表**：`listTrainingSubmissionRecords()` 支持按 state 过滤、按 `updatedAt` 降序排列
+- **超时检测**：`isTrainingSubmissionPendingTimedOut()` 基于默认（30 分钟）与自定义超时阈值
+- **清除**：`clearTrainingSubmissionRecord()` 只删除指定 task，不影响其他记录；对不存在的 task 不抛错
+- 所有测试使用 `vi.useFakeTimers()` 精确控制时间推进
 
 ---
 

@@ -1,7 +1,8 @@
 import { useTranslation } from 'react-i18next'
-import { Edit, X, Users, FileImage } from 'lucide-react'
+import { Edit, X, Users, FileImage, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
-import { organSources } from '../upload/types'
+import { Select } from '../ui/select'
+import { organSources, organSourceKeyMap } from '../upload/types'
 
 // ─── EditMetadataModal ───────────────────────────────────────────────────────
 
@@ -87,15 +88,18 @@ export function EditMetadataModal({
                 placeholder={t('listComponents.editModals.eventTimePlaceholder')}
                 className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
             </div>
-            <div>
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventStatus')}</label>
-              <select value={editEventStatus} onChange={(e) => onEditEventStatusChange(e.target.value)}
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white">
-                <option value="">{t('listComponents.editModals.selectStatus')}</option>
-                <option value="1">{t('listComponents.editModals.event')}</option>
-                <option value="0">{t('listComponents.editModals.censored')}</option>
-              </select>
-            </div>
+             <div>
+               <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventStatus')}</label>
+               <Select
+                 value={editEventStatus}
+                 onChange={onEditEventStatusChange}
+                 options={[
+                   { value: '1', label: t('listComponents.editModals.event') },
+                   { value: '0', label: t('listComponents.editModals.censored') },
+                 ]}
+                 placeholder={t('listComponents.editModals.selectStatus')}
+               />
+             </div>
           </div>
         )}
 
@@ -115,17 +119,20 @@ export function EditMetadataModal({
               placeholder={t('listComponents.editModals.agePlaceholder')}
               className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
           </div>
-          {/* Gender Input */}
-          <div>
-            <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.gender')}</label>
-            <select value={editGender} onChange={(e) => onEditGenderChange(e.target.value)}
-              className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white">
-              <option value="">{t('listComponents.editModals.selectGender')}</option>
-              <option value="Male">{t('listComponents.editModals.male')}</option>
-              <option value="Female">{t('listComponents.editModals.female')}</option>
-              <option value="Unspecified">{t('listComponents.editModals.unspecified')}</option>
-            </select>
-          </div>
+           {/* Gender Input */}
+           <div>
+             <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.gender')}</label>
+             <Select
+               value={editGender}
+               onChange={onEditGenderChange}
+               options={[
+                 { value: 'Male', label: t('listComponents.editModals.male') },
+                 { value: 'Female', label: t('listComponents.editModals.female') },
+                 { value: 'Unspecified', label: t('listComponents.editModals.unspecified') },
+               ]}
+               placeholder={t('listComponents.editModals.selectGender')}
+             />
+           </div>
         </div>
 
         {/* Action Buttons */}
@@ -222,15 +229,18 @@ export function BatchEditModal({
                   placeholder={t('listComponents.editModals.keepExisting')}
                   className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
               </div>
-              <div>
-                <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventStatus')}</label>
-                <select value={batchEditEventStatus} onChange={(e) => onBatchEditEventStatusChange(e.target.value)}
-                  className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white">
-                  <option value="">{t('listComponents.editModals.keepExisting')}</option>
-                  <option value="1">{t('listComponents.editModals.event')}</option>
-                  <option value="0">{t('listComponents.editModals.censored')}</option>
-                </select>
-              </div>
+               <div>
+                 <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.eventStatus')}</label>
+                 <Select
+                   value={batchEditEventStatus}
+                   onChange={onBatchEditEventStatusChange}
+                   options={[
+                     { value: '1', label: t('listComponents.editModals.event') },
+                     { value: '0', label: t('listComponents.editModals.censored') },
+                   ]}
+                   placeholder={t('listComponents.editModals.keepExisting')}
+                 />
+               </div>
             </div>
           )}
 
@@ -250,17 +260,20 @@ export function BatchEditModal({
                 placeholder={t('listComponents.editModals.existingPlaceholder')}
                 className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm" />
             </div>
-            {/* Gender Input */}
-            <div>
-              <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.gender')}</label>
-              <select value={batchEditGender} onChange={(e) => onBatchEditGenderChange(e.target.value)}
-                className="w-full px-3 py-1.5 sm:px-4 sm:py-2 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-xs sm:text-sm bg-white">
-                <option value="">{t('listComponents.editModals.keepExisting')}</option>
-                <option value="Male">{t('listComponents.editModals.male')}</option>
-                <option value="Female">{t('listComponents.editModals.female')}</option>
-                <option value="Unspecified">{t('listComponents.editModals.unspecified')}</option>
-              </select>
-            </div>
+             {/* Gender Input */}
+             <div>
+               <label className="block text-[11px] sm:text-sm font-semibold text-gray-700 mb-1 sm:mb-2">{t('listComponents.editModals.gender')}</label>
+               <Select
+                 value={batchEditGender}
+                 onChange={onBatchEditGenderChange}
+                 options={[
+                   { value: 'Male', label: t('listComponents.editModals.male') },
+                   { value: 'Female', label: t('listComponents.editModals.female') },
+                   { value: 'Unspecified', label: t('listComponents.editModals.unspecified') },
+                 ]}
+                 placeholder={t('listComponents.editModals.keepExisting')}
+               />
+             </div>
           </div>
 
         </div>
@@ -291,22 +304,30 @@ export interface EditDatasetModalProps {
   editingDatasetOriginalDataLevel: 'case' | 'file'
   editingDatasetSourceSelection: string
   editingDatasetSourceCustom: string
+  editingDatasetIsPublic: boolean
+  editingDatasetOriginalIsPublic: boolean
   editingDatasetSaving: boolean
   isSlideDataset: boolean
   canSelectSegmentation: boolean
+  canEditVisibility: boolean
   onNameChange: (v: string) => void
   onTypeChange: (v: 'classification' | 'survival' | 'segmentation') => void
   onDataLevelChange: (v: 'case' | 'file') => void
   onSourceSelectionChange: (v: string) => void
   onSourceCustomChange: (v: string) => void
+  onIsPublicChange: (v: boolean) => void
   onCancel: () => void
   onSave: () => void
 }
 
 export function EditDatasetModal({
   editingDatasetName, editingDatasetType, editingDatasetOriginalType,
-  editingDatasetDataLevel, editingDatasetOriginalDataLevel, editingDatasetSourceSelection, editingDatasetSourceCustom, editingDatasetSaving,
-  isSlideDataset, canSelectSegmentation, onNameChange, onTypeChange, onDataLevelChange, onSourceSelectionChange, onSourceCustomChange, onCancel, onSave,
+  editingDatasetDataLevel, editingDatasetOriginalDataLevel, editingDatasetSourceSelection, editingDatasetSourceCustom,
+  editingDatasetIsPublic, editingDatasetOriginalIsPublic,
+  editingDatasetSaving,
+  isSlideDataset, canSelectSegmentation, canEditVisibility,
+  onNameChange, onTypeChange, onDataLevelChange, onSourceSelectionChange, onSourceCustomChange,
+  onIsPublicChange, onCancel, onSave,
 }: EditDatasetModalProps) {
   const { t } = useTranslation()
   const isOtherSource = editingDatasetSourceSelection === 'Other'
@@ -403,17 +424,18 @@ export function EditDatasetModal({
         <div className="mb-6">
           <label className="block text-sm font-semibold text-gray-700 mb-2">{t('listComponents.editModals.sourceOrganTissue')}</label>
           <div className="grid grid-cols-1 gap-3">
-            <select
+            <Select
               value={editingDatasetSourceSelection}
-              onChange={(e) => onSourceSelectionChange(e.target.value)}
-              className="w-full px-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
-            >
-              <option value="">{t('listComponents.editModals.selectDatasetSource')}</option>
-              {organSources.filter((source) => source !== 'Other').map((source) => (
-                <option key={source} value={source}>{source}</option>
-              ))}
-              <option value="Other">{t('listComponents.editModals.otherSource')}</option>
-            </select>
+              onChange={onSourceSelectionChange}
+              options={[
+                ...organSources.filter((source) => source !== 'Other').map((source) => ({
+                  value: source,
+                  label: t(`organSources.${organSourceKeyMap[source]}`),
+                })),
+                { value: 'Other', label: t('organSources.other') },
+              ]}
+              placeholder={t('listComponents.editModals.selectDatasetSource')}
+            />
             {isOtherSource && (
               <input
                 type="text"
@@ -428,6 +450,60 @@ export function EditDatasetModal({
             {t('listComponents.editModals.datasetSourceDescription')}
           </p>
         </div>
+
+        {/* Visibility Settings */}
+        {canEditVisibility && (
+          <div className="mb-6">
+            <label className="block text-sm font-semibold text-gray-700 mb-3">{t('listComponents.editModals.datasetVisibility')}</label>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  onIsPublicChange(false)
+                }}
+                className={`flex flex-row items-center p-3 rounded-xl border-2 transition-all text-left ${
+                  !editingDatasetIsPublic
+                    ? 'border-slate-500 bg-slate-50/50'
+                    : 'border-slate-100 bg-white hover:border-slate-200'
+                }`}
+              >
+                <div className={`p-2 rounded-lg mr-3 ${!editingDatasetIsPublic ? 'bg-slate-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                  <Lock className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className={`font-bold block text-sm ${!editingDatasetIsPublic ? 'text-slate-900' : 'text-slate-700'}`}>
+                    {t('listComponents.editModals.private')}
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-0.5">{t('listComponents.editModals.privateDesc')}</span>
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => onIsPublicChange(true)}
+                className={`flex flex-row items-center p-3 rounded-xl border-2 transition-all text-left ${
+                  editingDatasetIsPublic
+                    ? 'border-blue-500 bg-blue-50/50'
+                    : 'border-slate-100 bg-white hover:border-slate-200'
+                }`}
+              >
+                <div className={`p-2 rounded-lg mr-3 ${editingDatasetIsPublic ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                  <Globe className="w-4 h-4" />
+                </div>
+                <div>
+                  <span className={`font-bold block text-sm ${editingDatasetIsPublic ? 'text-blue-900' : 'text-slate-700'}`}>
+                    {t('listComponents.editModals.public')}
+                  </span>
+                  <span className="text-[10px] text-slate-500 mt-0.5">{t('listComponents.editModals.publicDesc')}</span>
+                </div>
+              </button>
+            </div>
+            {editingDatasetIsPublic !== editingDatasetOriginalIsPublic && (
+              <p className="mt-2 text-xs text-amber-600">
+                {t('listComponents.editModals.changingVisibilityWarning')}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex gap-3">

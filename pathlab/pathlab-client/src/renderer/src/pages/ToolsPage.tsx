@@ -4,6 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Button } from '../components/ui/button'
 import { Rocket, TrendingUp, FileText, ChevronRight, ArrowLeft } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
+import { useAuth } from '../contexts/AuthContext'
 
 interface Tool {
     title: string
@@ -12,11 +13,13 @@ interface Tool {
     path: string
     color: string
     comingSoon?: boolean
+    requiresGpu?: boolean
 }
 
 export default function ToolsPage() {
     const navigate = useNavigate()
     const { t } = useTranslation()
+    const { canUseGpu } = useAuth()
 
     const tools: Tool[] = [
         {
@@ -25,6 +28,7 @@ export default function ToolsPage() {
             icon: Rocket,
             path: '/task-setup',
             color: 'text-rose-500',
+            requiresGpu: true,
         },
         {
             title: t('toolsPage.tools.resultsViewer'),
@@ -32,6 +36,7 @@ export default function ToolsPage() {
             icon: TrendingUp,
             path: '/results',
             color: 'text-indigo-500',
+            requiresGpu: true,
         },
         {
             title: t('toolsPage.tools.reportGenerator'),
@@ -66,7 +71,7 @@ export default function ToolsPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
                     {tools.map((tool, index) => {
                         const Icon = tool.icon
-                        const isDisabled = tool.comingSoon
+                        const isDisabled = Boolean(tool.comingSoon || (tool.requiresGpu && !canUseGpu))
                         return (
                             <Card
                                 key={index}

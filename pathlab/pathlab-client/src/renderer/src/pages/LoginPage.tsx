@@ -9,13 +9,15 @@ import React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useAuth } from '../contexts/AuthContext'
-import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink, AlertTriangle } from 'lucide-react'
+import { Microscope, Brain, Shield, Zap, LogIn, Loader2, User, Lock, Heart, ExternalLink, AlertTriangle, UserPlus } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { LanguageSwitcher } from '../components/common/LanguageSwitcher'
 import { DisclaimerModal } from '../components/DisclaimerModal'
 import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal'
-import { getPublicSettings, ApiError } from '../api'
+import { getPublicSettings, getPublicMaintenanceNotice, ApiError } from '../api'
+import { MaintenanceNoticeModal } from '../components/MaintenanceNoticeModal'
+import { RegisterRequestModal } from '../components/RegisterRequestModal'
 
 /**
  * Inner login page component.
@@ -30,6 +32,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
   const [username, setUsername] = React.useState('')
   const [password, setPassword] = React.useState('')
   const [formError, setFormError] = React.useState<string | null>(null)
+  const [isRegisterOpen, setIsRegisterOpen] = React.useState(false)
   const [isTermsPreviewOpen, setIsTermsPreviewOpen] = React.useState(false)
   const [isPrivacyPreviewOpen, setIsPrivacyPreviewOpen] = React.useState(false)
 
@@ -216,7 +219,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
 
             {/* Cloudflare Turnstile Widget */}
             {turnstileSiteKey && (
-              <div ref={turnstileRef} className="flex justify-center" />
+              <div ref={turnstileRef} className="w-full" />
             )}
 
             <Button
@@ -226,6 +229,16 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
               {t('common.signIn')}
+            </Button>
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsRegisterOpen(true)}
+              className="w-full h-11 border-slate-200 text-slate-700 hover:bg-slate-50 font-medium rounded-lg flex items-center justify-center gap-2"
+            >
+              <UserPlus className="w-4 h-4" />
+              {t('loginPage.requestAccess')}
             </Button>
 
             <div className="rounded-2xl bg-slate-50/80 px-5 py-4 shadow-[0_10px_30px_rgba(15,23,42,0.06)]">
@@ -350,6 +363,8 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
         </div>
       </div>
 
+      <RegisterRequestModal isOpen={isRegisterOpen} onClose={() => setIsRegisterOpen(false)} turnstileSiteKey={turnstileSiteKey || undefined} />
+
       <DisclaimerModal
         isOpen={isTermsPreviewOpen}
         isLoading={false}
@@ -377,10 +392,14 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
  * LoginPage wrapper that fetches Turnstile settings and passes them down.
  * Turnstile script is only loaded on the login page, not globally.
  */
+const NOTICE_CACHE_KEY = 'pathlab_notice_cache'
+
 export default function LoginPage() {
   const [turnstileSiteKey, setTurnstileSiteKey] = React.useState<string>('')
   const [settingsLoaded, setSettingsLoaded] = React.useState(false)
   const [backendUnavailable, setBackendUnavailable] = React.useState(false)
+  const [noticeMessage, setNoticeMessage] = React.useState<string | null>(null)
+  const [noticeOpen, setNoticeOpen] = React.useState(false)
 
   React.useEffect(() => {
     getPublicSettings()
@@ -391,14 +410,37 @@ export default function LoginPage() {
         setBackendUnavailable(false)
       })
       .catch((err) => {
-        // If backend is unreachable (network error or nginx 502/503), show maintenance banner
         if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
           setBackendUnavailable(true)
         }
-        // Continue without Turnstile either way
       })
       .finally(() => {
         setSettingsLoaded(true)
+      })
+
+    getPublicMaintenanceNotice()
+      .then((notice) => {
+        if (notice.active && notice.message) {
+          localStorage.setItem(NOTICE_CACHE_KEY, JSON.stringify({ message: notice.message }))
+          setNoticeMessage(notice.message)
+          setNoticeOpen(true)
+        } else {
+          localStorage.removeItem(NOTICE_CACHE_KEY)
+        }
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && (err.isNetworkError() || err.isServerError())) {
+          try {
+            const cached = localStorage.getItem(NOTICE_CACHE_KEY)
+            if (cached) {
+              const { message } = JSON.parse(cached)
+              if (message) {
+                setNoticeMessage(message)
+                setNoticeOpen(true)
+              }
+            }
+          } catch { /* ignore */ }
+        }
       })
   }, [])
 
@@ -406,5 +448,14 @@ export default function LoginPage() {
     return null
   }
 
-  return <LoginPageInner backendUnavailable={backendUnavailable} turnstileSiteKey={turnstileSiteKey || undefined} />
+  return (
+    <>
+      <LoginPageInner backendUnavailable={backendUnavailable} turnstileSiteKey={turnstileSiteKey || undefined} />
+      <MaintenanceNoticeModal
+        isOpen={noticeOpen}
+        message={noticeMessage ?? ''}
+        onDismiss={() => setNoticeOpen(false)}
+      />
+    </>
+  )
 }

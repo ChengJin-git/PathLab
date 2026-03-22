@@ -18,6 +18,7 @@ export interface WSIItem {
   case_id?: string | null
   age?: number | null
   gender?: string | null
+  source?: string | null
   split?: string | null
   file_extension?: string | null  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
   file_size?: number | null

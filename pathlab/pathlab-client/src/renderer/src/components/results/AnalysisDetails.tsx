@@ -507,12 +507,12 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
 
             {/* IoU Curve */}
             {shouldShowChart('iou_curve') && analysis.chart_data?.iou_curve && (
-              <MetricCurveChart data={analysis.chart_data.iou_curve} />
+              <MetricCurveChart data={analysis.chart_data.iou_curve} title={analysis.chart_data.iou_curve.metric_name} />
             )}
 
             {/* Dice Curve */}
             {shouldShowChart('dice_curve') && analysis.chart_data?.dice_curve && (
-              <MetricCurveChart data={analysis.chart_data.dice_curve} />
+              <MetricCurveChart data={analysis.chart_data.dice_curve} title={analysis.chart_data.dice_curve.metric_name} />
             )}
 
             {/* External Segmentation Per-Class IoU */}

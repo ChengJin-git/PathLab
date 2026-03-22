@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 from ..models import (
     DataGroup,
     Dataset,
-    DatasetPermission,
+    DatasetGrant,
     SegmentationAnnotation,
     WSISlide,
     AITask,
@@ -23,6 +23,10 @@ from ..models import (
     TrainingTaskWSI,
     utc_now,
 )
+
+
+class DatasetNameConflictError(ValueError):
+    pass
 
 
 class DatasetRepository:
@@ -36,14 +40,19 @@ class DatasetRepository:
         group_id: str,
         description: str = None,
         user_id: str = None,
+        source_organ: str = None,
+        parent_dataset_id: str = None,
+        is_public: bool = False,
     ) -> Dataset:
-        """Create a new dataset record with data_group relationship loaded"""
         dataset = Dataset(
             dataset_id=dataset_id,
             name=name,
             group_id=group_id,
             description=description,
             user_id=user_id,
+            source_organ=source_organ or None,
+            parent_dataset_id=parent_dataset_id or None,
+            is_public=is_public,
         )
         db.add(dataset)
         await db.flush()
@@ -66,44 +75,57 @@ class DatasetRepository:
         return result.scalar_one_or_none()
 
     @staticmethod
-    async def get_by_name(db: AsyncSession, name: str) -> Optional[Dataset]:
+    async def get_by_name(
+        db: AsyncSession, name: str, user_id: Optional[str] = None
+    ) -> Optional[Dataset]:
         """Get dataset by display name with data_group relationship loaded"""
-        result = await db.execute(
+        query = (
             select(Dataset)
             .options(selectinload(Dataset.data_group))
             .where(Dataset.name == name)
         )
+        if user_id is not None:
+            query = query.where(Dataset.user_id == user_id)
+
+        result = await db.execute(query)
         return result.scalar_one_or_none()
 
     @staticmethod
     async def get_or_create(
-        db: AsyncSession, name: str, group_id: str, user_id: str = None
+        db: AsyncSession,
+        name: str,
+        group_id: str,
+        user_id: str = None,
+        source_organ: str = None,
+        parent_dataset_id: str = None,
+        is_public: bool = False,
+        reuse_existing: bool = True,
     ) -> Dataset:
-        """Get existing dataset by name or create new one with UUID.
-
-        Note: Dataset name does not have a UNIQUE constraint (different users may
-        share dataset names). Under PostgreSQL READ COMMITTED, concurrent calls with
-        the same name may create duplicate datasets. This is acceptable as
-        get_by_name returns the first match, and duplicates are rare in practice.
-        A SAVEPOINT is still used to handle any unexpected IntegrityError gracefully.
-        """
         import uuid
 
-        existing = await DatasetRepository.get_by_name(db, name)
+        existing = await DatasetRepository.get_by_name(db, name, user_id=user_id)
         if existing:
+            if not reuse_existing:
+                raise DatasetNameConflictError(name)
             return existing
         dataset_id = str(uuid.uuid4())
         try:
             async with db.begin_nested():
                 return await DatasetRepository.create(
-                    db, dataset_id, name, group_id=group_id, user_id=user_id
+                    db,
+                    dataset_id,
+                    name,
+                    group_id=group_id,
+                    user_id=user_id,
+                    source_organ=source_organ,
+                    parent_dataset_id=parent_dataset_id,
+                    is_public=is_public,
                 )
         except IntegrityError:
-            # Unlikely but handle gracefully — re-query
             logger.debug(
                 f"Dataset concurrent insert detected for name='{name}', re-querying"
             )
-            existing = await DatasetRepository.get_by_name(db, name)
+            existing = await DatasetRepository.get_by_name(db, name, user_id=user_id)
             if existing:
                 return existing
             raise
@@ -192,13 +214,12 @@ class DatasetRepository:
             )
         )
         await db.execute(
-            delete(DatasetPermission).where(DatasetPermission.dataset_id == dataset_id)
+            delete(DatasetGrant).where(DatasetGrant.dataset_id == dataset_id)
         )
 
         # Delete WSI slides
         await db.execute(delete(WSISlide).where(WSISlide.dataset_id == dataset_id))
 
-        # Delete the dataset (dataset_permissions has ondelete=CASCADE, DB handles it)
         result = await db.execute(
             delete(Dataset).where(Dataset.dataset_id == dataset_id)
         )
@@ -292,3 +313,65 @@ class DatasetRepository:
             .where(WSISlide.feature_extracted == True)  # noqa: E712
         )
         return result.scalar() or 0
+
+    @staticmethod
+    async def get_public_dataset_ids(db: AsyncSession) -> List[str]:
+        result = await db.execute(
+            select(Dataset.dataset_id).where(Dataset.is_public.is_(True))
+        )
+        return [row[0] for row in result.all()]
+
+    @staticmethod
+    async def get_child_dataset_ids(
+        db: AsyncSession, parent_ids: List[str], max_depth: int = 3
+    ) -> List[str]:
+        if not parent_ids:
+            return []
+        all_child_ids: set = set()
+        frontier = list(parent_ids)
+        for _ in range(max_depth):
+            result = await db.execute(
+                select(Dataset.dataset_id).where(
+                    Dataset.parent_dataset_id.in_(frontier)
+                )
+            )
+            new_ids = [
+                row[0]
+                for row in result.all()
+                if row[0] not in all_child_ids and row[0] not in parent_ids
+            ]
+            if not new_ids:
+                break
+            all_child_ids.update(new_ids)
+            frontier = new_ids
+        return list(all_child_ids)
+
+    @staticmethod
+    async def get_ancestor_dataset_ids(
+        db: AsyncSession, dataset_id: Optional[str], max_depth: int = 8
+    ) -> List[str]:
+        if not dataset_id:
+            return []
+
+        ancestors: List[str] = []
+        seen: set[str] = set()
+        current_id = dataset_id
+
+        for _ in range(max_depth):
+            if not current_id or current_id in seen:
+                break
+            seen.add(current_id)
+
+            result = await db.execute(
+                select(Dataset.parent_dataset_id).where(
+                    Dataset.dataset_id == current_id
+                )
+            )
+            parent_id = result.scalar_one_or_none()
+            if not parent_id:
+                break
+
+            ancestors.append(parent_id)
+            current_id = parent_id
+
+        return ancestors

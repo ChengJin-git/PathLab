@@ -1,16 +1,16 @@
 import React, { useState, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
-import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu } from 'lucide-react'
+import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu, KeyRound, Mail } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
-import ConversationSidebar from './ConversationSidebar'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
 import { PrivacyPolicyModal } from './PrivacyPolicyModal'
 import { MaintenanceNoticeModal } from './MaintenanceNoticeModal'
+import { ChangePasswordModal } from './ChangePasswordModal'
+import { SetEmailModal } from './SetEmailModal'
 import { uploadAvatar, deleteAvatar, ApiError } from '../api'
 import { API_BASE } from '../config'
 import { useTranslation } from 'react-i18next'
@@ -28,6 +28,8 @@ export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation()
   const [isMenuOpen, setIsMenuOpen] = useState(false)
   const [isPrivacyPolicyOpen, setIsPrivacyPolicyOpen] = useState(false)
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
+  const [isSetEmailOpen, setIsSetEmailOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -42,9 +44,8 @@ export default function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  const isAIChatPage = location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/ai-chat')
-  const isDeepResearchPage = location.pathname.startsWith('/deep-research')
-  const isConversationWorkspacePage = isAIChatPage || isDeepResearchPage
+  // Check if current page is Dashboard (ChatGPT-style home page)
+  const isAIChatPage = location.pathname.startsWith('/dashboard')
   const isRegisterPage = location.pathname === '/register'
 
   const handleLogout = async () => {
@@ -84,8 +85,8 @@ export default function Layout({ children }: LayoutProps) {
         const errorMessage = err instanceof ApiError
           ? err.message
           : err instanceof Error
-            ? err.message
-            : 'Failed to upload avatar'
+          ? err.message
+          : 'Failed to upload avatar'
         toastError(errorMessage)
       }
     }
@@ -107,14 +108,14 @@ export default function Layout({ children }: LayoutProps) {
       const errorMessage = err instanceof ApiError
         ? err.message
         : err instanceof Error
-          ? err.message
-          : t('layout.avatarUploadFailed')
+        ? err.message
+        : t('layout.avatarUploadFailed')
       toastError(errorMessage)
     }
   }
 
   return (
-    <div className={`bg-gray-50 flex flex-col ${isConversationWorkspacePage || location.pathname === '/task-setup'
+    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup'
       ? 'h-screen overflow-hidden'
       : isRegisterPage
         ? 'h-screen' // Allow main to handle scroll
@@ -126,7 +127,7 @@ export default function Layout({ children }: LayoutProps) {
             {/* Logo Area */}
             <div className="flex items-center">
               {/* Mobile hamburger for AI Chat sidebar */}
-              {isConversationWorkspacePage && (
+              {isAIChatPage && (
                 <button
                   onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-sidebar'))}
                   className="p-2 mr-1 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors lg:hidden"
@@ -239,6 +240,24 @@ export default function Layout({ children }: LayoutProps) {
                           <span>{t('layout.deleteAvatar')}</span>
                         </button>
                       )}
+
+                      <button
+                        type="button"
+                        onClick={() => { setIsChangePasswordOpen(true); setIsMenuOpen(false) }}
+                        className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
+                      >
+                        <KeyRound className="w-3.5 h-3.5 mr-2 text-gray-400 group-hover:text-primary-500" />
+                        <span>{t('layout.changePassword')}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => { setIsSetEmailOpen(true); setIsMenuOpen(false) }}
+                        className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
+                      >
+                        <Mail className="w-3.5 h-3.5 mr-2 text-gray-400 group-hover:text-primary-500" />
+                        <span>{t('layout.setEmail')}</span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -260,36 +279,16 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      {isConversationWorkspacePage ? (
-        <div className="flex-1 flex overflow-hidden">
-          <ConversationSidebar />
-          <main className="flex-1 min-w-0 overflow-hidden relative">
-            <AnimatePresence mode="sync">
-              <motion.div
-                key={location.pathname.split('/')[1]}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15, ease: 'easeInOut' }}
-                className="h-full"
-              >
-                {children}
-              </motion.div>
-            </AnimatePresence>
-          </main>
-        </div>
-      ) : (
-        <main
-          className={`flex-1 ${location.pathname === '/task-setup'
-            ? 'h-full overflow-hidden'
-            : isRegisterPage
-              ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
-              : `w-full mx-auto p-3 sm:p-6 lg:p-8`
-            }`}
-        >
-          {children}
-        </main>
-      )}
+      <main
+        className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
+          ? 'h-full overflow-hidden'
+          : isRegisterPage
+            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
+            : `w-full mx-auto p-3 sm:p-6 lg:p-8`
+          }`}
+      >
+        {children}
+      </main>
       <InstallPWA />
 
       {/* Disclaimer Modal - shown when user needs to accept agreement */}
@@ -307,11 +306,21 @@ export default function Layout({ children }: LayoutProps) {
         onBackToTerms={() => setIsPrivacyPolicyOpen(false)}
       />
 
+      <ChangePasswordModal
+        isOpen={isChangePasswordOpen}
+        onClose={() => setIsChangePasswordOpen(false)}
+      />
+
+      <SetEmailModal
+        isOpen={isSetEmailOpen}
+        onClose={() => setIsSetEmailOpen(false)}
+      />
+
       {/* Maintenance Notice Modal - shown when admin posts a notice */}
       <MaintenanceNoticeModal
         isOpen={!needsAgreement && needsMaintenanceAcknowledgment}
         message={maintenanceNoticeMessage || ''}
-        onAcknowledge={acknowledgeMaintenanceNotice}
+        onAcknowledge={async () => { await acknowledgeMaintenanceNotice() }}
       />
     </div>
   )

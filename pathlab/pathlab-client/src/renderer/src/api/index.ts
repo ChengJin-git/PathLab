@@ -23,5 +23,7 @@ export * from './heatmap'
 export * from './wsi'
 export * from './storage'
 export * from './annotation'
+export * from './grants'
+export * from './trainingOptions'
 export * from './dataset-download'
 
