@@ -690,6 +690,7 @@ async def update_user(
         raise HTTPException(status_code=404, detail="User not found")
 
     was_active = user.is_active
+    is_first_activation = not user.is_active and user.first_activated_at is None
 
     # Update fields
     update_data = user_update.model_dump(exclude_unset=True)
@@ -714,11 +715,16 @@ async def update_user(
     if "is_active" in update_data:
         user.deactivated_by_maintenance = False
 
+    if is_first_activation and user.is_active:
+        from datetime import datetime, timezone
+
+        user.first_activated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+
     await db.commit()
     await db.refresh(user)
 
     logger.info(f"Admin {admin.email} updated user {user.email}")
-    if not was_active and user.is_active:
+    if not was_active and user.is_active and is_first_activation:
         asyncio.create_task(_send_activation_email(user))
     return user
 
@@ -861,19 +867,24 @@ async def batch_activate_users(
     """
     import uuid
 
+    from datetime import datetime, timezone
+
     updated = 0
     activated_users = []
     for user_id in request.user_ids:
         try:
             user_uuid = uuid.UUID(user_id)
         except ValueError:
-            continue  # Skip invalid UUIDs
+            continue
 
         result = await db.execute(select(User).where(User.id == user_uuid))
         user = result.scalar_one_or_none()
 
         if user and user.role != "admin" and user.id != admin.id:
-            if not user.is_active:
+            if not user.is_active and user.first_activated_at is None:
+                user.first_activated_at = datetime.now(timezone.utc).replace(
+                    tzinfo=None
+                )
                 activated_users.append(user)
             user.is_active = True
             user.deactivated_by_maintenance = False

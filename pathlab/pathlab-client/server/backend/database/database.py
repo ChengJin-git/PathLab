@@ -235,6 +235,20 @@ async def init_db():
 
         await conn.execute(
             text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "first_activated_at TIMESTAMP DEFAULT NULL"
+            )
+        )
+        await conn.execute(
+            text(
+                "UPDATE users SET first_activated_at = NOW() "
+                "WHERE first_activated_at IS NULL"
+            )
+        )
+        logger.info("users.first_activated_at column ensured and backfilled")
+
+        await conn.execute(
+            text(
                 "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
                 "is_public BOOLEAN NOT NULL DEFAULT FALSE"
             )

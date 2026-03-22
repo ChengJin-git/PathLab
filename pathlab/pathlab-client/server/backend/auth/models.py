@@ -115,6 +115,12 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         ),
     )
 
+    first_activated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime,
+        nullable=True,
+        default=None,
+    )
+
     # Maintenance notice acknowledgment tracking
     notice_acknowledged_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime,
