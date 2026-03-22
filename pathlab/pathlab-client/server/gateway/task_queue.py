@@ -495,28 +495,43 @@ class TaskQueueManager:
             return
 
         user_id: str | None = queued_task.kwargs.get("user_id")
-        if not user_id:
-            try:
-                async with async_session() as db:
-                    if queued_task.task_type in (
-                        TaskType.TRAINING,
-                        TaskType.EXTERNAL_VALIDATION,
-                    ):
-                        from backend.database.repositories import TrainingTaskRepository
+        task_name: str = queued_task.task_id
+        try:
+            async with async_session() as db:
+                if queued_task.task_type in (
+                    TaskType.TRAINING,
+                    TaskType.EXTERNAL_VALIDATION,
+                ):
+                    from backend.database.repositories import TrainingTaskRepository
 
-                        task = await TrainingTaskRepository.get_by_id(
-                            db, queued_task.task_id
-                        )
-                    else:
-                        from backend.database.repositories import AITaskRepository
+                    task = await TrainingTaskRepository.get_by_id(
+                        db, queued_task.task_id
+                    )
+                else:
+                    from backend.database.repositories import AITaskRepository
 
-                        task = await AITaskRepository.get_by_id(db, queued_task.task_id)
-                    user_id = task.user_id if task else None
-            except Exception as exc:
-                logger.warning(
-                    f"[TaskEmail] could not resolve user_id for task {queued_task.task_id}: {exc}"
-                )
-                return
+                    task = await AITaskRepository.get_by_id(db, queued_task.task_id)
+
+                if not task:
+                    logger.warning(
+                        f"[TaskEmail] task {queued_task.task_id} not found in DB, skipping email"
+                    )
+                    return
+
+                if task.status != "completed":
+                    logger.info(
+                        f"[TaskEmail] task {queued_task.task_id} status={task.status!r}, skipping email"
+                    )
+                    return
+
+                if not user_id:
+                    user_id = task.user_id
+                task_name = getattr(task, "task_name", None) or queued_task.task_id
+        except Exception as exc:
+            logger.warning(
+                f"[TaskEmail] could not resolve task info for task {queued_task.task_id}: {exc}"
+            )
+            return
 
         if not user_id:
             return
@@ -535,8 +550,7 @@ class TaskQueueManager:
                 context={
                     "display_name": display_name,
                     "username": user.email,
-                    "task_id": queued_task.task_id,
-                    "task_status": status,
+                    "task_name": task_name,
                 },
                 for_admin=False,
             )
