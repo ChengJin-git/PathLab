@@ -8,6 +8,7 @@
     "build",
     "dist"
   ],
+  "extraPaths": ["."],
   "venvPath": ".",
   "typeCheckingMode": "standard",
   "reportArgumentType": "warning",

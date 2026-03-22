@@ -50,7 +50,7 @@ function getGrantDatasetsButton(): HTMLButtonElement {
     .getAllByRole("button")
     .find((item) => item.textContent?.includes("settings.permissionCenterModal.grantSelectedDatasets"));
   if (!button) throw new Error("Grant datasets button not found");
-  return button;
+  return button as HTMLButtonElement;
 }
 
 function getSelectVisibleDatasetsLabel(): HTMLElement {

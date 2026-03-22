@@ -41,6 +41,14 @@ const MOCK_GLOBAL_SETTINGS: GlobalSettings = {
   turnstile_enabled: true,
   turnstile_site_key: 'site_key_abc',
   turnstile_secret_key: 'secret_key_xyz',
+  resend_enabled: false,
+  resend_api_key: '',
+  email_templates: {
+    new_user_registration_notice: { subject: 'Welcome', html: '<p>Welcome</p>' },
+    account_activated: { subject: 'Account Activated', html: '<p>Activated</p>' },
+    task_completed_notice: { subject: 'Task Completed', html: '<p>Done</p>' },
+    admin_new_user_registration_notice: { subject: 'New User', html: '<p>New user registered</p>' },
+  },
 }
 
 beforeEach(() => {

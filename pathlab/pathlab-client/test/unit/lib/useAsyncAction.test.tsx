@@ -74,7 +74,7 @@ describe('useAsyncAction', () => {
   })
 
   it('returns undefined when fn throws', async () => {
-    const { result } = renderHook(() => useAsyncAction({ onError: vi.fn() }))
+    const { result } = renderHook(() => useAsyncAction<string>({ onError: vi.fn() }))
     let returnValue: string | undefined = 'initial'
 
     await act(async () => {

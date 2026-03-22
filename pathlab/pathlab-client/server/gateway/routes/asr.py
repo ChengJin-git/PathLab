@@ -326,12 +326,11 @@ async def asr_realtime_websocket(
 
     # Helper function to connect to DashScope with retry
     async def connect_to_dashscope():
-        model = "qwen3-asr-flash-realtime"
+        model = "qwen3-asr-flash-realtime-2026-02-10"
         base_url = "wss://dashscope-intl.aliyuncs.com/api-ws/v1/realtime"
         url = f"{base_url}?model={model}"
         headers = {
             "Authorization": f"Bearer {dashscope_api_key}",
-            "OpenAI-Beta": "realtime=v1",
         }
 
         max_retries = 2
@@ -341,15 +340,18 @@ async def asr_realtime_websocket(
                 logger.info(
                     f"Connecting to DashScope ASR (attempt {attempt}/{max_retries}): {url}"
                 )
-                await websocket.send_json(
-                    {
-                        "type": "session.progress",
-                        "step": "connecting_upstream",
-                        "provider": "DashScope",
-                        "attempt": attempt,
-                        "max_attempts": max_retries,
-                    }
-                )
+                try:
+                    await websocket.send_json(
+                        {
+                            "type": "session.progress",
+                            "step": "connecting_upstream",
+                            "provider": "DashScope",
+                            "attempt": attempt,
+                            "max_attempts": max_retries,
+                        }
+                    )
+                except Exception:
+                    pass  # Client may have already disconnected
                 ws = await websockets.connect(
                     url, additional_headers=headers, open_timeout=10
                 )
@@ -546,15 +548,21 @@ async def asr_realtime_websocket(
 
     except websockets.exceptions.ConnectionClosed as e:
         logger.error(f"{source_name} WebSocket closed: {e}")
-        await websocket.send_json(
-            {
-                "type": "error",
-                "error": {"message": f"{source_name} connection closed: {e}"},
-            }
-        )
+        try:
+            await websocket.send_json(
+                {
+                    "type": "error",
+                    "error": {"message": f"{source_name} connection closed: {e}"},
+                }
+            )
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Realtime ASR error ({source_name}): {e}")
-        await websocket.send_json({"type": "error", "error": {"message": str(e)}})
+        try:
+            await websocket.send_json({"type": "error", "error": {"message": str(e)}})
+        except Exception:
+            pass
     finally:
         if upstream_ws:
             try:
