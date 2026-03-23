@@ -445,9 +445,7 @@ export function AssistantStructuredContent({
                     onError={(error) => {
                         console.warn("[DeepResearch] TASK_HISTORY_CONFIG load error:", error);
                     }}
-                    onDataLoaded={handleTaskHistoryDataLoaded}
-                    navigationSource="deep-research"
-                    deepResearchConversationId={deepResearchConversationId ?? undefined}
+                    onDataLoaded={(tasks) => { handleTaskHistoryDataLoaded(tasks) }}
                 />
             )}
             {navigateBlock && (

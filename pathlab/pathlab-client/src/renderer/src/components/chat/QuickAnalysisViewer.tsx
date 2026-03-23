@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Tooltip } from '../ui/tooltip'
 import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent, Layers } from 'lucide-react'
 import { getTaskQuickAnalysis, getAnalysisStatus } from '../../api'
 import { ApiError } from '../../api/client'
@@ -472,14 +471,7 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           </h3>
           <p className="text-xs text-gray-500 mt-1 truncate">{config.task_name || config.task_id}{numSamples && ` • ${t('chatComponents.quickAnalysis.testSamples', { count: numSamples })}`}{taskType && ` • ${taskType}`}</p>
         </div>
-        <Tooltip content={t('chatComponents.quickAnalysis.refresh')}>
-          <button
-            onClick={handleRefresh}
-            className={`p-1.5 text-gray-400 ${getHeaderHoverColor(taskType)} hover:bg-white rounded-lg transition-colors flex-shrink-0`}
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </Tooltip>
+        <button onClick={handleRefresh} className={`p-1.5 text-gray-400 ${getHeaderHoverColor(taskType)} hover:bg-white rounded-lg transition-colors flex-shrink-0`} title={t('chatComponents.quickAnalysis.refresh')}><RefreshCw className="w-4 h-4" /></button>
       </div>
 
       <div className="p-4 sm:p-5 space-y-4 sm:space-y-6">
@@ -558,25 +550,25 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
                   const foldNumber = parseInt(foldName.replace('fold_', ''), 10) + 1
                   const displayName = t('chatComponents.quickAnalysis.foldLabel', { number: foldNumber })
                   return (
-                    <div key={foldName} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm hover:border-purple-300 transition-colors">
-                      <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wider border-b border-gray-100 pb-2">
-                        {displayName}
-                      </div>
-                      {foldData.val_metrics && (
-                        <div className="space-y-2">
-                          {Object.entries(foldData.val_metrics).map(([k, v]) => (
-                            <div key={k} className="flex justify-between items-center text-xs">
-                              <span className="text-gray-500 font-medium truncate pr-2" title={formatMetricName(k)}>
-                                {formatMetricName(k)}
-                              </span>
-                              <span className="font-mono font-semibold text-gray-900 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
-                                {typeof v === 'number' ? formatMetricValue(v, k) : v}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                  <div key={foldName} className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm hover:border-purple-300 transition-colors">
+                    <div className="text-xs font-bold text-gray-700 mb-2 uppercase tracking-wider border-b border-gray-100 pb-2">
+                      {displayName}
                     </div>
+                    {foldData.val_metrics && (
+                      <div className="space-y-2">
+                        {Object.entries(foldData.val_metrics).map(([k, v]) => (
+                          <div key={k} className="flex justify-between items-center text-xs">
+                            <span className="text-gray-500 font-medium truncate pr-2" title={formatMetricName(k)}>
+                              {formatMetricName(k)}
+                            </span>
+                            <span className="font-mono font-semibold text-gray-900 bg-gray-50 px-1.5 py-0.5 rounded border border-gray-100">
+                              {typeof v === 'number' ? formatMetricValue(v, k) : v}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                   )
                 })}
             </div>
@@ -593,17 +585,16 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
 
             {/* Desktop View: Stacked */}
             <div className="hidden sm:block space-y-4">
-              {chartData.iou_curve && <MetricCurveChart data={chartData.iou_curve} title={iouCurveTitle} compact={true} />}
-              {chartData.dice_curve && <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.quickAnalysis.diceCurve')} compact={true} />}
-              {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title={t('chatComponents.quickAnalysis.rocCurve')} compact={true} />}
-              {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title={t('chatComponents.quickAnalysis.confusionMatrix')} compact={true} />}
+              {chartData.iou_curve && <MetricCurveChart data={chartData.iou_curve} title={iouCurveTitle} />}
+              {chartData.dice_curve && <MetricCurveChart data={chartData.dice_curve} title={t('chatComponents.quickAnalysis.diceCurve')} />}
+              {chartData.roc_curve && <RocCurveChart data={chartData.roc_curve} title={t('chatComponents.quickAnalysis.rocCurve')} />}
+              {chartData.confusion_matrix && <ConfusionMatrixChart data={chartData.confusion_matrix} title={t('chatComponents.quickAnalysis.confusionMatrix')} />}
               {chartData.loss_curve && (
                 'is_kfold' in chartData.loss_curve && chartData.loss_curve.is_kfold
-                  ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title={t('chatComponents.quickAnalysis.trainingLossKFold')} compact={true} />
-                  : <LossCurveChart data={chartData.loss_curve as LossCurveData} title={t('chatComponents.quickAnalysis.trainingLoss')} compact={true} />
+                  ? <KFoldLossCurveChart data={chartData.loss_curve as KFoldLossCurveData} title={t('chatComponents.quickAnalysis.trainingLossKFold')} />
+                  : <LossCurveChart data={chartData.loss_curve as LossCurveData} title={t('chatComponents.quickAnalysis.trainingLoss')} />
               )}
-              {chartData.km_curve && <KMCurveChart data={chartData.km_curve} title={t('chatComponents.quickAnalysis.kmSurvivalCurve')} compact={true} />
-              }
+              {chartData.km_curve && <KMCurveChart data={chartData.km_curve} title={t('chatComponents.quickAnalysis.kmSurvivalCurve')} />}
             </div>
 
             {/* Mobile View: Tabs */}
