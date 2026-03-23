@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar, BarChart3, ChevronLeft, ChevronRight, Users } from 'lucide-react'
+import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar, BarChart3, Users } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
@@ -13,6 +13,7 @@ import {
   ExportTaskStatus, fetchUserUsageStats, UserUsageItem, downloadBlobFile
 } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
+import { PaginationFooter } from '../ui/pagination-footer'
 
 export interface FeedbackTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -326,45 +327,16 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
 
             {/* Pagination Controls */}
              {usageTotalPages > 1 && (
-               <div className="flex flex-col sm:flex-row items-center justify-between gap-3 mt-4 pt-4 border-t border-gray-100">
-                 <div className="flex items-center gap-2 text-sm text-gray-500">
-                   <span>{t('settings.feedbackTab.usageRowsPerPage')}</span>
-                   <Select
-                     value={String(usagePageSize)}
-                     onChange={(v) => { setUsagePageSize(Number(v)); setUsagePage(0) }}
-                     options={[
-                       { value: '5', label: '5' },
-                       { value: '10', label: '10' },
-                       { value: '20', label: '20' },
-                     ]}
-                     triggerClassName="w-20"
-                   />
-                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">
-                    {t('settings.feedbackTab.usagePageInfo', {
-                      current: usagePage + 1,
-                      total: usageTotalPages,
-                    })}
-                  </span>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => setUsagePage((p) => Math.max(0, p - 1))}
-                      disabled={usagePage === 0}
-                      className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => setUsagePage((p) => Math.min(usageTotalPages - 1, p + 1))}
-                      disabled={usagePage >= usageTotalPages - 1}
-                      className="p-1.5 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                  </div>
-                </div>
-              </div>
+               <div className="mt-4">
+                 <PaginationFooter
+                   page={usagePage + 1}
+                   pageSize={usagePageSize}
+                   total={usageData.length}
+                   pageSizeOptions={['5', '10', '20']}
+                   onPageChange={(p) => setUsagePage(p - 1)}
+                   onPageSizeChange={(size) => { setUsagePageSize(size); setUsagePage(0) }}
+                 />
+               </div>
             )}
           </>
         )}

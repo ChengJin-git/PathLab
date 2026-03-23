@@ -1,12 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
+import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
 import { Card } from '../ui/card'
-import { Select } from '../ui/select'
 import { Tooltip } from '../ui/tooltip'
 import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
+import { PaginationFooter } from '../ui/pagination-footer'
 import { isSegmentationTask } from '../../lib/externalValidationUtils'
 
 export interface ModelsTabProps {
@@ -155,8 +155,6 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
 
     return { metrics, isSurvival, primaryMetric, secondaryMetric }
   }
-
-  const totalPages = Math.ceil(modelsTotal / pageSize)
 
   return (
     <Card className="p-4 sm:p-6">
@@ -520,82 +518,15 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
           </div>
 
           {/* Pagination Controls */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6 pt-4 border-t border-gray-100">
-             <div className="flex flex-col sm:flex-row items-center gap-2 text-sm text-gray-500">
-                <span>
-                   {t('settings.modelsTab.showing')} <span className="font-medium mx-1">{modelsTotal > 0 ? (page - 1) * pageSize + 1 : 0}</span>
-                   {t('settings.modelsTab.to')} <span className="font-medium mx-1">{Math.min(page * pageSize, modelsTotal)}</span>
-                   {t('settings.modelsTab.of')} <span className="font-medium mx-1">{modelsTotal}</span> {t('settings.modelsTab.entries')}
-                </span>
-                <div className="flex items-center mt-2 sm:mt-0">
-                   <span className="text-sm text-gray-500 mr-2">{t('settings.modelsTab.show')}:</span>
-                   <Select
-                     value={String(pageSize)}
-                     onChange={(v) => { setPageSize(Number(v)); setPage(1) }}
-                     options={[
-                       { value: '5', label: '5' },
-                       { value: '10', label: '10' },
-                       { value: '20', label: '20' },
-                     ]}
-                     triggerClassName="w-20"
-                   />
-                </div>
-             </div>
-
-            <div className="flex items-center gap-1">
-                <Tooltip content={t('settings.modelsTab.firstPage')}>
-                  <button
-                    type="button"
-                    onClick={() => setPage(1)}
-                    disabled={page === 1}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronsLeft className="w-5 h-5" />
-                  </button>
-                </Tooltip>
-                <Tooltip content={t('settings.modelsTab.previousPage')}>
-                  <button
-                    type="button"
-                    onClick={() => setPage(p => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronLeft className="w-5 h-5" />
-                  </button>
-                </Tooltip>
-
-                <div className="flex items-center px-2 min-w-[60px] justify-center">
-                  <span className="text-sm font-medium text-gray-900">
-                    {page}
-                  </span>
-                  <span className="text-sm text-gray-500 mx-1">/</span>
-                  <span className="text-sm text-gray-500">
-                    {totalPages || 1}
-                  </span>
-                </div>
-
-                <Tooltip content={t('settings.modelsTab.nextPage')}>
-                  <button
-                    type="button"
-                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages || totalPages === 0}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronRight className="w-5 h-5" />
-                  </button>
-                </Tooltip>
-                <Tooltip content={t('settings.modelsTab.lastPage')}>
-                  <button
-                    type="button"
-                    onClick={() => setPage(totalPages)}
-                    disabled={page === totalPages || totalPages === 0}
-                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  >
-                    <ChevronsRight className="w-5 h-5" />
-                  </button>
-                </Tooltip>
-              </div>
-          </div>
+          <PaginationFooter
+            page={page}
+            pageSize={pageSize}
+            total={modelsTotal}
+            disabled={loadingModels}
+            pageSizeOptions={['5', '10', '20']}
+            onPageChange={setPage}
+            onPageSizeChange={(size) => { setPageSize(size); setPage(1) }}
+          />
         </>
       )}
     </Card>

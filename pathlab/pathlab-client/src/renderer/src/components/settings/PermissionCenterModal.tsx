@@ -2,10 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useDebounce } from "../../lib/useDebounce";
 import { useTranslation } from "react-i18next";
 import { ModalShell } from "../ui/modal-shell";
+import { PaginationFooter } from "../ui/pagination-footer";
 import {
   ArrowRightLeft,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   Database,
   Eye,
@@ -42,7 +41,6 @@ import type { ShowConfirmDialog } from "./ConfirmDialog";
 type PermissionMode = "user" | "dataset";
 type PermissionDataset = DatasetSummary & { dataset_id: string };
 
-const PAGE_SIZE_OPTIONS = ["4", "6", "9", "18"];
 const SEARCH_DEBOUNCE_MS = 300;
 const PRIVATE_DATASET_FILTER = { is_public: false as const };
 
@@ -74,74 +72,6 @@ function parsePositiveHours(value: string): number | undefined {
 
 function getUserDisplayName(user?: Partial<UserListItem> | null) {
   return user?.nickname || user?.email || "-";
-}
-
-function PaginationFooter({
-  page,
-  pageSize,
-  total,
-  disabled,
-  onPageChange,
-  onPageSizeChange,
-  t,
-}: {
-  page: number;
-  pageSize: number;
-  total: number;
-  disabled?: boolean;
-  onPageChange: (page: number) => void;
-  onPageSizeChange: (pageSize: number) => void;
-  t: (key: string, options?: Record<string, unknown>) => string;
-}) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
-
-  return (
-    <div className="flex flex-col gap-3 border-t border-gray-200 pt-3 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex items-center gap-2 text-sm text-gray-600">
-        <span>{t("settings.permissionCenterModal.itemsPerPage")}</span>
-        <Select
-          value={String(pageSize)}
-          onChange={(value) => onPageSizeChange(Number(value))}
-          options={PAGE_SIZE_OPTIONS.map((value) => ({ value, label: value }))}
-          className="w-20"
-          disabled={disabled}
-        />
-      </div>
-      <div className="flex items-center justify-between gap-3 sm:justify-end">
-        <span className="text-sm text-gray-500">
-          {t("settings.permissionCenterModal.pageInfo", {
-            current: Math.min(page, totalPages),
-            total: totalPages,
-            count: total,
-          })}
-        </span>
-        <div className="flex items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange(page - 1)}
-            disabled={disabled || page <= 1}
-            className="gap-1"
-          >
-            <ChevronLeft className="h-3.5 w-3.5" />
-            {t("settings.permissionCenterModal.previous")}
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => onPageChange(page + 1)}
-            disabled={disabled || page >= totalPages}
-            className="gap-1"
-          >
-            {t("settings.permissionCenterModal.next")}
-            <ChevronRight className="h-3.5 w-3.5" />
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 function BulkSelectionBanner({
@@ -1233,7 +1163,6 @@ export function PermissionCenterModal({
                     setUserPageSize(pageSize);
                     setUserPage(1);
                   }}
-                  t={t}
                 />
               </div>
             </div>
@@ -1494,7 +1423,6 @@ export function PermissionCenterModal({
                       setGrantDatasetPageSize(pageSize);
                       setGrantDatasetPage(1);
                     }}
-                    t={t}
                   />
                 </div>
                 <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
@@ -1735,7 +1663,6 @@ export function PermissionCenterModal({
                     setDatasetPageSize(pageSize);
                     setDatasetPage(1);
                   }}
-                  t={t}
                 />
               </div>
             </div>
@@ -2043,7 +1970,6 @@ export function PermissionCenterModal({
                       setGrantUserPageSize(pageSize);
                       setGrantUserPage(1);
                     }}
-                    t={t}
                   />
                 </div>
                 <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">

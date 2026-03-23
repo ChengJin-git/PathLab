@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Download, ClipboardList, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Download, ClipboardList } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -11,6 +11,7 @@ import {
   type AnnotationAuditEntry,
 } from '../../api/annotation'
 import { getAuthToken } from '../../api/client'
+import { PaginationFooter } from '../ui/pagination-footer'
 import { formatDateCompact } from '../../lib/utils'
 
 const PAGE_SIZE_OPTIONS = [
@@ -217,45 +218,16 @@ export function AnnotationAuditCard() {
             </div>
           </div>
 
-          <div className="mt-3 flex items-center justify-between gap-2 text-xs text-gray-500">
-            <div className="flex items-center gap-2">
-              <span className="whitespace-nowrap">{t('settings.usersTab.rowsPerPage')}</span>
-              <div className="w-[70px]">
-                <Select
-                  value={query.pageSize.toString()}
-                  onChange={(v) => setQuery(q => ({ ...q, page: 1, pageSize: Number(v) }))}
-                  options={PAGE_SIZE_OPTIONS}
-                  className="h-7 text-xs"
-                />
-              </div>
-              <span className="text-gray-300">|</span>
-              <span className="whitespace-nowrap">
-                {t('settings.usersTab.pageOf', { current: query.page, total: totalPages })}
-              </span>
-              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">
-                ({t('settings.usersTab.totalCount', { count: totalCount })})
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setQuery(q => ({ ...q, page: Math.max(1, q.page - 1) }))}
-                disabled={query.page === 1 || loading}
-                className="h-7 w-7 p-0"
-              >
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setQuery(q => ({ ...q, page: Math.min(totalPages, q.page + 1) }))}
-                disabled={query.page >= totalPages || loading}
-                className="h-7 w-7 p-0"
-              >
-                <ChevronRight className="w-3.5 h-3.5" />
-              </Button>
-            </div>
+          <div className="mt-3">
+            <PaginationFooter
+              page={query.page}
+              pageSize={query.pageSize}
+              total={totalCount}
+              disabled={loading}
+              pageSizeOptions={PAGE_SIZE_OPTIONS.map(o => o.value)}
+              onPageChange={(p) => setQuery(q => ({ ...q, page: p }))}
+              onPageSizeChange={(size) => setQuery(q => ({ ...q, page: 1, pageSize: size }))}
+            />
           </div>
         </>
       )}

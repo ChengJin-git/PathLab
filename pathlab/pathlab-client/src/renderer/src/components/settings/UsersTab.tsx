@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X, Database, Mail } from 'lucide-react'
+import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, Megaphone, Send, X, Database, Mail } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
@@ -21,6 +21,7 @@ import { CreateUserModal } from './CreateUserModal'
 import { PermissionCenterModal } from './PermissionCenterModal'
 import { EmailTemplateModal } from './EmailTemplateModal'
 import { AnnotationAuditCard } from './AnnotationAuditCard'
+import { PaginationFooter } from '../ui/pagination-footer'
 import type { EmailTemplatesConfig } from '../../api/settings'
 import { useAuth } from '../../contexts/AuthContext'
 
@@ -726,51 +727,16 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
         </div>
 
         {!loadingUsers && totalUsers > 0 && (
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-4 px-2">
-            <div className="flex items-center gap-2 text-sm text-gray-600">
-              <span className="whitespace-nowrap">{t('settings.usersTab.rowsPerPage')}</span>
-              <div className="w-[70px]">
-                <Select
-                  value={itemsPerPage.toString()}
-                  onChange={(v) => {
-                    setItemsPerPage(Number(v))
-                    setCurrentPage(1)
-                  }}
-                  options={[
-                    { value: '5', label: '5' },
-                    { value: '10', label: '10' },
-                    { value: '20', label: '20' }
-                  ]}
-                  className="h-8"
-                />
-              </div>
-              <span className="hidden sm:inline text-gray-300">|</span>
-              <span className="whitespace-nowrap">
-                {t('settings.usersTab.pageOf', { current: currentPage, total: totalPages || 1 })}
-              </span>
-              <span className="text-gray-400 whitespace-nowrap hidden sm:inline">({t('settings.usersTab.totalCount', { count: totalUsers })})</span>
-            </div>
-            
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline" 
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                disabled={currentPage === 1}
-                className="h-8 w-8 p-0"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                disabled={currentPage >= totalPages || totalPages === 0}
-                className="h-8 w-8 p-0"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </Button>
-            </div>
+          <div className="mt-4 px-2">
+            <PaginationFooter
+              page={currentPage}
+              pageSize={itemsPerPage}
+              total={totalUsers}
+              disabled={loadingUsers}
+              pageSizeOptions={['5', '10', '20']}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={(size) => { setItemsPerPage(size); setCurrentPage(1) }}
+            />
           </div>
         )}
         </>
