@@ -1,51 +1,21 @@
-"""
-Training Cancellation Mechanism
+"""Training Cancellation Mechanism — backed by TaskInterruptionSet."""
 
-This module provides the cancellation mechanism for training tasks.
-It is kept separate from training routes to avoid circular imports.
+from backend.ai.common.task_control import TaskInterruptionSet
 
-Usage:
-- Gateway calls request_cancellation(task_id) when timeout occurs or user cancels
-- Trainers call is_task_cancelled(task_id) in their training loops
-- Training endpoints call clear_cancellation(task_id) in their finally blocks
-"""
-import logging
-from typing import Set
-
-logger = logging.getLogger("training_cancellation")
-
-# Global set of task IDs that have been requested to cancel
-# Trainers check this set in their training loops
-_cancellation_requests: Set[str] = set()
+_cancellation = TaskInterruptionSet("cancellation")
 
 
 class TrainingCancelledException(Exception):
-    """Exception raised when training is cancelled by user or timeout."""
-    pass
+    """Raised inside a training loop when the task is cancelled."""
 
 
 def request_cancellation(task_id: str) -> bool:
-    """
-    Request cancellation of a training task.
-
-    Returns:
-        True if cancellation was requested (task will stop at next check point)
-    """
-    _cancellation_requests.add(task_id)
-    logger.info(f"Cancellation requested for task {task_id}")
-    return True
+    return _cancellation.request(task_id)
 
 
 def is_task_cancelled(task_id: str) -> bool:
-    """
-    Check if a task has been requested to cancel.
-
-    Trainers should call this in their training loops (e.g., at each epoch start).
-    """
-    return task_id in _cancellation_requests
+    return _cancellation.is_set(task_id)
 
 
 def clear_cancellation(task_id: str) -> None:
-    """Clear the cancellation flag for a task (called after task cleanup)."""
-    _cancellation_requests.discard(task_id)
-
+    _cancellation.clear(task_id)
