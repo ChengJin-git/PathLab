@@ -488,35 +488,60 @@ export default function ListPage() {
       t => t.type === 'delete_dataset' && t.status === 'success' && !completedDeleteTaskIdsRef.current.has(t.id)
     )
     if (justCompletedDeleteTasks.length === 0) return
+
+    // Collect names of deleted datasets for optimistic removal
+    const deletedNames = new Set(
+      justCompletedDeleteTasks.map(t => t.datasetName).filter(Boolean)
+    )
+
     for (const task of justCompletedDeleteTasks) {
       completedDeleteTaskIdsRef.current.add(task.id)
     }
+
+    // Optimistic update: immediately remove deleted datasets from all cached pages
+    if (deletedNames.size > 0) {
+      qc.setQueriesData<{ items?: DatasetSummary[]; total?: number }>(
+        { queryKey: ['page-datasets'] },
+        (oldData) => {
+          if (!oldData?.items) return oldData
+          const filtered = oldData.items.filter(
+            (d) => !deletedNames.has(d.dataset_name)
+          )
+          return {
+            ...oldData,
+            items: filtered,
+            total: Math.max(0, (oldData.total ?? 0) - (oldData.items.length - filtered.length))
+          }
+        }
+      )
+    }
+
+    // Also clean up pending delete overlays for these tasks
+    for (const task of justCompletedDeleteTasks) {
+      const rawTaskId = task.id.replace(/^delete_dataset_/, '')
+      if (pendingDeleteRef.current.has(rawTaskId)) {
+        pendingDeleteRef.current.delete(rawTaskId)
+        removeDeletingDatasetByTaskId(rawTaskId)
+      }
+    }
+
+    // Single background refetch to reconcile with server (e.g. fix total count, pagination)
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
-    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 6000)
-    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 15000)
-  }, [tasks, qc])
+  }, [tasks, qc, removeDeletingDatasetByTaskId])
 
   useEffect(() => {
     if (pendingDeleteRef.current.size === 0) return
     const fetchedIds = new Set(
       (datasetsQuery.data?.items ?? []).map((d: DatasetSummary) => d.dataset_id).filter(Boolean)
     )
-    let hasStillPending = false
     for (const [taskId, datasetId] of pendingDeleteRef.current) {
       if (!fetchedIds.has(datasetId)) {
         pendingDeleteRef.current.delete(taskId)
         removeDeletingDatasetByTaskId(taskId)
-      } else {
-        hasStillPending = true
       }
     }
-    if (hasStillPending) {
-      const timer = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
-      return () => clearTimeout(timer)
-    }
-  }, [datasetsQuery.data, removeDeletingDatasetByTaskId, qc])
+  }, [datasetsQuery.data, removeDeletingDatasetByTaskId])
 
   useEffect(() => {
     if (selectedDatasetId) return
@@ -529,8 +554,8 @@ export default function ListPage() {
     for (const task of justCompleted) {
       completedUploadTaskIdsRef.current.add(task.id)
     }
-    qc.removeQueries({ queryKey: ['page-datasets'] })
     setDatasetCurrentPage(1)
+    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
   }, [tasks, qc, selectedDatasetId])
 
