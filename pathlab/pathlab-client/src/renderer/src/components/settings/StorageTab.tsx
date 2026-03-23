@@ -41,7 +41,7 @@ import {
   invalidateExternalDatasetsCache,
   fetchDatasets
 } from '../../api'
-import { formatBytes, formatFileSize } from '../../lib/utils'
+import { formatFileSize } from '../../lib/utils'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { MigrationModal } from './MigrationModal'
@@ -656,7 +656,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
             <button type="button" onClick={loadStats} className="mt-3 px-3 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700">{t('settings.storageTab.retry')}</button>
           </div>
         ) : stats ? (
-          <StorageStatsDisplay stats={stats} formatBytes={formatBytes} />
+          <StorageStatsDisplay stats={stats} formatFileSize={formatFileSize} />
         ) : (
           <div className="text-center py-8 text-gray-500"><p>{t('settings.storageTab.noStorageData')}</p></div>
         )}
@@ -670,7 +670,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
           cleanupResult={cleanupResult}
           detectOrphaned={detectOrphaned}
           handleCleanup={handleCleanup}
-          formatBytes={formatBytes}
+          formatFileSize={formatFileSize}
           anyStorageOpInProgress={anyStorageOpInProgress}
         />
         <OrphanedRecordsCard

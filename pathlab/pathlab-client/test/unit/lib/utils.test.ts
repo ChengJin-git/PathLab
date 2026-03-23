@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cn, formatBytes, formatFileSize, formatDateTime, formatDateCompact, formatUtcDate } from '@renderer/lib/utils'
+import { cn, formatFileSize, formatDateTime, formatDateCompact, formatUtcDate } from '@renderer/lib/utils'
 
 describe('cn (class name merger)', () => {
   it('merges class names', () => {
@@ -44,25 +44,6 @@ describe('formatFileSize', () => {
   it('formats gigabytes with 2 decimals', () => {
     expect(formatFileSize(1024 * 1024 * 1024)).toBe('1.00 GB')
     expect(formatFileSize(1024 * 1024 * 1024 * 2.5)).toBe('2.50 GB')
-  })
-})
-
-describe('formatBytes (deprecated alias for formatFileSize)', () => {
-  it('is identical to formatFileSize', () => {
-    expect(formatBytes).toBe(formatFileSize)
-  })
-
-  it('handles null/undefined/0', () => {
-    expect(formatBytes(0)).toBe('0 B')
-    expect(formatBytes(null)).toBe('0 B')
-    expect(formatBytes(undefined)).toBe('0 B')
-  })
-
-  it('formats sizes with adaptive precision', () => {
-    expect(formatBytes(512)).toBe('512 B')
-    expect(formatBytes(1024)).toBe('1.0 KB')
-    expect(formatBytes(1024 * 1024)).toBe('1.0 MB')
-    expect(formatBytes(1024 * 1024 * 1024)).toBe('1.00 GB')
   })
 })
 

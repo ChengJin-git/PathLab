@@ -2,7 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { WSIStorageInfo } from '../../api'
-import { formatBytes } from '../../lib/utils'
+import { formatFileSize } from '../../lib/utils'
 import { ModalShell } from '../ui/modal-shell'
 
 // ─── DeleteConfirmModal ──────────────────────────────────────────────────────
@@ -67,7 +67,7 @@ export function DeleteConfirmModal({
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs sm:text-sm font-semibold text-blue-900">{t('listComponents.reducedStorage')}:</span>
                 <span className="text-base sm:text-lg font-bold text-blue-900">
-                  {formatBytes(displaySize)}
+                  {formatFileSize(displaySize)}
                 </span>
               </div>
               <details className="text-xs sm:text-sm">
@@ -76,19 +76,19 @@ export function DeleteConfirmModal({
                 </summary>
                 <ul className="mt-2 space-y-1 text-blue-600/80 ml-4 border-l border-blue-100 pl-3">
                   {wsiStorageInfo.wsi_file.exists && (
-                    <li>• {t('listComponents.wsiFile')} ({formatBytes(wsiStorageInfo.wsi_file.size)})</li>
+                    <li>• {t('listComponents.wsiFile')} ({formatFileSize(wsiStorageInfo.wsi_file.size)})</li>
                   )}
                   {wsiStorageInfo.coordinates.exists && (
-                    <li>• {t('listComponents.coordinatesCache')} ({formatBytes(wsiStorageInfo.coordinates.size)})</li>
+                    <li>• {t('listComponents.coordinatesCache')} ({formatFileSize(wsiStorageInfo.coordinates.size)})</li>
                   )}
                   {wsiStorageInfo.mask.exists && (
-                    <li>• {t('listComponents.tissueMask')} ({formatBytes(wsiStorageInfo.mask.size)})</li>
+                    <li>• {t('listComponents.tissueMask')} ({formatFileSize(wsiStorageInfo.mask.size)})</li>
                   )}
                   {wsiStorageInfo.ai_results.file_count > 0 && (
-                    <li>• {t('listComponents.aiResults')} ({wsiStorageInfo.ai_results.file_count} {t('listComponents.filesLower')}, {formatBytes(wsiStorageInfo.ai_results.size)})</li>
+                    <li>• {t('listComponents.aiResults')} ({wsiStorageInfo.ai_results.file_count} {t('listComponents.filesLower')}, {formatFileSize(wsiStorageInfo.ai_results.size)})</li>
                   )}
                   {deleteMode === 'complete' && wsiStorageInfo.features.length > 0 && (
-                    <li>• {t('listComponents.features')} ({wsiStorageInfo.features.length} {t('listComponents.filesLower')}, {formatBytes(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
+                    <li>• {t('listComponents.features')} ({wsiStorageInfo.features.length} {t('listComponents.filesLower')}, {formatFileSize(wsiStorageInfo.features.reduce((sum, f) => sum + f.size, 0))})</li>
                   )}
                 </ul>
               </details>

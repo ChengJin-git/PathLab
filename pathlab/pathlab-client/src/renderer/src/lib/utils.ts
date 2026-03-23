@@ -21,10 +21,7 @@ export function formatFileSize(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-/**
- * @deprecated Use {@link formatFileSize} instead — identical behavior.
- */
-export const formatBytes = formatFileSize
+
 
 // ────────────────────────────────────────────────────────────────────────────
 // Date formatting utilities

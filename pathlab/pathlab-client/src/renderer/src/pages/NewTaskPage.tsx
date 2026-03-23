@@ -36,7 +36,7 @@ import {
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
 } from '../lib/trainingSubmissionTracker'
-import { formatBytes } from '../lib/utils'
+import { formatFileSize } from '../lib/utils'
 import {
   FEATURE_EXTRACTORS,
   FM_SEGMENTATION_ARCHITECTURE,
@@ -798,7 +798,7 @@ export default function NewTaskPage() {
               onEditClick={handleEditClick}
               onBatchDeleteClick={handleBatchDeleteClick}
               onBatchEditClick={handleBatchEditClick}
-              formatBytes={formatBytes}
+              formatFileSize={formatFileSize}
               getFileType={dataSelection.getFileType}
               splitStrategy={trainingConfig.splitStrategy}
               setSplitStrategy={trainingConfig.setSplitStrategy}

@@ -17,7 +17,7 @@ import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
-import { formatBytes } from '../lib/utils'
+import { formatFileSize } from '../lib/utils'
 import {
   clearTrainingSubmissionRecord,
   isTrainingSubmissionPendingTimedOut,
@@ -962,7 +962,7 @@ export default function TaskListPage() {
                   <div className="flex items-center justify-between mb-2 sm:mb-3">
                     <span className="text-[11px] sm:text-sm font-semibold text-blue-900">{t('taskList.deleteModal.freesSurface')}:</span>
                     <span className="text-base sm:text-lg font-bold text-blue-900">
-                      {formatBytes(displaySize)}
+                      {formatFileSize(displaySize)}
                     </span>
                   </div>
                   <details className="text-[11px] sm:text-sm">
@@ -971,19 +971,19 @@ export default function TaskListPage() {
                     </summary>
                     <ul className="mt-2 space-y-1 text-blue-700/80 ml-4 border-l border-blue-100 pl-3">
                       {taskStorageInfo.training_dir.exists && (
-                        <li>• {t('taskList.deleteModal.trainingData', { size: formatBytes(taskStorageInfo.training_dir.size) })}</li>
+                        <li>• {t('taskList.deleteModal.trainingData', { size: formatFileSize(taskStorageInfo.training_dir.size) })}</li>
                       )}
                       {taskStorageInfo.ai_results.exists && (
-                        <li>• {t('taskList.deleteModal.aiResults', { size: formatBytes(taskStorageInfo.ai_results.size) })}</li>
+                        <li>• {t('taskList.deleteModal.aiResults', { size: formatFileSize(taskStorageInfo.ai_results.size) })}</li>
                       )}
                       {taskStorageInfo.training_logs.exists && (
-                        <li>• {t('taskList.deleteModal.logs', { size: formatBytes(taskStorageInfo.training_logs.size) })}</li>
+                        <li>• {t('taskList.deleteModal.logs', { size: formatFileSize(taskStorageInfo.training_logs.size) })}</li>
                       )}
                       {taskStorageInfo.analysis_logs.exists && (
-                        <li>• {t('taskList.deleteModal.analysisLogs', { size: formatBytes(taskStorageInfo.analysis_logs.size) })}</li>
+                        <li>• {t('taskList.deleteModal.analysisLogs', { size: formatFileSize(taskStorageInfo.analysis_logs.size) })}</li>
                       )}
                       {deleteMode === 'complete' && taskStorageInfo.models.length > 0 && (
-                        <li>• {t('taskList.deleteModal.models', { size: formatBytes(modelsSize) })}</li>
+                        <li>• {t('taskList.deleteModal.models', { size: formatFileSize(modelsSize) })}</li>
                       )}
                     </ul>
                   </details>

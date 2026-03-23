@@ -14,7 +14,7 @@ import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
-import { formatBytes } from '../lib/utils'
+import { formatFileSize } from '../lib/utils'
 import { clampDatasetPage } from '../lib/datasetPagination'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
@@ -1851,7 +1851,7 @@ export default function ListPage() {
                         </span>
                         <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
                           <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                          {formatBytes(dataset.total_size)}
+                          {formatFileSize(dataset.total_size)}
                         </span>
                         {isAdmin && dataset.username && (
                           <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap text-slate-400 ml-auto">
@@ -2034,7 +2034,7 @@ export default function ListPage() {
                             </span>
                             <span className="flex items-center gap-1.5 font-medium whitespace-nowrap">
                               <CheckCircle className="w-4 h-4 text-slate-400" />
-                              {formatBytes(dataset.total_size)}
+                              {formatFileSize(dataset.total_size)}
                             </span>
                             {isAdmin && dataset.username && (
                               <span className="flex items-center gap-1.5 font-medium whitespace-nowrap text-slate-400">

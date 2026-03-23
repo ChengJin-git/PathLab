@@ -11,7 +11,7 @@ interface OrphanedFilesCardProps {
   cleanupResult: CleanupResult | null
   detectOrphaned: (clearCleanupResult?: boolean) => void
   handleCleanup: (e: React.MouseEvent) => void
-  formatBytes: (bytes: number) => string
+  formatFileSize: (bytes: number) => string
   anyStorageOpInProgress: boolean
 }
 
@@ -22,7 +22,7 @@ export const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
   cleanupResult,
   detectOrphaned,
   handleCleanup,
-  formatBytes,
+  formatFileSize,
   anyStorageOpInProgress
 }) => {
   const { t } = useTranslation()
@@ -62,7 +62,7 @@ export const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
                   dirs: cleanupResult.deleted_dirs.length,
                   emptyDirs: cleanupResult.deleted_empty_dirs.length,
                   failed: cleanupResult.failed.length,
-                  size: formatBytes(cleanupResult.total_size)
+                   size: formatFileSize(cleanupResult.total_size)
                 })}
               </div>
             </div>
@@ -81,7 +81,7 @@ export const OrphanedFilesCard: React.FC<OrphanedFilesCardProps> = ({
                     )}
                   </div>
                   <div className="text-xs text-yellow-700 mt-1">
-                    {t('settings.storage.canBeFreed', { size: formatBytes(orphanedFiles.total_orphaned_size) })}
+                    {t('settings.storage.canBeFreed', { size: formatFileSize(orphanedFiles.total_orphaned_size) })}
                   </div>
                 </div>
                 <button

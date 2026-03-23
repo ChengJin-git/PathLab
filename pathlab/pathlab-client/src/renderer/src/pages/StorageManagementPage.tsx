@@ -5,7 +5,7 @@ import { HardDrive, RefreshCw, Trash2, Search, CheckCircle, AlertCircle, Chevron
 import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFiles, startCleanupEmptyDatasetsTask, OrphanedFilesInfo, CleanupResult, OrphanedFile } from '../api'
 import { PageHeader, Card, Button } from '../components/common'
 import { useToast } from '../contexts/ToastContext'
-import { formatBytes } from '../lib/utils'
+import { formatFileSize } from '../lib/utils'
 import { useAsyncAction } from '../lib/useAsyncAction'
 
 export default function StorageManagementPage() {
@@ -190,7 +190,7 @@ export default function StorageManagementPage() {
               {stats.total_size_gb.toFixed(2)} GB
             </div>
             <div className="text-blue-100">
-              {formatBytes(stats.total_size)} ({stats.total_size_mb.toFixed(2)} MB)
+              {formatFileSize(stats.total_size)} ({stats.total_size_mb.toFixed(2)} MB)
             </div>
           </div>
           <div className="text-right">
@@ -233,7 +233,7 @@ export default function StorageManagementPage() {
                     </div>
                     <div className="text-right">
                       <div className="font-semibold text-gray-900">
-                        {formatBytes(info.size)}
+                        {formatFileSize(info.size)}
                       </div>
                       <div className="text-sm text-gray-600">
                         {percentage.toFixed(1)}%
@@ -270,7 +270,7 @@ export default function StorageManagementPage() {
               </div>
               <div className="text-center">
                 <div className="text-2xl font-bold text-gray-900">
-                  {formatBytes(
+                  {formatFileSize(
                     Object.values(stats.breakdown).reduce((sum, info) => sum + info.size, 0) /
                     Object.values(stats.breakdown).filter(info => info.file_count > 0).length
                   )}
@@ -351,7 +351,7 @@ export default function StorageManagementPage() {
                       )}
                     </div>
                     <div className="text-sm text-orange-700">
-                      {t('storagePage.orphanedFiles.orphanedSize', { size: formatBytes(orphanedFiles.total_orphaned_size) })}
+                      {t('storagePage.orphanedFiles.orphanedSize', { size: formatFileSize(orphanedFiles.total_orphaned_size) })}
                     </div>
                   </div>
                   {orphanedFiles.total_orphaned_count > 0 && (
@@ -420,7 +420,7 @@ export default function StorageManagementPage() {
                               {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                               <span className="font-medium">{category.label}</span>
                               <span className="text-sm text-gray-600">
-                                ({t('storagePage.orphanedFiles.categoryInfo', { count: categoryData.length, size: formatBytes(totalSize) })})
+                                ({t('storagePage.orphanedFiles.categoryInfo', { count: categoryData.length, size: formatFileSize(totalSize) })})
                               </span>
                             </button>
                           </div>
@@ -435,7 +435,7 @@ export default function StorageManagementPage() {
                                     {file.path.split('/').pop()}
                                   </span>
                                   <span className="text-gray-500 font-medium text-xs whitespace-nowrap bg-white px-2 py-1 rounded border border-gray-200 shadow-sm">
-                                    {formatBytes(file.size)}
+                                    {formatFileSize(file.size)}
                                   </span>
                                 </div>
                               ))}

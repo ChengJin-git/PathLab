@@ -97,7 +97,7 @@ export interface DataSelectionStepProps {
   onBatchDeleteClick: () => void
 
   // Helpers
-  formatBytes: (bytes: number) => string
+  formatFileSize: (bytes: number) => string
   getFileType: (fileExtension: string | null, size: number | null, authoritativeDataType?: 'wsi' | 'patch' | null) => 'WSI' | 'Patch'
 
   // Navigation
@@ -146,7 +146,7 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
     setSelectedIds,
     searchQuery,
     setSearchQuery,
-    formatBytes,
+    formatFileSize,
     getFileType,
     splitStrategy,
     setSplitStrategy,
@@ -194,14 +194,14 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
 
         {/* Dataset Selection Grid (always shown when files not expanded) */}
         {!filesExpanded && (
-          <DatasetGrid
-            datasetsLoading={datasetsLoading}
-            datasets={datasets}
-            taskType={taskType}
-            selectedDatasetId={selectedDatasetId}
-            onSelectDataset={onSelectDataset}
-            formatBytes={formatBytes}
-          />
+        <DatasetGrid
+          datasetsLoading={datasetsLoading}
+          datasets={datasets}
+          taskType={taskType}
+          selectedDatasetId={selectedDatasetId}
+          onSelectDataset={onSelectDataset}
+          formatFileSize={formatFileSize}
+        />
         )}
 
         {/* File Selection View (only when user explicitly expands files) */}
@@ -281,14 +281,14 @@ function DatasetGrid({
   taskType,
   selectedDatasetId,
   onSelectDataset,
-  formatBytes,
+  formatFileSize,
 }: {
   datasetsLoading: boolean
   datasets: DatasetSummary[]
   taskType: TaskType
   selectedDatasetId: string | null
   onSelectDataset: (id: string | null, name: string) => void
-  formatBytes: (bytes: number) => string
+  formatFileSize: (bytes: number) => string
 }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -367,7 +367,7 @@ function DatasetGrid({
                     {t(dataset.data_type === 'patch' ? 'training.dataSelection.filesCount' : 'training.dataSelection.slidesCount', { count: dataset.file_count })}
                   </span>
                   <span className={`hidden sm:inline w-1 h-1 rounded-full ${isSelected ? 'bg-primary-300' : 'bg-gray-300'}`}></span>
-                  <span className={`text-[10px] sm:text-xs font-semibold ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>{formatBytes(dataset.total_size)}</span>
+                   <span className={`text-[10px] sm:text-xs font-semibold ${isSelected ? 'text-primary-600' : 'text-gray-500'}`}>{formatFileSize(dataset.total_size)}</span>
                 </div>
                 {/* View Files button for selected dataset */}
                 {isSelected && (

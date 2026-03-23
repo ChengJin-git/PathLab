@@ -4,10 +4,10 @@ import { StorageStats } from '../../../api'
 
 interface StorageStatsDisplayProps {
   stats: StorageStats
-  formatBytes: (bytes: number) => string
+  formatFileSize: (bytes: number) => string
 }
 
-export const StorageStatsDisplay: React.FC<StorageStatsDisplayProps> = ({ stats, formatBytes }) => {
+export const StorageStatsDisplay: React.FC<StorageStatsDisplayProps> = ({ stats, formatFileSize }) => {
   const { t } = useTranslation()
 
   const labelMap: { [key: string]: string } = {
@@ -71,7 +71,7 @@ export const StorageStatsDisplay: React.FC<StorageStatsDisplayProps> = ({ stats,
             <div key={category} className="border border-gray-200 rounded-lg p-3 hover:border-gray-300 transition-colors">
               <div className="text-xs text-gray-600 mb-1">{label}</div>
               <div className="text-xl font-bold text-gray-900">{info.file_count}</div>
-              <div className="text-xs text-gray-500 mt-1">{formatBytes(info.size)}</div>
+              <div className="text-xs text-gray-500 mt-1">{formatFileSize(info.size)}</div>
             </div>
           )
         })}
