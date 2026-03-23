@@ -1494,6 +1494,12 @@
         "title": "浏览图像",
         "description": "浏览和分析病理图像",
         "prompt": "我想浏览和分析一些病理图像，你能帮我根据需求找到合适的图像吗？"
+      },
+      "deepResearch": {
+        "title": "深度研究",
+        "description": "AI 驱动的文献综述与规划报告",
+        "welcomeTitle": "欢迎使用深度研究",
+        "welcomeDescription": "描述您的研究问题，我将协助您制定计划、开展调查并总结证据。"
       }
     },
     "taskSuccess": {
@@ -1508,7 +1514,16 @@
       "analysisCompleted": "分析已提交成功！\n\n分析现已在后台运行，处理完成后可在结果查看器中查看结果。",
       "viewAnalysisResults": "查看分析结果",
       "analysisResultsDesc": "点击打开结果查看器。已提交的分析会在处理完成后显示结果。"
-    }
+    },
+    "researchStages": {
+      "coordinating": "协调中...",
+      "planning": "规划中...",
+      "researching": "研究中...",
+      "coding": "编码中...",
+      "writingReport": "撰写报告..."
+    },
+    "newChat": "新建对话",
+    "untitledConversation": "未命名对话"
   },
   "uploadPage": {
     "datasetNameRequired": "数据集名称不能为空。",
@@ -2695,6 +2710,12 @@
       "viewSource": "查看原文",
       "searchResult": "搜索结果",
       "page": "页"
+    },
+    "deepResearchLink": {
+      "title": "深度研究报告",
+      "viewReport": "查看完整研究报告",
+      "checking": "加载中...",
+      "notFound": "关联的深度研究已被删除。"
     }
   },
   "listComponents": {
@@ -3540,15 +3561,15 @@
       "gtDeleted": "GT 已删除",
       "autoSeeded": "已将您的个人草稿导入到协作草稿",
       "autoSeedConfirmTitle": "标注内容冲突",
-        "autoSeedConfirmMessage": "个人标注与协作标注均有内容。选择用个人标注覆盖协作内容，还是直接进入协作模式？",
-        "autoSeedConfirmMessageSharedEmpty": "你有个人标注内容，协作空间当前为空。是否将个人标注导入协作空间，还是直接进入？",
+      "autoSeedConfirmMessage": "个人标注与协作标注均有内容。选择用个人标注覆盖协作内容，还是直接进入协作模式？",
+      "autoSeedConfirmMessageSharedEmpty": "你有个人标注内容，协作空间当前为空。是否将个人标注导入协作空间，还是直接进入？",
       "autoSeedConfirmUse": "导入协作",
-        "autoSeedConfirmSkip": "直接进入",
+      "autoSeedConfirmSkip": "直接进入",
       "removedUnsavedLost": "你已被移出协作，未保存的修改已丢失",
       "exitSharedTitle": "标注内容冲突",
-        "exitSharedMessage": "你有协作标注内容，切换到个人模式后将不再显示。是否将协作标注导入个人空间？",
+      "exitSharedMessage": "你有协作标注内容，切换到个人模式后将不再显示。是否将协作标注导入个人空间？",
       "exitSharedImport": "导入个人",
-        "exitSharedDiscard": "直接进入",
+      "exitSharedDiscard": "直接进入",
       "dialog": {
         "title": "管理协作者",
         "ownerRole": "所有者",
@@ -3668,5 +3689,10 @@
       "imported": "导入 GT",
       "userLabel": "用户标注"
     }
+  },
+  "deepResearchPage": {
+    "backToAIChat": "返回 AI 对话",
+    "loadingDeepResearch": "正在加载深度研究",
+    "restoringConversation": "正在恢复对话..."
   }
 }

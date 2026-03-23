@@ -1494,6 +1494,12 @@
         "title": "Browse Images",
         "description": "Browse and analyze WSI or patches",
         "prompt": "I want to browse and analyze some pathology images (WSI or patches). Can you help me find the right ones based on my needs?"
+      },
+      "deepResearch": {
+        "title": "Deep Research",
+        "description": "AI-powered literature review and planning report",
+        "welcomeTitle": "Welcome to Deep Research",
+        "welcomeDescription": "Describe your research question and I will help you plan, investigate, and summarize the evidence."
       }
     },
     "taskSuccess": {
@@ -1508,7 +1514,16 @@
       "analysisCompleted": "Analysis submitted successfully!\n\nThe analysis is now running in the background. Results will appear in the Results Viewer once processing completes.",
       "viewAnalysisResults": "View Analysis Results",
       "analysisResultsDesc": "Click to open the Results Viewer. Submitted analysis results will appear once processing completes."
-    }
+    },
+    "researchStages": {
+      "coordinating": "Coordinating...",
+      "planning": "Planning...",
+      "researching": "Researching...",
+      "coding": "Coding...",
+      "writingReport": "Writing report..."
+    },
+    "newChat": "New Chat",
+    "untitledConversation": "Untitled"
   },
   "uploadPage": {
     "datasetNameRequired": "Dataset name is required.",
@@ -2700,6 +2715,12 @@
       "viewSource": "View source",
       "searchResult": "Search result",
       "page": "Page"
+    },
+    "deepResearchLink": {
+      "title": "Deep Research Report",
+      "viewReport": "View Full Research Report",
+      "checking": "Loading...",
+      "notFound": "The linked deep research has been deleted."
     }
   },
   "analysisDetails": {
@@ -3545,15 +3566,15 @@
       "gtDeleted": "GT deleted",
       "autoSeeded": "Your personal draft has been imported into the collaborative draft",
       "autoSeedConfirmTitle": "Annotation conflict",
-        "autoSeedConfirmMessage": "Both personal and collaborative annotations have content. Overwrite the collaborative annotations with your personal ones, or enter collaborative mode as-is?",
-        "autoSeedConfirmMessageSharedEmpty": "You have personal annotations and the collaborative space is currently empty. Import your personal annotations into the collaborative space, or enter directly?",
+      "autoSeedConfirmMessage": "Both personal and collaborative annotations have content. Overwrite the collaborative annotations with your personal ones, or enter collaborative mode as-is?",
+      "autoSeedConfirmMessageSharedEmpty": "You have personal annotations and the collaborative space is currently empty. Import your personal annotations into the collaborative space, or enter directly?",
       "autoSeedConfirmUse": "Import to collaboration",
-        "autoSeedConfirmSkip": "Enter directly",
+      "autoSeedConfirmSkip": "Enter directly",
       "removedUnsavedLost": "You have been removed from the collaboration. Unsaved changes were lost.",
       "exitSharedTitle": "Annotation conflict",
-        "exitSharedMessage": "You have collaborative annotations that will not carry over to personal mode. Import the collaborative annotations to your personal space, or switch directly?",
+      "exitSharedMessage": "You have collaborative annotations that will not carry over to personal mode. Import the collaborative annotations to your personal space, or switch directly?",
       "exitSharedImport": "Import to personal",
-        "exitSharedDiscard": "Enter directly",
+      "exitSharedDiscard": "Enter directly",
       "dialog": {
         "title": "Manage Collaborators",
         "ownerRole": "Owner",
@@ -3673,5 +3694,10 @@
       "imported": "Imported GT",
       "userLabel": "User Label"
     }
+  },
+  "deepResearchPage": {
+    "backToAIChat": "Back to AI Chat",
+    "loadingDeepResearch": "Loading Deep Research",
+    "restoringConversation": "Restoring your conversation..."
   }
 }

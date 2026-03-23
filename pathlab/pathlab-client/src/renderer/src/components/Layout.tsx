@@ -1,10 +1,12 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useMemo } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu, KeyRound, Mail } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
+import ConversationSidebar from './ConversationSidebar'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
 import { PrivacyPolicyModal } from './PrivacyPolicyModal'
@@ -44,8 +46,10 @@ export default function Layout({ children }: LayoutProps) {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Check if current page is Dashboard (ChatGPT-style home page)
+  // Check if current page is Dashboard (ChatGPT-style home page) or Deep Research
   const isAIChatPage = location.pathname.startsWith('/dashboard')
+  const isDeepResearchPage = location.pathname.startsWith('/deep-research')
+  const isConversationWorkspacePage = isAIChatPage || isDeepResearchPage
   const isRegisterPage = location.pathname === '/register'
 
   const handleLogout = async () => {
@@ -115,7 +119,7 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup'
+    <div className={`bg-gray-50 flex flex-col ${isConversationWorkspacePage || location.pathname === '/task-setup'
       ? 'h-screen overflow-hidden'
       : isRegisterPage
         ? 'h-screen' // Allow main to handle scroll
@@ -127,7 +131,7 @@ export default function Layout({ children }: LayoutProps) {
             {/* Logo Area */}
             <div className="flex items-center">
               {/* Mobile hamburger for AI Chat sidebar */}
-              {isAIChatPage && (
+              {isConversationWorkspacePage && (
                 <button
                   onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-sidebar'))}
                   className="p-2 mr-1 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors lg:hidden"
@@ -279,16 +283,43 @@ export default function Layout({ children }: LayoutProps) {
       </header>
 
       {/* Main Content */}
-      <main
-        className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
-          ? 'h-full overflow-hidden'
-          : isRegisterPage
-            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
-            : `w-full mx-auto p-3 sm:p-6 lg:p-8`
-          }`}
-      >
-        {children}
-      </main>
+      {isConversationWorkspacePage ? (
+        <div className="flex-1 flex overflow-hidden">
+          <ConversationSidebar />
+          <main className="flex-1 min-w-0 overflow-hidden relative">
+            <AnimatePresence mode="sync">
+              <motion.div
+                key={location.pathname.split('/')[1]}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.15, ease: 'easeInOut' }}
+                className="h-full"
+              >
+                {children}
+              </motion.div>
+            </AnimatePresence>
+          </main>
+        </div>
+      ) : (
+        <AnimatePresence mode="sync">
+          <motion.main
+            key={location.pathname.split('/')[1]}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15, ease: 'easeInOut' }}
+            className={`flex-1 ${location.pathname === '/task-setup'
+              ? 'h-full overflow-hidden'
+              : isRegisterPage
+                ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
+                : `w-full mx-auto p-3 sm:p-6 lg:p-8`
+              }`}
+          >
+            {children}
+          </motion.main>
+        </AnimatePresence>
+      )}
       <InstallPWA />
 
       {/* Disclaimer Modal - shown when user needs to accept agreement */}

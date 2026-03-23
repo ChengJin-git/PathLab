@@ -3,9 +3,9 @@ import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
   Clock, History, Loader2, MessageSquare, Plus, Trash2, Menu,
-  Database, Brain, LineChart, ChevronRight, Wrench
+  Database, ClipboardList, ChevronRight, Wrench, Share2
 } from 'lucide-react'
-import { deleteConversation, getConversations, type Conversation } from '../api'
+import { deleteConversation, getConversation, getConversations, type Conversation } from '../api'
 import { listActiveResearchJobs } from '../lib/deep-research/api/chat'
 import { resetDeepResearchSession, useStore } from '../lib/deep-research/store'
 import { stripResearchMeta } from '../lib/deep-research/utils/strip-research-meta'
@@ -155,22 +155,30 @@ export default function ConversationSidebar() {
     return aiConversationId
   }, [location.pathname, urlConversationId])
 
-  const openConversation = (targetConversationId: string) => {
-    // Always navigate to /dashboard/:id — AIChatPage will redirect to
-    // /deep-research/:id automatically if the conversation is deep_research type.
-    navigate(`/dashboard/${targetConversationId}`)
+  const openConversation = (conv: Conversation) => {
+    // Navigate directly to the correct route based on conversation type
+    if (conv.conversation_type === 'deep_research') {
+      const returnId = preserveAIChatReturnContext()
+      navigate(`/deep-research/${conv.conversation_id}`, {
+        state: returnId ? { returnToAIChatConversationId: returnId } : undefined
+      })
+    } else {
+      navigate(`/dashboard/${conv.conversation_id}`)
+    }
     if (window.innerWidth < 1024) {
       setShowHistory(false)
     }
   }
 
-  // New chat → reset DR state and force AI Chat welcome page (do not restore old session)
+  // New chat → reset DR state and navigate to appropriate page
   const handleNewChat = () => {
+    const isOnDeepResearch = location.pathname.startsWith('/deep-research')
     resetDeepResearchSession()
-    navigate('/dashboard', {
-      replace: true,
-      state: { forceNewChat: true }
-    })
+    if (isOnDeepResearch) {
+      navigate('/deep-research?new=1', { replace: true })
+    } else {
+      navigate('/dashboard', { replace: true })
+    }
     if (window.innerWidth < 1024) {
       setShowHistory(false)
     }
@@ -212,6 +220,42 @@ export default function ConversationSidebar() {
     setDeleteConfirmId(null)
   }
 
+  const handleExportConversation = async (conversationId: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    try {
+      const conversation = await getConversation(conversationId)
+      const lines: string[] = []
+      lines.push(`# ${conversation.title}`)
+      lines.push('')
+      lines.push(`> Exported: ${new Date().toLocaleString()}`)
+      lines.push('')
+      lines.push('---')
+      lines.push('')
+      for (const msg of conversation.messages) {
+        const roleLabel = msg.role === 'user' ? 'User' : 'Assistant'
+        lines.push(`## ${roleLabel}`)
+        lines.push('')
+        lines.push(msg.content.trim())
+        lines.push('')
+        lines.push('---')
+        lines.push('')
+      }
+      const markdown = lines.join('\n')
+      const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' })
+      const safeTitle = (conversation.title || 'conversation').replace(/[\\/:*?"<>|]/g, '_').slice(0, 80)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${safeTitle}.md`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.warn('[ConversationSidebar] Failed to export:', error)
+    }
+  }
+
   // Determine active conversation ID for highlighting.
   // For deep-research pages, also check the zustand store's conversationId
   // (which gets set before the URL updates).
@@ -235,7 +279,7 @@ export default function ConversationSidebar() {
         className={`bg-gray-50 border-r border-gray-200 flex flex-col overflow-hidden
           fixed top-16 bottom-0 left-0 z-40 w-72 transition-transform duration-300 ease-in-out
           ${showHistory ? 'translate-x-0' : '-translate-x-full'}
-          lg:relative lg:top-auto lg:bottom-auto lg:z-auto lg:flex-shrink-0 lg:translate-x-0 lg:transition-all
+          lg:relative lg:top-auto lg:bottom-auto lg:z-auto lg:flex-shrink-0 lg:translate-x-0 lg:transition-[width] lg:duration-300 lg:ease-in-out
           ${showHistory ? 'lg:w-72' : 'lg:w-14'}
         `}
         role="navigation"
@@ -253,15 +297,15 @@ export default function ConversationSidebar() {
         </div>
 
         {/* Expanded sidebar content */}
-        <div className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity duration-300 ease-in-out pt-6 lg:pt-0 ${showHistory ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-          {/* New Chat Button */}
+        <div className={`w-[268px] min-w-[268px] flex flex-col flex-1 overflow-hidden transition-opacity ease-in-out pt-6 lg:pt-0 ${showHistory ? 'opacity-100 duration-300 delay-75' : 'opacity-0 pointer-events-none duration-150'}`}>
+          {/* New Research Task Button */}
           <div className="px-3 pb-3 pt-0">
             <button
               onClick={handleNewChat}
               className="w-full px-4 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 transition-all shadow-sm flex items-center justify-center gap-2"
             >
               <Plus className="w-4 h-4" />
-              {t('aiChat.newChat')}
+              {location.pathname.startsWith('/deep-research') ? t('aiChat.newResearchTask') : t('aiChat.newChat')}
             </button>
           </div>
 
@@ -292,7 +336,7 @@ export default function ConversationSidebar() {
                 onClick={() => { navigate('/task-list'); setShowHistory(false) }}
                 className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-violet-50 hover:text-violet-700 transition-colors group"
               >
-                <Brain className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
+                <ClipboardList className="w-4 h-4 text-violet-500 group-hover:text-violet-600" />
                 <span className="flex-1 text-left">{t('aiChat.sidebar.analysisLab')}</span>
                 <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-violet-400 opacity-0 group-hover:opacity-100 transition-all" />
               </button>
@@ -300,7 +344,7 @@ export default function ConversationSidebar() {
                 onClick={() => { navigate('/tools'); setShowHistory(false) }}
                 className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-700 hover:bg-emerald-50 hover:text-emerald-700 transition-colors group"
               >
-                <LineChart className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
+                <Wrench className="w-4 h-4 text-emerald-500 group-hover:text-emerald-600" />
                 <span className="flex-1 text-left">{t('aiChat.sidebar.insightsReports')}</span>
                 <ChevronRight className="w-3.5 h-3.5 text-gray-300 group-hover:text-emerald-400 opacity-0 group-hover:opacity-100 transition-all" />
               </button>
@@ -353,7 +397,7 @@ export default function ConversationSidebar() {
                     return (
                   <div
                     key={conv.conversation_id}
-                    onClick={() => openConversation(conv.conversation_id)}
+                    onClick={() => openConversation(conv)}
                     className={cn(
                       'group relative p-3 rounded-xl cursor-pointer transition-all border',
                       activeConversationId === conv.conversation_id
@@ -402,13 +446,22 @@ export default function ConversationSidebar() {
                           </div>
                         )}
                       </div>
-                      <button
-                        onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
-                        className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                        title={t('aiChat.deleteConversation')}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        <button
+                          onClick={(e) => handleExportConversation(conv.conversation_id, e)}
+                          className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+                          title={t('aiChat.exportConversation')}
+                        >
+                          <Share2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={(e) => handleDeleteConversation(conv.conversation_id, e)}
+                          className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          title={t('aiChat.deleteConversation')}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
                   </div>
                     )
