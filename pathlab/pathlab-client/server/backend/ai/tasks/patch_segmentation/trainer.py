@@ -42,6 +42,7 @@ from sklearn.metrics import confusion_matrix
 
 from backend.ai.cancellation import is_task_cancelled, TrainingCancelledException
 from backend.ai.schemas.base import TaskStatus
+from backend.ai.schemas import TaskType
 from backend.ai.tasks.base import BaseTrainer
 from backend.ai.utils.vram_guard import (
     check_vram_before_model_load,
@@ -116,7 +117,7 @@ __default_config__ = {
 }
 
 
-class SegmentationTrainer:
+class SegmentationTrainer(BaseTrainer):
     """
     Trainer for patch-level segmentation tasks using segmentation_models_pytorch.
 
@@ -130,6 +131,31 @@ class SegmentationTrainer:
     - Gradient clipping for training stability
     """
 
+    task_type = TaskType.PATCH_SEGMENTATION
+
+    async def extract_features(
+        self,
+        wsi_ids: List[str],
+        extractor_name: str,
+        batch_size: int,
+        force_recompute: bool,
+        logger: Any,
+        db: Any,
+        hf_token: str = "",
+        preprocessing_config: Optional[Dict[str, Any]] = None,
+    ) -> Any:
+        del (
+            wsi_ids,
+            extractor_name,
+            batch_size,
+            force_recompute,
+            logger,
+            db,
+            hf_token,
+            preprocessing_config,
+        )
+        return self._build_feature_response([])
+
     def __init__(
         self,
         task_id: str,
@@ -139,9 +165,7 @@ class SegmentationTrainer:
         config: Dict[str, Any] = None,
         task_logger: Optional[TrainingLogger] = None,
     ):
-        self.task_id = task_id
-        self.uploads_root = Path(uploads_root)
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        super().__init__(task_id, uploads_root, device)
         self.batch_size = batch_size
         self.config = self.update_config(config)
         self.seed = self.config.get("training", {}).get("seed")

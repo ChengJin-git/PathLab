@@ -51,6 +51,7 @@ from backend.ai.tasks.training_utils import (
     interpolate_progress,
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
+    check_training_interruption,
 )
 from backend.database.repositories import (
     WSIRepository,
@@ -1087,10 +1088,9 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
             # Check for cancellation / permission every 50 batches
             if batch_count % 50 == 0:
-                if is_task_cancelled(task_id):
-                    return None, None, None, "cancelled"
-                if is_permission_revoked(task_id):
-                    return None, None, None, "permission_revoked"
+                interruption = check_training_interruption(task_id)
+                if interruption:
+                    return None, None, None, interruption
 
             # Unpack batch based on data level
             if is_case_level:

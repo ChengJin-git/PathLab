@@ -69,6 +69,7 @@ from backend.ai.tasks.training_utils import (
     interpolate_progress,
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
+    check_training_interruption,
 )
 
 
@@ -292,10 +293,9 @@ class PatchClassificationTrainer(BaseTrainer):
 
             # Check for cancellation/permission every 50 batches
             if batch_count % 50 == 0:
-                if is_task_cancelled(task_id):
-                    return None, 0, "cancelled"
-                if is_permission_revoked(task_id):
-                    return None, 0, "permission_revoked"
+                interruption = check_training_interruption(task_id)
+                if interruption:
+                    return None, 0, interruption
 
             batch_img = batch_img.to(device)
             gt = gt.to(device).long()
