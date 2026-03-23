@@ -4,13 +4,20 @@
 
 **Goal:** Eliminate ~1,400 lines of redundant frontend code by extracting 4 shared primitives and migrating 47 files to use them — zero behaviour change.
 
-**Architecture:** Four new primitives (ModalShell, useDebounce, useConfirmDialog, PaginationFooter) are created first as pure additions, then consumed by existing files via targeted migration. All changes are verifiable with `lsp_diagnostics` + grep success criteria from the spec.
+**Architecture:** Four new primitives (ModalShell, useDebounce, useConfirmDialog, PaginationFooter) are created first as pure additions, then consumed by existing files via targeted migration. All changes are verifiable with `lsp_diagnostics` + grep success criteria.
 
 **Tech Stack:** React 18, TypeScript, Tailwind CSS, react-i18next, Electron (renderer process)
 
 **Spec:** `docs/superpowers/specs/2026-03-23-frontend-deduplication-design.md`
 
-**Base path:** `pathlab/pathlab-client/src/renderer/src/`
+**Base path (all relative paths below are inside):** `pathlab/pathlab-client/src/renderer/src/`
+
+**Existing helpers to know:**
+- `lib/utils.ts` exports `cn(...)` (classname merge utility — already exists, not new)
+- `lib/useAsyncAction.ts` — already exists; signature: `useAsyncAction<T>(options?: { onError?: (err: unknown) => void }): [isPending: boolean, run: (fn: () => Promise<T>) => Promise<T | undefined>]`
+- `components/settings/ConfirmDialog.tsx` exports `ConfirmDialogState`, `ShowConfirmDialog`, `ConfirmDialog` component, `ConfirmDialogProps`
+
+**lsp_diagnostics invocation:** use the `lsp_diagnostics` tool with `filePath` set to the absolute file path and `severity: "error"` — expect 0 errors.
 
 ---
 
@@ -23,9 +30,9 @@
 - `components/ui/pagination-footer.tsx`
 
 **Modified files (migrate):**
-- 22 modal files → ModalShell (Tasks 2–4)
+- 21 modal files → ModalShell (Tasks 2–4)
 - 2 files → useDebounce (Task 5)
-- 11 files → useConfirmDialog (Tasks 6–7)
+- 12 files → useConfirmDialog (Tasks 6–7, includes `UsersTab.tsx` as PermissionCenterModal's parent)
 - 26 files → useAsyncAction (Tasks 8–10)
 - 6 files → PaginationFooter (Task 11)
 
@@ -85,7 +92,7 @@ export function useConfirmDialog() {
 - [ ] **Step 3: Create `components/ui/modal-shell.tsx`**
 
 ```typescript
-import { useEffect } from 'react'
+import React, { useEffect } from 'react'
 import { cn } from '../../lib/utils'
 
 interface ModalShellProps {
@@ -144,9 +151,8 @@ export function ModalShell({
 
 - [ ] **Step 4: Create `components/ui/pagination-footer.tsx`**
 
-Copy the exact `PaginationFooter` implementation out of `components/settings/PermissionCenterModal.tsx` (lines ~77–143), remove the `t` prop, and call `useTranslation()` internally:
-
 ```typescript
+import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from './button'
@@ -226,9 +232,13 @@ export function PaginationFooter({
 }
 ```
 
-- [ ] **Step 5: Run lsp_diagnostics on all 4 new files, verify clean**
+- [ ] **Step 5: Verify lsp_diagnostics (severity: error) on all 4 new files — expect 0 errors each**
 
-Check: `lib/useDebounce.ts`, `lib/useConfirmDialog.ts`, `components/ui/modal-shell.tsx`, `components/ui/pagination-footer.tsx` — all must have 0 errors.
+Run `lsp_diagnostics` with `severity: "error"` on:
+- Absolute path: `.../src/renderer/src/lib/useDebounce.ts`
+- Absolute path: `.../src/renderer/src/lib/useConfirmDialog.ts`
+- Absolute path: `.../src/renderer/src/components/ui/modal-shell.tsx`
+- Absolute path: `.../src/renderer/src/components/ui/pagination-footer.tsx`
 
 - [ ] **Step 6: Commit**
 
@@ -253,54 +263,55 @@ git commit -m "refactor: add ModalShell, useDebounce, useConfirmDialog, Paginati
 
 **Migration pattern for each file:**
 
-1. Add import: `import { ModalShell } from './ui/modal-shell'`  
-   (adjust relative path for files in subdirectories)
-2. Find the outermost `<div className="fixed inset-0 ...">` and its matching closing `</div>`
-3. Replace that outer div pair with:
-   - If `onClose=yes`: `<ModalShell isOpen={isOpen} onClose={onClose} maxWidth="???">`…`</ModalShell>`
-   - If `onClose=no`: `<ModalShell isOpen={isOpen} maxWidth="???">`…`</ModalShell>`
-4. The inner content div (white box) is also replaced by ModalShell's container — **delete it too** (ModalShell renders the white box itself)
-5. The remaining children are just the header/body/footer content of the modal
+1. Add import: `import { ModalShell } from './ui/modal-shell'`
+2. Find the outermost `<div className="fixed inset-0 ...">` — this is the backdrop div
+3. Find the matching inner white-box div (`<div className="bg-white rounded-...">`), which is a direct child
+4. Replace **both** the outer (backdrop) div and the inner (white box) div with a single `<ModalShell>` open tag
+5. The remaining children (header, form, buttons etc.) become `ModalShell`'s children
+6. If the file has `onClose`=yes: use `<ModalShell isOpen={isOpen} onClose={onClose} maxWidth="...">`
+7. If the file has `onClose`=no: use `<ModalShell isOpen={isOpen} maxWidth="...">`
+8. Remove the now-redundant `isOpen ? ... : null` guard around the outer div (ModalShell handles this internally with `if (!isOpen) return null`)
 
-**Important:** Both the backdrop div AND the white content box div are replaced. Only the internal content (title, form, buttons) is kept as `children`.
+- [ ] **Step 1: Read + migrate `components/ChangePasswordModal.tsx`**
 
-- [ ] **Step 1: Migrate `components/ChangePasswordModal.tsx`**
+- [ ] **Step 2: Run lsp_diagnostics (severity: error) on ChangePasswordModal.tsx — expect 0 errors**
 
-Read the file. Find the `fixed inset-0` overlay div and the `bg-white rounded-...` content div. Replace both with `<ModalShell isOpen={isOpen} onClose={onClose} maxWidth="md">`. Keep everything inside.
+- [ ] **Step 3: Read + migrate `components/SetEmailModal.tsx`** — maxWidth="md", onClose={onClose}
 
-- [ ] **Step 2: Verify `lsp_diagnostics` clean on ChangePasswordModal.tsx**
+- [ ] **Step 4: Run lsp_diagnostics (severity: error) — expect 0 errors**
 
-- [ ] **Step 3: Migrate `components/SetEmailModal.tsx`** — same approach, `maxWidth="md"`, `onClose={onClose}`
+- [ ] **Step 5: Migrate `components/DisclaimerModal.tsx`** — maxWidth="xl", no onClose
 
-- [ ] **Step 4: Verify lsp_diagnostics clean**
+- [ ] **Step 6: Migrate `components/MaintenanceNoticeModal.tsx`** — maxWidth="lg", no onClose
 
-- [ ] **Step 5: Migrate `components/DisclaimerModal.tsx`** — `maxWidth="xl"`, no `onClose` prop (modal has no backdrop dismiss)
+- [ ] **Step 7: Migrate `components/RegisterRequestModal.tsx`** — maxWidth="md", no onClose
 
-- [ ] **Step 6: Migrate `components/MaintenanceNoticeModal.tsx`** — `maxWidth="lg"`, no `onClose`
-
-- [ ] **Step 7: Migrate `components/RegisterRequestModal.tsx`** — `maxWidth="md"`, no `onClose`
-
-- [ ] **Step 8: Verify lsp_diagnostics clean on all 5 files**
+- [ ] **Step 8: Run lsp_diagnostics (severity: error) on remaining 3 files — expect 0 errors each**
 
 - [ ] **Step 9: Verify success criteria**
 
 ```bash
-# Each of these must print 0 lines:
-grep "fixed inset-0" pathlab/pathlab-client/src/renderer/src/components/ChangePasswordModal.tsx
-grep "fixed inset-0" pathlab/pathlab-client/src/renderer/src/components/SetEmailModal.tsx
-grep "fixed inset-0" pathlab/pathlab-client/src/renderer/src/components/DisclaimerModal.tsx
-grep "fixed inset-0" pathlab/pathlab-client/src/renderer/src/components/MaintenanceNoticeModal.tsx
-grep "fixed inset-0" pathlab/pathlab-client/src/renderer/src/components/RegisterRequestModal.tsx
+BASE=pathlab/pathlab-client/src/renderer/src
+for f in \
+  components/ChangePasswordModal.tsx \
+  components/SetEmailModal.tsx \
+  components/DisclaimerModal.tsx \
+  components/MaintenanceNoticeModal.tsx \
+  components/RegisterRequestModal.tsx; do
+  count=$(grep -c "fixed inset-0" "$BASE/$f")
+  echo "$f: $count (expect 0)"
+done
 ```
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add pathlab/pathlab-client/src/renderer/src/components/ChangePasswordModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/SetEmailModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/DisclaimerModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/MaintenanceNoticeModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/RegisterRequestModal.tsx
+git add \
+  pathlab/pathlab-client/src/renderer/src/components/ChangePasswordModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/SetEmailModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/DisclaimerModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/MaintenanceNoticeModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/RegisterRequestModal.tsx
 git commit -m "refactor: migrate root modal components to ModalShell"
 ```
 
@@ -318,71 +329,76 @@ git commit -m "refactor: migrate root modal components to ModalShell"
 - `components/settings/MigrationModal.tsx` (maxWidth="md", onClose=no)
 - `components/settings/PermissionCenterModal.tsx` (maxWidth="6xl", onClose=yes)
 
-**Import path for settings/:** `import { ModalShell } from '../ui/modal-shell'`
+**Import path for settings/ files:** `import { ModalShell } from '../ui/modal-shell'`
 
-**Special case — `ConfirmDialog.tsx`:** This component receives `dialog.isOpen` as the open flag (not a standalone `isOpen` prop). Use `<ModalShell isOpen={dialog.isOpen} maxWidth="sm">`.
+**Special case — `ConfirmDialog.tsx`:** This component checks `dialog.isOpen` internally (not a prop called `isOpen`). Use `<ModalShell isOpen={dialog.isOpen} maxWidth="sm">`. The current `if (!dialog.isOpen) return null` guard is replaced by ModalShell's own guard.
 
-**Special case — `PermissionCenterModal.tsx`:** This is a large file (~1800 lines). Find the outermost `<div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">` and the inner `<div className="relative max-h-[90vh] w-full max-w-6xl ...">`. Replace both with `<ModalShell isOpen={true} onClose={onClose} maxWidth="6xl">`. Note: this modal is always mounted conditionally by its parent, so `isOpen={true}` is correct.
+**Special case — `PermissionCenterModal.tsx`:** This is a large file. This component is always mounted conditionally by its parent, so it renders when it's open. Find the `fixed inset-0` overlay div and its matching white container div, replace both with `<ModalShell isOpen={true} onClose={onClose} maxWidth="6xl">`. The `onClose` prop already exists on this component.
 
-- [ ] **Step 1: Migrate all 8 settings modal files** (one at a time, using the pattern described above)
+- [ ] **Step 1: Migrate all 8 settings modal files** (one at a time — read → identify backdrop+container div pair → replace with ModalShell → verify diagnostics after each)
 
-  For each file:
-  1. Add `import { ModalShell } from '../ui/modal-shell'`
-  2. Replace the `fixed inset-0` overlay + `bg-white rounded...` container with `<ModalShell ...>`
-  3. Keep inner content as children
+  For each file: add `import { ModalShell } from '../ui/modal-shell'`, replace the two-div structure, keep children, verify lsp_diagnostics (severity: error) → 0 errors.
 
-- [ ] **Step 2: Verify lsp_diagnostics clean on all 8 files**
-
-- [ ] **Step 3: Verify success criteria**
+- [ ] **Step 2: Verify success criteria**
 
 ```bash
-for f in ConfirmDialog CreateUserModal EditUserModal EmailTemplateModal PermissionModal DatasetPermissionModal MigrationModal PermissionCenterModal; do
-  grep "fixed inset-0" "pathlab/pathlab-client/src/renderer/src/components/settings/${f}.tsx"
+BASE=pathlab/pathlab-client/src/renderer/src
+for f in \
+  components/settings/ConfirmDialog.tsx \
+  components/settings/CreateUserModal.tsx \
+  components/settings/EditUserModal.tsx \
+  components/settings/EmailTemplateModal.tsx \
+  components/settings/PermissionModal.tsx \
+  components/settings/DatasetPermissionModal.tsx \
+  components/settings/MigrationModal.tsx \
+  components/settings/PermissionCenterModal.tsx; do
+  count=$(grep -c "fixed inset-0" "$BASE/$f")
+  echo "$f: $count (expect 0)"
 done
-# All must produce 0 output
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-git add pathlab/pathlab-client/src/renderer/src/components/settings/ConfirmDialog.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/settings/CreateUserModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/settings/EditUserModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/settings/EmailTemplateModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/settings/PermissionModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/settings/DatasetPermissionModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/settings/MigrationModal.tsx \
-        pathlab/pathlab-client/src/renderer/src/components/settings/PermissionCenterModal.tsx
+git add \
+  pathlab/pathlab-client/src/renderer/src/components/settings/ConfirmDialog.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/settings/CreateUserModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/settings/EditUserModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/settings/EmailTemplateModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/settings/PermissionModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/settings/DatasetPermissionModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/settings/MigrationModal.tsx \
+  pathlab/pathlab-client/src/renderer/src/components/settings/PermissionCenterModal.tsx
 git commit -m "refactor: migrate settings modal components to ModalShell"
 ```
 
 ---
 
-## Task 4: Migrate ModalShell — List + Training Components (9 files)
+## Task 4: Migrate ModalShell — List + Training Components (8 files)
 
-**Files to modify:**
+**Files to modify (8 files, containing 10 modal components total):**
 - `components/list/ExportLabelsModal.tsx` (maxWidth="md", onClose=yes)
 - `components/list/FileMetadataModal.tsx` (maxWidth="lg", onClose=yes)
-- `components/list/DeleteModals.tsx` — contains 2 modal components: `DeleteConfirmModal` (maxWidth="lg", onClose=no) and `BatchDeleteModal` (maxWidth="lg", onClose=no)
-- `components/list/EditModals.tsx` — contains 3 modal components: `EditMetadataModal` (maxWidth="md", onClose=yes via cancel), `BatchEditModal` (maxWidth="md", onClose=yes), `EditDatasetModal` (maxWidth="md", onClose=yes)
+- `components/list/DeleteModals.tsx` — contains 2 separate modal components: `DeleteConfirmModal` (maxWidth="lg", onClose=no) and `BatchDeleteModal` (maxWidth="lg", onClose=no)
+- `components/list/EditModals.tsx` — contains 3 separate modal components: `EditMetadataModal` (maxWidth="md", onClose=yes via cancel), `BatchEditModal` (maxWidth="md", onClose=yes), `EditDatasetModal` (maxWidth="md", onClose=yes)
 - `components/training/DeleteConfirmModal.tsx` (maxWidth="md", onClose=no)
 - `components/training/EditMetadataModal.tsx` (maxWidth="md", onClose=yes)
 - `components/training/BatchEditModal.tsx` (maxWidth="md", onClose=yes)
 - `components/training/FileMetadataModal.tsx` (maxWidth="lg", onClose=yes)
 
-**Import path for list/ and training/:** `import { ModalShell } from '../ui/modal-shell'`
+**Import path for list/ and training/ files:** `import { ModalShell } from '../ui/modal-shell'`
 
-**Special case — `EditModals.tsx` and `DeleteModals.tsx`:** Each file contains multiple modal components. Each component has its own overlay div — replace each one independently.
+**Special case — `EditModals.tsx` `EditDatasetModal`:** The current outer div has `onClick={onCancel}` for backdrop close. Replace it with `<ModalShell isOpen={true} onClose={onCancel} maxWidth="md">`. The inner `onClick={e => e.stopPropagation()}` is also removed (ModalShell handles this internally). The component is always conditionally mounted by its parent.
 
-**Special case — `EditModals.tsx` `EditDatasetModal`:** This modal uses `onClick={onCancel}` on the outer div for backdrop close. With ModalShell, replace the outer div with `<ModalShell isOpen={true} onClose={onCancel} maxWidth="md">` and remove the outer `onClick`. The inner `onClick={e => e.stopPropagation()}` is also removed (ModalShell handles this internally).
+**Special case — multi-component files:** `DeleteModals.tsx` and `EditModals.tsx` each contain multiple named export functions. Each function has its own overlay div — replace each one independently. A single `import { ModalShell }` at the top of the file covers all components in that file.
 
-- [ ] **Step 1: Migrate `components/list/ExportLabelsModal.tsx`**
+- [ ] **Step 1: Migrate `components/list/ExportLabelsModal.tsx`** — read, replace overlay+container, verify lsp_diagnostics
 
 - [ ] **Step 2: Migrate `components/list/FileMetadataModal.tsx`**
 
-- [ ] **Step 3: Migrate `components/list/DeleteModals.tsx`** (both DeleteConfirmModal and BatchDeleteModal)
+- [ ] **Step 3: Migrate `components/list/DeleteModals.tsx`** — replace both DeleteConfirmModal and BatchDeleteModal overlay divs
 
-- [ ] **Step 4: Migrate `components/list/EditModals.tsx`** (all 3 modal components in the file)
+- [ ] **Step 4: Migrate `components/list/EditModals.tsx`** — replace all 3 modal component overlay divs
 
 - [ ] **Step 5: Migrate `components/training/DeleteConfirmModal.tsx`**
 
@@ -392,23 +408,24 @@ git commit -m "refactor: migrate settings modal components to ModalShell"
 
 - [ ] **Step 8: Migrate `components/training/FileMetadataModal.tsx`**
 
-- [ ] **Step 9: Verify lsp_diagnostics clean on all 9 files**
+- [ ] **Step 9: Run lsp_diagnostics (severity: error) on all 8 files — expect 0 errors each**
 
 - [ ] **Step 10: Verify success criteria**
 
 ```bash
+BASE=pathlab/pathlab-client/src/renderer/src
 for f in \
-  "components/list/ExportLabelsModal.tsx" \
-  "components/list/FileMetadataModal.tsx" \
-  "components/list/DeleteModals.tsx" \
-  "components/list/EditModals.tsx" \
-  "components/training/DeleteConfirmModal.tsx" \
-  "components/training/EditMetadataModal.tsx" \
-  "components/training/BatchEditModal.tsx" \
-  "components/training/FileMetadataModal.tsx"; do
-  grep "fixed inset-0" "pathlab/pathlab-client/src/renderer/src/${f}"
+  components/list/ExportLabelsModal.tsx \
+  components/list/FileMetadataModal.tsx \
+  components/list/DeleteModals.tsx \
+  components/list/EditModals.tsx \
+  components/training/DeleteConfirmModal.tsx \
+  components/training/EditMetadataModal.tsx \
+  components/training/BatchEditModal.tsx \
+  components/training/FileMetadataModal.tsx; do
+  count=$(grep -c "fixed inset-0" "$BASE/$f")
+  echo "$f: $count (expect 0)"
 done
-# All must produce 0 output
 ```
 
 - [ ] **Step 11: Commit**
@@ -438,75 +455,64 @@ git commit -m "refactor: migrate list and training modal components to ModalShel
 
 - [ ] **Step 1: Read the file and locate the 3 debounce state+effect blocks**
 
-The 3 targets (around lines 220–417):
+They look like this (search for `setDebouncedUserSearchQuery`, `setDebouncedDatasetSearchQuery`, `setDebouncedGrantUserSearchQuery`):
 ```typescript
-// Target 1: user search
 const [debouncedUserSearchQuery, setDebouncedUserSearchQuery] = useState("")
 useEffect(() => {
   const timer = window.setTimeout(() => setDebouncedUserSearchQuery(userSearchQuery), SEARCH_DEBOUNCE_MS)
   return () => window.clearTimeout(timer)
 }, [userSearchQuery])
-
-// Target 2: dataset search
-const [debouncedDatasetSearchQuery, setDebouncedDatasetSearchQuery] = useState("")
-useEffect(() => {
-  const timer = window.setTimeout(() => setDebouncedDatasetSearchQuery(datasetSearchQuery), SEARCH_DEBOUNCE_MS)
-  return () => window.clearTimeout(timer)
-}, [datasetSearchQuery])
-
-// Target 3: grant user search
-const [debouncedGrantUserSearchQuery, setDebouncedGrantUserSearchQuery] = useState("")
-useEffect(() => {
-  const timer = window.setTimeout(() => setDebouncedGrantUserSearchQuery(grantUserSearchQuery), SEARCH_DEBOUNCE_MS)
-  return () => window.clearTimeout(timer)
-}, [grantUserSearchQuery])
 ```
+(× 3 for the 3 different search queries)
 
 - [ ] **Step 2: Add import and replace all 3 blocks**
 
+Add at top: `import { useDebounce } from '../../lib/useDebounce'`
+
+Replace each `useState` + `useEffect` block with a single line:
 ```typescript
-import { useDebounce } from '../../lib/useDebounce'
-// ...
 const debouncedUserSearchQuery = useDebounce(userSearchQuery, SEARCH_DEBOUNCE_MS)
 const debouncedDatasetSearchQuery = useDebounce(datasetSearchQuery, SEARCH_DEBOUNCE_MS)
 const debouncedGrantUserSearchQuery = useDebounce(grantUserSearchQuery, SEARCH_DEBOUNCE_MS)
 ```
 
-Delete all 3 `useState` declarations and all 3 `useEffect` blocks for these 3 variables.
+Delete: the 3 `useState` declarations (for the debounced variables) and the 3 `useEffect` blocks.
 
-- [ ] **Step 3: Verify lsp_diagnostics clean**
+- [ ] **Step 3: Run lsp_diagnostics (severity: error) — expect 0 errors**
 
 - [ ] **Step 4: Verify success criteria**
 
 ```bash
-grep "setDebouncedUserSearchQuery\|setDebouncedDatasetSearchQuery\|setDebouncedGrantUserSearchQuery" \
-  pathlab/pathlab-client/src/renderer/src/components/settings/PermissionCenterModal.tsx
-# Must print 0 lines
-grep "import.*useDebounce" \
-  pathlab/pathlab-client/src/renderer/src/components/settings/PermissionCenterModal.tsx
-# Must print 1 line
+BASE=pathlab/pathlab-client/src/renderer/src
+# Debounced setter calls must be gone:
+grep -c "setDebouncedUserSearchQuery\|setDebouncedDatasetSearchQuery\|setDebouncedGrantUserSearchQuery" \
+  "$BASE/components/settings/PermissionCenterModal.tsx"
+# Expected: 0
+
+# Import must exist:
+grep -c "import.*useDebounce" "$BASE/components/settings/PermissionCenterModal.tsx"
+# Expected: 1
 ```
 
 ### DatasetConfigStep.tsx
 
-- [ ] **Step 5: Read the file, locate the 2 debounce blocks, apply same pattern**
+- [ ] **Step 5: Read the file, locate the 2 debounce blocks (window.setTimeout + clearTimeout), apply same replacement pattern**
 
-```typescript
-import { useDebounce } from '../../lib/useDebounce'
-// Replace each useState + useEffect debounce pair with a single useDebounce call
-```
+Add: `import { useDebounce } from '../../lib/useDebounce'`  
+Remove: the 2 `useState + useEffect + setTimeout/clearTimeout` blocks  
+Add: 2 `useDebounce` calls
 
-- [ ] **Step 6: Verify lsp_diagnostics clean**
+- [ ] **Step 6: Run lsp_diagnostics (severity: error) — expect 0 errors**
 
 - [ ] **Step 7: Verify success criteria**
 
 ```bash
-grep "window\.setTimeout\|window\.clearTimeout\|setTimeout\|clearTimeout" \
-  pathlab/pathlab-client/src/renderer/src/components/upload/DatasetConfigStep.tsx
-# Must print 0 lines
-grep "import.*useDebounce" \
-  pathlab/pathlab-client/src/renderer/src/components/upload/DatasetConfigStep.tsx
-# Must print 1 line
+BASE=pathlab/pathlab-client/src/renderer/src
+grep -c "setTimeout\|clearTimeout" "$BASE/components/upload/DatasetConfigStep.tsx"
+# Expected: 0
+
+grep -c "import.*useDebounce" "$BASE/components/upload/DatasetConfigStep.tsx"
+# Expected: 1
 ```
 
 - [ ] **Step 8: Commit**
@@ -528,17 +534,18 @@ git commit -m "refactor: replace inline debounce useEffects with useDebounce hoo
 - `pages/TaskDetailPage.tsx`
 - `pages/NewTaskPage.tsx`
 
-**Migration pattern for each file:**
+**Import:** `import { useConfirmDialog } from '../lib/useConfirmDialog'`
 
-1. Add import: `import { useConfirmDialog } from '../lib/useConfirmDialog'`
-2. Find and delete the local `useState<ConfirmDialogState>(...)` declaration
-3. Find and delete the local `showConfirmDialog` and `closeConfirmDialog` handler functions
-4. Replace with: `const { dialogState, showConfirmDialog, closeConfirmDialog } = useConfirmDialog()`
-5. Ensure the JSX renders `<ConfirmDialog dialog={dialogState} onClose={closeConfirmDialog} />` (it likely already does — just verify the variable names match)
+**Migration pattern:**
 
-- [ ] **Step 1: Migrate `pages/ListPage.tsx`** — read the file, locate ConfirmDialogState usage, apply migration pattern
+1. Find the local `useState<ConfirmDialogState>(...)` declaration — delete it
+2. Find the local `showConfirmDialog` and `closeConfirmDialog` function definitions — delete them
+3. Add: `const { dialogState, showConfirmDialog, closeConfirmDialog } = useConfirmDialog()`
+4. The JSX `<ConfirmDialog dialog={...} onClose={...} />` is already rendered — verify it uses `dialogState` and `closeConfirmDialog` (update variable references if different names were used)
 
-- [ ] **Step 2: Verify lsp_diagnostics clean**
+- [ ] **Step 1: Migrate `pages/ListPage.tsx`**
+
+- [ ] **Step 2: Run lsp_diagnostics (severity: error) on ListPage.tsx — expect 0 errors**
 
 - [ ] **Step 3: Migrate `pages/TaskListPage.tsx`**
 
@@ -546,15 +553,16 @@ git commit -m "refactor: replace inline debounce useEffects with useDebounce hoo
 
 - [ ] **Step 5: Migrate `pages/NewTaskPage.tsx`**
 
-- [ ] **Step 6: Verify lsp_diagnostics clean on all 4 files**
+- [ ] **Step 6: Run lsp_diagnostics (severity: error) on all 4 files — expect 0 errors**
 
 - [ ] **Step 7: Verify success criteria**
 
 ```bash
-for f in ListPage.tsx TaskListPage.tsx TaskDetailPage.tsx NewTaskPage.tsx; do
+BASE=pathlab/pathlab-client/src/renderer/src
+for f in pages/ListPage.tsx pages/TaskListPage.tsx pages/TaskDetailPage.tsx pages/NewTaskPage.tsx; do
   echo "=== $f ==="
-  grep "useState<ConfirmDialogState>" "pathlab/pathlab-client/src/renderer/src/pages/${f}"
-  # Must print 0 lines per file
+  echo "useState<ConfirmDialogState> (expect 0): $(grep -c 'useState<ConfirmDialogState>' $BASE/$f)"
+  echo "import useConfirmDialog (expect 1): $(grep -c 'import.*useConfirmDialog' $BASE/$f)"
 done
 ```
 
@@ -571,28 +579,28 @@ git commit -m "refactor: migrate pages to useConfirmDialog hook"
 
 ---
 
-## Task 7: Roll Out useConfirmDialog — Settings Components (7 files)
+## Task 7: Roll Out useConfirmDialog — Settings Components (8 files)
 
 **Files to modify:**
-- `components/settings/UsersTab.tsx`
+- `components/settings/UsersTab.tsx` — **also the parent of `PermissionCenterModal`; add hook here and pass props down**
 - `components/settings/StorageTab.tsx`
 - `components/settings/ModelsTab.tsx`
 - `components/settings/AnnotationAuditCard.tsx`
 - `components/settings/DatasetPermissionModal.tsx`
 - `components/settings/PermissionModal.tsx`
-- `components/settings/PermissionCenterModal.tsx` ← **special case** (see note)
 
-**Note on PermissionCenterModal:** This component currently receives `showConfirmDialog` and `closeConfirmDialog` as **props** from its parent (`SettingsPage`). Do NOT adopt the hook in this modal itself — instead, the **parent** (`SettingsPage.tsx` or whatever mounts `PermissionCenterModal`) adopts the hook and passes the functions down. The modal's prop interface is unchanged. If `SettingsPage.tsx` is the parent, add the hook there.
+**Note on `PermissionCenterModal`:** This modal receives `showConfirmDialog` and `closeConfirmDialog` as props from its parent, `UsersTab.tsx`. Do NOT change `PermissionCenterModal`'s prop interface. Instead, in `UsersTab.tsx`:
+1. Import and call `useConfirmDialog()`
+2. Pass the returned `showConfirmDialog` and `closeConfirmDialog` to `<PermissionCenterModal>` as props (replacing whatever local state was there before)
+3. Render `<ConfirmDialog dialog={dialogState} onClose={closeConfirmDialog} />` at the end of `UsersTab`'s JSX
+
+**Import path for settings/:** `import { useConfirmDialog } from '../../lib/useConfirmDialog'`
 
 **Migration pattern:** Same as Task 6.
 
-- [ ] **Step 1: Locate the parent that mounts `PermissionCenterModal` and add `useConfirmDialog` there**
+- [ ] **Step 1: Migrate `components/settings/UsersTab.tsx`** (includes PermissionCenterModal parent wiring)
 
-```bash
-grep -r "PermissionCenterModal" pathlab/pathlab-client/src/renderer/src --include="*.tsx" -l
-```
-
-- [ ] **Step 2: Migrate `components/settings/UsersTab.tsx`**
+- [ ] **Step 2: Run lsp_diagnostics (severity: error) on UsersTab.tsx — expect 0 errors**
 
 - [ ] **Step 3: Migrate `components/settings/StorageTab.tsx`**
 
@@ -604,9 +612,26 @@ grep -r "PermissionCenterModal" pathlab/pathlab-client/src/renderer/src --includ
 
 - [ ] **Step 7: Migrate `components/settings/PermissionModal.tsx`**
 
-- [ ] **Step 8: Verify lsp_diagnostics clean on all modified files**
+- [ ] **Step 8: Run lsp_diagnostics (severity: error) on all 6 remaining files — expect 0 errors**
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 9: Verify success criteria**
+
+```bash
+BASE=pathlab/pathlab-client/src/renderer/src
+for f in \
+  components/settings/UsersTab.tsx \
+  components/settings/StorageTab.tsx \
+  components/settings/ModelsTab.tsx \
+  components/settings/AnnotationAuditCard.tsx \
+  components/settings/DatasetPermissionModal.tsx \
+  components/settings/PermissionModal.tsx; do
+  echo "=== $f ==="
+  echo "useState<ConfirmDialogState> (expect 0): $(grep -c 'useState<ConfirmDialogState>' $BASE/$f)"
+  echo "import useConfirmDialog (expect 1): $(grep -c 'import.*useConfirmDialog' $BASE/$f)"
+done
+```
+
+- [ ] **Step 10: Commit**
 
 ```bash
 git add \
@@ -616,7 +641,6 @@ git add \
   pathlab/pathlab-client/src/renderer/src/components/settings/AnnotationAuditCard.tsx \
   pathlab/pathlab-client/src/renderer/src/components/settings/DatasetPermissionModal.tsx \
   pathlab/pathlab-client/src/renderer/src/components/settings/PermissionModal.tsx
-# Include SettingsPage.tsx if modified
 git commit -m "refactor: migrate settings components to useConfirmDialog hook"
 ```
 
@@ -625,98 +649,95 @@ git commit -m "refactor: migrate settings components to useConfirmDialog hook"
 ## Task 8: Roll Out useAsyncAction — Pages (6 files)
 
 **Files to modify:**
-- `pages/StorageManagementPage.tsx`
-- `pages/TaskDetailPage.tsx`
-- `pages/TaskListPage.tsx`
-- `pages/ResultsViewerPage.tsx`
-- `pages/NewTaskPage.tsx`
-- `pages/AIChatPage.tsx`
+- `pages/StorageManagementPage.tsx` — handlers: `detectOrphaned`, `handleCleanup`, empty dataset cleanup handler
+- `pages/TaskDetailPage.tsx` — handlers: `handleRerun`, `handleCancel`
+- `pages/TaskListPage.tsx` — handler: `handleDeleteTask`
+- `pages/ResultsViewerPage.tsx` — handlers: `runAnalysis`, `startExternalValidation`
+- `pages/NewTaskPage.tsx` — async handlers: `handleSubmitTask` and any others with `setX(true)/try/finally/setX(false)`
+- `pages/AIChatPage.tsx` — async handlers
+
+**Import:** `import { useAsyncAction } from '../lib/useAsyncAction'`
+
+**Scope reminder:** ONLY migrate handlers with this pattern:
+```typescript
+setLoading(true)   // or setIsPending(true) / setIsLoading(true) / setSubmitting(true)
+try { await apiCall() }
+catch (err) { setError(...) }
+finally { setLoading(false) }
+```
+Do NOT touch `useQuery` fetches, `useEffect` data loads, or polling intervals.
 
 **Migration pattern:**
-
 ```typescript
-// BEFORE: manual loading state
+// BEFORE
 const [loading, setLoading] = useState(false)
 const [error, setError] = useState<string | null>(null)
-
-const detectOrphaned = async () => {
+const handler = async () => {
   setLoading(true)
   setError(null)
-  try {
-    const data = await detectOrphanedFiles()
-    setOrphanedFiles(data)
-  } catch (err) {
-    setError(err instanceof Error ? err.message : t('error'))
-  } finally {
-    setLoading(false)
-  }
+  try { const data = await apiCall(); setData(data) }
+  catch (err) { setError(err instanceof Error ? err.message : t('error')) }
+  finally { setLoading(false) }
 }
 
-// AFTER: useAsyncAction
+// AFTER
 import { useAsyncAction } from '../lib/useAsyncAction'
-
 const [error, setError] = useState<string | null>(null)
-const [loadingOrphaned, runDetectOrphaned] = useAsyncAction({
+const [loading, runHandler] = useAsyncAction({
   onError: (err) => setError(err instanceof Error ? err.message : t('error'))
 })
-
-const detectOrphaned = () => {
+const handler = () => {
   setError(null)
-  return runDetectOrphaned(async () => {
-    const data = await detectOrphanedFiles()
-    setOrphanedFiles(data)
+  return runHandler(async () => {
+    const data = await apiCall()
+    setData(data)
   })
 }
 ```
 
-**For files using `useToast` for errors:** if the existing catch block calls `toastError(...)` instead of `setError(...)`, use:
-```typescript
-const { error: toastError } = useToast()
-const [isPending, run] = useAsyncAction({ onError: (err) => toastError(err instanceof Error ? err.message : 'Error') })
-```
+If the file uses `useToast()` for errors instead of local error state, use `onError: (err) => toastError(...)`.
 
-**Scope reminder:** Only migrate handlers that follow `setX(true) + try/catch/finally + setX(false)`. Do NOT touch `useQuery` fetches or `useEffect` data loads.
+- [ ] **Step 1: Migrate `pages/StorageManagementPage.tsx`** — read, identify all `setLoadingX(true)` blocks in handlers, apply migration
 
-- [ ] **Step 1: Migrate `pages/StorageManagementPage.tsx`**
+- [ ] **Step 2: Run lsp_diagnostics (severity: error) — expect 0 errors**
 
-  Target handlers: `detectOrphaned`, `handleCleanup`, `startingEmptyDatasetCleanup` handler  
-  Read the file first, identify each `setLoadingX(true)` block, apply migration pattern one handler at a time.
+- [ ] **Step 3: Migrate `pages/TaskDetailPage.tsx`**
 
-- [ ] **Step 2: Verify lsp_diagnostics clean**
+- [ ] **Step 4: Migrate `pages/TaskListPage.tsx`**
 
-- [ ] **Step 3: Migrate `pages/TaskDetailPage.tsx`** — handlers: `handleRerun`, `handleCancel`
+- [ ] **Step 5: Migrate `pages/ResultsViewerPage.tsx`**
 
-- [ ] **Step 4: Migrate `pages/TaskListPage.tsx`** — handler: `handleDeleteTask`
+- [ ] **Step 6: Migrate `pages/NewTaskPage.tsx`**
 
-- [ ] **Step 5: Migrate `pages/ResultsViewerPage.tsx`** — handlers: `runAnalysis`, `startExternalValidation`
+- [ ] **Step 7: Migrate `pages/AIChatPage.tsx`**
 
-- [ ] **Step 6: Migrate `pages/NewTaskPage.tsx`** — handlers: `handleSubmitTask` and other async handlers
-
-- [ ] **Step 7: Migrate `pages/AIChatPage.tsx`** — async message/action handlers
-
-- [ ] **Step 8: Verify lsp_diagnostics clean on all 6 files**
+- [ ] **Step 8: Run lsp_diagnostics (severity: error) on all 6 files — expect 0 errors**
 
 - [ ] **Step 9: Verify success criteria**
 
 ```bash
-for f in StorageManagementPage.tsx TaskDetailPage.tsx TaskListPage.tsx \
-          ResultsViewerPage.tsx NewTaskPage.tsx AIChatPage.tsx; do
+BASE=pathlab/pathlab-client/src/renderer/src
+for f in \
+  pages/StorageManagementPage.tsx pages/TaskDetailPage.tsx pages/TaskListPage.tsx \
+  pages/ResultsViewerPage.tsx pages/NewTaskPage.tsx pages/AIChatPage.tsx; do
   echo "=== $f ==="
-  grep "setLoading(true)\|setIsPending(true)\|setIsLoading(true)\|setSubmitting(true)" \
-    "pathlab/pathlab-client/src/renderer/src/pages/${f}"
-  # Must print 0 lines per file
+  echo "setLoading(true) (expect 0): $(grep -cF 'setLoading(true)' $BASE/$f)"
+  echo "setIsLoading(true) (expect 0): $(grep -cF 'setIsLoading(true)' $BASE/$f)"
+  echo "setSubmitting(true) (expect 0): $(grep -cF 'setSubmitting(true)' $BASE/$f)"
+  echo "import useAsyncAction (expect 1): $(grep -c 'import.*useAsyncAction' $BASE/$f)"
 done
 ```
 
 - [ ] **Step 10: Commit**
 
 ```bash
-git add pathlab/pathlab-client/src/renderer/src/pages/StorageManagementPage.tsx \
-        pathlab/pathlab-client/src/renderer/src/pages/TaskDetailPage.tsx \
-        pathlab/pathlab-client/src/renderer/src/pages/TaskListPage.tsx \
-        pathlab/pathlab-client/src/renderer/src/pages/ResultsViewerPage.tsx \
-        pathlab/pathlab-client/src/renderer/src/pages/NewTaskPage.tsx \
-        pathlab/pathlab-client/src/renderer/src/pages/AIChatPage.tsx
+git add \
+  pathlab/pathlab-client/src/renderer/src/pages/StorageManagementPage.tsx \
+  pathlab/pathlab-client/src/renderer/src/pages/TaskDetailPage.tsx \
+  pathlab/pathlab-client/src/renderer/src/pages/TaskListPage.tsx \
+  pathlab/pathlab-client/src/renderer/src/pages/ResultsViewerPage.tsx \
+  pathlab/pathlab-client/src/renderer/src/pages/NewTaskPage.tsx \
+  pathlab/pathlab-client/src/renderer/src/pages/AIChatPage.tsx
 git commit -m "refactor: migrate page handlers to useAsyncAction"
 ```
 
@@ -736,25 +757,28 @@ git commit -m "refactor: migrate page handlers to useAsyncAction"
 
 **Import path:** `import { useAsyncAction } from '../../lib/useAsyncAction'`
 
-**Pattern:** Same as Task 8 — read each file, identify `setLoadingX(true)/try/catch/finally/setLoadingX(false)` blocks in event handlers, replace with `useAsyncAction`.
+**Pattern:** Same as Task 8 — read each file, identify handlers with `setX(true)/try/catch/finally/setX(false)`, migrate.
 
-- [ ] **Step 1: Migrate all 8 settings files** (one at a time; read → identify targets → migrate → verify diagnostics)
+- [ ] **Step 1: Migrate all 8 settings files** (one at a time — read → identify targets → migrate → verify lsp_diagnostics)
 
-- [ ] **Step 2: Verify lsp_diagnostics clean on all 8 files**
-
-- [ ] **Step 3: Verify success criteria**
+- [ ] **Step 2: Verify success criteria**
 
 ```bash
-for f in UsersTab.tsx ModelsTab.tsx FeedbackTab.tsx TasksTab.tsx GeneralTab.tsx \
-          StorageTab.tsx AnnotationAuditCard.tsx PermissionCenterModal.tsx; do
+BASE=pathlab/pathlab-client/src/renderer/src
+for f in \
+  components/settings/UsersTab.tsx components/settings/ModelsTab.tsx \
+  components/settings/FeedbackTab.tsx components/settings/TasksTab.tsx \
+  components/settings/GeneralTab.tsx components/settings/StorageTab.tsx \
+  components/settings/AnnotationAuditCard.tsx components/settings/PermissionCenterModal.tsx; do
   echo "=== $f ==="
-  grep "setLoading(true)\|setIsPending(true)\|setIsLoading(true)\|setSubmitting(true)" \
-    "pathlab/pathlab-client/src/renderer/src/components/settings/${f}"
+  echo "setLoading(true) (expect 0): $(grep -cF 'setLoading(true)' $BASE/$f)"
+  echo "setIsLoading(true) (expect 0): $(grep -cF 'setIsLoading(true)' $BASE/$f)"
+  echo "setSubmitting(true) (expect 0): $(grep -cF 'setSubmitting(true)' $BASE/$f)"
+  echo "import useAsyncAction (expect 1): $(grep -c 'import.*useAsyncAction' $BASE/$f)"
 done
-# All must print 0 lines
 ```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add \
@@ -788,18 +812,39 @@ git commit -m "refactor: migrate settings component handlers to useAsyncAction"
 - `components/settings/PermissionModal.tsx`
 
 **Import paths:**
-- For `components/WSIViewer.tsx`: `import { useAsyncAction } from '../lib/useAsyncAction'`
-- For `components/wsiViewer/`, `components/chat/`, `components/settings/`: `import { useAsyncAction } from '../../lib/useAsyncAction'`
+- `components/WSIViewer.tsx`: `import { useAsyncAction } from '../lib/useAsyncAction'`
+- `components/wsiViewer/`, `components/chat/`, `components/settings/`: `import { useAsyncAction } from '../../lib/useAsyncAction'`
 
 **Pattern:** Same as Tasks 8–9.
 
-- [ ] **Step 1: Migrate all 12 files** (read → identify `setLoadingX(true)` handler patterns → migrate)
+- [ ] **Step 1: Migrate all 12 files** (read each → identify `setX(true)/try/catch/finally` patterns in handlers → migrate → verify lsp_diagnostics)
 
-- [ ] **Step 2: Verify lsp_diagnostics clean on all 12 files**
+- [ ] **Step 2: Verify success criteria**
 
-- [ ] **Step 3: Verify success criteria** (same grep pattern as Tasks 8–9 for all 12 files)
+```bash
+BASE=pathlab/pathlab-client/src/renderer/src
+for f in \
+  components/WSIViewer.tsx \
+  components/wsiViewer/ShareAnnotationDialog.tsx \
+  components/chat/AnalysisConfigCard.tsx \
+  components/chat/TaskConfigCard.tsx \
+  components/chat/DatasetRegistrationCard.tsx \
+  components/chat/TaskHistoryCard.tsx \
+  components/chat/ChartCard.tsx \
+  components/chat/MetricCard.tsx \
+  components/chat/ImageRecommendationCard.tsx \
+  components/chat/QuickAnalysisViewer.tsx \
+  components/settings/DatasetPermissionModal.tsx \
+  components/settings/PermissionModal.tsx; do
+  echo "=== $f ==="
+  echo "setLoading(true) (expect 0): $(grep -cF 'setLoading(true)' $BASE/$f)"
+  echo "setIsLoading(true) (expect 0): $(grep -cF 'setIsLoading(true)' $BASE/$f)"
+  echo "setSubmitting(true) (expect 0): $(grep -cF 'setSubmitting(true)' $BASE/$f)"
+  echo "import useAsyncAction (expect 1): $(grep -c 'import.*useAsyncAction' $BASE/$f)"
+done
+```
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
 git add \
@@ -830,11 +875,16 @@ git commit -m "refactor: migrate component handlers to useAsyncAction"
 - `components/settings/AnnotationAuditCard.tsx` — replace own pagination JSX
 - `pages/ListPage.tsx` — replace own pagination JSX
 
-**Migration pattern:**
+**Import paths:**
+- `components/settings/*.tsx`: `import { PaginationFooter } from '../ui/pagination-footer'`
+- `pages/ListPage.tsx`: `import { PaginationFooter } from '../components/ui/pagination-footer'`
 
-1. Add import: `import { PaginationFooter } from '../ui/pagination-footer'` (adjust path)
-2. Find the existing pagination div/component
-3. Replace with:
+**PermissionCenterModal special step:** Search for `function PaginationFooter` inside the file (around line 77). Delete the entire local function definition (lines ~77–143). Then add the import at the top.
+
+**Migration pattern for other files:**
+
+1. Find the existing pagination div/markup (typically contains prev/next buttons and page-size selector)
+2. Replace with:
 ```tsx
 <PaginationFooter
   page={page}
@@ -845,13 +895,11 @@ git commit -m "refactor: migrate component handlers to useAsyncAction"
   onPageSizeChange={(size) => { setPageSize(size); setPage(1) }}
 />
 ```
-4. Delete the old pagination JSX (including any local pagination variables if they become unused)
+3. Adjust prop names to match the file's actual state variable names
 
-**PermissionCenterModal special step:** Delete the private `PaginationFooter` function defined inside the file (lines ~77–143), then add the import at the top.
+- [ ] **Step 1: Migrate `components/settings/PermissionCenterModal.tsx`** — delete local PaginationFooter function, add import, update all 2 call sites to remove the `t={t}` prop
 
-- [ ] **Step 1: Migrate `components/settings/PermissionCenterModal.tsx`** — delete internal component, add import
-
-- [ ] **Step 2: Verify lsp_diagnostics clean**
+- [ ] **Step 2: Run lsp_diagnostics (severity: error) — expect 0 errors**
 
 - [ ] **Step 3: Migrate `components/settings/UsersTab.tsx`**
 
@@ -863,20 +911,21 @@ git commit -m "refactor: migrate component handlers to useAsyncAction"
 
 - [ ] **Step 7: Migrate `pages/ListPage.tsx`**
 
-- [ ] **Step 8: Verify lsp_diagnostics clean on all 6 files**
+- [ ] **Step 8: Run lsp_diagnostics (severity: error) on all 6 files — expect 0 errors each**
 
 - [ ] **Step 9: Verify success criteria**
 
 ```bash
+BASE=pathlab/pathlab-client/src/renderer/src
 for f in \
-  "components/settings/PermissionCenterModal.tsx" \
-  "components/settings/UsersTab.tsx" \
-  "components/settings/ModelsTab.tsx" \
-  "components/settings/FeedbackTab.tsx" \
-  "components/settings/AnnotationAuditCard.tsx" \
-  "pages/ListPage.tsx"; do
-  grep "import.*PaginationFooter" "pathlab/pathlab-client/src/renderer/src/${f}"
-  # Must print 1 line per file
+  components/settings/PermissionCenterModal.tsx \
+  components/settings/UsersTab.tsx \
+  components/settings/ModelsTab.tsx \
+  components/settings/FeedbackTab.tsx \
+  components/settings/AnnotationAuditCard.tsx \
+  pages/ListPage.tsx; do
+  echo "=== $f ==="
+  echo "import PaginationFooter (expect 1): $(grep -c 'import.*PaginationFooter' $BASE/$f)"
 done
 ```
 
@@ -901,8 +950,7 @@ git commit -m "refactor: replace inline pagination with shared PaginationFooter 
 
 ```bash
 BASE=pathlab/pathlab-client/src/renderer/src
-
-echo "=== ModalShell: fixed inset-0 must be 0 in all 22 modal files ==="
+echo "======= ModalShell: fixed inset-0 must be 0 in all 21 modal files ======="
 for f in \
   components/ChangePasswordModal.tsx components/SetEmailModal.tsx \
   components/DisclaimerModal.tsx components/MaintenanceNoticeModal.tsx \
@@ -915,28 +963,26 @@ for f in \
   components/list/DeleteModals.tsx components/list/EditModals.tsx \
   components/training/DeleteConfirmModal.tsx components/training/EditMetadataModal.tsx \
   components/training/BatchEditModal.tsx components/training/FileMetadataModal.tsx; do
-  count=$(grep -c "fixed inset-0" "$BASE/$f" 2>/dev/null || echo 0)
+  count=$(grep -c "fixed inset-0" "$BASE/$f" 2>/dev/null && true || echo 0)
   echo "$f: $count (expect 0)"
 done
 
-echo "=== useDebounce: setDebounced* must be 0 in PermissionCenterModal ==="
-grep -c "setDebouncedUserSearchQuery\|setDebouncedDatasetSearchQuery\|setDebouncedGrantUserSearchQuery" \
-  "$BASE/components/settings/PermissionCenterModal.tsx" || echo 0
+echo "======= useDebounce ======="
+echo "setDebouncedX in PermissionCenterModal (expect 0): $(grep -cF 'setDebouncedUserSearchQuery' $BASE/components/settings/PermissionCenterModal.tsx)"
+echo "setTimeout in DatasetConfigStep (expect 0): $(grep -cF 'setTimeout' $BASE/components/upload/DatasetConfigStep.tsx)"
 
-echo "=== useDebounce: setTimeout must be 0 in DatasetConfigStep ==="
-grep -c "setTimeout\|clearTimeout" "$BASE/components/upload/DatasetConfigStep.tsx" || echo 0
-
-echo "=== useConfirmDialog: no useState<ConfirmDialogState> in 11 files ==="
+echo "======= useConfirmDialog (expect 0 useState<ConfirmDialogState>, 1 import) ======="
 for f in \
   pages/ListPage.tsx pages/TaskListPage.tsx pages/TaskDetailPage.tsx pages/NewTaskPage.tsx \
   components/settings/UsersTab.tsx components/settings/StorageTab.tsx \
   components/settings/ModelsTab.tsx components/settings/AnnotationAuditCard.tsx \
   components/settings/DatasetPermissionModal.tsx components/settings/PermissionModal.tsx; do
-  count=$(grep -c "useState<ConfirmDialogState>" "$BASE/$f" 2>/dev/null || echo 0)
-  echo "$f: $count (expect 0)"
+  s=$(grep -cF 'useState<ConfirmDialogState>' "$BASE/$f" 2>/dev/null || echo 0)
+  i=$(grep -c 'import.*useConfirmDialog' "$BASE/$f" 2>/dev/null || echo 0)
+  echo "$f: useState=$s(expect 0) import=$i(expect 1)"
 done
 
-echo "=== useAsyncAction: no manual setLoading(true) in 26 files ==="
+echo "======= useAsyncAction (expect 0 setLoading(true), 1 import) ======="
 for f in \
   pages/StorageManagementPage.tsx pages/TaskDetailPage.tsx pages/TaskListPage.tsx \
   pages/ResultsViewerPage.tsx pages/NewTaskPage.tsx pages/AIChatPage.tsx \
@@ -950,18 +996,23 @@ for f in \
   components/chat/ChartCard.tsx components/chat/MetricCard.tsx \
   components/chat/ImageRecommendationCard.tsx components/chat/QuickAnalysisViewer.tsx \
   components/settings/DatasetPermissionModal.tsx components/settings/PermissionModal.tsx; do
-  count=$(grep -c "setLoading(true)\|setIsPending(true)\|setIsLoading(true)\|setSubmitting(true)" "$BASE/$f" 2>/dev/null || echo 0)
-  echo "$f: $count (expect 0)"
+  s=$(grep -cF 'setLoading(true)' "$BASE/$f" 2>/dev/null || echo 0)
+  i=$(grep -c 'import.*useAsyncAction' "$BASE/$f" 2>/dev/null || echo 0)
+  echo "$f: setLoading=$s(expect 0) import=$i(expect 1)"
 done
+
+echo "======= No as any / ts-ignore / ts-expect-error introduced ======="
+git diff main..HEAD -- "$BASE" | grep '^\+' | grep -c 'as any\|@ts-ignore\|@ts-expect-error' || echo 0
+# Expected: 0
 ```
 
-- [ ] **Step 2: Run lsp_diagnostics on the full renderer/src directory**
+- [ ] **Step 2: Run lsp_diagnostics on full renderer/src directory** (`severity: "error"`, note any pre-existing errors from unrelated files as expected — do NOT fix them)
 
-Check `pathlab/pathlab-client/src/renderer/src` with extension `.tsx` — ensure no new errors were introduced (pre-existing errors from unrelated files are OK to note but not fix).
-
-- [ ] **Step 3: Commit final**
+- [ ] **Step 3: Final commit**
 
 ```bash
-git commit --allow-empty -m "refactor: frontend deduplication complete — ModalShell, useDebounce, useConfirmDialog, useAsyncAction, PaginationFooter"
+git add -A
+git status  # review — should be clean (nothing to add)
+# If clean, no commit needed; if any files are unstaged, investigate
 ```
 
