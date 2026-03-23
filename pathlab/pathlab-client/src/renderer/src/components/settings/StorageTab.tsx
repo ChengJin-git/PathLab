@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import {
@@ -77,17 +78,17 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [loadingStorage, setLoadingStorage] = useState(false)
   const [storageError, setStorageError] = useState<string | null>(null)
   const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
-  const [loadingOrphaned, setLoadingOrphaned] = useState(false)
-  const [isCleaningUp, setIsCleaningUp] = useState(false)
+  const [loadingOrphaned, runLoadingOrphaned] = useAsyncAction<void>({ onError: (err) => setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToDetectOrphanedFiles')) })
+  const [isCleaningUp, runCleaningUp] = useAsyncAction<void>({ onError: (err) => setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToCleanupFiles')) })
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories] = useState<Set<string>>(new Set())
   const [orphanedRecords, setOrphanedRecords] = useState<OrphanedRecordsInfo | null>(null)
-  const [loadingOrphanedRecords, setLoadingOrphanedRecords] = useState(false)
-  const [isCleaningUpRecords, setIsCleaningUpRecords] = useState(false)
+  const [loadingOrphanedRecords, runLoadingOrphanedRecords] = useAsyncAction<void>({ onError: (err) => setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToDetectOrphanedRecords')) })
+  const [isCleaningUpRecords, runCleaningUpRecords] = useAsyncAction<void>({ onError: (err) => setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToCleanupRecords')) })
   const [recordsCleanupResult, setRecordsCleanupResult] = useState<OrphanedRecordsCleanupResult | null>(null)
   const [storageConfig, setStorageConfig] = useState<StorageConfig | null>(null)
   const [storagePath, setStoragePath] = useState('')
-  const [storageSaving, setStorageSaving] = useState(false)
+  const [storageSaving, runStorageSaving] = useAsyncAction<void>({ onError: (err) => setStorageConfigError(err instanceof Error ? err.message : t('settings.storageTab.failedToUpdateConfig')) })
   const [storageSaved, setStorageSaved] = useState(false)
   const [storageConfigError, setStorageConfigError] = useState<string | null>(null)
   const [showMigrationPrompt, setShowMigrationPrompt] = useState(false)
@@ -95,7 +96,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [deleteSource, setDeleteSource] = useState(false)
   const [batchScanPath, setBatchScanPath] = useState('')
   const [batchScanResult, setBatchScanResult] = useState<ScanDirectoryResponse | null>(null)
-  const [batchScanning, setBatchScanning] = useState(false)
+  const [batchScanning, runBatchScanning] = useAsyncAction<void>({ onError: (err) => setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir')) })
   const [batchScanError, setBatchScanError] = useState<string | null>(null)
   const [batchSelectedFiles, setBatchSelectedFiles] = useState<Set<string>>(new Set())
   const [batchExcludedFiles, setBatchExcludedFiles] = useState<Set<string>>(new Set())
@@ -103,7 +104,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [batchDatasetMode, setBatchDatasetMode] = useState<'existing' | 'new'>('new')
   const [batchSelectedDatasetId, setBatchSelectedDatasetId] = useState<string>('')
   const batchNewDatasetNameRef = useRef<HTMLInputElement>(null)
-  const [batchRegistering, setBatchRegistering] = useState(false)
+  const [batchRegistering, runBatchRegistering] = useAsyncAction<void>({ onError: (err) => setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartImport')) })
   const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
   const [batchTaskType, setBatchTaskTypeRaw] = useState<'classification' | 'survival' | 'segmentation'>('classification')
@@ -122,11 +123,11 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   })
   const [loadingExternalDatasets, setLoadingExternalDatasets] = useState(false)
   const [selectedExternalDatasets, setSelectedExternalDatasets] = useState<Set<string>>(new Set())
-  const [unbindingDatasets, setUnbindingDatasets] = useState(false)
-  const [checkingExternalFiles, setCheckingExternalFiles] = useState(false)
+  const [unbindingDatasets, runUnbindingDatasets] = useAsyncAction<void>()
+  const [checkingExternalFiles, runCheckingExternalFiles] = useAsyncAction<void>({ onError: (err) => setExternalFilesError(err instanceof Error ? err.message : t('settings.storageTab.failedToCheckFiles')) })
   const [externalFilesResult, setExternalFilesResult] = useState<CheckExternalFilesResponse | null>(null)
   const [selectedUnavailableFiles, setSelectedUnavailableFiles] = useState<Set<string>>(new Set())
-  const [deletingUnavailableFiles, setDeletingUnavailableFiles] = useState(false)
+  const [deletingUnavailableFiles, runDeletingUnavailableFiles] = useAsyncAction<void>({ onError: (err) => setExternalFilesError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartDelete')) })
   const [externalFilesError, setExternalFilesError] = useState<string | null>(null)
 
   const loadBatchDatasets = async () => {
@@ -197,16 +198,15 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     }
   }
 
-  const handleBatchScan = async () => {
+  const handleBatchScan = () => {
     if (!batchScanPath.trim()) return
-    setBatchScanning(true)
     setBatchScanError(null)
     setBatchScanResult(null)
     setBatchSelectedFiles(new Set())
     setBatchExcludedFiles(new Set())
     setBatchSelectAllValid(false)
     setBatchImportTaskId(null)
-    try {
+    void runBatchScanning(async () => {
       const result = await scanDirectory(batchScanPath.trim(), {
         taskType: batchTaskType,
         page: 1,
@@ -214,19 +214,16 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       })
       setBatchScanResult(result)
       setBatchSelectAllValid(true)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to scan directory:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
-    } finally {
-      setBatchScanning(false)
-    }
+    })
   }
 
-  const handleBatchScanPageChange = async (page: number) => {
+  const handleBatchScanPageChange = (page: number) => {
     if (!batchScanResult) return
-    setBatchScanning(true)
     setBatchScanError(null)
-    try {
+    void runBatchScanning(async () => {
       const result = await scanDirectory(batchScanResult.directory, {
         scanId: batchScanResult.scan_id,
         taskType: batchTaskType,
@@ -234,12 +231,10 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })
       setBatchScanResult(result)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to load scan page:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
-    } finally {
-      setBatchScanning(false)
-    }
+    })
   }
 
   useEffect(() => {
@@ -249,31 +244,22 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
 
     let cancelled = false
 
-    const reloadSegmentationScan = async () => {
-      setBatchScanning(true)
-      setBatchScanError(null)
-      try {
-        const result = await scanDirectory(batchScanResult.directory, {
-          taskType: 'segmentation',
-          page: batchScanResult.page,
-          pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
-        })
-        if (!cancelled) {
-          setBatchScanResult(result)
-        }
-      } catch (err) {
-        if (!cancelled) {
-          console.error('Failed to reload segmentation scan:', err)
-          setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
-        }
-      } finally {
-        if (!cancelled) {
-          setBatchScanning(false)
-        }
+    setBatchScanError(null)
+    void runBatchScanning(async () => {
+      const result = await scanDirectory(batchScanResult.directory, {
+        taskType: 'segmentation',
+        page: batchScanResult.page,
+        pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
+      })
+      if (!cancelled) {
+        setBatchScanResult(result)
       }
-    }
-
-    void reloadSegmentationScan()
+    }).catch((err: unknown) => {
+      if (!cancelled) {
+        console.error('Failed to reload segmentation scan:', err)
+        setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
+      }
+    })
 
     return () => {
       cancelled = true
@@ -318,7 +304,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchExcludedFiles(new Set())
   }
 
-  const handleBatchRegister = async () => {
+  const handleBatchRegister = () => {
     if (batchSelectedCount === 0) return
     if (batchDatasetMode === 'existing' && !batchSelectedDatasetId) {
       setBatchScanError(t('settings.storageTab.pleaseSelectDataset'))
@@ -329,10 +315,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setBatchScanError(t('settings.storageTab.pleaseEnterDatasetName'))
       return
     }
-    setBatchRegistering(true)
     setBatchScanError(null)
     setBatchImportTaskId(null)
-    try {
+    void runBatchRegistering(async () => {
       const result = await startBatchImportTask({
         scan_id: batchScanResult?.scan_id,
         select_all_valid: batchSelectAllValid,
@@ -351,31 +336,26 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setBatchSelectAllValid(false)
       if (batchNewDatasetNameRef.current) { batchNewDatasetNameRef.current.value = '' }
       setTimeout(() => { loadBatchDatasets(); refreshExternalDatasets() }, 2000)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to start batch import task:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartImport'))
-    } finally {
-      setBatchRegistering(false)
-    }
+    })
   }
 
-  const handleCheckExternalFiles = async () => {
-    setCheckingExternalFiles(true)
+  const handleCheckExternalFiles = () => {
     setExternalFilesResult(null)
     setExternalFilesError(null)
     setSelectedUnavailableFiles(new Set())
-    try {
+    void runCheckingExternalFiles(async () => {
       const result = await checkExternalFiles()
       setExternalFilesResult(result)
       if (result.unavailable.length > 0) {
         setSelectedUnavailableFiles(new Set(result.unavailable.map(f => f.wsi_id)))
       }
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to check external files:', err)
       setExternalFilesError(err instanceof Error ? err.message : t('settings.storageTab.failedToCheckFiles'))
-    } finally {
-      setCheckingExternalFiles(false)
-    }
+    })
   }
 
   const handleDeleteUnavailableFiles = async () => {
@@ -386,18 +366,15 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
-        setDeletingUnavailableFiles(true)
         setExternalFilesError(null)
-        try {
+        void runDeletingUnavailableFiles(async () => {
           await startDeleteExternalTask(Array.from(selectedUnavailableFiles))
           setSelectedUnavailableFiles(new Set())
           setTimeout(() => handleCheckExternalFiles(), 2000)
-        } catch (err) {
+        }).catch((err: unknown) => {
           console.error('Failed to start delete external task:', err)
           setExternalFilesError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartDelete'))
-        } finally {
-          setDeletingUnavailableFiles(false)
-        }
+        })
       }
     })
   }
@@ -426,11 +403,10 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
-        setUnbindingDatasets(true)
-        try {
+        void runUnbindingDatasets(async () => {
           await startUnbindDatasetTask(datasetId)
           setTimeout(() => refreshExternalDatasets(), 2000)
-        } catch (err) {
+        }).catch((err: unknown) => {
           console.error('Failed to start unbind dataset task:', err)
           showConfirmDialog({
             title: t('settings.storageTab.unbindFailed'),
@@ -439,9 +415,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
             showCancel: false,
             onConfirm: () => closeConfirmDialog()
           })
-        } finally {
-          setUnbindingDatasets(false)
-        }
+        })
       }
     })
   }
@@ -458,14 +432,13 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       confirmVariant: 'danger',
       onConfirm: async () => {
         closeConfirmDialog()
-        setUnbindingDatasets(true)
-        try {
+        void runUnbindingDatasets(async () => {
           for (const datasetId of selectedExternalDatasets) {
             await startUnbindDatasetTask(datasetId)
           }
           setSelectedExternalDatasets(new Set())
           setTimeout(() => refreshExternalDatasets(), 2000)
-        } catch (err) {
+        }).catch((err: unknown) => {
           console.error('Failed to start unbind dataset tasks:', err)
           showConfirmDialog({
             title: t('settings.storageTab.unbindFailed'),
@@ -474,9 +447,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
             showCancel: false,
             onConfirm: () => closeConfirmDialog()
           })
-        } finally {
-          setUnbindingDatasets(false)
-        }
+        })
       }
     })
   }
@@ -487,22 +458,19 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     if (selected) { setStoragePath(selected) }
   }
 
-  const performStorageUpdate = async (path: string) => {
-    setStorageSaving(true)
+  const performStorageUpdate = (path: string) => {
     setStorageConfigError(null)
-    try {
+    return runStorageSaving(async () => {
       const result = await updateStorageConfig(path)
       setStorageConfig({ uploads_dir: result.uploads_dir, source: 'config' })
       setStoragePath(result.uploads_dir)
       await loadStats()
       setStorageSaved(true)
       setTimeout(() => setStorageSaved(false), 3000)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to update storage config:', err)
       setStorageConfigError(err instanceof Error ? err.message : t('settings.storageTab.failedToUpdateConfig'))
-    } finally {
-      setStorageSaving(false)
-    }
+    })
   }
 
   const handleStorageSave = async (e: React.FormEvent) => {
@@ -516,19 +484,16 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     await performStorageUpdate(storagePath.trim())
   }
 
-  const handleConfirmMigration = async () => {
+  const handleConfirmMigration = () => {
     setShowMigrationPrompt(false)
-    setStorageSaving(true)
-    try {
+    void runStorageSaving(async () => {
       await addMigrationTask(migrationTarget, deleteSource)
       setStorageSaved(true)
       setTimeout(() => setStorageSaved(false), 3000)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to start migration:', err)
       setStorageConfigError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartMigration'))
-    } finally {
-      setStorageSaving(false)
-    }
+    })
   }
 
   const handleSkipMigration = async () => {
@@ -536,69 +501,57 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     await performStorageUpdate(migrationTarget)
   }
 
-  const detectOrphaned = async (clearCleanupResult: boolean = true) => {
-    setLoadingOrphaned(true)
+  const detectOrphaned = (clearCleanupResult: boolean = true) => {
     setStorageError(null)
     if (clearCleanupResult) { setCleanupResult(null) }
-    try {
+    return runLoadingOrphaned(async () => {
       const data = await detectOrphanedFiles()
       setOrphanedFiles(data)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to detect orphaned files:', err)
       setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToDetectOrphanedFiles'))
-    } finally {
-      setLoadingOrphaned(false)
-    }
+    })
   }
 
-  const handleCleanup = async (e: React.MouseEvent) => {
+  const handleCleanup = (e: React.MouseEvent) => {
     e.preventDefault()
     if (!orphanedFiles) return
     const categories = selectedCategories.size > 0 ? Array.from(selectedCategories) : undefined
-    setIsCleaningUp(true)
     setStorageError(null)
-    try {
+    void runCleaningUp(async () => {
       const result = await cleanupOrphanedFiles(categories)
       setCleanupResult(result)
       loadStats()
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to cleanup orphaned files:', err)
       setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToCleanupFiles'))
-    } finally {
-      setIsCleaningUp(false)
-    }
+    })
   }
 
-  const detectOrphanedRecordsHandler = async (clearCleanupResult: boolean = true) => {
-    setLoadingOrphanedRecords(true)
+  const detectOrphanedRecordsHandler = (clearCleanupResult: boolean = true) => {
     setStorageError(null)
     if (clearCleanupResult) { setRecordsCleanupResult(null) }
-    try {
+    return runLoadingOrphanedRecords(async () => {
       const data = await detectOrphanedRecords()
       setOrphanedRecords(data)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to detect orphaned records:', err)
       setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToDetectOrphanedRecords'))
-    } finally {
-      setLoadingOrphanedRecords(false)
-    }
+    })
   }
 
-  const handleRecordsCleanup = async (e: React.MouseEvent) => {
+  const handleRecordsCleanup = (e: React.MouseEvent) => {
     e.preventDefault()
     if (!orphanedRecords) return
-    setIsCleaningUpRecords(true)
     setStorageError(null)
-    try {
+    void runCleaningUpRecords(async () => {
       const result = await cleanupOrphanedRecords()
       setRecordsCleanupResult(result)
       await detectOrphanedRecordsHandler(false)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to cleanup orphaned records:', err)
       setStorageError(err instanceof Error ? err.message : t('settings.storageTab.failedToCleanupRecords'))
-    } finally {
-      setIsCleaningUpRecords(false)
-    }
+    })
   }
 
   const handleResetDerivedData = async () => {

@@ -9,8 +9,8 @@ interface OrphanedRecordsCardProps {
   loadingOrphanedRecords: boolean
   isCleaningUpRecords: boolean
   recordsCleanupResult: OrphanedRecordsCleanupResult | null
-  detectOrphanedRecordsHandler: (clearCleanupResult?: boolean) => Promise<void>
-  handleRecordsCleanup: (e: React.MouseEvent) => Promise<void>
+  detectOrphanedRecordsHandler: (clearCleanupResult?: boolean) => void
+  handleRecordsCleanup: (e: React.MouseEvent) => void
   anyStorageOpInProgress: boolean
 }
 

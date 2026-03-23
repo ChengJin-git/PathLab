@@ -9,8 +9,8 @@ interface OrphanedFilesCardProps {
   loadingOrphaned: boolean
   isCleaningUp: boolean
   cleanupResult: CleanupResult | null
-  detectOrphaned: (clearCleanupResult?: boolean) => Promise<void>
-  handleCleanup: (e: React.MouseEvent) => Promise<void>
+  detectOrphaned: (clearCleanupResult?: boolean) => void
+  handleCleanup: (e: React.MouseEvent) => void
   formatBytes: (bytes: number) => string
   anyStorageOpInProgress: boolean
 }

@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import { clearDraftKeys } from '../lib/useDraftState'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -103,7 +104,7 @@ export default function NewTaskPage() {
     label: string
     original_filename?: string
   } | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const [deleting, runDeleting] = useAsyncAction<void>()
 
   // Edit modal
   const [showEditModal, setShowEditModal] = useState(false)
@@ -116,11 +117,11 @@ export default function NewTaskPage() {
     event_time?: number
     event_status?: number
   } | null>(null)
-  const [updating, setUpdating] = useState(false)
+  const [updating, runUpdating] = useAsyncAction<void>()
 
   // Batch edit modal
   const [showBatchEditModal, setShowBatchEditModal] = useState(false)
-  const [batchUpdating, setBatchUpdating] = useState(false)
+  const [batchUpdating, runBatchUpdating] = useAsyncAction<void>()
 
   // Polling state
   const [polledTask, setPolledTask] = useState<TrainingTaskDetail | null>(null)
@@ -320,22 +321,19 @@ export default function NewTaskPage() {
     setShowDeleteModal(true)
   }
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = () => {
     if (!wsiToDelete) return
-    setDeleting(true)
-    try {
+    void runDeleting(async () => {
       addDeleteWSITask([wsiToDelete.wsi_id], 'standard')
       setShowDeleteModal(false)
       setWsiToDelete(null)
       if (dataSelection.selectedDatasetId) {
         setTimeout(() => dataSelection.reloadItems(), 500)
       }
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to delete WSI:', err)
       alert(t('newTask.errors.failedDeleteWsi', { error: String(err) }))
-    } finally {
-      setDeleting(false)
-    }
+    })
   }
 
   const handleBatchDeleteClick = () => {
@@ -377,7 +375,7 @@ export default function NewTaskPage() {
     setShowEditModal(true)
   }
 
-  const handleConfirmEdit = async (data: {
+  const handleConfirmEdit = (data: {
     label: string
     case_id: string
     age: string
@@ -386,8 +384,7 @@ export default function NewTaskPage() {
     event_status: string
   }) => {
     if (!editingWSI) return
-    setUpdating(true)
-    try {
+    void runUpdating(async () => {
       const isSegmentationTask = wizard.taskType === 'segmentation'
       const age = data.age ? parseInt(data.age) : undefined
       const event_time = data.event_time ? parseFloat(data.event_time) : undefined
@@ -406,12 +403,10 @@ export default function NewTaskPage() {
       if (dataSelection.selectedDatasetId) {
         await dataSelection.reloadItems()
       }
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to update WSI metadata:', err)
       alert(t('newTask.errors.failedUpdateMetadata', { error: String(err) }))
-    } finally {
-      setUpdating(false)
-    }
+    })
   }
 
   const handleBatchEditClick = () => {
@@ -422,7 +417,7 @@ export default function NewTaskPage() {
     setShowBatchEditModal(true)
   }
 
-  const handleConfirmBatchEdit = async (data: {
+  const handleConfirmBatchEdit = (data: {
     label: string
     case_id: string
     age: string
@@ -444,8 +439,7 @@ export default function NewTaskPage() {
       setShowBatchEditModal(false)
       return
     }
-    setBatchUpdating(true)
-    try {
+    void runBatchUpdating(async () => {
       const age = data.age ? parseInt(data.age) : undefined
       const event_time = data.event_time ? parseFloat(data.event_time) : undefined
       const event_status = data.event_status ? parseInt(data.event_status) : undefined
@@ -463,12 +457,10 @@ export default function NewTaskPage() {
       setShowBatchEditModal(false)
       dataSelection.clearSelection()
       alert(t('newTask.errors.batchUpdateStarted', { count: request.wsi_ids.length }))
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to start batch edit:', err)
       alert(t('newTask.errors.failedBatchEdit', { error: String(err) }))
-    } finally {
-      setBatchUpdating(false)
-    }
+    })
   }
 
   // ========== Training Submission ==========

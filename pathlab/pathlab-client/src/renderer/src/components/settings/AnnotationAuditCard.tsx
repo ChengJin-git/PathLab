@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { Download, ClipboardList } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -51,7 +52,7 @@ export function AnnotationAuditCard() {
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [exporting, setExporting] = useState(false)
+  const [exporting, runExporting] = useAsyncAction<void>()
 
   const totalPages = Math.max(1, Math.ceil(totalCount / query.pageSize))
 
@@ -81,9 +82,8 @@ export function AnnotationAuditCard() {
     return () => { cancelled = true }
   }, [query])
 
-  const handleExportCsv = async () => {
-    setExporting(true)
-    try {
+  const handleExportCsv = () => {
+    void runExporting(async () => {
       const url = exportAnnotationAuditUrl({
         dataset_id: query.datasetFilter || undefined,
         event_type: query.eventTypeFilter || undefined,
@@ -97,9 +97,7 @@ export function AnnotationAuditCard() {
       a.download = 'annotation_audit.csv'
       a.click()
       URL.revokeObjectURL(a.href)
-    } finally {
-      setExporting(false)
-    }
+    })
   }
 
   return (

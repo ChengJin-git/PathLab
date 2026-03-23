@@ -33,13 +33,13 @@ interface BatchRegisterCardProps {
   batchIsPublic: boolean
   setBatchIsPublic: (value: boolean) => void
   handleSelectBatchScanDir: () => Promise<void>
-  handleBatchScan: () => Promise<void>
-  handleBatchScanPageChange: (page: number) => Promise<void>
+  handleBatchScan: () => void
+  handleBatchScanPageChange: (page: number) => void
   isBatchFileSelected: (path: string, valid: boolean) => boolean
   handleBatchFileToggle: (path: string, valid: boolean) => void
   handleBatchSelectAll: () => void
   handleBatchDeselectAll: () => void
-  handleBatchRegister: () => Promise<void>
+  handleBatchRegister: () => void
   formatFileSize: (bytes: number) => string
   hasSelectDirectoryApi: boolean
   externalDatasets: ExternalDatasetInfo[]
@@ -48,11 +48,11 @@ interface BatchRegisterCardProps {
   loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
-  refreshExternalDatasets: () => Promise<void>
+  refreshExternalDatasets: () => void | Promise<void>
   handleExternalDatasetToggle: (datasetId: string | null) => void
   handleExternalDatasetSelectAll: () => void
-  handleUnbindDataset: (datasetId: string, datasetName: string) => Promise<void>
-  handleUnbindSelectedDatasets: () => Promise<void>
+  handleUnbindDataset: (datasetId: string, datasetName: string) => void
+  handleUnbindSelectedDatasets: () => void
   navigate: (path: string) => void
 }
 

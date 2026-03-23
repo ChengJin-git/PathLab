@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { Loader2, Edit2, CheckCircle2, XCircle } from 'lucide-react'
 import { updateTrainingTaskName } from '../../api'
@@ -40,32 +41,23 @@ export function removeRenameTaskBlock(content: string): string {
 
 export function RenameTaskCard({ config, onSuccess, onError }: RenameTaskCardProps) {
   const { t } = useTranslation()
-  const [isRenaming, setIsRenaming] = useState(false)
+  const [isRenaming, runRenaming] = useAsyncAction<void>({ onError: (err: unknown) => { const errorMsg = (err as Error)?.message || t('chatComponents.renameTask.failedToRename'); setError(errorMsg); onError?.(errorMsg) } })
   const [isRenamed, setIsRenamed] = useState(false)
   const [error, setError] = useState<string>('')
 
-  const handleRename = async () => {
+  const handleRename = () => {
     if (!config.new_name.trim()) {
       const errorMsg = t('chatComponents.renameTask.nameCannotBeEmpty')
       setError(errorMsg)
       onError?.(errorMsg)
       return
     }
-
-    setIsRenaming(true)
     setError('')
-
-    try {
+    void runRenaming(async () => {
       await updateTrainingTaskName(config.task_id, config.new_name.trim())
       setIsRenamed(true)
       onSuccess?.(config.task_id, config.new_name.trim())
-    } catch (err: any) {
-      const errorMsg = err.message || t('chatComponents.renameTask.failedToRename')
-      setError(errorMsg)
-      onError?.(errorMsg)
-    } finally {
-      setIsRenaming(false)
-    }
+    })
   }
 
   return (

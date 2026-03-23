@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { FileSpreadsheet, Upload, AlertTriangle, CheckCircle, Loader2, X, ArrowRight } from 'lucide-react'
@@ -186,7 +187,14 @@ function generateSplit(csvContent: string): string {
 export function CSVActionCard({ config, csvContent, fileName, onSuccess, onError }: CSVActionCardProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [isUploading, setIsUploading] = useState(false)
+  const [isUploading, runUploading] = useAsyncAction<void>({
+    onError: (err) => {
+      setUploadResult('error')
+      const msg = err instanceof Error ? err.message : t('chatComponents.csvAction.uploadFailed')
+      setErrorMessage(msg)
+      onError?.(msg)
+    }
+  })
   const [uploadResult, setUploadResult] = useState<'success' | 'error' | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
@@ -321,11 +329,9 @@ export function CSVActionCard({ config, csvContent, fileName, onSuccess, onError
     )
   }
 
-  const handleUpload = async () => {
-    setIsUploading(true)
+  const handleUpload = () => {
     setErrorMessage(null)
-
-    try {
+    void runUploading(async () => {
       let finalCSV = csvContent
       if (config.action === 'correct_and_upload' && config.corrections) {
         finalCSV = applyCorrections(csvContent, config.corrections)
@@ -345,14 +351,7 @@ export function CSVActionCard({ config, csvContent, fileName, onSuccess, onError
 
       setUploadResult('success')
       onSuccess?.(result)
-    } catch (error) {
-      setUploadResult('error')
-      const msg = error instanceof Error ? error.message : t('chatComponents.csvAction.uploadFailed')
-      setErrorMessage(msg)
-      onError?.(msg)
-    } finally {
-      setIsUploading(false)
-    }
+    })
   }
 
   if (uploadResult === 'success') {

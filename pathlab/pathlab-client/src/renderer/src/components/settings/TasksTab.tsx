@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { Layers, RefreshCw, Minus, Plus, CheckCircle, Cpu, AlertCircle } from 'lucide-react'
 import { Card } from '../ui/card'
@@ -18,7 +19,7 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
   const [queueError, setQueueError] = useState<string | null>(null)
   const [taskTimeout, setTaskTimeout] = useState('259200')
   const [taskSaved, setTaskSaved] = useState(false)
-  const [taskSaving, setTaskSaving] = useState(false)
+  const [taskSaving, runTaskSaving] = useAsyncAction<void>()
 
   const loadQueueStatus = useCallback(async () => {
     setLoadingQueue(true); setQueueError(null)
@@ -44,17 +45,17 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
     catch (err) { console.error('Failed to update queue config:', err); setQueueError(err instanceof Error ? err.message : t('settings.tasksTab.failedToUpdateQueueConfig')) }
   }, [t])
 
-  const handleTaskSave = async (e: React.FormEvent) => {
-    e.preventDefault(); setTaskSaving(true)
-    try {
+  const handleTaskSave = (e: React.FormEvent) => {
+    e.preventDefault()
+    void runTaskSaving(async () => {
       const timeout = parseInt(taskTimeout, 10)
       if (isNaN(timeout) || timeout < 60 || timeout > 259200) throw new Error(t('settings.tasksTab.timeoutRangeError'))
       await updateQueueConfig({ task_timeout: timeout })
       setTaskSaved(true); setTimeout(() => setTaskSaved(false), 3000)
-    } catch (err) {
+    }).catch((err: unknown) => {
       console.error('Failed to save task config:', err)
       showConfirmDialog({ title: t('settings.tasksTab.error'), message: err instanceof Error ? err.message : t('settings.tasksTab.failedToSaveConfig'), confirmText: t('settings.tasksTab.ok'), confirmVariant: 'danger', showCancel: false, onConfirm: () => closeConfirmDialog() })
-    } finally { setTaskSaving(false) }
+    })
   }
   const isSingleGPU = queueStatus?.gpu_count === 1
   const queueDiagnosis = queueStatus

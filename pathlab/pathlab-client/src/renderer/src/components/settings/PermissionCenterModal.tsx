@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useAsyncAction } from "../../lib/useAsyncAction";
 import { useDebounce } from "../../lib/useDebounce";
 import { useTranslation } from "react-i18next";
 import { ModalShell } from "../ui/modal-shell";
@@ -147,7 +148,7 @@ export function PermissionCenterModal({
   const { t } = useTranslation();
   const [mode, setMode] = useState<PermissionMode>(initialMode);
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [submitting, runSubmitting] = useAsyncAction<void>({ onError: (err) => setError(err instanceof Error ? err.message : String(err)) });
   const [expiresInHours, setExpiresInHours] = useState("");
   const [datasetSearchQuery, setDatasetSearchQuery] = useState("");
 
@@ -686,11 +687,10 @@ export function PermissionCenterModal({
     setAllMatchingUserCount(0);
   };
 
-  const handleGrantToUser = async () => {
+  const handleGrantToUser = () => {
     if (!selectedUser || selectedGrantableDatasetIds.length === 0) return;
-    try {
-      setSubmitting(true);
-      setError(null);
+    setError(null);
+    void runSubmitting(async () => {
       const hours = parsePositiveHours(expiresInHours);
       const results = await Promise.allSettled(
         selectedGrantableDatasetIds.map((datasetId) =>
@@ -711,15 +711,13 @@ export function PermissionCenterModal({
             failed: failedCount,
           }),
         );
-    } catch (err) {
+    }).catch((err: unknown) => {
       setError(
         err instanceof Error
           ? err.message
           : t("settings.permissionCenterModal.failedToGrantUserPermissions"),
       );
-    } finally {
-      setSubmitting(false);
-    }
+    });
   };
 
   const handleRevokeFromUser = (permission: DatasetGrant) => {
@@ -734,12 +732,11 @@ export function PermissionCenterModal({
       confirmVariant: "warning",
       onConfirm: async () => {
         closeConfirmDialog();
-        try {
-          setSubmitting(true);
-          setError(null);
+        setError(null);
+        void runSubmitting(async () => {
           await revokeDatasetGrant(permission.dataset_id, selectedUser.id);
           await loadUserPermissions(selectedUser.id);
-        } catch (err) {
+        }).catch((err: unknown) => {
           setError(
             err instanceof Error
               ? err.message
@@ -747,9 +744,7 @@ export function PermissionCenterModal({
                   "settings.permissionCenterModal.failedToRevokeUserPermission",
                 ),
           );
-        } finally {
-          setSubmitting(false);
-        }
+        });
       },
     });
   };
@@ -769,9 +764,8 @@ export function PermissionCenterModal({
       confirmVariant: "danger",
       onConfirm: async () => {
         closeConfirmDialog();
-        try {
-          setSubmitting(true);
-          setError(null);
+        setError(null);
+        void runSubmitting(async () => {
           const results = await Promise.allSettled(
             validUserPermissions.map((permission) =>
               revokeDatasetGrant(permission.dataset_id, selectedUser.id),
@@ -787,7 +781,7 @@ export function PermissionCenterModal({
                 failed: failedCount,
               }),
             );
-        } catch (err) {
+        }).catch((err: unknown) => {
           setError(
             err instanceof Error
               ? err.message
@@ -795,23 +789,20 @@ export function PermissionCenterModal({
                   "settings.permissionCenterModal.failedToRevokeUserPermissions",
                 ),
           );
-        } finally {
-          setSubmitting(false);
-        }
+        });
       },
     });
   };
 
-  const handleGrantToDataset = async () => {
+  const handleGrantToDataset = () => {
     if (
       !selectedDatasetId ||
       selectedGrantUserIds.length === 0 ||
       selectedDatasetIsPublic
     )
       return;
-    try {
-      setSubmitting(true);
-      setError(null);
+    setError(null);
+    void runSubmitting(async () => {
       const hours = parsePositiveHours(expiresInHours);
       const response = await batchGrantDatasetGrants(
         selectedDatasetId,
@@ -829,15 +820,13 @@ export function PermissionCenterModal({
             failed: response.failed,
           }),
         );
-    } catch (err) {
+    }).catch((err: unknown) => {
       setError(
         err instanceof Error
           ? err.message
           : t("settings.permissionCenterModal.failedToGrantDatasetGrants"),
       );
-    } finally {
-      setSubmitting(false);
-    }
+    });
   };
 
   const handleRevokeFromDataset = (permission: DatasetGrant) => {
@@ -854,9 +843,8 @@ export function PermissionCenterModal({
       confirmVariant: "warning",
       onConfirm: async () => {
         closeConfirmDialog();
-        try {
-          setSubmitting(true);
-          setError(null);
+        setError(null);
+        void runSubmitting(async () => {
           const response = await batchRevokeDatasetGrants(
             permission.dataset_id,
             [permission.user_id],
@@ -868,15 +856,13 @@ export function PermissionCenterModal({
                 failed: response.failed,
               }),
             );
-        } catch (err) {
+        }).catch((err: unknown) => {
           setError(
             err instanceof Error
               ? err.message
               : t("settings.permissionCenterModal.failedToRevokeDatasetGrant"),
           );
-        } finally {
-          setSubmitting(false);
-        }
+        });
       },
     });
   };
@@ -896,9 +882,8 @@ export function PermissionCenterModal({
       confirmVariant: "danger",
       onConfirm: async () => {
         closeConfirmDialog();
-        try {
-          setSubmitting(true);
-          setError(null);
+        setError(null);
+        void runSubmitting(async () => {
           const response = await batchRevokeDatasetGrants(
             selectedDatasetId,
             validDatasetGrants.map((permission) => permission.user_id),
@@ -910,15 +895,13 @@ export function PermissionCenterModal({
                 failed: response.failed,
               }),
             );
-        } catch (err) {
+        }).catch((err: unknown) => {
           setError(
             err instanceof Error
               ? err.message
               : t("settings.permissionCenterModal.failedToRevokeDatasetGrants"),
           );
-        } finally {
-          setSubmitting(false);
-        }
+        });
       },
     });
   };
@@ -954,11 +937,10 @@ export function PermissionCenterModal({
       selectedVisibilityDatasetIds.includes(dataset.dataset_id),
     );
 
-  const handleBatchUpdateVisibility = async () => {
+  const handleBatchUpdateVisibility = () => {
     if (selectedVisibilityDatasetIds.length === 0) return;
-    try {
-      setSubmitting(true);
-      setError(null);
+    setError(null);
+    void runSubmitting(async () => {
       const targetIsPublic = visibilityTarget === "public";
       const results = await Promise.allSettled(
         selectedVisibilityDatasetIds.map((datasetId) =>
@@ -980,15 +962,13 @@ export function PermissionCenterModal({
       if (mode === "dataset" && selectedDatasetId) {
         await loadDatasetGrants(selectedDatasetId);
       }
-    } catch (err) {
+    }).catch((err: unknown) => {
       setError(
         err instanceof Error
           ? err.message
           : t("settings.permissionCenterModal.failedToBatchUpdateVisibility"),
       );
-    } finally {
-      setSubmitting(false);
-    }
+    });
   };
 
   const renderSegmentedSwitch = () => (

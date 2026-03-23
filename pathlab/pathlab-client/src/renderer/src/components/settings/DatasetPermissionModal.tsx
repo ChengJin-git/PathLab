@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { Database, Search, Clock, Trash2, X, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -43,14 +44,18 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
   const [permissions, setPermissions] = useState<DatasetGrant[]>([])
   const [selectedDatasetId, setSelectedDatasetId] = useState('')
   const [selectedDatasetIsPublic, setSelectedDatasetIsPublic] = useState(false)
-  const [togglingVisibility, setTogglingVisibility] = useState(false)
+  const [togglingVisibility, runTogglingVisibility] = useAsyncAction<void>({
+    onError: (err) => setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToUpdateVisibility'))
+  })
+  const [submitting, runSubmitting] = useAsyncAction<void>({
+    onError: (err) => setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToGrantPermissions'))
+  })
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([])
   const [userSearchQuery, setUserSearchQuery] = useState('')
   const [expiresInHours, setExpiresInHours] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loadingData, setLoadingData] = useState(false)
   const [loadingPermissions, setLoadingPermissions] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
 
   const loadDatasetGrantList = useCallback(async (datasetId: string) => {
     if (!datasetId) {
@@ -141,11 +146,10 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
     void loadDatasetGrantList(datasetId)
   }
 
-  const handleToggleVisibility = async () => {
+  const handleToggleVisibility = () => {
     if (!selectedDatasetId) return
-    setTogglingVisibility(true)
     setError(null)
-    try {
+    void runTogglingVisibility(async () => {
       const newValue = !selectedDatasetIsPublic
       const result = await updateDatasetVisibility(selectedDatasetId, newValue)
       setSelectedDatasetIsPublic(result.is_public)
@@ -153,11 +157,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
         ? { ...d, is_public: result.is_public }
         : d
       ))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToUpdateVisibility'))
-    } finally {
-      setTogglingVisibility(false)
-    }
+    })
   }
 
 
@@ -174,14 +174,12 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
     setSelectedUserIds((prev) => checked ? [...prev, userId] : prev.filter((id) => id !== userId))
   }
 
-  const handleGrantPermissions = async () => {
+  const handleGrantPermissions = () => {
     if (!selectedDatasetId || selectedUserIds.length === 0) return
     const parsedHours = expiresInHours.trim() ? Number.parseInt(expiresInHours, 10) : undefined
     const hours = parsedHours && parsedHours > 0 ? parsedHours : undefined
-
-    try {
-      setSubmitting(true)
-      setError(null)
+    setError(null)
+    void runSubmitting(async () => {
       const results = await Promise.allSettled(selectedUserIds.map((userId) => grantDatasetGrant(selectedDatasetId, userId, hours)))
       await loadDatasetGrantList(selectedDatasetId)
       setSelectedUserIds([])
@@ -189,11 +187,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
       if (results.some((result) => result.status === 'rejected')) {
         setError(t('settings.datasetPermissionModal.failedToGrantPermissions'))
       }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToGrantPermissions'))
-    } finally {
-      setSubmitting(false)
-    }
+    })
   }
 
   const handleRevokePermission = (permission: DatasetGrant) => {
@@ -205,18 +199,15 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
       message: t('settings.datasetPermissionModal.revokePermissionConfirm', { datasetName, userName }),
       confirmText: t('settings.usersTab.revoke'),
       confirmVariant: 'warning',
-      onConfirm: async () => {
+      onConfirm: () => {
         closeConfirmDialog()
-        try {
-          setSubmitting(true)
-          setError(null)
+        setError(null)
+        void runSubmitting(async () => {
           await revokeDatasetGrant(permission.dataset_id, permission.user_id)
           await loadDatasetGrantList(permission.dataset_id)
-        } catch (err) {
+        }).catch((err: unknown) => {
           setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToRevokePermission'))
-        } finally {
-          setSubmitting(false)
-        }
+        })
       }
     })
   }
@@ -231,21 +222,18 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
       message: t('settings.datasetPermissionModal.revokeAllPermissionsConfirm', { datasetName, count: validPermissions.length }),
       confirmText: t('settings.usersTab.revokeAll'),
       confirmVariant: 'danger',
-      onConfirm: async () => {
+      onConfirm: () => {
         closeConfirmDialog()
-        try {
-          setSubmitting(true)
-          setError(null)
+        setError(null)
+        void runSubmitting(async () => {
           const results = await Promise.allSettled(validPermissions.map((permission) => revokeDatasetGrant(selectedDatasetId, permission.user_id)))
           await loadDatasetGrantList(selectedDatasetId)
           if (results.some((result) => result.status === 'rejected')) {
             setError(t('settings.datasetPermissionModal.failedToRevokePermissions'))
           }
-        } catch (err) {
+        }).catch((err: unknown) => {
           setError(err instanceof Error ? err.message : t('settings.datasetPermissionModal.failedToRevokePermissions'))
-        } finally {
-          setSubmitting(false)
-        }
+        })
       }
     })
   }

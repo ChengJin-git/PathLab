@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
@@ -136,7 +137,7 @@ export default function ResultsViewerPage() {
   const fromAIChat = (location.state as { fromAIChat?: boolean } | null)?.fromAIChat === true
 
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(initialSelectedTaskId)
-  const [running, setRunning] = useState(false)
+  const [running, runRunning] = useAsyncAction<void>()
   const [selectedMetrics, setSelectedMetrics] = useState<string[]>([...DEFAULT_CLASSIFICATION_METRICS])
   const [selectedCharts, setSelectedCharts] = useState<string[]>([...DEFAULT_CLASSIFICATION_CHARTS])
   const [description, setDescription] = useState('')
@@ -144,7 +145,7 @@ export default function ResultsViewerPage() {
   const [expandedAnalysis, setExpandedAnalysis] = useState<string | null>(null)
   const [showHistory, setShowHistory] = useState(false)
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const [deleting, runDeleting] = useAsyncAction<void>({ onError: (err) => setAnalysisError(err instanceof Error ? err.message : t('resultsPage.failedToDeleteRetry')) })
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])
@@ -450,7 +451,7 @@ export default function ResultsViewerPage() {
     }
   }, [trainedModels])
 
-  const startExternalValidation = async () => {
+  const startExternalValidation = () => {
     if (!selectedModelId || !datasetId || selectedMetrics.length === 0) return
 
     const selectedModel = trainedModels.find(m => m.model_id === selectedModelId)
@@ -459,9 +460,8 @@ export default function ResultsViewerPage() {
       return
     }
 
-    setRunning(true)
     setValidationError(null)
-    try {
+    void runRunning(async () => {
       const result = await apiStartExternalValidation(
         selectedModelId,
         datasetId,
@@ -500,16 +500,14 @@ export default function ResultsViewerPage() {
       } else {
         setExtValidationPendingTaskId(result.task_id)
       }
-    } catch (error) {
+    }).catch((error: unknown) => {
       console.error('Failed to start external validation:', error)
       if (error instanceof Error) {
         setValidationError(error.message)
       } else {
         setValidationError(t('resultsPage.failedToConnect'))
       }
-    } finally {
-      setRunning(false)
-    }
+    })
   }
 
   const startPolling = (taskId: string) => {
@@ -582,12 +580,11 @@ export default function ResultsViewerPage() {
   const modelTask = rawModelTask ? { ...rawModelTask, wsi_ids: modelTaskWsiIds } : null
   const selectedDataset = validationDatasets.find(ds => ds.dataset_id === datasetId)
 
-  const runAnalysis = async () => {
+  const runAnalysis = () => {
     if (!selectedTaskId || selectedMetrics.length === 0) return
 
-    setRunning(true)
     setAnalysisError(null)
-    try {
+    void runRunning(async () => {
       const response = await fetch(`${API_BASE}/results/tasks/${selectedTaskId}/analysis`, buildAuthRequestInit({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -620,12 +617,10 @@ export default function ResultsViewerPage() {
         const error = await response.json()
         setAnalysisError(error.detail || t('resultsPage.unknownError'))
       }
-    } catch (error) {
+    }).catch((error: unknown) => {
       console.error('Failed to run analysis:', error)
       setAnalysisError(t('resultsPage.failedToConnect'))
-    } finally {
-      setRunning(false)
-    }
+    })
   }
 
   const toggleMetric = (metricId: string) => {
@@ -661,7 +656,7 @@ export default function ResultsViewerPage() {
     setDeleteConfirmId(analysisId)
   }
 
-  const confirmDeleteAnalysis = async () => {
+  const confirmDeleteAnalysis = () => {
     if (!deleteConfirmId) return
 
     // Determine the task ID based on current page mode
@@ -670,8 +665,7 @@ export default function ResultsViewerPage() {
       : selectedTaskId
     if (!taskId) return
 
-    setDeleting(true)
-    try {
+    void runDeleting(async () => {
       const response = await fetch(`${API_BASE}/results/tasks/${taskId}/analysis/${deleteConfirmId}`, buildAuthRequestInit({
         method: 'DELETE'
       }))
@@ -697,12 +691,7 @@ export default function ResultsViewerPage() {
         const error = await response.json()
         setAnalysisError(t('resultsPage.failedToDeleteDetail', { detail: error.detail || t('resultsPage.unknownError') }))
       }
-    } catch (error) {
-      console.error('Failed to delete analysis:', error)
-      setAnalysisError(t('resultsPage.failedToDeleteRetry'))
-    } finally {
-      setDeleting(false)
-    }
+    })
   }
 
   const cancelDelete = () => {

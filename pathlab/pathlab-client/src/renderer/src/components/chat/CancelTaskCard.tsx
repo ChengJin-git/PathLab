@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { Loader2, XCircle, CheckCircle2, AlertCircle, StopCircle } from 'lucide-react'
 import { cancelQueueTask } from '../../api'
@@ -40,7 +41,7 @@ export function removeCancelTaskBlock(content: string): string {
 
 export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: CancelTaskCardProps) {
   const { t } = useTranslation()
-  const [isCancelling, setIsCancelling] = useState(false)
+  const [isCancelling, runCancelling] = useAsyncAction<void>({ onError: (err) => { const errorMsg = err instanceof Error ? err.message : 'Failed to cancel task'; setError(errorMsg); onError?.(errorMsg) } })
   const [isCancelled, setIsCancelled] = useState(false)
   const [error, setError] = useState<string>('')
   // Track the last cancelTrigger value to detect changes
@@ -61,13 +62,10 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
     }
   }, [cancelTrigger, lastCancelTrigger, isCancelling, isCancelled, error])
 
-  const handleCancel = async () => {
+  const handleCancel = () => {
     if (isCancelling || isCancelled) return
-
-    setIsCancelling(true)
     setError('')
-
-    try {
+    void runCancelling(async () => {
       const result = await cancelQueueTask(config.task_id)
       if (result.cancelled) {
         setIsCancelled(true)
@@ -77,13 +75,7 @@ export function CancelTaskCard({ config, onSuccess, onError, cancelTrigger }: Ca
         setError(errorMsg)
         onError?.(errorMsg)
       }
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to cancel task'
-      setError(errorMsg)
-      onError?.(errorMsg)
-    } finally {
-      setIsCancelling(false)
-    }
+    })
   }
 
   if (isCancelled) {

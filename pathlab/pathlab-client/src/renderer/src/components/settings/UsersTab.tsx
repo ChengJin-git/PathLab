@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, Megaphone, Send, X, Database, Mail } from 'lucide-react'
 import { Card } from '../ui/card'
@@ -73,12 +74,12 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
   const [editForm, setEditForm] = useState<{ nickname: string; role: string; password: string; registration_email: string }>({ nickname: '', role: '', password: '', registration_email: '' })
   const [showCreateUser, setShowCreateUser] = useState(false)
   const [createForm, setCreateForm] = useState<{ username: string; password: string; nickname: string; role: string; registration_email: string }>({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
-  const [creatingUser, setCreatingUser] = useState(false)
+  const [creatingUser, runCreatingUser] = useAsyncAction<void>({ onError: (err) => setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser')) })
   const [maintenanceMode, setMaintenanceMode] = useState(false)
   const [noticeMessage, setNoticeMessage] = useState('')
   const [currentNotice, setCurrentNotice] = useState<string | null>(null)
   const [showNoticeInput, setShowNoticeInput] = useState(false)
-  const [sendingNotice, setSendingNotice] = useState(false)
+  const [sendingNotice, runSendingNotice] = useAsyncAction<void>({ onError: (err) => setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice')) })
 
   const [permissionCenterOpen, setPermissionCenterOpen] = useState(false)
   const [permissionCenterMode, setPermissionCenterMode] = useState<PermissionMode>('user')
@@ -202,12 +203,11 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     }
   }
 
-  const handleCreateUser = async () => {
+  const handleCreateUser = () => {
     if (!createForm.username || !createForm.password) { setUsersError(t('settings.usersTab.usernamePasswordRequired')); return }
     if (createForm.password.length < 6) { setUsersError(t('settings.usersTab.passwordMinLength')); return }
-    try {
-      setCreatingUser(true)
-      setUsersError(null)
+    setUsersError(null)
+    void runCreatingUser(async () => {
       const requestedRole = createForm.role as 'admin' | 'pathologist' | 'guest'
       const data: RegisterRequest = {
         email: createForm.username,
@@ -223,11 +223,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
       setShowCreateUser(false)
       setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
       loadUsers()
-    } catch (err) {
-      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToCreateUser'))
-    } finally {
-      setCreatingUser(false)
-    }
+    })
   }
 
   const handleToggleUserActive = async (user: UserListItem) => {
@@ -363,6 +359,22 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     setPermissionCenterOpen(false)
   }
 
+  const handleClearNotice = () => {
+    void runSendingNotice(async () => {
+      await setMaintenanceNoticeApi(null)
+      setCurrentNotice(null)
+    })
+  }
+
+  const handlePublishNotice = () => {
+    void runSendingNotice(async () => {
+      const result = await setMaintenanceNoticeApi(noticeMessage.trim())
+      setCurrentNotice(result.active ? result.message : null)
+      setShowNoticeInput(false)
+      setNoticeMessage('')
+    })
+  }
+
   return (
     <>
     <Card className="p-4 sm:p-6">
@@ -392,17 +404,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                   <span className="hidden sm:inline">{t('settings.usersTab.editNotice')}</span>
                 </Button>
                 <Tooltip content={t('settings.usersTab.clearNotice')}>
-                  <Button variant="ghost" size="sm" onClick={async () => {
-                    setSendingNotice(true)
-                    try {
-                      await setMaintenanceNoticeApi(null)
-                      setCurrentNotice(null)
-                    } catch (err) {
-                      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
-                    } finally {
-                      setSendingNotice(false)
-                    }
-                  }} className="h-7 w-7 p-0 text-amber-400 hover:text-red-500">
+                  <Button variant="ghost" size="sm" onClick={handleClearNotice} className="h-7 w-7 p-0 text-amber-400 hover:text-red-500">
                     <X className="w-3.5 h-3.5" />
                   </Button>
                 </Tooltip>
@@ -425,19 +427,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                 <Button variant="ghost" size="sm" onClick={() => { setShowNoticeInput(false); setNoticeMessage('') }} disabled={sendingNotice} className="text-xs sm:text-sm h-7 sm:h-8">
                   {t('settings.usersTab.cancelNotice')}
                 </Button>
-                <Button size="sm" className="bg-amber-600 hover:bg-amber-700 text-white gap-1 text-xs sm:text-sm h-7 sm:h-8" disabled={sendingNotice || !noticeMessage.trim()} onClick={async () => {
-                  setSendingNotice(true)
-                  try {
-                    const result = await setMaintenanceNoticeApi(noticeMessage.trim())
-                    setCurrentNotice(result.active ? result.message : null)
-                    setShowNoticeInput(false)
-                    setNoticeMessage('')
-                  } catch (err) {
-                    setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
-                  } finally {
-                    setSendingNotice(false)
-                  }
-                }}>
+                <Button size="sm" className="bg-amber-600 hover:bg-amber-700 text-white gap-1 text-xs sm:text-sm h-7 sm:h-8" disabled={sendingNotice || !noticeMessage.trim()} onClick={handlePublishNotice}>
                   <Send className="w-3 h-3" />
                   {t('settings.usersTab.publishNotice')}
                 </Button>

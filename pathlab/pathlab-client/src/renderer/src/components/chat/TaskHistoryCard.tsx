@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useAsyncAction } from '../../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { TFunction } from 'i18next'
 import { Tooltip } from '../ui/tooltip'
@@ -89,7 +90,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   const [showEditModal, setShowEditModal] = useState(false)
   const [taskToEdit, setTaskToEdit] = useState<TrainingTask | null>(null)
   const [editedTaskName, setEditedTaskName] = useState('')
-  const [isEditingSaving, setIsEditingSaving] = useState(false)
+  const [isEditingSaving, runEditingSaving] = useAsyncAction<void>({ onError: (err: unknown) => setEditError((err as Error)?.message || t('chatComponents.taskHistory.errors.failedToUpdateName')) })
   const [editError, setEditError] = useState<string | null>(null)
 
   const onErrorRef = useRef(onError)
@@ -225,18 +226,14 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     setShowEditModal(true)
   }
 
-  const handleSaveTaskName = async () => {
+  const handleSaveTaskName = () => {
     if (!taskToEdit || !editedTaskName.trim()) {
       setEditError(t('chatComponents.taskHistory.errors.taskNameEmpty'))
       return
     }
-
-    setIsEditingSaving(true)
     setEditError(null)
-
-    try {
+    void runEditingSaving(async () => {
       const updatedTask = await updateTrainingTaskName(taskToEdit.task_id, editedTaskName.trim())
-
       setTasks(prevTasks =>
         prevTasks.map(taskItem =>
           taskItem.task_id === taskToEdit.task_id
@@ -244,15 +241,9 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
             : taskItem
         )
       )
-
       setShowEditModal(false)
       setTaskToEdit(null)
-    } catch (err: any) {
-      console.error('Failed to update task name:', err)
-      setEditError(err.message || t('chatComponents.taskHistory.errors.failedToUpdateName'))
-    } finally {
-      setIsEditingSaving(false)
-    }
+    })
   }
 
   const handleTaskClick = (taskId: string) => {

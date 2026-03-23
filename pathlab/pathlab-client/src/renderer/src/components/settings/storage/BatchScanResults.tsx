@@ -30,12 +30,12 @@ interface BatchScanResultsProps {
   setBatchDataLevel: (level: 'case' | 'file') => void
   batchIsPublic: boolean
   setBatchIsPublic: (value: boolean) => void
-  handleBatchScanPageChange: (page: number) => Promise<void>
+  handleBatchScanPageChange: (page: number) => void
   isBatchFileSelected: (path: string, valid: boolean) => boolean
   handleBatchFileToggle: (path: string, valid: boolean) => void
   handleBatchSelectAll: () => void
   handleBatchDeselectAll: () => void
-  handleBatchRegister: () => Promise<void>
+  handleBatchRegister: () => void
   formatFileSize: (bytes: number) => string
 }
 
