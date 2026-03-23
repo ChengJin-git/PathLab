@@ -33,6 +33,10 @@ from backend.common.config import Config
 
 # Estimated model sizes in MB (conservative estimates including activations overhead)
 # These are approximate values for FP32 weights + some buffer for activations
+VRAM_WAIT_POLL_INTERVAL_SEC: int = 30
+VRAM_WAIT_MAX_SEC: int = 1800
+
+
 MODEL_SIZE_ESTIMATES_MB: Dict[str, int] = {
     # Small models (~100MB)
     "resnet50": 200,
