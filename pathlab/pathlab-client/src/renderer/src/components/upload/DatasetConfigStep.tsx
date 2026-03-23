@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, ArrowRight, Tags, Activity, Users, FileImage, Plus, Layers, Info, Database, Globe, Lock } from 'lucide-react'
 import { PageHeader } from '../PageHeader'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Select } from '../ui/select'
+import { useDebounce } from '../../lib/useDebounce'
 import type { UploadMode, DataLevel } from './types'
 import { organSources, organSourceKeyMap } from './types'
 
@@ -38,8 +39,8 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   onNext, onBack
 }) => {
   const { t } = useTranslation()
-  const debounceTimerRef = useRef<NodeJS.Timeout>()
   const [debouncedSourceCustom, setDebouncedSourceCustom] = useState(datasetSourceCustom)
+  const _debouncedForParent = useDebounce(debouncedSourceCustom, 300)
 
   const isSegmentation = uploadMode === 'segmentation'
   const isOtherSource = datasetSourceSelection === 'Other'
@@ -59,18 +60,8 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
 
   // Handle debounced input for custom source
   useEffect(() => {
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current)
-    }
-    debounceTimerRef.current = setTimeout(() => {
-      onDatasetSourceCustomChange(debouncedSourceCustom)
-    }, 300)
-    return () => {
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current)
-      }
-    }
-  }, [debouncedSourceCustom, onDatasetSourceCustomChange])
+    onDatasetSourceCustomChange(_debouncedForParent)
+  }, [_debouncedForParent, onDatasetSourceCustomChange])
 
   // Auto-fill source for existing datasets
   useEffect(() => {

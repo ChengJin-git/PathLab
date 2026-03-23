@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useDebounce } from "../../lib/useDebounce";
 import { useTranslation } from "react-i18next";
 import { ModalShell } from "../ui/modal-shell";
 import {
@@ -219,8 +220,7 @@ export function PermissionCenterModal({
   const [submitting, setSubmitting] = useState(false);
   const [expiresInHours, setExpiresInHours] = useState("");
   const [datasetSearchQuery, setDatasetSearchQuery] = useState("");
-  const [debouncedDatasetSearchQuery, setDebouncedDatasetSearchQuery] =
-    useState("");
+
   const [datasetPage, setDatasetPage] = useState(1);
   const [datasetPageSize, setDatasetPageSize] = useState(9);
   const [grantDatasetPage, setGrantDatasetPage] = useState(1);
@@ -230,7 +230,7 @@ export function PermissionCenterModal({
   const [loadingDatasets, setLoadingDatasets] = useState(false);
   const [selectedDatasetId, setSelectedDatasetId] = useState("");
   const [userSearchQuery, setUserSearchQuery] = useState("");
-  const [debouncedUserSearchQuery, setDebouncedUserSearchQuery] = useState("");
+
   const [userPage, setUserPage] = useState(1);
   const [userPageSize, setUserPageSize] = useState(9);
   const [userItems, setUserItems] = useState<UserListItem[]>([]);
@@ -238,8 +238,7 @@ export function PermissionCenterModal({
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState("");
   const [grantUserSearchQuery, setGrantUserSearchQuery] = useState("");
-  const [debouncedGrantUserSearchQuery, setDebouncedGrantUserSearchQuery] =
-    useState("");
+
   const [grantUserPage, setGrantUserPage] = useState(1);
   const [grantUserPageSize, setGrantUserPageSize] = useState(9);
   const [grantUserItems, setGrantUserItems] = useState<UserListItem[]>([]);
@@ -393,29 +392,9 @@ export function PermissionCenterModal({
     [selectableGrantUsers, selectedGrantUserIds],
   );
 
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => setDebouncedUserSearchQuery(userSearchQuery),
-      SEARCH_DEBOUNCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [userSearchQuery]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => setDebouncedDatasetSearchQuery(datasetSearchQuery),
-      SEARCH_DEBOUNCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [datasetSearchQuery]);
-
-  useEffect(() => {
-    const timer = window.setTimeout(
-      () => setDebouncedGrantUserSearchQuery(grantUserSearchQuery),
-      SEARCH_DEBOUNCE_MS,
-    );
-    return () => window.clearTimeout(timer);
-  }, [grantUserSearchQuery]);
+  const debouncedUserSearchQuery = useDebounce(userSearchQuery, SEARCH_DEBOUNCE_MS);
+  const debouncedDatasetSearchQuery = useDebounce(datasetSearchQuery, SEARCH_DEBOUNCE_MS);
+  const debouncedGrantUserSearchQuery = useDebounce(grantUserSearchQuery, SEARCH_DEBOUNCE_MS);
 
   const fetchAllSelectableDatasetIds = useCallback(async () => {
     const response = await fetchDatasets(undefined, {
