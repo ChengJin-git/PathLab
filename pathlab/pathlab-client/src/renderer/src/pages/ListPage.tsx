@@ -546,7 +546,7 @@ export default function ListPage() {
   useEffect(() => {
     if (selectedDatasetId) return
     const justCompleted = tasks.filter(
-      t => (t.type === 'upload' || t.type === 'batch_import') &&
+      t => (t.type === 'upload' || t.type === 'batch_import' || t.type === 'extraction') &&
         t.status === 'success' &&
         !completedUploadTaskIdsRef.current.has(t.id)
     )
