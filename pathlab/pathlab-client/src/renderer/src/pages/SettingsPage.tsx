@@ -18,7 +18,7 @@ import {
   UsersTab,
   FeedbackTab
 } from '../components/settings'
-import type { ConfirmDialogState, ShowConfirmDialog } from '../components/settings'
+import { useConfirmDialog } from '../lib/useConfirmDialog'
 
 type TabType = 'general' | 'tasks' | 'models' | 'storage' | 'users' | 'feedback'
 
@@ -62,23 +62,7 @@ export default function SettingsPage() {
   })
 
   // Confirmation Dialog State (shared across tabs)
-  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>({
-    isOpen: false,
-    title: '',
-    message: '',
-    onConfirm: () => {},
-    confirmText: 'Confirm',
-    confirmVariant: 'danger'
-  })
-
-  // Shared confirm dialog helpers
-  const showConfirmDialog: ShowConfirmDialog = (config) => {
-    setConfirmDialog({ ...config, isOpen: true })
-  }
-
-  const closeConfirmDialog = () => {
-    setConfirmDialog(prev => ({ ...prev, isOpen: false }))
-  }
+  const { dialogState: confirmDialog, showConfirmDialog, closeConfirmDialog } = useConfirmDialog()
 
   const checkServiceHealth = useCallback(async () => {
     try {
