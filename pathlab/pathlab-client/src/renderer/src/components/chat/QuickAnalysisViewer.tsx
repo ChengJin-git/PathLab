@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
+import { Tooltip } from '../ui/tooltip'
 import { Loader2, BarChart3, TrendingUp, AlertCircle, RefreshCw, Activity, Target, Percent, Layers } from 'lucide-react'
 import { getTaskQuickAnalysis, getAnalysisStatus } from '../../api'
 import { ApiError } from '../../api/client'
@@ -471,7 +472,14 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
           </h3>
           <p className="text-xs text-gray-500 mt-1 truncate">{config.task_name || config.task_id}{numSamples && ` • ${t('chatComponents.quickAnalysis.testSamples', { count: numSamples })}`}{taskType && ` • ${taskType}`}</p>
         </div>
-        <button onClick={handleRefresh} className={`p-1.5 text-gray-400 ${getHeaderHoverColor(taskType)} hover:bg-white rounded-lg transition-colors flex-shrink-0`} title={t('chatComponents.quickAnalysis.refresh')}><RefreshCw className="w-4 h-4" /></button>
+        <Tooltip content={t('chatComponents.quickAnalysis.refresh')}>
+          <button
+            onClick={handleRefresh}
+            className={`p-1.5 text-gray-400 ${getHeaderHoverColor(taskType)} hover:bg-white rounded-lg transition-colors flex-shrink-0`}
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </Tooltip>
       </div>
 
       <div className="p-4 sm:p-5 space-y-4 sm:space-y-6">

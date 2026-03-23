@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Pencil, Square, Pentagon, Tag, ChevronDown, User, Users, UserPlus, Loader2 } from 'lucide-react'
 import { useState, useRef, useEffect } from 'react'
+import { Tooltip } from '../ui/tooltip'
 
 /** Preset label colors for auto-assignment */
 export const LABEL_COLORS = [
@@ -106,6 +107,7 @@ export function AnnotationToolbar({
           {hasDatasetContext && onToggleEditingMode && (
             <>
               <div className="flex items-center bg-gray-100 rounded-lg p-0.5 border border-gray-200">
+                <Tooltip content={t('annotation.collab.personalDraft')}>
                 <button
                   type="button"
                   onClick={editingMode !== 'personal' && !modeTransitioning ? onToggleEditingMode : undefined}
@@ -117,7 +119,6 @@ export function AnnotationToolbar({
                         ? 'text-gray-300 cursor-wait'
                         : 'text-gray-500 hover:text-gray-700'
                   }`}
-                  title={t('annotation.collab.personalDraft')}
                 >
                   {modeTransitioning && editingMode === 'shared'
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -125,6 +126,8 @@ export function AnnotationToolbar({
                   }
                   <span>{t('annotation.collab.personalDraft')}</span>
                 </button>
+                </Tooltip>
+                <Tooltip content={t('annotation.collab.collaborativeShare')}>
                 <button
                   type="button"
                   onClick={editingMode !== 'shared' && !modeTransitioning ? onToggleEditingMode : undefined}
@@ -136,7 +139,6 @@ export function AnnotationToolbar({
                         ? 'text-gray-300 cursor-wait'
                         : 'text-gray-500 hover:text-gray-700'
                   }`}
-                  title={t('annotation.collab.collaborativeShare')}
                 >
                   {modeTransitioning && editingMode === 'personal'
                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -144,6 +146,7 @@ export function AnnotationToolbar({
                   }
                   <span>{t('annotation.collab.collaborativeShare')}</span>
                 </button>
+                </Tooltip>
               </div>
               <div className="w-px h-5 bg-gray-200 mx-1" />
             </>
@@ -151,22 +154,24 @@ export function AnnotationToolbar({
 
           {/* Drawing tool selection */}
           <div className="flex items-center bg-gray-100 rounded-lg p-0.5 border border-gray-200">
+            <Tooltip content={t('annotation.rectangle')}>
             <button
               type="button"
               onClick={() => onToolChange('rect')}
               className={`p-1.5 rounded-md text-xs transition-all ${drawingTool === 'rect' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-              title={t('annotation.rectangle')}
             >
               <Square className="w-3.5 h-3.5" />
             </button>
+            </Tooltip>
+            <Tooltip content={t('annotation.polygon')}>
             <button
               type="button"
               onClick={() => onToolChange('polygon')}
               className={`p-1.5 rounded-md text-xs transition-all ${drawingTool === 'polygon' ? 'bg-white shadow-sm text-indigo-600' : 'text-gray-500 hover:text-gray-700'}`}
-              title={t('annotation.polygon')}
             >
               <Pentagon className="w-3.5 h-3.5" />
             </button>
+            </Tooltip>
           </div>
 
           <div className="w-px h-5 bg-gray-200 mx-1" />
@@ -231,14 +236,15 @@ export function AnnotationToolbar({
                   <div className="w-px h-5 bg-gray-200 mx-1" />
                   <div className="flex items-center gap-1">
                     {onShareManage && (
+                      <Tooltip content={t('annotation.collab.manageCollaborators')}>
                       <button
                         type="button"
                         onClick={onShareManage}
                         className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                        title={t('annotation.collab.manageCollaborators')}
                       >
                         <UserPlus className="w-3.5 h-3.5" />
                       </button>
+                      </Tooltip>
                     )}
 
                   </div>

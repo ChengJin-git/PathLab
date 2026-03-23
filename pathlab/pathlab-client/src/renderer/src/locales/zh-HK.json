@@ -947,6 +947,17 @@
       "getInsights": "獲取洞察",
       "getInsightsDesc": "檢視結果、產生報告和匯出發現。"
     },
+    "fullProcess": {
+      "title": "全流程系統功能",
+      "step1Title": "資料整合與視覺化",
+      "step1Desc": "無縫管理並實時呈現千兆級海量全切片（WSI）圖像，指尖交互，流暢漫遊不延遲。",
+      "step2Title": "智能 AI 分析流水線",
+      "step2Desc": "強大的 Agentic AI 智能體編排複雜的診斷工作流，排程多個前端大模型進行全方位深層分析。",
+      "step3Title": "自動化洞察與出具報告",
+      "step3Desc": "分鐘級自動撰寫標準化實驗報告，一鍵產生直觀的視覺化圖表，讓科研與診斷快人一步。",
+      "step4Title": "私隱優先的協同網絡",
+      "step4Desc": "底層內建私隱保護架構，確保所有敏感的病患醫療資料在極高安全標準下完成跨機構的高效協同。"
+    },
     "pricing": "定價",
     "pricingTitle": "簡單透明的定價",
     "individual": "個人版",

@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { Loader2, TrendingUp, Target, Percent, Activity, AlertCircle, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { Tooltip } from '../ui/tooltip'
 import { getTaskQuickAnalysis, getTrainingTasks } from '../../api'
 import { METRIC_COLORS, formatMetricName, formatMetricValue, isPercentageMetric } from '../../constants/metrics'
 
@@ -185,13 +186,14 @@ export function MetricCard({ config, onError }: MetricCardProps) {
             {numSamples && ` • ${t('chatComponents.metricCard.samples', { count: numSamples })}`}
           </p>
         </div>
-        <button
-          onClick={handleRefresh}
-          className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
-          title={t('chatComponents.metricCard.refresh')}
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+          <Tooltip content={t('chatComponents.metricCard.refresh')}>
+            <button
+              onClick={handleRefresh}
+              className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </Tooltip>
       </div>
 
       {/* Metrics Grid */}

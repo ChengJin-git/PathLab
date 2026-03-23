@@ -4,6 +4,7 @@ import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu, KeyRound, Mai
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
+import { Tooltip } from './ui/tooltip'
 import { BackgroundTaskPanel } from './BackgroundTaskPanel'
 import { InstallPWA } from './InstallPWA'
 import { DisclaimerModal } from './DisclaimerModal'
@@ -155,13 +156,14 @@ export default function Layout({ children }: LayoutProps) {
 
               {/* Settings Shortcut - Admin only */}
               {isAdmin && (
-                <button
-                  onClick={() => navigate('/settings')}
-                  className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
-                  title={t('common.settings')}
-                >
-                  <Settings className="w-5 h-5" />
-                </button>
+                <Tooltip content={t('common.settings')}>
+                  <button
+                    onClick={() => navigate('/settings')}
+                    className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <Settings className="w-5 h-5" />
+                  </button>
+                </Tooltip>
               )}
 
               {/* Language Switcher */}
@@ -178,23 +180,24 @@ export default function Layout({ children }: LayoutProps) {
                   <span className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-semibold">{user?.role}</span>
                 </div>
 
-                <button
-                  onClick={handleAvatarClick}
-                  className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center ring-2 ring-white shadow-sm hover:ring-primary-100 transition-all cursor-pointer group"
-                  title={t('layout.profileMenu')}
-                >
-                  {user?.avatar_url ? (
-                    <img
-                      src={user.avatar_url.startsWith('http') ? user.avatar_url : `${API_BASE}${user.avatar_url}`}
-                      alt="Avatar"
-                      className="w-full h-full object-cover group-hover:opacity-90"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700 group-hover:bg-primary-200 transition-colors">
-                      {(user?.nickname || user?.email?.split('@')[0] || 'U').charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                </button>
+                <Tooltip content={t('layout.profileMenu')}>
+                  <button
+                    onClick={handleAvatarClick}
+                    className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center ring-2 ring-white shadow-sm hover:ring-primary-100 transition-all cursor-pointer group"
+                  >
+                    {user?.avatar_url ? (
+                      <img
+                        src={user.avatar_url.startsWith('http') ? user.avatar_url : `${API_BASE}${user.avatar_url}`}
+                        alt="Avatar"
+                        className="w-full h-full object-cover group-hover:opacity-90"
+                      />
+                    ) : (
+                      <div className="w-full h-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700 group-hover:bg-primary-200 transition-colors">
+                        {(user?.nickname || user?.email?.split('@')[0] || 'U').charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                  </button>
+                </Tooltip>
 
                 {/* Hidden file input */}
                 <input
@@ -264,15 +267,16 @@ export default function Layout({ children }: LayoutProps) {
               </div>
 
               {/* Logout */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleLogout}
-                className="text-gray-500 hover:text-red-600 hover:bg-red-50"
-                title={t('auth.logout')}
-              >
-                <LogOut className="w-5 h-5" />
-              </Button>
+              <Tooltip content={t('auth.logout')}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleLogout}
+                  className="text-gray-500 hover:text-red-600 hover:bg-red-50"
+                >
+                  <LogOut className="w-5 h-5" />
+                </Button>
+              </Tooltip>
             </div>
           </div>
         </div>

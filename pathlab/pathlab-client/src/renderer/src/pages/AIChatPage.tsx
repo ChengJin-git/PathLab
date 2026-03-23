@@ -92,6 +92,7 @@ import {
 	removeTaskConfigBlock,
 } from "../components/chat/TaskConfigCard";
 import type { CachedTaskData } from "../components/chat/TaskHistoryCard";
+import { Tooltip } from "../components/ui/tooltip";
 import { removeVoiceControlBlock } from "../components/chat/VoiceControlBlock";
 import { AudioVisualizer } from "../components/common/AudioVisualizer";
 import { MULTIMODAL_MODELS } from "../components/settings/GeneralTab";
@@ -3032,18 +3033,21 @@ export default function AIChatPage() {
 				<div
 					className={`hidden lg:flex items-center gap-1 p-2 pt-3 ${showHistory ? "px-3" : "flex-col"}`}
 				>
-					<button
-						type="button"
-						onClick={() => setShowHistory(!showHistory)}
-						className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
-						title={
+					<Tooltip
+						content={
 							showHistory
 								? t("aiChat.closeChatHistory")
 								: t("aiChat.openChatHistory")
 						}
 					>
-						<Menu className="w-5 h-5" />
-					</button>
+						<button
+							type="button"
+							onClick={() => setShowHistory(!showHistory)}
+							className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors flex-shrink-0"
+						>
+							<Menu className="w-5 h-5" />
+						</button>
+					</Tooltip>
 				</div>
 
 				{/* Expanded sidebar content - always rendered, fade in/out with opacity */}
@@ -3139,14 +3143,15 @@ export default function AIChatPage() {
 							</h3>
 						</div>
 						{conversations.length > 0 && (
-							<button
-								type="button"
-								onClick={handleDeleteAllHistory}
-								className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-								title={t("aiChat.deleteAllHistory")}
-							>
-								<Trash2 className="w-4 h-4" />
-							</button>
+							<Tooltip content={t("aiChat.deleteAllHistory")}>
+								<button
+									type="button"
+									onClick={handleDeleteAllHistory}
+									className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+								>
+									<Trash2 className="w-4 h-4" />
+								</button>
+							</Tooltip>
 						)}
 					</div>
 
@@ -3210,26 +3215,34 @@ export default function AIChatPage() {
 													</div>
 												</div>
 												<div className="flex items-center gap-0.5 flex-shrink-0">
-													<button
-														type="button"
-														onClick={(e) =>
-															handleExportConversation(conv.conversation_id, e)
-														}
-														className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
-														title={t("aiChat.exportConversation")}
-													>
-														<Share2 className="w-4 h-4" />
-													</button>
-													<button
-														type="button"
-														onClick={(e) =>
-															handleDeleteConversation(conv.conversation_id, e)
-														}
-														className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-														title={t("aiChat.deleteConversation")}
-													>
-														<Trash2 className="w-4 h-4" />
-													</button>
+													<Tooltip content={t("aiChat.exportConversation")}>
+														<button
+															type="button"
+															onClick={(e) =>
+																handleExportConversation(
+																	conv.conversation_id,
+																	e,
+																)
+															}
+															className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-all"
+														>
+															<Share2 className="w-4 h-4" />
+														</button>
+													</Tooltip>
+													<Tooltip content={t("aiChat.deleteConversation")}>
+														<button
+															type="button"
+															onClick={(e) =>
+																handleDeleteConversation(
+																	conv.conversation_id,
+																	e,
+																)
+															}
+															className="sm:opacity-0 sm:group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+														>
+															<Trash2 className="w-4 h-4" />
+														</button>
+													</Tooltip>
 												</div>
 											</div>
 										</button>
@@ -3572,6 +3585,7 @@ export default function AIChatPage() {
 																		<div className="w-px h-4 bg-gray-200" />
 
 																		{/* Thumbs Up/Down Buttons */}
+																		<Tooltip content={t("aiChat.goodResponse")}>
 																		<button
 																			type="button"
 																			onClick={() =>
@@ -3588,10 +3602,11 @@ export default function AIChatPage() {
 																					? "text-green-500"
 																					: "hover:text-gray-600"
 																			}`}
-																			title={t("aiChat.goodResponse")}
 																		>
 																			<ThumbsUp className="w-4 h-4" />
 																		</button>
+																		</Tooltip>
+																		<Tooltip content={t("aiChat.badResponse")}>
 																		<button
 																			type="button"
 																			onClick={() =>
@@ -3611,20 +3626,20 @@ export default function AIChatPage() {
 																					? "text-red-500"
 																					: "hover:text-gray-600"
 																			}`}
-																			title={t("aiChat.badResponse")}
 																		>
 																			<ThumbsDown className="w-4 h-4" />
 																		</button>
+																		</Tooltip>
 
 																		<div className="w-px h-4 bg-gray-200" />
 
+																		<Tooltip content={t("aiChat.copy")}>
 																		<button
 																			type="button"
 																			onClick={() =>
 																				handleCopy(message.content)
 																			}
 																			className="hover:text-gray-600 transition-colors"
-																			title={t("aiChat.copy")}
 																		>
 																			<svg
 																				aria-hidden="true"
@@ -3648,6 +3663,8 @@ export default function AIChatPage() {
 																				<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
 																			</svg>
 																		</button>
+																		</Tooltip>
+																		<Tooltip content={t("aiChat.regenerate")}>
 																		<button
 																			type="button"
 																			onClick={() =>
@@ -3655,7 +3672,6 @@ export default function AIChatPage() {
 																			}
 																			disabled={isGenerating}
 																			className={`hover:text-gray-600 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
-																			title={t("aiChat.regenerate")}
 																		>
 																			<svg
 																				aria-hidden="true"
@@ -3674,17 +3690,17 @@ export default function AIChatPage() {
 																				<path d="M16 16h5v5"></path>
 																			</svg>
 																		</button>
+																		</Tooltip>
+																		<Tooltip content={t("aiChat.deleteMessageAndContinue")}>
 																		<button
 																			type="button"
 																			onClick={() => handleDeleteMessage(index)}
 																			disabled={isGenerating}
 																			className={`hover:text-red-500 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
-																			title={t(
-																				"aiChat.deleteMessageAndContinue",
-																			)}
 																		>
 																			<Trash2 className="w-4 h-4" />
 																		</button>
+																		</Tooltip>
 																	</>
 																);
 															})()}
@@ -3704,11 +3720,11 @@ export default function AIChatPage() {
 
 														<div className="w-px h-4 bg-gray-200" />
 
+														<Tooltip content={t("aiChat.copy")}>
 														<button
 															type="button"
 															onClick={() => handleCopy(message.content)}
 															className="hover:text-gray-600 transition-colors"
-															title={t("aiChat.copy")}
 														>
 															<svg
 																aria-hidden="true"
@@ -3730,15 +3746,16 @@ export default function AIChatPage() {
 																	ry="2"
 																></rect>
 																<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-															</svg>
-														</button>
-														<button
-															type="button"
-															onClick={() => handleResubmitMessage(index)}
-															disabled={isGenerating}
-															className={`hover:text-gray-600 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
-															title={t("aiChat.resubmit")}
-														>
+																			</svg>
+																		</button>
+																		</Tooltip>
+																		<Tooltip content={t("aiChat.resubmit")}>
+																<button
+																	type="button"
+																	onClick={() => handleResubmitMessage(index)}
+																	disabled={isGenerating}
+																	className={`hover:text-gray-600 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
+																>
 															<svg
 																aria-hidden="true"
 																width="16"
@@ -3756,16 +3773,18 @@ export default function AIChatPage() {
 																<path d="M16 16h5v5"></path>
 															</svg>
 														</button>
+														</Tooltip>
 
+														<Tooltip content={t("aiChat.deleteMessageAndContinue")}>
 														<button
 															type="button"
 															onClick={() => handleDeleteMessage(index)}
 															disabled={isGenerating}
 															className={`hover:text-red-500 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
-															title={t("aiChat.deleteMessageAndContinue")}
 														>
 															<Trash2 className="w-4 h-4" />
 														</button>
+														</Tooltip>
 													</div>
 												)}
 											</div>
@@ -3829,6 +3848,7 @@ export default function AIChatPage() {
 								hasScrolledAway ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4 pointer-events-none"
 							}`}
 						>
+							<Tooltip content={t("aiChat.jumpToBottom")}>
 							<button
 								type="button"
 								onClick={() => {
@@ -3838,7 +3858,6 @@ export default function AIChatPage() {
 								}}
 								className="w-10 h-10 bg-white/95 backdrop-blur shadow-[0_4px_16px_rgba(0,0,0,0.12)] border border-gray-100/50 rounded-full flex items-center justify-center text-gray-500 hover:text-gray-900 hover:shadow-md transition-all duration-200"
 								aria-label={t("aiChat.jumpToBottom")}
-								title={t("aiChat.jumpToBottom")}
 							>
 								<ChevronDown className="w-5 h-5" />
 								{isGenerating && (
@@ -3848,6 +3867,7 @@ export default function AIChatPage() {
 									</span>
 								)}
 							</button>
+							</Tooltip>
 						</div>
 
 						<form
@@ -4069,11 +4089,11 @@ export default function AIChatPage() {
 
 										{/* Send / Stop Button */}
 										{isGenerating ? (
+											<Tooltip content={t("aiChat.stopGenerating")}>
 											<button
 												type="button"
 												onClick={handleStopGeneration}
 												className="p-2 sm:p-2.5 rounded-full transition-all duration-300 shadow-sm bg-gray-800 text-white hover:bg-gray-900 shadow-md active:scale-95"
-												title={t("aiChat.stopGenerating")}
 												aria-label={t("aiChat.stopGenerating")}
 											>
 												<Square
@@ -4081,6 +4101,7 @@ export default function AIChatPage() {
 													fill="currentColor"
 												/>
 											</button>
+											</Tooltip>
 										) : realtimeIsRecording ? (
 											/* Force-send partial transcript during recording */
 											<button

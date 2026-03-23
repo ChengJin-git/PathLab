@@ -5,6 +5,7 @@ import {
   Layers, Clock, Info, Grid3X3, FileJson, Globe, Lock
 } from 'lucide-react'
 import { Button } from '../../ui/button'
+import { Tooltip } from '../../ui/tooltip'
 import { Label } from '../../ui/label'
 import { Badge } from '../../ui/badge'
 import { Checkbox } from '../../ui/checkbox'
@@ -176,29 +177,31 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
           })}
         </div>
         <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleBatchScanPageChange(batchScanResult.page - 1)}
-            disabled={batchScanResult.page <= 1}
-            title={t('settings.storage.previousPage')}
-            aria-label={t('settings.storage.previousPage')}
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Button>
+          <Tooltip content={t('settings.storage.previousPage')}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleBatchScanPageChange(batchScanResult.page - 1)}
+              disabled={batchScanResult.page <= 1}
+              aria-label={t('settings.storage.previousPage')}
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+          </Tooltip>
           <span className="text-xs font-medium text-gray-600 px-2">
             {t('settings.storage.pageIndicator', { page: batchScanResult.page, totalPages: batchScanResult.total_pages })}
           </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => handleBatchScanPageChange(batchScanResult.page + 1)}
-            disabled={batchScanResult.page >= batchScanResult.total_pages}
-            title={t('settings.storage.nextPage')}
-            aria-label={t('settings.storage.nextPage')}
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Button>
+          <Tooltip content={t('settings.storage.nextPage')}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handleBatchScanPageChange(batchScanResult.page + 1)}
+              disabled={batchScanResult.page >= batchScanResult.total_pages}
+              aria-label={t('settings.storage.nextPage')}
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </Tooltip>
         </div>
       </div>
 

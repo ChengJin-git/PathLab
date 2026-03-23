@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { X } from 'lucide-react'
 import { Button } from '../ui/button'
+import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import type { EmailTemplatesConfig } from '../../api/settings'
 
@@ -214,37 +215,39 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
               {editorMode === 'visual' && (
                 <div className="flex items-center gap-0.5 px-2 py-1 bg-gray-50 border border-b-0 rounded-t-md">
                   {TOOLBAR.map(a => (
-                    <button
-                      key={a.cmd}
-                      type="button"
-                      title={a.title}
-                      onMouseDown={(e) => { e.preventDefault(); execFormat(a.cmd) }}
-                      className="w-7 h-7 flex items-center justify-center rounded text-sm font-medium hover:bg-gray-200 transition text-gray-700"
-                    >
-                      {a.label}
-                    </button>
+                    <Tooltip key={a.cmd} content={a.title}>
+                      <button
+                        type="button"
+                        onMouseDown={(e) => { e.preventDefault(); execFormat(a.cmd) }}
+                        className="w-7 h-7 flex items-center justify-center rounded text-sm font-medium hover:bg-gray-200 transition text-gray-700"
+                      >
+                        {a.label}
+                      </button>
+                    </Tooltip>
                   ))}
                   <div className="w-px h-4 bg-gray-300 mx-1" />
-                  <button
-                    type="button"
-                    title="插入链接"
-                    onMouseDown={(e) => {
-                      e.preventDefault()
-                      const url = window.prompt('链接地址')
-                      if (url) execFormat('createLink', url)
-                    }}
-                    className="px-2 h-7 flex items-center justify-center rounded text-xs hover:bg-gray-200 transition text-gray-600"
-                  >
-                    链接
-                  </button>
-                  <button
-                    type="button"
-                    title="清除格式"
-                    onMouseDown={(e) => { e.preventDefault(); execFormat('removeFormat') }}
-                    className="px-2 h-7 flex items-center justify-center rounded text-xs hover:bg-gray-200 transition text-gray-500"
-                  >
-                    清除格式
-                  </button>
+                  <Tooltip content="插入链接">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        const url = window.prompt('链接地址')
+                        if (url) execFormat('createLink', url)
+                      }}
+                      className="px-2 h-7 flex items-center justify-center rounded text-xs hover:bg-gray-200 transition text-gray-600"
+                    >
+                      链接
+                    </button>
+                  </Tooltip>
+                  <Tooltip content="清除格式">
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); execFormat('removeFormat') }}
+                      className="px-2 h-7 flex items-center justify-center rounded text-xs hover:bg-gray-200 transition text-gray-500"
+                    >
+                      清除格式
+                    </button>
+                  </Tooltip>
                 </div>
               )}
 

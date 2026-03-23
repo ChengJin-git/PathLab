@@ -12,6 +12,7 @@ import { TFunction } from 'i18next'
 import { useNavigate } from 'react-router-dom'
 import { useBackgroundTask, BackgroundTask, TaskItem, TaskStatus } from '../contexts/BackgroundTaskContext'
 import { cn } from '../lib/utils'
+import { Tooltip } from './ui/tooltip'
 import {
   TRAINING_STATUS_LABELS,
   VALIDATION_STATUS_LABELS,
@@ -289,41 +290,43 @@ const TaskCard: React.FC<{
           </div>
           <div className={cn("flex flex-row items-center gap-1 h-5", expanded ? "self-start mt-0.5 h-auto" : "")}>
             {onNavigate && !showCancelConfirm && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onNavigate() }}
-                className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-primary-600"
-                title={t('backgroundTask.viewDetail')}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                </svg>
-              </button>
+              <Tooltip content={t('backgroundTask.viewDetail')}>
+                <button
+                  onClick={(e) => { e.stopPropagation(); onNavigate() }}
+                  className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-primary-600"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                </button>
+              </Tooltip>
             )}
             {isActiveTask && !showCancelConfirm && (
-              <button
-                onClick={async (e) => {
-                  e.stopPropagation()
-                  if (isServerTask) {
-                    setShowCancelConfirm(true)
-                    return
-                  }
-                  onCancel()
-                }}
-                disabled={isCancelling}
-                className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-red-600 disabled:opacity-50"
-                title={t('backgroundTask.cancel')}
-              >
-                {isCancelling ? (
-                  <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                ) : (
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                  </svg>
-                )}
-              </button>
+              <Tooltip content={t('backgroundTask.cancel')}>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (isServerTask) {
+                      setShowCancelConfirm(true)
+                      return
+                    }
+                    onCancel()
+                  }}
+                  disabled={isCancelling}
+                  className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-red-600 disabled:opacity-50"
+                >
+                  {isCancelling ? (
+                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  ) : (
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </button>
+              </Tooltip>
             )}
 
             {showCancelConfirm && (
@@ -332,42 +335,45 @@ const TaskCard: React.FC<{
                 onClick={(e) => e.stopPropagation()}
               >
                 <div className="text-[10px] uppercase font-bold text-gray-400 mr-1">{t('backgroundTask.confirm')}</div>
+                <Tooltip content={t('backgroundTask.confirmStop')}>
+                  <button
+                    onClick={async () => {
+                      setIsCancelling(true)
+                      setShowCancelConfirm(false)
+                      await onCancelServer()
+                      setIsCancelling(false)
+                    }}
+                    className="h-5 w-5 flex items-center justify-center text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-all shadow-sm ring-1 ring-inset ring-red-100"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </button>
+                </Tooltip>
+                <Tooltip content={t('backgroundTask.keepRunning')}>
+                  <button
+                    onClick={() => setShowCancelConfirm(false)}
+                    className="h-5 w-5 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </Tooltip>
+              </div>
+            )}
+            
+            {!isActiveTask && (
+              <Tooltip content={t('backgroundTask.close')}>
                 <button
-                  onClick={async () => {
-                    setIsCancelling(true)
-                    setShowCancelConfirm(false)
-                    await onCancelServer()
-                    setIsCancelling(false)
-                  }}
-                  className="h-5 w-5 flex items-center justify-center text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-all shadow-sm ring-1 ring-inset ring-red-100"
-                  title={t('backgroundTask.confirmStop')}
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                  </svg>
-                </button>
-                <button
-                  onClick={() => setShowCancelConfirm(false)}
-                  className="h-5 w-5 flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-md transition-colors"
-                  title={t('backgroundTask.keepRunning')}
+                  onClick={(e) => { e.stopPropagation(); onRemove() }}
+                  className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-700"
                 >
                   <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
-              </div>
-            )}
-            
-            {!isActiveTask && (
-              <button
-                onClick={(e) => { e.stopPropagation(); onRemove() }}
-                className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-gray-700"
-                title={t('backgroundTask.close')}
-              >
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              </Tooltip>
             )}
             <svg
               className={cn("w-3.5 h-3.5 text-gray-300 transition-transform", expanded && "rotate-180")}
@@ -450,25 +456,26 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
 
   return (
     <div className="relative" ref={panelRef}>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          "p-2 rounded-lg transition-colors relative",
-          isOpen ? "bg-gray-100 text-primary-600" : "text-gray-500 hover:text-primary-600 hover:bg-gray-100"
-        )}
-        title={t('backgroundTask.title')}
-      >
-        <svg className={cn("w-5 h-5", isProcessing && "animate-pulse")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-        </svg>
+      <Tooltip content={t('backgroundTask.title')}>
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={cn(
+            "p-2 rounded-lg transition-colors relative",
+            isOpen ? "bg-gray-100 text-primary-600" : "text-gray-500 hover:text-primary-600 hover:bg-gray-100"
+          )}
+        >
+          <svg className={cn("w-5 h-5", isProcessing && "animate-pulse")} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
 
-        {activeCount > 0 && (
-          <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white"></span>
-        )}
-        {activeCount === 0 && finishedCount > 0 && (
-          <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-gray-400 rounded-full border-2 border-white"></span>
-        )}
-      </button>
+          {activeCount > 0 && (
+            <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-white"></span>
+          )}
+          {activeCount === 0 && finishedCount > 0 && (
+            <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-gray-400 rounded-full border-2 border-white"></span>
+          )}
+        </button>
+      </Tooltip>
 
       {isOpen && (
         <div className={cn(

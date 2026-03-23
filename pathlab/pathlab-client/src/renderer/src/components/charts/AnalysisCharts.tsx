@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import ReactECharts from 'echarts-for-react'
 import type { EChartsOption } from 'echarts'
 import { Download } from 'lucide-react'
+import { Tooltip } from '../ui/tooltip'
 
 interface ConfusionMatrixData {
   classes: string[]
@@ -244,7 +245,9 @@ export const ConfusionMatrixChart = memo(function ConfusionMatrixChart({ data, t
               {showPercent ? t('analysisCharts.showCount') : t('analysisCharts.showPercent')}
             </button>
           )}
-          <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+          <Tooltip content={t('analysisCharts.exportPng')}>
+            <button type="button" onClick={handleExport} className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></button>
+          </Tooltip>
         </div>
       </div>
       <ReactECharts ref={chartRef} option={option} style={{ height: `${chartHeight}px`, width: '100%' }} notMerge={true} />
@@ -362,7 +365,9 @@ export const RocCurveChart = memo(function RocCurveChart({ data, title, compact 
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700">{title || t('analysisCharts.rocCurve')}</span>
-        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+        <Tooltip content={t('analysisCharts.exportPng')}>
+          <button type="button" onClick={handleExport} className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></button>
+        </Tooltip>
       </div>
       <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
     </div>
@@ -422,7 +427,9 @@ export const LossCurveChart = memo(function LossCurveChart({ data, title, compac
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700">{title || t('analysisCharts.lossCurve')}</span>
-        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+        <Tooltip content={t('analysisCharts.exportPng')}>
+          <button type="button" onClick={handleExport} className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></button>
+        </Tooltip>
       </div>
       <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
     </div>
@@ -520,7 +527,9 @@ export const KFoldLossCurveChart = memo(function KFoldLossCurveChart({ data, tit
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700">{title || t('analysisCharts.kFoldLossCurve', { folds: data.num_folds })}</span>
-        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+        <Tooltip content={t('analysisCharts.exportPng')}>
+          <button type="button" onClick={handleExport} className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></button>
+        </Tooltip>
       </div>
       <ReactECharts ref={chartRef} option={option} style={{ height: chartHeight, width: '100%' }} notMerge={true} />
     </div>
@@ -686,7 +695,9 @@ export const KMCurveChart = memo(function KMCurveChart({ data, title, compact }:
               C-Idx: {data.c_index.toFixed(3)}
             </span>
           )}
-          <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+          <Tooltip content={t('analysisCharts.exportPng')}>
+            <button type="button" onClick={handleExport} className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></button>
+          </Tooltip>
         </div>
       </div>
       <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
@@ -785,7 +796,9 @@ export const MetricCurveChart = memo(function MetricCurveChart({ data, title, co
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700">{title || `${data.metric_name} ${t('analysisCharts.metricCurve')}`}</span>
-        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+        <Tooltip content={t('analysisCharts.exportPng')}>
+          <button type="button" onClick={handleExport} className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></button>
+        </Tooltip>
       </div>
       <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
     </div>
@@ -848,7 +861,9 @@ export const PerClassMetricBarChart = memo(function PerClassMetricBarChart({ dat
     <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
       <div className="p-2 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
         <span className="text-sm font-medium text-gray-700">{title || `${data.metric_name} by Class`}</span>
-        <button onClick={handleExport} className="text-indigo-600 hover:text-indigo-800" title={t('analysisCharts.exportPng')}><Download className="w-4 h-4" /></button>
+        <Tooltip content={t('analysisCharts.exportPng')}>
+          <button type="button" onClick={handleExport} className="text-indigo-600 hover:text-indigo-800"><Download className="w-4 h-4" /></button>
+        </Tooltip>
       </div>
       <ReactECharts ref={chartRef} option={option} style={{ height: compact ? '300px' : '420px', width: '100%' }} notMerge={true} />
     </div>

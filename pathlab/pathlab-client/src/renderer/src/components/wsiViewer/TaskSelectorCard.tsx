@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { AvailableHeatmap, HeatmapData, PatchCAMData } from '../../api'
 import { Card } from '../common'
 import { Badge } from '../ui/badge'
+import { Tooltip } from '../ui/tooltip'
 import { Layers, ChevronDown, CheckCircle2, History, Trash2 } from 'lucide-react'
 import { formatClasses } from './utils'
 
@@ -71,13 +72,14 @@ export function TaskSelectorCard({
         <span className="ml-auto text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
           {uniqueTasks.length} {t('wsiViewerComponents.taskSelector.available')}
         </span>
+        <Tooltip content={t('wsiViewerComponents.taskSelector.deleteAIResults')}>
         <button
           onClick={() => setShowDeleteConfirm(true)}
           className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-          title={t('wsiViewerComponents.taskSelector.deleteAIResults')}
         >
           <Trash2 className="w-4 h-4" />
         </button>
+        </Tooltip>
       </div>
       <div className="p-3 relative">
         <div className="relative">
