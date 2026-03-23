@@ -6,6 +6,7 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { updateCurrentUser, ApiError, CurrentUserUpdateRequest } from '../api'
 import { useAuth } from '../contexts/AuthContext'
+import { ModalShell } from './ui/modal-shell'
 
 interface SetEmailModalProps {
   isOpen: boolean
@@ -35,8 +36,6 @@ export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
       setSuccess(false)
     }
   }, [isOpen, user])
-
-  if (!isOpen) return null
 
   const handleClose = () => {
     onClose()
@@ -82,8 +81,7 @@ export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-md w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200">
+    <ModalShell isOpen={isOpen} onClose={handleClose} maxWidth="md">
         <div className="p-4 sm:p-6 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
           <div className="p-2 bg-primary-100 rounded-lg">
             <Mail className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
@@ -206,7 +204,6 @@ export function SetEmailModal({ isOpen, onClose }: SetEmailModalProps) {
             </Button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

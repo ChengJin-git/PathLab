@@ -4,6 +4,7 @@ import { Shield, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
 import { getClientIP } from '../api'
 import { getLegalInlineComponents } from './legal/LegalInlineLink'
+import { ModalShell } from './ui/modal-shell'
 
 interface DisclaimerModalProps {
   isOpen: boolean
@@ -49,11 +50,8 @@ export function DisclaimerModal({
     }
   }, [isOpen])
 
-  if (!isOpen) return null
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200">
+    <ModalShell isOpen={isOpen} maxWidth="xl" className="max-w-4xl">
         <div className="p-6 border-b border-gray-100 bg-gray-50/50">
           <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
             <Shield className="w-5 h-5 text-blue-600" />
@@ -154,8 +152,7 @@ export function DisclaimerModal({
             </>
           )}
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
 

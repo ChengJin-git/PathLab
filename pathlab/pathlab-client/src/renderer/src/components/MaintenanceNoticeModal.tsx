@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Construction, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
+import { ModalShell } from './ui/modal-shell'
 
 interface MaintenanceNoticeModalProps {
   isOpen: boolean
@@ -14,7 +15,7 @@ export function MaintenanceNoticeModal({ isOpen, message, onAcknowledge, onDismi
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
 
-  if (!isOpen || !message) return null
+  if (!message) return null
 
   const handleAcknowledge = async () => {
     setIsLoading(true)
@@ -26,8 +27,7 @@ export function MaintenanceNoticeModal({ isOpen, message, onAcknowledge, onDismi
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] flex flex-col">
+    <ModalShell isOpen={isOpen} maxWidth="lg" className="flex flex-col">
         <div className="p-4 sm:p-6 border-b border-amber-100 bg-amber-50/50 flex-shrink-0">
           <h3 className="text-base sm:text-xl font-bold text-gray-900 flex items-center gap-2">
             <Construction className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600 flex-shrink-0" />
@@ -69,8 +69,7 @@ export function MaintenanceNoticeModal({ isOpen, message, onAcknowledge, onDismi
             </Button>
           )}
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
 

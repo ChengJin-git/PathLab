@@ -4,6 +4,7 @@ import { UserPlus, Mail, User, Lock, CheckCircle, X, Loader2, Info } from 'lucid
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { requestAccess, ApiError } from '../api'
+import { ModalShell } from './ui/modal-shell'
 
 interface Props {
   isOpen: boolean
@@ -77,8 +78,6 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
     }
   }, [isOpen, turnstileSiteKey])
 
-  if (!isOpen) return null
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
@@ -127,8 +126,7 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md relative animate-in fade-in zoom-in-95 duration-200">
+    <ModalShell isOpen={isOpen} maxWidth="md" className="relative">
         <button
           type="button"
           onClick={onClose}
@@ -224,7 +222,6 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
             <Button type="button" onClick={onClose} className="px-8">{t('common.close')}</Button>
           </div>
         )}
-      </div>
-    </div>
+    </ModalShell>
   )
 }

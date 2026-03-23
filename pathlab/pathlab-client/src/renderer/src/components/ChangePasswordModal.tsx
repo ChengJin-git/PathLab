@@ -5,6 +5,7 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { changePassword, ApiError } from '../api'
+import { ModalShell } from './ui/modal-shell'
 
 interface ChangePasswordModalProps {
   isOpen: boolean
@@ -22,8 +23,6 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
-
-  if (!isOpen) return null
 
   const resetForm = () => {
     setCurrentPassword('')
@@ -74,8 +73,7 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-200">
-      <div className="bg-white rounded-xl sm:rounded-2xl shadow-2xl max-w-md w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200">
+    <ModalShell isOpen={isOpen} onClose={handleClose} maxWidth="md">
         <div className="p-4 sm:p-6 border-b border-slate-100 bg-slate-50/50 flex items-center gap-3">
           <div className="p-2 bg-primary-100 rounded-lg">
             <KeyRound className="w-4 h-4 sm:w-5 sm:h-5 text-primary-600" />
@@ -211,7 +209,6 @@ export function ChangePasswordModal({ isOpen, onClose }: ChangePasswordModalProp
             </Button>
           </div>
         </form>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
