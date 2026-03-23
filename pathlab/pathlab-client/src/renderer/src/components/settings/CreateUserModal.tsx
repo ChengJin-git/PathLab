@@ -4,6 +4,7 @@ import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Select } from '../ui/select'
+import { ModalShell } from '../ui/modal-shell'
 
 export interface CreateUserModalProps {
   createForm: { username: string; password: string; nickname: string; role: string; registration_email: string }
@@ -17,8 +18,7 @@ export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onCl
   const { t } = useTranslation()
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+    <ModalShell isOpen={true} onClose={onClose} maxWidth="md" className="p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
           <UserPlus className="w-5 h-5 mr-2 text-primary-600" />
           {t('settings.createUserModal.title')}
@@ -88,7 +88,6 @@ export function CreateUserModal({ createForm, onCreateFormChange, onSubmit, onCl
             {isCreating ? t('settings.createUserModal.creating') : t('settings.createUserModal.createUser')}
           </Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

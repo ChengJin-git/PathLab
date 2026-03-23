@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { RefreshCw, Database, ChevronRight, HardDrive } from 'lucide-react'
 import { Button } from '../ui/button'
+import { ModalShell } from '../ui/modal-shell'
 
 export interface MigrationModalProps {
   isOpen: boolean
@@ -25,11 +26,8 @@ export function MigrationModal({
 }: MigrationModalProps) {
   const { t } = useTranslation()
 
-  if (!isOpen) return null
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-900/60 backdrop-blur-md p-4 animate-in fade-in duration-300">
-      <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden animate-in zoom-in-95 duration-300 border border-gray-100">
+    <ModalShell isOpen={isOpen} maxWidth="lg" className="rounded-3xl border border-gray-100">
         {/* Soft Header */}
         <div className="p-8 pb-4 text-center">
           <div className="w-20 h-20 bg-primary-50 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-sm border border-primary-100/50">
@@ -125,7 +123,6 @@ export function MigrationModal({
             </Button>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

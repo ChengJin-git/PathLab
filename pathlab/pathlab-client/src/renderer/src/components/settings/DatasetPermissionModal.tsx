@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Database, Search, Clock, Trash2, X, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
+import { ModalShell } from '../ui/modal-shell'
 import { Tooltip } from '../ui/tooltip'
 import { Checkbox } from '../ui/checkbox'
 import { Input } from '../ui/input'
@@ -250,8 +251,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-5xl w-full p-6 max-h-[88vh] overflow-y-auto">
+    <ModalShell isOpen={true} onClose={onClose} maxWidth="xl" className="max-w-5xl p-6">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h3 className="text-lg font-semibold text-gray-900 flex items-center">
@@ -497,7 +497,6 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
         <div className="flex justify-end mt-6 pt-4 border-t border-gray-200">
           <Button variant="outline" onClick={onClose}>{t('settings.permissionModal.close')}</Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

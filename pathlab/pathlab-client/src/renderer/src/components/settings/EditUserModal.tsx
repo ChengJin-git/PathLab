@@ -4,6 +4,7 @@ import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Select } from '../ui/select'
 import type { UserListItem } from '../../api/users'
+import { ModalShell } from '../ui/modal-shell'
 
 export interface EditUserModalProps {
   user: UserListItem
@@ -17,8 +18,7 @@ export function EditUserModal({ user, editForm, onEditFormChange, onSave, onClos
   const { t } = useTranslation()
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+    <ModalShell isOpen={true} onClose={onClose} maxWidth="md" className="p-6">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">{t('settings.editUserModal.title')}</h3>
         <div className="space-y-4">
           <div>
@@ -76,7 +76,6 @@ export function EditUserModal({ user, editForm, onEditFormChange, onSave, onClos
             {t('settings.editUserModal.saveChanges')}
           </Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

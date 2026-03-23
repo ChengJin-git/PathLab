@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { ModalShell } from "../ui/modal-shell";
 import {
   ArrowRightLeft,
   ChevronLeft,
@@ -1113,14 +1114,7 @@ export function PermissionCenterModal({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
-      <button
-        type="button"
-        aria-label={t("settings.permissionModal.close")}
-        onClick={onClose}
-        className="absolute inset-0"
-      />
-      <div className="relative max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl">
+    <ModalShell isOpen={true} onClose={onClose} maxWidth="6xl" className="p-6">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
             <h3 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
@@ -2130,7 +2124,6 @@ export function PermissionCenterModal({
             {t("settings.permissionModal.close")}
           </Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

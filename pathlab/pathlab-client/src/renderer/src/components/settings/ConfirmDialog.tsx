@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Trash2, Info } from 'lucide-react'
 import { Button } from '../ui/button'
+import { ModalShell } from '../ui/modal-shell'
 
 export interface ConfirmDialogState {
   isOpen: boolean
@@ -22,11 +23,8 @@ export interface ConfirmDialogProps {
 export function ConfirmDialog({ dialog, onClose }: ConfirmDialogProps) {
   const { t } = useTranslation()
 
-  if (!dialog.isOpen) return null
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+    <ModalShell isOpen={dialog.isOpen} maxWidth="md" className="p-6">
         <div className="text-center mb-6">
           <div className={`w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-4 ${
             dialog.confirmVariant === 'danger' ? 'bg-red-100' :
@@ -66,7 +64,6 @@ export function ConfirmDialog({ dialog, onClose }: ConfirmDialogProps) {
             {dialog.confirmText || t('settings.confirmDialog.confirm')}
           </Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

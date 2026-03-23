@@ -6,6 +6,7 @@ import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Checkbox } from '../ui/checkbox'
 import { UserListItem, DatasetGrant } from '../../api'
+import { ModalShell } from '../ui/modal-shell'
 
 export interface PermissionModalProps {
   user: UserListItem
@@ -42,14 +43,13 @@ export function PermissionModal({
   const availableDatasets = datasets.filter(d => !permissions.some(p => p.dataset_id === d.dataset_id && p.is_valid))
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full p-6 max-h-[80vh] overflow-y-auto">
+    <ModalShell isOpen={true} onClose={onClose} maxWidth="xl" className="max-w-2xl p-6">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-lg font-semibold text-gray-900 flex items-center">
             <Key className="w-5 h-5 mr-2 text-purple-600" />
             {t('settings.permissionModal.title', { user: user.nickname || user.email })}
           </h3>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+          <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -201,7 +201,6 @@ export function PermissionModal({
             {t('settings.permissionModal.close')}
           </Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

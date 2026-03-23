@@ -4,6 +4,7 @@ import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import type { EmailTemplatesConfig } from '../../api/settings'
+import { ModalShell } from '../ui/modal-shell'
 
 type EditorMode = 'visual' | 'source' | 'preview'
 
@@ -143,8 +144,7 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="w-full max-w-5xl bg-white rounded-xl border shadow-2xl overflow-hidden">
+    <ModalShell isOpen={true} onClose={onClose} maxWidth="xl" className="max-w-5xl">
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <div>
             <h3 className="text-lg font-semibold text-gray-900">邮件模板配置</h3>
@@ -288,7 +288,6 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
