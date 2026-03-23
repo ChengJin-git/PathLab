@@ -35,7 +35,15 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-class DataGroup(Base):
+class TimestampMixin:
+    """Mixin that adds id, created_at, updated_at to every ORM model."""
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+
+class DataGroup(TimestampMixin, Base):
     """
     DataGroup table.
     Defines valid combinations of data_type, aggregation_level, and task_type.
@@ -50,7 +58,6 @@ class DataGroup(Base):
 
     __tablename__ = "data_groups"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
     group_id = Column(
         String(255), unique=True, nullable=False, index=True
     )  # UUID for API
@@ -65,10 +72,6 @@ class DataGroup(Base):
     task_type = Column(
         String(50), nullable=False
     )  # 'classification' | 'survival' | ... (extensible)
-
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
     datasets = relationship(
@@ -107,7 +110,7 @@ class DataGroup(Base):
         }
 
 
-class Dataset(Base):
+class Dataset(TimestampMixin, Base):
     """
     Dataset table.
     Stores dataset metadata with UUID for privacy (no plaintext names in API).
@@ -115,7 +118,6 @@ class Dataset(Base):
 
     __tablename__ = "datasets"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
     dataset_id = Column(
         String(255), unique=True, nullable=False, index=True
     )  # UUID for API
@@ -147,10 +149,6 @@ class Dataset(Base):
         index=True,
     )
 
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
-
     # Relationships
     data_group = relationship("DataGroup", back_populates="datasets")
     wsi_slides = relationship(
@@ -181,7 +179,7 @@ class Dataset(Base):
         }
 
 
-class WSISlide(Base):
+class WSISlide(TimestampMixin, Base):
     """
     WSI Slide metadata table.
     Stores metadata for whole slide images.
@@ -189,7 +187,6 @@ class WSISlide(Base):
 
     __tablename__ = "wsi_slides"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
     wsi_id = Column(String(255), unique=True, nullable=False, index=True)
     original_filename = Column(
         String(500)
@@ -244,10 +241,6 @@ class WSISlide(Base):
     # Eliminates per-query lower(wsi_path) LIKE scans on every paginated list.
     # Values: 'wsi' | 'patch' | NULL (legacy rows; backfilled at startup via init_db)
     data_type = Column(String(20), nullable=True, index=True)
-
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
     dataset = relationship("Dataset", back_populates="wsi_slides")
@@ -476,7 +469,7 @@ class AIResult(Base):
         }
 
 
-class ChatConversation(Base):
+class ChatConversation(TimestampMixin, Base):
     """
     Chat Conversation table.
     Stores conversation sessions with AI assistant.
@@ -484,14 +477,9 @@ class ChatConversation(Base):
 
     __tablename__ = "chat_conversations"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
     conversation_id = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
-
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships (order_by ensures messages are always returned in chronological order)
     messages = relationship(
@@ -572,7 +560,7 @@ class ChatMessage(Base):
         }
 
 
-class MessageFeedback(Base):
+class MessageFeedback(TimestampMixin, Base):
     """
     Message Feedback table.
     Stores user feedback for chat messages (thumbs up/down) and task helpfulness ratings.
@@ -581,7 +569,6 @@ class MessageFeedback(Base):
 
     __tablename__ = "message_feedbacks"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
     message_id = Column(
         Integer,
         ForeignKey("chat_messages.id", ondelete="CASCADE"),
@@ -610,10 +597,6 @@ class MessageFeedback(Base):
     # Task info (for task helpfulness feedback)
     task_type = Column(String(50), nullable=True)  # 'training', 'inference', 'analysis'
     task_title = Column(String(500), nullable=True)  # Task name/title
-
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
     message = relationship("ChatMessage", backref="feedbacks")
@@ -703,7 +686,7 @@ class ExportTask(Base):
         }
 
 
-class TrainingTask(Base):
+class TrainingTask(TimestampMixin, Base):
     """
     Training Task table.
     Stores training task configuration and status for no-code training platform.
@@ -711,7 +694,6 @@ class TrainingTask(Base):
 
     __tablename__ = "training_tasks"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(String(255), unique=True, nullable=False, index=True)
     task_name = Column(String(500), nullable=False)
     task_description = Column(Text)
@@ -745,8 +727,6 @@ class TrainingTask(Base):
     classes = Column(JSON)  # ["HSIL", "LSIL", "Normal", ...]
 
     # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
     started_at = Column(DateTime)
     finished_at = Column(DateTime)
 
@@ -1028,7 +1008,7 @@ class StorageTask(Base):
         }
 
 
-class SegmentationAnnotation(Base):
+class SegmentationAnnotation(TimestampMixin, Base):
     """
     Segmentation Annotation table.
     Stores COCO-format annotations for segmentation tasks.
@@ -1051,7 +1031,6 @@ class SegmentationAnnotation(Base):
 
     __tablename__ = "segmentation_annotations"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
     annotation_id = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String(255), nullable=False, index=True)
     source_dataset_id = Column(
@@ -1075,10 +1054,6 @@ class SegmentationAnnotation(Base):
 
     # Last editor for shared_draft (None for personal drafts and finalized records)
     last_edited_by = Column(String(255), nullable=True)
-
-    # Timestamps
-    created_at = Column(DateTime, default=utc_now, nullable=False)
-    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
 
     # Relationships
     source_dataset = relationship("Dataset")
