@@ -35,6 +35,7 @@ from ..models import (
     TrainingLog,
     utc_now,
 )
+from .base import BaseRepository
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
 from backend.ai.schemas.base import TaskStatus
 from backend.common.coco_utils import merge_coco_datasets, extract_coco_wsi_label_sets
@@ -142,8 +143,11 @@ async def _load_segmentation_multilabels(
     )
 
 
-class TrainingTaskRepository:
+class TrainingTaskRepository(BaseRepository[TrainingTask]):
     """Repository for Training Task operations"""
+
+    model = TrainingTask
+    pk_field = "task_id"
 
     @staticmethod
     async def create(

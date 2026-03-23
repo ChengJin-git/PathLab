@@ -26,6 +26,7 @@ from backend.preprocessing.heatmap_preview_cache import (
 from .analysis_helpers import (
     _split_case_attention_to_slides_static,
 )
+from .inference_base import resolve_device, report_progress
 
 logger = logging.getLogger(__name__)
 
@@ -116,12 +117,7 @@ async def _run_inference_wsi_survival(
             times_map[wsi_id] = 0.0
             statuses_map[wsi_id] = 0
 
-    # Load model checkpoint
-    device = (
-        assigned_device
-        if assigned_device
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = resolve_device(assigned_device)
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     # Get bin_edges from checkpoint (required for survival)
@@ -216,8 +212,7 @@ async def _run_inference_wsi_survival(
                 batch_patch_counts,
             ) in enumerate(dataloader):
                 # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
-                if progress_callback and total_items > 0:
-                    await progress_callback(0.1 + 0.8 * (idx / total_items))
+                await report_progress(progress_callback, idx, total_items)
                 # Unpack batch (batch_size=1)
                 h_features = features.squeeze(0).to(device)
                 case_id = case_id[0]
@@ -270,8 +265,7 @@ async def _run_inference_wsi_survival(
 
             for idx, (features, time_val, status_val, wsi_id) in enumerate(dataloader):
                 # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
-                if progress_callback and total_items > 0:
-                    await progress_callback(0.1 + 0.8 * (idx / total_items))
+                await report_progress(progress_callback, idx, total_items)
 
                 # Unpack batch (batch_size=1)
                 h_features = features.squeeze(0).to(device)

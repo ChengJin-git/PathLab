@@ -361,3 +361,23 @@ def delete_resume_checkpoint(path: Path) -> None:
         path.unlink(missing_ok=True)
     except Exception:
         pass
+
+
+def check_training_interruption(task_id: str) -> Optional[str]:
+    """Check for cancellation or permission revocation.
+
+    Returns:
+        "cancelled"          if cancellation was requested,
+        "permission_revoked" if permission was revoked,
+        None                 if no interruption.
+
+    Call this inside training loops (e.g. every 50 batches).
+    """
+    from backend.ai.cancellation import is_task_cancelled
+    from backend.ai.permission_revocation import is_permission_revoked
+
+    if is_task_cancelled(task_id):
+        return "cancelled"
+    if is_permission_revoked(task_id):
+        return "permission_revoked"
+    return None

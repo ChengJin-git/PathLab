@@ -131,40 +131,40 @@ class TrainingTaskUpdateRequest(BaseModel):
     task_name: str  # New task name
 
 
-class UploadByPathRequest(BaseModel):
-    """Request model for uploading WSI by file path"""
-
-    wsi_path: str
-    dataset_id: Optional[str] = None  # Dataset UUID (existing dataset) or None for new
-    dataset_name: Optional[str] = (
-        None  # Dataset display name (for creating new dataset)
-    )
-    source_organ: Optional[str] = None  # Source organ/tissue for new dataset
-    aggregation_level: Optional[str] = (
-        None  # Aggregation level for new dataset: "case" or "file"
-    )
-    task_type: Optional[str] = None  # classification | survival | segmentation
+class BaseDatasetRequest(BaseModel):
+    dataset_id: Optional[str] = None
+    dataset_name: Optional[str] = None
+    source_organ: Optional[str] = None
+    aggregation_level: Optional[str] = None
+    task_type: Optional[str] = None
     is_public: bool = False
+    default_label: Optional[str] = None
+    default_event_time: Optional[float] = None
+    default_event_status: Optional[int] = None
+
+
+class BaseWSIMetadataFields(BaseModel):
     label: Optional[str] = None
     case_id: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    event_time: Optional[float] = None
+    event_status: Optional[int] = None
+
+
+class UploadByPathRequest(BaseDatasetRequest):
+    wsi_path: str
     wsi_id: Optional[str] = None
-    age: Optional[int] = None
-    gender: Optional[str] = None
-    # Survival analysis fields
-    event_time: Optional[float] = None  # Time to event (days/months)
-    event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
-
-
-class WSIMetadataUpdateRequest(BaseModel):
-    """Request model for updating WSI metadata"""
-
     label: Optional[str] = None
     case_id: Optional[str] = None
     age: Optional[int] = None
     gender: Optional[str] = None
-    # Survival analysis fields
-    event_time: Optional[float] = None  # Time to event (days/months)
-    event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
+    event_time: Optional[float] = None
+    event_status: Optional[int] = None
+
+
+class WSIMetadataUpdateRequest(BaseWSIMetadataFields):
+    pass
 
 
 class StorageConfigRequest(BaseModel):
@@ -314,36 +314,15 @@ class DeleteUnavailableFilesRequest(BaseModel):
     wsi_ids: List[str]  # List of WSI IDs to delete
 
 
-class StartBatchImportRequest(BaseModel):
-    """Request model for starting a batch import background task"""
-
-    files: Optional[List[BatchRegisterFileInfo]] = (
-        None  # Optional explicit list of file info objects to register
-    )
-    dataset_id: Optional[str] = None  # Existing dataset UUID
-    dataset_name: Optional[str] = None  # New dataset name (if creating new)
-    source_organ: Optional[str] = None  # Source organ/tissue for new dataset
-    scan_root: Optional[str] = (
-        None  # Directory used during external scan (for segmentation annotation matching)
-    )
-    scan_id: Optional[str] = None  # Cached scan session ID for paginated batch import
-    select_all_valid: bool = (
-        False  # When scan_id is provided, import all valid files except excluded_paths
-    )
-    selected_paths: List[str] = Field(
-        default_factory=list
-    )  # Explicit paths selected from paginated scan results
-    excluded_paths: List[str] = Field(
-        default_factory=list
-    )  # Paths excluded when select_all_valid=True
-    aggregation_level: str = "file"  # "case" or "file" - aggregation level
-    task_type: str = "classification"  # "classification", "survival", or "segmentation"
-    is_public: bool = False
-    # Classification fields
-    default_label: Optional[str] = None  # Default label for classification files
-    # Survival analysis fields (required when task_type is "survival")
-    default_event_time: Optional[float] = None  # Time to event
-    default_event_status: Optional[int] = None  # 1 = event occurred, 0 = censored
+class StartBatchImportRequest(BaseDatasetRequest):
+    files: Optional[List[BatchRegisterFileInfo]] = None
+    scan_root: Optional[str] = None
+    scan_id: Optional[str] = None
+    select_all_valid: bool = False
+    selected_paths: List[str] = Field(default_factory=list)
+    excluded_paths: List[str] = Field(default_factory=list)
+    aggregation_level: str = "file"
+    task_type: str = "classification"
 
 
 class StartDeleteExternalRequest(BaseModel):
@@ -359,18 +338,8 @@ class StartDeleteDatasetRequest(BaseModel):
     mode: DeletionMode = DeletionMode.STANDARD
 
 
-class StartBatchUpdateMetadataRequest(BaseModel):
-    """Request model for starting a batch update metadata background task"""
-
-    wsi_ids: List[str]  # List of WSI IDs to update
-    # Metadata fields to update (None means keep existing value)
-    label: Optional[str] = None
-    case_id: Optional[str] = None
-    age: Optional[int] = None
-    gender: Optional[str] = None
-    # Survival analysis fields
-    event_time: Optional[float] = None
-    event_status: Optional[int] = None
+class StartBatchUpdateMetadataRequest(BaseWSIMetadataFields):
+    wsi_ids: List[str]
 
 
 # ── Annotation ──────────────────────────────────────────────────────────────

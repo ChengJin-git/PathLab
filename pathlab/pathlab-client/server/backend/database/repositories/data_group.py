@@ -5,7 +5,7 @@ DataGroupRepository - Data Access Layer
 import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
-from sqlalchemy import select, delete, insert
+from sqlalchemy import select, delete, insert, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,10 +23,14 @@ from ..models import (
     TrainingLog,
     utc_now,
 )
+from .base import BaseRepository
 
 
-class DataGroupRepository:
+class DataGroupRepository(BaseRepository[DataGroup]):
     """Repository for DataGroup operations"""
+
+    model = DataGroup
+    pk_field = "group_id"
 
     @staticmethod
     async def create(
@@ -51,14 +55,6 @@ class DataGroupRepository:
         await db.flush()
         await db.refresh(data_group)
         return data_group
-
-    @staticmethod
-    async def get_by_id(db: AsyncSession, group_id: str) -> Optional[DataGroup]:
-        """Get data group by group_id (UUID)"""
-        result = await db.execute(
-            select(DataGroup).where(DataGroup.group_id == group_id)
-        )
-        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_combination(
@@ -130,20 +126,6 @@ class DataGroupRepository:
         """Get all data groups"""
         result = await db.execute(select(DataGroup).order_by(DataGroup.name))
         return result.scalars().all()
-
-    @staticmethod
-    async def update(
-        db: AsyncSession, group_id: str, update_data: Dict[str, Any]
-    ) -> Optional[DataGroup]:
-        """Update data group"""
-        update_data["updated_at"] = utc_now()
-        await db.execute(
-            update(DataGroup)
-            .where(DataGroup.group_id == group_id)
-            .values(**update_data)
-        )
-        await db.flush()
-        return await DataGroupRepository.get_by_id(db, group_id)
 
     @staticmethod
     async def delete(db: AsyncSession, group_id: str) -> bool:
