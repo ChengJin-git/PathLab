@@ -618,6 +618,18 @@ class WSIClassificationTrainer(BaseTrainer):
                     "Feature extraction stopped: permission revoked by admin"
                 )
 
+            # Guard: skip batches where all patches failed to load.
+            # _collate_skip_failed_patches returns torch.empty(0, 3, H, W) for
+            # all-failed batches. Passing a zero-element tensor to ViT-based
+            # extractors triggers "cannot reshape tensor of 0 elements into shape
+            # [0, -1, D]" because x.view(B, -1, C) is ambiguous when B=0.
+            if imgs.numel() == 0:
+                _log.warning(
+                    f"[FeatureExtract] Batch {batch_count}/{total_batches}: all patches failed "
+                    f"to load (empty batch), skipping"
+                )
+                continue
+
             # Apply inference_mode only during the actual computation
             with torch.inference_mode():
                 imgs = imgs.to(self.device, non_blocking=True)
