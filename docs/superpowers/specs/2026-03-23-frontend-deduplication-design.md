@@ -1,23 +1,24 @@
 # Frontend Deduplication & Component Extraction — Design Spec
 
 **Date:** 2026-03-23  
-**Status:** Approved  
+**Status:** Approved (v3 — post spec-review round 2)  
 **Scope:** `pathlab/pathlab-client/src/renderer/src`
 
 ---
 
 ## Background
 
-The PathLab frontend has grown to 130+ TSX files. Through audit, six categories of redundancy were identified totalling an estimated **1,800+ duplicated/redundant lines**:
+The PathLab frontend has grown to 130+ TSX files. Through audit, six categories of redundancy were identified:
 
-| Category | Files affected | Estimated lines removable |
+| Category | Files affected | Est. lines removable |
 |---|---|---|
-| Modal overlay JSX duplication | 20+ | ~400 |
-| `training/` vs `list/` component copies | 8 | ~600 |
-| `Loader2` spinner inline pattern | 26 files, 84 sites | ~150 |
-| Manual loading/error state (vs useAsyncAction) | 26 | ~300 |
-| Debounce useEffect copies | 5 | ~50 |
+| Modal overlay JSX duplication | 22 specific files | ~440 |
+| Manual loading/error state (vs useAsyncAction) | 26 files | ~300 |
+| Debounce useEffect copies | 2 files, 5 sites | ~50 |
 | Pagination reimplemented per-component | 6 | ~200 |
+| `Loader2` spinner inline pattern | 84 sites | ~150 |
+
+> Note: `training/` vs `list/` modal consolidation was evaluated and **removed from scope** — see Section 2.
 
 ---
 
@@ -25,7 +26,7 @@ The PathLab frontend has grown to 130+ TSX files. Through audit, six categories 
 
 - High cohesion: each unit has one clear purpose and well-defined interface
 - Low coupling: consumers don't know modal internals; hooks don't know UI
-- Zero behaviour change: pure refactor, no new features
+- Zero behaviour change: pure refactor, no new features, no UX differences
 - All TypeScript type-safe, no `as any` suppressions
 
 ---
@@ -34,32 +35,57 @@ The PathLab frontend has grown to 130+ TSX files. Through audit, six categories 
 
 ### `components/ui/modal-shell.tsx`
 
-Replaces the 3 diverged modal overlay variants that repeat across 20+ files.
+Replaces 3 diverged overlay variants repeating across 22 files.
 
 ```typescript
 interface ModalShellProps {
   isOpen: boolean
-  onClose?: () => void        // if provided, backdrop click closes
-  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '6xl'  // default 'md'
-  className?: string
+  onClose?: () => void      // if provided: backdrop click + Escape close; otherwise neither fires
+  maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '6xl'  // default: 'md'
+  className?: string        // applied to the inner content container
   children: React.ReactNode
 }
 ```
 
-Canonical styling (Variant B — newest animated style):
-```
-fixed inset-0 z-50 flex items-center justify-center
-bg-black/50 backdrop-blur-sm p-2 sm:p-4
-animate-in fade-in duration-200
-```
-Container:
-```
-bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full overflow-hidden
-scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh]
-```
-`maxWidth` maps: `sm→max-w-sm`, `md→max-w-md`, `lg→max-w-lg`, `xl→max-w-xl`, `6xl→max-w-6xl`.
+**Behavioral contract (must NOT change existing behaviour):**
+- Backdrop (outer div) click: calls `onClose` only when prop is provided
+- Inner content div: uses `e.stopPropagation()` — content clicks never bubble to backdrop
+- No portal — renders inline in the DOM tree (same as all current modals)
+- No focus trap, no scroll lock — keep existing browser defaults
+- Escape key: `useEffect` + `keydown` listener calls `onClose` only when prop is provided
+- `maxWidth` maps: `sm→max-w-sm`, `md→max-w-md`, `lg→max-w-lg`, `xl→max-w-xl`, `6xl→max-w-6xl`
 
-All 20 existing modals migrate to wrap their content in `<ModalShell>` and delete their local overlay divs.
+**Canonical styling (Variant B — newest animated style):**
+
+Overlay: `fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-2 sm:p-4 animate-in fade-in duration-200`
+
+Content: `bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto {maxWidth}`
+
+**Migration targets (22 files, exact settings):**
+
+```
+components/ChangePasswordModal.tsx              maxWidth="md"   onClose=yes
+components/SetEmailModal.tsx                    maxWidth="md"   onClose=yes
+components/DisclaimerModal.tsx                  maxWidth="xl"   onClose=no
+components/MaintenanceNoticeModal.tsx           maxWidth="lg"   onClose=no
+components/RegisterRequestModal.tsx             maxWidth="md"   onClose=no
+components/settings/ConfirmDialog.tsx           maxWidth="sm"   onClose=no
+components/settings/CreateUserModal.tsx         maxWidth="md"   onClose=yes
+components/settings/EditUserModal.tsx           maxWidth="md"   onClose=yes
+components/settings/EmailTemplateModal.tsx      maxWidth="lg"   onClose=yes
+components/settings/PermissionModal.tsx         maxWidth="md"   onClose=yes
+components/settings/DatasetPermissionModal.tsx  maxWidth="lg"   onClose=yes
+components/settings/MigrationModal.tsx          maxWidth="md"   onClose=no
+components/settings/PermissionCenterModal.tsx   maxWidth="6xl"  onClose=yes
+components/list/ExportLabelsModal.tsx           maxWidth="md"   onClose=yes
+components/list/FileMetadataModal.tsx           maxWidth="lg"   onClose=yes
+components/list/DeleteModals.tsx  (×2 modals)   maxWidth="lg"   onClose=no
+components/list/EditModals.tsx    (×3 modals)   maxWidth="md"   onClose=yes (per modal)
+components/training/DeleteConfirmModal.tsx      maxWidth="md"   onClose=no
+components/training/EditMetadataModal.tsx       maxWidth="md"   onClose=yes
+components/training/BatchEditModal.tsx          maxWidth="md"   onClose=yes
+components/training/FileMetadataModal.tsx       maxWidth="lg"   onClose=yes
+```
 
 ---
 
@@ -69,15 +95,26 @@ All 20 existing modals migrate to wrap their content in `<ModalShell>` and delet
 function useDebounce<T>(value: T, delay: number): T
 ```
 
-Replaces 5 repeated `useState + useEffect + setTimeout + clearTimeout` patterns:
-- `PermissionCenterModal` (3 instances: `userSearchQuery`, `datasetSearchQuery`, `grantUserSearchQuery`)
-- `DatasetConfigStep` (2 instances)
+**Exact replacement targets (5 useEffect blocks, 2 files):**
+- `components/settings/PermissionCenterModal.tsx`: 3 effects for `userSearchQuery`, `datasetSearchQuery`, `grantUserSearchQuery`  
+  Each uses `window.setTimeout(..., SEARCH_DEBOUNCE_MS)`
+- `components/upload/DatasetConfigStep.tsx`: 2 debounce effects
+
+Each `useState + useEffect + setTimeout/clearTimeout` block becomes:
+```typescript
+const debouncedQuery = useDebounce(query, 300)
+```
+The derived `setDebouncedXSearchQuery` state variables are **deleted** from these files.
 
 ---
 
 ### `lib/useConfirmDialog.ts`
 
 ```typescript
+import type { ConfirmDialogState, ShowConfirmDialog } from '../components/settings/ConfirmDialog'
+
+const CLOSED: ConfirmDialogState = { isOpen: false, title: '', message: '', onConfirm: () => {} }
+
 function useConfirmDialog(): {
   dialogState: ConfirmDialogState
   showConfirmDialog: ShowConfirmDialog
@@ -85,15 +122,37 @@ function useConfirmDialog(): {
 }
 ```
 
-`ConfirmDialogState` and `ShowConfirmDialog` types are already defined in `components/settings/ConfirmDialog.tsx` — import from there.
+**Integration requirement — MANDATORY:** Every adopting component MUST render `<ConfirmDialog>` in its output:
+```tsx
+const { dialogState, showConfirmDialog, closeConfirmDialog } = useConfirmDialog()
+return (
+  <>
+    {/* existing component JSX */}
+    <ConfirmDialog dialog={dialogState} onClose={closeConfirmDialog} />
+  </>
+)
+```
 
-Replaces manual `useState<ConfirmDialogState>` + handler duplication in 10+ parent components (`UsersTab`, `SettingsPage`, `PermissionCenterModal`, `DatasetPermissionModal`, `ListPage`, `TaskListPage`, etc.).
+**Target files (11):**
+```
+pages/ListPage.tsx
+pages/TaskListPage.tsx
+pages/TaskDetailPage.tsx
+pages/NewTaskPage.tsx
+components/settings/UsersTab.tsx
+components/settings/StorageTab.tsx
+components/settings/ModelsTab.tsx
+components/settings/AnnotationAuditCard.tsx
+components/settings/DatasetPermissionModal.tsx
+components/settings/PermissionModal.tsx
+components/settings/PermissionCenterModal.tsx  ← parent (SettingsPage) uses hook; modal's prop interface unchanged
+```
 
 ---
 
 ### `components/ui/pagination-footer.tsx`
 
-Extract and publicly export the existing `PaginationFooter` component from inside `PermissionCenterModal.tsx`. Interface stays identical — only move it out.
+Extracted from inside `PermissionCenterModal.tsx`. Owns its own i18n via `useTranslation()` internally — no `t` prop required by callers.
 
 ```typescript
 interface PaginationFooterProps {
@@ -101,137 +160,150 @@ interface PaginationFooterProps {
   pageSize: number
   total: number
   disabled?: boolean
+  pageSizeOptions?: string[]   // default: ['4', '6', '9', '18']
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
 }
 ```
 
-Consumers: `PermissionCenterModal`, `UsersTab`, `ModelsTab`, `FeedbackTab`, `AnnotationAuditCard`, `ListPage`.
+**Target files (6):**
+```
+components/settings/PermissionCenterModal.tsx  — internal → public import (remove t prop)
+components/settings/UsersTab.tsx               — replace own pagination JSX
+components/settings/ModelsTab.tsx              — replace own pagination JSX
+components/settings/FeedbackTab.tsx            — replace own pagination JSX
+components/settings/AnnotationAuditCard.tsx    — replace own pagination JSX
+pages/ListPage.tsx                             — replace own pagination JSX
+```
 
 ---
 
-## Section 2 — Merge & Delete (training/ × list/ duplication)
+## Section 2 — training/ vs list/ Modals: Out of Scope
 
-### Files to delete (4)
+**Decision:** Full consolidation of `training/` and `list/` modal components is **removed from this refactor**.
 
-| File | Replace with |
-|---|---|
-| `components/training/DeleteConfirmModal.tsx` | Updated `list/DeleteModals.tsx` |
-| `components/training/EditMetadataModal.tsx` | `list/EditModals.tsx` `EditMetadataModal` |
-| `components/training/BatchEditModal.tsx` | `list/EditModals.tsx` `BatchEditModal` |
-| `components/training/FileMetadataModal.tsx` | `list/FileMetadataModal.tsx` |
+**Reason:** The training and list versions have fundamentally different prop contracts (uncontrolled callbacks in training vs controlled value/setter pairs in list, plus different UX — training modals lack delete-mode selection and storage info UI). Merging them would require behavior changes, violating the "zero behaviour change" constraint.
 
-### Upgrade `list/DeleteModals.tsx`
-
-The `training/` version uses a single component with `mode: 'single' | 'batch'` prop. The `list/` version has two separate exports (`DeleteConfirmModal`, `BatchDeleteModal`). 
-
-Resolution: keep both named exports in `list/DeleteModals.tsx` (no API change for `ListPage`), and add an optional convenience re-export:
-
-```typescript
-// New convenience wrapper used by NewTaskPage (replaces training version)
-export function UnifiedDeleteModal(props: DeleteConfirmModalProps | BatchDeleteModalProps) {
-  if ('wsiToDelete' in props) return <DeleteConfirmModal {...props} />
-  return <BatchDeleteModal {...props} />
-}
-```
-
-`NewTaskPage` and the training wizard switch from `training/DeleteConfirmModal` to this unified import.
-
-### Props delta for other merged modals
-
-`training/EditMetadataModal` uses `taskType: 'classification' | 'survival' | 'segmentation'` while `list/` uses `datasetType`. They are semantically identical — the `list/` version already has `datasetType` and handles all three. `NewTaskPage` updates its import path; no prop name changes needed.
+**What we do instead:** Both sets of training modals are included in the **ModalShell migration** (Section 1), so they stop duplicating the overlay boilerplate. Deeper consolidation of training/list logic is deferred to a separate refactor once the component APIs are aligned.
 
 ---
 
 ## Section 3 — State Layer Unification
 
-### 3a. `useAsyncAction` — universal adoption
+### 3a. `useAsyncAction` — targeted adoption
 
-**Current state:** `useAsyncAction` is used correctly in `ListPage` (7 call sites) but ignored in 26 other files that duplicate the `setLoading(true) / try/catch/finally / setLoading(false)` pattern.
-
-**Migration pattern:**
+**Scope (strictly):** Only migrate event-handler–triggered imperative calls with this exact pattern:
 ```typescript
-// Before
-const [loading, setLoading] = useState(false)
+setState(true)
+try { await apiCall() }
+catch (err) { setError(...) }
+finally { setState(false) }
+```
+
+**EXCLUDED:**
+- `react-query` / `useQuery` managed fetches (already handled)
+- `useEffect`-driven data loading with cleanup/cancellation
+- Background task polling (SSE, intervals)
+
+**Standard migration pattern:**
+```typescript
 const [error, setError] = useState<string | null>(null)
-const doSomething = async () => {
-  setLoading(true); setError(null)
-  try { await apiCall() }
-  catch (err) { setError(err instanceof Error ? err.message : 'Error') }
-  finally { setLoading(false) }
-}
-
-// After
-const [, setError] = useState<string | null>(null)
 const [isPending, run] = useAsyncAction({
-  onError: (err) => setError(err instanceof Error ? err.message : 'Error')
+  onError: (err) => setError(err instanceof Error ? err.message : 'Unknown error')
 })
-const doSomething = () => run(() => apiCall())
+const handler = () => {
+  setError(null)
+  return run(() => apiCall())
+}
+// When return value is needed:
+const result = await run(() => apiCall())
+if (result !== undefined) { /* use result */ }
 ```
 
-Files to migrate (by priority):
+**Target files (26 — handlers only):**
 
-**Pages (6):**
-- `StorageManagementPage` — `detectOrphaned`, `handleCleanup`
-- `TaskDetailPage` — `loadTaskDetail`, `handleRerun`
-- `TaskListPage` — `handleDeleteTask`
-- `ResultsViewerPage` — `runAnalysis`, `startExternalValidation`
-- `NewTaskPage` — multiple handlers
-- `AIChatPage` — multiple handlers
-
-**Settings (8):**
-- `UsersTab`, `ModelsTab`, `FeedbackTab`, `TasksTab`, `GeneralTab`, `StorageTab`, `AnnotationAuditCard`, `PermissionCenterModal`
-
-**Other components (12):**
-- `WSIViewer`, `ShareAnnotationDialog`, chat card components (`AnalysisConfigCard`, `TaskConfigCard`, `DatasetRegistrationCard`, `TaskHistoryCard`, `ChartCard`, `MetricCard`, `ImageRecommendationCard`, `QuickAnalysisViewer`)
-
-### 3b. `useDebounce` rollout
-
-Replace all 5 debounce `useEffect` blocks (see Section 1). Each becomes one line:
-```typescript
-const debouncedQuery = useDebounce(query, 300)
+Pages (6):
+```
+pages/StorageManagementPage.tsx    detectOrphaned, handleCleanup, startingEmptyDatasetCleanup
+pages/TaskDetailPage.tsx           handleRerun, handleCancel
+pages/TaskListPage.tsx             handleDeleteTask
+pages/ResultsViewerPage.tsx        runAnalysis, startExternalValidation
+pages/NewTaskPage.tsx              handleSubmitTask and other async handlers
+pages/AIChatPage.tsx               async message/action handlers
 ```
 
-### 3c. `useConfirmDialog` rollout
-
-All parent components that currently hold `useState<ConfirmDialogState>` + inline `showConfirmDialog` / `closeConfirmDialog` functions replace those ~15 lines with:
-```typescript
-const { dialogState, showConfirmDialog, closeConfirmDialog } = useConfirmDialog()
+Settings (8):
 ```
-Then pass `showConfirmDialog` / `closeConfirmDialog` to child components that need them (e.g., `PermissionCenterModal`).
+components/settings/UsersTab.tsx
+components/settings/ModelsTab.tsx
+components/settings/FeedbackTab.tsx
+components/settings/TasksTab.tsx
+components/settings/GeneralTab.tsx
+components/settings/StorageTab.tsx
+components/settings/AnnotationAuditCard.tsx
+components/settings/PermissionCenterModal.tsx
+```
+
+Other components (12):
+```
+components/WSIViewer.tsx
+components/wsiViewer/ShareAnnotationDialog.tsx
+components/chat/AnalysisConfigCard.tsx
+components/chat/TaskConfigCard.tsx
+components/chat/DatasetRegistrationCard.tsx
+components/chat/TaskHistoryCard.tsx
+components/chat/ChartCard.tsx
+components/chat/MetricCard.tsx
+components/chat/ImageRecommendationCard.tsx
+components/chat/QuickAnalysisViewer.tsx
+components/settings/DatasetPermissionModal.tsx
+components/settings/PermissionModal.tsx
+```
 
 ---
 
 ## Execution Order
 
-This ordering minimises merge conflicts and ensures each step is independently verifiable:
-
-1. **Add primitives** — create 4 new files (ModalShell, useDebounce, useConfirmDialog, PaginationFooter). No existing files touched.
-2. **Delete training/ duplicates** — upgrade `list/` files, update imports in `NewTaskPage`. Delete 4 files.
-3. **Migrate ModalShell** — update 18 modal files to use `<ModalShell>`. One file at a time, each verifiable with `lsp_diagnostics`.
-4. **Roll out useDebounce** — 5 files, low risk.
-5. **Roll out useConfirmDialog** — 10+ parent components.
-6. **Roll out useAsyncAction** — 26 files, highest volume. Pages first (fewer cascading imports), then settings components, then chat components.
-7. **Roll out PaginationFooter** — 6 components replace their pagination JSX.
+1. **Add primitives** — create 4 new files, no existing files touched
+2. **Migrate ModalShell** — 22 modal files, one at a time, `lsp_diagnostics` after each
+3. **Roll out `useDebounce`** — 2 files (PermissionCenterModal, DatasetConfigStep)
+4. **Roll out `useConfirmDialog`** — 11 parent components
+5. **Roll out `useAsyncAction`** — 26 files — pages first, then settings, then chat
+6. **Roll out `PaginationFooter`** — 6 components
 
 ---
 
-## Success Criteria
+## Success Criteria (grep-verifiable)
 
-- [ ] `components/training/DeleteConfirmModal.tsx`, `EditMetadataModal.tsx`, `BatchEditModal.tsx`, `FileMetadataModal.tsx` deleted
-- [ ] `ModalShell` used in all 18+ modals; no orphan `fixed inset-0 z-50 flex items-center justify-center bg-black/50` strings remain in modal files
-- [ ] `useDebounce` has 0 remaining inline `setTimeout` debounce patterns  
-- [ ] `useAsyncAction` used for all async operations; `setIsLoading`/`setLoading` pattern eliminated from pages and settings tabs
-- [ ] `PaginationFooter` used in all 6 pagination sites
-- [ ] `lsp_diagnostics` clean on all modified files
-- [ ] No `as any`, `@ts-ignore`, or `@ts-expect-error` introduced
-- [ ] No functional behaviour change (same props accepted, same UI rendered)
+**ModalShell migration (22 files):**
+- For each of the 22 listed files: grep `fixed inset-0` inside that file → 0 matches
+
+**useDebounce rollout (2 files):**
+- `components/settings/PermissionCenterModal.tsx`: grep `setDebouncedUserSearchQuery\|setDebouncedDatasetSearchQuery\|setDebouncedGrantUserSearchQuery` → 0 matches; grep `import.*useDebounce` → 1 match
+- `components/upload/DatasetConfigStep.tsx`: grep `window\.setTimeout\|window\.clearTimeout\|setTimeout\|clearTimeout` → 0 matches; grep `import.*useDebounce` → 1 match
+
+**useConfirmDialog rollout (11 files):**
+- Each of the 11 listed files: grep `useState<ConfirmDialogState>` → 0 matches
+- Each file: grep `import.*useConfirmDialog` → 1 match
+
+**useAsyncAction rollout (26 files):**
+- Each of the 26 listed files: grep `setLoading(true)\|setIsPending(true)\|setIsLoading(true)\|setSubmitting(true)` (exact string, not regex) → 0 matches per file
+- Each file: grep `import.*useAsyncAction` → 1 match
+
+**PaginationFooter rollout (6 files):**
+- Each of the 6 listed files: grep `import.*PaginationFooter` → 1 match
+
+**Global:**
+- `lsp_diagnostics` clean on every modified file
+- No `as any`, `@ts-ignore`, `@ts-expect-error` introduced
 
 ---
 
 ## Out of Scope
 
-- New UI features or visual design changes
-- `useDataSelection.ts`, `useTaskWizard.ts`, domain-specific hooks (already well-scoped)
-- API layer (`api/` directory) — already modularised
+- `training/` vs `list/` deeper modal consolidation (see Section 2)
+- New UI features, visual design changes, UX changes
+- Domain-specific hooks (`useDataSelection`, `useTaskWizard`, etc.)
+- API layer (`api/`) — already modularised
 - Test files
+- Pre-existing LSP errors unrelated to modified files
