@@ -70,7 +70,7 @@ backend/
 - 统一配置：`common/config.py`
 - Redis 客户端 / 连接管理位于 `common/` 下
 - 端口与服务发现工具：`common/port_utils.py` 等
-- 持久化全局设置当前覆盖 `openrouter`、`huggingface`、`dashscope`、`exa`、`local_vllm`、`local_asr`、`turnstile` 等键
+- 持久化全局设置当前覆盖 `openrouter`、`huggingface`、`dashscope`、`exa`、`local_vllm`、`local_asr`、`turnstile`、`admin_notify_email`、`email_templates` 等键
 
 ### 存储
 

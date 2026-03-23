@@ -155,12 +155,12 @@ describe('chatWithAI (streaming)', () => {
     }))
   })
 
-  it('handles abort signal gracefully', async () => {
+  it('re-throws AbortError when request is aborted', async () => {
     const controller = new AbortController()
     mockFetch.mockRejectedValueOnce(new DOMException('Aborted', 'AbortError'))
     await expect(
       chatWithAI(MOCK_MESSAGES, vi.fn(), undefined, undefined, controller.signal)
-    ).rejects.toBeDefined()
+    ).rejects.toMatchObject({ name: 'AbortError' })
   })
 
   it('throws ApiError with NETWORK_ERROR on fetch failure', async () => {

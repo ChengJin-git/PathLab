@@ -75,16 +75,14 @@ describe('sha256 (JavaScript fallback path)', () => {
     expect(hash).toMatch(/^[0-9a-f]{64}$/)
   })
 
-  it('fallback produces a consistent 64-character hex hash', async () => {
-    const fallbackHash = await sha256('hello')
-    expect(fallbackHash).toHaveLength(64)
-    expect(fallbackHash).toMatch(/^[0-9a-f]{64}$/)
+  it('fallback produces the correct SHA-256 hash for "hello"', async () => {
+    const hash = await sha256('hello')
+    expect(hash).toBe('2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824')
   })
 
-  it('fallback handles empty string and returns a 64-character hex hash', async () => {
+  it('fallback handles empty string and returns correct SHA-256 hash', async () => {
     const hash = await sha256('')
-    expect(hash).toHaveLength(64)
-    expect(hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(hash).toBe('e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855')
   })
 })
 
@@ -103,7 +101,6 @@ describe('sha256 (subtle.digest failure fallback)', () => {
 
   it('falls back to pure-JS implementation when subtle.digest throws', async () => {
     const hash = await sha256('hello')
-    expect(hash).toHaveLength(64)
-    expect(hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(hash).toBe('2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824')
   })
 })

@@ -56,14 +56,15 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数测试（7 个文件）
+    ├── lib/              # 纯工具函数 / Hook 测试（8 个文件）
     │   ├── cache.test.ts
     │   ├── utils.test.ts
     │   ├── chatMessageParser.test.ts
     │   ├── datasetPagination.test.ts
     │   ├── segmentationUploadUtils.test.ts
     │   ├── externalValidationUtils.test.ts
-    │   └── trainingSubmissionTracker.test.ts
+    │   ├── trainingSubmissionTracker.test.ts
+    │   └── useAsyncAction.test.tsx
     ├── contexts/         # React Context 测试
     │   └── AuthContext.test.tsx
     └── components/       # 组件测试（2 个文件）
@@ -865,6 +866,26 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 - `EXTRACTOR_EMBED_DIM` — 常量完整性（已知提取器维度、未知返回 undefined）
 - `getDatasetCompatibilityError()` — 核心兼容性逻辑，覆盖：data_type 不匹配、task_type 不匹配、分类标签集不等、提取器 embed dim 不匹配、WSI 数据泄漏检测、survival 免标签检查、分割任务特有规则（文件级数据集、架构 / backbone 元数据校验、source/target 数据集不能相同）
 - `filterCompatibleDatasets()` / `isDatasetCompatible()` — 基于 `getDatasetCompatibilityError` 的过滤包装
+
+---
+
+## unit/lib/useAsyncAction.test.tsx
+
+**对应源文件**：`src/renderer/src/lib/useAsyncAction.ts`
+**测试数量**：6 个
+
+覆盖 `useAsyncAction` Hook 的核心语义：
+
+- 初始状态 `isPending = false`
+- 异步函数运行期间 `isPending = true`，完成后归 `false`
+- `run()` 返回异步函数的解析值
+- 函数抛错后 `isPending` 仍归 `false`，并调用 `onError` 回调
+- 未提供 `onError` 时降级到 `console.error`
+- 两个并发 `run()` 调用各自独立完成，引用计数在最后一个完成前保持 `isPending = true`
+
+### 测试方式
+
+使用 `renderHook` + `act` 驱动 React Hook，通过手动 resolve/reject Promise 精确控制异步时序。
 
 ---
 

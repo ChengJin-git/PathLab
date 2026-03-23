@@ -42,7 +42,8 @@ function sha256Fallback(message: string): string {
   while ((bytes.length % 64) !== 56) bytes.push(0)
 
   // Append length as 64-bit big-endian
-  for (let i = 56; i >= 0; i -= 8) bytes.push((bitLength >>> i) & 0xff)
+  // JavaScript >>> only uses the low 5 bits of the shift count, so i >= 32 must be handled separately
+  for (let i = 56; i >= 0; i -= 8) bytes.push(i >= 32 ? 0 : (bitLength >>> i) & 0xff)
 
   // Process each 64-byte chunk
   for (let offset = 0; offset < bytes.length; offset += 64) {
