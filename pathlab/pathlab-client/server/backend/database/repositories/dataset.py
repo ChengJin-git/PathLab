@@ -23,56 +23,18 @@ from ..models import (
     TrainingTaskWSI,
     utc_now,
 )
+from .base import BaseRepository
 
 
 class DatasetNameConflictError(ValueError):
     pass
 
 
-class DatasetRepository:
+class DatasetRepository(BaseRepository[Dataset]):
     """Repository for Dataset operations"""
 
-    @staticmethod
-    async def create(
-        db: AsyncSession,
-        dataset_id: str,
-        name: str,
-        group_id: str,
-        description: str = None,
-        user_id: str = None,
-        source_organ: str = None,
-        parent_dataset_id: str = None,
-        is_public: bool = False,
-    ) -> Dataset:
-        dataset = Dataset(
-            dataset_id=dataset_id,
-            name=name,
-            group_id=group_id,
-            description=description,
-            user_id=user_id,
-            source_organ=source_organ or None,
-            parent_dataset_id=parent_dataset_id or None,
-            is_public=is_public,
-        )
-        db.add(dataset)
-        await db.flush()
-        # Re-fetch with data_group relationship loaded to avoid lazy loading issues
-        result = await db.execute(
-            select(Dataset)
-            .options(selectinload(Dataset.data_group))
-            .where(Dataset.dataset_id == dataset_id)
-        )
-        return result.scalar_one()
-
-    @staticmethod
-    async def get_by_id(db: AsyncSession, dataset_id: str) -> Optional[Dataset]:
-        """Get dataset by dataset_id (UUID) with data_group relationship loaded"""
-        result = await db.execute(
-            select(Dataset)
-            .options(selectinload(Dataset.data_group))
-            .where(Dataset.dataset_id == dataset_id)
-        )
-        return result.scalar_one_or_none()
+    model = Dataset
+    pk_field = "dataset_id"
 
     @staticmethod
     async def get_by_name(
@@ -169,20 +131,6 @@ class DatasetRepository:
             .where(Dataset.dataset_id.in_(dataset_ids))
         )
         return result.scalars().all()
-
-    @staticmethod
-    async def update(
-        db: AsyncSession, dataset_id: str, update_data: Dict[str, Any]
-    ) -> Optional[Dataset]:
-        """Update dataset"""
-        update_data["updated_at"] = utc_now()
-        await db.execute(
-            update(Dataset)
-            .where(Dataset.dataset_id == dataset_id)
-            .values(**update_data)
-        )
-        await db.flush()
-        return await DatasetRepository.get_by_id(db, dataset_id)
 
     @staticmethod
     async def delete(db: AsyncSession, dataset_id: str) -> bool:

@@ -18,6 +18,7 @@ from backend.common.file_types import (
     TIF_EXTENSIONS,
     SIZE_THRESHOLD,
 )
+from .base import BaseRepository
 
 
 def _dataset_with_group_loader():
@@ -28,8 +29,11 @@ def _parent_wsi_loader():
     return selectinload(WSISlide.parent_wsi).selectinload(WSISlide.dataset)
 
 
-class WSIRepository:
+class WSIRepository(BaseRepository[WSISlide]):
     """Repository for WSI Slide operations"""
+
+    model = WSISlide
+    pk_field = "wsi_id"
 
     @staticmethod
     def _has_elevated_dataset_access(
@@ -238,21 +242,6 @@ class WSIRepository:
             query = query.limit(limit)
         result = await db.execute(query)
         return result.scalars().all()
-
-    @staticmethod
-    async def create(db: AsyncSession, wsi_data: Dict[str, Any]) -> WSISlide:
-        """Create a new WSI slide record"""
-        wsi = WSISlide(**wsi_data)
-        db.add(wsi)
-        await db.flush()
-        await db.refresh(wsi)
-        return wsi
-
-    @staticmethod
-    async def get_by_id(db: AsyncSession, wsi_id: str) -> Optional[WSISlide]:
-        """Get WSI by wsi_id"""
-        result = await db.execute(select(WSISlide).where(WSISlide.wsi_id == wsi_id))
-        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_all(
