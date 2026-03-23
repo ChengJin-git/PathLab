@@ -293,6 +293,8 @@ async def lifespan(app: FastAPI):
     training_rag_prewarm_task: asyncio.Task[None] | None = None
     chat_context_prewarm_task: asyncio.Task[None] | None = None
 
+    Config.ensure_directories()
+
     logger.info("Initializing database...")
     await init_db()
     logger.info("✓ Database initialized")
@@ -438,6 +440,15 @@ async def lifespan(app: FastAPI):
     )
     startup_prewarm_local_asr()
 
+    app.state.ai_client = httpx.AsyncClient(
+        base_url=AI_SERVICE_URL,
+        timeout=httpx.Timeout(connect=5.0, read=300.0, write=30.0, pool=5.0),
+    )
+    app.state.preprocessing_client = httpx.AsyncClient(
+        base_url=PREPROCESSING_SERVICE_URL,
+        timeout=httpx.Timeout(connect=5.0, read=120.0, write=30.0, pool=5.0),
+    )
+
     try:
         yield  # Application runs here
     finally:
@@ -457,6 +468,9 @@ async def lifespan(app: FastAPI):
             chat_context_prewarm_task.cancel()
             with suppress(asyncio.CancelledError):
                 await chat_context_prewarm_task
+
+        await app.state.ai_client.aclose()
+        await app.state.preprocessing_client.aclose()
 
         logger.info("Shutting down task queue manager...")
         await shutdown_task_queue()

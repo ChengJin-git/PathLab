@@ -46,6 +46,7 @@ from backend.auth.dependencies import (
     get_user_id_filter,
     get_user_from_header_or_param,
 )
+from backend.common.permissions import require_conversation_access
 from backend.common.chat_context_cache import (
     get_cached_context_kwargs_admin,
     get_cached_context_kwargs,
@@ -839,23 +840,6 @@ def _is_context_length_exceeded_error(exc: Exception) -> bool:
 def _should_fallback_from_local_vllm_error(exc: Exception) -> bool:
     """Return True when a local vLLM upstream request failure should trigger remote fallback."""
     return isinstance(exc, httpx.HTTPError)
-
-
-async def _require_conversation_write_access(
-    db: AsyncSession,
-    conversation_id: str,
-    user: User,
-) -> None:
-    """Ensure the current user can persist data into the target conversation."""
-    conversation = await ChatRepository.get_conversation(db, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    if not check_data_ownership(str(conversation.user_id), user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to modify this conversation",
-        )
 
 
 def _is_segmentation_task(task_type: str | None) -> bool:
@@ -3724,16 +3708,7 @@ async def get_conversation(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a conversation with all messages. Users can only view their own conversations."""
-    conversation = await ChatRepository.get_conversation(db, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # Check ownership
-    if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to view this conversation",
-        )
+    conversation = await require_conversation_access(db, conversation_id, user)
 
     # Sort messages by id to ensure chronological order (defense-in-depth)
     sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
@@ -3750,16 +3725,7 @@ async def delete_conversation(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a conversation. Users can only delete their own conversations."""
-    conversation = await ChatRepository.get_conversation(db, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    # Check ownership
-    if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to delete this conversation",
-        )
+    await require_conversation_access(db, conversation_id, user)
 
     await cleanup_conversation_chat_patch_tasks(conversation_id)
     success = await ChatRepository.delete_conversation(db, conversation_id)
@@ -3778,15 +3744,7 @@ async def update_message(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a message's content. Used to persist task submission status."""
-    # First check conversation exists and user owns it
-    conversation = await ChatRepository.get_conversation(db, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to update this message"
-        )
+    await require_conversation_access(db, conversation_id, user)
 
     # Update the message
     message = await ChatRepository.update_message(
@@ -3811,16 +3769,7 @@ async def delete_messages_from(
     Used for conversation branching - allows users to delete from a point and restart.
     Users can only delete messages in their own conversations.
     """
-    # First check conversation exists and user owns it
-    conversation = await ChatRepository.get_conversation(db, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to delete messages in this conversation",
-        )
+    await require_conversation_access(db, conversation_id, user)
 
     await cleanup_chat_patch_tasks_from_message(conversation_id, message_id)
     # Delete the message and all subsequent messages
@@ -3845,16 +3794,7 @@ async def add_message(
     db: AsyncSession = Depends(get_db),
 ):
     """Add a message to a conversation. Used to persist task submission success messages."""
-    # First check conversation exists and user owns it
-    conversation = await ChatRepository.get_conversation(db, conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-
-    if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to add messages to this conversation",
-        )
+    await require_conversation_access(db, conversation_id, user)
 
     # Add the message
     message_data = {
@@ -3874,14 +3814,7 @@ async def start_chat_patch_inference(
     db: AsyncSession = Depends(get_db),
 ):
     """Start a temporary chat-only patch inference task."""
-    conversation = await ChatRepository.get_conversation(db, req.conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to modify this conversation",
-        )
+    conversation = await require_conversation_access(db, req.conversation_id, user)
     if not any(message.id == req.message_id for message in conversation.messages):
         raise HTTPException(status_code=404, detail="Message not found")
 
@@ -3924,14 +3857,7 @@ async def cancel_chat_patch_inference_on_exit(
     db: AsyncSession = Depends(get_db),
 ):
     """Cancel active chat image inference for a message and persist a localized cancel reply."""
-    conversation = await ChatRepository.get_conversation(db, req.conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    if not check_data_ownership(conversation.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to modify this conversation",
-        )
+    conversation = await require_conversation_access(db, req.conversation_id, user)
 
     target_message = next(
         (message for message in conversation.messages if message.id == req.message_id),
@@ -4021,7 +3947,7 @@ async def chat_with_ai(
     ui_lang = _LANG_HEADER_MAP.get(ui_lang_header) if ui_lang_header else None
 
     if req.conversation_id:
-        await _require_conversation_write_access(db, req.conversation_id, user)
+        await require_conversation_access(db, req.conversation_id, user)
 
     # Resolve current datetime in the user's browser timezone (falls back to UTC).
     tz_header = request.headers.get("X-Timezone", "").strip()
