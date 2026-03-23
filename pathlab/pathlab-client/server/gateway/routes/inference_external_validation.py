@@ -39,6 +39,7 @@ from .analysis_helpers import (
     _split_case_attention_to_slides_static,
 )
 from .analysis_state import get_analysis_state
+from .inference_base import resolve_device
 from .inference_patch_segmentation import (
     _build_segmentation_per_image_metrics,
     _get_seg_grad_cam_target_layers,
@@ -82,11 +83,7 @@ async def _run_external_validation_patch_segmentation(
     )
 
     uploads_dir = Config.get_uploads_dir()
-    device = (
-        assigned_device
-        if assigned_device
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = resolve_device(assigned_device)
 
     try:
         # 1. Load model checkpoint and rebuild model
@@ -571,11 +568,7 @@ async def _run_external_validation_patch_classification(
     )
 
     uploads_dir = Config.get_uploads_dir()
-    device = (
-        assigned_device
-        if assigned_device
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = resolve_device(assigned_device)
 
     try:
         # Load model checkpoint(s)
@@ -1057,11 +1050,7 @@ async def _run_external_validation(
         # CPU-intensive (pickle deserialization) and would block the event loop.
         model_dir = uploads_dir / "models" / model_id
         config_path = model_dir / "config.json"
-        device = (
-            assigned_device
-            if assigned_device
-            else ("cuda" if torch.cuda.is_available() else "cpu")
-        )
+        device = resolve_device(assigned_device)
 
         def _sync_load_models():
             """Load model config and checkpoint(s). Runs in thread to avoid blocking event loop."""

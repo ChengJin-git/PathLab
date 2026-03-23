@@ -23,6 +23,7 @@ from .analysis_helpers import (
     _coerce_str_list,
     _normalize_label_names,
 )
+from .inference_base import resolve_device
 
 logger = logging.getLogger(__name__)
 
@@ -166,11 +167,7 @@ async def _run_inference_patch_segmentation(
         _coerce_str_list(task.classes or trained_model.classes or [])
     )
 
-    device = (
-        assigned_device
-        if assigned_device
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = resolve_device(assigned_device)
 
     logger.info(f"Loading segmentation model from {checkpoint_path}")
 

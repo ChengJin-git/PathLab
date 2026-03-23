@@ -21,6 +21,7 @@ from .analysis_helpers import (
     _coerce_str,
     _coerce_str_list,
 )
+from .inference_base import resolve_device, report_progress
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +109,7 @@ async def _run_inference_patch_classification(
     if not image_paths:
         raise HTTPException(status_code=400, detail="No image paths found")
 
-    # Load checkpoint
-    device = (
-        assigned_device
-        if assigned_device
-        else ("cuda" if torch.cuda.is_available() else "cpu")
-    )
+    device = resolve_device(assigned_device)
     checkpoint = torch.load(ckpt_path, map_location=device)
 
     extractor_name = checkpoint.get(
@@ -176,8 +172,7 @@ async def _run_inference_patch_classification(
     with torch.set_grad_enabled(use_gradients):
         for idx, (wsi_id, img_path) in enumerate(image_paths.items()):
             # Update progress (0.1 to 0.9 range, leaving room for setup/cleanup)
-            if progress_callback and total_items > 0:
-                await progress_callback(0.1 + 0.8 * (idx / total_items))
+            await report_progress(progress_callback, idx, total_items)
 
             try:
                 img = Image.open(img_path).convert("RGB")
