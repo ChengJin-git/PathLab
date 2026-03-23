@@ -57,9 +57,15 @@ export default function TaskListPage() {
   const [sortBy, setSortBy] = useState<'created' | 'updated' | 'name'>('updated')
   const [searchQuery, setSearchQuery] = useState('')
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('')
-  const [currentPage, setCurrentPage] = useState(1)
-  const [pageInput, setPageInput] = useState('1')
-  const [itemsPerPage, setItemsPerPage] = useState(5)
+  const [currentPage, setCurrentPage] = useState(() => {
+    const stored = sessionStorage.getItem('pathlab.taskList.page')
+    return stored ? Math.max(1, parseInt(stored, 10)) : 1
+  })
+  const [pageInput, setPageInput] = useState(() => sessionStorage.getItem('pathlab.taskList.page') || '1')
+  const [itemsPerPage, setItemsPerPage] = useState(() => {
+    const stored = sessionStorage.getItem('pathlab.taskList.pageSize')
+    return stored ? parseInt(stored, 10) : 5
+  })
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [deleteMode, setDeleteMode] = useState<'standard' | 'complete'>('standard')
@@ -206,6 +212,14 @@ export default function TaskListPage() {
     cancelled: stats.cancelled + syntheticStats.cancelled,
   }
   const uiTotalCount = totalCount + syntheticStats.total
+
+  useEffect(() => {
+    sessionStorage.setItem('pathlab.taskList.page', String(currentPage))
+  }, [currentPage])
+
+  useEffect(() => {
+    sessionStorage.setItem('pathlab.taskList.pageSize', String(itemsPerPage))
+  }, [itemsPerPage])
 
   useEffect(() => {
     setSelectedTasks([])
