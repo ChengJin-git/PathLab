@@ -433,7 +433,7 @@ describe('apiFetchBlob', () => {
       blob: () => Promise.resolve(blob),
     } as unknown as Response)
     const result = await apiFetchBlob('http://api.local/file')
-    expect(result).toBeDefined()
+    expect(result).toBeInstanceOf(Blob)
   })
 
   it('throws ApiError on non-2xx status', async () => {

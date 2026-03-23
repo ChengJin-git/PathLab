@@ -947,6 +947,17 @@
       "getInsights": "Get Insights",
       "getInsightsDesc": "Review results, generate reports, and export findings."
     },
+    "fullProcess": {
+      "title": "Full Process Capabilities",
+      "step1Title": "Data Integration & Visualization",
+      "step1Desc": "Seamlessly manage and visualize multi-gigapixel whole slide images in real-time.",
+      "step2Title": "Intelligent AI Analysis Pipeline",
+      "step2Desc": "Powerful agentic AI orchestrates complex diagnostic workflows and deep learning models.",
+      "step3Title": "Automated Insights & Reporting",
+      "step3Desc": "Generate comprehensive clinical reports, charts, and actionable insights instantly.",
+      "step4Title": "Privacy-First Collaboration",
+      "step4Desc": "Built from the ground up to protect patient data and support secure institutional collaboration."
+    },
     "pricing": "Pricing",
     "pricingTitle": "Simple, transparent pricing",
     "individual": "Individual",

@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { useState, useEffect, useCallback } from 'react'
 import { X, UserPlus, Trash2, Search, Loader2, Users, Shield, ShieldCheck, User } from 'lucide-react'
+import { Tooltip } from '../ui/tooltip'
 import {
   listCollaborators,
   addCollaborator,
@@ -279,14 +280,15 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
                           </button>
                         </div>
                       ) : (
+                        <Tooltip content={t('annotation.collab.dialog.removeCollaborator')}>
                         <button
                           type="button"
                           onClick={() => setPendingRemoveUser(member.user_id)}
                           className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title={t('annotation.collab.dialog.removeCollaborator')}
                         >
                           <Trash2 className="w-4 h-4" />
                         </button>
+                        </Tooltip>
                       )
                     )}
                   </div>

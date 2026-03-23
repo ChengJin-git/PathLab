@@ -9,6 +9,7 @@ import { Upload, Microscope, Edit, Trash2, CheckCircle, X, Loader2, ChevronLeft,
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { Tooltip } from '../components/ui/tooltip'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
@@ -488,40 +489,65 @@ export default function ListPage() {
       t => t.type === 'delete_dataset' && t.status === 'success' && !completedDeleteTaskIdsRef.current.has(t.id)
     )
     if (justCompletedDeleteTasks.length === 0) return
+
+    // Collect names of deleted datasets for optimistic removal
+    const deletedNames = new Set(
+      justCompletedDeleteTasks.map(t => t.datasetName).filter(Boolean)
+    )
+
     for (const task of justCompletedDeleteTasks) {
       completedDeleteTaskIdsRef.current.add(task.id)
     }
+
+    // Optimistic update: immediately remove deleted datasets from all cached pages
+    if (deletedNames.size > 0) {
+      qc.setQueriesData<{ items?: DatasetSummary[]; total?: number }>(
+        { queryKey: ['page-datasets'] },
+        (oldData) => {
+          if (!oldData?.items) return oldData
+          const filtered = oldData.items.filter(
+            (d) => !deletedNames.has(d.dataset_name)
+          )
+          return {
+            ...oldData,
+            items: filtered,
+            total: Math.max(0, (oldData.total ?? 0) - (oldData.items.length - filtered.length))
+          }
+        }
+      )
+    }
+
+    // Also clean up pending delete overlays for these tasks
+    for (const task of justCompletedDeleteTasks) {
+      const rawTaskId = task.id.replace(/^delete_dataset_/, '')
+      if (pendingDeleteRef.current.has(rawTaskId)) {
+        pendingDeleteRef.current.delete(rawTaskId)
+        removeDeletingDatasetByTaskId(rawTaskId)
+      }
+    }
+
+    // Single background refetch to reconcile with server (e.g. fix total count, pagination)
     void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 2000)
-    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 6000)
-    setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 15000)
-  }, [tasks, qc])
+  }, [tasks, qc, removeDeletingDatasetByTaskId])
 
   useEffect(() => {
     if (pendingDeleteRef.current.size === 0) return
     const fetchedIds = new Set(
       (datasetsQuery.data?.items ?? []).map((d: DatasetSummary) => d.dataset_id).filter(Boolean)
     )
-    let hasStillPending = false
     for (const [taskId, datasetId] of pendingDeleteRef.current) {
       if (!fetchedIds.has(datasetId)) {
         pendingDeleteRef.current.delete(taskId)
         removeDeletingDatasetByTaskId(taskId)
-      } else {
-        hasStillPending = true
       }
     }
-    if (hasStillPending) {
-      const timer = setTimeout(() => void qc.invalidateQueries({ queryKey: ['page-datasets'] }), 5000)
-      return () => clearTimeout(timer)
-    }
-  }, [datasetsQuery.data, removeDeletingDatasetByTaskId, qc])
+  }, [datasetsQuery.data, removeDeletingDatasetByTaskId])
 
   useEffect(() => {
     if (selectedDatasetId) return
     const justCompleted = tasks.filter(
-      t => (t.type === 'upload' || t.type === 'batch_import') &&
+      t => (t.type === 'upload' || t.type === 'batch_import' || t.type === 'extraction') &&
         t.status === 'success' &&
         !completedUploadTaskIdsRef.current.has(t.id)
     )
@@ -529,8 +555,8 @@ export default function ListPage() {
     for (const task of justCompleted) {
       completedUploadTaskIdsRef.current.add(task.id)
     }
-    qc.removeQueries({ queryKey: ['page-datasets'] })
     setDatasetCurrentPage(1)
+    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
     void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
   }, [tasks, qc, selectedDatasetId])
 
@@ -1552,30 +1578,32 @@ export default function ListPage() {
 
                   <div className="flex shrink-0 items-center gap-2 sm:gap-3 self-start xl:ml-4 xl:self-center">
                     <div className="inline-flex items-center rounded-lg bg-slate-100 p-0.5 shadow-inner">
-                      <button
-                        type="button"
-                        onClick={() => { setDatasetViewMode('grid'); setDatasetCurrentPage(1) }}
-                        aria-label={t('listPage.view.iconView')}
-                        title={t('listPage.view.iconView')}
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'grid'
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                      >
-                        <LayoutGrid className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => { setDatasetViewMode('list'); setDatasetCurrentPage(1) }}
-                        aria-label={t('listPage.view.listView')}
-                        title={t('listPage.view.listView')}
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'list'
-                          ? 'bg-white text-slate-900 shadow-sm'
-                          : 'text-slate-500 hover:text-slate-700'
-                          }`}
-                      >
-                        <List className="h-3.5 w-3.5" />
-                      </button>
+                        <Tooltip content={t('listPage.view.iconView')}>
+                          <button
+                            type="button"
+                            onClick={() => { setDatasetViewMode('grid'); setDatasetCurrentPage(1) }}
+                            aria-label={t('listPage.view.iconView')}
+                            className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'grid'
+                              ? 'bg-white text-slate-900 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                              }`}
+                          >
+                            <LayoutGrid className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
+                        <Tooltip content={t('listPage.view.listView')}>
+                          <button
+                            type="button"
+                            onClick={() => { setDatasetViewMode('list'); setDatasetCurrentPage(1) }}
+                            aria-label={t('listPage.view.listView')}
+                            className={`inline-flex h-8 w-8 items-center justify-center rounded-md transition-all ${datasetViewMode === 'list'
+                              ? 'bg-white text-slate-900 shadow-sm'
+                              : 'text-slate-500 hover:text-slate-700'
+                              }`}
+                          >
+                            <List className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
                     </div>
 
                     <span className="inline-flex items-center rounded-full bg-slate-50 px-2.5 py-0.5 text-[11px] sm:text-xs font-medium text-slate-600 whitespace-nowrap">
@@ -1720,42 +1748,45 @@ export default function ListPage() {
                             </h3>
                               {dataset.can_delete && (
                                <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
-                                 <Button
-                                     variant="ghost"
-                                     size="icon"
-                                     className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
-                                     onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                     title={t('listPage.exportLabels')}
-                                     disabled={exporting}
-                                   >
-                                     {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                     ) : (
-                                       <Download className="w-3.5 h-3.5" />
-                                     )}
-                                   </Button>
-                                  <Button
-                                   variant="ghost"
-                                   size="icon"
-                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                   onClick={(e) => handleEditDatasetClick(e, dataset)}
-                  title={t('listPage.editDataset')}
-                                >
-                                    <Pencil className="w-3.5 h-3.5" />
-                                  </Button>
-                                  <Button
-                                   variant="ghost"
-                                   size="icon"
-                                   className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                   onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                   title={t('listPage.deleteDataset')}
-                                 >
-                                   <Trash2 className="w-3.5 h-3.5" />
-                                 </Button>
+                                   <Tooltip content={t('listPage.exportLabels')}>
+                                     <Button
+                                       variant="ghost"
+                                       size="icon"
+                                       className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
+                                       onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                       disabled={exporting}
+                                     >
+                                       {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                       ) : (
+                                         <Download className="w-3.5 h-3.5" />
+                                       )}
+                                     </Button>
+                                   </Tooltip>
+                                  <Tooltip content={t('listPage.editDataset')}>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
+                                      onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </Tooltip>
+                                  <Tooltip content={t('listPage.deleteDataset')}>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
+                                      onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  </Tooltip>
                               </div>
-                            )}
-                          </div>
-                        )}
+                                          )}
+                                        </div>
+                                    )}
                       </div>
                       <div className="flex items-center gap-2 mb-3 sm:mb-4 flex-wrap">
                         <p className="text-xs sm:text-sm text-slate-500 font-medium whitespace-nowrap">
@@ -1955,38 +1986,41 @@ export default function ListPage() {
                             <div className="hidden xl:flex items-center gap-1">
                               {dataset.can_delete && (
                                  <>
-                                   <Button
-                                     variant="ghost"
-                                     size="icon"
-                                     className="h-8 w-8 text-slate-400 hover:text-green-600"
-                                     onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                     title={t('listPage.exportLabels')}
-                                     disabled={exporting}
-                                   >
-                                     {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                       <Loader2 className="w-4 h-4 animate-spin" />
-                                     ) : (
-                                       <Download className="w-4 h-4" />
-                                     )}
-                                   </Button>
-                                   <Button
-                                     variant="ghost"
-                                     size="icon"
-                                     className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                     onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                     title={t('listPage.editDataset')}
-                                    >
-                                      <Pencil className="w-4 h-4" />
-                                    </Button>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                      onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                      title={t('listPage.deleteDataset')}
-                                    >
-                                      <Trash2 className="w-4 h-4" />
-                                    </Button>
+                                   <Tooltip content={t('listPage.exportLabels')}>
+                                     <Button
+                                       variant="ghost"
+                                       size="icon"
+                                       className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                       onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                       disabled={exporting}
+                                     >
+                                       {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                         <Loader2 className="w-4 h-4 animate-spin" />
+                                       ) : (
+                                         <Download className="w-4 h-4" />
+                                       )}
+                                     </Button>
+                                   </Tooltip>
+                                   <Tooltip content={t('listPage.editDataset')}>
+                                     <Button
+                                       variant="ghost"
+                                       size="icon"
+                                       className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                       onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                     >
+                                       <Pencil className="w-4 h-4" />
+                                     </Button>
+                                   </Tooltip>
+                                    <Tooltip content={t('listPage.deleteDataset')}>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                        onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                      >
+                                        <Trash2 className="w-4 h-4" />
+                                      </Button>
+                                    </Tooltip>
                                   </>
                                 )}
                                <ChevronRight className="w-5 h-5 text-slate-300 group-hover:text-slate-500 transition-colors" />
@@ -2016,38 +2050,41 @@ export default function ListPage() {
                         <div className="flex items-center gap-1">
                            {dataset.can_delete && (
                              <>
-                               <Button
-                                 variant="ghost"
-                                 size="icon"
-                                 className="h-8 w-8 text-slate-400 hover:text-green-600"
-                                 onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                 title={t('listPage.exportLabels')}
-                                 disabled={exporting}
-                               >
-                                 {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                   <Loader2 className="w-4 h-4 animate-spin" />
-                                 ) : (
-                                   <Download className="w-4 h-4" />
-                                 )}
-                               </Button>
-                               <Button
-                                 variant="ghost"
-                                 size="icon"
-                                 className="h-8 w-8 text-slate-400 hover:text-blue-600"
-                                 onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                 title={t('listPage.editDataset')}
-                               >
-                                  <Pencil className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-8 w-8 text-slate-400 hover:text-red-600"
-                                  onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                  title={t('listPage.deleteDataset')}
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
+                               <Tooltip content={t('listPage.exportLabels')}>
+                                 <Button
+                                   variant="ghost"
+                                   size="icon"
+                                   className="h-8 w-8 text-slate-400 hover:text-green-600"
+                                   onClick={(e) => handleExportLabelsClick(e, dataset)}
+                                   disabled={exporting}
+                                 >
+                                   {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
+                                     <Loader2 className="w-4 h-4 animate-spin" />
+                                   ) : (
+                                     <Download className="w-4 h-4" />
+                                   )}
+                                 </Button>
+                               </Tooltip>
+                               <Tooltip content={t('listPage.editDataset')}>
+                                 <Button
+                                   variant="ghost"
+                                   size="icon"
+                                   className="h-8 w-8 text-slate-400 hover:text-blue-600"
+                                   onClick={(e) => handleEditDatasetClick(e, dataset)}
+                                 >
+                                   <Pencil className="w-4 h-4" />
+                                 </Button>
+                               </Tooltip>
+                                <Tooltip content={t('listPage.deleteDataset')}>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-slate-400 hover:text-red-600"
+                                    onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </Tooltip>
                               </>
                             )}
                          </div>
@@ -2518,19 +2555,20 @@ export default function ListPage() {
                               </td>
                               <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
                                 <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
-                                  <Link
-                                    to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
-                                    state={{
-                                      fromDataset: true,
-                                      datasetId: selectedDatasetId,
-                                      datasetName: selectedDatasetName
-                                    }}
-                                    title={t('listPage.viewFile')}
-                                  >
-                                    <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
-                                  </Link>
-                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title={t('listPage.editMetadata')} onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
-                                  {it.can_delete && <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title={t('listPage.deleteFile')} onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label ?? '', it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>}
+                                  <Tooltip content={t('listPage.viewFile')}>
+                                    <Link
+                                      to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                      state={{
+                                        fromDataset: true,
+                                        datasetId: selectedDatasetId,
+                                        datasetName: selectedDatasetName
+                                      }}
+                                    >
+                                      <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button>
+                                    </Link>
+                                  </Tooltip>
+                                  {it.can_delete && <Tooltip content={t('listPage.editMetadata')}><Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button></Tooltip>}
+                                  {it.can_delete && <Tooltip content={t('listPage.deleteFile')}><Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label ?? '', it.original_filename); }}><Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" /></Button></Tooltip>}
                                 </div>
                               </td>
                             </tr>
@@ -2681,36 +2719,37 @@ export default function ListPage() {
                                       <span className="text-xs sm:text-sm font-medium text-gray-700 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                       <span className="text-[10px] sm:text-xs text-gray-400 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                                        {it.parent_wsi_id && (
-                                         <Link
-                                           to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                           state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                           className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
-                                           title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
-                                           onClick={(e) => e.stopPropagation()}
-                                         >
-                                           <div className="flex items-center gap-1 flex-wrap">
-                                             <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
-                                               {t('annotation.croppedFrom')}
-                                             </span>
-                                             {it.parent_wsi_name && it.parent_dataset_name ? (
-                                               <>
-                                                 <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
-                                                   <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
-                                                   <span className="truncate">{it.parent_dataset_name}</span>
-                                                 </span>
-                                                 <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
-                                                   <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
-                                                   <span className="truncate">{it.parent_wsi_name}</span>
-                                                 </span>
-                                               </>
-                                             ) : (
-                                               <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
-                                                 <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
-                                                 {it.parent_wsi_id.slice(0, 8)}…
+                                         <Tooltip content={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}>
+                                           <Link
+                                             to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                             state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                             className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
+                                             onClick={(e) => e.stopPropagation()}
+                                           >
+                                             <div className="flex items-center gap-1 flex-wrap">
+                                               <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
+                                                 {t('annotation.croppedFrom')}
                                                </span>
-                                             )}
-                                           </div>
-                                         </Link>
+                                               {it.parent_wsi_name && it.parent_dataset_name ? (
+                                                 <>
+                                                   <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-orange-50 text-orange-700 border border-orange-200/60 transition-colors max-w-[100px] sm:max-w-[150px] truncate" title={it.parent_dataset_name}>
+                                                     <Database className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                                     <span className="truncate">{it.parent_dataset_name}</span>
+                                                   </span>
+                                                   <span className="inline-flex flex-shrink-0 items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors max-w-[120px] sm:max-w-[200px] truncate" title={it.parent_wsi_name}>
+                                                     <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70 flex-shrink-0" />
+                                                     <span className="truncate">{it.parent_wsi_name}</span>
+                                                   </span>
+                                                 </>
+                                               ) : (
+                                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded-sm text-[10px] sm:text-[11px] font-medium bg-blue-50 text-blue-700 border border-blue-200/60 group-hover/link:bg-blue-100 transition-colors">
+                                                   <FileImage className="w-2.5 h-2.5 sm:w-3 sm:h-3 mr-1 inline opacity-70" />
+                                                   {it.parent_wsi_id.slice(0, 8)}…
+                                                 </span>
+                                               )}
+                                             </div>
+                                           </Link>
+                                         </Tooltip>
                                        )}
                                     </div>
                                   </td>
@@ -2763,19 +2802,20 @@ export default function ListPage() {
                                   </td>
                                   <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
                                     <div className="flex items-center justify-end gap-1 sm:gap-2 opacity-60 group-hover:opacity-100 transition-opacity">
-                                      <Link
-                                        to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
-                                        state={{
-                                          fromDataset: true,
-                                          datasetId: selectedDatasetId,
-                                          datasetName: selectedDatasetName
-                                        }}
-                                        title={t('listPage.viewFile')}
-                                      >
-                                        <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
-                                      </Link>
-                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" title={t('listPage.editMetadata')} onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
-                                      {it.can_delete && <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" title={t('listPage.deleteFile')} onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label ?? '', it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button>}
+                                      <Tooltip content={t('listPage.viewFile')}>
+                                        <Link
+                                          to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                          state={{
+                                            fromDataset: true,
+                                            datasetId: selectedDatasetId,
+                                            datasetName: selectedDatasetName
+                                          }}
+                                        >
+                                          <Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"><Microscope className="w-3 h-3 sm:w-4 sm:h-4" /></Button>
+                                        </Link>
+                                      </Tooltip>
+                                      {it.can_delete && <Tooltip content={t('listPage.editMetadata')}><Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg" onClick={(e) => { e.preventDefault(); handleEditClick(it); }}><Edit className="w-3 h-3 sm:w-4 sm:h-4" /></Button></Tooltip>}
+                                      {it.can_delete && <Tooltip content={t('listPage.deleteFile')}><Button variant="ghost" size="icon" className="h-6 w-6 sm:h-7 sm:w-7 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg" onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label ?? '', it.original_filename); }}><Trash2 className="w-3 h-3 sm:w-4 sm:h-4" /></Button></Tooltip>}
                                     </div>
                                   </td>
                                 </tr>
@@ -2806,13 +2846,13 @@ export default function ListPage() {
                                 <span className="text-sm sm:text-base font-semibold text-gray-900 truncate max-w-[150px] sm:max-w-[200px]" title={it.wsi_id}>{it.wsi_id}</span>
                                 <span className="text-[10px] sm:text-sm text-gray-500 mt-0.5 truncate max-w-[150px] sm:max-w-[300px]" title={it.original_filename}>{it.original_filename}</span>
                                    {it.parent_wsi_id && (
-                                     <Link
-                                       to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
-                                       state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
-                                       className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
-                                       title={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}
-                                       onClick={(e) => e.stopPropagation()}
-                                     >
+                                     <Tooltip content={it.parent_wsi_name && it.parent_dataset_name ? t('annotation.croppedFromDataset', { datasetName: it.parent_dataset_name, slideName: it.parent_wsi_name }) : t('annotation.viewSource')}>
+                                       <Link
+                                         to={`/wsi/${encodeURIComponent(it.parent_wsi_id)}`}
+                                         state={{ fromDataset: true, datasetId: selectedDatasetId, datasetName: selectedDatasetName }}
+                                         className="group/link flex flex-col sm:flex-row items-start sm:items-center gap-1 sm:gap-1.5 mt-1"
+                                         onClick={(e) => e.stopPropagation()}
+                                       >
                                        <div className="flex items-center gap-1 flex-wrap">
                                          <span className="text-[10px] sm:text-[11px] font-medium text-gray-500 whitespace-nowrap bg-gray-100/80 px-1.5 py-0.5 rounded-sm border border-gray-200">
                                            {t('annotation.croppedFrom')}
@@ -2835,9 +2875,10 @@ export default function ListPage() {
                                            </span>
                                          )}
                                        </div>
-                                     </Link>
-                                   )}
-                                {it.case_id && !isPatchDataset && (
+                                      </Link>
+                                      </Tooltip>
+                                    )}
+                                 {it.case_id && !isPatchDataset && (
                                    <span className="text-[10px] sm:text-xs text-blue-600 mt-0.5 truncate max-w-[150px] sm:max-w-[200px]" title={t('listPage.caseLabel', { caseId: it.case_id })}>
                                      {t('listPage.caseLabel', { caseId: it.case_id })}
                                   </span>
@@ -2914,42 +2955,45 @@ export default function ListPage() {
                             </td>
                             <td className="px-3 sm:px-6 py-4 sm:py-5 text-right">
                               <div className="flex items-center justify-end gap-1 sm:gap-3 sm:opacity-60 group-hover:opacity-100 transition-opacity">
-                                <Link
-                                  to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
-                                  state={{
-                                    fromDataset: true,
-                                    datasetId: selectedDatasetId,
-                                    datasetName: selectedDatasetName
-                                  }}
-                                  title={t('listPage.viewFile')}
-                                >
-                                  <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
-                                    <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                                  </Button>
-                                </Link>
+                                <Tooltip content={t('listPage.viewFile')}>
+                                  <Link
+                                    to={`/wsi/${encodeURIComponent(it.wsi_id)}`}
+                                    state={{
+                                      fromDataset: true,
+                                      datasetId: selectedDatasetId,
+                                      datasetName: selectedDatasetName
+                                    }}
+                                  >
+                                    <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg">
+                                      <Microscope className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                    </Button>
+                                  </Link>
+                                </Tooltip>
 
                                 {it.can_delete && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
-                                    title={t('listPage.editMetadata')}
-                                    onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
-                                  >
-                                    <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                                  </Button>
+                                  <Tooltip content={t('listPage.editMetadata')}>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg"
+                                      onClick={(e) => { e.preventDefault(); handleEditClick(it); }}
+                                    >
+                                      <Edit className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                    </Button>
+                                  </Tooltip>
                                 )}
 
                                 {it.can_delete && (
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
-                                    title={t('listPage.deleteFile')}
-                                    onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label ?? '', it.original_filename); }}
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
-                                  </Button>
+                                  <Tooltip content={t('listPage.deleteFile')}>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7 sm:h-9 sm:w-9 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                                      onClick={(e) => { e.preventDefault(); handleDeleteClick(it.wsi_id, it.label ?? '', it.original_filename); }}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5 sm:w-5 sm:h-5" />
+                                    </Button>
+                                  </Tooltip>
                                 )}
                               </div>
                             </td>

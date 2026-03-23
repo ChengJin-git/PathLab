@@ -33,6 +33,7 @@ from backend.ai.utils.vram_guard import (
     check_vram_before_batch_processing,
     VRAMInsufficientError,
     VRAMExceededError,
+    VRAM_WAIT_POLL_INTERVAL_SEC,
 )
 from backend.ai.schemas import (
     TaskType,
@@ -123,19 +124,49 @@ class WSIClassificationTrainer(BaseTrainer):
         Args:
             session_maker: Factory to create short-lived DB sessions (replaces db parameter)
         """
-        # VRAM Protection: Check if GPU has enough memory BEFORE loading the model
-        # This prevents system crashes from loading models that are too large
         device = torch.device(self.device)
         if device.type == "cuda":
-            try:
-                await asyncio.to_thread(
-                    check_vram_before_model_load,
-                    model_name=extractor_name,
-                    device=device,
-                    batch_size=batch_size,
-                )
-            except VRAMInsufficientError as e:
-                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
+            _waited = 0
+            _vram_wait_max = Config.get_task_timeout()
+            while True:
+                try:
+                    await asyncio.to_thread(
+                        check_vram_before_model_load,
+                        model_name=extractor_name,
+                        device=device,
+                        batch_size=batch_size,
+                    )
+                    break
+                except VRAMInsufficientError as e:
+                    if _waited >= _vram_wait_max:
+                        raise RuntimeError(
+                            f"VRAM protection triggered: {e.message}"
+                        ) from e
+                    if is_task_cancelled(self.task_id):
+                        raise TrainingCancelledException(
+                            "Feature extraction cancelled while waiting for VRAM"
+                        )
+                    if is_permission_revoked(self.task_id):
+                        raise PermissionRevokedException(
+                            "Feature extraction stopped while waiting for VRAM: permission revoked"
+                        )
+                    await logger.warning(
+                        f"VRAM insufficient for '{extractor_name}' "
+                        f"(need {e.required_vram_mb:.0f} MB, free {e.available_vram_mb:.0f} MB / "
+                        f"{e.total_vram_mb:.0f} MB total). "
+                        f"Retrying in {VRAM_WAIT_POLL_INTERVAL_SEC}s "
+                        f"(waited {_waited}s / max {_vram_wait_max}s)...",
+                        metadata={
+                            "model_name": extractor_name,
+                            "required_mb": e.required_vram_mb,
+                            "available_mb": e.available_vram_mb,
+                            "total_mb": e.total_vram_mb,
+                            "waited_sec": _waited,
+                            "max_wait_sec": _vram_wait_max,
+                        },
+                    )
+                    await asyncio.sleep(VRAM_WAIT_POLL_INTERVAL_SEC)
+                    _waited += VRAM_WAIT_POLL_INTERVAL_SEC
 
         # Build extractor once and reuse (blocking: model download + GPU transfer)
         def _load_extractor():
@@ -617,6 +648,18 @@ class WSIClassificationTrainer(BaseTrainer):
                 raise PermissionRevokedException(
                     "Feature extraction stopped: permission revoked by admin"
                 )
+
+            # Guard: skip batches where all patches failed to load.
+            # _collate_skip_failed_patches returns torch.empty(0, 3, H, W) for
+            # all-failed batches. Passing a zero-element tensor to ViT-based
+            # extractors triggers "cannot reshape tensor of 0 elements into shape
+            # [0, -1, D]" because x.view(B, -1, C) is ambiguous when B=0.
+            if imgs.numel() == 0:
+                _log.warning(
+                    f"[FeatureExtract] Batch {batch_count}/{total_batches}: all patches failed "
+                    f"to load (empty batch), skipping"
+                )
+                continue
 
             # Apply inference_mode only during the actual computation
             with torch.inference_mode():

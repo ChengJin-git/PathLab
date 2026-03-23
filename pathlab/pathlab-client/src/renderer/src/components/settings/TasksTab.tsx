@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Layers, RefreshCw, Minus, Plus, CheckCircle, Cpu, AlertCircle } from 'lucide-react'
 import { Card } from '../ui/card'
+import { Tooltip } from '../ui/tooltip'
 import { QueueStatus, getQueueStatus, updateQueueConfig, getQueueConfig } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
 
@@ -118,14 +119,16 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                 </span>
               </div>
             )}
-            <button
-              onClick={loadQueueStatus}
-              disabled={loadingQueue}
-              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-              title={t('settings.tasksTab.refreshQueueStatus')}
-            >
-              <RefreshCw className={`w-4 h-4 ${loadingQueue ? 'animate-spin' : ''}`} />
-            </button>
+            <Tooltip content={t('settings.tasksTab.refreshQueueStatus')}>
+              <button
+                type="button"
+                onClick={loadQueueStatus}
+                disabled={loadingQueue}
+                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <RefreshCw className={`w-4 h-4 ${loadingQueue ? 'animate-spin' : ''}`} />
+              </button>
+            </Tooltip>
           </div>
         </div>
 
@@ -188,14 +191,16 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                 <div className="flex flex-col gap-2">
                   <div className="flex items-center w-full">
                     <div className={`flex items-center bg-white border border-gray-300 rounded-lg overflow-hidden shadow-sm transition-colors w-full ${isSingleGPU ? 'opacity-50 cursor-not-allowed' : 'hover:border-primary-400'}`}>
-                      <button
-                        onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
-                        disabled={isSingleGPU}
-                        className={`p-2.5 text-gray-600 transition-colors border-r border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
-                        title={isSingleGPU ? t('settings.tasksTab.disabledSingleGPU') : t('settings.tasksTab.decrease')}
-                      >
-                        <Minus className="w-4 h-4" />
-                      </button>
+                      <Tooltip content={isSingleGPU ? t('settings.tasksTab.disabledSingleGPU') : t('settings.tasksTab.decrease')}>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateMaxConcurrent(Math.max(1, queueStatus.max_concurrent - 1))}
+                          disabled={isSingleGPU}
+                          className={`p-2.5 text-gray-600 transition-colors border-r border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
+                        >
+                          <Minus className="w-4 h-4" />
+                        </button>
+                      </Tooltip>
                       <input
                         type="number"
                         min="1"
@@ -210,14 +215,16 @@ export function TasksTab({ showConfirmDialog, closeConfirmDialog }: TasksTabProp
                         }}
                         className={`flex-1 py-1.5 text-center font-bold text-gray-900 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none bg-transparent text-sm ${isSingleGPU ? 'cursor-not-allowed' : ''}`}
                       />
-                      <button
-                        onClick={() => handleUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
-                        disabled={isSingleGPU}
-                        className={`p-2.5 text-gray-600 transition-colors border-l border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
-                        title={isSingleGPU ? t('settings.tasksTab.disabledSingleGPU') : t('settings.tasksTab.increase')}
-                      >
-                        <Plus className="w-4 h-4" />
-                      </button>
+                      <Tooltip content={isSingleGPU ? t('settings.tasksTab.disabledSingleGPU') : t('settings.tasksTab.increase')}>
+                        <button
+                          type="button"
+                          onClick={() => handleUpdateMaxConcurrent(Math.min(10, queueStatus.max_concurrent + 1))}
+                          disabled={isSingleGPU}
+                          className={`p-2.5 text-gray-600 transition-colors border-l border-gray-200 flex-shrink-0 ${isSingleGPU ? 'cursor-not-allowed' : 'hover:bg-gray-50 active:bg-gray-100'}`}
+                        >
+                          <Plus className="w-4 h-4" />
+                        </button>
+                      </Tooltip>
                     </div>
                   </div>
                   {isSingleGPU ? (

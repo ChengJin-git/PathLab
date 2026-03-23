@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Globe, Check } from 'lucide-react'
+import { Tooltip } from '../ui/tooltip'
 import { supportedLanguages, changeLanguage, SupportedLanguage } from '../../i18n'
 import { Select } from '../ui/select'
 
@@ -37,13 +38,14 @@ export function LanguageSwitcher({ className, variant = 'dropdown' }: LanguageSw
   if (variant === 'icon') {
     return (
       <div className={`relative ${className || ''}`} ref={containerRef}>
-        <button
-          onClick={() => setOpen(prev => !prev)}
-          className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
-          title={currentLang.nativeName}
-        >
-          <Globe className="w-5 h-5" />
-        </button>
+        <Tooltip content={currentLang.nativeName}>
+          <button
+            onClick={() => setOpen(prev => !prev)}
+            className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
+          >
+            <Globe className="w-5 h-5" />
+          </button>
+        </Tooltip>
         {open && (
           <div className="absolute right-0 top-full mt-1 min-w-[160px] bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50">
             {supportedLanguages.map((lang) => (

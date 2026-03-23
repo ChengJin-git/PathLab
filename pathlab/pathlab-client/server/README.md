@@ -100,7 +100,7 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 pip install -r server/requirements-test.txt
 ```
 
-当前后端测试文件（5 个测试文件，116 个常规测试 + ~144 个预训练模型测试）：
+当前后端测试文件（10 个测试文件，116 个常规测试 + ~144 个预训练模型测试；其中 5 个为权限专项测试）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
@@ -109,6 +109,11 @@ pip install -r server/requirements-test.txt
 | `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
 | `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
 | `tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
+| `tests/test_permission_logic.py` | — | 权限判断核心逻辑（数据集 / WSI 访问层次规则）|
+| `tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归（GPU grant、shared annotation、个人草稿）|
+| `tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证（in-process revoke、GPU 路径、分析提交 403）|
+| `tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试（CSV 上传路由 guest 可用性等）|
+| `tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
 
 **测试设计要点**
 

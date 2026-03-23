@@ -57,10 +57,11 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **34 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **39 个路由模块文件**（不含 `__init__.py`）。
 
 除了上面 17 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
+- 推理实现：`inference_external_validation.py`、`inference_wsi_survival.py`、`inference_patch_segmentation.py`、`inference_patch_classification.py`、`inference_wsi_classification.py`（各推理路径的实现逻辑，由 `results` router 调用）
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
 - 分析辅助：`analysis_helpers.py`、`analysis_metrics.py`、`analysis_state.py`
 - 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`、`chat_intent_policy.py`
@@ -113,6 +114,22 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - `/images`、`/assets` → 当前前端构建产物目录（如果存在）
 
 这意味着浏览器部署模式下，Gateway 既提供 API，也可以直接为前端构建产物提供静态资源入口。
+
+## Gateway 顶层模块
+
+`server/gateway/` 目录除 `routes/` 子目录外，当前还包含以下顶层 Python 模块：
+
+| 模块 | 说明 |
+|------|------|
+| `main.py` | FastAPI 应用入口，负责生命周期管理与 router 注册 |
+| `dependencies.py` | 公共 FastAPI 依赖（日志、工具函数等） |
+| `models.py` | Gateway 层 Pydantic 请求 / 响应模型 |
+| `utils.py` | 业务工具函数（segmentation contract 校验等） |
+| `pipeline.py` | AI 推理流水线辅助逻辑 |
+| `task_queue.py` | 集中式 GPU 任务队列管理（最大并发控制、FIFO 调度、断电恢复、VRAM 预检）|
+| `email_notifications.py` | 模板化邮件发送（用户激活通知、申请受理通知、管理员新用户提醒）|
+| `scan_sessions.py` | 目录扫描会话状态管理（TTL 缓存，供 `storage_scan` 路由复用）|
+| `bootstrap_builtin_training_knowledge.py` | 内置训练推荐知识源预热逻辑 |
 
 ## 与内部服务的关系
 

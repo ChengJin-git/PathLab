@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 @theme {
+  --animate-tooltip-in: tooltip-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-tooltip-out: tooltip-out 0.08s ease-in forwards;
+
   /* Primary color palette */
   --color-primary-50: #f5f7ff;
   --color-primary-100: #ebf0ff;
@@ -237,5 +240,15 @@ body {
 .prose pre code.hljs .hljs-subst,
 .prose pre code.hljs .hljs-formula {
   color: #f0abfc;
+}
+
+@keyframes tooltip-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tooltip-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.94); }
 }
 

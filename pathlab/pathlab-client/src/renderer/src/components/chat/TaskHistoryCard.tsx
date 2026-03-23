@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { TFunction } from 'i18next'
+import { Tooltip } from '../ui/tooltip'
 import { Loader2, History, CheckCircle2, XCircle, Clock, PlayCircle, AlertCircle, RefreshCw, ChevronRight, Edit2 } from 'lucide-react'
 import { getTrainingTasks, TrainingTask, updateTrainingTaskName } from '../../api'
 import { useNavigate } from 'react-router-dom'
@@ -306,13 +307,14 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
             {t('chatComponents.taskHistory.tasksFound', { count: tasks.length })}
           </p>
         </div>
-        <button
-          onClick={handleRefresh}
-          className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
-          title={t('chatComponents.taskHistory.refresh')}
-        >
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <Tooltip content={t('chatComponents.taskHistory.refresh')}>
+          <button
+            onClick={handleRefresh}
+            className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors flex-shrink-0"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </Tooltip>
       </div>
 
       {/* Task List */}
@@ -398,13 +400,14 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
                   </div>
                   <div className="flex items-center gap-1 flex-shrink-0">
                     {user && task.user_id === user.id && (
-                      <button
-                        onClick={(e) => handleEditTask(task, e)}
-                        className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
-                        title={t('chatComponents.taskHistory.editTaskName')}
-                      >
-                        <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                      </button>
+                      <Tooltip content={t('chatComponents.taskHistory.editTaskName')}>
+                        <button
+                          onClick={(e) => handleEditTask(task, e)}
+                          className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
+                        >
+                          <Edit2 className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                        </button>
+                      </Tooltip>
                     )}
                     <ChevronRight className="w-5 h-5 text-gray-300 group-hover:text-purple-500 transition-colors" />
                   </div>

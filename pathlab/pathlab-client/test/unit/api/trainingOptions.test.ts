@@ -80,8 +80,8 @@ describe('fetchTrainingOptions', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2)
   })
 
-  it('throws on API error', async () => {
+  it('throws ApiError with AUTH_ERROR code on 401', async () => {
     mockFetch.mockResolvedValueOnce(errResp({ detail: 'Unauthorized' }, 401))
-    await expect(fetchTrainingOptions()).rejects.toThrow()
+    await expect(fetchTrainingOptions()).rejects.toMatchObject({ status: 401, code: 'AUTH_ERROR' })
   })
 })

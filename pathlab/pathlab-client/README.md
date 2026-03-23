@@ -41,8 +41,9 @@ pathlab-client/
 ├── test/                   # 前端单元测试（Vitest）
 │   ├── setup.ts            # 全局 mock 初始化
 │   ├── unit/api/           # API 客户端层测试（19 个文件）
-│   ├── unit/lib/           # 工具函数测试（3 个文件）
-│   └── unit/contexts/      # React Context 测试（1 个文件）
+│   ├── unit/lib/           # 工具函数 / Hook 测试（8 个文件）
+│   ├── unit/contexts/      # React Context 测试（1 个文件）
+│   └── unit/components/    # 组件测试（2 个文件）
 ├── scripts/                # 构建辅助脚本
 │   ├── build-python.sh     # Python sidecar 打包（PyInstaller）
 │   └── prepare-redis.sh    # 嵌入式 Redis 二进制准备
@@ -109,7 +110,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前共 **29 个测试文件**：
+当前共 **30 个测试文件**：
 
 | 分类 | 文件 | 覆盖内容 |
 |------|------|---------|
@@ -139,6 +140,7 @@ npm run test:coverage # 生成覆盖率报告
 | 工具函数 | `unit/lib/segmentationUploadUtils.test.ts` | stem 提取、JSON 文件合并、图像 / JSON 匹配摘要 |
 | 工具函数 | `unit/lib/externalValidationUtils.test.ts` | 任务类型判断、提取器维度表、数据集兼容性过滤 |
 | 工具函数 | `unit/lib/trainingSubmissionTracker.test.ts` | localStorage 训练提交状态机（pending / created / failed / cancelled / 过期清理）|
+| 工具函数 | `unit/lib/useAsyncAction.test.tsx` | `useAsyncAction` Hook：isPending 状态、并发引用计数、onError 回调、默认 console.error 降级 |
 | React Context | `unit/contexts/AuthContext.test.tsx` | 认证状态机、角色判断、协议签署、维护公告 |
 | 组件 | `unit/components/settings/PermissionCenterModal.test.tsx` | 权限中心弹窗数据集选择与展示逻辑 |
 | 组件 | `unit/components/settings/storage/BatchScanResults.test.tsx` | 存储批量扫描结果展示组件 |
@@ -160,7 +162,7 @@ python -m pytest server/tests/ -v -k "not pretrained"
 python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 ```
 
-当前共 **116 个常规测试 + ~144 个预训练模型测试**，分布在 **10 个测试文件**：
+当前共 **116 个常规测试 + ~144 个预训练模型测试**，分布在 **10 个测试文件**（含 5 个权限专项测试文件）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|

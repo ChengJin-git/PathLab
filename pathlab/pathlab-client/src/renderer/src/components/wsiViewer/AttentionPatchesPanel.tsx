@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { HeatmapData, PatchCAMData, getPatchImageUrl } from '../../api'
 import { Card } from '../common'
 import { Badge } from '../ui/badge'
+import { Tooltip } from '../ui/tooltip'
 import { Layers, TrendingUp, TrendingDown, Download, Loader2 } from 'lucide-react'
 
 interface AttentionPatchesPanelProps {
@@ -66,11 +67,11 @@ export function AttentionPatchesPanel({
               <Badge variant="secondary" className="bg-red-50 text-red-700 hover:bg-red-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
                 {t('wsiViewerComponents.attentionPatchesPanel.top10')}
               </Badge>
+              <Tooltip content={t('wsiViewerComponents.attentionPatchesPanel.exportTopPatches')}>
               <button
                 onClick={handleExportTop}
                 disabled={exportingTop}
                 className="text-gray-400 hover:text-red-600 transition-colors"
-                title={t('wsiViewerComponents.attentionPatchesPanel.exportTopPatches')}
               >
                 {exportingTop ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -78,6 +79,7 @@ export function AttentionPatchesPanel({
                   <Download className="w-4 h-4" />
                 )}
               </button>
+              </Tooltip>
             </div>
           </div>
           <div className="p-3 sm:p-5">
@@ -121,11 +123,11 @@ export function AttentionPatchesPanel({
               <Badge variant="secondary" className="bg-blue-50 text-blue-700 hover:bg-blue-100 px-2 sm:px-2.5 font-semibold text-[10px] sm:text-xs">
                 {t('wsiViewerComponents.attentionPatchesPanel.bottom10')}
               </Badge>
+              <Tooltip content={t('wsiViewerComponents.attentionPatchesPanel.exportBottomPatches')}>
               <button
                 onClick={handleExportBottom}
                 disabled={exportingBottom}
                 className="text-gray-400 hover:text-blue-600 transition-colors"
-                title={t('wsiViewerComponents.attentionPatchesPanel.exportBottomPatches')}
               >
                 {exportingBottom ? (
                   <Loader2 className="w-4 h-4 animate-spin" />
@@ -133,6 +135,7 @@ export function AttentionPatchesPanel({
                   <Download className="w-4 h-4" />
                 )}
               </button>
+              </Tooltip>
             </div>
           </div>
           <div className="p-3 sm:p-5">

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Database, Search, Clock, Trash2, X, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
+import { Tooltip } from '../ui/tooltip'
 import { Checkbox } from '../ui/checkbox'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -382,16 +383,17 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
                               )}
                             </div>
                           </div>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleRevokePermission(permission)}
-                            disabled={submitting}
-                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                            title={t('settings.datasetPermissionModal.revokePermission')}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          <Tooltip content={t('settings.datasetPermissionModal.revokePermission')}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleRevokePermission(permission)}
+                              disabled={submitting}
+                              className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </Tooltip>
                         </div>
                       )
                     })}

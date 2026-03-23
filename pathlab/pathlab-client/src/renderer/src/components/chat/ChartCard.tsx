@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Loader2, BarChart3, AlertCircle, RefreshCw } from 'lucide-react'
+import { Tooltip } from '../ui/tooltip'
 import { getTaskQuickAnalysis } from '../../api'
 import { ApiError } from '../../api/client'
 import {
@@ -182,9 +183,14 @@ export function ChartCard({ config, onError }: ChartCardProps) {
           </h3>
           <p className="text-xs text-gray-500 mt-1">{config.task_name || config.task_id}</p>
         </div>
-        <button onClick={handleRefresh} className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors" title={t('chatComponents.chartCard.refresh')}>
-          <RefreshCw className="w-4 h-4" />
-        </button>
+        <Tooltip content={t('chatComponents.chartCard.refresh')}>
+          <button
+            onClick={handleRefresh}
+            className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-white rounded-lg transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+          </button>
+        </Tooltip>
       </div>
 
       {/* Charts */}

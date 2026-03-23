@@ -16,6 +16,7 @@ import {
 } from '../api'
 import WSIViewer from '../components/WSIViewer'
 import { Card } from '../components/common'
+import { Tooltip } from '../components/ui/tooltip'
 import { ArrowLeft, Microscope, Layers, Loader2, ChevronLeft, ChevronRight, Plus, Minus, RotateCcw, Maximize2, X, Save, AlertTriangle, Keyboard, Move, Users } from 'lucide-react'
 import { exportPatchesAsZip } from '../components/wsiViewer/utils'
 import { TaskSelectorCard } from '../components/wsiViewer/TaskSelectorCard'
@@ -1812,6 +1813,7 @@ export default function WSIViewerPage() {
 
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+              <Tooltip content={prevWSI ? `${t('common.previous')} (Q)` : t('wsiViewer.noPreviousSlide')}>
               <button
                 type="button"
                 onClick={() => prevWSI && guardedNavigate(() => navigate(`/wsi/${prevWSI.wsi_id}`, {
@@ -1826,12 +1828,13 @@ export default function WSIViewerPage() {
                 }))}
                 disabled={!prevWSI}
                 className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
-                title={prevWSI ? `${t('common.previous')} (Q)` : t('wsiViewer.noPreviousSlide')}
               >
                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
                 {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">Q</kbd>}
               </button>
+              </Tooltip>
               <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
+              <Tooltip content={nextWSI ? `${t('common.next')} (E)` : t('wsiViewer.noNextSlide')}>
               <button
                 type="button"
                 onClick={() => nextWSI && guardedNavigate(() => navigate(`/wsi/${nextWSI.wsi_id}`, {
@@ -1846,11 +1849,11 @@ export default function WSIViewerPage() {
                 }))}
                 disabled={!nextWSI}
                 className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
-                title={nextWSI ? `${t('common.next')} (E)` : t('wsiViewer.noNextSlide')}
               >
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
                 {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">E</kbd>}
               </button>
+              </Tooltip>
             </div>
 
             <div className="w-px h-5 bg-gray-200" />
@@ -1884,6 +1887,7 @@ export default function WSIViewerPage() {
 
             {/* Save Annotations Button — visible only in annotation mode */}
             {annotationMode && (
+              <Tooltip content={t('annotation.saveAnnotations')}>
               <button
                 onClick={handleManualSave}
                 disabled={savingAnnotations || !hasUnsavedChanges}
@@ -1892,7 +1896,6 @@ export default function WSIViewerPage() {
                     ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
                     : 'bg-gray-100 text-gray-400 cursor-default'
                 }`}
-                title={t('annotation.saveAnnotations')}
               >
                 {savingAnnotations ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -1903,6 +1906,7 @@ export default function WSIViewerPage() {
                   {savingAnnotations ? t('annotation.saving') : t('annotation.saveAnnotations')}
                 </span>
               </button>
+              </Tooltip>
             )}
 
             <button
@@ -1947,43 +1951,47 @@ export default function WSIViewerPage() {
                 onMouseUp={(e) => e.stopPropagation()}
               >
                 <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl p-1 flex items-center">
+                  <Tooltip content={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}>
                   <button
                     type="button"
                     onClick={handlePatchZoomIn}
                     className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-                    title={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}
                   >
                     <Plus className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">=</kbd>}
                   </button>
+                  </Tooltip>
+                  <Tooltip content={`${t('wsiViewerComponents.viewer.zoomOut')} (-)`}>
                   <button
                     type="button"
                     onClick={handlePatchZoomOut}
                     className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-                    title={`${t('wsiViewerComponents.viewer.zoomOut')} (-)`}
                   >
                     <Minus className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">-</kbd>}
                   </button>
+                  </Tooltip>
                   <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                  <Tooltip content={`${t('wsiViewerComponents.viewer.resetView')} (R)`}>
                   <button
                     type="button"
                     onClick={handlePatchReset}
                     className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-                    title={`${t('wsiViewerComponents.viewer.resetView')} (R)`}
                   >
                     <RotateCcw className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">R</kbd>}
                   </button>
+                  </Tooltip>
+                  <Tooltip content={`${t('wsiViewerComponents.viewer.fullScreen')} (F)`}>
                   <button
                     type="button"
                     onClick={handlePatchFullscreen}
                     className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-                    title={`${t('wsiViewerComponents.viewer.fullScreen')} (F)`}
                   >
                     <Maximize2 className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">F</kbd>}
                   </button>
+                  </Tooltip>
                   <div className="w-px h-5 bg-gray-200 mx-0.5" />
                   <div
                     className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"

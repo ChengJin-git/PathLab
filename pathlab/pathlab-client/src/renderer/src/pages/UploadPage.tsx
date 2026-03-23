@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { xlsxToCSV } from '../lib/csvImporter'
+import { Tooltip } from '../components/ui/tooltip'
 import {
   Download,
   X,
@@ -1504,13 +1505,14 @@ export default function RegisterPage() {
                               {(splitFile.size / 1024).toFixed(1)} KB
                             </span>
                           </div>
+                          <Tooltip content={t('uploadPage.removeFile')}>
                           <button
                             onClick={() => setSplitFile(null)}
                             className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
-                            title={t('uploadPage.removeFile')}
                           >
                             <X className="w-4 h-4" />
                           </button>
+                          </Tooltip>
                         </div>
                       ) : (
                         // Show file input when no file is selected

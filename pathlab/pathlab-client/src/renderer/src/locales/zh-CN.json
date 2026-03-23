@@ -947,6 +947,17 @@
       "getInsights": "获取洞察",
       "getInsightsDesc": "查看结果、生成报告和导出发现。"
     },
+    "fullProcess": {
+      "title": "全流程系统能力",
+      "step1Title": "数据整合与可视化",
+      "step1Desc": "无缝管理并实时呈现千兆级海量全切片（WSI）图像，指尖交互，丝滑漫游不卡顿。",
+      "step2Title": "智能 AI 分析流水线",
+      "step2Desc": "强大的 Agentic AI 智能体编排复杂的诊断工作流，调度多个前沿大模型进行全方位深层分析。",
+      "step3Title": "自动化洞察与出具报告",
+      "step3Desc": "分钟级自动撰写标准化实验报告，一键生成直观的可视化图表，让科研与诊断快人一步。",
+      "step4Title": "隐私优先的协同网络",
+      "step4Desc": "底层内建隐私保护架构，确保所有敏感的患者医疗数据在极高安全标准下完成跨机构的高效协同。"
+    },
     "pricing": "定价",
     "pricingTitle": "简单透明的定价",
     "individual": "个人版",

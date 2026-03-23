@@ -1,68 +1,70 @@
-// Copyright (c) 2025 Bytedance Ltd. and/or its affiliates
-// SPDX-License-Identifier: MIT
+import * as React from "react"
+import * as TooltipPrimitive from "@radix-ui/react-tooltip"
+import { cn } from "../../lib/utils"
 
-"use client";
+const TooltipProvider = TooltipPrimitive.Provider
+const TooltipRoot = TooltipPrimitive.Root
+const TooltipTrigger = TooltipPrimitive.Trigger
 
-import * as React from "react";
-import * as TooltipPrimitive from "@radix-ui/react-tooltip";
-
-import { cn } from "../../lib/utils";
-
-function TooltipProvider({
-  delayDuration = 0,
-  ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
-  return (
-    <TooltipPrimitive.Provider
-      data-slot="tooltip-provider"
-      delayDuration={delayDuration}
+const TooltipContent = React.forwardRef<
+  React.ElementRef<typeof TooltipPrimitive.Content>,
+  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Content>
+>(({ className, sideOffset = 6, children, ...props }, ref) => (
+  <TooltipPrimitive.Portal>
+    <TooltipPrimitive.Content
+      ref={ref}
+      sideOffset={sideOffset}
+      className={cn(
+        "z-50 rounded-lg px-2.5 py-1.5 max-w-[220px] break-words text-center",
+        "bg-[#1c1c2e]/[0.97] text-[11px] font-medium leading-snug tracking-wide text-white",
+        "shadow-lg shadow-black/30 border border-white/[0.07]",
+        "data-[state=delayed-open]:animate-tooltip-in",
+        "data-[state=instant-open]:animate-tooltip-in",
+        "data-[state=closed]:animate-tooltip-out",
+        "data-[side=top]:origin-bottom data-[side=bottom]:origin-top",
+        "data-[side=left]:origin-right data-[side=right]:origin-left",
+        className
+      )}
       {...props}
-    />
-  );
+    >
+      {children}
+      <TooltipPrimitive.Arrow className="fill-[#1c1c2e]/[0.97]" width={8} height={4} />
+    </TooltipPrimitive.Content>
+  </TooltipPrimitive.Portal>
+))
+TooltipContent.displayName = "TooltipContent"
+
+export interface TooltipProps {
+  children: React.ReactElement
+  content: React.ReactNode
+  side?: "top" | "bottom" | "left" | "right"
+  align?: "start" | "center" | "end"
+  sideOffset?: number
+  delayDuration?: number
+  contentClassName?: string
+  disabled?: boolean
 }
 
 function Tooltip({
-  ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return (
-    <TooltipProvider>
-      <TooltipPrimitive.Root data-slot="tooltip" {...props} />
-    </TooltipProvider>
-  );
-}
-
-const TooltipTrigger = React.forwardRef<
-  React.ElementRef<typeof TooltipPrimitive.Trigger>,
-  React.ComponentPropsWithoutRef<typeof TooltipPrimitive.Trigger>
->(({ ...props }, ref) => {
-  return (
-    <TooltipPrimitive.Trigger data-slot="tooltip-trigger" ref={ref} {...props} />
-  );
-});
-TooltipTrigger.displayName = TooltipPrimitive.Trigger.displayName;
-
-function TooltipContent({
-  className,
-  sideOffset = 0,
   children,
-  ...props
-}: React.ComponentProps<typeof TooltipPrimitive.Content>) {
+  content,
+  side = "top",
+  align = "center",
+  sideOffset = 6,
+  delayDuration = 400,
+  contentClassName,
+  disabled = false,
+}: TooltipProps) {
+  if (!content || disabled) return children
+
   return (
-    <TooltipPrimitive.Portal>
-      <TooltipPrimitive.Content
-        data-slot="tooltip-content"
-        sideOffset={sideOffset}
-        className={cn(
-          "bg-primary text-primary-foreground animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-md px-3 py-1.5 text-xs text-balance",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-        <TooltipPrimitive.Arrow className="bg-primary fill-primary z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-[2px]" />
-      </TooltipPrimitive.Content>
-    </TooltipPrimitive.Portal>
-  );
+    <TooltipRoot delayDuration={delayDuration}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent side={side} align={align} sideOffset={sideOffset} className={contentClassName}>
+        {content}
+      </TooltipContent>
+    </TooltipRoot>
+  )
 }
 
-export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider };
+export { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipContent, Tooltip }

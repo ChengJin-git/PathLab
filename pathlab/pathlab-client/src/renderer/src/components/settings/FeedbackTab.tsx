@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { MessageSquare, RefreshCw, Trash2, Download, X, ThumbsUp, ThumbsDown, Clock, Search, Calendar, BarChart3, ChevronLeft, ChevronRight, Users } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
+import { Tooltip } from '../ui/tooltip'
 import { Label } from '../ui/label'
 import { Select } from '../ui/select'
 import {
@@ -462,13 +463,15 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                             <Calendar className="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-2.5 pointer-events-none" />
                         </div>
                         {(exportDateFrom || exportDateTo) && (
-                            <button
-                                onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
-                                className="hidden sm:block p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
-                                title={t('settings.feedbackTab.clearDates')}
-                            >
-                                <X className="w-4 h-4" />
-                            </button>
+                            <Tooltip content={t('settings.feedbackTab.clearDates')}>
+                                <button
+                                    type="button"
+                                    onClick={() => { setExportDateFrom(''); setExportDateTo('') }}
+                                    className="hidden sm:block p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
+                                >
+                                    <X className="w-4 h-4" />
+                                </button>
+                            </Tooltip>
                         )}
                         {/* Mobile clear button */}
                         {(exportDateFrom || exportDateTo) && (

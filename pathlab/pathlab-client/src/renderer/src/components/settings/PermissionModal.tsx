@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 import { Key, X, Clock, Trash2 } from 'lucide-react'
 import { Button } from '../ui/button'
+import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Checkbox } from '../ui/checkbox'
@@ -58,16 +59,17 @@ export function PermissionModal({
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-medium text-gray-700">{t('settings.permissionModal.currentPermissions')}</h4>
             {!loadingPermissions && permissions.length > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onRevokeAllPermissions}
-                className="h-auto py-1 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                title={t('settings.permissionModal.revokeAllPermissions')}
-              >
-                <Trash2 className="w-3 h-3 mr-1" />
-                {t('settings.permissionModal.batchRevoke')}
-              </Button>
+              <Tooltip content={t('settings.permissionModal.revokeAllPermissions')}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onRevokeAllPermissions}
+                  className="h-auto py-1 px-2 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                >
+                  <Trash2 className="w-3 h-3 mr-1" />
+                  {t('settings.permissionModal.batchRevoke')}
+                </Button>
+              </Tooltip>
             )}
           </div>
           {loadingPermissions ? (
@@ -95,15 +97,16 @@ export function PermissionModal({
                       {perm.is_expired && <span className="text-red-600 font-medium">{t('settings.permissionModal.expired')}</span>}
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => onRevokePermission(perm.dataset_id)}
-                    className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
-                    title={t('settings.permissionModal.revokePermission')}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  <Tooltip content={t('settings.permissionModal.revokePermission')}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onRevokePermission(perm.dataset_id)}
+                      className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </Tooltip>
                 </div>
               ))}
             </div>

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PackagePlus, Loader2, ChevronDown } from 'lucide-react'
+import { Tooltip } from '../ui/tooltip'
 import { AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
 import { organSources, organSourceKeyMap } from '../upload/types'
 
@@ -139,22 +140,22 @@ export function CreateDatasetDialog({
               {(['classification', 'segmentation'] as const).map(tt => {
                 const isDisabled = submitting || (tt === 'segmentation' && hasWsiSources)
                 return (
-                  <button
-                    key={tt}
-                    type="button"
-                    onClick={() => !isDisabled && setTaskType(tt)}
-                    disabled={isDisabled}
-                    title={tt === 'segmentation' && hasWsiSources ? t('annotation.segmentationWsiNotSupported') : undefined}
-                    className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
-                      taskType === tt
-                        ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
-                        : isDisabled
-                          ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
-                          : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                    }`}
-                  >
-                    {t(`annotation.${tt}`)}
-                  </button>
+                  <Tooltip key={tt} content={tt === 'segmentation' && hasWsiSources ? t('annotation.segmentationWsiNotSupported') : undefined}>
+                    <button
+                      type="button"
+                      onClick={() => !isDisabled && setTaskType(tt)}
+                      disabled={isDisabled}
+                      className={`flex-1 px-3 py-2 text-xs font-medium rounded-lg border transition-all ${
+                        taskType === tt
+                          ? 'bg-indigo-50 border-indigo-300 text-indigo-700'
+                          : isDisabled
+                            ? 'bg-gray-100 border-gray-200 text-gray-400 cursor-not-allowed'
+                            : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      {t(`annotation.${tt}`)}
+                    </button>
+                  </Tooltip>
                 )
               })}
             </div>

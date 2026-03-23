@@ -51,6 +51,7 @@
 - `session_nonce`
 - `agreement_accepted_at` / `agreement_ip`
 - `notice_acknowledged_at`
+- `registration_email`：用户通过 `POST /auth/request-access` 申请访问时填写的教育邮箱，用于发送申请受理与账号激活通知邮件；直接注册（`/auth/register`）的用户此字段为 `null`
 
 ## annotation_id 命名规范
 

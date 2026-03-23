@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
+import { Tooltip } from '../components/ui/tooltip'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -1225,13 +1226,14 @@ export default function ResultsViewerPage() {
                             )}
                           </button>
                           <div className="flex items-center gap-2 ml-3">
+                            <Tooltip content={t('resultsPage.deleteThisAnalysis')}>
                             <button
                               onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
                               className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title={t('resultsPage.deleteThisAnalysis')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
+                            </Tooltip>
                             <button
                               onClick={() => setExpandedExtAnalysis(
                                 expandedExtAnalysis === analysis.analysis_id ? null : analysis.analysis_id
@@ -1665,13 +1667,14 @@ export default function ResultsViewerPage() {
                             )}
                           </button>
                           <div className="flex items-center gap-2 ml-3">
+                            <Tooltip content={t('resultsPage.deleteThisAnalysis')}>
                             <button
                               onClick={(e) => handleDeleteAnalysis(analysis.analysis_id, e)}
                               className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                              title={t('resultsPage.deleteThisAnalysis')}
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
+                            </Tooltip>
                             <button
                               onClick={() => setExpandedAnalysis(
                                 expandedAnalysis === analysis.analysis_id ? null : analysis.analysis_id

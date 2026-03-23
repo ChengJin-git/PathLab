@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { PREPROCESSING_BASE, API_BASE } from '../config'
 import { HeatmapData, buildSearchParams, getPatchFileImageUrl, withAuthTokenQuery } from '../api'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2, Move, Keyboard } from 'lucide-react'
+import { Tooltip } from './ui/tooltip'
 
 function isInputFocused(): boolean {
   const el = document.activeElement as HTMLElement | null
@@ -582,39 +583,42 @@ export default function WSIViewer({
       {/* Custom Control Bar (Apple Style) */}
       <div className="absolute top-4 left-4 z-20 flex flex-col items-start gap-2 transition-opacity duration-200">
         <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl p-1 flex items-center">
+          <Tooltip content={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}>
           <button
             type="button"
             onClick={handleZoomIn}
             className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-            title={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}
           >
             <Plus className="w-5 h-5" />
             {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">=</kbd>}
           </button>
+          </Tooltip>
+          <Tooltip content={`${t('wsiViewerComponents.viewer.zoomOut')} (-)`}>
           <button
             type="button"
             onClick={handleZoomOut}
             className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-            title={`${t('wsiViewerComponents.viewer.zoomOut')} (-)`}
           >
             <Minus className="w-5 h-5" />
             {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">-</kbd>}
           </button>
+          </Tooltip>
           <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
+          <Tooltip content={`${t('wsiViewerComponents.viewer.resetView')} (R)`}>
           <button
             type="button"
             onClick={handleReset}
             className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-            title={`${t('wsiViewerComponents.viewer.resetView')} (R)`}
           >
             <RotateCcw className="w-4 h-4" />
             {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">R</kbd>}
           </button>
+          </Tooltip>
+          <Tooltip content={`${isFullScreen ? t('wsiViewerComponents.viewer.exitFullScreen') : t('wsiViewerComponents.viewer.fullScreen')} (F)`}>
           <button
             type="button"
             onClick={handleFullScreen}
             className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
-            title={`${isFullScreen ? t('wsiViewerComponents.viewer.exitFullScreen') : t('wsiViewerComponents.viewer.fullScreen')} (F)`}
           >
             {isFullScreen ? (
               <Minimize className="w-4 h-4" />
@@ -623,6 +627,7 @@ export default function WSIViewer({
             )}
             {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">F</kbd>}
           </button>
+          </Tooltip>
           <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
           <div 
             className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"

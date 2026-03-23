@@ -260,7 +260,7 @@ export default function TaskDetailPage() {
           setCreationIssue(trackedIssue)
           setCreationSlow(false)
           setWaitingForCreation(false)
-        } else if (tracked?.state === 'pending') {
+        } else if (tracked?.state === 'pending' || tracked?.state === 'created') {
           setCreationIssue(null)
           setWaitingForCreation(true)
         } else {
@@ -270,7 +270,7 @@ export default function TaskDetailPage() {
       } else {
         console.error('Failed to load task detail:', error)
         const tracked = getTrainingSubmissionRecord(task_id)
-        if (tracked?.state === 'pending') {
+        if (tracked?.state === 'pending' || tracked?.state === 'created') {
           setCreationIssue(null)
           setWaitingForCreation(true)
         }

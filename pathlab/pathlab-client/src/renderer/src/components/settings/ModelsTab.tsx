@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next'
 import { Database, RefreshCw, Layers, Calendar, Star, ToggleRight, ToggleLeft, Trash2, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, CheckCircle, XCircle, BarChart3, FlaskConical } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Select } from '../ui/select'
+import { Tooltip } from '../ui/tooltip'
 import { TrainedModel, getTrainedModels, updateTrainedModel, deleteTrainedModel } from '../../api'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { isSegmentationTask } from '../../lib/externalValidationUtils'
@@ -169,14 +170,16 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
         </h2>
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">{t('settings.modelsTab.modelCount', { count: modelsTotal })}</span>
-          <button
-            onClick={loadTrainedModels}
-            disabled={loadingModels}
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-            title={t('settings.modelsTab.refreshModels')}
-          >
-            <RefreshCw className={`w-4 h-4 ${loadingModels ? 'animate-spin' : ''}`} />
-          </button>
+          <Tooltip content={t('settings.modelsTab.refreshModels')}>
+            <button
+              type="button"
+              onClick={loadTrainedModels}
+              disabled={loadingModels}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingModels ? 'animate-spin' : ''}`} />
+            </button>
+          </Tooltip>
         </div>
       </div>
 
@@ -283,46 +286,56 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
 
                    {/* Actions */}
                    <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
-                      <button
-                            onClick={() => handleViewAnalysis(model)}
-                            className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
-                            title={t('settings.modelsTab.viewTrainingResults')}
-                          >
-                            <BarChart3 className="w-5 h-5" />
-                      </button>
-                      <button
-                            onClick={() => handleExternalValidation(model)}
-                            className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                            title={t('settings.modelsTab.runExternalValidation')}
-                          >
-                            <FlaskConical className="w-5 h-5" />
-                      </button>
+                      <Tooltip content={t('settings.modelsTab.viewTrainingResults')}>
+                        <button
+                          type="button"
+                          onClick={() => handleViewAnalysis(model)}
+                          className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
+                        >
+                          <BarChart3 className="w-5 h-5" />
+                        </button>
+                      </Tooltip>
+                      <Tooltip content={t('settings.modelsTab.runExternalValidation')}>
+                        <button
+                          type="button"
+                          onClick={() => handleExternalValidation(model)}
+                          className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                        >
+                          <FlaskConical className="w-5 h-5" />
+                        </button>
+                      </Tooltip>
                         {!model.is_default && model.is_active && (
-                          <button
-                            onClick={() => handleSetDefaultModel(model)}
-                            className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                            title={t('settings.modelsTab.setAsDefault')}
-                          >
-                            <Star className="w-5 h-5" />
-                          </button>
+                          <Tooltip content={t('settings.modelsTab.setAsDefault')}>
+                            <button
+                              type="button"
+                              onClick={() => handleSetDefaultModel(model)}
+                              className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
+                            >
+                              <Star className="w-5 h-5" />
+                            </button>
+                          </Tooltip>
                         )}
-                        <button
-                          onClick={() => handleToggleModelActive(model)}
-                          className={`p-2 rounded-lg transition-all ${model.is_active
-                            ? 'text-emerald-600 hover:bg-emerald-50'
-                            : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
-                          }`}
-                          title={model.is_active ? t('settings.modelsTab.deactivate') : t('settings.modelsTab.activate')}
-                        >
-                          {model.is_active ? <CheckCircle className="w-5 h-5 text-emerald-600" /> : <XCircle className="w-5 h-5" />}
-                        </button>
-                        <button
-                          onClick={() => handleDeleteModel(model)}
-                          className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                          title={t('settings.modelsTab.deleteModelAction')}
-                        >
-                          <Trash2 className="w-5 h-5" />
-                        </button>
+                        <Tooltip content={model.is_active ? t('settings.modelsTab.deactivate') : t('settings.modelsTab.activate')}>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleModelActive(model)}
+                            className={`p-2 rounded-lg transition-all ${model.is_active
+                              ? 'text-emerald-600 hover:bg-emerald-50'
+                              : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
+                            }`}
+                          >
+                            {model.is_active ? <CheckCircle className="w-5 h-5 text-emerald-600" /> : <XCircle className="w-5 h-5" />}
+                          </button>
+                        </Tooltip>
+                        <Tooltip content={t('settings.modelsTab.deleteModelAction')}>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteModel(model)}
+                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                          >
+                            <Trash2 className="w-5 h-5" />
+                          </button>
+                        </Tooltip>
                    </div>
                 </div>
               )
@@ -447,46 +460,56 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
 
                       <td className="px-6 py-4 align-middle text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <button
-                            onClick={() => handleViewAnalysis(model)}
-                            className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
-                            title={t('settings.modelsTab.viewTrainingResults')}
-                          >
-                            <BarChart3 className="w-5 h-5" />
-                          </button>
-                          <button
-                             onClick={() => handleExternalValidation(model)}
-                             className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
-                             title={t('settings.modelsTab.runExternalValidation')}
-                           >
-                            <FlaskConical className="w-5 h-5" />
-                          </button>
-                          {!model.is_default && model.is_active && (
+                          <Tooltip content={t('settings.modelsTab.viewTrainingResults')}>
                             <button
-                              onClick={() => handleSetDefaultModel(model)}
-                              className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
-                              title={t('settings.modelsTab.setAsDefault')}
+                              type="button"
+                              onClick={() => handleViewAnalysis(model)}
+                              className="p-2 text-gray-400 hover:text-primary-600 hover:bg-primary-50 rounded-lg transition-all"
                             >
-                              <Star className="w-5 h-5" />
+                              <BarChart3 className="w-5 h-5" />
                             </button>
+                          </Tooltip>
+                          <Tooltip content={t('settings.modelsTab.runExternalValidation')}>
+                            <button
+                              type="button"
+                              onClick={() => handleExternalValidation(model)}
+                              className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                            >
+                              <FlaskConical className="w-5 h-5" />
+                            </button>
+                          </Tooltip>
+                          {!model.is_default && model.is_active && (
+                            <Tooltip content={t('settings.modelsTab.setAsDefault')}>
+                              <button
+                                type="button"
+                                onClick={() => handleSetDefaultModel(model)}
+                                className="p-2 text-gray-400 hover:text-amber-500 hover:bg-amber-50 rounded-lg transition-all"
+                              >
+                                <Star className="w-5 h-5" />
+                              </button>
+                            </Tooltip>
                           )}
-                          <button
-                            onClick={() => handleToggleModelActive(model)}
-                            className={`p-2 rounded-lg transition-all ${model.is_active
-                              ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-                              : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
-                            }`}
-                            title={model.is_active ? t('settings.modelsTab.deactivate') : t('settings.modelsTab.activate')}
-                          >
-                            {model.is_active ? <CheckCircle className="w-5 h-5 text-emerald-600" /> : <XCircle className="w-5 h-5" />}
-                          </button>
-                          <button
-                            onClick={() => handleDeleteModel(model)}
-                            className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
-                            title={t('settings.modelsTab.deleteModelAction')}
-                          >
-                            <Trash2 className="w-5 h-5" />
-                          </button>
+                          <Tooltip content={model.is_active ? t('settings.modelsTab.deactivate') : t('settings.modelsTab.activate')}>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleModelActive(model)}
+                              className={`p-2 rounded-lg transition-all ${model.is_active
+                                ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
+                                : 'text-gray-400 hover:text-emerald-600 hover:bg-gray-100'
+                              }`}
+                            >
+                              {model.is_active ? <CheckCircle className="w-5 h-5 text-emerald-600" /> : <XCircle className="w-5 h-5" />}
+                            </button>
+                          </Tooltip>
+                          <Tooltip content={t('settings.modelsTab.deleteModelAction')}>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteModel(model)}
+                              className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-all"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          </Tooltip>
                         </div>
                       </td>
                     </tr>
@@ -520,22 +543,26 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
              </div>
 
             <div className="flex items-center gap-1">
-                <button
-                  onClick={() => setPage(1)}
-                  disabled={page === 1}
-                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title={t('settings.modelsTab.firstPage')}
-                >
-                  <ChevronsLeft className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => setPage(p => Math.max(1, p - 1))}
-                  disabled={page === 1}
-                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title={t('settings.modelsTab.previousPage')}
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
+                <Tooltip content={t('settings.modelsTab.firstPage')}>
+                  <button
+                    type="button"
+                    onClick={() => setPage(1)}
+                    disabled={page === 1}
+                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
+                  >
+                    <ChevronsLeft className="w-5 h-5" />
+                  </button>
+                </Tooltip>
+                <Tooltip content={t('settings.modelsTab.previousPage')}>
+                  <button
+                    type="button"
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
+                  >
+                    <ChevronLeft className="w-5 h-5" />
+                  </button>
+                </Tooltip>
 
                 <div className="flex items-center px-2 min-w-[60px] justify-center">
                   <span className="text-sm font-medium text-gray-900">
@@ -547,22 +574,26 @@ export function ModelsTab({ showConfirmDialog, closeConfirmDialog }: ModelsTabPr
                   </span>
                 </div>
 
-                <button
-                  onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                  disabled={page === totalPages || totalPages === 0}
-                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title={t('settings.modelsTab.nextPage')}
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => setPage(totalPages)}
-                  disabled={page === totalPages || totalPages === 0}
-                  className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
-                  title={t('settings.modelsTab.lastPage')}
-                >
-                  <ChevronsRight className="w-5 h-5" />
-                </button>
+                <Tooltip content={t('settings.modelsTab.nextPage')}>
+                  <button
+                    type="button"
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages || totalPages === 0}
+                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
+                  >
+                    <ChevronRight className="w-5 h-5" />
+                  </button>
+                </Tooltip>
+                <Tooltip content={t('settings.modelsTab.lastPage')}>
+                  <button
+                    type="button"
+                    onClick={() => setPage(totalPages)}
+                    disabled={page === totalPages || totalPages === 0}
+                    className="p-1 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed text-gray-600"
+                  >
+                    <ChevronsRight className="w-5 h-5" />
+                  </button>
+                </Tooltip>
               </div>
           </div>
         </>

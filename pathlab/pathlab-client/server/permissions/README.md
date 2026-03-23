@@ -15,15 +15,15 @@ Scope includes:
 ## 1) Role Model and Core Capability
 
 ### 1.1 Roles in system
-- Roles are fixed to `admin`, `pathologist`, `guest`: `pathlab/pathlab-client/server/backend/auth/models.py:120`.
-- Valid role set: `VALID_ROLES = {admin, pathologist, guest}`: `pathlab/pathlab-client/server/backend/auth/models.py:124`.
+- Roles are fixed to `admin`, `pathologist`, `guest`: `pathlab/pathlab-client/server/backend/auth/models.py:151`.
+- Valid role set: `VALID_ROLES = {admin, pathologist, guest}`: `pathlab/pathlab-client/server/backend/auth/models.py:155`.
 
 ### 1.2 GPU base capability
-- `can_use_gpu()` is true only for admin/pathologist, false for guest: `pathlab/pathlab-client/server/backend/auth/models.py:137`.
+- `can_use_gpu()` is true only for admin/pathologist, false for guest: `pathlab/pathlab-client/server/backend/auth/models.py:168`.
 - Explicit dependency `require_can_use_gpu` rejects non-GPU users: `pathlab/pathlab-client/server/backend/auth/dependencies.py:36`.
 
 ### 1.3 Admin-only capability
-- Settings APIs require admin: `pathlab/pathlab-client/server/gateway/routes/settings.py:103`.
+- Settings APIs require admin: `pathlab/pathlab-client/server/gateway/routes/settings.py:105`.
 - `require_admin` helper: `pathlab/pathlab-client/server/backend/auth/dependencies.py:17`.
 
 ---
@@ -91,7 +91,7 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
 
 ## 4.2 Data management (rename/type/data-level/source/delete/update metadata)
 - Dataset operations generally require owner/admin via `require_owner=True` on `get_dataset_with_access`: examples at `pathlab/pathlab-client/server/gateway/routes/wsi.py:814`, `pathlab/pathlab-client/server/gateway/routes/wsi.py:868`, `pathlab/pathlab-client/server/gateway/routes/wsi.py:995`, `pathlab/pathlab-client/server/gateway/routes/wsi.py:1073`.
-- WSI delete/update metadata require owner/admin: `pathlab/pathlab-client/server/gateway/routes/wsi.py:1238`, `pathlab/pathlab-client/server/gateway/routes/wsi.py:1312`.
+- WSI delete/update metadata require owner/admin: `pathlab/pathlab-client/server/gateway/routes/wsi.py:1242`, `pathlab/pathlab-client/server/gateway/routes/wsi.py:1316`.
 
 ## 4.3 Training
 - Create training task: authenticated user endpoint: `pathlab/pathlab-client/server/gateway/routes/training.py:243`.
@@ -108,36 +108,36 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
   - `rerun_from_task_id` is silently ignored if the caller is not admin (backend gate: `user.is_admin() and req.rerun_from_task_id`): `pathlab/pathlab-client/server/gateway/routes/training.py:280`.
 
 ## 4.4 Internal validation (implemented as task analysis flow)
-- Internal validation trigger is `POST /results/tasks/{task_id}/analysis`: `pathlab/pathlab-client/server/gateway/routes/results.py:6034`.
+- Internal validation trigger is `POST /results/tasks/{task_id}/analysis`: `pathlab/pathlab-client/server/gateway/routes/results.py:2039`.
 - Enforced checks:
-  - `_get_task_with_access` (owner/admin visibility): `pathlab/pathlab-client/server/gateway/routes/results.py:6057`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:80`
-  - dataset-level access check for non-admin users: even if a pathologist's role grants GPU capability, `run_task_analysis` additionally verifies `check_dataset_access_permission`; revoked dataset access returns HTTP 403 before the task is queued: `pathlab/pathlab-client/server/gateway/routes/results.py:6067`
-  - `_require_task_gpu_permission` for analysis execution path: `pathlab/pathlab-client/server/gateway/routes/results.py:6084`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:102`
+  - `_get_task_with_access` (owner/admin visibility): `pathlab/pathlab-client/server/gateway/routes/results.py:2062`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:80`
+  - dataset-level access check for non-admin users: even if a pathologist's role grants GPU capability, `run_task_analysis` additionally verifies `check_dataset_access_permission`; revoked dataset access returns HTTP 403 before the task is queued: `pathlab/pathlab-client/server/gateway/routes/results.py:2075`
+  - `_require_task_gpu_permission` for analysis execution path: `pathlab/pathlab-client/server/gateway/routes/results.py:2089`, `pathlab/pathlab-client/server/gateway/routes/analysis_helpers.py:102`
 - Analysis visibility:
-  - `GET /results/tasks/{task_id}/analysis` filters non-admin to analyses submitted by that user: `pathlab/pathlab-client/server/gateway/routes/results.py:5926`, `pathlab/pathlab-client/server/gateway/routes/results.py:5994`.
+  - `GET /results/tasks/{task_id}/analysis` filters non-admin to analyses submitted by that user: `pathlab/pathlab-client/server/gateway/routes/results.py:1959`, `pathlab/pathlab-client/server/gateway/routes/results.py:2031`.
 - Frontend behaviour on revoked dataset:
   - `AnalysisConfigCard` catches HTTP 403 from `run_task_analysis` and shows a localised toast; the task remains visible (read-only), only new analysis submissions are blocked: `pathlab/pathlab-client/src/renderer/src/components/chat/AnalysisConfigCard.tsx`.
   - i18n key: `chatComponents.analysisConfig.datasetAccessRevoked` (en-US / zh-CN / zh-HK): `pathlab/pathlab-client/src/renderer/src/locales/en-US.json`.
 
 ## 4.5 External validation
-- Entry: `POST /results/external-validation`: `pathlab/pathlab-client/server/gateway/routes/results.py:3034`.
+- Entry: `POST /results/external-validation`: `pathlab/pathlab-client/server/gateway/routes/results.py:1380`.
 - Enforced checks:
-  - model ownership/task access (`_require_task_access`): `pathlab/pathlab-client/server/gateway/routes/results.py:3079`
-  - target dataset access (`_has_external_validation_dataset_access`): `pathlab/pathlab-client/server/gateway/routes/results.py:3099`, `pathlab/pathlab-client/server/gateway/routes/results.py:142`
-  - dataset GPU permission: `pathlab/pathlab-client/server/gateway/routes/results.py:3108`
-  - model/dataset compatibility (`data_type/task_type/aggregation_level/labels/features`): `pathlab/pathlab-client/server/gateway/routes/results.py:3115`
-- Auto-triggers post-inference analysis, but task visibility still follows owner/admin model: `pathlab/pathlab-client/server/gateway/routes/results.py:5721`, `pathlab/pathlab-client/server/gateway/routes/results.py:5781`.
+  - model ownership/task access (`_require_task_access`): `pathlab/pathlab-client/server/gateway/routes/results.py:1424`
+  - target dataset access (`_has_external_validation_dataset_access`): `pathlab/pathlab-client/server/gateway/routes/results.py:1444`, `pathlab/pathlab-client/server/gateway/routes/results.py:142`
+  - dataset GPU permission: `pathlab/pathlab-client/server/gateway/routes/results.py:1453`
+  - model/dataset compatibility (`data_type/task_type/aggregation_level/labels/features`): `pathlab/pathlab-client/server/gateway/routes/results.py:1461`
+- Auto-triggers post-inference analysis, but task visibility still follows owner/admin model: `pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:494`, `pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:884`.
 - **Rerun** (failed or cancelled external validation tasks):
   - Frontend shows the rerun button for both `failed` and `cancelled` task statuses: `pathlab/pathlab-client/src/renderer/src/pages/TaskDetailPage.tsx`.
   - Non-admin rerun: submits a new external validation owned by the current user; `rerun_from_task_id` is not sent. All standard permission checks (model access, dataset access, GPU) apply to the requester.
-  - Admin rerun: frontend passes `rerun_from_task_id = source_task_id`; backend sets `effective_task_owner_user_id = source_task.user_id` so the new task is owned by the **original task's user**, not the admin: `pathlab/pathlab-client/server/gateway/routes/results.py:3055`. All permission checks (model, dataset, GPU) are still evaluated against the **requesting admin user**, not the effective owner.
-  - `rerun_from_task_id` is silently ignored if the caller is not admin (backend gate: `user.is_admin() and req.rerun_from_task_id`): `pathlab/pathlab-client/server/gateway/routes/results.py:3055`.
+  - Admin rerun: frontend passes `rerun_from_task_id = source_task_id`; backend sets `effective_task_owner_user_id = source_task.user_id` so the new task is owned by the **original task's user**, not the admin: `pathlab/pathlab-client/server/gateway/routes/results.py:1400`. All permission checks (model, dataset, GPU) are still evaluated against the **requesting admin user**, not the effective owner.
+  - `rerun_from_task_id` is silently ignored if the caller is not admin (backend gate: `user.is_admin() and req.rerun_from_task_id`): `pathlab/pathlab-client/server/gateway/routes/results.py:1400`.
 
 ## 4.6 AI chat
 - Chat page is protected by login route guard (`/dashboard`): `pathlab/pathlab-client/src/renderer/src/App.tsx:39`.
 
 ## 4.7 Admin settings
-- Backend admin-only for get/update/check-vllm operations: `pathlab/pathlab-client/server/gateway/routes/settings.py:103`, `pathlab/pathlab-client/server/gateway/routes/settings.py:117`, `pathlab/pathlab-client/server/gateway/routes/settings.py:154`.
+- Backend admin-only for get/update/check-vllm operations: `pathlab/pathlab-client/server/gateway/routes/settings.py:105`, `pathlab/pathlab-client/server/gateway/routes/settings.py:119`, `pathlab/pathlab-client/server/gateway/routes/settings.py:156`.
 
 ---
 
@@ -148,29 +148,29 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
 - Public datasets are globally readable (authenticated users), private require owner/admin/grant logic via access checks in dependencies.
 
 ## 5.2 Grant model
-- Grant dimensions: `can_read`, `can_collaborate`, `can_use_gpu`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:53`.
+- Grant dimensions: `can_read`, `can_collaborate`, `can_use_gpu`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:52`.
 - The public `POST /datasets/{dataset_id}/grants` endpoint always forces `can_read=True, can_collaborate=False, can_use_gpu=False` (lines 426–428); the `can_collaborate` dimension is set separately via the collaborator add endpoint, and `can_use_gpu` is only accessible through the internal `_grant_or_renew_permission` helper.
 - Guest cannot receive GPU grants:
-  - runtime guard in `_grant_or_renew_permission`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:73`
+  - runtime guard in `_grant_or_renew_permission`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:77`
   - test coverage: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:131`.
 - `check_dataset_gpu_permission` behaviour: if `user.can_use_gpu()` is true (admin/pathologist), return immediately; otherwise **always** consult `DatasetGrantRepository.has_valid_gpu` for all roles including guest. There is no separate `is_guest()` short-circuit — the DB query is the sole gate: `pathlab/pathlab-client/server/backend/auth/dependencies.py:293`. The net result for guest is unchanged (no GPU grant is ever stored for a guest), but the code path is now uniform.
 
 ## 5.3 Revoke model and side effects
-- Single revoke endpoint: `DELETE /datasets/{dataset_id}/grants/{target_user_id}`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:546`.
-- Batch revoke endpoint: `POST /datasets/{dataset_id}/grants/batch-revoke`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:582`.
+- Single revoke endpoint: `DELETE /datasets/{dataset_id}/grants/{target_user_id}`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:565`.
+- Batch revoke endpoint: `POST /datasets/{dataset_id}/grants/batch-revoke`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:601`.
 - Revoke side effects include:
-  - find affected running tasks using dataset WSIs: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:112`
-  - notify AI service to revoke permission on running tasks: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:136`
-  - cascade revoke on child datasets: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:188`
-  - audit log entries: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:575`.
-- Cross-process revocation (in-process tasks): `_notify_ai_service_permission_revocation` now calls `_local_revoke(task_id)` (via `backend.ai.permission_revocation.revoke_task_permission`) **before** the HTTP call to the AI service. This ensures that external-validation tasks running in the same Gateway process are interrupted even if the HTTP round-trip has not yet completed: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:137`, `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:141`.
+  - find affected running tasks using dataset WSIs: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:116`
+  - notify AI service to revoke permission on running tasks: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:140`
+  - cascade revoke on child datasets: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:195`
+  - audit log entries: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:594`.
+- Cross-process revocation (in-process tasks): `_notify_ai_service_permission_revocation` now calls `_local_revoke(task_id)` (via `backend.ai.permission_revocation.revoke_task_permission`) **before** the HTTP call to the AI service. This ensures that external-validation tasks running in the same Gateway process are interrupted even if the HTTP round-trip has not yet completed: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:141`, `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:145`.
 - In-flight external-validation checkpoint locations: tasks check `is_permission_revoked(task_id)` at the following points and raise `PermissionRevokedException` if revoked:
-  - `_run_external_validation_patch_segmentation`: after PATCHING 10 (`pathlab/pathlab-client/server/gateway/routes/results.py:3703`) and after inference thread returns before DB save (`pathlab/pathlab-client/server/gateway/routes/results.py:3994`). `clear_revocation(task_id)` is called in `finally`.
-  - `_run_external_validation_patch_classification`: after PATCHING 10 (`pathlab/pathlab-client/server/gateway/routes/results.py:4264`) and after inference thread returns before DB save (`pathlab/pathlab-client/server/gateway/routes/results.py:4390`). `clear_revocation(task_id)` is called in `finally`.
-  - `_run_external_validation` (survival / main body): after PATCHING 0 (`pathlab/pathlab-client/server/gateway/routes/results.py:4557`) and before TRAINING 35 (`pathlab/pathlab-client/server/gateway/routes/results.py:5198`).
+  - `_run_external_validation_patch_segmentation`: after PATCHING 10 (`pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:157`) and after inference thread returns before DB save (`pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:448`). `clear_revocation(task_id)` is called in `finally`.
+  - `_run_external_validation_patch_classification`: after PATCHING 10 (`pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:718`) and after inference thread returns before DB save (`pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:844`). `clear_revocation(task_id)` is called in `finally`.
+  - `_run_external_validation` (survival / main body): after PATCHING 0 (`pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:1011`) and before TRAINING 35 (`pathlab/pathlab-client/server/gateway/routes/inference_external_validation.py:1652`).
 
 ## 5.4 Public->private transition side effect
-- When visibility switches public->private, non-owner running training tasks on that dataset can be stopped: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:270`.
+- When visibility switches public->private, non-owner running training tasks on that dataset can be stopped: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py:269`.
 
 ---
 
@@ -184,16 +184,16 @@ Code: `pathlab/pathlab-client/server/backend/auth/annotation_permissions.py:8`.
 Test: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:64`.
 
 ## 6.2 Personal annotation access
-- Route-level owner/admin restriction for dataset-scoped personal operations via `_require_personal_annotation_owner`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:506`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:707`.
+- Route-level owner/admin restriction for dataset-scoped personal operations via `_require_personal_annotation_owner`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:512`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:715`.
 - Repository-level access guard for personal drafts via `get_with_permission` owner/admin-only behavior: `pathlab/pathlab-client/server/backend/database/repositories/annotation.py:172`.
 
 ## 6.3 Shared finalize
-- Only owner/admin can finalize shared annotation into GT: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1417`.
-- Finalize writes `label_{dataset_id}` as `status=finalized`, then removes shared draft: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1441`.
+- Only owner/admin can finalize shared annotation into GT: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1449`.
+- Finalize writes `label_{dataset_id}` as `status=finalized`, then removes shared draft: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1473`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1484`.
 
 ## 6.4 Collaborator management
-- Add/remove collaborator requires owner/admin (`can_finalize`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1633`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1697`.
-- Removing collaborator cascades child-dataset collaborator revoke behavior and emits collaboration revocation events (`access_revoked`, `force_disconnect`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1736`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1767`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1770`.
+- Add/remove collaborator requires owner/admin (`can_finalize`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1665`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1729`.
+- Removing collaborator cascades child-dataset collaborator revoke behavior and emits collaboration revocation events (`access_revoked`, `force_disconnect`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1736`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1766`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1770`.
 
 ## 6.5 Annotation source semantics
 - `annotation_source` is a **derived read-only field** computed at query time; it is never stored as a column.
@@ -224,12 +224,12 @@ Test: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:64`
 ## 8) Annotation -> New Dataset Closed Loop
 
 ## 8.1 Extraction entry
-- Entry endpoint is `POST /annotation/extract`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1065`.
-- Supports dataset-scope extraction from effective annotations (GT + overlay): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1085`.
+- Entry endpoint is `POST /annotation/extract`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1091`.
+- Supports dataset-scope extraction from effective annotations (GT + overlay): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1121`.
 
 ## 8.2 Access and mode checks during extraction
-- Shared extraction requires shared-access check (`can_access_shared`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1091`.
-- Every referenced WSI rechecked via `get_wsi_with_access`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1137`.
+- Shared extraction requires shared-access check (`can_access_shared`): `pathlab/pathlab-client/server/gateway/routes/annotation.py:1119`.
+- Every referenced WSI rechecked via `get_wsi_with_access`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1166`.
 
 ## 8.3 Inheritance into new dataset payload
 - When extraction is sourced from an existing dataset, payload carries:
@@ -237,10 +237,10 @@ Test: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:64`
   - `parent_dataset_id = source_dataset_id`
   - inherited `is_public` from parent dataset
 
-Code: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1176`.
+Code: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1202`.
 
 ## 8.4 Finalization as closed-loop stabilization
-- Shared finalize persists GT into finalized record and removes draft, stabilizing produced annotation state before downstream extraction: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1417`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1441`.
+- Shared finalize persists GT into finalized record and removes draft, stabilizing produced annotation state before downstream extraction: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1449`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1473`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:1484`.
 
 ## 8.5 Extraction audit: promoted_to_training_reference
 - When extraction succeeds, a `promoted_to_training_reference` audit event is written to `permission_audit_logs` recording the source annotation ID and new dataset ID.
@@ -264,7 +264,7 @@ Code: `pathlab/pathlab-client/server/backend/database/repositories/annotation.py
 Code: `pathlab/pathlab-client/server/backend/database/repositories/annotation.py:336`.
 
 ## 9.3 Empty finalize guard
-- Shared finalize rejects empty annotations unless `force=true`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1433`.
+- Shared finalize rejects empty annotations unless `force=true`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1466`.
 
 ## 9.4 Label deletion guard with active training
 - Label delete endpoint (`DELETE /datasets/{dataset_id}/labels`) blocks when active training tasks exist: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1826`.
@@ -273,7 +273,7 @@ Code: `pathlab/pathlab-client/server/backend/database/repositories/annotation.py
 ## 9.5 Task access and analysis visibility boundary
 - Task analysis endpoints require task access checks; non-admin analysis listing is further filtered to analyses submitted by current user.
 
-Code: `pathlab/pathlab-client/server/gateway/routes/results.py:5926`, `pathlab/pathlab-client/server/gateway/routes/results.py:5994`.
+Code: `pathlab/pathlab-client/server/gateway/routes/results.py:1959`, `pathlab/pathlab-client/server/gateway/routes/results.py:2031`.
 
 ---
 
@@ -344,7 +344,17 @@ Two public registration paths exist:
 
 Only admin can elevate a user to `pathologist` or `admin` role after creation (via `AdminUserUpdate`).
 
-Default admin account: created on first run when no users exist (`backend/database/database.py:307`). Password is taken from `DEFAULT_ADMIN_PASSWORD` env var; if unset, a random password is generated and printed once to logs at `CRITICAL` level. There is no hardcoded fallback password.
+Default admin account: created on first run when no users exist (`backend/database/database.py:327`). Password is taken from `DEFAULT_ADMIN_PASSWORD` env var; if unset, a random password is generated and printed once to logs at `CRITICAL` level. There is no hardcoded fallback password.
+
+**Email notifications** (triggered by `gateway/email_notifications.py` via `send_templated_email`):
+
+| Event | Recipient | Trigger |
+|---|---|---|
+| `application_received` | applicant's `registration_email` | immediately after `POST /auth/request-access` succeeds |
+| `new_user_registration_notice` | admin `admin_notify_email` setting | same as above (admin alert) |
+| `activation_email` | applicant's `registration_email` | when admin activates a previously inactive user via `AdminUserUpdate(is_active=True)` |
+
+Email delivery is fire-and-forget (`asyncio.create_task`). If `registration_email` is absent or `admin_notify_email` is not configured, the corresponding notification is silently skipped. Email templates are configurable via the `email_templates` global setting.
 
 ### 13.2 Token-in-URL Pattern (SSE and Image Endpoints)
 
@@ -361,7 +371,7 @@ Security implication: tokens in URLs appear in server access logs and browser hi
 
 `GET /asr/realtime` (WebSocket) accepts `?token=` because WebSocket handshakes cannot carry `Authorization` headers in browser environments.
 
-Auth path: `gateway/routes/asr.py:240` calls `_get_user_from_jwt(token, db)` from `backend/auth/dependencies.py`, which enforces full JWT validation including session nonce. A token invalidated by a new login on another device is rejected at this endpoint identically to all REST endpoints.
+Auth path: `gateway/routes/asr.py:249` calls `_get_user_from_jwt(token, db)` from `backend/auth/dependencies.py`, which enforces full JWT validation including session nonce. A token invalidated by a new login on another device is rejected at this endpoint identically to all REST endpoints.
 
 ### 13.4 JWT Configuration
 

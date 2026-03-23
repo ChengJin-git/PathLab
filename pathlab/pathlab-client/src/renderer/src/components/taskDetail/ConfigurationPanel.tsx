@@ -309,18 +309,19 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                   {task.model_config.optimizer || 'N/A'}
                 </span>
               </div>
-              {!isSegmentation && task.data_type === 'wsi' ? (
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {formatSplitMethod(task.preprocessing_config.split_config, t)}
-                  </span>
-                </div>
-              ) : (
+              {(task.data_type === 'patch' || isSegmentation) && (
                 <div className="flex justify-between items-center text-[11px] sm:text-sm">
                   <span className="text-gray-500 font-medium">{t('taskDetail.configuration.trainingBatchSize')}</span>
                   <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                     {task.model_config.batch_size ?? 'N/A'}
+                  </span>
+                </div>
+              )}
+              {task.data_type === 'wsi' && (
+                <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
+                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                    {formatSplitMethod(task.preprocessing_config.split_config, t)}
                   </span>
                 </div>
               )}

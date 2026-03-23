@@ -5,6 +5,7 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { AuthProvider } from './contexts/AuthContext'
 import { BackgroundTaskProvider } from './contexts/BackgroundTaskContext'
 import { ToastProvider } from './contexts/ToastContext'
+import { TooltipProvider } from './components/ui/tooltip'
 import App from './App'
 import './index.css'
 import { initializeApiConfig, updateApiBase } from './config'
@@ -72,15 +73,17 @@ async function bootstrap(): Promise<void> {
 
   createRoot(document.getElementById('root')!).render(
     <QueryClientProvider client={queryClient}>
-      <Router basename={isElectron ? undefined : basename}>
-        <ToastProvider>
-          <AuthProvider>
-            <BackgroundTaskProvider>
-              <App />
-            </BackgroundTaskProvider>
-          </AuthProvider>
-        </ToastProvider>
-      </Router>
+      <TooltipProvider delayDuration={400} skipDelayDuration={200}>
+        <Router basename={isElectron ? undefined : basename}>
+          <ToastProvider>
+            <AuthProvider>
+              <BackgroundTaskProvider>
+                <App />
+              </BackgroundTaskProvider>
+            </AuthProvider>
+          </ToastProvider>
+        </Router>
+      </TooltipProvider>
       <ReactQueryDevtools initialIsOpen={false} />
     </QueryClientProvider>
   )

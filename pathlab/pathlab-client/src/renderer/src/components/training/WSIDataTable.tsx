@@ -7,6 +7,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
+import { Tooltip } from '../ui/tooltip'
 import { Loader2, ChevronLeft, ChevronRight, ChevronDown, Edit2, Trash2, Users } from 'lucide-react'
 import { TaskType } from '../../constants/training'
 
@@ -447,30 +448,32 @@ function SlideRow({
       </td>
       <td className={`px-3 sm:px-6 py-${nested ? '3' : '4'} sm:py-${nested ? '4' : '5'} text-right`}>
         <div className={`flex items-center justify-end gap-1 ${nested ? 'sm:gap-2' : 'sm:gap-3'} ${nested ? '' : 'sm:'}opacity-60 group-hover:opacity-100 transition-opacity`}>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`h-${nested ? '6' : '7'} w-${nested ? '6' : '7'} sm:h-${nested ? '7' : '9'} sm:w-${nested ? '7' : '9'} text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg`}
-            title={t('training.wsiTable.editMetadata')}
-            onClick={(e) => {
-              e.preventDefault()
-              handleEditClick(item)
-            }}
-          >
-            <Edit2 className={`w-${nested ? '3' : '3.5'} h-${nested ? '3' : '3.5'} sm:w-${nested ? '4' : '5'} sm:h-${nested ? '4' : '5'}`} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`h-${nested ? '6' : '7'} w-${nested ? '6' : '7'} sm:h-${nested ? '7' : '9'} sm:w-${nested ? '7' : '9'} text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg`}
-            title={t('training.wsiTable.deleteFile')}
-            onClick={(e) => {
-              e.preventDefault()
-              handleDeleteClick(item.wsi_id, item.label ?? undefined, item.original_filename)
-            }}
-          >
-            <Trash2 className={`w-${nested ? '3' : '3.5'} h-${nested ? '3' : '3.5'} sm:w-${nested ? '4' : '5'} sm:h-${nested ? '4' : '5'}`} />
-          </Button>
+          <Tooltip content={t('training.wsiTable.editMetadata')}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`h-${nested ? '6' : '7'} w-${nested ? '6' : '7'} sm:h-${nested ? '7' : '9'} sm:w-${nested ? '7' : '9'} text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg`}
+              onClick={(e) => {
+                e.preventDefault()
+                handleEditClick(item)
+              }}
+            >
+              <Edit2 className={`w-${nested ? '3' : '3.5'} h-${nested ? '3' : '3.5'} sm:w-${nested ? '4' : '5'} sm:h-${nested ? '4' : '5'}`} />
+            </Button>
+          </Tooltip>
+          <Tooltip content={t('training.wsiTable.deleteFile')}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className={`h-${nested ? '6' : '7'} w-${nested ? '6' : '7'} sm:h-${nested ? '7' : '9'} sm:w-${nested ? '7' : '9'} text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg`}
+              onClick={(e) => {
+                e.preventDefault()
+                handleDeleteClick(item.wsi_id, item.label ?? undefined, item.original_filename)
+              }}
+            >
+              <Trash2 className={`w-${nested ? '3' : '3.5'} h-${nested ? '3' : '3.5'} sm:w-${nested ? '4' : '5'} sm:h-${nested ? '4' : '5'}`} />
+            </Button>
+          </Tooltip>
         </div>
       </td>
     </tr>

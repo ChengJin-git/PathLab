@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Users, UserPlus, RefreshCw, Shield, UserCog, User, Edit, ToggleRight, ToggleLeft, RotateCcw, Trash2, CheckSquare, Square, Construction, Search, ChevronLeft, ChevronRight, Megaphone, Send, X, Database, Mail } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
+import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import {
@@ -389,19 +390,21 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                   <Send className="w-3 h-3" />
                   <span className="hidden sm:inline">{t('settings.usersTab.editNotice')}</span>
                 </Button>
-                <Button variant="ghost" size="sm" onClick={async () => {
-                  setSendingNotice(true)
-                  try {
-                    await setMaintenanceNoticeApi(null)
-                    setCurrentNotice(null)
-                  } catch (err) {
-                    setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
-                  } finally {
-                    setSendingNotice(false)
-                  }
-                }} className="h-7 w-7 p-0 text-amber-400 hover:text-red-500" title={t('settings.usersTab.clearNotice')}>
-                  <X className="w-3.5 h-3.5" />
-                </Button>
+                <Tooltip content={t('settings.usersTab.clearNotice')}>
+                  <Button variant="ghost" size="sm" onClick={async () => {
+                    setSendingNotice(true)
+                    try {
+                      await setMaintenanceNoticeApi(null)
+                      setCurrentNotice(null)
+                    } catch (err) {
+                      setUsersError(err instanceof Error ? err.message : t('settings.usersTab.failedToSendNotice'))
+                    } finally {
+                      setSendingNotice(false)
+                    }
+                  }} className="h-7 w-7 p-0 text-amber-400 hover:text-red-500">
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </Tooltip>
               </div>
             )}
           </div>
@@ -463,26 +466,28 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           </div>
           {/* Maintenance Notice Button - only show when no active notice and input not open */}
           {!currentNotice && !showNoticeInput && (
-            <Button
-              variant="outline"
-              onClick={() => { setShowNoticeInput(true); setNoticeMessage('') }}
-              className="gap-2"
-              title={t('settings.usersTab.sendNotice')}
-            >
-              <Megaphone className="w-4 h-4" />
-              <span className="hidden sm:inline">{t('settings.usersTab.sendNotice')}</span>
-            </Button>
+            <Tooltip content={t('settings.usersTab.sendNotice')}>
+              <Button
+                variant="outline"
+                onClick={() => { setShowNoticeInput(true); setNoticeMessage('') }}
+                className="gap-2"
+              >
+                <Megaphone className="w-4 h-4" />
+                <span className="hidden sm:inline">{t('settings.usersTab.sendNotice')}</span>
+              </Button>
+            </Tooltip>
           )}
           {/* Maintenance Mode Toggle */}
-          <Button
-            variant={maintenanceMode ? "destructive" : "outline"}
-            onClick={handleToggleMaintenanceMode}
-            className="gap-2"
-            title={maintenanceMode ? t('settings.usersTab.disableMaintenanceModeTitle') : t('settings.usersTab.enableMaintenanceModeTitle')}
-          >
-            <Construction className="w-4 h-4" />
-            <span className="hidden sm:inline">{maintenanceMode ? t('settings.usersTab.endMaintenanceMode') : t('settings.usersTab.maintenanceMode')}</span>
-          </Button>
+          <Tooltip content={maintenanceMode ? t('settings.usersTab.disableMaintenanceModeTitle') : t('settings.usersTab.enableMaintenanceModeTitle')}>
+            <Button
+              variant={maintenanceMode ? "destructive" : "outline"}
+              onClick={handleToggleMaintenanceMode}
+              className="gap-2"
+            >
+              <Construction className="w-4 h-4" />
+              <span className="hidden sm:inline">{maintenanceMode ? t('settings.usersTab.endMaintenanceMode') : t('settings.usersTab.maintenanceMode')}</span>
+            </Button>
+          </Tooltip>
           <Button variant="outline" onClick={() => setPermissionCenterOpen(true)} className="gap-2">
             <Database className="w-4 h-4" />
             <span className="hidden sm:inline">{t('settings.usersTab.openPermissionCenter')}</span>
@@ -565,19 +570,20 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
             <thead>
               <tr className="border-b border-gray-200">
                 <th className="w-10 py-3 px-2">
-                  <button
-                    type="button"
-                    onClick={toggleSelectAll}
-                    className="p-1 rounded hover:bg-gray-100 transition-colors"
-                    title={allSelectableSelected ? t('settings.usersTab.deselectAll') : t('settings.usersTab.selectAll')}
-                    disabled={selectableUsers.length === 0}
-                  >
-                    {allSelectableSelected && selectableUsers.length > 0 ? (
-                      <CheckSquare className="w-4 h-4 text-primary-600" />
-                    ) : (
-                      <Square className="w-4 h-4 text-gray-400" />
-                    )}
-                  </button>
+                  <Tooltip content={allSelectableSelected ? t('settings.usersTab.deselectAll') : t('settings.usersTab.selectAll')}>
+                    <button
+                      type="button"
+                      onClick={toggleSelectAll}
+                      className="p-1 rounded hover:bg-gray-100 transition-colors"
+                      disabled={selectableUsers.length === 0}
+                    >
+                      {allSelectableSelected && selectableUsers.length > 0 ? (
+                        <CheckSquare className="w-4 h-4 text-primary-600" />
+                      ) : (
+                        <Square className="w-4 h-4 text-gray-400" />
+                      )}
+                    </button>
+                  </Tooltip>
                 </th>
                 <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600">{t('settings.usersTab.columnUsername')}</th>
                 <th className="text-left py-3 px-2 sm:px-4 font-medium text-gray-600 hidden xs:table-cell sm:table-cell">{t('settings.usersTab.columnNickname')}</th>
@@ -631,23 +637,25 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell">
                       {user.registration_email ? (
-                        <button
-                          type="button"
-                          onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }}
-                          className="text-xs text-blue-600 font-mono hover:underline cursor-pointer"
-                          title={t('settings.usersTab.editUser')}
-                        >
-                          {user.registration_email}
-                        </button>
+                        <Tooltip content={t('settings.usersTab.editUser')}>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }}
+                            className="text-xs text-blue-600 font-mono hover:underline cursor-pointer"
+                          >
+                            {user.registration_email}
+                          </button>
+                        </Tooltip>
                       ) : (
-                        <button
-                          type="button"
-                          onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: '' }) }}
-                          className="text-xs text-gray-400 hover:text-blue-600 hover:underline cursor-pointer"
-                          title={t('settings.usersTab.editUser')}
-                        >
-                          -
-                        </button>
+                        <Tooltip content={t('settings.usersTab.editUser')}>
+                          <button
+                            type="button"
+                            onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: '' }) }}
+                            className="text-xs text-gray-400 hover:text-blue-600 hover:underline cursor-pointer"
+                          >
+                            -
+                          </button>
+                        </Tooltip>
                       )}
                     </td>
                     <td className="py-3 px-4 hidden md:table-cell">
@@ -672,28 +680,35 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                     </td>
                     <td className="py-3 px-2 sm:px-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }} className="h-8 w-8 p-0" title={t('settings.usersTab.editUser')}>
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        {(!currentUserId || user.id !== currentUserId) && user.email !== 'admin' && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleToggleUserActive(user)}
-                            className={`h-8 w-8 p-0 ${user.is_active ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
-                            title={user.is_active ? t('settings.usersTab.deactivateUser') : t('settings.usersTab.activateUser')}
-                          >
-                            {user.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                        <Tooltip content={t('settings.usersTab.editUser')}>
+                          <Button variant="ghost" size="sm" onClick={() => { setEditingUser(user); setEditForm({ nickname: user.nickname || '', role: user.role, password: '', registration_email: user.registration_email || '' }) }} className="h-8 w-8 p-0">
+                            <Edit className="w-4 h-4" />
                           </Button>
+                        </Tooltip>
+                        {(!currentUserId || user.id !== currentUserId) && user.email !== 'admin' && (
+                          <Tooltip content={user.is_active ? t('settings.usersTab.deactivateUser') : t('settings.usersTab.activateUser')}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleToggleUserActive(user)}
+                              className={`h-8 w-8 p-0 ${user.is_active ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'}`}
+                            >
+                              {user.is_active ? <ToggleRight className="w-4 h-4" /> : <ToggleLeft className="w-4 h-4" />}
+                            </Button>
+                          </Tooltip>
                         )}
                         {user.agreement_accepted_at && (
-                          <Button variant="ghost" size="sm" onClick={() => handleRevokeAgreement(user.id)} className="h-8 w-8 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50" title={t('settings.usersTab.revokeAgreement')}>
-                            <RotateCcw className="w-4 h-4" />
-                          </Button>
+                          <Tooltip content={t('settings.usersTab.revokeAgreement')}>
+                            <Button variant="ghost" size="sm" onClick={() => handleRevokeAgreement(user.id)} className="h-8 w-8 p-0 text-orange-600 hover:text-orange-700 hover:bg-orange-50">
+                              <RotateCcw className="w-4 h-4" />
+                            </Button>
+                          </Tooltip>
                         )}
-                        <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user.id)} className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50" title={t('settings.usersTab.deleteUserAction')}>
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <Tooltip content={t('settings.usersTab.deleteUserAction')}>
+                          <Button variant="ghost" size="sm" onClick={() => handleDeleteUser(user.id)} className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </Tooltip>
                       </div>
                     </td>
                   </tr>

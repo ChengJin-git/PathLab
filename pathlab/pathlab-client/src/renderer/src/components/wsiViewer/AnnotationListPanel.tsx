@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Pencil, Trash2, PackagePlus, ChevronDown, ChevronUp, AlertTriangle } from 'lucide-react'
+import { Tooltip } from '../ui/tooltip'
 import { AnnotationRegion, AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
 import { Card } from '../common'
 
@@ -202,14 +203,15 @@ export function AnnotationListPanel({
           <h3 className="m-0 text-sm font-semibold text-gray-900">{t('annotation.currentSlide')}</h3>
           <div className="ml-auto flex items-center gap-2">
             {someCurrentSelected && (
+              <Tooltip content={t('annotation.deleteSelected', { count: selectedRegionIds.size })}>
               <button
                 onClick={handleBatchDeleteCurrent}
                 className="flex items-center gap-1 px-2 py-0.5 text-red-500 hover:text-red-600 text-xs transition-colors"
-                title={t('annotation.deleteSelected', { count: selectedRegionIds.size })}
               >
                 <Trash2 className="w-3 h-3" />
                 <span>{selectedRegionIds.size}</span>
               </button>
+              </Tooltip>
             )}
             <span className="text-xs text-gray-500 bg-gray-100 px-2 py-0.5 rounded">
               {regions.length} {t('annotation.regions')}
@@ -260,12 +262,16 @@ export function AnnotationListPanel({
                   )}
                   <span className="text-[10px] text-gray-400">{region.type === 'polygon' ? '⬠' : '▭'} #{idx + 1}</span>
                   <span className="text-[10px] text-gray-400">{Math.round(region.width)}×{Math.round(region.height)}</span>
-                  <button onClick={e => { e.stopPropagation(); handleStartEdit(region) }} className="p-1 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity" title={t('annotation.editLabel')}>
+                  <Tooltip content={t('annotation.editLabel')}>
+                  <button onClick={e => { e.stopPropagation(); handleStartEdit(region) }} className="p-1 text-gray-400 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Pencil className="w-3 h-3" />
                   </button>
-                  <button onClick={e => { e.stopPropagation(); onDeleteRegion(region.id) }} className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity" title={t('annotation.deleteRegion')}>
+                  </Tooltip>
+                  <Tooltip content={t('annotation.deleteRegion')}>
+                  <button onClick={e => { e.stopPropagation(); onDeleteRegion(region.id) }} className="p-1 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity">
                     <Trash2 className="w-3 h-3" />
                   </button>
+                  </Tooltip>
                 </div>
               ))}
             </div>

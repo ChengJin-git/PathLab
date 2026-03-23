@@ -1,6 +1,7 @@
 import React, { createRef } from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { TooltipProvider } from '@radix-ui/react-tooltip'
 import { BatchScanResults } from '@renderer/components/settings/storage/BatchScanResults'
 
 vi.mock('react-i18next', () => ({
@@ -58,7 +59,7 @@ const baseProps = {
 
 describe('BatchScanResults', () => {
   it('does not show collaboration visibility options for new dataset import', () => {
-    render(<BatchScanResults {...baseProps} />)
+    render(<TooltipProvider><BatchScanResults {...baseProps} /></TooltipProvider>)
 
     expect(screen.queryByText('datasetPermission.openCollaboration')).not.toBeInTheDocument()
     expect(screen.queryByText('datasetPermission.closedCollaboration')).not.toBeInTheDocument()
