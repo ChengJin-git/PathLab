@@ -26,6 +26,7 @@ from .annotation import (
 from .annotation_audit import AnnotationAuditLogRepository
 from .dataset_stats import DatasetStatsRepository
 from .dataset_grant import DatasetGrantRepository, PermissionAuditLogRepository
+from .utils import paginate_query, apply_user_filter
 
 __all__ = [
     "DataGroupRepository",
@@ -48,4 +49,6 @@ __all__ = [
     "DatasetStatsRepository",
     "DatasetGrantRepository",
     "PermissionAuditLogRepository",
+    "paginate_query",
+    "apply_user_filter",
 ]
