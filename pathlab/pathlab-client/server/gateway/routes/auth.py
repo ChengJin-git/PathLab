@@ -1233,6 +1233,54 @@ async def get_me(user: User = Depends(current_active_user)):
     return user
 
 
+@router.patch("/auth/me", response_model=UserRead, tags=["Authentication"])
+async def update_me(
+    user_update: UserUpdate,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    from fastapi_users.password import PasswordHelper
+
+    update_data = user_update.model_dump(exclude_unset=True)
+
+    new_email = update_data.pop("email", None)
+    if new_email is not None and new_email != user.email:
+        result = await db.execute(select(User).where(User.email == new_email))
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="UPDATE_USER_EMAIL_ALREADY_EXISTS",
+            )
+        user.email = new_email
+
+    new_password = update_data.pop("password", None)
+    if new_password:
+        password_helper = PasswordHelper()
+        user.hashed_password = password_helper.hash(new_password)
+        user.password_sha256 = hashlib.sha256(new_password.encode()).hexdigest()
+
+    allowed = {
+        "nickname",
+        "notify_on_success",
+        "notify_on_failed",
+        "notify_on_cancelled",
+    }
+    for field, value in update_data.items():
+        if field in allowed and hasattr(user, field):
+            setattr(user, field, value)
+
+    await db.commit()
+    await db.refresh(user)
+
+    if user.avatar_path:
+        user.avatar_url = (
+            f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
+        )
+
+    logger.info(f"User {user.email} updated their own profile")
+    return user
+
+
 @router.post("/auth/avatar", response_model=UserRead, tags=["Authentication"])
 async def upload_avatar(
     file: UploadFile = File(...),
