@@ -6,6 +6,7 @@ import { getStorageStats, StorageStats, detectOrphanedFiles, cleanupOrphanedFile
 import { PageHeader, Card, Button } from '../components/common'
 import { useToast } from '../contexts/ToastContext'
 import { formatBytes } from '../lib/utils'
+import { useAsyncAction } from '../lib/useAsyncAction'
 
 export default function StorageManagementPage() {
   const { t } = useTranslation()
@@ -22,12 +23,16 @@ export default function StorageManagementPage() {
 
   // Orphaned files state
   const [orphanedFiles, setOrphanedFiles] = useState<OrphanedFilesInfo | null>(null)
-  const [, setError] = useState<string | null>(null)
-  const [loadingOrphaned, setLoadingOrphaned] = useState(false)
   const [cleanupResult, setCleanupResult] = useState<CleanupResult | null>(null)
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
-  const [startingEmptyDatasetCleanup, setStartingEmptyDatasetCleanup] = useState(false)
+
+  const [loadingOrphaned, runLoadingOrphaned] = useAsyncAction({
+    onError: (err) => console.error('Failed to detect/cleanup orphaned files:', err)
+  })
+  const [startingEmptyDatasetCleanup, runStartingEmptyDatasetCleanup] = useAsyncAction({
+    onError: (err) => toastError(err instanceof Error ? err.message : t('storagePage.errors.cleanupEmptyDatasetsFailed'))
+  })
 
   const categoryLabels: { [key: string]: string } = {
     coordinates: t('storagePage.categories.coordinates'),
@@ -55,60 +60,34 @@ export default function StorageManagementPage() {
     void refetchStats()
   }
 
-  const detectOrphaned = async () => {
-    setLoadingOrphaned(true)
-    setError(null)
+  const detectOrphaned = () => {
     setCleanupResult(null)
-    try {
+    return runLoadingOrphaned(async () => {
       const data = await detectOrphanedFiles()
       setOrphanedFiles(data)
-    } catch (err) {
-      console.error('Failed to detect orphaned files:', err)
-      setError(err instanceof Error ? err.message : t('storagePage.errors.detectOrphanedFailed'))
-    } finally {
-      setLoadingOrphaned(false)
-    }
+    })
   }
 
-  const handleCleanup = async () => {
+  const handleCleanup = () => {
     if (!orphanedFiles) return
-
-    const categories = selectedCategories.size > 0
-      ? Array.from(selectedCategories)
-      : undefined
-
-    setLoadingOrphaned(true)
-    setError(null)
-    try {
+    const categories = selectedCategories.size > 0 ? Array.from(selectedCategories) : undefined
+    return runLoadingOrphaned(async () => {
       const result = await cleanupOrphanedFiles(categories)
       setCleanupResult(result)
       void qc.invalidateQueries({ queryKey: ['storage-stats'] })
       void refetchStats()
       await detectOrphaned()
-    } catch (err) {
-      console.error('Failed to cleanup orphaned files:', err)
-      setError(err instanceof Error ? err.message : t('storagePage.errors.cleanupFailed'))
-    } finally {
-      setLoadingOrphaned(false)
-    }
+    })
   }
 
-  const handleStartEmptyDatasetCleanup = async () => {
-    setStartingEmptyDatasetCleanup(true)
-    try {
-      const result = await startCleanupEmptyDatasetsTask()
-      if (result.task_id === 'no-op') {
-        toastSuccess(t('storagePage.emptyDatasets.noop'))
-      } else {
-        toastSuccess(t('storagePage.emptyDatasets.started', { count: result.total_items }))
-      }
-    } catch (err) {
-      console.error('Failed to start empty dataset cleanup:', err)
-      toastError(err instanceof Error ? err.message : t('storagePage.errors.cleanupEmptyDatasetsFailed'))
-    } finally {
-      setStartingEmptyDatasetCleanup(false)
+  const handleStartEmptyDatasetCleanup = () => runStartingEmptyDatasetCleanup(async () => {
+    const result = await startCleanupEmptyDatasetsTask()
+    if (result.task_id === 'no-op') {
+      toastSuccess(t('storagePage.emptyDatasets.noop'))
+    } else {
+      toastSuccess(t('storagePage.emptyDatasets.started', { count: result.total_items }))
     }
-  }
+  })
 
   const toggleCategory = (category: string) => {
     const newSelected = new Set(selectedCategories)

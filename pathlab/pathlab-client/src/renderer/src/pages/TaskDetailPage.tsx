@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3 } from 'lucide-react'
@@ -88,7 +89,7 @@ export default function TaskDetailPage() {
   const [rerunning, setRerunning] = useState(false)
   const [rerunError, setRerunError] = useState<string | null>(null)
   const [copySuccess, setCopySuccess] = useState(false)
-  const [cancelling, setCancelling] = useState(false)
+  const [cancelling, runCancelling] = useAsyncAction()
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsContainerRef = useRef<HTMLDivElement>(null)
@@ -469,19 +470,13 @@ export default function TaskDetailPage() {
     }
   }
 
-  const handleCancelTask = async () => {
+  const handleCancelTask = () => {
     if (!task_id) return
-
-    setCancelling(true)
     setShowCancelConfirm(false)
-    try {
+    return runCancelling(async () => {
       await cancelQueueTask(task_id)
       // Task status will be updated via SSE
-    } catch (error) {
-      console.error('Failed to cancel task:', error)
-    } finally {
-      setCancelling(false)
-    }
+    })
   }
 
   if (loading && !task) {

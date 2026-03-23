@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useAsyncAction } from '../lib/useAsyncAction'
 import { flushSync } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -74,8 +75,10 @@ export default function TaskListPage() {
   const [loadingStorageInfo, setLoadingStorageInfo] = useState(false)
   const [selectedTasks, setSelectedTasks] = useState<string[]>([])
   const [isBatchDelete, setIsBatchDelete] = useState(false)
-  const [, setDeleteError] = useState<string | null>(null)
-  const [isDeleting, setIsDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
+  const [isDeleting, runDeleting] = useAsyncAction({
+    onError: (err) => setDeleteError(err instanceof Error ? err.message : t('taskList.deleteTaskFailed'))
+  })
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [cancellingTaskId, setCancellingTaskId] = useState<string | null>(null)
   const [submissionTaskRecords, setSubmissionTaskRecords] = useState(() => listTrainingSubmissionRecords(['pending', 'failed', 'cancelled']))
@@ -118,7 +121,9 @@ export default function TaskListPage() {
   const [showEditModal, setShowEditModal] = useState(false)
   const [taskToEdit, setTaskToEdit] = useState<Task | null>(null)
   const [editedTaskName, setEditedTaskName] = useState('')
-  const [isEditingSaving, setIsEditingSaving] = useState(false)
+  const [isEditingSaving, runEditingSaving] = useAsyncAction({
+    onError: (err: unknown) => setEditError((err as Error)?.message || t('taskList.editTaskNameFailed'))
+  })
   const [editError, setEditError] = useState<string | null>(null)
 
   const { rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
@@ -261,26 +266,18 @@ export default function TaskListPage() {
   }
 
   // Save edited task name
-  const handleSaveTaskName = async () => {
+  const handleSaveTaskName = () => {
     if (!taskToEdit || !editedTaskName.trim()) {
       setEditError(t('taskList.editTaskNameEmpty'))
       return
     }
-
-    setIsEditingSaving(true)
     setEditError(null)
-
-    try {
+    return runEditingSaving(async () => {
       await updateTrainingTaskName(taskToEdit.task_id, editedTaskName.trim())
       await qc.invalidateQueries({ queryKey: ['training-tasks'] })
       setShowEditModal(false)
       setTaskToEdit(null)
-    } catch (err: any) {
-      console.error('Failed to update task name:', err)
-      setEditError(err.message || t('taskList.editTaskNameFailed'))
-    } finally {
-      setIsEditingSaving(false)
-    }
+    })
   }
 
   const toggleSelectAll = (checked: boolean) => {
@@ -309,17 +306,15 @@ export default function TaskListPage() {
     setShowDeleteModal(true)
   }
 
-  const confirmDelete = async () => {
+  const confirmDelete = () => {
     if (!taskToDelete && !isBatchDelete) return
 
     // Determine which task IDs are being deleted
     const taskIdsToDelete = isBatchDelete ? selectedTasks : (taskToDelete ? [taskToDelete] : [])
     if (taskIdsToDelete.length === 0) return
 
-    setIsDeleting(true)
     setDeleteError(null)
-
-    try {
+    return runDeleting(async () => {
       // Delete tasks synchronously - cancel active tasks first, then delete
       for (const taskId of taskIdsToDelete) {
         const task = tasks.find(t => t.task_id === taskId)
@@ -346,12 +341,7 @@ export default function TaskListPage() {
       setShowDeleteModal(false)
       setTaskStorageInfo(null)
       setDeleteMode('standard')
-    } catch (error) {
-      console.error('Failed to delete task:', error)
-      setDeleteError(error instanceof Error ? error.message : t('taskList.deleteTaskFailed'))
-    } finally {
-      setIsDeleting(false)
-    }
+    })
   }
 
   const getStatusBadge = (status: Task['status'], taskType?: string, isSyntheticTask?: boolean) => {
