@@ -4,9 +4,8 @@
 import type { CSSProperties } from "react";
 
 import {
-  Tooltip as ShadcnTooltip,
+  TooltipRoot,
   TooltipContent,
-  TooltipProvider,
   TooltipTrigger,
 } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
@@ -31,18 +30,16 @@ export function Tooltip({
   delayDuration?: number;
 }) {
   return (
-    <TooltipProvider>
-      <ShadcnTooltip delayDuration={delayDuration} open={open}>
-        <TooltipTrigger asChild>{children}</TooltipTrigger>
-        <TooltipContent
-          className={cn(className)}
-          style={style}
-          side={side}
-          sideOffset={sideOffset}
-        >
-          {title}
-        </TooltipContent>
-      </ShadcnTooltip>
-    </TooltipProvider>
+    <TooltipRoot delayDuration={delayDuration} open={open}>
+      <TooltipTrigger asChild>{children}</TooltipTrigger>
+      <TooltipContent
+        className={cn(className)}
+        style={style}
+        side={side}
+        sideOffset={sideOffset}
+      >
+        {title}
+      </TooltipContent>
+    </TooltipRoot>
   );
 }
