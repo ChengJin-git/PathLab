@@ -34,7 +34,6 @@ from backend.ai.utils.vram_guard import (
     VRAMInsufficientError,
     VRAMExceededError,
     VRAM_WAIT_POLL_INTERVAL_SEC,
-    VRAM_WAIT_MAX_SEC,
 )
 from backend.ai.schemas import (
     TaskType,
@@ -128,6 +127,7 @@ class WSIClassificationTrainer(BaseTrainer):
         device = torch.device(self.device)
         if device.type == "cuda":
             _waited = 0
+            _vram_wait_max = Config.get_task_timeout()
             while True:
                 try:
                     await asyncio.to_thread(
@@ -138,7 +138,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     )
                     break
                 except VRAMInsufficientError as e:
-                    if _waited >= VRAM_WAIT_MAX_SEC:
+                    if _waited >= _vram_wait_max:
                         raise RuntimeError(
                             f"VRAM protection triggered: {e.message}"
                         ) from e
@@ -155,14 +155,14 @@ class WSIClassificationTrainer(BaseTrainer):
                         f"(need {e.required_vram_mb:.0f} MB, free {e.available_vram_mb:.0f} MB / "
                         f"{e.total_vram_mb:.0f} MB total). "
                         f"Retrying in {VRAM_WAIT_POLL_INTERVAL_SEC}s "
-                        f"(waited {_waited}s / max {VRAM_WAIT_MAX_SEC}s)...",
+                        f"(waited {_waited}s / max {_vram_wait_max}s)...",
                         metadata={
                             "model_name": extractor_name,
                             "required_mb": e.required_vram_mb,
                             "available_mb": e.available_vram_mb,
                             "total_mb": e.total_vram_mb,
                             "waited_sec": _waited,
-                            "max_wait_sec": VRAM_WAIT_MAX_SEC,
+                            "max_wait_sec": _vram_wait_max,
                         },
                     )
                     await asyncio.sleep(VRAM_WAIT_POLL_INTERVAL_SEC)
