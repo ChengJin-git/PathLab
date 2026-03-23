@@ -1,3 +1,6 @@
+# git worktrees
+.worktrees/
+
 # checkpoints of feature extractors
 pathlab/pathlab-client/server/backend/ai/extractors/checkpoints
 pathlab/pathlab-client/server/backend/ai/segmentors/checkpoints
