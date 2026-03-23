@@ -7,6 +7,7 @@
 import { useTranslation } from 'react-i18next'
 import { FileText } from 'lucide-react'
 import { Select } from '../ui/select'
+import { ModalShell } from '../ui/modal-shell'
 import { TaskType } from '../../constants/training'
 import { FileMetadata } from '../../types/training'
 
@@ -34,8 +35,7 @@ export function FileMetadataModal({
   const labelHint = taskType === 'survival' ? t('training.fileMetadata.labelHintSurvival') : t('training.fileMetadata.labelHintClassification')
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+    <ModalShell isOpen={true} onClose={onCancel} maxWidth="xl" className="max-w-4xl flex flex-col">
         {/* Header */}
         <div className="p-6 border-b border-gray-200">
           <h3 className="text-2xl font-bold text-gray-900">{t('training.fileMetadata.title')}</h3>
@@ -127,7 +127,6 @@ export function FileMetadataModal({
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

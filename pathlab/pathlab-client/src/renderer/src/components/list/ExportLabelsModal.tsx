@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { X, AlertCircle } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Select } from '../ui/select'
+import { ModalShell } from '../ui/modal-shell'
 import type { DatasetSummary, ExportLabelsOptions } from '../../api'
 
 export type { ExportLabelsOptions } from '../../api'
@@ -47,8 +48,7 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
   const exportDisabled = isKFold ? !kFoldValid : !ratioValid
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+    <ModalShell isOpen={true} onClose={onCancel} maxWidth="md">
         {/* Header */}
         <div className="flex items-center justify-between p-4 sm:p-6 border-b">
           <h2 className="text-lg sm:text-xl font-semibold text-gray-900">
@@ -216,8 +216,7 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
             {t('listPage.exportWithSplit')}
           </Button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
 

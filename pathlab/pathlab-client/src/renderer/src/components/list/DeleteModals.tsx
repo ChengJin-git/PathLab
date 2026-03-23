@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertCircle, Loader2 } from 'lucide-react'
 import { WSIStorageInfo } from '../../api'
 import { formatBytes } from '../../lib/utils'
+import { ModalShell } from '../ui/modal-shell'
 
 // ─── DeleteConfirmModal ──────────────────────────────────────────────────────
 
@@ -22,16 +23,15 @@ export function DeleteConfirmModal({
 }: DeleteConfirmModalProps) {
   const { t } = useTranslation()
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="text-center mb-3 sm:mb-6">
-          <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-            <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
-          </div>
-          <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 leading-tight">{t('listComponents.deleteSlide')}</h3>
-          <p className="text-xs sm:text-base text-gray-600">{t('listComponents.cannotBeUndone')}</p>
+    <ModalShell isOpen={true} maxWidth="lg" className="p-4 sm:p-6">
+      {/* Header */}
+      <div className="text-center mb-3 sm:mb-6">
+        <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+          <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
         </div>
+        <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 leading-tight">{t('listComponents.deleteSlide')}</h3>
+        <p className="text-xs sm:text-base text-gray-600">{t('listComponents.cannotBeUndone')}</p>
+      </div>
 
         {/* WSI Info */}
         <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4 border border-gray-100">
@@ -159,9 +159,8 @@ export function DeleteConfirmModal({
           >
             {t('common.delete')}
           </button>
-        </div>
       </div>
-    </div>
+    </ModalShell>
   )
 }
 
@@ -186,18 +185,17 @@ export function BatchDeleteModal({
   const { t } = useTranslation()
   const effectiveCount = selectedCount ?? selectedIds.size
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="text-center mb-3 sm:mb-6">
-          <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-            <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
-          </div>
-          <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 text-balance leading-tight">
-            {datasetToDeleteId ? t('listComponents.deleteDataset') : t('listComponents.deleteMultipleSlides')}
-          </h3>
-          <p className="text-xs sm:text-base text-gray-600">{t('listComponents.cannotBeUndone')}</p>
+    <ModalShell isOpen={true} maxWidth="lg" className="p-4 sm:p-6">
+      {/* Header */}
+      <div className="text-center mb-3 sm:mb-6">
+        <div className="w-10 h-10 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+          <AlertCircle className="w-6 h-6 sm:w-10 sm:h-10 text-red-600" />
         </div>
+        <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2 text-balance leading-tight">
+          {datasetToDeleteId ? t('listComponents.deleteDataset') : t('listComponents.deleteMultipleSlides')}
+        </h3>
+        <p className="text-xs sm:text-base text-gray-600">{t('listComponents.cannotBeUndone')}</p>
+      </div>
 
         {/* Selection Info */}
         <div className="bg-gray-50 rounded-xl p-3 sm:p-4 mb-4 sm:mb-6 border border-gray-100 text-center">
@@ -278,7 +276,6 @@ export function BatchDeleteModal({
             {deleting ? t('listComponents.deleting') : (datasetToDeleteId ? t('common.delete') : t('listComponents.deleteCount', { count: effectiveCount }))}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }

@@ -7,6 +7,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertTriangle } from 'lucide-react'
+import { ModalShell } from '../ui/modal-shell'
 
 export interface WSIDeleteInfo {
   wsi_id: string
@@ -50,8 +51,7 @@ export function DeleteConfirmModal({
       : t('common.delete')
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+    <ModalShell isOpen={true} maxWidth="md" className="p-6">
         {/* Header */}
         <div className="text-center mb-6">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -111,8 +111,7 @@ export function DeleteConfirmModal({
           >
             {buttonText}
           </button>
-        </div>
       </div>
-    </div>
+    </ModalShell>
   )
 }

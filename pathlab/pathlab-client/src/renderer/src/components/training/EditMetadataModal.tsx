@@ -7,6 +7,7 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Edit2 } from 'lucide-react'
+import { ModalShell } from '../ui/modal-shell'
 import { TaskType } from '../../constants/training'
 
 export interface WSIEditInfo {
@@ -61,8 +62,7 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
   const labelHint = t('training.editMetadata.labelHint')
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6">
+    <ModalShell isOpen={true} onClose={onCancel} maxWidth="md" className="p-6">
         {/* Header */}
         <div className="text-center mb-6">
           <div className="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -171,8 +171,7 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
           >
             {updating ? t('training.editMetadata.updating') : t('training.editMetadata.saveChanges')}
           </button>
-        </div>
       </div>
-    </div>
+    </ModalShell>
   )
 }

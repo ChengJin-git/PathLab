@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Edit, X, Users, FileImage, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Select } from '../ui/select'
+import { ModalShell } from '../ui/modal-shell'
 import { organSources, organSourceKeyMap } from '../upload/types'
 
 // ─── EditMetadataModal ───────────────────────────────────────────────────────
@@ -51,16 +52,15 @@ export function EditMetadataModal({
   const isImageDataset = visualType === 'images'
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="text-center mb-3 sm:mb-6">
-          <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-            <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
-          </div>
-          <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">{t('listComponents.editModals.editMetadata')}</h3>
-          <p className="text-xs sm:text-sm text-gray-600">{t(isImageDataset ? 'listComponents.editModals.updateImageInfo' : 'listComponents.editModals.updateSlideInfo')}</p>
+    <ModalShell isOpen={true} onClose={onCancel} maxWidth="md" className="p-4 sm:p-6">
+      {/* Header */}
+      <div className="text-center mb-3 sm:mb-6">
+        <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+          <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
         </div>
+        <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">{t('listComponents.editModals.editMetadata')}</h3>
+        <p className="text-xs sm:text-sm text-gray-600">{t(isImageDataset ? 'listComponents.editModals.updateImageInfo' : 'listComponents.editModals.updateSlideInfo')}</p>
+      </div>
 
         {/* WSI ID (read-only) */}
         <div className="mb-3 sm:mb-4">
@@ -146,8 +146,7 @@ export function EditMetadataModal({
             {updating ? t('listComponents.editModals.saving') : t('listComponents.editModals.saveChanges')}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
 
@@ -191,16 +190,15 @@ export function BatchEditModal({
   const isImageDataset = visualType === 'images'
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
-      <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 sm:min-h-[620px] max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="text-center mb-3 sm:mb-6">
-          <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
-            <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
-          </div>
-          <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">{t('listComponents.editModals.batchEditMetadata')}</h3>
-          <p className="text-xs sm:text-sm text-gray-600">{t(isImageDataset ? 'listComponents.editModals.updateImages' : 'listComponents.editModals.updateSlides', { count: selectedCount })}</p>
+    <ModalShell isOpen={true} onClose={onCancel} maxWidth="md" className="p-4 sm:p-6">
+      {/* Header */}
+      <div className="text-center mb-3 sm:mb-6">
+        <div className="w-10 h-10 sm:w-16 sm:h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-2 sm:mb-4">
+          <Edit className="w-6 h-6 sm:w-10 sm:h-10 text-blue-600" />
         </div>
+        <h3 className="text-lg sm:text-2xl font-bold text-gray-900 mb-0.5 sm:mb-2">{t('listComponents.editModals.batchEditMetadata')}</h3>
+        <p className="text-xs sm:text-sm text-gray-600">{t(isImageDataset ? 'listComponents.editModals.updateImages' : 'listComponents.editModals.updateSlides', { count: selectedCount })}</p>
+      </div>
 
         {/* Info Message */}
         <div className="mb-3 sm:mb-4 p-2.5 sm:p-3 bg-blue-50 border border-blue-100 rounded-lg">
@@ -289,8 +287,7 @@ export function BatchEditModal({
             {batchUpdating ? t('listComponents.editModals.updating') : t('listComponents.editModals.updateCount', { count: selectedCount })}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
 
@@ -332,15 +329,14 @@ export function EditDatasetModal({
   const { t } = useTranslation()
   const isOtherSource = editingDatasetSourceSelection === 'Other'
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onCancel}>
-      <div className="bg-white rounded-2xl sm:rounded-3xl shadow-2xl w-full max-w-md p-4 sm:p-6 animate-in zoom-in-95 fade-in duration-200" onClick={e => e.stopPropagation()}>
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h3 className="text-lg sm:text-xl font-bold text-gray-900">{t('listComponents.editModals.editDataset')}</h3>
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-gray-600" onClick={onCancel}>
-            <X className="w-5 h-5" />
-          </Button>
-        </div>
+    <ModalShell isOpen={true} onClose={onCancel} maxWidth="md" className="p-4 sm:p-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4 sm:mb-6">
+        <h3 className="text-lg sm:text-xl font-bold text-gray-900">{t('listComponents.editModals.editDataset')}</h3>
+        <Button variant="ghost" size="icon" className="h-8 w-8 text-gray-400 hover:text-gray-600" onClick={onCancel}>
+          <X className="w-5 h-5" />
+        </Button>
+      </div>
 
         {/* Dataset Name */}
         <div className="mb-4">
@@ -516,7 +512,6 @@ export function EditDatasetModal({
             {editingDatasetSaving ? t('listComponents.editModals.saving') : t('listComponents.editModals.saveChanges')}
           </button>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   )
 }
