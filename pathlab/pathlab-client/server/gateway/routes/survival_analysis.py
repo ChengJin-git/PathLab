@@ -9,7 +9,6 @@ import asyncio
 import functools
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 from fastapi import HTTPException
@@ -18,8 +17,16 @@ from sqlalchemy import select
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from backend.database.models import TrainingTaskWSI
-from backend.database.repositories import TrainingTaskRepository, WSIRepository
+from backend.database.repositories import TrainingTaskRepository
 
+from .analysis_base import (
+    fill_wsi_filenames,
+    make_analysis_dir,
+    make_analysis_result,
+    make_bootstrap_progress_sync,
+    unpack_progress_config,
+    utc_timestamp_z,
+)
 from .analysis_helpers import _get_random_seed_from_task
 from .analysis_metrics import (
     _calculate_integrated_brier_score,
@@ -47,13 +54,7 @@ async def _run_survival_analysis(
         progress_callback: Optional async function to report progress (0-100).
         progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
     """
-    # Default progress ranges if not provided
-    if progress_config is None:
-        progress_config = {"start": 20, "ci_start": 30, "ci_end": 95, "has_ci": True}
-    p_start = progress_config.get("start", 20)
-    p_ci_start = progress_config.get("ci_start", 30)
-    p_ci_end = progress_config.get("ci_end", 95)
-
+    p_start, p_ci_start, p_ci_end = unpack_progress_config(progress_config)
     task_id = task.task_id
 
     # Check if this is a case-level dataset
@@ -229,10 +230,7 @@ async def _run_survival_analysis(
     c_index, _, _, _, _ = concordance_index_censored(events_bool, times_arr, risks_arr)
     logger.info(f"  Calculated C-Index (scikit-survival): {c_index}")
 
-    # Create analysis directory
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / timestamp
-    analysis_dir.mkdir(parents=True, exist_ok=True)
+    analysis_dir, timestamp = make_analysis_dir(task_id)
 
     metrics = {"c_index": round(c_index, 4)}
 
@@ -279,18 +277,9 @@ async def _run_survival_analysis(
             f"Computing bootstrap 95% CI for survival task {task_id}, metrics: {ci_metrics}..."
         )
         loop = asyncio.get_event_loop()
-
-        # Create thread-safe progress callback for bootstrap CI (ci_start -> ci_end)
-        ci_range = p_ci_end - p_ci_start
-
-        def bootstrap_progress_sync(fraction: float):
-            if progress_callback:
-                # Map bootstrap progress (0.0-1.0) to overall progress (ci_start -> ci_end)
-                overall_progress = int(p_ci_start + fraction * ci_range)
-                loop.call_soon_threadsafe(
-                    lambda p=overall_progress: asyncio.create_task(progress_callback(p))
-                )
-
+        bootstrap_progress_sync = make_bootstrap_progress_sync(
+            progress_callback, p_ci_start, p_ci_end, loop
+        )
         bootstrap_ci_result = await loop.run_in_executor(
             None,  # Use default thread pool
             functools.partial(
@@ -364,7 +353,7 @@ async def _run_survival_analysis(
     summary = {
         "task_id": task_id,
         "task_type": "survival",
-        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat() + "Z",
+        "timestamp": utc_timestamp_z(),
         "description": request.description,
         "num_samples": len(risks),
         "metrics": metrics,
@@ -388,17 +377,7 @@ async def _run_survival_analysis(
 
     await asyncio.to_thread(_write_json_sync, analysis_dir / "summary.json", summary)
 
-    surv_ids_for_lookup = [
-        r["wsi_id"] for r in wsi_results if r.get("wsi_id") and not r.get("filename")
-    ]
-    if surv_ids_for_lookup:
-        surv_wsi_map = await WSIRepository.get_by_ids(db, surv_ids_for_lookup)
-        for r in wsi_results:
-            if not r.get("filename") and r.get("wsi_id"):
-                wsi_obj = surv_wsi_map.get(r["wsi_id"])
-                r["filename"] = (wsi_obj.original_filename if wsi_obj else None) or r[
-                    "wsi_id"
-                ]
+    await fill_wsi_filenames(db, wsi_results)
 
     await asyncio.to_thread(
         _write_json_sync,
@@ -406,10 +385,4 @@ async def _run_survival_analysis(
         {"wsi_results": wsi_results, "metrics": metrics},
     )
 
-    return {
-        "task_id": task_id,
-        "analysis_id": timestamp,
-        "analysis_dir": str(analysis_dir),
-        "summary": summary,
-        "chart_paths": chart_paths,
-    }
+    return make_analysis_result(task_id, timestamp, analysis_dir, summary, chart_paths)
