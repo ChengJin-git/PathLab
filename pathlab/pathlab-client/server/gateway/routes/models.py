@@ -26,7 +26,7 @@ from backend.database.repositories import TrainedModelRepository, TrainingTaskRe
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin
 from .access_control import assert_owner
-from backend.common.chat_context_cache import invalidate_chat_context
+from gateway.chat.context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/models", tags=["Trained Models"])
 logger = logging.getLogger(__name__)

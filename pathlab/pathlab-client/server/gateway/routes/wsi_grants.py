@@ -21,7 +21,7 @@ from backend.database.repositories import (
 )
 from ..dependencies import AI_SERVICE_URL, logger
 from ..models import DatasetUpdateVisibilityRequest
-from backend.common.chat_context_cache import (
+from gateway.chat.context_cache import (
     invalidate_chat_context,
     invalidate_all_user_chat_contexts,
 )

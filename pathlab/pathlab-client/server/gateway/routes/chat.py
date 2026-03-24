@@ -47,7 +47,7 @@ from backend.auth.dependencies import (
 )
 from .access_control import assert_owner
 from backend.common.permissions import require_conversation_access
-from backend.common.chat_context_cache import (
+from gateway.chat.context_cache import (
     get_cached_context_kwargs_admin,
     get_cached_context_kwargs,
     get_training_snapshot,
@@ -1647,6 +1647,7 @@ def _build_merged_pdf_context(
 from .chat_feedback import router as chat_feedback_router
 
 router.include_router(chat_feedback_router)
+
 
 async def stream_ai_response(
     messages: list[dict[str, Any]],

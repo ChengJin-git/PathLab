@@ -46,7 +46,7 @@ from backend.common.annotation_summary_cache import (
     rebuild_dataset_annotation_summary_cache,
 )
 from backend.common.annotation_pubsub import publish as publish_annotation_event
-from backend.common.chat_context_cache import (
+from gateway.chat.context_cache import (
     invalidate_chat_context,
     invalidate_all_user_chat_contexts,
 )

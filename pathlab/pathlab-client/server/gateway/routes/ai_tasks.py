@@ -29,7 +29,7 @@ from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
 from ..utils import require_no_active_batch_imports
-from backend.common.chat_context_cache import invalidate_chat_context
+from gateway.chat.context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/tasks", tags=["AI Inference"])
 

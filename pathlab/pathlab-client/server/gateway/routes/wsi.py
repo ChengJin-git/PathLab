@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete as sql_delete
 from sklearn.exceptions import NotFittedError
 
-from backend.common.chat_context_cache import invalidate_chat_context
+from gateway.chat.context_cache import invalidate_chat_context
 from backend.database import get_db
 from backend.database.repositories import (
     WSIRepository,

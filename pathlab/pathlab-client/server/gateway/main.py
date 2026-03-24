@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.database import init_db, close_db, get_db, async_session
 from backend.auth.models import User
 from backend.ai.schemas.base import TaskStatus
-from backend.common.chat_context_cache import (
+from gateway.chat.context_cache import (
     set_cached_context_kwargs,
     set_cached_context_kwargs_admin,
 )
@@ -62,7 +62,7 @@ from .routes import (
     training_options_router,
 )
 from backend.common.config import Config
-from backend.common.chat_context_builder import build_chat_context_for_user
+from gateway.chat.context_builder import build_chat_context_for_user
 
 
 async def _startup_prewarm_chat_context_cache() -> None:

@@ -42,7 +42,7 @@ from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMod
 from ..pipeline import run_training_pipeline, run_patching_then_submit
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training, require_no_active_batch_imports
-from backend.common.chat_context_cache import invalidate_chat_context
+from gateway.chat.context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 

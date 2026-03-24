@@ -633,7 +633,7 @@ class TaskQueueManager:
                 )
         if user_id:
             try:
-                from backend.common.chat_context_cache import (
+                from gateway.chat.context_cache import (
                     invalidate_chat_context,
                     clear_training_snapshot,
                 )
