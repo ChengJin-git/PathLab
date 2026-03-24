@@ -13,16 +13,6 @@ import {
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import {
-  StorageStats,
-  OrphanedFilesInfo,
-  CleanupResult,
-  OrphanedRecordsInfo,
-  OrphanedRecordsCleanupResult,
-  StorageConfig,
-  ScanDirectoryResponse,
-  CheckExternalFilesResponse,
-  ExternalDatasetInfo,
-  DatasetSummary,
   getStorageStats,
   detectOrphanedFiles,
   cleanupOrphanedFiles,
@@ -39,8 +29,20 @@ import {
   getExternalDatasets,
   getExternalDatasetsCachedSync,
   invalidateExternalDatasetsCache,
-  fetchDatasets
-} from '../../api'
+} from '../../api/storage'
+import type {
+  StorageStats,
+  OrphanedFilesInfo,
+  CleanupResult,
+  OrphanedRecordsInfo,
+  OrphanedRecordsCleanupResult,
+  StorageConfig,
+  ScanDirectoryResponse,
+  CheckExternalFilesResponse,
+  ExternalDatasetInfo,
+} from '../../api/storage'
+import { fetchDatasets } from '../../api/wsi'
+import type { DatasetSummary } from '../../api/wsi'
 import { formatFileSize } from '../../lib/utils'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import { ShowConfirmDialog } from './ConfirmDialog'

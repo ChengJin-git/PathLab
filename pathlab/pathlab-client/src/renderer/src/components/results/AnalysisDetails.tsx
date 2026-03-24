@@ -2,7 +2,8 @@ import { useState } from 'react'
 import { Download, FlaskConical, Loader2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChart, KMCurveChart, MetricCurveChart, PerClassMetricBarChart, type LossCurveData, type KFoldLossCurveData } from '../charts/AnalysisCharts'
-import { downloadApiFile, downloadTrainedModelExport, withAuthTokenQuery } from '../../api'
+import { downloadApiFile, withAuthTokenQuery } from '../../api/client'
+import { downloadTrainedModelExport } from '../../api/training'
 import { API_BASE } from '../../config'
 
 // --- Types shared with ResultsViewerPage ---

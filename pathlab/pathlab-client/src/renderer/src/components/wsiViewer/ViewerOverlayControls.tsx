@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Layers } from 'lucide-react'
-import { SEGMENTATION_MASK_COLORS } from '../../api'
+import { SEGMENTATION_MASK_COLORS } from '../../api/heatmap'
 
 interface ViewerOverlayControlsProps {
   canShowHeatmapOverlay: boolean

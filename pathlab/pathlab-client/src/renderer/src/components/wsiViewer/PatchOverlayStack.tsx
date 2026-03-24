@@ -1,5 +1,5 @@
 import type { CSSProperties, SyntheticEvent } from 'react'
-import { getPatchFileImageUrl } from '../../api'
+import { getPatchFileImageUrl } from '../../api/heatmap'
 import type { AnnotationRegion } from '../../api/annotation'
 import { PatchAnnotationOverlay } from './PatchAnnotationOverlay'
 

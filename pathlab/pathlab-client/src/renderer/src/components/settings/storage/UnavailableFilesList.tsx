@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { AlertCircle, Trash2, RefreshCw } from 'lucide-react'
 import { Button } from '../../ui/button'
 import { Checkbox } from '../../ui/checkbox'
-import { ExternalFileInfo } from '../../../api'
+import type { ExternalFileInfo } from '../../../api/storage'
 
 interface UnavailableFilesListProps {
   unavailableFiles: ExternalFileInfo[]

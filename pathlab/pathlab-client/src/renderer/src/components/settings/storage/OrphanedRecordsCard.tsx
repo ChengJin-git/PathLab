@@ -2,7 +2,7 @@ import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Database, Search, Trash2, CheckCircle } from 'lucide-react'
 import { Card } from '../../ui/card'
-import { OrphanedRecordsInfo, OrphanedRecordsCleanupResult } from '../../../api'
+import type { OrphanedRecordsInfo, OrphanedRecordsCleanupResult } from '../../../api/storage'
 
 interface OrphanedRecordsCardProps {
   orphanedRecords: OrphanedRecordsInfo | null

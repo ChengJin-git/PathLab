@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { HeatmapData, PatchCAMData, getPatchImageUrl } from '../../api'
+import type { HeatmapData, PatchCAMData } from '../../api/heatmap'
+import { getPatchImageUrl } from '../../api/heatmap'
 import { Card } from '../common'
 import { Badge } from '../ui/badge'
 import { Tooltip } from '../ui/tooltip'

@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { PREPROCESSING_BASE, API_BASE } from '../config'
-import { HeatmapData, buildSearchParams, getPatchFileImageUrl, withAuthTokenQuery } from '../api'
+import type { HeatmapData } from '../api/heatmap'
+import { getPatchFileImageUrl } from '../api/heatmap'
+import { buildSearchParams, withAuthTokenQuery } from '../api/client'
 import { Plus, Minus, RotateCcw, Maximize, Minimize, Loader2, Move, Keyboard } from 'lucide-react'
 import { Tooltip } from './ui/tooltip'
 

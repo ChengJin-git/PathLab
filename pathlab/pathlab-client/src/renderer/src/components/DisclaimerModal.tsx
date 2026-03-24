@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { Shield, Loader2 } from 'lucide-react'
 import { Button } from './ui/button'
-import { getClientIP } from '../api'
+import { getClientIP } from '../api/users'
 import { getLegalInlineComponents } from './legal/LegalInlineLink'
 import { ModalShell } from './ui/modal-shell'
 

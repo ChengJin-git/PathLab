@@ -1,4 +1,6 @@
-import { HeatmapPoint, buildAuthRequestInit, downloadBlobFile, getPatchImageUrl } from '../../api'
+import type { HeatmapPoint } from '../../api/heatmap'
+import { getPatchImageUrl } from '../../api/heatmap'
+import { buildAuthRequestInit, downloadBlobFile } from '../../api/client'
 
 /**
  * Export patches as a ZIP file containing images

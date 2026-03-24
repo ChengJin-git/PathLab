@@ -5,7 +5,8 @@
  * Used by both ResultsViewerPage and AnalysisConfigCard to ensure consistent validation rules.
  */
 
-import { TrainedModel, ValidationDataset } from '../api'
+import type { TrainedModel } from '../api/training'
+import type { ValidationDataset } from '../api/results'
 
 /**
  * Feature extractor name → embedding dimension mapping.

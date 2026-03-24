@@ -4,7 +4,8 @@ import { KeyRound, Loader2, Eye, EyeOff } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
-import { changePassword, ApiError } from '../api'
+import { changePassword } from '../api/auth'
+import { ApiError } from '../api/client'
 import { ModalShell } from './ui/modal-shell'
 
 interface ChangePasswordModalProps {

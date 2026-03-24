@@ -9,15 +9,16 @@ import { Checkbox } from '../ui/checkbox'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Select } from '../ui/select'
+import { fetchDatasets } from '../../api/wsi'
 import {
-  fetchDatasets,
   grantDatasetGrant,
   listDatasetGrants,
-  listUsers,
   revokeDatasetGrant,
-  updateDatasetVisibility
-} from '../../api'
-import type { DatasetGrant, UserListItem } from '../../api'
+  updateDatasetVisibility,
+} from '../../api/grants'
+import type { DatasetGrant } from '../../api/grants'
+import { listUsers } from '../../api/users'
+import type { UserListItem } from '../../api/users'
 import type { ShowConfirmDialog } from './ConfirmDialog'
 
 export interface DatasetGrantModalProps {

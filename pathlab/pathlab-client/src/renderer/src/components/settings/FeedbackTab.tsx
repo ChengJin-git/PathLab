@@ -7,11 +7,15 @@ import { Tooltip } from '../ui/tooltip'
 import { Label } from '../ui/label'
 import { Select } from '../ui/select'
 import {
-  MessageFeedback, FeedbackStats,
   getAdminFeedbacks, getFeedbackStats, exportFeedbacks as exportFeedbacksApi,
-  resetAllFeedbacks, startAsyncExport, getExportTaskStatus, downloadExportFile,
-  ExportTaskStatus, fetchUserUsageStats, UserUsageItem, downloadBlobFile
-} from '../../api'
+  resetAllFeedbacks,
+} from '../../api/feedback'
+import type { MessageFeedback, FeedbackStats } from '../../api/feedback'
+import { startAsyncExport, getExportTaskStatus, downloadExportFile } from '../../api/export'
+import type { ExportTaskStatus } from '../../api/export'
+import { fetchUserUsageStats } from '../../api/stats'
+import type { UserUsageItem } from '../../api/stats'
+import { downloadBlobFile } from '../../api/client'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { PaginationFooter } from '../ui/pagination-footer'
 

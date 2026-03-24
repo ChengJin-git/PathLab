@@ -4,9 +4,9 @@ import { X, AlertCircle } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { ModalShell } from '../ui/modal-shell'
-import type { DatasetSummary, ExportLabelsOptions } from '../../api'
+import type { DatasetSummary, ExportLabelsOptions } from '../../api/wsi'
 
-export type { ExportLabelsOptions } from '../../api'
+export type { ExportLabelsOptions } from '../../api/wsi'
 
 interface ExportLabelsModalProps {
   dataset: DatasetSummary

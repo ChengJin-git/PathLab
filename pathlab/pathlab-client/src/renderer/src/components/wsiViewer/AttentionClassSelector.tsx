@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { HeatmapData } from '../../api'
+import type { HeatmapData } from '../../api/heatmap'
 import { Card } from '../common'
 import { Layers, ChevronDown, CheckCircle2 } from 'lucide-react'
 

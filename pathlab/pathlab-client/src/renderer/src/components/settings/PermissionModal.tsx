@@ -5,7 +5,8 @@ import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
 import { Checkbox } from '../ui/checkbox'
-import { UserListItem, DatasetGrant } from '../../api'
+import type { UserListItem } from '../../api/users'
+import type { DatasetGrant } from '../../api/grants'
 import { ModalShell } from '../ui/modal-shell'
 
 export interface PermissionModalProps {

@@ -4,7 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { Layers, RefreshCw, Minus, Plus, CheckCircle, Cpu, AlertCircle } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Tooltip } from '../ui/tooltip'
-import { QueueStatus, getQueueStatus, updateQueueConfig, getQueueConfig } from '../../api'
+import { getQueueStatus, updateQueueConfig, getQueueConfig } from '../../api/queue'
+import type { QueueStatus } from '../../api/queue'
 import { ShowConfirmDialog } from './ConfirmDialog'
 
 export interface TasksTabProps {

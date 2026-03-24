@@ -4,7 +4,7 @@ import { Plus, Database } from 'lucide-react'
 import { Input } from '../../ui/input'
 import { Select } from '../../ui/select'
 import { Label } from '../../ui/label'
-import { DatasetSummary } from '../../../api'
+import type { DatasetSummary } from '../../../api/wsi'
 
 interface DatasetSelectionProps {
   batchDatasetMode: 'existing' | 'new'

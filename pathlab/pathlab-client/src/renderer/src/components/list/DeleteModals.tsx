@@ -1,7 +1,7 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { AlertCircle, Loader2 } from 'lucide-react'
-import { WSIStorageInfo } from '../../api'
+import type { WSIStorageInfo } from '../../api/storage'
 import { formatFileSize } from '../../lib/utils'
 import { ModalShell } from '../ui/modal-shell'
 

@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { AvailableHeatmap } from '../../api'
+import type { AvailableHeatmap } from '../../api/heatmap'
 import { Trash2, Loader2 } from 'lucide-react'
 
 interface DeleteResultsModalProps {

@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { HardDrive, Search, Trash2, RefreshCw, ChevronRight } from 'lucide-react'
 import { Button } from '../../ui/button'
 import { Checkbox } from '../../ui/checkbox'
-import { ExternalDatasetInfo } from '../../../api'
+import type { ExternalDatasetInfo } from '../../../api/storage'
 
 interface ExternalDatasetsTableProps {
   externalDatasets: ExternalDatasetInfo[]

@@ -8,14 +8,15 @@ import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import {
-  listUsersPaged, updateUser, deleteUser, registerUser, revokeUserAgreement,
+  listUsersPaged, updateUser, deleteUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
   getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
-  getGlobalSettings, updateGlobalSettings
-} from '../../api'
-import type { AdminUserUpdateRequest, RegisterRequest } from '../../api/auth'
+} from '../../api/users'
 import type { UserListItem } from '../../api/users'
+import { registerUser } from '../../api/auth'
+import type { AdminUserUpdateRequest, RegisterRequest } from '../../api/auth'
+import { getGlobalSettings, updateGlobalSettings } from '../../api/settings'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
 import { CreateUserModal } from './CreateUserModal'

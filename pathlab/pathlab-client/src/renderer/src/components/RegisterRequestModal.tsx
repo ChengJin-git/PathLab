@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { UserPlus, Mail, User, Lock, CheckCircle, X, Loader2, Info } from 'lucide-react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
-import { requestAccess, ApiError } from '../api'
+import { requestAccess } from '../api/auth'
+import { ApiError } from '../api/client'
 import { ModalShell } from './ui/modal-shell'
 
 interface Props {
