@@ -10,7 +10,7 @@
 
 import { useRef, useState, useCallback, useEffect } from 'react'
 import { getApiBase } from '../config'
-import { getAuthToken } from '../api/auth'
+import { getAuthToken } from '../api/client'
 
 const ERROR_MESSAGES: Record<string, string> = {
   'NotAllowedError': 'Microphone permission denied. Please allow microphone access and try again.',

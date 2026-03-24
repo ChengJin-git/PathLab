@@ -2,7 +2,8 @@
  * Type definitions for Background Task Context
  */
 
-import { TrainingTaskDetail, UploadSplitsResponse } from '../../api'
+import type { TrainingTaskDetail } from '../../api/training'
+import type { UploadSplitsResponse } from '../../api/wsi'
 
 // Task types - includes server-side training tasks and storage tasks
 export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'metadata_upload' | 'extraction'

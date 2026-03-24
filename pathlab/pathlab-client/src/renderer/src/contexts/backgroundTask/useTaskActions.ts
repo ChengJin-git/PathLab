@@ -8,12 +8,10 @@
 import React, { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import {
-  uploadWSIFile, uploadWSIByPath, deleteWSI, deleteTrainingTask,
-  checkUploadSpace, cancelQueueTask, cancelStorageTask,
-  startMigration, getMigrationStatus,
-  fetchDatasets, uploadDatasetSplits
-} from '../../api'
+import { uploadWSIFile, uploadWSIByPath, deleteWSI, fetchDatasets, uploadDatasetSplits } from '../../api/wsi'
+import { deleteTrainingTask } from '../../api/training'
+import { checkUploadSpace, cancelStorageTask, startMigration, getMigrationStatus } from '../../api/storage'
+import { cancelQueueTask } from '../../api/queue'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
 import { generateId } from './helpers'
 import { markTrainingSubmissionCancelled } from '../../lib/trainingSubmissionTracker'

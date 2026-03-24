@@ -10,7 +10,8 @@
 
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAuthToken, getDiskSpace, getMigrationStatus } from '../../api'
+import { getAuthToken } from '../../api/client'
+import { getDiskSpace, getMigrationStatus } from '../../api/storage'
 import { useAuth } from '../AuthContext'
 import { DISMISSED_TASKS_KEY, generateId } from './helpers'
 import { useTrainingSSE } from './useTrainingSSE'

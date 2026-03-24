@@ -4,7 +4,9 @@
 
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAuthToken, getCurrentUser, TrainingTaskDetail } from '../../api'
+import { getAuthToken } from '../../api/client'
+import { getCurrentUser } from '../../api/auth'
+import type { TrainingTaskDetail } from '../../api/training'
 import { API_BASE } from '../../config'
 import { mapTrainingStatus } from './helpers'
 import type { BackgroundTask, TaskType, TrainingTaskStatus, ServerTaskType } from './types'

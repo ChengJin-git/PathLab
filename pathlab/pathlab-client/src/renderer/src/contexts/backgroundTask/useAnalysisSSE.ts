@@ -3,7 +3,8 @@
  */
 
 import { useState, useEffect } from 'react'
-import { getAuthToken, getCurrentUser } from '../../api'
+import { getAuthToken } from '../../api/client'
+import { getCurrentUser } from '../../api/auth'
 import { API_BASE } from '../../config'
 import { mapTrainingStatus } from './helpers'
 import type { BackgroundTask, TaskType, TrainingTaskStatus } from './types'
