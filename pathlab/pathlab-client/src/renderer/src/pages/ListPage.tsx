@@ -19,7 +19,7 @@ import { clampDatasetPage } from '../lib/datasetPagination'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
-import { organSources, organSourceKeyMap } from '../components/upload/types'
+import { organSources, organSourceKeyMap } from '../constants/wsi'
 
 
 type ListWSIItem = import('../api/wsi').WSISummary

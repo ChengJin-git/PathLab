@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { PackagePlus, Loader2, ChevronDown } from 'lucide-react'
 import { Tooltip } from '../ui/tooltip'
 import { AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
-import { organSources, organSourceKeyMap } from '../upload/types'
+import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 interface CreateDatasetDialogProps {
   show: boolean

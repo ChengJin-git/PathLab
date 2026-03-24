@@ -3,7 +3,7 @@ import { Edit, X, Users, FileImage, Globe, Lock } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { ModalShell } from '../ui/modal-shell'
-import { organSources, organSourceKeyMap } from '../upload/types'
+import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 // ─── EditMetadataModal ───────────────────────────────────────────────────────
 

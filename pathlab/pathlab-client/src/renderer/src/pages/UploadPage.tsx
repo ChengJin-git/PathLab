@@ -41,10 +41,11 @@ import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
 import { parseCsvMetadata } from '../lib/csvImporter'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../lib/segmentationUploadUtils'
+import { organSources } from '../constants/wsi'
 import {
   type LocalItem, type FileMetadata, type UploadMode, type DataLevel, type DataType,
   type ElectronApi, type MrxsDataFolder, type CollectionResult,
-  defaultMetadata, organSources, generateCaseId,
+  defaultMetadata, generateCaseId,
   collectItemsFromDataTransfer, buildFileKey,
   BulkEditModal, DatasetConfigStep, SuccessStep
 } from '../components/upload'

@@ -7,7 +7,7 @@ import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { useDebounce } from '../../lib/useDebounce'
 import type { UploadMode, DataLevel } from './types'
-import { organSources, organSourceKeyMap } from './types'
+import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 export interface DatasetConfigStepProps {
   datasetName: string

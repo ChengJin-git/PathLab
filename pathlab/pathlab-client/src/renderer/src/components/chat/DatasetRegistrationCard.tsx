@@ -10,7 +10,7 @@ import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTask
 import { isSupportedName, isTmapDataFile, getBaseName } from '../../constants/fileTypes'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 import { Select } from '../ui/select'
-import { organSources, organSourceKeyMap } from '../upload/types'
+import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
   const match = content.match(/\[DATASET_REGISTRATION\]([\s\S]*?)\[\/DATASET_REGISTRATION\]/)

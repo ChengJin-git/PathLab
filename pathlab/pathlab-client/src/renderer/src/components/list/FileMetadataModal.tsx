@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import type { FileMetadata } from '../../types/training'
 import { Select } from '../ui/select'
 import { ModalShell } from '../ui/modal-shell'
-import { organSources, organSourceKeyMap } from '../upload/types'
+import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 export type FileMetadataMap = Map<string, FileMetadata>
 
