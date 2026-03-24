@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Callable, Tuple, cast as type_cast
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, cast, String
 from sqlalchemy.orm import selectinload
@@ -46,6 +46,7 @@ from backend.database.repositories import (
     DatasetGrantRepository,
 )
 from backend.common.config import Config
+from ..dependencies import make_sse_response
 from backend.common.redis_client import get_redis, make_key
 from backend.storage import StorageManager
 from backend.auth import (
@@ -2275,15 +2276,7 @@ async def stream_analysis_tasks(user: User = Depends(get_user_from_token_param))
             # Client disconnected
             logger.info("Analysis SSE client disconnected")
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        },
-    )
+    return make_sse_response(event_generator())
 
 
 @router.get("/tasks/{task_id}/quick-analysis")

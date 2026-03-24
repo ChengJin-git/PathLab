@@ -11,7 +11,7 @@ import uuid
 from collections import defaultdict
 from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
-from fastapi.responses import StreamingResponse
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database import get_db, async_session, safe_session
@@ -37,7 +37,7 @@ from ..utils import ensure_dataset_segmentation_contract
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from backend.database.utils.training_logger import TrainingLogger
-from ..dependencies import logger, storage_manager
+from ..dependencies import logger, make_sse_response, storage_manager
 from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
 from ..pipeline import run_training_pipeline, run_patching_then_submit
 from ..task_queue import get_task_queue, TaskType
@@ -709,15 +709,7 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
             # Client disconnected
             logger.info("SSE client disconnected")
 
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        },
-    )
+    return make_sse_response(event_generator())
 
 
 @router.get("/{task_id}")
@@ -1209,15 +1201,7 @@ async def stream_training_logs(
             logger.error(f"Error in log stream for task {task_id}: {e}")
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
 
-    return StreamingResponse(
-        log_event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",  # Disable nginx buffering
-        },
-    )
+    return make_sse_response(log_event_generator())
 
 
 @router.get("/{task_id}/logs/recent")

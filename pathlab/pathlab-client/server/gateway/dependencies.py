@@ -2,8 +2,10 @@ import os
 import sys
 import httpx
 from pathlib import Path
+from typing import AsyncGenerator
 from dotenv import load_dotenv
 from fastapi import Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.common import get_logger
@@ -56,3 +58,15 @@ def get_ai_client(request: Request) -> httpx.AsyncClient:
 
 def get_preprocessing_client(request: Request) -> httpx.AsyncClient:
     return request.app.state.preprocessing_client
+
+
+def make_sse_response(generator: AsyncGenerator) -> StreamingResponse:
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

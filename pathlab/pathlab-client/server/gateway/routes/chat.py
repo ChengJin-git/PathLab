@@ -19,7 +19,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
 from typing import Any
 from fastapi import APIRouter, HTTPException, Depends, Request
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import FileResponse
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -57,7 +57,7 @@ from gateway.chat.context_cache import (
 from backend.common.config import Config
 from backend.common.gpu_utils import get_gpu_summary_for_prompt
 from backend.ai.segmentors.specs import is_fm_segmentation_backbone
-from ..dependencies import logger
+from ..dependencies import logger, make_sse_response
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
 from ..models import (
     ChatRequest,
@@ -178,11 +178,6 @@ _FEATURE_SCAN_CACHE_TTL = 60.0
 _CompatCacheKey = tuple[str, str, str, str, str | None, tuple[str, ...], int]
 _compat_check_cache: dict[_CompatCacheKey, tuple[bool, float]] = {}
 _COMPAT_CACHE_TTL = 120.0
-
-
-
-
-
 
 
 async def _get_available_extractors(features_root: Path, wsi_id: str) -> list[str]:
@@ -1239,9 +1234,6 @@ _READ_DOCUMENT_PROMPTS = {
         "重要：[REFERENCE] 區塊格式已正確，請原樣複製到回答中。"
     ),
 }
-
-
-
 
 
 # Include feedback sub-router
@@ -3052,12 +3044,4 @@ async def chat_with_ai(
                         f"Failed to save cancelled response on disconnect: {e}"
                     )
 
-    return StreamingResponse(
-        stream_with_persistence(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
+    return make_sse_response(stream_with_persistence())
