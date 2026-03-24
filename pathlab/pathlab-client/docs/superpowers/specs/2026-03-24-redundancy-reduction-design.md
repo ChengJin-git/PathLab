@@ -2,7 +2,7 @@
 
 **Date**: 2026-03-24  
 **Scope**: `pathlab/pathlab-client/` — excludes `server/backend/deep-research/` and `pathlab/pathlab-server/`  
-**Status**: Design approved, pending implementation plan
+**Status**: Design approved, implementation plan complete
 
 ---
 
@@ -93,11 +93,51 @@ PREPROCESSING_SERVICE_URL = os.getenv(
 
 ---
 
+### Backend (chat.py)
+
+#### P7 — `chat.py` conversation CRUD endpoints belong in a dedicated router (COHESION)
+
+**Location**: `server/gateway/routes/chat.py` lines 3669–3808
+
+`chat.py` currently contains 7 endpoints for conversation/message CRUD (create conversation, list conversations, get conversation, delete conversation, update message, add message, delete message). These endpoints are pure database operations — they have zero dependency on the SSE streaming machinery (`stream_ai_response`) that makes up the rest of the file.
+
+The pattern already exists in the codebase: `chat_feedback.py`, `chat_patch_inference.py`, and `chat_pdf.py` are all dedicated routers included via `router.include_router()`. The conversation CRUD endpoints should follow the same pattern.
+
+#### P8 — LLM call layer is interleaved with orchestration logic (COHESION)
+
+**Location**: `server/gateway/routes/chat.py` lines 140–175 (module state) + 2282–2642 (LLM functions)
+
+`chat.py` contains a self-contained LLM client layer mixed into the orchestration file:
+- Module-level state: `_llm_http_client` (httpx client), `_vllm_cache`, `_VLLM_CACHE_TTL_OK`, `_VLLM_CACHE_TTL_FAIL_BASE`
+- Dead code: `_CompatCacheKey` (line 173) and `_compat_check_cache` (lines 174–175) — defined, never used
+- LLM call functions: `_get_llm_http_client`, `_stream_from_openai_compatible`, `_check_local_vllm_available`, `_call_ai_complete`, `_execute_exa_search`, `_consume_task_exception`, `_wait_for_disconnect`, `_run_or_cancel_on_disconnect`, `_deduplicate_search_results`, `_format_search_results_for_ai`
+- Exception class: `ClientDisconnectedError` (line 2499)
+
+This block (~450 lines) has a clean boundary: it provides the low-level primitives that `stream_ai_response` calls, and has no dependency on routing, database, or SSE response construction.
+
+#### P9 — Model ranking/selection logic is interleaved with orchestration logic (COHESION)
+
+**Location**: `server/gateway/routes/chat.py` lines ~146–2281 (private helper section)
+
+A cluster of functions responsible for model selection and content processing is embedded in `chat.py`:
+`extract_text_from_content`, `_infer_model_request_filters`, `_matches_model_request_filters`, `_matches_quick_model_request_filters`, `_format_model_filter_summary`, `_semantic_top_k_models`, `_should_use_semantic_model_ranking`, `_extract_images_from_content`, `_extract_citation_contexts`
+
+These ~9 functions (~600 lines) constitute a coherent model-selection subsystem. Their only external dependency is `split_md_into_pages` from `chat_pdf.py` (used by `_extract_citation_contexts`).
+
+#### P10 — `serve_pdf_image` endpoint is in the wrong file (COHESION)
+
+**Location**: `server/gateway/routes/chat.py` lines 4601–4627
+
+`GET /pdf-images/{url_hash}/{filename}` (the `serve_pdf_image` endpoint) is a file-serving endpoint with zero dependency on the LLM/chat machinery. `chat_pdf.py` already owns all other PDF-related logic in the codebase. This endpoint belongs there.
+
+---
+
 ## Out of Scope (Explicit Exclusions)
 
 | Item | Reason |
 |---|---|
-| `gateway/routes/chat.py` (4627 lines) | Already had 6 helper modules extracted; further decomposition requires SSE flow restructuring — separate effort |
+| `stream_ai_response` (lines 2643–3668, ~1025 lines) | Core SSE orchestration; has deep internal state dependencies — not split |
+| `chat_patch_inference.py` endpoints (lines 3809–4600) | Already in their own router; no further decomposition needed |
 | `gateway/routes/` subdirectory reorganization | Prefix-based naming (`chat_*`, `analysis_*`, `inference_*`) already provides grouping; file moves bring no functional gain |
 | Renaming `constants/training.ts` `DataLevel` | The naming conflict is with dead code (P5); renaming would ripple through 3 actively-used hooks/components unnecessarily |
 
@@ -203,6 +243,138 @@ Verify with `grep -r "DataLevel" src/` that no file imports this from `upload/ty
 
 ---
 
+### C1 — Extract conversation CRUD to `chat_conversation.py` (fixes P7)
+
+**New file**: `server/gateway/routes/chat_conversation.py`
+
+Extract from `chat.py` the 7 conversation/message CRUD endpoints (lines 3669–3808):
+- `POST /conversations` → create conversation
+- `GET /conversations` → list conversations
+- `GET /conversations/{id}` → get conversation
+- `DELETE /conversations/{id}` → delete conversation
+- `PUT /conversations/{conversation_id}/messages/{message_id}` → update message
+- `POST /conversations/{id}/messages` → add message
+- `DELETE /conversations/{conversation_id}/messages/{message_id}` → delete message
+
+Required imports in `chat_conversation.py`:
+```python
+import uuid
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from backend.database import get_db
+from backend.database.repositories import ChatRepository
+from backend.auth import current_active_user, User
+from backend.common.permissions import require_conversation_access
+from ..models import CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
+from .chat_patch_inference import (
+    cleanup_conversation_chat_patch_tasks,
+    cleanup_chat_patch_tasks_from_message,
+)
+```
+
+In `chat.py`, add at module level:
+```python
+from .chat_conversation import router as chat_conversation_router
+router.include_router(chat_conversation_router)
+```
+
+`gateway/main.py` does not change.
+
+**Success criterion**: The 7 CRUD endpoints respond identically. `chat.py` shrinks by ~140 lines.
+
+---
+
+### C2 — Extract LLM call layer to `chat_llm_client.py` (fixes P8)
+
+**New file**: `server/gateway/routes/chat_llm_client.py`
+
+Extract from `chat.py`:
+- Module-level constants: `_VLLM_CACHE_TTL_OK`, `_VLLM_CACHE_TTL_FAIL_BASE`
+- Module-level state factory: `_llm_http_client` (lazy httpx client), `_vllm_cache`
+- Exception class: `ClientDisconnectedError`
+- Functions: `_get_llm_http_client`, `_stream_from_openai_compatible`, `_check_local_vllm_available`, `_call_ai_complete`, `_execute_exa_search`, `_consume_task_exception`, `_wait_for_disconnect`, `_run_or_cancel_on_disconnect`, `_deduplicate_search_results`, `_format_search_results_for_ai`
+
+**Delete dead code** (do not carry over to `chat_llm_client.py`):
+- `_CompatCacheKey` type alias (line ~173)
+- `_compat_check_cache` dict (lines ~174–175)
+
+In `chat.py`, add imports from the new module:
+```python
+from .chat_llm_client import (
+    ClientDisconnectedError,
+    _get_llm_http_client,
+    _stream_from_openai_compatible,
+    _check_local_vllm_available,
+    _call_ai_complete,
+    _execute_exa_search,
+    _consume_task_exception,
+    _wait_for_disconnect,
+    _run_or_cancel_on_disconnect,
+    _deduplicate_search_results,
+    _format_search_results_for_ai,
+)
+```
+
+**Success criterion**: `chat.py` no longer defines `ClientDisconnectedError` or the LLM helper functions. All existing behavior unchanged. `chat.py` shrinks by ~450 lines. Dead code `_CompatCacheKey`/`_compat_check_cache` is deleted.
+
+---
+
+### C3 — Extract model selector to `chat_model_selector.py` (fixes P9)
+
+**New file**: `server/gateway/routes/chat_model_selector.py`
+
+Extract from `chat.py`:
+- `extract_text_from_content`
+- `_infer_model_request_filters`
+- `_matches_model_request_filters`
+- `_matches_quick_model_request_filters`
+- `_format_model_filter_summary`
+- `_semantic_top_k_models`
+- `_should_use_semantic_model_ranking`
+- `_extract_images_from_content`
+- `_extract_citation_contexts`
+
+`_extract_citation_contexts` uses `split_md_into_pages` from `chat_pdf.py`. Add:
+```python
+from .chat_pdf import split_md_into_pages
+```
+
+In `chat.py`, add imports from the new module:
+```python
+from .chat_model_selector import (
+    extract_text_from_content,
+    _infer_model_request_filters,
+    _matches_model_request_filters,
+    _matches_quick_model_request_filters,
+    _format_model_filter_summary,
+    _semantic_top_k_models,
+    _should_use_semantic_model_ranking,
+    _extract_images_from_content,
+    _extract_citation_contexts,
+)
+```
+
+**Success criterion**: `chat.py` no longer defines these 9 functions. All existing behavior unchanged. `chat.py` shrinks by ~600 lines.
+
+---
+
+### C4 — Move `serve_pdf_image` to `chat_pdf.py` (fixes P10)
+
+**File modified**: `server/gateway/routes/chat_pdf.py`
+
+Move the `GET /pdf-images/{url_hash}/{filename}` endpoint (lines 4601–4627 in `chat.py`) to `chat_pdf.py`.
+
+`chat_pdf.py` already has its own `router`. The endpoint uses:
+- `aiofiles` (already imported in `chat_pdf.py`)
+- `HASHED_PDF_CACHE_DIR` constant (defined in `chat_pdf.py`)
+- FastAPI `FileResponse`
+
+Remove from `chat.py`. `chat_pdf.py`'s router is already included in `chat.py` via `router.include_router(chat_pdf_router)` — no routing change needed.
+
+**Success criterion**: `chat.py` no longer defines `serve_pdf_image`. The endpoint continues to serve PDF images at the same URL path. `chat.py` shrinks by ~27 lines.
+
+---
+
 ### B1 — Use `Config` in `dependencies.py` (fixes P6)
 
 **File**: `server/gateway/dependencies.py`
@@ -235,9 +407,14 @@ PREPROCESSING_SERVICE_URL = Config.PREPROCESSING_SERVICE_URL
 | F4 | `components/list/FileMetadataModal.tsx` only | Low — type import, zero runtime effect |
 | F5 | `components/upload/types.ts` only | Low — removing unused export |
 | B1 | `server/gateway/dependencies.py` only | Low — same env var read, via Config |
+| C1 | `chat_conversation.py` (new), `chat.py` (remove 140 lines + include_router) | Low — pure extraction, no logic change |
+| C2 | `chat_llm_client.py` (new), `chat.py` (remove ~450 lines + dead code) | Low — pure extraction + delete unused symbols |
+| C3 | `chat_model_selector.py` (new), `chat.py` (remove ~600 lines) | Low — pure extraction, no logic change |
+| C4 | `chat_pdf.py` (add ~27 lines), `chat.py` (remove ~27 lines) | Low — pure relocation, endpoint URL unchanged |
 
-**Total files touched**: 10 (1 new, 9 modified)  
-**Zero runtime behavior changes**: All changes are type-level or constant relocation.
+**Total files touched**: 16 (4 new, 12 modified)  
+**`chat.py` line reduction**: 4627 → ~2660 lines (~42% reduction)  
+**Zero runtime behavior changes**: All changes are type-level, constant relocation, or code extraction.
 
 ---
 
@@ -248,4 +425,7 @@ PREPROCESSING_SERVICE_URL = Config.PREPROCESSING_SERVICE_URL
 - [ ] No file outside `constants/` imports `organSources` or `organSourceKeyMap` from a `components/` path
 - [ ] `grep -r "DataLevel" src/renderer/src/components/upload/types.ts` returns empty
 - [ ] `dependencies.py` contains no `os.getenv("AI_SERVICE_URL"` or `os.getenv("PREPROCESSING_SERVICE_URL"`
+- [ ] `chat.py` no longer defines `ClientDisconnectedError`, conversation CRUD endpoints, or `serve_pdf_image`
+- [ ] `chat.py` no longer contains `_CompatCacheKey` or `_compat_check_cache`
+- [ ] All chat endpoints respond identically (functional regression test)
 - [ ] `python -m pytest server/tests/ -v -k "not pretrained"` passes
