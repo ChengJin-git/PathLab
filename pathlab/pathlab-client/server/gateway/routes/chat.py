@@ -89,6 +89,7 @@ from .chat_pdf import (
     format_reference_card,
     ACADEMIC_SOURCE_TYPES,
     find_cached_articles_by_title,
+    router as chat_pdf_router,
 )
 from .chat_pdf_vectorstore import search_pdf_chunks
 from .chat_training_recommendation import (
@@ -114,6 +115,7 @@ router = APIRouter(tags=["Chat & Conversations"])
 from .chat_conversation import router as chat_conversation_router
 
 router.include_router(chat_conversation_router)
+router.include_router(chat_pdf_router)
 
 SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
 ACTIVE_TRAINING_STATUSES = {
@@ -4455,37 +4457,3 @@ async def chat_with_ai(
             "X-Accel-Buffering": "no",
         },
     )
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PDF image serving
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-@router.get("/pdf-images/{url_hash}/{filename}")
-async def serve_pdf_image(
-    url_hash: str, filename: str, user: User = Depends(get_user_from_header_or_param)
-):
-    """Serve extracted PDF images from persistent cache.
-
-    Images are stored at: uploads/pdf_cache/images/{url_hash}/{filename}
-    They are created during PDF parsing and referenced by absolute URLs inside
-    cached markdown.
-    """
-    # Prevent path traversal: url_hash must be hex chars only; filename must be
-    # a plain filename with no directory separators or parent-dir references.
-    if not re.match(r"^[0-9a-f]+$", url_hash, re.IGNORECASE):
-        raise HTTPException(status_code=400, detail="Invalid url_hash")
-    if ".." in filename or "/" in filename or "\\" in filename:
-        raise HTTPException(status_code=400, detail="Invalid filename")
-
-    image_path = get_pdf_image_path(url_hash, filename)
-
-    if not image_path.exists() or not image_path.is_file():
-        raise HTTPException(status_code=404, detail="Image not found")
-
-    content_type, _ = mimetypes.guess_type(str(image_path))
-    if content_type is None:
-        content_type = "application/octet-stream"
-
-    return FileResponse(image_path, media_type=content_type)

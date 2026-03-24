@@ -9,7 +9,9 @@ Features:
 - File-based cache with 7-day TTL
 - Reference card generation for AI responses
 """
+
 import json
+import mimetypes
 import multiprocessing
 import os
 import re
@@ -29,17 +31,25 @@ from typing import Any, Callable, Literal
 from datetime import datetime, timedelta
 from urllib.parse import unquote, urlparse
 import httpx
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
 from ..dependencies import logger
+from backend.auth import User
+from backend.auth.dependencies import get_user_from_header_or_param
 from backend.common.config import Config
 from .transformers_runtime import ensure_transformers_runtime_ready
+
+router = APIRouter(tags=["Chat & Conversations"])
 
 
 _pdf_cache_dir: Path | None = None
 PDF_CACHE_TTL_DAYS = 7
-_marker_gpu_queue_override: contextvars.ContextVar[bool | None] = contextvars.ContextVar(
-    "marker_gpu_queue_override",
-    default=None,
+_marker_gpu_queue_override: contextvars.ContextVar[bool | None] = (
+    contextvars.ContextVar(
+        "marker_gpu_queue_override",
+        default=None,
+    )
 )
 
 
@@ -64,10 +74,19 @@ def _should_skip_marker_gpu_queue() -> tuple[bool, str]:
     override = _marker_gpu_queue_override.get()
     if override is not None:
         if override:
-            return True, "Skipping Marker GPU queue because a call-scoped override is enabled"
-        return False, "Using Marker GPU queue because a call-scoped override is disabled"
+            return (
+                True,
+                "Skipping Marker GPU queue because a call-scoped override is enabled",
+            )
+        return (
+            False,
+            "Using Marker GPU queue because a call-scoped override is disabled",
+        )
     if _env_flag("PDF_SKIP_MARKER_GPU_QUEUE", False):
-        return True, "Skipping Marker GPU queue because PDF_SKIP_MARKER_GPU_QUEUE is enabled"
+        return (
+            True,
+            "Skipping Marker GPU queue because PDF_SKIP_MARKER_GPU_QUEUE is enabled",
+        )
     return False, "Using GPU queue first for Marker best-effort parse"
 
 
@@ -77,8 +96,12 @@ PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS = max(
     0.0,
     float(os.getenv("PDF_BACKGROUND_UPGRADE_IDLE_GRACE_SECONDS", "0.5")),
 )
-PDF_VECTOR_INDEX_MAX_CONCURRENT = max(1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1")))
-PDF_ENABLE_BACKGROUND_MARKER_UPGRADE = _env_flag("PDF_ENABLE_BACKGROUND_MARKER_UPGRADE", True)
+PDF_VECTOR_INDEX_MAX_CONCURRENT = max(
+    1, int(os.getenv("PDF_VECTOR_INDEX_MAX_CONCURRENT", "1"))
+)
+PDF_ENABLE_BACKGROUND_MARKER_UPGRADE = _env_flag(
+    "PDF_ENABLE_BACKGROUND_MARKER_UPGRADE", True
+)
 PDF_PARSE_METHOD_MARKER = "marker"
 PDF_PARSE_METHOD_PYMUPDF = "pymupdf"
 PDF_PARSE_METHOD_FAILED = "parse_failed"
@@ -102,16 +125,18 @@ PdfParseMethod = Literal["marker", "pymupdf", "parse_failed", "web"]
 _MAX_WEB_DOWNLOAD_BYTES = 5 * 1024 * 1024
 _MAX_WEB_TEXT_CHARS = 120_000
 _REPOSITORY_SOURCE_TYPES = frozenset({"github", "gitlab", "gitee"})
-_LIGHTWEIGHT_WEB_SOURCE_TYPES = frozenset({
-    "github",
-    "gitlab",
-    "gitee",
-    "zenodo",
-    "documentation",
-    "blog",
-    "wikipedia",
-    "huggingface",
-})
+_LIGHTWEIGHT_WEB_SOURCE_TYPES = frozenset(
+    {
+        "github",
+        "gitlab",
+        "gitee",
+        "zenodo",
+        "documentation",
+        "blog",
+        "wikipedia",
+        "huggingface",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,9 +155,9 @@ CACHED_MARKDOWN_CANDIDATES: tuple[tuple[str, str], ...] = (
     (PYMUPDF_CACHE_SUFFIX, PDF_PARSE_METHOD_PYMUPDF),
 )
 CACHE_ARTEFACT_SUFFIXES: tuple[str, ...] = (
-    '.pdf',
-    '.pdf.partial',
-    '.json',
+    ".pdf",
+    ".pdf.partial",
+    ".json",
     STRUCTURED_CACHE_SUFFIX,
     *(suffix for suffix, _ in CACHED_MARKDOWN_CANDIDATES),
 )
@@ -177,15 +202,16 @@ def get_pdf_image_path(url_hash: str, filename: str) -> Path:
     # Tolerant regex: accepts fig-3.jpg, fig-2d.png, fig-12a.jpg, etc.
     # LLMs often hallucinate sub-figure letters (a/b/c/d) or wrong extensions.
     # We extract only the leading digits as the figure number.
-    fig_match = re.match(r'^fig-(\d+)[a-zA-Z]*\.[a-zA-Z]+$', filename)
+    fig_match = re.match(r"^fig-(\d+)[a-zA-Z]*\.[a-zA-Z]+$", filename)
     if fig_match:
         fig_num = int(fig_match.group(1))  # 1-based, letter suffix ignored
         if images_dir.is_dir():
             image_files = sorted(
-                f for f in images_dir.iterdir()
+                f
+                for f in images_dir.iterdir()
                 if f.is_file()
-                and not f.name.startswith('fig-')
-                and not f.name.startswith('_')
+                and not f.name.startswith("fig-")
+                and not f.name.startswith("_")
             )
             if 1 <= fig_num <= len(image_files):
                 return image_files[fig_num - 1]
@@ -224,7 +250,9 @@ def _get_pdf_parse_running_count(semaphore: asyncio.Semaphore) -> int:
     return max(0, PDF_PARSE_MAX_CONCURRENT - available_slots)
 
 
-def _get_pdf_parse_load_snapshot(semaphore: asyncio.Semaphore | None = None) -> tuple[int, int]:
+def _get_pdf_parse_load_snapshot(
+    semaphore: asyncio.Semaphore | None = None,
+) -> tuple[int, int]:
     active_semaphore = semaphore or _get_pdf_parse_semaphore()
     return (
         _get_pdf_parse_running_count(active_semaphore),
@@ -243,7 +271,9 @@ def _is_pdf_parse_idle(semaphore: asyncio.Semaphore | None = None) -> tuple[bool
     return True, "foreground PDF parse capacity is idle"
 
 
-def _raise_if_pdf_parse_queue_full(semaphore: asyncio.Semaphore, slot_label: str) -> None:
+def _raise_if_pdf_parse_queue_full(
+    semaphore: asyncio.Semaphore, slot_label: str
+) -> None:
     waiter_count = _get_pdf_parse_waiter_count(semaphore)
     if waiter_count < PDF_PARSE_MAX_QUEUE:
         return
@@ -282,74 +312,50 @@ async def _run_with_pdf_parse_slot(
 
 
 PDF_URL_PATTERNS = [
-    r'\.pdf$',
-    
-    r'arxiv\.org/(pdf|abs)/',
-    r'arxiv\.org/pdf/',
-    r'openreview\.net/(pdf|forum|note)\?id=',
-    
-    r'ncbi\.nlm\.nih\.gov/pmc/articles/',
-    r'pubmed\.ncbi\.nlm\.nih\.gov/',
-    
-    r'semanticscholar\.org/paper/',
-    r's2-pdf\.s3\.amazonaws\.com/',
-    
-    r'aclanthology\.org/',
-    
-    r'ieeexplore\.ieee\.org/document/',
-    
-    r'dl\.acm\.org/doi/',
-    
-    r'link\.springer\.com/',
-    r'springer\.com/content/pdf/',
-    
-    r'sciencedirect\.com/science/article/',
-    r'elsevier\.com/',
-    r'doi\.org/10\.(1016|1056|1002)/',
-    
-    r'nature\.com/articles/',
-    r'nature\.com/reviews/',
-    
-    r'onlinelibrary\.wiley\.com/doi/',
-    
-    r'plos\.org/',
-    r'journals\.plos\.org/',
-    
-    r'biorxiv\.org/content/',
-    r'medrxiv\.org/content/',
-    
-    r'jamanetwork\.com/journals/',
-    r'jamanetwork\.com/articlepdf/',
-    
-    r'nejm\.org/doi/',
-    r'nejm\.org/doi/pdf/',
-    r'mediacenteratypon\.nejmgroup-production\.org/.*\.pdf',
-    
-    r'thelancet\.com/journals/',
-    r'thelancet\.com/article/',
-    r'sciencedirect\.com/journal/the-lancet/',
-    
-    r'cell\.com/cell/',
-    r'cell\.com/.*fulltext',
-    
-    r'science\.org/doi/',
-    r'science\.org/doi/pdf/',
-    
-    r'cancer\.gov/',
-    r'nejm\.org/',
-    
-    r'academic\.oup\.com/',
-    r'oup\.com/',
-    
-    r'frontiersin\.org/articles/',
-    
-    r'mdpi\.com/',
-    
-    r'royalsocietypublishing\.org/doi/',
-    
-    r'pnas\.org/doi/',
-    
-    r'sciencemag\.org/',
+    r"\.pdf$",
+    r"arxiv\.org/(pdf|abs)/",
+    r"arxiv\.org/pdf/",
+    r"openreview\.net/(pdf|forum|note)\?id=",
+    r"ncbi\.nlm\.nih\.gov/pmc/articles/",
+    r"pubmed\.ncbi\.nlm\.nih\.gov/",
+    r"semanticscholar\.org/paper/",
+    r"s2-pdf\.s3\.amazonaws\.com/",
+    r"aclanthology\.org/",
+    r"ieeexplore\.ieee\.org/document/",
+    r"dl\.acm\.org/doi/",
+    r"link\.springer\.com/",
+    r"springer\.com/content/pdf/",
+    r"sciencedirect\.com/science/article/",
+    r"elsevier\.com/",
+    r"doi\.org/10\.(1016|1056|1002)/",
+    r"nature\.com/articles/",
+    r"nature\.com/reviews/",
+    r"onlinelibrary\.wiley\.com/doi/",
+    r"plos\.org/",
+    r"journals\.plos\.org/",
+    r"biorxiv\.org/content/",
+    r"medrxiv\.org/content/",
+    r"jamanetwork\.com/journals/",
+    r"jamanetwork\.com/articlepdf/",
+    r"nejm\.org/doi/",
+    r"nejm\.org/doi/pdf/",
+    r"mediacenteratypon\.nejmgroup-production\.org/.*\.pdf",
+    r"thelancet\.com/journals/",
+    r"thelancet\.com/article/",
+    r"sciencedirect\.com/journal/the-lancet/",
+    r"cell\.com/cell/",
+    r"cell\.com/.*fulltext",
+    r"science\.org/doi/",
+    r"science\.org/doi/pdf/",
+    r"cancer\.gov/",
+    r"nejm\.org/",
+    r"academic\.oup\.com/",
+    r"oup\.com/",
+    r"frontiersin\.org/articles/",
+    r"mdpi\.com/",
+    r"royalsocietypublishing\.org/doi/",
+    r"pnas\.org/doi/",
+    r"sciencemag\.org/",
 ]
 
 
@@ -367,7 +373,9 @@ def get_url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
-def _remove_cached_pdf_artifacts(url_hash: str, *, remove_vectorstore: bool = False) -> None:
+def _remove_cached_pdf_artifacts(
+    url_hash: str, *, remove_vectorstore: bool = False
+) -> None:
     """Delete all persisted cache artifacts for a cached PDF hash."""
     cache_dir = get_pdf_cache_dir()
     for suffix in CACHE_ARTEFACT_SUFFIXES:
@@ -382,12 +390,15 @@ def _remove_cached_pdf_artifacts(url_hash: str, *, remove_vectorstore: bool = Fa
     if remove_vectorstore:
         try:
             from .chat_pdf_vectorstore import delete_pdf_from_vectorstore
+
             delete_pdf_from_vectorstore(url_hash)
         except Exception as e:
             logger.error(f"Error cleaning vector store for {url_hash}: {e}")
 
 
-def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | None] | None:
+def _get_cached_pdf(
+    url: str,
+) -> tuple[bytes, dict[str, Any], str | None, str | None] | None:
     """Returns (pdf_bytes, meta, cached_markdown_or_None, parse_method_or_None)."""
     try:
         cache_dir = get_pdf_cache_dir()
@@ -398,10 +409,10 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | 
         if not meta_file.exists() or not pdf_file.exists():
             return None
 
-        with open(meta_file, 'r') as f:
+        with open(meta_file, "r") as f:
             meta = json.load(f)
 
-        cached_time = datetime.fromisoformat(meta.get('cached_at', '2000-01-01'))
+        cached_time = datetime.fromisoformat(meta.get("cached_at", "2000-01-01"))
         if datetime.now() - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
             logger.info(f"PDF cache expired for {url}")
             try:
@@ -419,10 +430,12 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | 
             md_candidate = cache_dir / f"{url_hash}{suffix}"
             if md_candidate.exists():
                 try:
-                    cached_md = md_candidate.read_text(encoding='utf-8')
+                    cached_md = md_candidate.read_text(encoding="utf-8")
                     cached_md_method = method
                     if method == PDF_PARSE_METHOD_MARKER:
-                        logger.info(f"PDF cache: using high-quality parsed result for {url}")
+                        logger.info(
+                            f"PDF cache: using high-quality parsed result for {url}"
+                        )
                     break
                 except Exception:
                     pass
@@ -433,7 +446,9 @@ def _get_cached_pdf(url: str) -> tuple[bytes, dict[str, Any], str | None, str | 
         return None
 
 
-def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: str = "") -> None:
+def _save_pdf_to_cache(
+    url: str, pdf_bytes: bytes, title: str = "", markdown: str = ""
+) -> None:
     try:
         cache_dir = get_pdf_cache_dir()
         url_hash = get_url_hash(url)
@@ -445,29 +460,32 @@ def _save_pdf_to_cache(url: str, pdf_bytes: bytes, title: str = "", markdown: st
         partial_file.rename(pdf_file)
 
         meta = {
-            'url': url,
-            'title': title,
-            'cached_at': datetime.now().isoformat(),
-            'size_bytes': len(pdf_bytes),
-            'parse_method': None,
-            'structured_parse_method': None,
-            'structured_parse_ready': False,
-            'high_quality_parse_pending': False,
-            'high_quality_parse_ready': False,
-            'high_quality_upgrade_status': None,
-            'high_quality_upgrade_detail': None,
-            'high_quality_upgrade_updated_at': None,
+            "url": url,
+            "title": title,
+            "cached_at": datetime.now().isoformat(),
+            "size_bytes": len(pdf_bytes),
+            "parse_method": None,
+            "structured_parse_method": None,
+            "structured_parse_ready": False,
+            "high_quality_parse_pending": False,
+            "high_quality_parse_ready": False,
+            "high_quality_upgrade_status": None,
+            "high_quality_upgrade_detail": None,
+            "high_quality_upgrade_updated_at": None,
             **_build_cached_article_meta_fields(url, title),
         }
-        with open(meta_file, 'w') as f:
+        with open(meta_file, "w") as f:
             json.dump(meta, f, indent=2)
 
         # Also cache parsed markdown if provided
         if markdown:
             md_file = cache_dir / f"{url_hash}.md"
-            md_file.write_text(markdown, encoding='utf-8')
+            md_file.write_text(markdown, encoding="utf-8")
 
-        logger.info(f"Cached PDF: {url} ({len(pdf_bytes)} bytes)" + (" + markdown" if markdown else ""))
+        logger.info(
+            f"Cached PDF: {url} ({len(pdf_bytes)} bytes)"
+            + (" + markdown" if markdown else "")
+        )
     except Exception as e:
         logger.error(f"Error saving PDF to cache: {e}")
 
@@ -489,29 +507,33 @@ def _save_lightweight_markdown_to_cache(
         now_iso = datetime.now().isoformat()
         page_count = max(1, _extract_page_count(markdown) or 1)
 
-        md_file.write_text(markdown, encoding='utf-8')
-        _save_structured_to_cache(url, _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_WEB))
+        md_file.write_text(markdown, encoding="utf-8")
+        _save_structured_to_cache(
+            url, _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_WEB)
+        )
 
         meta = {
-            'url': url,
-            'title': title,
-            'cached_at': now_iso,
-            'size_bytes': len(markdown.encode('utf-8')),
-            'page_count': page_count,
-            'parse_method': PDF_PARSE_METHOD_WEB,
-            'structured_parse_method': PDF_PARSE_METHOD_WEB,
-            'structured_parse_ready': True,
-            'high_quality_parse_pending': False,
-            'high_quality_parse_ready': False,
-            'high_quality_upgrade_status': PDF_UPGRADE_STATUS_SKIPPED,
-            'high_quality_upgrade_detail': "Lightweight webpage extraction does not use PDF upgrade",
-            'high_quality_upgrade_updated_at': now_iso,
-            'is_academic': is_academic,
-            'content_kind': 'webpage',
+            "url": url,
+            "title": title,
+            "cached_at": now_iso,
+            "size_bytes": len(markdown.encode("utf-8")),
+            "page_count": page_count,
+            "parse_method": PDF_PARSE_METHOD_WEB,
+            "structured_parse_method": PDF_PARSE_METHOD_WEB,
+            "structured_parse_ready": True,
+            "high_quality_parse_pending": False,
+            "high_quality_parse_ready": False,
+            "high_quality_upgrade_status": PDF_UPGRADE_STATUS_SKIPPED,
+            "high_quality_upgrade_detail": "Lightweight webpage extraction does not use PDF upgrade",
+            "high_quality_upgrade_updated_at": now_iso,
+            "is_academic": is_academic,
+            "content_kind": "webpage",
             **_build_cached_article_meta_fields(url, title),
         }
-        meta['source_type'] = source_type or meta.get('source_type') or detect_source_type(url)
-        with open(meta_file, 'w') as f:
+        meta["source_type"] = (
+            source_type or meta.get("source_type") or detect_source_type(url)
+        )
+        with open(meta_file, "w") as f:
             json.dump(meta, f, indent=2)
 
         logger.info(f"Cached lightweight page: {url} ({page_count} pseudo-pages)")
@@ -525,26 +547,26 @@ def _get_cached_lightweight_document(url: str) -> tuple[dict[str, Any], str] | N
     if not meta or not markdown:
         return None
 
-    parse_method = str(meta.get('parse_method') or '')
-    content_kind = str(meta.get('content_kind') or '')
-    if parse_method == PDF_PARSE_METHOD_WEB or content_kind == 'webpage':
+    parse_method = str(meta.get("parse_method") or "")
+    content_kind = str(meta.get("content_kind") or "")
+    if parse_method == PDF_PARSE_METHOD_WEB or content_kind == "webpage":
         return meta, markdown
     return None
 
 
 def _source_label_for_display(source_type: str) -> str:
     return {
-        'github': 'GitHub',
-        'gitlab': 'GitLab',
-        'gitee': 'Gitee',
-        'zenodo': 'Zenodo',
-        'documentation': 'Docs',
-        'blog': 'Blog',
-        'wikipedia': 'Wikipedia',
-        'huggingface': 'Hugging Face',
-        'web': 'Web',
-        'pdf': 'PDF',
-    }.get(source_type, source_type.upper() if source_type else 'Web')
+        "github": "GitHub",
+        "gitlab": "GitLab",
+        "gitee": "Gitee",
+        "zenodo": "Zenodo",
+        "documentation": "Docs",
+        "blog": "Blog",
+        "wikipedia": "Wikipedia",
+        "huggingface": "Hugging Face",
+        "web": "Web",
+        "pdf": "PDF",
+    }.get(source_type, source_type.upper() if source_type else "Web")
 
 
 def _derive_title_from_url(url: str, fallback: str = "") -> str:
@@ -552,9 +574,9 @@ def _derive_title_from_url(url: str, fallback: str = "") -> str:
         return fallback
     try:
         parsed = urlparse(url)
-        segments = [unquote(part) for part in parsed.path.split('/') if part]
+        segments = [unquote(part) for part in parsed.path.split("/") if part]
         if segments:
-            return segments[-1].replace('-', ' ').replace('_', ' ')
+            return segments[-1].replace("-", " ").replace("_", " ")
     except Exception:
         pass
     return url
@@ -563,11 +585,11 @@ def _derive_title_from_url(url: str, fallback: str = "") -> str:
 def _normalize_lightweight_web_text(text: str) -> str:
     normalized_lines: list[str] = []
     previous_blank = True
-    for raw_line in str(text or '').splitlines():
-        line = re.sub(r'\s+', ' ', raw_line).strip()
+    for raw_line in str(text or "").splitlines():
+        line = re.sub(r"\s+", " ", raw_line).strip()
         if not line:
             if not previous_blank and normalized_lines:
-                normalized_lines.append('')
+                normalized_lines.append("")
             previous_blank = True
             continue
         normalized_lines.append(line)
@@ -576,7 +598,9 @@ def _normalize_lightweight_web_text(text: str) -> str:
 
 
 def _clean_lightweight_metadata_value(text: str, max_len: int = 280) -> str:
-    normalized = _normalize_lightweight_web_text(text).replace("\n", " ").strip(" -:|\t")
+    normalized = (
+        _normalize_lightweight_web_text(text).replace("\n", " ").strip(" -:|\t")
+    )
     if len(normalized) <= max_len:
         return normalized
     return normalized[: max_len - 3].rstrip() + "..."
@@ -598,7 +622,9 @@ def _collect_selector_texts(
         except Exception:
             continue
         for node in nodes:
-            value = _clean_lightweight_metadata_value(node.get_text(" ", strip=True), max_len=max_len)
+            value = _clean_lightweight_metadata_value(
+                node.get_text(" ", strip=True), max_len=max_len
+            )
             if len(value) < min_len:
                 continue
             dedupe_key = value.lower()
@@ -625,12 +651,16 @@ def _extract_definition_list_metadata(
         except Exception:
             roots = []
         for root in roots:
-            for dt in root.select('dt'):
-                dd = dt.find_next_sibling('dd')
+            for dt in root.select("dt"):
+                dd = dt.find_next_sibling("dd")
                 if dd is None:
                     continue
-                key = _clean_lightweight_metadata_value(dt.get_text(" ", strip=True), max_len=64)
-                value = _clean_lightweight_metadata_value(dd.get_text(" ", strip=True), max_len=320)
+                key = _clean_lightweight_metadata_value(
+                    dt.get_text(" ", strip=True), max_len=64
+                )
+                value = _clean_lightweight_metadata_value(
+                    dd.get_text(" ", strip=True), max_len=320
+                )
                 if not key or not value:
                     continue
                 dedupe_key = (key.lower(), value.lower())
@@ -643,56 +673,79 @@ def _extract_definition_list_metadata(
     return pairs
 
 
-def _extract_lightweight_metadata_items(soup: Any, source_type: str) -> list[tuple[str, str]]:
+def _extract_lightweight_metadata_items(
+    soup: Any, source_type: str
+) -> list[tuple[str, str]]:
     items: list[tuple[str, str]] = []
 
     if source_type in _REPOSITORY_SOURCE_TYPES:
         overview_selectors = {
-            'github': (
-                'p.f4.my-3',
-                'div.BorderGrid-cell p.f4',
+            "github": (
+                "p.f4.my-3",
+                "div.BorderGrid-cell p.f4",
                 'div[data-testid="repository-description"]',
             ),
-            'gitlab': (
-                'div.project-page-layout p.gl-text-subtle',
-                'div.project-description',
-                'div.home-panel-title + p',
+            "gitlab": (
+                "div.project-page-layout p.gl-text-subtle",
+                "div.project-description",
+                "div.home-panel-title + p",
             ),
-            'gitee': (
-                'div.project-desc',
-                'div.project-intro',
-                'div.repository-description',
+            "gitee": (
+                "div.project-desc",
+                "div.project-intro",
+                "div.repository-description",
             ),
         }
         topic_selectors = {
-            'github': ('a[href*="/topics/"]',),
-            'gitlab': ('a.topic-badge', 'span.gl-badge'),
-            'gitee': ('a.topic-tag', 'span.ui-label'),
+            "github": ('a[href*="/topics/"]',),
+            "gitlab": ("a.topic-badge", "span.gl-badge"),
+            "gitee": ("a.topic-tag", "span.ui-label"),
         }
-        overviews = _collect_selector_texts(soup, overview_selectors.get(source_type, ()), max_items=1, max_len=320)
-        topics = _collect_selector_texts(soup, topic_selectors.get(source_type, ()), max_items=8, max_len=40, min_len=2)
+        overviews = _collect_selector_texts(
+            soup, overview_selectors.get(source_type, ()), max_items=1, max_len=320
+        )
+        topics = _collect_selector_texts(
+            soup,
+            topic_selectors.get(source_type, ()),
+            max_items=8,
+            max_len=40,
+            min_len=2,
+        )
         if overviews:
             items.append(("Repository overview", overviews[0]))
         if topics:
             items.append(("Topics", ", ".join(topics[:8])))
         return items
 
-    if source_type == 'zenodo':
+    if source_type == "zenodo":
         metadata = _extract_definition_list_metadata(
             soup,
             (
-                'section#record-detail',
-                'div.record-main',
-                'div#record-page',
-                'body',
+                "section#record-detail",
+                "div.record-main",
+                "div#record-page",
+                "body",
             ),
             max_items=8,
         )
-        preferred_order = ['doi', 'publication date', 'published', 'type', 'version', 'license', 'keywords', 'communities']
+        preferred_order = [
+            "doi",
+            "publication date",
+            "published",
+            "type",
+            "version",
+            "license",
+            "keywords",
+            "communities",
+        ]
         ranked = sorted(
             metadata,
             key=lambda pair: next(
-                (idx for idx, marker in enumerate(preferred_order) if marker in pair[0].lower()),
+                (
+                    idx
+                    for idx, marker in enumerate(preferred_order)
+                    if marker in pair[0].lower()
+                ),
                 len(preferred_order),
             ),
         )
@@ -704,31 +757,59 @@ def _extract_lightweight_metadata_items(soup: Any, source_type: str) -> list[tup
 def _build_lightweight_platform_note(source_type: str) -> str:
     if source_type in _REPOSITORY_SOURCE_TYPES:
         return (
-            'This is a lightweight repository-page extraction focused on the landing page / README. '
-            'For file trees, source code, or deeper implementation details, open the repository link directly and use page navigation.'
+            "This is a lightweight repository-page extraction focused on the landing page / README. "
+            "For file trees, source code, or deeper implementation details, open the repository link directly and use page navigation."
         )
-    if source_type == 'zenodo':
+    if source_type == "zenodo":
         return (
-            'This is a lightweight Zenodo record extraction. '
-            'For full metadata, attached files, or downloads, open the record page directly.'
+            "This is a lightweight Zenodo record extraction. "
+            "For full metadata, attached files, or downloads, open the record page directly."
         )
     return (
-        'This is a lightweight page extraction. '
-        'If you need interactive elements or more detail, open the page directly.'
+        "This is a lightweight page extraction. "
+        "If you need interactive elements or more detail, open the page directly."
     )
 
 
 def _select_primary_html_container(soup: Any, source_type: str) -> Any:
     selector_map = {
-        'github': ('div#readme', 'div[data-testid="readme-content"]', 'article.markdown-body', 'main'),
-        'gitlab': ('div.readme-holder', 'section.md', 'div.file-content', 'div.blob-content', 'main'),
-        'gitee': ('div#readme', 'div.repository-readme', 'div.file_content', 'div.markdown-body', 'main'),
-        'zenodo': ('div#collapse-description', 'div.record-main', 'section#record-detail', 'main'),
-        'documentation': ('article', 'main', '[role="main"]'),
-        'blog': ('article', 'main', '[role="main"]'),
-        'huggingface': ('main', 'article'),
+        "github": (
+            "div#readme",
+            'div[data-testid="readme-content"]',
+            "article.markdown-body",
+            "main",
+        ),
+        "gitlab": (
+            "div.readme-holder",
+            "section.md",
+            "div.file-content",
+            "div.blob-content",
+            "main",
+        ),
+        "gitee": (
+            "div#readme",
+            "div.repository-readme",
+            "div.file_content",
+            "div.markdown-body",
+            "main",
+        ),
+        "zenodo": (
+            "div#collapse-description",
+            "div.record-main",
+            "section#record-detail",
+            "main",
+        ),
+        "documentation": ("article", "main", '[role="main"]'),
+        "blog": ("article", "main", '[role="main"]'),
+        "huggingface": ("main", "article"),
     }
-    selectors = [*selector_map.get(source_type, ()), 'article', 'main', '[role="main"]', 'body']
+    selectors = [
+        *selector_map.get(source_type, ()),
+        "article",
+        "main",
+        '[role="main"]',
+        "body",
+    ]
     seen: set[str] = set()
     for selector in selectors:
         if selector in seen:
@@ -754,25 +835,27 @@ def _build_lightweight_page_markdown(
 ) -> str:
     body = extracted_text[:_MAX_WEB_TEXT_CHARS].strip()
     lines = [
-        '--- Page 1 ---',
-        f'# {title}',
-        '',
-        f'- **URL**: {url}',
-        f'- **Source**: {_source_label_for_display(source_type)}',
+        "--- Page 1 ---",
+        f"# {title}",
+        "",
+        f"- **URL**: {url}",
+        f"- **Source**: {_source_label_for_display(source_type)}",
     ]
     if description:
-        lines.extend(['', '## Overview', description.strip()])
+        lines.extend(["", "## Overview", description.strip()])
     if metadata_items:
-        lines.append('')
-        lines.append('## Metadata')
+        lines.append("")
+        lines.append("## Metadata")
         for key, value in metadata_items:
-            lines.append(f'- **{key}**: {value}')
-    lines.extend([
-        '',
-        '## Note',
-        _build_lightweight_platform_note(source_type),
-    ])
-    lines.extend(['', '## Extracted Content', body])
+            lines.append(f"- **{key}**: {value}")
+    lines.extend(
+        [
+            "",
+            "## Note",
+            _build_lightweight_platform_note(source_type),
+        ]
+    )
+    lines.extend(["", "## Extracted Content", body])
     return "\n".join(lines).strip()
 
 
@@ -792,7 +875,9 @@ def _extract_lightweight_markdown_from_html(
         BeautifulSoup = None  # type: ignore[assignment]
 
     if BeautifulSoup is None:
-        extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(html_content))
+        extracted_text = _normalize_lightweight_web_text(
+            _extract_marker_text_from_html(html_content)
+        )
         final_title = _derive_title_from_url(url, fallback=title)
         if len(extracted_text) < 160:
             return None
@@ -803,33 +888,37 @@ def _extract_lightweight_markdown_from_html(
             extracted_text=extracted_text,
         )
 
-    soup = BeautifulSoup(html_content, 'html.parser')
+    soup = BeautifulSoup(html_content, "html.parser")
     for tag in soup(["script", "style", "noscript", "svg"]):
         tag.decompose()
 
     def _meta_content(**attrs: str) -> str:
-        node = soup.find('meta', attrs=attrs)
+        node = soup.find("meta", attrs=attrs)
         if node is None:
-            return ''
-        return str(node.get('content') or '').strip()
+            return ""
+        return str(node.get("content") or "").strip()
 
     extracted_title = (
-        _meta_content(property='og:title')
-        or _meta_content(name='twitter:title')
-        or (soup.title.get_text(' ', strip=True) if soup.title else '')
+        _meta_content(property="og:title")
+        or _meta_content(name="twitter:title")
+        or (soup.title.get_text(" ", strip=True) if soup.title else "")
     )
     content_root = _select_primary_html_container(soup, source_type)
-    extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(str(content_root)))
+    extracted_text = _normalize_lightweight_web_text(
+        _extract_marker_text_from_html(str(content_root))
+    )
     if len(extracted_text) < 240 and content_root is not (soup.body or soup):
-        extracted_text = _normalize_lightweight_web_text(_extract_marker_text_from_html(str(soup.body or soup)))
+        extracted_text = _normalize_lightweight_web_text(
+            _extract_marker_text_from_html(str(soup.body or soup))
+        )
 
     if len(extracted_text) < 160:
         return None
 
     description = (
-        _meta_content(name='description')
-        or _meta_content(property='og:description')
-        or _meta_content(name='twitter:description')
+        _meta_content(name="description")
+        or _meta_content(property="og:description")
+        or _meta_content(name="twitter:description")
     )
     metadata_items = _extract_lightweight_metadata_items(soup, source_type)
     final_title = _derive_title_from_url(url, fallback=extracted_title or title)
@@ -849,7 +938,9 @@ def _should_try_lightweight_web_first(source_type: str) -> bool:
 
 
 def _should_try_lightweight_web_fallback(url: str, source_type: str) -> bool:
-    return source_type in _LIGHTWEIGHT_WEB_SOURCE_TYPES or (source_type == 'web' and not is_pdf_url(url))
+    return source_type in _LIGHTWEIGHT_WEB_SOURCE_TYPES or (
+        source_type == "web" and not is_pdf_url(url)
+    )
 
 
 async def _fetch_lightweight_web_markdown(
@@ -859,25 +950,25 @@ async def _fetch_lightweight_web_markdown(
     timeout: float = 30.0,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {
-        'success': False,
-        'title': title,
-        'markdown': None,
-        'error': 'download_failed',
-        'error_code': None,
-        'error_detail': None,
+        "success": False,
+        "title": title,
+        "markdown": None,
+        "error": "download_failed",
+        "error_code": None,
+        "error_detail": None,
     }
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                          '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,text/plain,text/markdown;q=0.9,*/*;q=0.8',
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,text/plain,text/markdown;q=0.9,*/*;q=0.8",
         }
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url, headers=headers)
 
         if response.status_code != 200:
-            result['error_code'] = 'http_status'
-            result['error_detail'] = (
+            result["error_code"] = "http_status"
+            result["error_detail"] = (
                 f"This page returned HTTP {response.status_code}, so automatic reading is unavailable right now. "
                 "It may require login, anti-bot checks, or interactive navigation. Please open the page directly."
             )
@@ -885,24 +976,24 @@ async def _fetch_lightweight_web_markdown(
 
         content = response.content
         if len(content) > _MAX_WEB_DOWNLOAD_BYTES:
-            result['error'] = 'parse_failed'
-            result['error_code'] = 'page_too_large'
-            result['error_detail'] = (
+            result["error"] = "parse_failed"
+            result["error_code"] = "page_too_large"
+            result["error_detail"] = (
                 "This page is too large for lightweight extraction. Please open it directly for the full content."
             )
             return result
 
-        content_type = (response.headers.get('content-type') or '').lower()
-        if content[:4] == b'%PDF' or 'application/pdf' in content_type:
-            result['error_code'] = 'points_to_pdf'
-            result['error_detail'] = (
+        content_type = (response.headers.get("content-type") or "").lower()
+        if content[:4] == b"%PDF" or "application/pdf" in content_type:
+            result["error_code"] = "points_to_pdf"
+            result["error_detail"] = (
                 "This link points to a PDF document. Please use the PDF read flow or open the PDF directly."
             )
             return result
 
         final_title = title
         markdown: str | None = None
-        if any(kind in content_type for kind in ('text/plain', 'text/markdown')):
+        if any(kind in content_type for kind in ("text/plain", "text/markdown")):
             plain_text = _normalize_lightweight_web_text(response.text)
             if len(plain_text) >= 160:
                 final_title = _derive_title_from_url(str(response.url), fallback=title)
@@ -923,34 +1014,42 @@ async def _fetch_lightweight_web_markdown(
                 final_title, markdown = extracted
 
         if not markdown:
-            result['error'] = 'parse_failed'
-            result['error_code'] = 'unreadable_page'
-            result['error_detail'] = (
+            result["error"] = "parse_failed"
+            result["error_code"] = "unreadable_page"
+            result["error_detail"] = (
                 "I could not extract enough readable content from this page. "
                 "It may rely on heavy client-side rendering or interactive browsing. Please open the link directly for details."
             )
             return result
 
-        result.update({
-            'success': True,
-            'title': final_title,
-            'markdown': markdown,
-            'error': None,
-            'error_detail': None,
-        })
+        result.update(
+            {
+                "success": True,
+                "title": final_title,
+                "markdown": markdown,
+                "error": None,
+                "error_detail": None,
+            }
+        )
         return result
     except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-        result['error_code'] = 'network_unreachable'
-        result['error_detail'] = "The page could not be reached because of a network connection problem. Please try again later or open it directly."
+        result["error_code"] = "network_unreachable"
+        result["error_detail"] = (
+            "The page could not be reached because of a network connection problem. Please try again later or open it directly."
+        )
         return result
     except httpx.TimeoutException as e:
-        result['error_code'] = 'request_timeout'
-        result['error_detail'] = "The page took too long to respond. Please try again later or open it directly."
+        result["error_code"] = "request_timeout"
+        result["error_detail"] = (
+            "The page took too long to respond. Please try again later or open it directly."
+        )
         return result
     except Exception as e:
-        result['error'] = 'parse_failed'
-        result['error_code'] = 'unexpected_error'
-        result['error_detail'] = "An unexpected error occurred while preparing this page. Please open the link directly for more detail."
+        result["error"] = "parse_failed"
+        result["error_code"] = "unexpected_error"
+        result["error_detail"] = (
+            "An unexpected error occurred while preparing this page. Please open the link directly for more detail."
+        )
         return result
 
 
@@ -964,24 +1063,24 @@ async def _process_lightweight_web_url(
 ) -> dict[str, Any]:
     source_type = detect_source_type(url)
     result: dict[str, Any] = {
-        'url': url,
-        'title': title,
-        'source_type': source_type,
-        'is_academic': False,
-        'success': False,
-        'summary': None,
-        'pdf_content': None,
-        'error': None,
-        'error_code': None,
-        'error_detail': None,
-        'from_cache': False,
-        'reference_card': None,
-        'page_count': 1,
-        'parse_method': PDF_PARSE_METHOD_WEB,
-        'structured_parse_method': PDF_PARSE_METHOD_WEB,
-        'high_quality_pending': False,
-        'image_count': 0,
-        'images_ready': False,
+        "url": url,
+        "title": title,
+        "source_type": source_type,
+        "is_academic": False,
+        "success": False,
+        "summary": None,
+        "pdf_content": None,
+        "error": None,
+        "error_code": None,
+        "error_detail": None,
+        "from_cache": False,
+        "reference_card": None,
+        "page_count": 1,
+        "parse_method": PDF_PARSE_METHOD_WEB,
+        "structured_parse_method": PDF_PARSE_METHOD_WEB,
+        "high_quality_pending": False,
+        "image_count": 0,
+        "images_ready": False,
     }
 
     try:
@@ -990,57 +1089,71 @@ async def _process_lightweight_web_url(
         cached = _get_cached_lightweight_document(url) if use_cache else None
         if cached is not None:
             cache_meta, markdown = cached
-            result['from_cache'] = True
-            result['title'] = str(cache_meta.get('title') or title)
-            result['page_count'] = int(cache_meta.get('page_count') or 1)
-            result['parse_method'] = str(cache_meta.get('parse_method') or PDF_PARSE_METHOD_WEB)
-            result['structured_parse_method'] = str(cache_meta.get('structured_parse_method') or PDF_PARSE_METHOD_WEB)
+            result["from_cache"] = True
+            result["title"] = str(cache_meta.get("title") or title)
+            result["page_count"] = int(cache_meta.get("page_count") or 1)
+            result["parse_method"] = str(
+                cache_meta.get("parse_method") or PDF_PARSE_METHOD_WEB
+            )
+            result["structured_parse_method"] = str(
+                cache_meta.get("structured_parse_method") or PDF_PARSE_METHOD_WEB
+            )
 
         if not markdown:
-            fetch_result = await _fetch_lightweight_web_markdown(url, title, source_type)
-            if not fetch_result.get('success'):
-                result['error'] = str(fetch_result.get('error') or 'download_failed')
-                result['error_code'] = fetch_result.get('error_code')
-                result['error_detail'] = str(fetch_result.get('error_detail') or 'Unable to fetch page content.')
+            fetch_result = await _fetch_lightweight_web_markdown(
+                url, title, source_type
+            )
+            if not fetch_result.get("success"):
+                result["error"] = str(fetch_result.get("error") or "download_failed")
+                result["error_code"] = fetch_result.get("error_code")
+                result["error_detail"] = str(
+                    fetch_result.get("error_detail") or "Unable to fetch page content."
+                )
                 return result
-            markdown = str(fetch_result.get('markdown') or '')
-            result['title'] = str(fetch_result.get('title') or title)
+            markdown = str(fetch_result.get("markdown") or "")
+            result["title"] = str(fetch_result.get("title") or title)
 
         if not markdown.strip():
-            result['error'] = 'parse_failed'
-            result['error_code'] = 'empty_content'
-            result['error_detail'] = (
+            result["error"] = "parse_failed"
+            result["error_code"] = "empty_content"
+            result["error_detail"] = (
                 "Lightweight extraction returned no readable content. Please open the page directly for more detail."
             )
             return result
 
-        academic = bool(cache_meta.get('is_academic')) if cache_meta else is_academic_content(markdown, source_type)
-        result['is_academic'] = academic
-        result['pdf_content'] = markdown
-        result['page_count'] = max(1, _extract_page_count(markdown) or int(result.get('page_count') or 1))
+        academic = (
+            bool(cache_meta.get("is_academic"))
+            if cache_meta
+            else is_academic_content(markdown, source_type)
+        )
+        result["is_academic"] = academic
+        result["pdf_content"] = markdown
+        result["page_count"] = max(
+            1, _extract_page_count(markdown) or int(result.get("page_count") or 1)
+        )
 
-        if use_cache and not result['from_cache']:
+        if use_cache and not result["from_cache"]:
             await asyncio.to_thread(
                 _save_lightweight_markdown_to_cache,
                 url,
                 markdown,
-                str(result['title'] or title),
+                str(result["title"] or title),
                 source_type,
                 is_academic=academic,
             )
 
         summary = await summarize_pdf_content(
             markdown,
-            str(result['title']) if result['title'] is not None else title,
+            str(result["title"]) if result["title"] is not None else title,
             base_url,
             api_key,
             model,
             is_academic=academic,
         )
-        result['success'] = True
-        result['summary'] = summary
-        result['reference_card'] = format_reference_card(
-            str(result['title']) if result['title'] is not None else title,
+        result["success"] = True
+        result["summary"] = summary
+        result["reference_card"] = format_reference_card(
+            str(result["title"]) if result["title"] is not None else title,
             url,
             source_type,
             is_academic=academic,
@@ -1048,9 +1161,11 @@ async def _process_lightweight_web_url(
         return result
     except Exception as e:
         logger.error(f"Error processing lightweight page {url}: {e}")
-        result['error'] = 'parse_failed'
-        result['error_code'] = 'unexpected_error'
-        result['error_detail'] = "An unexpected error occurred while processing this page. Please open the link directly for more detail."
+        result["error"] = "parse_failed"
+        result["error_code"] = "unexpected_error"
+        result["error_detail"] = (
+            "An unexpected error occurred while processing this page. Please open the link directly for more detail."
+        )
         return result
 
 
@@ -1060,19 +1175,21 @@ def _extract_page_count(markdown: str) -> int:
     Scans all '--- Page X ---' markers and returns the maximum X found, which
     equals the total number of pages parsed.  Returns 0 if no markers are found.
     """
-    page_nums = [int(m) for m in re.findall(r'--- Page (\d+) ---', markdown)]
+    page_nums = [int(m) for m in re.findall(r"--- Page (\d+) ---", markdown)]
     return max(page_nums) if page_nums else 0
 
 
 def _extract_arxiv_id(url: str) -> str | None:
-    match = re.search(r'arxiv\.org/(?:abs|pdf|html)/([\w\.\-]+)', url, re.IGNORECASE)
+    match = re.search(r"arxiv\.org/(?:abs|pdf|html)/([\w\.\-]+)", url, re.IGNORECASE)
     if not match:
         return None
-    return match.group(1).replace('.pdf', '')
+    return match.group(1).replace(".pdf", "")
 
 
 def _extract_openreview_id(url: str) -> str | None:
-    match = re.search(r'openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)', url, re.IGNORECASE)
+    match = re.search(
+        r"openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)", url, re.IGNORECASE
+    )
     if not match:
         return None
     return match.group(1)
@@ -1086,20 +1203,24 @@ def _update_meta_fields(url: str, **fields: Any) -> None:
         meta_file = cache_dir / f"{url_hash}.json"
         if not meta_file.exists():
             return
-        with open(meta_file, 'r') as f:
+        with open(meta_file, "r") as f:
             meta = json.load(f)
         for key, value in fields.items():
             if value is not None:
                 meta[key] = value
-        title_for_lookup = str(meta.get('title') or '')
-        source_type = str(meta.get('source_type') or detect_source_type(url))
-        meta['source_type'] = source_type
-        meta['source_priority'] = _cached_article_source_priority_for_source(source_type)
-        meta['normalized_title'] = _normalize_cached_article_lookup_text(title_for_lookup)
-        meta['doi'] = _extract_doi(url)
-        meta['arxiv_id'] = _extract_arxiv_id(url)
-        meta['openreview_id'] = _extract_openreview_id(url)
-        with open(meta_file, 'w') as f:
+        title_for_lookup = str(meta.get("title") or "")
+        source_type = str(meta.get("source_type") or detect_source_type(url))
+        meta["source_type"] = source_type
+        meta["source_priority"] = _cached_article_source_priority_for_source(
+            source_type
+        )
+        meta["normalized_title"] = _normalize_cached_article_lookup_text(
+            title_for_lookup
+        )
+        meta["doi"] = _extract_doi(url)
+        meta["arxiv_id"] = _extract_arxiv_id(url)
+        meta["openreview_id"] = _extract_openreview_id(url)
+        with open(meta_file, "w") as f:
             json.dump(meta, f, indent=2)
     except Exception as e:
         logger.error(f"Error updating meta for {url}: {e}")
@@ -1138,10 +1259,10 @@ def _update_meta_academic_flag(url: str, is_academic: bool) -> None:
         meta_file = cache_dir / f"{url_hash}.json"
         if not meta_file.exists():
             return
-        with open(meta_file, 'r') as f:
+        with open(meta_file, "r") as f:
             meta = json.load(f)
-        meta['is_academic'] = is_academic
-        with open(meta_file, 'w') as f:
+        meta["is_academic"] = is_academic
+        with open(meta_file, "w") as f:
             json.dump(meta, f, indent=2)
     except Exception as e:
         logger.error(f"Error updating academic flag for {url}: {e}")
@@ -1155,7 +1276,7 @@ def _save_structured_to_cache(url: str, structured_content: dict[str, Any]) -> N
         structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
         structured_file.write_text(
             json.dumps(structured_content, ensure_ascii=False, indent=2),
-            encoding='utf-8',
+            encoding="utf-8",
         )
     except Exception as e:
         logger.error(f"Error saving structured cache for {url}: {e}")
@@ -1169,7 +1290,7 @@ def get_cached_structured_content(url: str) -> dict[str, Any] | None:
         structured_file = cache_dir / f"{url_hash}{STRUCTURED_CACHE_SUFFIX}"
         if not structured_file.exists():
             return None
-        structured_content = json.loads(structured_file.read_text(encoding='utf-8'))
+        structured_content = json.loads(structured_file.read_text(encoding="utf-8"))
         if not isinstance(structured_content, dict):
             return None
         schema_version = _safe_int(structured_content.get("schema_version"), 0)
@@ -1200,11 +1321,12 @@ def _save_markdown_to_cache(
         cache_dir = get_pdf_cache_dir()
         url_hash = get_url_hash(url)
         md_file = cache_dir / f"{url_hash}{PYMUPDF_CACHE_SUFFIX}"
-        md_file.write_text(markdown, encoding='utf-8')
+        md_file.write_text(markdown, encoding="utf-8")
         page_count = _extract_page_count(markdown)
         _save_structured_to_cache(
             url,
-            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_PYMUPDF),
+            structured_content
+            or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_PYMUPDF),
         )
         _update_meta_fields(
             url,
@@ -1248,11 +1370,12 @@ def _save_marker_to_cache(
         cache_dir = get_pdf_cache_dir()
         url_hash = get_url_hash(url)
         marker_file = cache_dir / f"{url_hash}{MARKER_CACHE_SUFFIX}"
-        marker_file.write_text(markdown, encoding='utf-8')
+        marker_file.write_text(markdown, encoding="utf-8")
         page_count = _extract_page_count(markdown)
         _save_structured_to_cache(
             url,
-            structured_content or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_MARKER),
+            structured_content
+            or _build_document_graph_from_markdown(markdown, PDF_PARSE_METHOD_MARKER),
         )
         _update_meta_fields(
             url,
@@ -1273,6 +1396,7 @@ def _save_marker_to_cache(
 
 # ── Vector Index Helper ─────────────────────────────────────────────────────
 
+
 def _run_vector_index_sync(
     url_hash: str,
     markdown: str,
@@ -1281,6 +1405,7 @@ def _run_vector_index_sync(
 ) -> int:
     """Index PDF content into the vector store in a worker thread."""
     from .chat_pdf_vectorstore import index_pdf_to_vectorstore
+
     return index_pdf_to_vectorstore(
         url_hash,
         markdown,
@@ -1301,10 +1426,14 @@ def _register_vector_index_task(url_hash: str, task: asyncio.Task[None]) -> None
         except asyncio.CancelledError:
             logger.info(f"[VectorIndex] Background indexing cancelled for {url_hash}")
         except Exception as e:
-            logger.error(f"[VectorIndex] Background indexing failed for {url_hash}: {e}")
+            logger.error(
+                f"[VectorIndex] Background indexing failed for {url_hash}: {e}"
+            )
 
         if url_hash in _vector_index_pending and url_hash not in _vector_index_tasks:
-            logger.info(f"[VectorIndex] Rescheduling pending background index for {url_hash}")
+            logger.info(
+                f"[VectorIndex] Rescheduling pending background index for {url_hash}"
+            )
             next_task = asyncio.create_task(_run_vector_index_worker(url_hash))
             _register_vector_index_task(url_hash, next_task)
 
@@ -1317,7 +1446,9 @@ async def _run_vector_index_worker(url_hash: str) -> None:
         async with semaphore:
             payload = _vector_index_pending.pop(url_hash, None)
             if payload is None:
-                logger.info(f"[VectorIndex] No pending job found for {url_hash}; worker exiting")
+                logger.info(
+                    f"[VectorIndex] No pending job found for {url_hash}; worker exiting"
+                )
                 return
 
             parse_method = str(payload.get("parse_method") or "unknown")
@@ -1331,14 +1462,18 @@ async def _run_vector_index_worker(url_hash: str) -> None:
                     url_hash,
                     str(payload.get("markdown") or ""),
                     str(payload.get("paper_title") or "Unknown"),
-                    payload.get("structured_content") if isinstance(payload, dict) else None,
+                    payload.get("structured_content")
+                    if isinstance(payload, dict)
+                    else None,
                 )
                 logger.info(
                     f"[VectorIndex] Finished background index for {url_hash}: "
                     f"{indexed} chunks (parse_method={parse_method})"
                 )
             except Exception as e:
-                logger.error(f"[VectorIndex] Failed background index for {url_hash}: {e}")
+                logger.error(
+                    f"[VectorIndex] Failed background index for {url_hash}: {e}"
+                )
 
         if url_hash not in _vector_index_pending:
             return
@@ -1385,6 +1520,7 @@ def _trigger_vector_index(
 
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
 
+
 def tokenize_for_search(text: str) -> list[str]:
     """Simple tokenizer for BM25 search. Handles English, numbers, CJK, Japanese, and Korean.
 
@@ -1394,7 +1530,7 @@ def tokenize_for_search(text: str) -> list[str]:
     """
     # CJK Unified + Extension A + Hiragana + Katakana + Hangul Syllables
     return re.findall(
-        r'[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]',
+        r"[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]",
         text.lower(),
     )
 
@@ -1404,7 +1540,7 @@ def split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
 
     Content before the first marker (if any) is assigned page number 0.
     """
-    parts = re.split(r'--- Page (\d+) ---', markdown)
+    parts = re.split(r"--- Page (\d+) ---", markdown)
     pages: list[tuple[int, str]] = []
     if parts[0].strip():
         pages.append((0, parts[0].strip()))
@@ -1452,9 +1588,19 @@ def _normalize_bbox(raw_bbox: Any) -> dict[str, Any] | None:
 
     if isinstance(raw_bbox, dict):
         if all(key in raw_bbox for key in ("l", "t", "r", "b")):
-            values = (raw_bbox.get("l"), raw_bbox.get("t"), raw_bbox.get("r"), raw_bbox.get("b"))
+            values = (
+                raw_bbox.get("l"),
+                raw_bbox.get("t"),
+                raw_bbox.get("r"),
+                raw_bbox.get("b"),
+            )
         elif all(key in raw_bbox for key in ("x0", "y0", "x1", "y1")):
-            values = (raw_bbox.get("x0"), raw_bbox.get("y0"), raw_bbox.get("x1"), raw_bbox.get("y1"))
+            values = (
+                raw_bbox.get("x0"),
+                raw_bbox.get("y0"),
+                raw_bbox.get("x1"),
+                raw_bbox.get("y1"),
+            )
         coord_origin = raw_bbox.get("coord_origin")
     elif isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) >= 4:
         values = (raw_bbox[0], raw_bbox[1], raw_bbox[2], raw_bbox[3])
@@ -1508,12 +1654,12 @@ def _build_markdown_table_from_rows(rows: list[list[str]]) -> str:
     ]
     for row in normalized_rows[1:]:
         padded = row + [""] * max(0, len(header) - len(row))
-        lines.append("| " + " | ".join(padded[:len(header)]) + " |")
+        lines.append("| " + " | ".join(padded[: len(header)]) + " |")
     return "\n".join(lines)
 
 
 def _extract_markdown_image(markdown_text: str) -> tuple[str, str]:
-    match = re.search(r'!\[([^\]]*)\]\(([^)]+)\)', markdown_text)
+    match = re.search(r"!\[([^\]]*)\]\(([^)]+)\)", markdown_text)
     if not match:
         return "", ""
     return match.group(1).strip(), match.group(2).strip()
@@ -1621,8 +1767,8 @@ def _append_blocks_from_markdown_text(
             equation_buffer.append(line)
             continue
 
-        heading_match = re.match(r'^(#{1,6})\s+(.*)$', stripped)
-        image_match = re.match(r'^!\[([^\]]*)\]\(([^)]+)\)$', stripped)
+        heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        image_match = re.match(r"^!\[([^\]]*)\]\(([^)]+)\)$", stripped)
 
         if not stripped:
             _flush_paragraph()
@@ -1672,7 +1818,9 @@ def _append_blocks_from_markdown_text(
     return working_path
 
 
-def _build_document_graph_from_markdown(markdown: str, parse_method: PdfParseMethod) -> dict[str, Any]:
+def _build_document_graph_from_markdown(
+    markdown: str, parse_method: PdfParseMethod
+) -> dict[str, Any]:
     """Normalize markdown into a lightweight Document Graph / Block Graph sidecar."""
     page_entries = split_md_into_pages(markdown)
     blocks: list[dict[str, Any]] = []
@@ -1726,7 +1874,9 @@ def _normalize_marker_markdown(markdown: str, first_page_id: int | None) -> str:
         page_num = int(match.group(1)) + page_offset
         return f"--- Page {page_num} ---"
 
-    return re.sub(r"\{(\d+)\}<<<PATHLAB_MARKER_PAGE_BREAK>>>", _replace_page_marker, markdown).strip()
+    return re.sub(
+        r"\{(\d+)\}<<<PATHLAB_MARKER_PAGE_BREAK>>>", _replace_page_marker, markdown
+    ).strip()
 
 
 def _extract_marker_text_from_html(html_content: str) -> str:
@@ -1755,7 +1905,9 @@ def _extract_marker_table_rows(html_content: str) -> list[list[str]]:
             return []
         rows: list[list[str]] = []
         for tr in table.find_all("tr"):
-            cells = [cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])]
+            cells = [
+                cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])
+            ]
             if cells:
                 rows.append(cells)
         return rows
@@ -1763,7 +1915,9 @@ def _extract_marker_table_rows(html_content: str) -> list[list[str]]:
         return []
 
 
-def _collect_marker_section_titles(node: dict[str, Any], title_map: dict[str, str]) -> None:
+def _collect_marker_section_titles(
+    node: dict[str, Any], title_map: dict[str, str]
+) -> None:
     block_type = _coerce_text(node.get("block_type")).lower()
     node_id = _coerce_text(node.get("id"))
     if block_type == "sectionheader" and node_id:
@@ -1775,10 +1929,13 @@ def _collect_marker_section_titles(node: dict[str, Any], title_map: dict[str, st
             _collect_marker_section_titles(child, title_map)
 
 
-def _resolve_marker_section_path(section_hierarchy: Any, title_map: dict[str, str]) -> list[str]:
+def _resolve_marker_section_path(
+    section_hierarchy: Any, title_map: dict[str, str]
+) -> list[str]:
     if not isinstance(section_hierarchy, dict):
         return []
     resolved: list[str] = []
+
     def _sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
         key_text = _coerce_text(item[0])
         try:
@@ -1815,7 +1972,9 @@ def _collect_marker_caption_text(node: dict[str, Any]) -> str:
             continue
         child_type = _coerce_text(child.get("block_type")).lower()
         if child_type == "caption":
-            caption_text = _extract_marker_text_from_html(_coerce_text(child.get("html")))
+            caption_text = _extract_marker_text_from_html(
+                _coerce_text(child.get("html"))
+            )
             if caption_text:
                 parts.append(caption_text)
     deduped: list[str] = []
@@ -1875,7 +2034,12 @@ def _build_document_graph_from_marker_document(
         blocks.append(block)
         page_node["children"].append(block_id)
 
-    def _walk(node: dict[str, Any], page_num: int, current_path: list[str], parent_type: str = "") -> None:
+    def _walk(
+        node: dict[str, Any],
+        page_num: int,
+        current_path: list[str],
+        parent_type: str = "",
+    ) -> None:
         raw_type = _coerce_text(node.get("block_type"))
         normalized_type = raw_type.lower()
         if not normalized_type or normalized_type == "page":
@@ -1891,7 +2055,12 @@ def _build_document_graph_from_marker_document(
         html_content = _coerce_text(node.get("html"))
         text = _extract_marker_text_from_html(html_content)
         bbox = _normalize_bbox(node.get("bbox"))
-        resolved_path = _resolve_marker_section_path(node.get("section_hierarchy"), section_title_map) or current_path.copy()
+        resolved_path = (
+            _resolve_marker_section_path(
+                node.get("section_hierarchy"), section_title_map
+            )
+            or current_path.copy()
+        )
         base_payload = {
             "bbox": bbox,
             "section_path": resolved_path.copy(),
@@ -1932,7 +2101,9 @@ def _build_document_graph_from_marker_document(
                 **base_payload,
             )
             for child in node.get("children") or []:
-                if isinstance(child, dict) and _coerce_text(child.get("block_type")).lower() not in {"caption", "picture", "table"}:
+                if isinstance(child, dict) and _coerce_text(
+                    child.get("block_type")
+                ).lower() not in {"caption", "picture", "table"}:
                     _walk(child, page_num, next_path, normalized_type)
             return
 
@@ -1949,7 +2120,9 @@ def _build_document_graph_from_marker_document(
                     **base_payload,
                 )
             for child in node.get("children") or []:
-                if isinstance(child, dict) and _coerce_text(child.get("block_type")).lower() not in {"caption", "picture", "figure"}:
+                if isinstance(child, dict) and _coerce_text(
+                    child.get("block_type")
+                ).lower() not in {"caption", "picture", "figure"}:
                     _walk(child, page_num, next_path, normalized_type)
             return
 
@@ -1965,7 +2138,11 @@ def _build_document_graph_from_marker_document(
             _append_block(page_num, "code", text=text, **base_payload)
         elif normalized_type.startswith("list") and text:
             _append_block(page_num, "list", text=text, **base_payload)
-        elif normalized_type == "caption" and parent_type in {"picture", "figure", "table"}:
+        elif normalized_type == "caption" and parent_type in {
+            "picture",
+            "figure",
+            "table",
+        }:
             return
         elif text:
             _append_block(page_num, "paragraph", text=text, **base_payload)
@@ -1974,7 +2151,11 @@ def _build_document_graph_from_marker_document(
             if isinstance(child, dict):
                 _walk(child, page_num, next_path, normalized_type)
 
-    pages = [child for child in rendered_json.get("children") or [] if isinstance(child, dict)]
+    pages = [
+        child
+        for child in rendered_json.get("children") or []
+        if isinstance(child, dict)
+    ]
     for page_index, page in enumerate(pages, start=1):
         if max_pages > 0 and page_index > max_pages:
             break
@@ -2049,7 +2230,9 @@ def _build_document_graph_from_pymupdf_chunks(
 
             native_label = (_coerce_text(page_box.get("class")) or "text").lower()
             bbox = _normalize_bbox(page_box.get("bbox"))
-            native_ref = f"page-box-{page_num}-{_safe_int(page_box.get('index'), len(blocks))}"
+            native_ref = (
+                f"page-box-{page_num}-{_safe_int(page_box.get('index'), len(blocks))}"
+            )
             base_payload = {
                 "bbox": bbox,
                 "source_backend": PDF_PARSE_METHOD_PYMUPDF,
@@ -2059,34 +2242,38 @@ def _build_document_graph_from_pymupdf_chunks(
 
             if native_label == "table":
                 rows = _parse_markdown_table_rows(box_text.splitlines())
-                blocks.append({
-                    "id": _next_block_id("table", page_num),
-                    "type": "table",
-                    "page": page_num,
-                    "parent_id": page_node["id"],
-                    "caption": "",
-                    "markdown": box_text,
-                    "cells": rows,
-                    "section_path": current_path.copy(),
-                    **base_payload,
-                })
+                blocks.append(
+                    {
+                        "id": _next_block_id("table", page_num),
+                        "type": "table",
+                        "page": page_num,
+                        "parent_id": page_node["id"],
+                        "caption": "",
+                        "markdown": box_text,
+                        "cells": rows,
+                        "section_path": current_path.copy(),
+                        **base_payload,
+                    }
+                )
                 page_node["children"].append(blocks[-1]["id"])
                 continue
 
             if native_label in {"picture", "image"}:
                 caption, image = _extract_markdown_image(box_text)
                 if image or caption or box_text:
-                    blocks.append({
-                        "id": _next_block_id("figure", page_num),
-                        "type": "figure",
-                        "page": page_num,
-                        "parent_id": page_node["id"],
-                        "image": image,
-                        "caption": caption or box_text,
-                        "vision_summary": "",
-                        "section_path": current_path.copy(),
-                        **base_payload,
-                    })
+                    blocks.append(
+                        {
+                            "id": _next_block_id("figure", page_num),
+                            "type": "figure",
+                            "page": page_num,
+                            "parent_id": page_node["id"],
+                            "image": image,
+                            "caption": caption or box_text,
+                            "vision_summary": "",
+                            "section_path": current_path.copy(),
+                            **base_payload,
+                        }
+                    )
                     page_node["children"].append(blocks[-1]["id"])
                 continue
 
@@ -2120,7 +2307,9 @@ def _build_document_graph_from_pymupdf_chunks(
         "schema_version": STRUCTURED_SCHEMA_VERSION,
         "type": "document",
         "parse_method": parse_method,
-        "page_count": max((int(node.get("page_start") or 0) for node in section_nodes), default=0),
+        "page_count": max(
+            (int(node.get("page_start") or 0) for node in section_nodes), default=0
+        ),
         "children": section_nodes,
         "blocks": blocks,
     }
@@ -2131,7 +2320,9 @@ def _to_parsed_pdf_result(
     parse_method: PdfParseMethod,
     structured_content: dict[str, Any] | None = None,
 ) -> ParsedPdfResult:
-    structured_content = structured_content or _build_document_graph_from_markdown(markdown, parse_method)
+    structured_content = structured_content or _build_document_graph_from_markdown(
+        markdown, parse_method
+    )
     return ParsedPdfResult(
         markdown=markdown,
         parse_method=parse_method,
@@ -2141,7 +2332,9 @@ def _to_parsed_pdf_result(
 
 
 def search_pdf_pages(
-    markdown: str, query: str, top_k: int = 10,
+    markdown: str,
+    query: str,
+    top_k: int = 10,
 ) -> list[tuple[int, str, float]]:
     """BM25 page-level search over parsed PDF markdown.
 
@@ -2188,7 +2381,9 @@ def search_pdf_pages(
                 continue
             n_qt = df[qt]
             idf = math.log((N - n_qt + 0.5) / (n_qt + 0.5) + 1)
-            score += idf * (tf[qt] * (k1 + 1)) / (tf[qt] + k1 * (1 - b + b * dl / avgdl))
+            score += (
+                idf * (tf[qt] * (k1 + 1)) / (tf[qt] + k1 * (1 - b + b * dl / avgdl))
+            )
         if score > 0:
             scored.append((page_num, content, score))
 
@@ -2207,7 +2402,7 @@ def get_cached_markdown(url: str) -> str | None:
         for suffix, _ in CACHED_MARKDOWN_CANDIDATES:
             md_file = cache_dir / f"{url_hash}{suffix}"
             if md_file.exists():
-                return md_file.read_text(encoding='utf-8')
+                return md_file.read_text(encoding="utf-8")
         return None
     except Exception:
         return None
@@ -2236,7 +2431,7 @@ def get_cached_pdf_meta(url: str) -> dict[str, Any] | None:
         meta_file = cache_dir / f"{url_hash}.json"
         if not meta_file.exists():
             return None
-        with open(meta_file, 'r') as f:
+        with open(meta_file, "r") as f:
             return json.load(f)
     except Exception:
         return None
@@ -2255,7 +2450,9 @@ async def _parse_pdf_with_marker_best_effort(
     so they do not consume the only foreground PDF parse slot under load.
     """
     skip_gpu_queue, routing_detail = _should_skip_marker_gpu_queue()
-    fallback_detail = "GPU Marker path unavailable or failed; retrying high-quality upgrade on CPU"
+    fallback_detail = (
+        "GPU Marker path unavailable or failed; retrying high-quality upgrade on CPU"
+    )
     logger.info(f"[Marker] Best-effort routing decision: {routing_detail}")
     marker_result: ParsedPdfResult | None = None
     if not skip_gpu_queue:
@@ -2317,7 +2514,9 @@ def _register_marker_upgrade_task(url_hash: str, task: asyncio.Task[None]) -> No
     task.add_done_callback(_cleanup)
 
 
-async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes) -> None:
+async def _run_marker_background_upgrade(
+    url: str, title: str, pdf_bytes: bytes
+) -> None:
     """Upgrade a fast PyMuPDF parse opportunistically in the background.
 
     Background upgrades must never queue behind foreground parses. They only run
@@ -2386,7 +2585,9 @@ async def _run_marker_background_upgrade(url: str, title: str, pdf_bytes: bytes)
         result = await _run_upgrade_parse()
 
         if result is None:
-            logger.info(f"Background Marker upgrade skipped for {url_hash} due to current system load")
+            logger.info(
+                f"Background Marker upgrade skipped for {url_hash} due to current system load"
+            )
             return
         if not result.markdown or result.markdown.startswith("[Error"):
             _record_high_quality_upgrade_state(
@@ -2479,44 +2680,50 @@ def cleanup_expired_pdf_cache() -> int:
         cache_dir = get_pdf_cache_dir()
         if not cache_dir.exists():
             return 0
-        
+
         now = datetime.now()
         for meta_file in cache_dir.glob("*.json"):
             try:
-                with open(meta_file, 'r') as f:
+                with open(meta_file, "r") as f:
                     meta = json.load(f)
-                
-                cached_time = datetime.fromisoformat(meta.get('cached_at', '2000-01-01'))
+
+                cached_time = datetime.fromisoformat(
+                    meta.get("cached_at", "2000-01-01")
+                )
                 if now - cached_time > timedelta(days=PDF_CACHE_TTL_DAYS):
                     url_hash = meta_file.stem
                     _remove_cached_pdf_artifacts(url_hash, remove_vectorstore=True)
                     cleaned += 1
-                    logger.info(f"Cleaned expired PDF cache: {meta.get('url', url_hash)}")
+                    logger.info(
+                        f"Cleaned expired PDF cache: {meta.get('url', url_hash)}"
+                    )
             except Exception as e:
                 logger.error(f"Error cleaning cache file {meta_file}: {e}")
-        
+
         if cleaned > 0:
             logger.info(f"PDF cache cleanup complete: {cleaned} files removed")
     except Exception as e:
         logger.error(f"Error in PDF cache cleanup: {e}")
-    
+
     return cleaned
 
 
 def get_arxiv_pdf_url(url: str) -> str:
-    match = re.search(r'arxiv\.org/(abs|pdf|html)/([\w\.\-]+)', url)
+    match = re.search(r"arxiv\.org/(abs|pdf|html)/([\w\.\-]+)", url)
     if match:
         paper_id = match.group(2)
-        paper_id = paper_id.replace('.pdf', '')
+        paper_id = paper_id.replace(".pdf", "")
         return f"https://arxiv.org/pdf/{paper_id}.pdf"
     return url
 
 
 def get_openreview_pdf_url(url: str) -> str:
     """Convert OpenReview forum/note URLs to direct PDF download URLs."""
-    if 'openreview.net/pdf?' in url:
+    if "openreview.net/pdf?" in url:
         return url
-    match = re.search(r'openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)', url, re.IGNORECASE)
+    match = re.search(
+        r"openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)", url, re.IGNORECASE
+    )
     if match:
         return f"https://openreview.net/pdf?id={match.group(1)}"
     return url
@@ -2527,9 +2734,9 @@ def get_sciencedirect_pdf_url(url: str) -> str:
 
     The pdfft URL works for open-access articles without authentication.
     """
-    if 'pdfft' in url or url.lower().endswith('.pdf'):
+    if "pdfft" in url or url.lower().endswith(".pdf"):
         return url
-    pii_match = re.search(r'/pii/([A-Z0-9]+)', url, re.IGNORECASE)
+    pii_match = re.search(r"/pii/([A-Z0-9]+)", url, re.IGNORECASE)
     if pii_match:
         pii = pii_match.group(1).upper()
         return f"https://www.sciencedirect.com/science/article/pii/{pii}/pdfft?isDTMRedir=true&download=true"
@@ -2538,41 +2745,41 @@ def get_sciencedirect_pdf_url(url: str) -> str:
 
 def get_nature_pdf_url(url: str) -> str:
     """Append .pdf to Nature article page URLs for direct PDF download."""
-    if url.lower().endswith('.pdf'):
+    if url.lower().endswith(".pdf"):
         return url
-    base = url.split('?')[0].split('#')[0].rstrip('/')
-    if re.search(r'nature\.com/articles/[a-z0-9\-]+$', base, re.IGNORECASE):
-        return base + '.pdf'
+    base = url.split("?")[0].split("#")[0].rstrip("/")
+    if re.search(r"nature\.com/articles/[a-z0-9\-]+$", base, re.IGNORECASE):
+        return base + ".pdf"
     return url
 
 
 def get_wiley_pdf_url(url: str) -> str:
     """Convert Wiley article URL to PDF download URL."""
-    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
         return url
-    for old in ('/doi/abs/', '/doi/full/'):
+    for old in ("/doi/abs/", "/doi/full/"):
         if old in url:
-            return url.replace(old, '/doi/pdf/')
+            return url.replace(old, "/doi/pdf/")
     # /doi/10.xxxx → /doi/pdf/10.xxxx
-    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
-        return url.replace('/doi/', '/doi/pdf/', 1)
+    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
+        return url.replace("/doi/", "/doi/pdf/", 1)
     return url
 
 
 def get_biorxiv_pdf_url(url: str) -> str:
     """Convert bioRxiv/medRxiv abstract URL to full PDF URL."""
-    if url.lower().endswith('.pdf'):
+    if url.lower().endswith(".pdf"):
         return url
-    base = url.rstrip('/').split('?')[0]
-    base = re.sub(r'\.(full|abstract|article-info|metrics)$', '', base)
-    return base + '.full.pdf'
+    base = url.rstrip("/").split("?")[0]
+    base = re.sub(r"\.(full|abstract|article-info|metrics)$", "", base)
+    return base + ".full.pdf"
 
 
 def get_science_pdf_url(url: str) -> str:
-    if '/doi/full/' in url:
-        return url.replace('/doi/full/', '/doi/pdf/')
-    elif '/doi/' in url and '/pdf' not in url:
-        return url.replace('/doi/', '/doi/pdf/')
+    if "/doi/full/" in url:
+        return url.replace("/doi/full/", "/doi/pdf/")
+    elif "/doi/" in url and "/pdf" not in url:
+        return url.replace("/doi/", "/doi/pdf/")
     return url
 
 
@@ -2581,9 +2788,9 @@ def get_pmc_pdf_url(url: str) -> str:
 
     Handles both pmc.ncbi.nlm.nih.gov and legacy ncbi.nlm.nih.gov/pmc URLs.
     """
-    if url.rstrip('/').endswith('/pdf') or '/pdf/' in url:
+    if url.rstrip("/").endswith("/pdf") or "/pdf/" in url:
         return url
-    match = re.search(r'/(PMC[0-9]+)/?', url, re.IGNORECASE)
+    match = re.search(r"/(PMC[0-9]+)/?", url, re.IGNORECASE)
     if match:
         pmc_id = match.group(1).upper()
         return f"https://pmc.ncbi.nlm.nih.gov/articles/{pmc_id}/pdf/"
@@ -2602,7 +2809,7 @@ async def _resolve_pubmed_to_pdf_url(url: str) -> str:
 
     Returns the best resolved URL, or the original URL unchanged on failure.
     """
-    pmid_match = re.search(r'pubmed\.ncbi\.nlm\.nih\.gov/(\d+)', url)
+    pmid_match = re.search(r"pubmed\.ncbi\.nlm\.nih\.gov/(\d+)", url)
     if not pmid_match:
         return url
     pmid = pmid_match.group(1)
@@ -2614,7 +2821,9 @@ async def _resolve_pubmed_to_pdf_url(url: str) -> str:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.get(api_url)
             if resp.status_code != 200:
-                logger.warning(f"NCBI ID converter returned {resp.status_code} for PMID {pmid}")
+                logger.warning(
+                    f"NCBI ID converter returned {resp.status_code} for PMID {pmid}"
+                )
                 return url
             data = resp.json()
             records = data.get("records", [])
@@ -2650,12 +2859,15 @@ async def _follow_doi_redirect(doi: str, pmid: str | None = None) -> str:
     label = f"PMID {pmid}" if pmid else f"DOI {doi}"
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            head_resp = await client.head(doi_url, headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                              "AppleWebKit/537.36 (KHTML, like Gecko) "
-                              "Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,*/*",
-            })
+            head_resp = await client.head(
+                doi_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml,*/*",
+                },
+            )
             final_url = str(head_resp.url)
             if final_url and final_url != doi_url:
                 logger.info(f"{label} → DOI redirect → {final_url}")
@@ -2671,17 +2883,17 @@ def get_acl_pdf_url(url: str) -> str:
 
     Per ACL Anthology FAQ: append .pdf to the canonical article URL.
     """
-    if url.lower().endswith('.pdf'):
+    if url.lower().endswith(".pdf"):
         return url
-    base = url.split('?')[0].split('#')[0].rstrip('/')
-    return base + '.pdf'
+    base = url.split("?")[0].split("#")[0].rstrip("/")
+    return base + ".pdf"
 
 
 def get_ieee_pdf_url(url: str) -> str:
     """Convert IEEE Xplore document page URL to PDF viewer URL."""
-    if url.lower().endswith('.pdf') or 'stamp.jsp' in url:
+    if url.lower().endswith(".pdf") or "stamp.jsp" in url:
         return url
-    match = re.search(r'/document/([0-9]+)', url)
+    match = re.search(r"/document/([0-9]+)", url)
     if match:
         return f"https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber={match.group(1)}"
     return url
@@ -2692,10 +2904,10 @@ def get_acm_pdf_url(url: str) -> str:
 
     Insert 'pdf/' segment after '/doi/' in the URL.
     """
-    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
         return url
-    if '/doi/' in url:
-        return url.replace('/doi/', '/doi/pdf/', 1)
+    if "/doi/" in url:
+        return url.replace("/doi/", "/doi/pdf/", 1)
     return url
 
 
@@ -2705,11 +2917,11 @@ def get_springer_pdf_url(url: str) -> str:
     Article page: link.springer.com/article/10.xxxx/yyy
     PDF:          link.springer.com/content/pdf/10.xxxx/yyy.pdf
     """
-    if '/content/pdf/' in url or url.lower().endswith('.pdf'):
+    if "/content/pdf/" in url or url.lower().endswith(".pdf"):
         return url
-    match = re.search(r'springer\.com/(?:article|chapter)/(10\.[0-9]{4,}[^\s?#]+)', url)
+    match = re.search(r"springer\.com/(?:article|chapter)/(10\.[0-9]{4,}[^\s?#]+)", url)
     if match:
-        doi = match.group(1).rstrip('/')
+        doi = match.group(1).rstrip("/")
         return f"https://link.springer.com/content/pdf/{doi}.pdf"
     return url
 
@@ -2720,14 +2932,16 @@ def get_plos_pdf_url(url: str) -> str:
     Article page: journals.plos.org/plosone/article?id=10.1371/journal.pone.xxxxxxx
     PDF:          journals.plos.org/plosone/article/file?id=10.1371/journal.pone.xxxxxxx&type=printable
     """
-    if 'type=printable' in url or 'article/file' in url:
+    if "type=printable" in url or "article/file" in url:
         return url
-    doi_match = re.search(r'[?&]id=(10\.[0-9]{4,}/[^\s?#&]+)', url)
+    doi_match = re.search(r"[?&]id=(10\.[0-9]{4,}/[^\s?#&]+)", url)
     if doi_match:
         doi = doi_match.group(1)
-        journal_match = re.search(r'journals\.plos\.org/([^/?#]+)', url)
-        journal = journal_match.group(1) if journal_match else 'plosone'
-        return f"https://journals.plos.org/{journal}/article/file?id={doi}&type=printable"
+        journal_match = re.search(r"journals\.plos\.org/([^/?#]+)", url)
+        journal = journal_match.group(1) if journal_match else "plosone"
+        return (
+            f"https://journals.plos.org/{journal}/article/file?id={doi}&type=printable"
+        )
     return url
 
 
@@ -2737,9 +2951,9 @@ def get_jama_pdf_url(url: str) -> str:
     Article page: jamanetwork.com/journals/jama/fullarticle/xxxxxxx
     PDF:          jamanetwork.com/journals/jama/articlepdf/xxxxxxx
     """
-    if 'articlepdf' in url or url.lower().endswith('.pdf'):
+    if "articlepdf" in url or url.lower().endswith(".pdf"):
         return url
-    return url.replace('/fullarticle/', '/articlepdf/')
+    return url.replace("/fullarticle/", "/articlepdf/")
 
 
 def get_nejm_pdf_url(url: str) -> str:
@@ -2748,13 +2962,13 @@ def get_nejm_pdf_url(url: str) -> str:
     Article page: nejm.org/doi/full/10.1056/NEJMxxx
     PDF:          nejm.org/doi/pdf/10.1056/NEJMxxx
     """
-    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
         return url
-    for old in ('/doi/full/', '/doi/abs/'):
+    for old in ("/doi/full/", "/doi/abs/"):
         if old in url:
-            return url.replace(old, '/doi/pdf/')
-    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
-        return url.replace('/doi/', '/doi/pdf/', 1)
+            return url.replace(old, "/doi/pdf/")
+    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
+        return url.replace("/doi/", "/doi/pdf/", 1)
     return url
 
 
@@ -2764,11 +2978,11 @@ def get_lancet_pdf_url(url: str) -> str:
     Article page: thelancet.com/journals/lancet/article/PIISxxxxxxx/fulltext
     PDF:          thelancet.com/journals/lancet/article/PIISxxxxxxx/pdf
     """
-    if '/pdf' in url or url.lower().endswith('.pdf'):
+    if "/pdf" in url or url.lower().endswith(".pdf"):
         return url
-    base = url.rstrip('/')
-    if base.endswith('/fulltext'):
-        return base[:-len('/fulltext')] + '/pdf'
+    base = url.rstrip("/")
+    if base.endswith("/fulltext"):
+        return base[: -len("/fulltext")] + "/pdf"
     return url
 
 
@@ -2778,9 +2992,11 @@ def get_cell_pdf_url(url: str) -> str:
     Article page: cell.com/cell/fulltext/S0092-8674(22)01377-0
     PDF:          cell.com/cell/pdf/s0092-8674(22)01377-0.pdf
     """
-    if url.lower().endswith('.pdf') or '/pdf/' in url:
+    if url.lower().endswith(".pdf") or "/pdf/" in url:
         return url
-    match = re.search(r'(https?://(?:www\.)?cell\.com/[^/]+)/fulltext/([^\s?#]+)', url, re.IGNORECASE)
+    match = re.search(
+        r"(https?://(?:www\.)?cell\.com/[^/]+)/fulltext/([^\s?#]+)", url, re.IGNORECASE
+    )
     if match:
         base, pii = match.group(1), match.group(2)
         return f"{base}/pdf/{pii.lower()}.pdf"
@@ -2792,11 +3008,11 @@ def get_oup_pdf_url(url: str) -> str:
 
     OUP provides a stable redirect endpoint: /pdf-lookup/doi/{doi}
     """
-    if 'article-pdf' in url or 'pdf-lookup' in url or url.lower().endswith('.pdf'):
+    if "article-pdf" in url or "pdf-lookup" in url or url.lower().endswith(".pdf"):
         return url
-    doi_match = re.search(r'(10\.[0-9]{4,}/[^\s?#&]+)', url)
+    doi_match = re.search(r"(10\.[0-9]{4,}/[^\s?#&]+)", url)
     if doi_match:
-        doi = doi_match.group(1).rstrip('/')
+        doi = doi_match.group(1).rstrip("/")
         return f"https://academic.oup.com/pdf-lookup/doi/{doi}"
     return url
 
@@ -2807,12 +3023,12 @@ def get_frontiers_pdf_url(url: str) -> str:
     Article page: frontiersin.org/journals/.../articles/10.3389/.../full
     PDF:          frontiersin.org/journals/.../articles/10.3389/.../pdf
     """
-    if url.lower().endswith('.pdf') or url.rstrip('/').endswith('/pdf'):
+    if url.lower().endswith(".pdf") or url.rstrip("/").endswith("/pdf"):
         return url
-    base = url.rstrip('/')
-    if base.endswith('/full'):
-        return base[:-5] + '/pdf'
-    return base + '/pdf'
+    base = url.rstrip("/")
+    if base.endswith("/full"):
+        return base[:-5] + "/pdf"
+    return base + "/pdf"
 
 
 def get_mdpi_pdf_url(url: str) -> str:
@@ -2821,9 +3037,9 @@ def get_mdpi_pdf_url(url: str) -> str:
     Article page: mdpi.com/2075-4698/15/1/6
     PDF:          mdpi.com/2075-4698/15/1/6/pdf
     """
-    if url.lower().endswith('.pdf') or url.rstrip('/').endswith('/pdf'):
+    if url.lower().endswith(".pdf") or url.rstrip("/").endswith("/pdf"):
         return url
-    return url.rstrip('/') + '/pdf'
+    return url.rstrip("/") + "/pdf"
 
 
 def get_rsp_pdf_url(url: str) -> str:
@@ -2832,13 +3048,13 @@ def get_rsp_pdf_url(url: str) -> str:
     Article page: royalsocietypublishing.org/doi/full/10.1098/xxx
     PDF:          royalsocietypublishing.org/doi/pdf/10.1098/xxx
     """
-    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
         return url
-    for old in ('/doi/full/', '/doi/abs/'):
+    for old in ("/doi/full/", "/doi/abs/"):
         if old in url:
-            return url.replace(old, '/doi/pdf/')
-    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
-        return url.replace('/doi/', '/doi/pdf/', 1)
+            return url.replace(old, "/doi/pdf/")
+    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
+        return url.replace("/doi/", "/doi/pdf/", 1)
     return url
 
 
@@ -2848,50 +3064,60 @@ def get_pnas_pdf_url(url: str) -> str:
     Article page: pnas.org/doi/10.1073/pnas.xxxxxxxx
     PDF:          pnas.org/doi/pdf/10.1073/pnas.xxxxxxxx
     """
-    if '/doi/pdf/' in url or url.lower().endswith('.pdf'):
+    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
         return url
-    if '/doi/full/' in url:
-        return url.replace('/doi/full/', '/doi/pdf/')
-    if re.search(r'/doi/10\.[0-9]{4,}', url) and '/doi/pdf/' not in url:
-        return url.replace('/doi/', '/doi/pdf/', 1)
+    if "/doi/full/" in url:
+        return url.replace("/doi/full/", "/doi/pdf/")
+    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
+        return url.replace("/doi/", "/doi/pdf/", 1)
     return url
 
 
 def _extract_doi(url: str) -> str | None:
     """Extract DOI from common academic URL patterns."""
     # Direct DOI URL: https://doi.org/10.xxxx/...
-    match = re.search(r'doi\.org/(10\.[0-9]{4,}[^\s?#]+)', url)
+    match = re.search(r"doi\.org/(10\.[0-9]{4,}[^\s?#]+)", url)
     if match:
-        return match.group(1).rstrip('/')
+        return match.group(1).rstrip("/")
     # Nature: nature.com/articles/s41586-024-07386-0
-    match = re.search(r'nature\.com/articles/(s[0-9]+-[0-9]+-[0-9]+-[a-z0-9]+)', url, re.IGNORECASE)
+    match = re.search(
+        r"nature\.com/articles/(s[0-9]+-[0-9]+-[0-9]+-[a-z0-9]+)", url, re.IGNORECASE
+    )
     if match:
         return f"10.1038/{match.group(1)}"
     # Science: science.org/doi/10.1126/science.xxx
-    match = re.search(r'science\.org/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)', url)
+    match = re.search(
+        r"science\.org/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)", url
+    )
     if match:
-        return match.group(1).rstrip('/')
+        return match.group(1).rstrip("/")
     # NEJM: nejm.org/doi/full/10.1056/NEJMxxx
-    match = re.search(r'nejm\.org/doi/(?:full/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)', url)
+    match = re.search(r"nejm\.org/doi/(?:full/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)", url)
     if match:
-        return match.group(1).rstrip('/')
+        return match.group(1).rstrip("/")
     # Wiley: onlinelibrary.wiley.com/doi/10.xxxx/xxx
-    match = re.search(r'wiley\.com/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)', url)
+    match = re.search(
+        r"wiley\.com/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)", url
+    )
     if match:
-        return match.group(1).rstrip('/')
+        return match.group(1).rstrip("/")
     # Springer: link.springer.com/article/10.xxxx/xxx
-    match = re.search(r'springer\.com/(?:article|chapter)/?(10\.[0-9]{4,}[^\s?#]+)', url)
+    match = re.search(
+        r"springer\.com/(?:article|chapter)/?(10\.[0-9]{4,}[^\s?#]+)", url
+    )
     if match:
-        return match.group(1).rstrip('/')
+        return match.group(1).rstrip("/")
     # Frontiers: frontiersin.org/journals/.../articles/10.3389/.../full
     # Must come before generic pattern to avoid capturing trailing /full or /pdf
-    match = re.search(r'frontiersin\.org/(?:journals/[^/]+/)?articles/(10\.[0-9]{4,}/[^\s?#&/]+)', url)
+    match = re.search(
+        r"frontiersin\.org/(?:journals/[^/]+/)?articles/(10\.[0-9]{4,}/[^\s?#&/]+)", url
+    )
     if match:
-        return match.group(1).rstrip('/')
+        return match.group(1).rstrip("/")
     # Generic DOI pattern in URL (must be last — greedily matches trailing path segments)
-    match = re.search(r'(10\.[0-9]{4,}/[^\s?#&]+)', url)
+    match = re.search(r"(10\.[0-9]{4,}/[^\s?#&]+)", url)
     if match:
-        return match.group(1).rstrip('/')
+        return match.group(1).rstrip("/")
     return None
 
 
@@ -2949,7 +3175,10 @@ async def _try_unpaywall_download(url: str, doi: str | None = None) -> bytes | N
             pdf_resp = await client.get(pdf_url, headers=headers)
             if pdf_resp.status_code == 200:
                 content = pdf_resp.content
-                if content[:4] == b'%PDF' or 'pdf' in pdf_resp.headers.get('content-type', '').lower():
+                if (
+                    content[:4] == b"%PDF"
+                    or "pdf" in pdf_resp.headers.get("content-type", "").lower()
+                ):
                     logger.info(f"Unpaywall download successful: {len(content)} bytes")
                     return content
             return None
@@ -2958,7 +3187,9 @@ async def _try_unpaywall_download(url: str, doi: str | None = None) -> bytes | N
         return None
 
 
-async def _try_semantic_scholar_download(url: str, doi: str | None = None) -> bytes | None:
+async def _try_semantic_scholar_download(
+    url: str, doi: str | None = None
+) -> bytes | None:
     """Try to get PDF via Semantic Scholar API."""
     if doi is None:
         doi = _extract_doi(url)
@@ -2983,8 +3214,13 @@ async def _try_semantic_scholar_download(url: str, doi: str | None = None) -> by
             pdf_resp = await client.get(pdf_url, headers=headers)
             if pdf_resp.status_code == 200:
                 content = pdf_resp.content
-                if content[:4] == b'%PDF' or 'pdf' in pdf_resp.headers.get('content-type', '').lower():
-                    logger.info(f"Semantic Scholar download successful: {len(content)} bytes")
+                if (
+                    content[:4] == b"%PDF"
+                    or "pdf" in pdf_resp.headers.get("content-type", "").lower()
+                ):
+                    logger.info(
+                        f"Semantic Scholar download successful: {len(content)} bytes"
+                    )
                     return content
             return None
     except Exception as e:
@@ -2999,60 +3235,62 @@ _MAX_PDF_DOWNLOAD_BYTES = 50 * 1024 * 1024
 async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
     try:
         # Validate URL scheme — only http(s) is supported.
-        if not url.startswith(('http://', 'https://')):
+        if not url.startswith(("http://", "https://")):
             logger.warning(f"Invalid URL scheme (not http/https): {url}")
             return None
 
         # Pre-step: Resolve PubMed abstract URLs to the actual content URL
         # (PMC PDF or publisher page via DOI redirect).  This MUST run before
         # the publisher elif-chain so the resolved URL can be matched below.
-        if 'pubmed.ncbi.nlm.nih.gov' in url:
+        if "pubmed.ncbi.nlm.nih.gov" in url:
             url = await _resolve_pubmed_to_pdf_url(url)
 
         # Step 1: Convert article page URLs to direct PDF download URLs.
-        if 'arxiv.org' in url:
+        if "arxiv.org" in url:
             url = get_arxiv_pdf_url(url)
-        elif 'openreview.net' in url:
+        elif "openreview.net" in url:
             url = get_openreview_pdf_url(url)
-        elif 'nature.com' in url:
+        elif "nature.com" in url:
             url = get_nature_pdf_url(url)
-        elif 'sciencedirect.com' in url or 'elsevier.com' in url:
+        elif "sciencedirect.com" in url or "elsevier.com" in url:
             url = get_sciencedirect_pdf_url(url)
-        elif 'science.org' in url:
+        elif "science.org" in url:
             url = get_science_pdf_url(url)
-        elif 'onlinelibrary.wiley.com' in url:
+        elif "onlinelibrary.wiley.com" in url:
             url = get_wiley_pdf_url(url)
-        elif 'biorxiv.org' in url or 'medrxiv.org' in url:
+        elif "biorxiv.org" in url or "medrxiv.org" in url:
             url = get_biorxiv_pdf_url(url)
-        elif 'pmc.ncbi.nlm.nih.gov' in url or 'ncbi.nlm.nih.gov/pmc' in url:
+        elif "pmc.ncbi.nlm.nih.gov" in url or "ncbi.nlm.nih.gov/pmc" in url:
             url = get_pmc_pdf_url(url)
-        elif 'aclanthology.org' in url:
+        elif "aclanthology.org" in url:
             url = get_acl_pdf_url(url)
-        elif 'ieeexplore.ieee.org' in url:
+        elif "ieeexplore.ieee.org" in url:
             url = get_ieee_pdf_url(url)
-        elif 'dl.acm.org' in url:
+        elif "dl.acm.org" in url:
             url = get_acm_pdf_url(url)
-        elif 'link.springer.com' in url or ('springer.com' in url and 'content/pdf' not in url):
+        elif "link.springer.com" in url or (
+            "springer.com" in url and "content/pdf" not in url
+        ):
             url = get_springer_pdf_url(url)
-        elif 'plos.org' in url:
+        elif "plos.org" in url:
             url = get_plos_pdf_url(url)
-        elif 'jamanetwork.com' in url:
+        elif "jamanetwork.com" in url:
             url = get_jama_pdf_url(url)
-        elif 'nejm.org' in url:
+        elif "nejm.org" in url:
             url = get_nejm_pdf_url(url)
-        elif 'thelancet.com' in url:
+        elif "thelancet.com" in url:
             url = get_lancet_pdf_url(url)
-        elif 'cell.com' in url:
+        elif "cell.com" in url:
             url = get_cell_pdf_url(url)
-        elif 'academic.oup.com' in url:
+        elif "academic.oup.com" in url:
             url = get_oup_pdf_url(url)
-        elif 'frontiersin.org' in url:
+        elif "frontiersin.org" in url:
             url = get_frontiers_pdf_url(url)
-        elif 'mdpi.com' in url:
+        elif "mdpi.com" in url:
             url = get_mdpi_pdf_url(url)
-        elif 'royalsocietypublishing.org' in url:
+        elif "royalsocietypublishing.org" in url:
             url = get_rsp_pdf_url(url)
-        elif 'pnas.org' in url:
+        elif "pnas.org" in url:
             url = get_pnas_pdf_url(url)
 
         headers = {
@@ -3074,23 +3312,27 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
                         f"{_MAX_PDF_DOWNLOAD_BYTES / 1024 / 1024:.0f} MB limit): {url}"
                     )
                     return None
-                if content[:4] == b'%PDF':
+                if content[:4] == b"%PDF":
                     return content
-                content_type = response.headers.get('content-type', '')
-                if 'pdf' in content_type.lower():
+                content_type = response.headers.get("content-type", "")
+                if "pdf" in content_type.lower():
                     return content
-                cd = response.headers.get('content-disposition', '')
-                if '.pdf' in cd.lower():
+                cd = response.headers.get("content-disposition", "")
+                if ".pdf" in cd.lower():
                     return content
                 # Got 200 but HTML/non-PDF — publisher returned a login or paywall page.
                 # (ScienceDirect, Nature, and others do this for non-OA content.)
                 logger.info(f"Got 200 non-PDF from {url}, trying open access APIs...")
                 try_oa_fallback = True
             elif response.status_code in (403, 401, 451):
-                logger.info(f"Got {response.status_code} from {url}, trying open access APIs...")
+                logger.info(
+                    f"Got {response.status_code} from {url}, trying open access APIs..."
+                )
                 try_oa_fallback = True
             else:
-                logger.warning(f"Failed to download PDF from {url}: status {response.status_code}")
+                logger.warning(
+                    f"Failed to download PDF from {url}: status {response.status_code}"
+                )
 
         if not try_oa_fallback:
             return None
@@ -3098,8 +3340,8 @@ async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
         # Step 3: Open-access API fallback (Unpaywall → Semantic Scholar).
         doi = _extract_doi(url)
         # ScienceDirect URLs contain only a PII, not a DOI — resolve via CrossRef.
-        if not doi and 'sciencedirect.com' in url:
-            pii_match = re.search(r'/pii/([A-Z0-9]+)', url, re.IGNORECASE)
+        if not doi and "sciencedirect.com" in url:
+            pii_match = re.search(r"/pii/([A-Z0-9]+)", url, re.IGNORECASE)
             if pii_match:
                 doi = await _try_crossref_doi_from_pii(pii_match.group(1).upper())
 
@@ -3159,6 +3401,7 @@ def _parse_pdf_with_pymupdf(
     # causing a TypeError in pymupdf4llm's save_image().  Work around
     # this by writing to a temp file so the Document has a valid name.
     import tempfile as _tempfile
+
     tmp_file = _tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
     try:
         logger.info(
@@ -3206,22 +3449,32 @@ def _parse_pdf_with_pymupdf(
         garbage_chars = 0
 
         for chunk in md_text:
-            page_num = chunk["metadata"].get("page", chunk["metadata"].get("page_number", 0))
+            page_num = chunk["metadata"].get(
+                "page", chunk["metadata"].get("page_number", 0)
+            )
             text = chunk["text"].strip()
             if text:
                 total_chars += len(text)
-                garbage = sum(1 for c in text if ord(c) > 0xFFFF or (ord(c) < 32 and c not in '\n\r\t'))
+                garbage = sum(
+                    1
+                    for c in text
+                    if ord(c) > 0xFFFF or (ord(c) < 32 and c not in "\n\r\t")
+                )
                 garbage_chars += garbage
                 page_sections.append(f"--- Page {page_num} ---\n\n{text}")
 
         # Quality checks
         if total_chars < 200:
-            logger.info(f"PyMuPDF: too short ({total_chars} chars), need structured-parser fallback")
+            logger.info(
+                f"PyMuPDF: too short ({total_chars} chars), need structured-parser fallback"
+            )
             return None
 
         garbage_ratio = garbage_chars / total_chars if total_chars > 0 else 0
         if garbage_ratio > 0.1:
-            logger.info(f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need structured-parser fallback")
+            logger.info(
+                f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need structured-parser fallback"
+            )
             return None
 
         # Per-page density check: catch scanned PDFs with sparse headers/footers
@@ -3251,7 +3504,9 @@ def _parse_pdf_with_pymupdf(
 
         img_count = md_content.count("![")
         logger.info("[PyMuPDF] Building structured content from page chunks")
-        structured_content = _build_document_graph_from_pymupdf_chunks(md_text, PDF_PARSE_METHOD_PYMUPDF)
+        structured_content = _build_document_graph_from_pymupdf_chunks(
+            md_text, PDF_PARSE_METHOD_PYMUPDF
+        )
         logger.info(
             f"PyMuPDF fast extraction OK: {total_chars} chars, "
             f"{len(page_sections)} pages, {img_count} images, "
@@ -3286,7 +3541,9 @@ def _parse_pdf_with_pymupdf_result(
     if parsed is None:
         return None
     markdown, page_chunks = parsed
-    structured_content = _build_document_graph_from_pymupdf_chunks(page_chunks, PDF_PARSE_METHOD_PYMUPDF)
+    structured_content = _build_document_graph_from_pymupdf_chunks(
+        page_chunks, PDF_PARSE_METHOD_PYMUPDF
+    )
     return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_PYMUPDF, structured_content)
 
 
@@ -3310,12 +3567,11 @@ async def _parse_pdf_with_pymupdf_in_worker_thread(
         return None
 
 
-
 def _extract_gpu_index_from_device(assigned_device: str | None) -> int | None:
     """Extract the physical GPU index from strings like ``cuda:1``."""
     if not assigned_device:
         return None
-    match = re.fullmatch(r'cuda:(\d+)', assigned_device.strip().lower())
+    match = re.fullmatch(r"cuda:(\d+)", assigned_device.strip().lower())
     if not match:
         return None
     return int(match.group(1))
@@ -3332,12 +3588,18 @@ def _save_marker_rendered_images(
         return raw_image_url_map, block_image_url_map
 
     images_output_dir.mkdir(parents=True, exist_ok=True)
-    for image_index, (raw_name, image_obj) in enumerate((rendered_markdown.images or {}).items(), start=1):
+    for image_index, (raw_name, image_obj) in enumerate(
+        (rendered_markdown.images or {}).items(), start=1
+    ):
         suffix = Path(raw_name).suffix or ".png"
         filename = f"figure-{image_index:03d}{suffix}"
         image_path = images_output_dir / filename
         image_obj.save(image_path)
-        image_url = f"{images_url_prefix}/{filename}" if images_url_prefix is not None else str(image_path)
+        image_url = (
+            f"{images_url_prefix}/{filename}"
+            if images_url_prefix is not None
+            else str(image_path)
+        )
         raw_image_url_map[raw_name] = image_url
         block_id = _marker_image_block_id_from_name(raw_name)
         if block_id:
@@ -3345,10 +3607,14 @@ def _save_marker_rendered_images(
     return raw_image_url_map, block_image_url_map
 
 
-def _rewrite_marker_markdown_image_refs(markdown: str, raw_image_url_map: dict[str, str]) -> str:
+def _rewrite_marker_markdown_image_refs(
+    markdown: str, raw_image_url_map: dict[str, str]
+) -> str:
     normalized_markdown = markdown
     for raw_name, image_url in raw_image_url_map.items():
-        normalized_markdown = normalized_markdown.replace(f"]({raw_name})", f"]({image_url})")
+        normalized_markdown = normalized_markdown.replace(
+            f"]({raw_name})", f"]({image_url})"
+        )
     return normalized_markdown
 
 
@@ -3357,12 +3623,14 @@ def _trim_paginated_markdown(markdown: str, max_pages: int) -> str:
         return markdown.strip()
     page_sections: list[str] = []
     for match in re.finditer(
-        r'--- Page (\d+) ---\n\n([\s\S]*?)(?=\n\n--- Page \d+ ---|\Z)',
+        r"--- Page (\d+) ---\n\n([\s\S]*?)(?=\n\n--- Page \d+ ---|\Z)",
         markdown,
     ):
         if int(match.group(1)) > max_pages:
             break
-        page_sections.append(f"--- Page {match.group(1)} ---\n\n{match.group(2).strip()}")
+        page_sections.append(
+            f"--- Page {match.group(1)} ---\n\n{match.group(2).strip()}"
+        )
     return "\n\n".join(section for section in page_sections if section.strip()).strip()
 
 
@@ -3393,7 +3661,9 @@ def _marker_subprocess_entry(
         result = _parse_pdf_with_marker(
             pdf_bytes,
             max_pages,
-            images_output_dir=Path(images_output_dir_str) if images_output_dir_str else None,
+            images_output_dir=Path(images_output_dir_str)
+            if images_output_dir_str
+            else None,
             images_url_prefix=images_url_prefix,
             accelerator_device=accelerator_device,
         )
@@ -3408,7 +3678,9 @@ def _marker_subprocess_entry(
                     "markdown": result.markdown if result is not None else None,
                     "parse_method": result.parse_method if result is not None else None,
                     "page_count": result.page_count if result is not None else 0,
-                    "structured_content": result.structured_content if result is not None else None,
+                    "structured_content": result.structured_content
+                    if result is not None
+                    else None,
                 },
             }
         )
@@ -3425,6 +3697,7 @@ def _marker_subprocess_entry(
     finally:
         try:
             import torch
+
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
@@ -3450,12 +3723,16 @@ def _run_marker_in_isolated_process(
         if normalized_device != "cuda":
             physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
             if physical_gpu_index is None:
-                raise RuntimeError(f"Invalid assigned GPU device for Marker parse: {accelerator_device}")
+                raise RuntimeError(
+                    f"Invalid assigned GPU device for Marker parse: {accelerator_device}"
+                )
         normalized_device = "cuda"
     elif normalized_device != "cpu":
-        raise RuntimeError(f"Unsupported Marker accelerator device: {accelerator_device}")
+        raise RuntimeError(
+            f"Unsupported Marker accelerator device: {accelerator_device}"
+        )
 
-    ctx = multiprocessing.get_context('spawn')
+    ctx = multiprocessing.get_context("spawn")
     parent_conn, child_conn = ctx.Pipe(duplex=False)
     process = ctx.Process(
         target=_marker_subprocess_entry,
@@ -3490,7 +3767,9 @@ def _run_marker_in_isolated_process(
                 f"(exitcode={process.exitcode})"
             )
         if not payload.get("ok"):
-            raise RuntimeError(payload.get("error") or "Unknown Marker subprocess error")
+            raise RuntimeError(
+                payload.get("error") or "Unknown Marker subprocess error"
+            )
         result_payload = payload.get("result") or {}
         markdown = result_payload.get("markdown")
         if markdown is None:
@@ -3632,7 +3911,9 @@ async def _parse_pdf_with_marker_via_gpu_queue(
         try:
             if result_future.cancelled():
                 if task_id:
-                    logger.info(f"Skipping cancelled Marker queued job {task_id} before GPU parse starts")
+                    logger.info(
+                        f"Skipping cancelled Marker queued job {task_id} before GPU parse starts"
+                    )
                 return
             if upgrade_url:
                 _record_high_quality_upgrade_state(
@@ -3653,14 +3934,18 @@ async def _parse_pdf_with_marker_via_gpu_queue(
                 result_future.set_result(result)
         except Exception as e:
             if task_id:
-                logger.warning(f"Marker queued job {task_id} failed on {assigned_device}: {e}")
+                logger.warning(
+                    f"Marker queued job {task_id} failed on {assigned_device}: {e}"
+                )
             if not result_future.done():
                 result_future.set_exception(e)
             raise
 
     await queue.submit(task_id, TaskType.INFERENCE, _queued_marker_job)
     try:
-        wait_timeout_seconds = max(0.0, float(Config.MARKER_GPU_QUEUE_WAIT_TIMEOUT_SECONDS))
+        wait_timeout_seconds = max(
+            0.0, float(Config.MARKER_GPU_QUEUE_WAIT_TIMEOUT_SECONDS)
+        )
         if wait_timeout_seconds > 0:
             try:
                 return await asyncio.wait_for(
@@ -3761,7 +4046,9 @@ def _parse_pdf_with_marker(
         logger.info(f"[Marker] Temporary PDF created at {tmp_file.name}")
 
         converter_started_at = time.perf_counter()
-        converter = PdfConverter(artifact_dict=create_model_dict(device=accelerator_device))
+        converter = PdfConverter(
+            artifact_dict=create_model_dict(device=accelerator_device)
+        )
         logger.info(
             f"[Marker] PdfConverter created in {time.perf_counter() - converter_started_at:.2f}s"
         )
@@ -3784,7 +4071,11 @@ def _parse_pdf_with_marker(
             images_output_dir,
             images_url_prefix,
         )
-        first_page_id = _safe_int(getattr(document.pages[0], "page_id", 0), 0) if getattr(document, "pages", None) else 0
+        first_page_id = (
+            _safe_int(getattr(document.pages[0], "page_id", 0), 0)
+            if getattr(document, "pages", None)
+            else 0
+        )
         markdown = _normalize_marker_markdown(markdown_output.markdown, first_page_id)
         markdown = _rewrite_marker_markdown_image_refs(markdown, raw_image_url_map)
         markdown = _trim_paginated_markdown(markdown, max_pages)
@@ -3807,9 +4098,15 @@ def _parse_pdf_with_marker(
             f"{len(structured_content.get('blocks', []))} native blocks, "
             f"elapsed={time.perf_counter() - parse_started_at:.2f}s"
         )
-        return _to_parsed_pdf_result(markdown, PDF_PARSE_METHOD_MARKER, structured_content)
+        return _to_parsed_pdf_result(
+            markdown, PDF_PARSE_METHOD_MARKER, structured_content
+        )
     except Exception as e:
-        elapsed = time.perf_counter() - parse_started_at if 'parse_started_at' in locals() else -1.0
+        elapsed = (
+            time.perf_counter() - parse_started_at
+            if "parse_started_at" in locals()
+            else -1.0
+        )
         logger.error(
             f"Marker extraction failed ({accelerator_device}) after {elapsed:.2f}s: "
             f"{type(e).__name__}: {e!r}\n{traceback.format_exc()}"
@@ -3833,6 +4130,7 @@ async def parse_pdf(
     Normal flow returns quickly with a PyMuPDF parse. Callers can schedule a
     background Marker upgrade separately to improve fidelity and structure.
     """
+
     async def _run_parse() -> ParsedPdfResult:
         pymupdf_result = await _parse_pdf_with_pymupdf_in_worker_thread(
             pdf_bytes,
@@ -3848,7 +4146,9 @@ async def parse_pdf(
             )
             return pymupdf_result
 
-        logger.info("parse_pdf falling back to Marker native parse after PyMuPDF fast path miss")
+        logger.info(
+            "parse_pdf falling back to Marker native parse after PyMuPDF fast path miss"
+        )
         marker_result = await _parse_pdf_with_marker_best_effort(
             pdf_bytes,
             max_pages,
@@ -3930,11 +4230,9 @@ Keep each section concise (2-3 sentences). Do NOT assume this is a research pape
 
     try:
         from .chat import _call_ai_complete
+
         summary = await _call_ai_complete(
-            messages=messages,
-            base_url=base_url,
-            api_key=api_key,
-            model=model
+            messages=messages, base_url=base_url, api_key=api_key, model=model
         )
         return summary
     except Exception as e:
@@ -3990,7 +4288,7 @@ def format_reference_card(
 
     if source_type == "arxiv":
         arxiv_id = ""
-        match = re.search(r'(\d{4}\.\d{4,5}|[a-z-]+/\d+)', url)
+        match = re.search(r"(\d{4}\.\d{4,5}|[a-z-]+/\d+)", url)
         if match:
             arxiv_id = match.group(1)
         card = f"""[REFERENCE]
@@ -4030,90 +4328,129 @@ def detect_source_type(url: str) -> str:
     url_lower = url.lower()
 
     # ── Academic sources ──────────────────────────────────────────────────────
-    if 'arxiv.org' in url_lower:
+    if "arxiv.org" in url_lower:
         return "arxiv"
-    elif 'openreview.net' in url_lower:
+    elif "openreview.net" in url_lower:
         return "openreview"
-    elif 'ncbi.nlm.nih.gov' in url_lower or 'pubmed' in url_lower:
+    elif "ncbi.nlm.nih.gov" in url_lower or "pubmed" in url_lower:
         return "pubmed"
-    elif 'nature.com' in url_lower:
+    elif "nature.com" in url_lower:
         return "nature"
-    elif 'science.org' in url_lower or 'sciencemag.org' in url_lower:
+    elif "science.org" in url_lower or "sciencemag.org" in url_lower:
         return "science"
-    elif 'cell.com' in url_lower:
+    elif "cell.com" in url_lower:
         return "cell"
-    elif 'thelancet.com' in url_lower:
+    elif "thelancet.com" in url_lower:
         return "lancet"
-    elif 'nejm.org' in url_lower:
+    elif "nejm.org" in url_lower:
         return "nejm"
-    elif 'jamanetwork.com' in url_lower:
+    elif "jamanetwork.com" in url_lower:
         return "jama"
-    elif 'bmj.com' in url_lower:
+    elif "bmj.com" in url_lower:
         return "bmj"
-    elif 'modernpathology.org' in url_lower:
+    elif "modernpathology.org" in url_lower:
         return "modernpathology"
-    elif 'springer.com' in url_lower or 'link.springer.com' in url_lower:
+    elif "springer.com" in url_lower or "link.springer.com" in url_lower:
         return "springer"
-    elif 'ieee' in url_lower:
+    elif "ieee" in url_lower:
         return "ieee"
-    elif 'acm.org' in url_lower:
+    elif "acm.org" in url_lower:
         return "acm"
-    elif 'biorxiv.org' in url_lower or 'medrxiv.org' in url_lower:
+    elif "biorxiv.org" in url_lower or "medrxiv.org" in url_lower:
         return "biorxiv"
-    elif 'sciencedirect.com' in url_lower or 'elsevier.com' in url_lower:
+    elif "sciencedirect.com" in url_lower or "elsevier.com" in url_lower:
         return "elsevier"
-    elif 'wiley.com' in url_lower or 'onlinelibrary.wiley.com' in url_lower:
+    elif "wiley.com" in url_lower or "onlinelibrary.wiley.com" in url_lower:
         return "wiley"
-    elif 'frontiersin.org' in url_lower:
+    elif "frontiersin.org" in url_lower:
         return "frontiers"
-    elif 'mdpi.com' in url_lower:
+    elif "mdpi.com" in url_lower:
         return "mdpi"
-    elif 'academic.oup.com' in url_lower:
+    elif "academic.oup.com" in url_lower:
         return "oup"
-    elif 'journals.plos.org' in url_lower or 'plos.org' in url_lower:
+    elif "journals.plos.org" in url_lower or "plos.org" in url_lower:
         return "plos"
-    elif 'tandfonline.com' in url_lower:
+    elif "tandfonline.com" in url_lower:
         return "taylor_francis"
     # ── Non-academic known sources ────────────────────────────────────────────
-    elif 'huggingface.co' in url_lower or 'hf.co' in url_lower:
+    elif "huggingface.co" in url_lower or "hf.co" in url_lower:
         return "huggingface"
-    elif 'github.com' in url_lower or 'github.io' in url_lower:
+    elif "github.com" in url_lower or "github.io" in url_lower:
         return "github"
-    elif 'gitlab.com' in url_lower:
+    elif "gitlab.com" in url_lower:
         return "gitlab"
-    elif 'gitee.com' in url_lower:
+    elif "gitee.com" in url_lower:
         return "gitee"
-    elif 'zenodo.org' in url_lower:
+    elif "zenodo.org" in url_lower:
         return "zenodo"
-    elif any(d in url_lower for d in (
-        'medium.com', 'substack.com', 'dev.to', 'hashnode.dev',
-        'wordpress.com', 'blogger.com', 'blogspot.com',
-        'csdn.net', 'zhihu.com', 'jianshu.com', 'cnblogs.com',
-        '/blog/', '/blogs/', '/posts/',
-    )):
+    elif any(
+        d in url_lower
+        for d in (
+            "medium.com",
+            "substack.com",
+            "dev.to",
+            "hashnode.dev",
+            "wordpress.com",
+            "blogger.com",
+            "blogspot.com",
+            "csdn.net",
+            "zhihu.com",
+            "jianshu.com",
+            "cnblogs.com",
+            "/blog/",
+            "/blogs/",
+            "/posts/",
+        )
+    ):
         return "blog"
-    elif any(d in url_lower for d in (
-        'readthedocs.io', 'readthedocs.org',
-        'docs.', '/docs/', '/documentation/',
-        'gitbook.io',
-    )):
+    elif any(
+        d in url_lower
+        for d in (
+            "readthedocs.io",
+            "readthedocs.org",
+            "docs.",
+            "/docs/",
+            "/documentation/",
+            "gitbook.io",
+        )
+    ):
         return "documentation"
-    elif 'wikipedia.org' in url_lower:
+    elif "wikipedia.org" in url_lower:
         return "wikipedia"
     # ── Generic PDF (may or may not be academic — caller should verify) ────
-    elif '.pdf' in url_lower:
+    elif ".pdf" in url_lower:
         return "pdf"
     else:
         return "web"
 
 
 # Known academic source types — used to determine if a source is inherently academic.
-ACADEMIC_SOURCE_TYPES = frozenset({
-    "arxiv", "openreview", "pubmed", "nature", "science", "cell", "lancet",
-    "nejm", "jama", "bmj", "modernpathology", "springer", "ieee", "acm",
-    "biorxiv", "elsevier", "wiley", "frontiers", "mdpi", "oup", "plos",
-    "taylor_francis",
-})
+ACADEMIC_SOURCE_TYPES = frozenset(
+    {
+        "arxiv",
+        "openreview",
+        "pubmed",
+        "nature",
+        "science",
+        "cell",
+        "lancet",
+        "nejm",
+        "jama",
+        "bmj",
+        "modernpathology",
+        "springer",
+        "ieee",
+        "acm",
+        "biorxiv",
+        "elsevier",
+        "wiley",
+        "frontiers",
+        "mdpi",
+        "oup",
+        "plos",
+        "taylor_francis",
+    }
+)
 
 
 def is_academic_content(content: str, source_type: str) -> bool:
@@ -4134,7 +4471,15 @@ def is_academic_content(content: str, source_type: str) -> bool:
         return True
 
     # Clearly non-academic sources are never academic.
-    if source_type in {"github", "gitlab", "gitee", "blog", "documentation", "wikipedia", "huggingface"}:
+    if source_type in {
+        "github",
+        "gitlab",
+        "gitee",
+        "blog",
+        "documentation",
+        "wikipedia",
+        "huggingface",
+    }:
         return False
 
     # Tier 2: heuristic analysis for generic PDFs / unknown web sources
@@ -4142,24 +4487,24 @@ def is_academic_content(content: str, source_type: str) -> bool:
 
     academic_markers = [
         # Structural sections typical of academic papers
-        r'\babstract\b',
-        r'\bintroduction\b',
-        r'\bmethodology\b|\bmethods\b|\bmaterials and methods\b',
-        r'\bresults\b',
-        r'\bdiscussion\b',
-        r'\bconclusion[s]?\b',
-        r'\breferences\b',
-        r'\backnowledgment[s]?\b|\backnowledgement[s]?\b',
+        r"\babstract\b",
+        r"\bintroduction\b",
+        r"\bmethodology\b|\bmethods\b|\bmaterials and methods\b",
+        r"\bresults\b",
+        r"\bdiscussion\b",
+        r"\bconclusion[s]?\b",
+        r"\breferences\b",
+        r"\backnowledgment[s]?\b|\backnowledgement[s]?\b",
         # Academic identifiers
-        r'\bdoi:\s*10\.',
-        r'\b10\.\d{4,}/\S+',  # DOI pattern
-        r'\bISSN\b|\bISBN\b',
+        r"\bdoi:\s*10\.",
+        r"\b10\.\d{4,}/\S+",  # DOI pattern
+        r"\bISSN\b|\bISBN\b",
         # Academic vocabulary
-        r'\bet al\.\b',
-        r'\bpeer[- ]review',
-        r'\bsupplementary\s+(material|data|figure|table)',
-        r'\bfigure\s+\d+|fig\.\s*\d+',
-        r'\btable\s+\d+',
+        r"\bet al\.\b",
+        r"\bpeer[- ]review",
+        r"\bsupplementary\s+(material|data|figure|table)",
+        r"\bfigure\s+\d+|fig\.\s*\d+",
+        r"\btable\s+\d+",
     ]
 
     match_count = sum(1 for pat in academic_markers if re.search(pat, content_lower))
@@ -4179,10 +4524,12 @@ def _normalize_cached_article_lookup_text(text: str) -> str:
     if not normalized:
         return ""
 
-    normalized = normalized.strip('"\'`“”‘’《》〈〉「」『』[]()')
-    normalized = re.sub(r'^(?:please\s+)?(?:read|open|view|show\s+me|look(?:\s+at)?)\s+', '', normalized)
-    normalized = re.sub(r'\s+(?:paper|article|pdf)\s*$', '', normalized)
-    normalized = re.sub(r'https?://\S+', ' ', normalized)
+    normalized = normalized.strip("\"'`“”‘’《》〈〉「」『』[]()")
+    normalized = re.sub(
+        r"^(?:please\s+)?(?:read|open|view|show\s+me|look(?:\s+at)?)\s+", "", normalized
+    )
+    normalized = re.sub(r"\s+(?:paper|article|pdf)\s*$", "", normalized)
+    normalized = re.sub(r"https?://\S+", " ", normalized)
     tokens = tokenize_for_search(normalized)
     return " ".join(tokens)
 
@@ -4194,7 +4541,15 @@ def _cached_article_source_priority_for_source(source_type: str) -> int:
         return 40
     if source_type == "web":
         return 20
-    if source_type in {"documentation", "github", "gitlab", "gitee", "huggingface", "wikipedia", "zenodo"}:
+    if source_type in {
+        "documentation",
+        "github",
+        "gitlab",
+        "gitee",
+        "huggingface",
+        "wikipedia",
+        "zenodo",
+    }:
         return 10
     if source_type == "blog":
         return 0
@@ -4220,16 +4575,35 @@ def _detect_cached_article_query_preference(query: str) -> str | None:
     if not query_lower:
         return None
 
-    if any(keyword in query_lower for keyword in (
-        "arxiv", "preprint", "预印本", "預印本", "bioarxiv", "biorxiv", "medrxiv",
-    )):
+    if any(
+        keyword in query_lower
+        for keyword in (
+            "arxiv",
+            "preprint",
+            "预印本",
+            "預印本",
+            "bioarxiv",
+            "biorxiv",
+            "medrxiv",
+        )
+    ):
         return "preprint"
     if "openreview" in query_lower:
         return "openreview"
-    if any(keyword in query_lower for keyword in (
-        "journal", "publisher", "published", "official version",
-        "正式版", "期刊版", "出版版", "正式发表", "正式發表",
-    )):
+    if any(
+        keyword in query_lower
+        for keyword in (
+            "journal",
+            "publisher",
+            "published",
+            "official version",
+            "正式版",
+            "期刊版",
+            "出版版",
+            "正式发表",
+            "正式發表",
+        )
+    ):
         return "formal"
     return None
 
@@ -4246,7 +4620,9 @@ def _build_cached_article_meta_fields(url: str, title: str) -> dict[str, Any]:
     }
 
 
-def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict[str, Any]]:
+def find_cached_articles_by_title(
+    query: str, max_results: int = 5
+) -> list[dict[str, Any]]:
     """Return strong local cache matches for a paper/article title query.
 
     This is intentionally conservative: only exact matches on normalized title are
@@ -4272,7 +4648,7 @@ def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict
             continue
 
         try:
-            meta = json.loads(meta_file.read_text(encoding='utf-8'))
+            meta = json.loads(meta_file.read_text(encoding="utf-8"))
         except Exception:
             continue
         if not isinstance(meta, dict):
@@ -4296,35 +4672,51 @@ def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict
                 cached_at_dt = datetime.fromisoformat(cached_at_raw)
             except Exception:
                 cached_at_dt = None
-        if cached_at_dt is not None and now - cached_at_dt > timedelta(days=PDF_CACHE_TTL_DAYS):
+        if cached_at_dt is not None and now - cached_at_dt > timedelta(
+            days=PDF_CACHE_TTL_DAYS
+        ):
             continue
 
         url_hash = meta_file.stem
-        has_markdown_cache = any((cache_dir / f"{url_hash}{suffix}").exists() for suffix, _ in CACHED_MARKDOWN_CANDIDATES)
+        has_markdown_cache = any(
+            (cache_dir / f"{url_hash}{suffix}").exists()
+            for suffix, _ in CACHED_MARKDOWN_CANDIDATES
+        )
         if not has_markdown_cache:
             continue
 
         source_type = str(meta.get("source_type") or detect_source_type(url))
         variant_kind = _cached_article_variant_kind(source_type)
-        matches.append({
-            "title": title,
-            "url": url,
-            "snippet": f"Local cache hit — {variant_kind} version already downloaded and parsed.",
-            "source_type": source_type,
-            "is_academic": bool(meta.get("is_academic", source_type in ACADEMIC_SOURCE_TYPES)),
-            "cached_at": cached_at_raw,
-            "match_type": "exact_normalized_title",
-            "variant_kind": variant_kind,
-            "normalized_title": normalized_title,
-            "doi": meta.get("doi"),
-            "arxiv_id": meta.get("arxiv_id"),
-            "openreview_id": meta.get("openreview_id"),
-            "source_priority": int(meta.get("source_priority", _cached_article_source_priority_for_source(source_type))),
-        })
+        matches.append(
+            {
+                "title": title,
+                "url": url,
+                "snippet": f"Local cache hit — {variant_kind} version already downloaded and parsed.",
+                "source_type": source_type,
+                "is_academic": bool(
+                    meta.get("is_academic", source_type in ACADEMIC_SOURCE_TYPES)
+                ),
+                "cached_at": cached_at_raw,
+                "match_type": "exact_normalized_title",
+                "variant_kind": variant_kind,
+                "normalized_title": normalized_title,
+                "doi": meta.get("doi"),
+                "arxiv_id": meta.get("arxiv_id"),
+                "openreview_id": meta.get("openreview_id"),
+                "source_priority": int(
+                    meta.get(
+                        "source_priority",
+                        _cached_article_source_priority_for_source(source_type),
+                    )
+                ),
+            }
+        )
         seen_urls.add(url)
 
     if query_preference:
-        preferred_matches = [match for match in matches if match.get("variant_kind") == query_preference]
+        preferred_matches = [
+            match for match in matches if match.get("variant_kind") == query_preference
+        ]
         if preferred_matches:
             matches = preferred_matches
 
@@ -4335,7 +4727,7 @@ def find_cached_articles_by_title(query: str, max_results: int = 5) -> list[dict
         ),
         reverse=True,
     )
-    return matches[:max(1, max_results)]
+    return matches[: max(1, max_results)]
 
 
 async def _save_markdown_to_cache_async(
@@ -4391,7 +4783,7 @@ async def process_pdf_url(
     base_url: str,
     api_key: str,
     model: str,
-    use_cache: bool = True
+    use_cache: bool = True,
 ) -> dict[str, Any]:
     """Process a PDF URL: download, parse, summarize, and format a reference card.
 
@@ -4407,22 +4799,24 @@ async def process_pdf_url(
         "is_academic": False,  # Whether content is academic (paper) or general (webpage)
         "success": False,
         "summary": None,
-        "pdf_content": None,   # Full markdown with page markers for AI citation
+        "pdf_content": None,  # Full markdown with page markers for AI citation
         "error": None,
         "error_detail": None,  # Human-readable error explanation
         "from_cache": False,
         "reference_card": None,
-        "page_count": None,    # Total pages parsed (int), filled after parsing
+        "page_count": None,  # Total pages parsed (int), filled after parsing
         "parse_method": None,  # "marker" or "pymupdf"
         "structured_parse_method": None,
         "high_quality_pending": False,
-        "image_count": 0,      # Number of extracted images on disk
-        "images_ready": False, # Whether extracted images are available to reference
+        "image_count": 0,  # Number of extracted images on disk
+        "images_ready": False,  # Whether extracted images are available to reference
     }
 
     try:
         if _should_try_lightweight_web_first(str(result["source_type"])):
-            return await _process_lightweight_web_url(url, title, base_url, api_key, model, use_cache=use_cache)
+            return await _process_lightweight_web_url(
+                url, title, base_url, api_key, model, use_cache=use_cache
+            )
 
         pdf_bytes = None
         cached_markdown = None
@@ -4432,14 +4826,23 @@ async def process_pdf_url(
             if cached:
                 pdf_bytes, cache_meta, cached_markdown, cached_markdown_method = cached
                 result["from_cache"] = True
-                result["title"] = cache_meta.get('title', title)
+                result["title"] = cache_meta.get("title", title)
                 # Restore persisted metadata so callers always have it on cache hits
-                if cache_meta.get('page_count'):
-                    result["page_count"] = cache_meta['page_count']
-                result["parse_method"] = cached_markdown_method or cache_meta.get('parse_method')
-                result["structured_parse_method"] = cache_meta.get('structured_parse_method')
-                result["high_quality_pending"] = bool(cache_meta.get('high_quality_parse_pending'))
-                logger.info(f"Using cached PDF for {url}" + (" (with cached markdown)" if cached_markdown else ""))
+                if cache_meta.get("page_count"):
+                    result["page_count"] = cache_meta["page_count"]
+                result["parse_method"] = cached_markdown_method or cache_meta.get(
+                    "parse_method"
+                )
+                result["structured_parse_method"] = cache_meta.get(
+                    "structured_parse_method"
+                )
+                result["high_quality_pending"] = bool(
+                    cache_meta.get("high_quality_parse_pending")
+                )
+                logger.info(
+                    f"Using cached PDF for {url}"
+                    + (" (with cached markdown)" if cached_markdown else "")
+                )
 
         if not pdf_bytes:
             pdf_bytes = await download_pdf(url, timeout=180.0)
@@ -4474,7 +4877,11 @@ async def process_pdf_url(
         if cached_markdown:
             pdf_content = cached_markdown
             logger.info(f"Using cached parsed markdown for {url}")
-            if result["parse_method"] == PDF_PARSE_METHOD_PYMUPDF and use_cache and pdf_bytes:
+            if (
+                result["parse_method"] == PDF_PARSE_METHOD_PYMUPDF
+                and use_cache
+                and pdf_bytes
+            ):
                 schedule_marker_upgrade(url, str(result["title"] or title), pdf_bytes)
                 result["high_quality_pending"] = bool(
                     (get_cached_pdf_meta(url) or {}).get("high_quality_parse_pending")
@@ -4482,10 +4889,13 @@ async def process_pdf_url(
         else:
             url_hash = get_url_hash(url)
             sync_images_output_dir = get_pdf_cache_dir() / "images" / url_hash
-            sync_images_url_prefix = f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
+            sync_images_url_prefix = (
+                f"{Config.GATEWAY_SERVICE_URL}/pdf-images/{url_hash}"
+            )
 
             parse_result = await parse_pdf(
-                pdf_bytes, max_pages=0,
+                pdf_bytes,
+                max_pages=0,
                 images_output_dir=sync_images_output_dir,
                 images_url_prefix=sync_images_url_prefix,
             )
@@ -4513,7 +4923,9 @@ async def process_pdf_url(
                     if pdf_bytes:
                         schedule_marker_upgrade(url, title, pdf_bytes)
                         result["high_quality_pending"] = bool(
-                            (get_cached_pdf_meta(url) or {}).get("high_quality_parse_pending")
+                            (get_cached_pdf_meta(url) or {}).get(
+                                "high_quality_parse_pending"
+                            )
                         )
 
         # Guard: empty result (not an [Error prefix but no content extracted)
@@ -4538,11 +4950,15 @@ async def process_pdf_url(
         result["page_count"] = result["page_count"] or _extract_page_count(pdf_content)
         # parse_method may already be set from cache metadata or current parse.
         if not result["parse_method"]:
-            result["parse_method"] = _get_high_quality_cache_method(url) or PDF_PARSE_METHOD_PYMUPDF
+            result["parse_method"] = (
+                _get_high_quality_cache_method(url) or PDF_PARSE_METHOD_PYMUPDF
+            )
         if not result["structured_parse_method"]:
             structured_cached = get_cached_structured_content(url)
             if structured_cached:
-                result["structured_parse_method"] = structured_cached.get("parse_method")
+                result["structured_parse_method"] = structured_cached.get(
+                    "parse_method"
+                )
         if result["parse_method"] == PDF_PARSE_METHOD_MARKER:
             result["high_quality_pending"] = False
 
@@ -4552,7 +4968,9 @@ async def process_pdf_url(
         #   - The summarization prompt (academic vs general)
         #   - The reference card type (paper vs webpage)
         #   - The label used in the supplement context (Paper vs Document)
-        source_type = str(result["source_type"]) if result["source_type"] is not None else "web"
+        source_type = (
+            str(result["source_type"]) if result["source_type"] is not None else "web"
+        )
         academic = is_academic_content(pdf_content, source_type)
         result["is_academic"] = academic
         # Persist to cache so follow-up questions can read it without re-detection
@@ -4565,7 +4983,9 @@ async def process_pdf_url(
         images_dir_for_check = get_pdf_cache_dir() / "images" / url_hash_for_images
         image_count_on_disk = 0
         if images_dir_for_check.exists() and images_dir_for_check.is_dir():
-            image_count_on_disk = sum(1 for f in images_dir_for_check.iterdir() if f.is_file())
+            image_count_on_disk = sum(
+                1 for f in images_dir_for_check.iterdir() if f.is_file()
+            )
         images_ready = image_count_on_disk > 0
         result["image_count"] = image_count_on_disk
         result["images_ready"] = images_ready
@@ -4598,7 +5018,29 @@ async def process_pdf_url(
     except Exception as e:
         logger.error(f"Error processing PDF {url}: {e}")
         result["error"] = str(e)
-        result["error_detail"] = f"An unexpected error occurred while processing '{title}': {str(e)[:100]}"
+        result["error_detail"] = (
+            f"An unexpected error occurred while processing '{title}': {str(e)[:100]}"
+        )
 
     return result
 
+
+@router.get("/pdf-images/{url_hash}/{filename}")
+async def serve_pdf_image(
+    url_hash: str, filename: str, user: User = Depends(get_user_from_header_or_param)
+):
+    if not re.match(r"^[0-9a-f]+$", url_hash, re.IGNORECASE):
+        raise HTTPException(status_code=400, detail="Invalid url_hash")
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    image_path = get_pdf_image_path(url_hash, filename)
+
+    if not image_path.exists() or not image_path.is_file():
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    content_type, _ = mimetypes.guess_type(str(image_path))
+    if content_type is None:
+        content_type = "application/octet-stream"
+
+    return FileResponse(image_path, media_type=content_type)
