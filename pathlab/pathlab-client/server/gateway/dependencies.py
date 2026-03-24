@@ -46,10 +46,8 @@ storage_manager = StorageManager(str(UPLOADS_DIR))
 from backend.storage.migration import migration_manager
 
 # Service URLs (internal communication)
-AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://127.0.0.1:6102")
-PREPROCESSING_SERVICE_URL = os.getenv(
-    "PREPROCESSING_SERVICE_URL", "http://127.0.0.1:6101"
-)
+AI_SERVICE_URL = Config.AI_SERVICE_URL
+PREPROCESSING_SERVICE_URL = Config.PREPROCESSING_SERVICE_URL
 
 
 def get_ai_client(request: Request) -> httpx.AsyncClient:
