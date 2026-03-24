@@ -39,7 +39,7 @@ from backend.common.config import Config
 from backend.database.utils.training_logger import TrainingLogger
 from ..dependencies import logger, storage_manager
 from ..models import TrainingTaskRequest, TrainingTaskUpdateRequest, DeletionMode
-from ..pipeline import run_training_pipeline
+from ..pipeline import run_training_pipeline, run_patching_then_submit
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training, require_no_active_batch_imports
 from backend.common.chat_context_cache import invalidate_chat_context
@@ -216,28 +216,44 @@ async def _validate_files_and_enqueue(
         return
 
     task_queue = get_task_queue()
-    await task_queue.submit(
-        task_id=task_id,
-        task_type=TaskType.TRAINING,
-        coro_func=run_training_pipeline,
-        **pipeline_kwargs,
-    )
 
-    async with safe_session() as db:
-        await TrainingTaskRepository.update_status(
-            db, task_id, TaskStatus.QUEUED, progress=0
+    if pipeline_kwargs.get("data_type") == "wsi":
+        patching_coro = run_patching_then_submit(task_id, pipeline_kwargs)
+        patching_task = asyncio.create_task(patching_coro)
+        task_queue.register_patching_task(task_id, patching_task)
+
+        await training_logger.info(
+            "[PreQueue] Starting patch extraction before GPU queue submission",
+            metadata={
+                "status": TaskStatus.PATCHING,
+                "task_type": pipeline_kwargs.get("training_task_type"),
+                "data_type": "wsi",
+                "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
+            },
         )
-        await db.commit()
+    else:
+        await task_queue.submit(
+            task_id=task_id,
+            task_type=TaskType.TRAINING,
+            coro_func=run_training_pipeline,
+            **pipeline_kwargs,
+        )
 
-    await training_logger.info(
-        "[Queue] Task submitted to training queue, waiting for available worker/GPU resources",
-        metadata={
-            "status": TaskStatus.QUEUED,
-            "task_type": pipeline_kwargs.get("training_task_type"),
-            "data_type": pipeline_kwargs.get("data_type"),
-            "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
-        },
-    )
+        async with safe_session() as db:
+            await TrainingTaskRepository.update_status(
+                db, task_id, TaskStatus.QUEUED, progress=0
+            )
+            await db.commit()
+
+        await training_logger.info(
+            "[Queue] Patch task submitted to GPU queue, waiting for available worker/GPU resources",
+            metadata={
+                "status": TaskStatus.QUEUED,
+                "task_type": pipeline_kwargs.get("training_task_type"),
+                "data_type": pipeline_kwargs.get("data_type"),
+                "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
+            },
+        )
 
 
 @router.post("")
