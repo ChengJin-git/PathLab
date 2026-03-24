@@ -1,8 +1,10 @@
 /**
  * Training Task Configuration Constants
  *
- * Centralized configuration for training task creation.
- * Extracted from NewTaskPage.tsx for better maintainability.
+ * Static compile-time fallback values — used only during the initial render
+ * before trainingOptionsBootstrap.ts has fetched live data from GET /training/options.
+ * Do NOT treat this file as the source of truth at runtime; the bootstrap module
+ * overwrites these arrays in-place once the API response arrives.
  */
 
 // ============================================================================

@@ -1,3 +1,9 @@
+/**
+ * Runtime training options initializer — fetches GET /training/options on app startup
+ * and overwrites the static fallback arrays in constants/training.ts in-place.
+ * This is the sole authoritative source of training options at runtime.
+ */
+
 import {
   AGGREGATORS,
   AGGREGATOR_OPTIONS,
