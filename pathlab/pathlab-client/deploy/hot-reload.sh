@@ -148,6 +148,12 @@ restart_service() {
     echo -e "  端口 $port 已释放 ✓"
 
     # Start new process
+    if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+        echo -e "  ${CYAN}[GPU]${NC} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+    else
+        echo -e "  ${CYAN}[GPU]${NC} CUDA_VISIBLE_DEVICES 未设置，使用全部可用 GPU"
+    fi
+
     cd "$SERVER_DIR"
     nohup "$PYTHON" -m uvicorn "$app" \
         --host 0.0.0.0 --port "$port" --log-level info --workers "$workers" \
