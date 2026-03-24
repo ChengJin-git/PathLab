@@ -362,3 +362,34 @@ def _split_case_attention_to_slides_static(
         start_idx = end_idx
 
     return slide_attentions
+
+
+# ---------------------------------------------------------------------------
+# Segmentation analysis helpers
+# ---------------------------------------------------------------------------
+
+
+def _normalize_segmentation_class_names(labels: Optional[List[Any]]) -> List[str]:
+    normalized: List[str] = []
+    seen = set()
+    for label in labels or []:
+        value = str(label).strip()
+        if value and value not in seen:
+            seen.add(value)
+            normalized.append(value)
+    return normalized
+
+
+def _resolve_segmentation_metric_value(
+    metrics: Optional[Dict[str, Any]], metric_key: str
+) -> Optional[float]:
+    if not isinstance(metrics, dict):
+        return None
+
+    value = metrics.get(metric_key)
+    if value is None and metric_key == "miou":
+        value = metrics.get("iou")
+    elif value is None and metric_key == "iou":
+        value = metrics.get("miou")
+
+    return float(value) if value is not None else None

@@ -38,7 +38,10 @@ from ..models import (
 from .base import BaseRepository
 from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
 from backend.ai.schemas.base import TaskStatus
-from backend.common.coco_utils import merge_coco_datasets, extract_coco_wsi_label_sets
+from backend.annotation.coco_utils import (
+    merge_coco_datasets,
+    extract_coco_wsi_label_sets,
+)
 
 
 def _build_segmentation_wsi_lookups(

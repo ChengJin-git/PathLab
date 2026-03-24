@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
-from typing import Any, TypedDict
+from typing import Any
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import select as sa_select
@@ -46,7 +46,7 @@ from backend.auth.dependencies import (
     get_user_from_header_or_param,
 )
 from .access_control import assert_owner
-from backend.common.permissions import require_conversation_access
+from gateway.chat.permissions import require_conversation_access
 from gateway.chat.context_cache import (
     get_cached_context_kwargs_admin,
     get_cached_context_kwargs,
@@ -89,9 +89,13 @@ from .chat_pdf import (
     format_reference_card,
     ACADEMIC_SOURCE_TYPES,
     find_cached_articles_by_title,
+    _describe_pdf_image_status,
+    _format_pdf_block_label,
+    _collect_pdf_urls_from_contexts,
+    _replace_images_with_fig_aliases,
+    _build_merged_pdf_context,
     router as chat_pdf_router,
 )
-from .chat_pdf_vectorstore import search_pdf_chunks
 from .chat_training_recommendation import (
     build_training_recommendation_evidence_context,
     detect_training_recommendation_profile,
@@ -176,13 +180,9 @@ _compat_check_cache: dict[_CompatCacheKey, tuple[bool, float]] = {}
 _COMPAT_CACHE_TTL = 120.0
 
 
-class _PaperMeta(TypedDict):
-    url: str
-    meta: dict[str, Any]
-    title: str
-    parse_method: str | None
-    image_count: int
-    is_academic: bool
+
+
+
 
 
 async def _get_available_extractors(features_root: Path, wsi_id: str) -> list[str]:
@@ -1240,407 +1240,8 @@ _READ_DOCUMENT_PROMPTS = {
     ),
 }
 
-# Prompt fragment appended when PDF context is rebuilt for follow-up questions.
-_PDF_FOLLOWUP_NOTE = {
-    "en": (
-        "NOTE: The PDF content below has been semantically searched to show the most relevant "
-        "chunks for the user's latest question, along with the first and last pages for context. "
-        "Retrieved blocks are labelled with page number and block type (e.g. `Page 3, Table 5`). "
-        "When citing, use [N, p.Y] format where N is the paper number. If the user asks about content not shown here, "
-        "tell them to ask a more specific follow-up question so the system can retrieve it.\n"
-        "STRICT GROUNDING: Your answer MUST be based ENTIRELY on the paper content below. "
-        "Do NOT use training knowledge to fill gaps. "
-        "When quoting original text from the paper, use blockquotes (> ...) to clearly distinguish "
-        "the paper's original words from your own analysis.\n"
-        "Do NOT mention internal parser names, upgrade steps, or GPU/CPU execution details.\n"
-        "If the user asks about processing status, only state whether the PDF is processing, available, or failed.\n"
-        "If a paper's images are available (shown in Paper Registry), include image links verbatim."
-    ),
-    "zh_CN": (
-        "注意：以下 PDF 内容已通过语义搜索筛选，展示与用户最新提问最相关的文本片段以及首尾页作为上下文。"
-        "片段标记了页码和块类型（如 `Page 3, Table 5`）。引用格式：[N, p.Y]，其中 N 是论文编号。"
-        "如果用户询问的信息不在这些片段中，请告诉用户提出更具体的追问以便系统检索。\n"
-        "严格 Grounding：你的回答**必须完全基于**下方论文内容，**禁止**用训练知识填补空白。"
-        "引用论文原文时，请使用引用块（> ...）来清楚区分论文原文和你自己的分析。\n"
-        "不要提及内部解析器名称、升级流程或 GPU/CPU 执行细节。\n"
-        "如果用户询问处理状态，只能说明 PDF 处于处理中、可用或失败。\n"
-        "如果论文图片可用（见 Paper Registry），请将图片链接原样包含在回答中。"
-    ),
-    "zh_HK": (
-        "注意：以下 PDF 內容已透過語義搜尋篩選，展示與用戶最新提問最相關的文本片段以及首尾頁作為上下文。"
-        "片段標記了頁碼和塊類型（如 `Page 3, Table 5`）。引用格式：[N, p.Y]，其中 N 是論文編號。"
-        "如果用戶詢問的資訊不在這些片段中，請告訴用戶提出更具體的追問以便系統檢索。\n"
-        "嚴格 Grounding：你的回答**必須完全基於**下方論文內容，**禁止**用訓練知識填補空白。"
-        "引用論文原文時，請使用引用區塊（> ...）來清楚區分論文原文和你自己的分析。\n"
-        "不要提及內部解析器名稱、升級流程或 GPU/CPU 執行細節。\n"
-        "如果用戶詢問處理狀態，只能說明 PDF 處於處理中、可用或失敗。\n"
-        "如果論文圖片可用（見 Paper Registry），請將圖片連結原樣包含在回答中。"
-    ),
-}
 
 
-def _describe_pdf_image_status(image_count: int) -> str:
-    return f"{image_count} figures ✅" if image_count > 0 else "none"
-
-
-def _format_pdf_block_label(chunk: dict[str, Any]) -> str:
-    block_type_raw = str(chunk.get("block_type") or "chunk").strip().lower()
-    block_index = int(chunk.get("chunk_index", 0)) + 1
-    label_map = {
-        "paragraph": "Paragraph",
-        "list": "List",
-        "code": "Code",
-        "table": "Table",
-        "figure": "Figure",
-        "equation": "Equation",
-        "section": "Section",
-    }
-    block_label = label_map.get(block_type_raw, block_type_raw.title() or "Chunk")
-    section_path = str(chunk.get("section_path") or "").strip()
-    label = f"Page {chunk.get('page_num', 0)}, {block_label} {block_index}"
-    if section_path:
-        label += f" [{section_path}]"
-    return label
-
-
-def _collect_pdf_urls_from_contexts(messages: list[dict[str, object]]) -> list[str]:
-    """Extract all unique PDF URLs from all [PDF_CONTEXT] blocks in conversation history.
-
-    Returns a deduplicated list of URLs preserving first-seen order.
-    """
-    pdf_ctx_re = re.compile(r"\[PDF_CONTEXT\]\n?([\s\S]*?)\n?\[/PDF_CONTEXT\]")
-    seen: dict[str, None] = {}  # ordered dict for dedup
-    for msg in messages:
-        if msg.get("role") != "user":
-            continue
-        raw = extract_text_from_content(msg.get("content", ""))
-        m = pdf_ctx_re.search(raw)
-        if m:
-            urls = re.findall(r"- \*\*URL\*\*: (https?://[^\s\n]+)", m.group(1))
-            for u in urls:
-                seen.setdefault(u, None)
-    return list(seen.keys())
-
-
-def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
-    """Replace hash-based image filenames with simple ``fig-N`` aliases.
-
-    LLMs cannot reliably reproduce 64-char SHA-256 hashes, leading to
-    hallucinated filenames and cascading 404 errors.  This replaces e.g.
-
-        ![](http://host/pdf-images/hash/abc123…def.jpg)
-
-    with:
-
-        ![Figure 3](http://host/pdf-images/hash/fig-3.jpg)
-
-    The server endpoint ``get_pdf_image_path`` resolves ``fig-N`` back to
-    the real file by alphabetically sorted directory listing.
-    """
-    images_dir = get_pdf_cache_dir() / "images" / url_hash
-    if not images_dir.is_dir():
-        return md_content
-
-    # Canonical file list — sorted, excluding any fig-* aliases or meta files
-    image_files = sorted(
-        f.name
-        for f in images_dir.iterdir()
-        if f.is_file() and not f.name.startswith("fig-") and not f.name.startswith("_")
-    )
-    if not image_files:
-        return md_content
-
-    # Reverse map: real filename → fig-N number (1-based)
-    file_to_fig: dict[str, int] = {name: i + 1 for i, name in enumerate(image_files)}
-
-    def _replacer(match: re.Match[str]) -> str:
-        alt = match.group(1)
-        prefix = match.group(2)  # up to and including …/pdf-images/hash/
-        filename_with_ext = match.group(3)  # e.g. "abc123…def.jpg"
-
-        fig_num = file_to_fig.get(filename_with_ext)
-        if fig_num is None:
-            return match.group(0)  # unknown file — leave as-is
-
-        ext = filename_with_ext.rsplit(".", 1)[-1]
-        new_alt = alt.strip() if alt.strip() else f"Figure {fig_num}"
-        return f"![{new_alt}]({prefix}fig-{fig_num}.{ext})"
-
-    # Pattern: ![alt](…/pdf-images/{url_hash}/filename.ext)
-    pattern = (
-        r"!\[([^\]]*)\]\("
-        + r"((?:[^\)]*?/)?pdf-images/"
-        + re.escape(url_hash)
-        + r"/)"
-        + r"([^/\)\s]+)"
-        + r"\)"
-    )
-    return re.sub(pattern, _replacer, md_content, flags=re.IGNORECASE)
-
-
-def _build_merged_pdf_context(
-    all_urls: list[str], user_query: str, detected_lang: str = "en"
-) -> str:
-    """Build a single merged PDF context from all unique URLs with BM25 page selection.
-
-    This replaces the old per-block `_enhance_pdf_context_for_query` with a
-    global merge that:
-      1. Builds a Paper Registry with global sequential numbering and image status.
-      2. Re-reads the **latest** cached markdown for each URL from disk.
-      3. Uses BM25 to select the most relevant pages per paper.
-      4. Returns one unified context string.
-    """
-    _PDF_MAX_CHARS_PER_PAPER = 40_000
-
-    if not all_urls:
-        return ""
-
-    total = len(all_urls)
-    enhanced_parts: list[str] = []
-
-    # ── Global Document Registry ─────────────────────────────────────────────
-    registry_lines = [f"## Document Registry ({total} documents):\n"]
-    paper_metas: list[_PaperMeta] = []
-    for idx, url in enumerate(all_urls, 1):
-        meta = get_cached_pdf_meta(url) or {}
-        title = meta.get("title", "Unknown")
-        parse_method = meta.get("parse_method")
-
-        # Determine academic status from cache meta (persisted by process_pdf_url).
-        # If not in cache (legacy), re-detect from cached markdown + source type.
-        if "is_academic" in meta:
-            is_academic = meta["is_academic"]
-        else:
-            cached_md = get_cached_markdown(url)
-            src_type = detect_source_type(url)
-            is_academic = (
-                is_academic_content(cached_md or "", src_type) if cached_md else False
-            )
-
-        label = "Paper" if is_academic else "Doc"
-
-        # Image status detection
-        url_hash = get_url_hash(url)
-        images_dir = get_pdf_cache_dir() / "images" / url_hash
-        image_count = 0
-        if images_dir.is_dir():
-            image_count = sum(1 for f in images_dir.iterdir() if f.is_file())
-        image_status = _describe_pdf_image_status(image_count)
-
-        registry_lines.append(
-            f"- [{label} {idx}] {title} ({url}) | Images: {image_status}"
-        )
-        paper_metas.append(
-            {
-                "url": url,
-                "meta": meta,
-                "title": title,
-                "parse_method": parse_method,
-                "image_count": image_count,
-                "is_academic": is_academic,
-            }
-        )
-
-        logger.info(
-            f"[BM25] {label} {idx} '{title}': parse_method={parse_method},"
-            + f" is_academic={is_academic}, images_available={image_count > 0} ({image_count} images)"
-        )
-
-    registry_lines.append("")
-    enhanced_parts.extend(registry_lines)
-
-    followup_note = _PDF_FOLLOWUP_NOTE.get(detected_lang, _PDF_FOLLOWUP_NOTE["en"])
-    enhanced_parts.append(followup_note + "\n")
-    enhanced_parts.append("## PDF Content (query-relevant pages):\n")
-
-    # ── Per-document rebuild ─────────────────────────────────────────────────
-    for paper_idx, pd in enumerate(paper_metas, 1):
-        url = pd["url"]
-        meta = pd["meta"]
-        title = pd["title"]
-        page_count = meta.get("page_count")
-        parse_method = pd["parse_method"]
-        is_academic = pd.get("is_academic", False)
-        label = "Paper" if is_academic else "Doc"
-        content_type = "Academic Paper" if is_academic else "General Document"
-        page_info = f"{page_count} pages" if page_count else "page count unknown"
-
-        enhanced_parts.append(
-            f"### [{label} {paper_idx} of {total}] {title}\n"
-            + f"- **URL**: {url}\n"
-            + f"- **Content type**: {content_type}\n"
-            + f"- **Total pages**: {page_info}\n"
-        )
-
-        # Read full cached markdown (always re-reads from disk → picks up newer high-quality cache)
-        full_md = get_cached_markdown(url)
-        if not full_md:
-            enhanced_parts.append(
-                "[Content not available — cache may have expired]\n---\n"
-            )
-            continue
-
-        # 改动 9: Replace hash-based image filenames with fig-N aliases.
-        # LLMs hallucinate 64-char SHA-256 hashes → cascading 404 errors.
-        url_hash_for_imgs = get_url_hash(url)
-        full_md = _replace_images_with_fig_aliases(full_md, url_hash_for_imgs)
-
-        # Short papers: include everything
-        if len(full_md) <= _PDF_MAX_CHARS_PER_PAPER:
-            enhanced_parts.append(full_md)
-            enhanced_parts.append("---\n")
-            continue
-
-        # ── Vector search for relevant chunks (with BM25 fallback) ──────────
-        url_hash = get_url_hash(url)
-        vector_results = search_pdf_chunks(user_query, url_hashes=[url_hash], top_k=15)
-
-        if vector_results:
-            # Use vector search results — group by page, sorted by page_num
-            logger.info(
-                f"[VectorSearch] {label} {paper_idx}: {len(vector_results)} chunks"
-                + f" retrieved (best distance={vector_results[0]['_distance']:.3f})"
-            )
-            # Always include first and last page for context
-            all_pages = split_md_into_pages(full_md)
-            first_pn, first_content = all_pages[0] if all_pages else (0, "")
-            last_pn, last_content = all_pages[-1] if all_pages else (0, "")
-
-            content_parts: list[str] = []
-            char_count = 0
-
-            # Add first page
-            if first_content:
-                first_text = f"--- Page {first_pn} ---\n{first_content}\n"
-                content_parts.append(first_text)
-                char_count += len(first_text)
-
-            # Add vector-retrieved chunks, sorted by page then chunk_index
-            sorted_chunks = sorted(
-                vector_results, key=lambda c: (c["page_num"], c["chunk_index"])
-            )
-            seen_chunks = set()
-            for chunk in sorted_chunks:
-                chunk_key = (chunk["page_num"], chunk["chunk_index"])
-                if chunk_key in seen_chunks:
-                    continue
-                seen_chunks.add(chunk_key)
-                # Skip if this chunk is from first or last page (already included)
-                if chunk["page_num"] == first_pn or chunk["page_num"] == last_pn:
-                    continue
-                chunk_body = chunk.get("display_text") or chunk.get("chunk_text") or ""
-                chunk_text = f"--- {_format_pdf_block_label(chunk)} ---\n{chunk_body}\n"
-                if char_count + len(chunk_text) > _PDF_MAX_CHARS_PER_PAPER:
-                    break
-                content_parts.append(chunk_text)
-                char_count += len(chunk_text)
-
-            # Add last page
-            if last_pn != first_pn and last_content:
-                last_text = f"--- Page {last_pn} ---\n{last_content}\n"
-                if char_count + len(last_text) <= _PDF_MAX_CHARS_PER_PAPER:
-                    content_parts.append(last_text)
-
-            # ── Re-hydrate image links from pages referenced by vector results ──
-            # Image markdown (![...](http://...pdf-images/...)) often ends up in
-            # its own chunk and scores poorly in semantic search.  To ensure the
-            # LLM can reference figures, we scan the *full* page text for every
-            # page that contributed a chunk and collect any image links that are
-            # NOT already present in the assembled content.
-            chunk_page_nums = {c["page_num"] for c in sorted_chunks}
-            # Also include first/last page nums which are already fully included
-            chunk_page_nums.discard(first_pn)
-            chunk_page_nums.discard(last_pn)
-            page_map = {pn: content for pn, content in all_pages}
-            assembled_text = "\n".join(content_parts)
-            image_lines: list[str] = []
-            for pn in sorted(chunk_page_nums):
-                page_content = page_map.get(pn, "")
-                for m in re.finditer(r"!\[[^\]]*\]\([^\)]+\)", page_content):
-                    img_md = m.group(0)
-                    if img_md not in assembled_text:
-                        image_lines.append(f"[From Page {pn}] {img_md}")
-            if image_lines:
-                img_section = (
-                    "\n\n--- Figures from relevant pages ---\n"
-                    + "\n".join(image_lines)
-                    + "\n"
-                )
-                if char_count + len(img_section) <= _PDF_MAX_CHARS_PER_PAPER:
-                    content_parts.append(img_section)
-                    logger.info(
-                        f"[ImageRehydrate] Added {len(image_lines)} image links from relevant pages"
-                    )
-
-            total_p = page_count or (len(all_pages) if all_pages else 0)
-            note = (
-                f"[Semantic search: showing {len(seen_chunks)} most relevant chunks "
-                f"from {total_p} total pages. Ask about specific topics for more.]\n"
-            )
-            content_parts.insert(0, note)
-            enhanced_parts.append("\n".join(content_parts))
-        else:
-            # ── BM25 fallback for documents not yet vector-indexed ────────────
-            logger.info(
-                f"[BM25 Fallback] {label} {paper_idx}: no vector results, using BM25"
-            )
-            all_pages = split_md_into_pages(full_md)
-            if not all_pages:
-                enhanced_parts.append(
-                    full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n"
-                )
-            else:
-                first_pn, first_content = all_pages[0]
-                last_pn, last_content = all_pages[-1]
-
-                bm25_results = search_pdf_pages(full_md, user_query, top_k=10)
-                bm25_extras = [
-                    (pn, content, score)
-                    for pn, content, score in bm25_results
-                    if pn != first_pn and pn != last_pn
-                ]
-
-                selected: list[tuple[int, str]] = [(first_pn, first_content)]
-                for pn, content, _ in sorted(bm25_extras, key=lambda x: x[0]):
-                    selected.append((pn, content))
-                if last_pn != first_pn:
-                    selected.append((last_pn, last_content))
-
-                content_parts = []
-                char_count = 0
-                prev_pn = None
-                for pn, page_content in selected:
-                    page_text = f"--- Page {pn} ---\n{page_content}\n"
-                    if char_count + len(page_text) > _PDF_MAX_CHARS_PER_PAPER:
-                        remaining = _PDF_MAX_CHARS_PER_PAPER - char_count
-                        if remaining > 200:
-                            content_parts.append(
-                                page_text[:remaining]
-                                + "\n[...page truncated for length]"
-                            )
-                        break
-                    if prev_pn is not None and pn > prev_pn + 1:
-                        content_parts.append(
-                            f"\n[...pages {prev_pn + 1}–{pn - 1} omitted — ask about them if needed...]\n"
-                        )
-                    content_parts.append(page_text)
-                    char_count += len(page_text)
-                    prev_pn = pn
-
-                shown = len([p for p in content_parts if p.startswith("--- Page")])
-                total_p = page_count or len(all_pages)
-                if shown < total_p:
-                    note = (
-                        f"[Showing {shown} of {total_p} pages: page 1 + "
-                        f"{max(shown - 2, 0)} query-relevant pages + last page. "
-                        f"Ask about specific pages or topics for more.]\n"
-                    )
-                    content_parts.insert(0, note)
-                enhanced_parts.append("\n".join(content_parts))
-
-        enhanced_parts.append("---\n")
-
-    return "\n".join(enhanced_parts)
 
 
 # Include feedback sub-router

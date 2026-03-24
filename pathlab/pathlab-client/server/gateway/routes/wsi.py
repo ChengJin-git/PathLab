@@ -41,11 +41,14 @@ from backend.auth.dependencies import (
     get_wsi_with_access,
 )
 from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
-from backend.common.annotation_summary_cache import (
+from backend.annotation.summary_cache import (
     load_dataset_annotation_summary_cache,
     is_dataset_annotation_summary_cache_valid,
 )
-from backend.common.coco_utils import merge_coco_datasets, extract_coco_wsi_label_sets
+from backend.annotation.coco_utils import (
+    merge_coco_datasets,
+    extract_coco_wsi_label_sets,
+)
 from ..dependencies import logger, storage_manager
 from ..models import (
     DeletionMode,

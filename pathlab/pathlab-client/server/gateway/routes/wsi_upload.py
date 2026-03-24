@@ -42,10 +42,10 @@ from ..utils import (
     load_coco_annotation_file,
     resolve_file_data_type_and_properties,
 )
-from backend.common.annotation_summary_cache import (
+from backend.annotation.summary_cache import (
     rebuild_dataset_annotation_summary_cache,
 )
-from backend.common.annotation_pubsub import publish as publish_annotation_event
+from backend.annotation.pubsub import publish as publish_annotation_event
 from gateway.chat.context_cache import (
     invalidate_chat_context,
     invalidate_all_user_chat_contexts,

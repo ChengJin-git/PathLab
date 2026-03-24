@@ -1521,7 +1521,7 @@ async def _extract_segmentation_dataset(
 
     # Also save to DB as source of truth
     try:
-        from backend.common.annotation_summary_cache import (
+        from backend.annotation.summary_cache import (
             rebuild_dataset_annotation_summary_cache,
         )
         from backend.database.repositories import SegmentationAnnotationRepository

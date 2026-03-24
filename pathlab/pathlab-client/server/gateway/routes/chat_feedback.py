@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.database.repositories import FeedbackRepository, ExportTaskRepository
 from backend.auth import current_active_user, User
-from backend.common.permissions import (
+from gateway.chat.permissions import (
     require_conversation_access,
     require_message_access,
 )

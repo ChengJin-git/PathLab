@@ -50,9 +50,9 @@ from backend.auth.annotation_permissions import (
     is_annotation_owner,
 )
 from backend.common.config import Config
-from backend.common.coco_utils import coco_to_roi_annotations
+from backend.annotation.coco_utils import coco_to_roi_annotations
 from backend.common.file_types import is_patch_file
-from backend.common.annotation_summary_cache import (
+from backend.annotation.summary_cache import (
     build_draft_annotation_summary_cache,
     is_draft_annotation_summary_cache_valid,
     load_draft_annotation_summary_cache,
@@ -60,8 +60,8 @@ from backend.common.annotation_summary_cache import (
     save_draft_annotation_summary_cache,
 )
 from backend.common.progress_store import get_progress, set_task_owner, get_task_owner
-from backend.common.annotation_pubsub import publish, subscribe_iter
-from backend.common.presence_pubsub import publish_presence, subscribe_presence_iter
+from backend.annotation.pubsub import publish, subscribe_iter
+from backend.annotation.presence_pubsub import publish_presence, subscribe_presence_iter
 from ..dependencies import logger
 from ..models import (
     AnnotationSaveRequest,

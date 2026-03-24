@@ -24,10 +24,9 @@ import time
 import uuid
 import gc
 import contextvars
-from dataclasses import dataclass
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Literal, TypedDict
 from datetime import datetime, timedelta
 from urllib.parse import unquote, urlparse
 import httpx
@@ -39,6 +38,64 @@ from backend.auth import User
 from backend.auth.dependencies import get_user_from_header_or_param
 from backend.common.config import Config
 from .transformers_runtime import ensure_transformers_runtime_ready
+from .chat_pdf_vectorstore import search_pdf_chunks
+from .chat_pdf_sources import (
+    get_arxiv_pdf_url,
+    get_openreview_pdf_url,
+    get_sciencedirect_pdf_url,
+    get_nature_pdf_url,
+    get_wiley_pdf_url,
+    get_biorxiv_pdf_url,
+    get_science_pdf_url,
+    get_pmc_pdf_url,
+    _resolve_pubmed_to_pdf_url,
+    _follow_doi_redirect,
+    get_acl_pdf_url,
+    get_ieee_pdf_url,
+    get_acm_pdf_url,
+    get_springer_pdf_url,
+    get_plos_pdf_url,
+    get_jama_pdf_url,
+    get_nejm_pdf_url,
+    get_lancet_pdf_url,
+    get_cell_pdf_url,
+    get_oup_pdf_url,
+    get_frontiers_pdf_url,
+    get_mdpi_pdf_url,
+    get_rsp_pdf_url,
+    get_pnas_pdf_url,
+    _extract_doi,
+    _try_crossref_doi_from_pii,
+    _try_unpaywall_download,
+    _try_semantic_scholar_download,
+    download_pdf,
+)
+from .chat_pdf_document import (
+    ParsedPdfResult,
+    tokenize_for_search,
+    split_md_into_pages,
+    _parse_markdown_table_rows,
+    _coerce_text,
+    _safe_int,
+    _normalize_bbox,
+    _build_markdown_table_from_rows,
+    _extract_markdown_image,
+    _make_page_node,
+    _append_blocks_from_markdown_text,
+    _build_document_graph_from_markdown,
+    _marker_image_block_id_from_name,
+    _normalize_marker_markdown,
+    _extract_marker_text_from_html,
+    _extract_marker_table_rows,
+    _collect_marker_section_titles,
+    _resolve_marker_section_path,
+    _find_marker_image_url,
+    _collect_marker_caption_text,
+    _build_document_graph_from_marker_document,
+    _build_document_graph_from_pymupdf_chunks,
+    _to_parsed_pdf_result,
+    search_pdf_pages,
+)
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -137,14 +194,6 @@ _LIGHTWEIGHT_WEB_SOURCE_TYPES = frozenset(
         "huggingface",
     }
 )
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedPdfResult:
-    markdown: str
-    parse_method: PdfParseMethod
-    page_count: int
-    structured_content: dict[str, Any]
 
 
 HIGH_QUALITY_CACHE_SUFFIXES: tuple[tuple[str, str], ...] = (
@@ -1521,876 +1570,6 @@ def _trigger_vector_index(
 # ── BM25 Page-Level Search ──────────────────────────────────────────────────
 
 
-def tokenize_for_search(text: str) -> list[str]:
-    """Simple tokenizer for BM25 search. Handles English, numbers, CJK, Japanese, and Korean.
-
-    - Lowercases all text
-    - Keeps alphanumeric runs (e.g. ``bm25``, ``page3``) as single tokens
-    - Splits each CJK / Hiragana / Katakana / Hangul character as an individual token
-    """
-    # CJK Unified + Extension A + Hiragana + Katakana + Hangul Syllables
-    return re.findall(
-        r"[a-z0-9]+|[\u4e00-\u9fff\u3400-\u4dbf\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af]",
-        text.lower(),
-    )
-
-
-def split_md_into_pages(markdown: str) -> list[tuple[int, str]]:
-    """Split markdown by ``--- Page X ---`` markers into ``(page_num, content)`` pairs.
-
-    Content before the first marker (if any) is assigned page number 0.
-    """
-    parts = re.split(r"--- Page (\d+) ---", markdown)
-    pages: list[tuple[int, str]] = []
-    if parts[0].strip():
-        pages.append((0, parts[0].strip()))
-    for i in range(1, len(parts), 2):
-        page_num = int(parts[i])
-        content = parts[i + 1] if i + 1 < len(parts) else ""
-        if content.strip():
-            pages.append((page_num, content.strip()))
-    return pages
-
-
-def _parse_markdown_table_rows(table_lines: list[str]) -> list[list[str]]:
-    rows: list[list[str]] = []
-    for line in table_lines:
-        stripped = line.strip()
-        if not stripped.startswith("|"):
-            continue
-        cells = [cell.strip() for cell in stripped.strip("|").split("|")]
-        if cells and any(cell and set(cell) != {"-", ":"} for cell in cells):
-            rows.append(cells)
-    return rows
-
-
-def _coerce_text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value.strip()
-    return str(value).strip()
-
-
-def _safe_int(value: Any, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _normalize_bbox(raw_bbox: Any) -> dict[str, Any] | None:
-    if raw_bbox is None:
-        return None
-
-    coord_origin = None
-    values: tuple[Any, Any, Any, Any] | None = None
-
-    if isinstance(raw_bbox, dict):
-        if all(key in raw_bbox for key in ("l", "t", "r", "b")):
-            values = (
-                raw_bbox.get("l"),
-                raw_bbox.get("t"),
-                raw_bbox.get("r"),
-                raw_bbox.get("b"),
-            )
-        elif all(key in raw_bbox for key in ("x0", "y0", "x1", "y1")):
-            values = (
-                raw_bbox.get("x0"),
-                raw_bbox.get("y0"),
-                raw_bbox.get("x1"),
-                raw_bbox.get("y1"),
-            )
-        coord_origin = raw_bbox.get("coord_origin")
-    elif isinstance(raw_bbox, (list, tuple)) and len(raw_bbox) >= 4:
-        values = (raw_bbox[0], raw_bbox[1], raw_bbox[2], raw_bbox[3])
-    else:
-        if hasattr(raw_bbox, "as_tuple"):
-            try:
-                values = tuple(raw_bbox.as_tuple())[:4]  # type: ignore[assignment]
-            except Exception:
-                values = None
-        if values is None:
-            l = getattr(raw_bbox, "l", getattr(raw_bbox, "x0", None))
-            t = getattr(raw_bbox, "t", getattr(raw_bbox, "y0", None))
-            r = getattr(raw_bbox, "r", getattr(raw_bbox, "x1", None))
-            b = getattr(raw_bbox, "b", getattr(raw_bbox, "y1", None))
-            if None not in (l, t, r, b):
-                values = (l, t, r, b)
-        coord_origin = getattr(raw_bbox, "coord_origin", coord_origin)
-
-    if values is None:
-        return None
-
-    try:
-        left, top, right, bottom = (float(v) for v in values)
-    except (TypeError, ValueError):
-        return None
-
-    coord_value = getattr(coord_origin, "value", coord_origin)
-    return {
-        "l": left,
-        "t": top,
-        "r": right,
-        "b": bottom,
-        "coord_origin": _coerce_text(coord_value) or "TOPLEFT",
-    }
-
-
-def _build_markdown_table_from_rows(rows: list[list[str]]) -> str:
-    normalized_rows = [
-        [str(cell).strip() for cell in row]
-        for row in rows
-        if isinstance(row, list) and any(str(cell).strip() for cell in row)
-    ]
-    if not normalized_rows:
-        return ""
-
-    header = normalized_rows[0]
-    separator = ["---"] * len(header)
-    lines = [
-        "| " + " | ".join(header) + " |",
-        "| " + " | ".join(separator) + " |",
-    ]
-    for row in normalized_rows[1:]:
-        padded = row + [""] * max(0, len(header) - len(row))
-        lines.append("| " + " | ".join(padded[: len(header)]) + " |")
-    return "\n".join(lines)
-
-
-def _extract_markdown_image(markdown_text: str) -> tuple[str, str]:
-    match = re.search(r"!\[([^\]]*)\]\(([^)]+)\)", markdown_text)
-    if not match:
-        return "", ""
-    return match.group(1).strip(), match.group(2).strip()
-
-
-def _make_page_node(page_num: int) -> dict[str, Any]:
-    return {
-        "id": f"page-{page_num}",
-        "type": "section",
-        "title": f"Page {page_num}",
-        "page_start": page_num,
-        "page_end": page_num,
-        "children": [],
-    }
-
-
-def _append_blocks_from_markdown_text(
-    *,
-    page_num: int,
-    page_text: str,
-    page_node: dict[str, Any],
-    blocks: list[dict[str, Any]],
-    next_block_id: Callable[[str, int], str],
-    current_path: list[str] | None = None,
-    base_payload: dict[str, Any] | None = None,
-) -> list[str]:
-    if not page_text.strip():
-        return list(current_path or [])
-
-    working_path = list(current_path or [])
-    common_payload = dict(base_payload or {})
-    paragraph_buffer: list[str] = []
-    table_buffer: list[str] = []
-    equation_buffer: list[str] = []
-    in_equation = False
-
-    def _append_block(block_type: str, **payload: Any) -> None:
-        block_id = next_block_id(block_type, page_num)
-        merged_payload = {
-            **common_payload,
-            **payload,
-        }
-        merged_payload.setdefault("section_path", working_path.copy())
-        block = {
-            "id": block_id,
-            "type": block_type,
-            "page": page_num,
-            "parent_id": page_node["id"],
-            **merged_payload,
-        }
-        blocks.append(block)
-        page_node["children"].append(block_id)
-
-    def _flush_paragraph() -> None:
-        if not paragraph_buffer:
-            return
-        text = "\n".join(paragraph_buffer).strip()
-        paragraph_buffer.clear()
-        if text:
-            _append_block("paragraph", text=text, section_path=working_path.copy())
-
-    def _flush_table() -> None:
-        if not table_buffer:
-            return
-        table_markdown = "\n".join(table_buffer).strip()
-        rows = _parse_markdown_table_rows(table_buffer)
-        table_buffer.clear()
-        if table_markdown:
-            _append_block(
-                "table",
-                markdown=table_markdown,
-                cells=rows,
-                caption="",
-                section_path=working_path.copy(),
-            )
-
-    def _flush_equation() -> None:
-        if not equation_buffer:
-            return
-        latex = "\n".join(equation_buffer).strip()
-        equation_buffer.clear()
-        if latex:
-            _append_block(
-                "equation",
-                latex=latex,
-                surrounding_text="",
-                section_path=working_path.copy(),
-            )
-
-    for raw_line in page_text.splitlines():
-        line = raw_line.rstrip()
-        stripped = line.strip()
-
-        if stripped.startswith("$$"):
-            _flush_paragraph()
-            _flush_table()
-            if in_equation and stripped != "$$":
-                equation_buffer.append(stripped)
-            in_equation = not in_equation
-            if not in_equation:
-                _flush_equation()
-            continue
-
-        if in_equation:
-            equation_buffer.append(line)
-            continue
-
-        heading_match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
-        image_match = re.match(r"^!\[([^\]]*)\]\(([^)]+)\)$", stripped)
-
-        if not stripped:
-            _flush_paragraph()
-            _flush_table()
-            continue
-
-        if heading_match:
-            _flush_paragraph()
-            _flush_table()
-            level = len(heading_match.group(1))
-            title = heading_match.group(2).strip()
-            working_path = working_path[: max(level - 1, 0)]
-            working_path.append(title)
-            _append_block(
-                "section",
-                text=title,
-                level=level,
-                section_path=working_path.copy(),
-            )
-            continue
-
-        if image_match:
-            _flush_paragraph()
-            _flush_table()
-            _append_block(
-                "figure",
-                image=image_match.group(2).strip(),
-                caption=image_match.group(1).strip(),
-                vision_summary="",
-                section_path=working_path.copy(),
-            )
-            continue
-
-        if stripped.startswith("|") and stripped.endswith("|"):
-            _flush_paragraph()
-            table_buffer.append(stripped)
-            continue
-
-        if table_buffer:
-            _flush_table()
-
-        paragraph_buffer.append(stripped)
-
-    _flush_paragraph()
-    _flush_table()
-    _flush_equation()
-    return working_path
-
-
-def _build_document_graph_from_markdown(
-    markdown: str, parse_method: PdfParseMethod
-) -> dict[str, Any]:
-    """Normalize markdown into a lightweight Document Graph / Block Graph sidecar."""
-    page_entries = split_md_into_pages(markdown)
-    blocks: list[dict[str, Any]] = []
-    section_nodes: list[dict[str, Any]] = []
-    block_counter = 0
-    current_path: list[str] = []
-
-    def _next_block_id(prefix: str, page_num: int) -> str:
-        nonlocal block_counter
-        block_counter += 1
-        return f"{prefix}-p{page_num}-{block_counter}"
-
-    for page_num, page_text in page_entries:
-        page_node = _make_page_node(page_num)
-        section_nodes.append(page_node)
-        current_path = _append_blocks_from_markdown_text(
-            page_num=page_num,
-            page_text=page_text,
-            page_node=page_node,
-            blocks=blocks,
-            next_block_id=_next_block_id,
-            current_path=current_path,
-            base_payload={
-                "source_backend": parse_method,
-                "native_label": "markdown",
-                "native_ref": f"markdown-page-{page_num}",
-            },
-        )
-
-    return {
-        "schema_version": STRUCTURED_SCHEMA_VERSION,
-        "type": "document",
-        "parse_method": parse_method,
-        "page_count": _extract_page_count(markdown),
-        "children": section_nodes,
-        "blocks": blocks,
-    }
-
-
-def _marker_image_block_id_from_name(image_name: str) -> str:
-    stem = Path(image_name).stem
-    if not stem:
-        return ""
-    return stem.replace("_", "/")
-
-
-def _normalize_marker_markdown(markdown: str, first_page_id: int | None) -> str:
-    page_offset = 1 if first_page_id == 0 else 0
-
-    def _replace_page_marker(match: re.Match[str]) -> str:
-        page_num = int(match.group(1)) + page_offset
-        return f"--- Page {page_num} ---"
-
-    return re.sub(
-        r"\{(\d+)\}<<<PATHLAB_MARKER_PAGE_BREAK>>>", _replace_page_marker, markdown
-    ).strip()
-
-
-def _extract_marker_text_from_html(html_content: str) -> str:
-    if not html_content:
-        return ""
-    try:
-        from bs4 import BeautifulSoup
-
-        text = BeautifulSoup(html_content, "html.parser").get_text("\n", strip=True)
-    except Exception:
-        text = re.sub(r"<[^>]+>", " ", html_content)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
-    return text.strip()
-
-
-def _extract_marker_table_rows(html_content: str) -> list[list[str]]:
-    if not html_content:
-        return []
-    try:
-        from bs4 import BeautifulSoup
-
-        soup = BeautifulSoup(html_content, "html.parser")
-        table = soup.find("table")
-        if table is None:
-            return []
-        rows: list[list[str]] = []
-        for tr in table.find_all("tr"):
-            cells = [
-                cell.get_text(" ", strip=True) for cell in tr.find_all(["th", "td"])
-            ]
-            if cells:
-                rows.append(cells)
-        return rows
-    except Exception:
-        return []
-
-
-def _collect_marker_section_titles(
-    node: dict[str, Any], title_map: dict[str, str]
-) -> None:
-    block_type = _coerce_text(node.get("block_type")).lower()
-    node_id = _coerce_text(node.get("id"))
-    if block_type == "sectionheader" and node_id:
-        title_text = _extract_marker_text_from_html(_coerce_text(node.get("html")))
-        if title_text:
-            title_map[node_id] = title_text
-    for child in node.get("children") or []:
-        if isinstance(child, dict):
-            _collect_marker_section_titles(child, title_map)
-
-
-def _resolve_marker_section_path(
-    section_hierarchy: Any, title_map: dict[str, str]
-) -> list[str]:
-    if not isinstance(section_hierarchy, dict):
-        return []
-    resolved: list[str] = []
-
-    def _sort_key(item: tuple[Any, Any]) -> tuple[int, str]:
-        key_text = _coerce_text(item[0])
-        try:
-            return (0, f"{int(key_text):06d}")
-        except Exception:
-            return (1, key_text)
-
-    for value in (item[1] for item in sorted(section_hierarchy.items(), key=_sort_key)):
-        title = title_map.get(_coerce_text(value), _coerce_text(value))
-        if title and title not in resolved:
-            resolved.append(title)
-    return resolved
-
-
-def _find_marker_image_url(node: dict[str, Any], image_url_map: dict[str, str]) -> str:
-    node_id = _coerce_text(node.get("id"))
-    if node_id and image_url_map.get(node_id):
-        return image_url_map[node_id]
-    for child in node.get("children") or []:
-        if isinstance(child, dict):
-            image_url = _find_marker_image_url(child, image_url_map)
-            if image_url:
-                return image_url
-    return ""
-
-
-def _collect_marker_caption_text(node: dict[str, Any]) -> str:
-    parts: list[str] = []
-    self_text = _extract_marker_text_from_html(_coerce_text(node.get("html")))
-    if self_text:
-        parts.append(self_text)
-    for child in node.get("children") or []:
-        if not isinstance(child, dict):
-            continue
-        child_type = _coerce_text(child.get("block_type")).lower()
-        if child_type == "caption":
-            caption_text = _extract_marker_text_from_html(
-                _coerce_text(child.get("html"))
-            )
-            if caption_text:
-                parts.append(caption_text)
-    deduped: list[str] = []
-    for part in parts:
-        if part not in deduped:
-            deduped.append(part)
-    return "\n".join(deduped).strip()
-
-
-def _build_document_graph_from_marker_document(
-    rendered_json: dict[str, Any],
-    parse_method: PdfParseMethod,
-    *,
-    max_pages: int = 0,
-    page_count_hint: int = 0,
-    image_url_map: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    blocks: list[dict[str, Any]] = []
-    section_nodes: list[dict[str, Any]] = []
-    page_node_map: dict[int, dict[str, Any]] = {}
-    block_counter = 0
-    image_url_map = image_url_map or {}
-    section_title_map: dict[str, str] = {}
-
-    for child in rendered_json.get("children") or []:
-        if isinstance(child, dict):
-            _collect_marker_section_titles(child, section_title_map)
-
-    initial_page_count = page_count_hint if page_count_hint > 0 else max_pages
-    for page_num in range(1, max(initial_page_count, 0) + 1):
-        page_node = _make_page_node(page_num)
-        section_nodes.append(page_node)
-        page_node_map[page_num] = page_node
-
-    def _next_block_id(prefix: str, page_num: int) -> str:
-        nonlocal block_counter
-        block_counter += 1
-        return f"{prefix}-p{page_num}-{block_counter}"
-
-    def _get_page_node(page_num: int) -> dict[str, Any]:
-        if page_num not in page_node_map:
-            page_node = _make_page_node(page_num)
-            page_node_map[page_num] = page_node
-            section_nodes.append(page_node)
-        return page_node_map[page_num]
-
-    def _append_block(page_num: int, block_type: str, **payload: Any) -> None:
-        page_node = _get_page_node(page_num)
-        block_id = _next_block_id(block_type, page_num)
-        block = {
-            "id": block_id,
-            "type": block_type,
-            "page": page_num,
-            "parent_id": page_node["id"],
-            **payload,
-        }
-        blocks.append(block)
-        page_node["children"].append(block_id)
-
-    def _walk(
-        node: dict[str, Any],
-        page_num: int,
-        current_path: list[str],
-        parent_type: str = "",
-    ) -> None:
-        raw_type = _coerce_text(node.get("block_type"))
-        normalized_type = raw_type.lower()
-        if not normalized_type or normalized_type == "page":
-            for child in node.get("children") or []:
-                if isinstance(child, dict):
-                    _walk(child, page_num, current_path, normalized_type)
-            return
-
-        if normalized_type in {"pageheader", "pagefooter", "footnote", "reference"}:
-            return
-
-        node_id = _coerce_text(node.get("id"))
-        html_content = _coerce_text(node.get("html"))
-        text = _extract_marker_text_from_html(html_content)
-        bbox = _normalize_bbox(node.get("bbox"))
-        resolved_path = (
-            _resolve_marker_section_path(
-                node.get("section_hierarchy"), section_title_map
-            )
-            or current_path.copy()
-        )
-        base_payload = {
-            "bbox": bbox,
-            "section_path": resolved_path.copy(),
-            "source_backend": PDF_PARSE_METHOD_MARKER,
-            "native_label": raw_type,
-            "native_ref": node_id,
-        }
-
-        next_path = resolved_path.copy()
-        if normalized_type == "sectionheader":
-            title_text = text
-            if title_text:
-                next_path = resolved_path or [title_text]
-                if next_path[-1] != title_text:
-                    next_path = [*next_path, title_text]
-                _append_block(
-                    page_num,
-                    "section",
-                    text=title_text,
-                    level=max(1, len(next_path)),
-                    **{**base_payload, "section_path": next_path.copy()},
-                )
-            for child in node.get("children") or []:
-                if isinstance(child, dict):
-                    _walk(child, page_num, next_path, normalized_type)
-            return
-
-        if normalized_type == "table":
-            cells = _extract_marker_table_rows(html_content)
-            table_markdown = _build_markdown_table_from_rows(cells)
-            _append_block(
-                page_num,
-                "table",
-                caption=_collect_marker_caption_text(node),
-                markdown=table_markdown,
-                cells=cells,
-                image=_find_marker_image_url(node, image_url_map),
-                **base_payload,
-            )
-            for child in node.get("children") or []:
-                if isinstance(child, dict) and _coerce_text(
-                    child.get("block_type")
-                ).lower() not in {"caption", "picture", "table"}:
-                    _walk(child, page_num, next_path, normalized_type)
-            return
-
-        if normalized_type in {"picture", "figure"}:
-            image_url = _find_marker_image_url(node, image_url_map)
-            caption = _collect_marker_caption_text(node)
-            if image_url or caption:
-                _append_block(
-                    page_num,
-                    "figure",
-                    image=image_url,
-                    caption=caption,
-                    vision_summary="",
-                    **base_payload,
-                )
-            for child in node.get("children") or []:
-                if isinstance(child, dict) and _coerce_text(
-                    child.get("block_type")
-                ).lower() not in {"caption", "picture", "figure"}:
-                    _walk(child, page_num, next_path, normalized_type)
-            return
-
-        if normalized_type in {"equation", "formula"} and text:
-            _append_block(
-                page_num,
-                "equation",
-                latex=text,
-                surrounding_text="",
-                **base_payload,
-            )
-        elif normalized_type == "code" and text:
-            _append_block(page_num, "code", text=text, **base_payload)
-        elif normalized_type.startswith("list") and text:
-            _append_block(page_num, "list", text=text, **base_payload)
-        elif normalized_type == "caption" and parent_type in {
-            "picture",
-            "figure",
-            "table",
-        }:
-            return
-        elif text:
-            _append_block(page_num, "paragraph", text=text, **base_payload)
-
-        for child in node.get("children") or []:
-            if isinstance(child, dict):
-                _walk(child, page_num, next_path, normalized_type)
-
-    pages = [
-        child
-        for child in rendered_json.get("children") or []
-        if isinstance(child, dict)
-    ]
-    for page_index, page in enumerate(pages, start=1):
-        if max_pages > 0 and page_index > max_pages:
-            break
-        _get_page_node(page_index)
-        for child in page.get("children") or []:
-            if isinstance(child, dict):
-                _walk(child, page_index, [], "page")
-
-    section_nodes.sort(key=lambda node: int(node.get("page_start") or 0))
-    total_pages = page_count_hint or len(pages)
-    page_count = min(total_pages, max_pages) if max_pages > 0 else total_pages
-    return {
-        "schema_version": STRUCTURED_SCHEMA_VERSION,
-        "type": "document",
-        "parse_method": parse_method,
-        "page_count": page_count,
-        "children": section_nodes,
-        "blocks": blocks,
-    }
-
-
-def _build_document_graph_from_pymupdf_chunks(
-    page_chunks: list[dict[str, Any]],
-    parse_method: PdfParseMethod,
-) -> dict[str, Any]:
-    blocks: list[dict[str, Any]] = []
-    section_nodes: list[dict[str, Any]] = []
-    block_counter = 0
-    current_path: list[str] = []
-
-    def _next_block_id(prefix: str, page_num: int) -> str:
-        nonlocal block_counter
-        block_counter += 1
-        return f"{prefix}-p{page_num}-{block_counter}"
-
-    for chunk in page_chunks:
-        metadata = chunk.get("metadata", {}) if isinstance(chunk, dict) else {}
-        page_num = _safe_int(metadata.get("page", metadata.get("page_number", 0)), 0)
-        if page_num <= 0:
-            continue
-        page_text = str(chunk.get("text") or "")
-        page_node = _make_page_node(page_num)
-        section_nodes.append(page_node)
-
-        page_boxes = chunk.get("page_boxes")
-        if not isinstance(page_boxes, list) or not page_boxes:
-            current_path = _append_blocks_from_markdown_text(
-                page_num=page_num,
-                page_text=page_text,
-                page_node=page_node,
-                blocks=blocks,
-                next_block_id=_next_block_id,
-                current_path=current_path,
-                base_payload={
-                    "source_backend": PDF_PARSE_METHOD_PYMUPDF,
-                    "native_label": "text",
-                    "native_ref": f"pymupdf-page-{page_num}",
-                },
-            )
-            continue
-
-        block_count_before = len(blocks)
-        for page_box in page_boxes:
-            if not isinstance(page_box, dict):
-                continue
-            position = page_box.get("pos")
-            box_text = ""
-            if isinstance(position, (list, tuple)) and len(position) >= 2:
-                start = _safe_int(position[0], 0)
-                stop = _safe_int(position[1], 0)
-                box_text = page_text[start:stop].strip()
-
-            native_label = (_coerce_text(page_box.get("class")) or "text").lower()
-            bbox = _normalize_bbox(page_box.get("bbox"))
-            native_ref = (
-                f"page-box-{page_num}-{_safe_int(page_box.get('index'), len(blocks))}"
-            )
-            base_payload = {
-                "bbox": bbox,
-                "source_backend": PDF_PARSE_METHOD_PYMUPDF,
-                "native_label": native_label,
-                "native_ref": native_ref,
-            }
-
-            if native_label == "table":
-                rows = _parse_markdown_table_rows(box_text.splitlines())
-                blocks.append(
-                    {
-                        "id": _next_block_id("table", page_num),
-                        "type": "table",
-                        "page": page_num,
-                        "parent_id": page_node["id"],
-                        "caption": "",
-                        "markdown": box_text,
-                        "cells": rows,
-                        "section_path": current_path.copy(),
-                        **base_payload,
-                    }
-                )
-                page_node["children"].append(blocks[-1]["id"])
-                continue
-
-            if native_label in {"picture", "image"}:
-                caption, image = _extract_markdown_image(box_text)
-                if image or caption or box_text:
-                    blocks.append(
-                        {
-                            "id": _next_block_id("figure", page_num),
-                            "type": "figure",
-                            "page": page_num,
-                            "parent_id": page_node["id"],
-                            "image": image,
-                            "caption": caption or box_text,
-                            "vision_summary": "",
-                            "section_path": current_path.copy(),
-                            **base_payload,
-                        }
-                    )
-                    page_node["children"].append(blocks[-1]["id"])
-                continue
-
-            current_path = _append_blocks_from_markdown_text(
-                page_num=page_num,
-                page_text=box_text,
-                page_node=page_node,
-                blocks=blocks,
-                next_block_id=_next_block_id,
-                current_path=current_path,
-                base_payload=base_payload,
-            )
-
-        if len(blocks) == block_count_before and page_text:
-            current_path = _append_blocks_from_markdown_text(
-                page_num=page_num,
-                page_text=page_text,
-                page_node=page_node,
-                blocks=blocks,
-                next_block_id=_next_block_id,
-                current_path=current_path,
-                base_payload={
-                    "source_backend": PDF_PARSE_METHOD_PYMUPDF,
-                    "native_label": "text",
-                    "native_ref": f"pymupdf-page-{page_num}",
-                },
-            )
-
-    section_nodes.sort(key=lambda node: int(node.get("page_start") or 0))
-    return {
-        "schema_version": STRUCTURED_SCHEMA_VERSION,
-        "type": "document",
-        "parse_method": parse_method,
-        "page_count": max(
-            (int(node.get("page_start") or 0) for node in section_nodes), default=0
-        ),
-        "children": section_nodes,
-        "blocks": blocks,
-    }
-
-
-def _to_parsed_pdf_result(
-    markdown: str,
-    parse_method: PdfParseMethod,
-    structured_content: dict[str, Any] | None = None,
-) -> ParsedPdfResult:
-    structured_content = structured_content or _build_document_graph_from_markdown(
-        markdown, parse_method
-    )
-    return ParsedPdfResult(
-        markdown=markdown,
-        parse_method=parse_method,
-        page_count=int(structured_content.get("page_count") or 0),
-        structured_content=structured_content,
-    )
-
-
-def search_pdf_pages(
-    markdown: str,
-    query: str,
-    top_k: int = 10,
-) -> list[tuple[int, str, float]]:
-    """BM25 page-level search over parsed PDF markdown.
-
-    Returns up to *top_k* pages as ``(page_num, content, score)`` tuples
-    sorted by descending BM25 score.  Pages with score == 0 are excluded.
-
-    Self-contained implementation — no external dependencies required.
-    """
-    import math
-    from collections import Counter
-
-    pages = split_md_into_pages(markdown)
-    if not pages:
-        return []
-
-    query_tokens = tokenize_for_search(query)
-    if not query_tokens:
-        return []
-
-    # Tokenize every page once
-    page_token_lists = [tokenize_for_search(content) for _, content in pages]
-
-    # BM25 hyper-parameters
-    k1, b = 1.5, 0.75
-    N = len(pages)
-    avgdl = sum(len(tl) for tl in page_token_lists) / N if N > 0 else 1
-
-    # Document frequency for each unique query term
-    unique_qts = set(query_tokens)
-    df: dict[str, int] = {qt: 0 for qt in unique_qts}
-    for tl in page_token_lists:
-        present = unique_qts & set(tl)
-        for qt in present:
-            df[qt] += 1
-
-    # Score each page
-    scored: list[tuple[int, str, float]] = []
-    for idx, (page_num, content) in enumerate(pages):
-        tf = Counter(page_token_lists[idx])
-        dl = len(page_token_lists[idx])
-        score = 0.0
-        for qt in query_tokens:
-            if qt not in tf:
-                continue
-            n_qt = df[qt]
-            idf = math.log((N - n_qt + 0.5) / (n_qt + 0.5) + 1)
-            score += (
-                idf * (tf[qt] * (k1 + 1)) / (tf[qt] + k1 * (1 - b + b * dl / avgdl))
-            )
-        if score > 0:
-            scored.append((page_num, content, score))
-
-    scored.sort(key=lambda x: x[2], reverse=True)
-    return scored[:top_k]
-
-
 def get_cached_markdown(url: str) -> str | None:
     """Return the best available cached markdown for *url*, or ``None``.
 
@@ -2706,663 +1885,6 @@ def cleanup_expired_pdf_cache() -> int:
         logger.error(f"Error in PDF cache cleanup: {e}")
 
     return cleaned
-
-
-def get_arxiv_pdf_url(url: str) -> str:
-    match = re.search(r"arxiv\.org/(abs|pdf|html)/([\w\.\-]+)", url)
-    if match:
-        paper_id = match.group(2)
-        paper_id = paper_id.replace(".pdf", "")
-        return f"https://arxiv.org/pdf/{paper_id}.pdf"
-    return url
-
-
-def get_openreview_pdf_url(url: str) -> str:
-    """Convert OpenReview forum/note URLs to direct PDF download URLs."""
-    if "openreview.net/pdf?" in url:
-        return url
-    match = re.search(
-        r"openreview\.net/(?:forum|note|pdf)\?id=([^&#]+)", url, re.IGNORECASE
-    )
-    if match:
-        return f"https://openreview.net/pdf?id={match.group(1)}"
-    return url
-
-
-def get_sciencedirect_pdf_url(url: str) -> str:
-    """Convert ScienceDirect article page URL to direct PDF download URL.
-
-    The pdfft URL works for open-access articles without authentication.
-    """
-    if "pdfft" in url or url.lower().endswith(".pdf"):
-        return url
-    pii_match = re.search(r"/pii/([A-Z0-9]+)", url, re.IGNORECASE)
-    if pii_match:
-        pii = pii_match.group(1).upper()
-        return f"https://www.sciencedirect.com/science/article/pii/{pii}/pdfft?isDTMRedir=true&download=true"
-    return url
-
-
-def get_nature_pdf_url(url: str) -> str:
-    """Append .pdf to Nature article page URLs for direct PDF download."""
-    if url.lower().endswith(".pdf"):
-        return url
-    base = url.split("?")[0].split("#")[0].rstrip("/")
-    if re.search(r"nature\.com/articles/[a-z0-9\-]+$", base, re.IGNORECASE):
-        return base + ".pdf"
-    return url
-
-
-def get_wiley_pdf_url(url: str) -> str:
-    """Convert Wiley article URL to PDF download URL."""
-    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
-        return url
-    for old in ("/doi/abs/", "/doi/full/"):
-        if old in url:
-            return url.replace(old, "/doi/pdf/")
-    # /doi/10.xxxx → /doi/pdf/10.xxxx
-    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
-        return url.replace("/doi/", "/doi/pdf/", 1)
-    return url
-
-
-def get_biorxiv_pdf_url(url: str) -> str:
-    """Convert bioRxiv/medRxiv abstract URL to full PDF URL."""
-    if url.lower().endswith(".pdf"):
-        return url
-    base = url.rstrip("/").split("?")[0]
-    base = re.sub(r"\.(full|abstract|article-info|metrics)$", "", base)
-    return base + ".full.pdf"
-
-
-def get_science_pdf_url(url: str) -> str:
-    if "/doi/full/" in url:
-        return url.replace("/doi/full/", "/doi/pdf/")
-    elif "/doi/" in url and "/pdf" not in url:
-        return url.replace("/doi/", "/doi/pdf/")
-    return url
-
-
-def get_pmc_pdf_url(url: str) -> str:
-    """Convert PMC article page URL to direct PDF download URL.
-
-    Handles both pmc.ncbi.nlm.nih.gov and legacy ncbi.nlm.nih.gov/pmc URLs.
-    """
-    if url.rstrip("/").endswith("/pdf") or "/pdf/" in url:
-        return url
-    match = re.search(r"/(PMC[0-9]+)/?", url, re.IGNORECASE)
-    if match:
-        pmc_id = match.group(1).upper()
-        return f"https://pmc.ncbi.nlm.nih.gov/articles/{pmc_id}/pdf/"
-    return url
-
-
-async def _resolve_pubmed_to_pdf_url(url: str) -> str:
-    """Resolve a PubMed abstract URL to a downloadable PDF URL.
-
-    Uses the NCBI ID converter API to map PMID → PMCID / DOI.
-    Priority: PMC PDF (free full text) > publisher URL (via DOI redirect).
-
-    When a DOI is found, follows the doi.org redirect to obtain the actual
-    publisher URL (e.g. sciencedirect.com, nature.com) so that
-    ``download_pdf``'s publisher-specific URL converters can be applied.
-
-    Returns the best resolved URL, or the original URL unchanged on failure.
-    """
-    pmid_match = re.search(r"pubmed\.ncbi\.nlm\.nih\.gov/(\d+)", url)
-    if not pmid_match:
-        return url
-    pmid = pmid_match.group(1)
-    try:
-        api_url = (
-            f"https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/"
-            f"?ids={pmid}&format=json&tool=pathlab&email=cjinag@connect.ust.hk"
-        )
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(api_url)
-            if resp.status_code != 200:
-                logger.warning(
-                    f"NCBI ID converter returned {resp.status_code} for PMID {pmid}"
-                )
-                return url
-            data = resp.json()
-            records = data.get("records", [])
-            if not records:
-                logger.info(f"NCBI ID converter: no records for PMID {pmid}")
-                return url
-            record = records[0]
-            # Prefer PMC (free full-text PDF)
-            pmcid = record.get("pmcid")
-            if pmcid:
-                pdf_url = f"https://pmc.ncbi.nlm.nih.gov/articles/{pmcid}/pdf/"
-                logger.info(f"PubMed {pmid} → PMC PDF: {pdf_url}")
-                return pdf_url
-            # Fall back to DOI — follow the redirect to get the real publisher URL
-            # so that download_pdf's elif chain can apply the right converter
-            # (e.g. ScienceDirect pdfft, Nature /content/pdf, etc.)
-            doi = record.get("doi")
-            if doi:
-                return await _follow_doi_redirect(doi, pmid)
-    except Exception as e:
-        logger.warning(f"NCBI ID converter error for PMID {pmid}: {e}")
-    return url
-
-
-async def _follow_doi_redirect(doi: str, pmid: str | None = None) -> str:
-    """Follow a doi.org redirect to get the final publisher URL.
-
-    Uses HEAD with follow_redirects to efficiently resolve without
-    downloading the full page.  Returns the final URL on success,
-    or ``https://doi.org/{doi}`` as fallback.
-    """
-    doi_url = f"https://doi.org/{doi}"
-    label = f"PMID {pmid}" if pmid else f"DOI {doi}"
-    try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            head_resp = await client.head(
-                doi_url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,*/*",
-                },
-            )
-            final_url = str(head_resp.url)
-            if final_url and final_url != doi_url:
-                logger.info(f"{label} → DOI redirect → {final_url}")
-                return final_url
-    except Exception as e:
-        logger.warning(f"DOI redirect failed for {label} ({doi_url}): {e}")
-    logger.info(f"{label} → DOI (no redirect): {doi_url}")
-    return doi_url
-
-
-def get_acl_pdf_url(url: str) -> str:
-    """Append .pdf to ACL Anthology article URL for direct PDF download.
-
-    Per ACL Anthology FAQ: append .pdf to the canonical article URL.
-    """
-    if url.lower().endswith(".pdf"):
-        return url
-    base = url.split("?")[0].split("#")[0].rstrip("/")
-    return base + ".pdf"
-
-
-def get_ieee_pdf_url(url: str) -> str:
-    """Convert IEEE Xplore document page URL to PDF viewer URL."""
-    if url.lower().endswith(".pdf") or "stamp.jsp" in url:
-        return url
-    match = re.search(r"/document/([0-9]+)", url)
-    if match:
-        return f"https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber={match.group(1)}"
-    return url
-
-
-def get_acm_pdf_url(url: str) -> str:
-    """Convert ACM Digital Library article URL to PDF download URL.
-
-    Insert 'pdf/' segment after '/doi/' in the URL.
-    """
-    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
-        return url
-    if "/doi/" in url:
-        return url.replace("/doi/", "/doi/pdf/", 1)
-    return url
-
-
-def get_springer_pdf_url(url: str) -> str:
-    """Convert SpringerLink article URL to direct PDF download URL.
-
-    Article page: link.springer.com/article/10.xxxx/yyy
-    PDF:          link.springer.com/content/pdf/10.xxxx/yyy.pdf
-    """
-    if "/content/pdf/" in url or url.lower().endswith(".pdf"):
-        return url
-    match = re.search(r"springer\.com/(?:article|chapter)/(10\.[0-9]{4,}[^\s?#]+)", url)
-    if match:
-        doi = match.group(1).rstrip("/")
-        return f"https://link.springer.com/content/pdf/{doi}.pdf"
-    return url
-
-
-def get_plos_pdf_url(url: str) -> str:
-    """Convert PLOS article page URL to direct PDF download URL.
-
-    Article page: journals.plos.org/plosone/article?id=10.1371/journal.pone.xxxxxxx
-    PDF:          journals.plos.org/plosone/article/file?id=10.1371/journal.pone.xxxxxxx&type=printable
-    """
-    if "type=printable" in url or "article/file" in url:
-        return url
-    doi_match = re.search(r"[?&]id=(10\.[0-9]{4,}/[^\s?#&]+)", url)
-    if doi_match:
-        doi = doi_match.group(1)
-        journal_match = re.search(r"journals\.plos\.org/([^/?#]+)", url)
-        journal = journal_match.group(1) if journal_match else "plosone"
-        return (
-            f"https://journals.plos.org/{journal}/article/file?id={doi}&type=printable"
-        )
-    return url
-
-
-def get_jama_pdf_url(url: str) -> str:
-    """Convert JAMA Network article page URL to PDF download URL.
-
-    Article page: jamanetwork.com/journals/jama/fullarticle/xxxxxxx
-    PDF:          jamanetwork.com/journals/jama/articlepdf/xxxxxxx
-    """
-    if "articlepdf" in url or url.lower().endswith(".pdf"):
-        return url
-    return url.replace("/fullarticle/", "/articlepdf/")
-
-
-def get_nejm_pdf_url(url: str) -> str:
-    """Convert NEJM article page URL to PDF download URL.
-
-    Article page: nejm.org/doi/full/10.1056/NEJMxxx
-    PDF:          nejm.org/doi/pdf/10.1056/NEJMxxx
-    """
-    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
-        return url
-    for old in ("/doi/full/", "/doi/abs/"):
-        if old in url:
-            return url.replace(old, "/doi/pdf/")
-    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
-        return url.replace("/doi/", "/doi/pdf/", 1)
-    return url
-
-
-def get_lancet_pdf_url(url: str) -> str:
-    """Convert The Lancet article page URL to PDF download URL.
-
-    Article page: thelancet.com/journals/lancet/article/PIISxxxxxxx/fulltext
-    PDF:          thelancet.com/journals/lancet/article/PIISxxxxxxx/pdf
-    """
-    if "/pdf" in url or url.lower().endswith(".pdf"):
-        return url
-    base = url.rstrip("/")
-    if base.endswith("/fulltext"):
-        return base[: -len("/fulltext")] + "/pdf"
-    return url
-
-
-def get_cell_pdf_url(url: str) -> str:
-    """Convert Cell Press article page URL to PDF download URL.
-
-    Article page: cell.com/cell/fulltext/S0092-8674(22)01377-0
-    PDF:          cell.com/cell/pdf/s0092-8674(22)01377-0.pdf
-    """
-    if url.lower().endswith(".pdf") or "/pdf/" in url:
-        return url
-    match = re.search(
-        r"(https?://(?:www\.)?cell\.com/[^/]+)/fulltext/([^\s?#]+)", url, re.IGNORECASE
-    )
-    if match:
-        base, pii = match.group(1), match.group(2)
-        return f"{base}/pdf/{pii.lower()}.pdf"
-    return url
-
-
-def get_oup_pdf_url(url: str) -> str:
-    """Convert Oxford Academic (OUP) article URL to PDF via pdf-lookup redirect.
-
-    OUP provides a stable redirect endpoint: /pdf-lookup/doi/{doi}
-    """
-    if "article-pdf" in url or "pdf-lookup" in url or url.lower().endswith(".pdf"):
-        return url
-    doi_match = re.search(r"(10\.[0-9]{4,}/[^\s?#&]+)", url)
-    if doi_match:
-        doi = doi_match.group(1).rstrip("/")
-        return f"https://academic.oup.com/pdf-lookup/doi/{doi}"
-    return url
-
-
-def get_frontiers_pdf_url(url: str) -> str:
-    """Convert Frontiers article page URL to PDF download URL.
-
-    Article page: frontiersin.org/journals/.../articles/10.3389/.../full
-    PDF:          frontiersin.org/journals/.../articles/10.3389/.../pdf
-    """
-    if url.lower().endswith(".pdf") or url.rstrip("/").endswith("/pdf"):
-        return url
-    base = url.rstrip("/")
-    if base.endswith("/full"):
-        return base[:-5] + "/pdf"
-    return base + "/pdf"
-
-
-def get_mdpi_pdf_url(url: str) -> str:
-    """Append /pdf to MDPI article URL for direct PDF download.
-
-    Article page: mdpi.com/2075-4698/15/1/6
-    PDF:          mdpi.com/2075-4698/15/1/6/pdf
-    """
-    if url.lower().endswith(".pdf") or url.rstrip("/").endswith("/pdf"):
-        return url
-    return url.rstrip("/") + "/pdf"
-
-
-def get_rsp_pdf_url(url: str) -> str:
-    """Convert Royal Society Publishing article URL to PDF download URL.
-
-    Article page: royalsocietypublishing.org/doi/full/10.1098/xxx
-    PDF:          royalsocietypublishing.org/doi/pdf/10.1098/xxx
-    """
-    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
-        return url
-    for old in ("/doi/full/", "/doi/abs/"):
-        if old in url:
-            return url.replace(old, "/doi/pdf/")
-    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
-        return url.replace("/doi/", "/doi/pdf/", 1)
-    return url
-
-
-def get_pnas_pdf_url(url: str) -> str:
-    """Convert PNAS article URL to PDF download URL.
-
-    Article page: pnas.org/doi/10.1073/pnas.xxxxxxxx
-    PDF:          pnas.org/doi/pdf/10.1073/pnas.xxxxxxxx
-    """
-    if "/doi/pdf/" in url or url.lower().endswith(".pdf"):
-        return url
-    if "/doi/full/" in url:
-        return url.replace("/doi/full/", "/doi/pdf/")
-    if re.search(r"/doi/10\.[0-9]{4,}", url) and "/doi/pdf/" not in url:
-        return url.replace("/doi/", "/doi/pdf/", 1)
-    return url
-
-
-def _extract_doi(url: str) -> str | None:
-    """Extract DOI from common academic URL patterns."""
-    # Direct DOI URL: https://doi.org/10.xxxx/...
-    match = re.search(r"doi\.org/(10\.[0-9]{4,}[^\s?#]+)", url)
-    if match:
-        return match.group(1).rstrip("/")
-    # Nature: nature.com/articles/s41586-024-07386-0
-    match = re.search(
-        r"nature\.com/articles/(s[0-9]+-[0-9]+-[0-9]+-[a-z0-9]+)", url, re.IGNORECASE
-    )
-    if match:
-        return f"10.1038/{match.group(1)}"
-    # Science: science.org/doi/10.1126/science.xxx
-    match = re.search(
-        r"science\.org/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)", url
-    )
-    if match:
-        return match.group(1).rstrip("/")
-    # NEJM: nejm.org/doi/full/10.1056/NEJMxxx
-    match = re.search(r"nejm\.org/doi/(?:full/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)", url)
-    if match:
-        return match.group(1).rstrip("/")
-    # Wiley: onlinelibrary.wiley.com/doi/10.xxxx/xxx
-    match = re.search(
-        r"wiley\.com/doi/(?:full/|abs/|pdf/)?(10\.[0-9]{4,}[^\s?#]+)", url
-    )
-    if match:
-        return match.group(1).rstrip("/")
-    # Springer: link.springer.com/article/10.xxxx/xxx
-    match = re.search(
-        r"springer\.com/(?:article|chapter)/?(10\.[0-9]{4,}[^\s?#]+)", url
-    )
-    if match:
-        return match.group(1).rstrip("/")
-    # Frontiers: frontiersin.org/journals/.../articles/10.3389/.../full
-    # Must come before generic pattern to avoid capturing trailing /full or /pdf
-    match = re.search(
-        r"frontiersin\.org/(?:journals/[^/]+/)?articles/(10\.[0-9]{4,}/[^\s?#&/]+)", url
-    )
-    if match:
-        return match.group(1).rstrip("/")
-    # Generic DOI pattern in URL (must be last — greedily matches trailing path segments)
-    match = re.search(r"(10\.[0-9]{4,}/[^\s?#&]+)", url)
-    if match:
-        return match.group(1).rstrip("/")
-    return None
-
-
-async def _try_crossref_doi_from_pii(pii: str) -> str | None:
-    """Look up DOI for a ScienceDirect article via CrossRef using PII as alternative-id.
-
-    ScienceDirect article URLs contain a PII (e.g. S2667325824005132) but not the DOI.
-    CrossRef's filter API resolves PII → DOI so we can pass it to Unpaywall/Semantic Scholar.
-    """
-    try:
-        api_url = f"https://api.crossref.org/works?filter=alternative-id:{pii}&rows=1"
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(
-                api_url,
-                headers={"User-Agent": "PathLab/1.0 (mailto:cjinag@connect.ust.hk)"},
-            )
-            if resp.status_code == 200:
-                items = resp.json().get("message", {}).get("items", [])
-                if items:
-                    doi = items[0].get("DOI")
-                    if doi:
-                        logger.info(f"CrossRef resolved PII {pii} → DOI {doi}")
-                        return doi
-    except Exception as e:
-        logger.warning(f"CrossRef PII lookup error for {pii}: {e}")
-    return None
-
-
-async def _try_unpaywall_download(url: str, doi: str | None = None) -> bytes | None:
-    """Try to get open access PDF via Unpaywall API."""
-    if doi is None:
-        doi = _extract_doi(url)
-    if not doi:
-        return None
-    try:
-        api_url = f"https://api.unpaywall.org/v2/{doi}?email=cjinag@connect.ust.hk"
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(api_url)
-            if resp.status_code != 200:
-                logger.info(f"Unpaywall API returned {resp.status_code} for DOI {doi}")
-                return None
-            data = resp.json()
-            best_oa = data.get("best_oa_location")
-            if not best_oa:
-                logger.info(f"No OA location found via Unpaywall for DOI {doi}")
-                return None
-            pdf_url = best_oa.get("url_for_pdf") or best_oa.get("url")
-            if not pdf_url:
-                return None
-            logger.info(f"Unpaywall found OA PDF for DOI {doi}: {pdf_url}")
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/pdf,*/*",
-            }
-            pdf_resp = await client.get(pdf_url, headers=headers)
-            if pdf_resp.status_code == 200:
-                content = pdf_resp.content
-                if (
-                    content[:4] == b"%PDF"
-                    or "pdf" in pdf_resp.headers.get("content-type", "").lower()
-                ):
-                    logger.info(f"Unpaywall download successful: {len(content)} bytes")
-                    return content
-            return None
-    except Exception as e:
-        logger.warning(f"Unpaywall API error: {e}")
-        return None
-
-
-async def _try_semantic_scholar_download(
-    url: str, doi: str | None = None
-) -> bytes | None:
-    """Try to get PDF via Semantic Scholar API."""
-    if doi is None:
-        doi = _extract_doi(url)
-    if not doi:
-        return None
-    try:
-        api_url = f"https://api.semanticscholar.org/graph/v1/paper/DOI:{doi}?fields=openAccessPdf"
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(api_url)
-            if resp.status_code != 200:
-                return None
-            data = resp.json()
-            oa_pdf = data.get("openAccessPdf")
-            if not oa_pdf or not oa_pdf.get("url"):
-                return None
-            pdf_url = oa_pdf["url"]
-            logger.info(f"Semantic Scholar found PDF for DOI {doi}: {pdf_url}")
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/pdf,*/*",
-            }
-            pdf_resp = await client.get(pdf_url, headers=headers)
-            if pdf_resp.status_code == 200:
-                content = pdf_resp.content
-                if (
-                    content[:4] == b"%PDF"
-                    or "pdf" in pdf_resp.headers.get("content-type", "").lower()
-                ):
-                    logger.info(
-                        f"Semantic Scholar download successful: {len(content)} bytes"
-                    )
-                    return content
-            return None
-    except Exception as e:
-        logger.warning(f"Semantic Scholar API error: {e}")
-        return None
-
-
-# Maximum PDF file size to download (50 MB) — prevents OOM on huge files.
-_MAX_PDF_DOWNLOAD_BYTES = 50 * 1024 * 1024
-
-
-async def download_pdf(url: str, timeout: float = 60.0) -> bytes | None:
-    try:
-        # Validate URL scheme — only http(s) is supported.
-        if not url.startswith(("http://", "https://")):
-            logger.warning(f"Invalid URL scheme (not http/https): {url}")
-            return None
-
-        # Pre-step: Resolve PubMed abstract URLs to the actual content URL
-        # (PMC PDF or publisher page via DOI redirect).  This MUST run before
-        # the publisher elif-chain so the resolved URL can be matched below.
-        if "pubmed.ncbi.nlm.nih.gov" in url:
-            url = await _resolve_pubmed_to_pdf_url(url)
-
-        # Step 1: Convert article page URLs to direct PDF download URLs.
-        if "arxiv.org" in url:
-            url = get_arxiv_pdf_url(url)
-        elif "openreview.net" in url:
-            url = get_openreview_pdf_url(url)
-        elif "nature.com" in url:
-            url = get_nature_pdf_url(url)
-        elif "sciencedirect.com" in url or "elsevier.com" in url:
-            url = get_sciencedirect_pdf_url(url)
-        elif "science.org" in url:
-            url = get_science_pdf_url(url)
-        elif "onlinelibrary.wiley.com" in url:
-            url = get_wiley_pdf_url(url)
-        elif "biorxiv.org" in url or "medrxiv.org" in url:
-            url = get_biorxiv_pdf_url(url)
-        elif "pmc.ncbi.nlm.nih.gov" in url or "ncbi.nlm.nih.gov/pmc" in url:
-            url = get_pmc_pdf_url(url)
-        elif "aclanthology.org" in url:
-            url = get_acl_pdf_url(url)
-        elif "ieeexplore.ieee.org" in url:
-            url = get_ieee_pdf_url(url)
-        elif "dl.acm.org" in url:
-            url = get_acm_pdf_url(url)
-        elif "link.springer.com" in url or (
-            "springer.com" in url and "content/pdf" not in url
-        ):
-            url = get_springer_pdf_url(url)
-        elif "plos.org" in url:
-            url = get_plos_pdf_url(url)
-        elif "jamanetwork.com" in url:
-            url = get_jama_pdf_url(url)
-        elif "nejm.org" in url:
-            url = get_nejm_pdf_url(url)
-        elif "thelancet.com" in url:
-            url = get_lancet_pdf_url(url)
-        elif "cell.com" in url:
-            url = get_cell_pdf_url(url)
-        elif "academic.oup.com" in url:
-            url = get_oup_pdf_url(url)
-        elif "frontiersin.org" in url:
-            url = get_frontiers_pdf_url(url)
-        elif "mdpi.com" in url:
-            url = get_mdpi_pdf_url(url)
-        elif "royalsocietypublishing.org" in url:
-            url = get_rsp_pdf_url(url)
-        elif "pnas.org" in url:
-            url = get_pnas_pdf_url(url)
-
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "application/pdf,application/x-pdf,*/*",
-        }
-
-        # Step 2: Attempt direct download.
-        try_oa_fallback = False
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
-
-            if response.status_code == 200:
-                content = response.content
-                # Size guard — reject files larger than _MAX_PDF_DOWNLOAD_BYTES
-                if len(content) > _MAX_PDF_DOWNLOAD_BYTES:
-                    logger.warning(
-                        f"PDF too large ({len(content) / 1024 / 1024:.1f} MB > "
-                        f"{_MAX_PDF_DOWNLOAD_BYTES / 1024 / 1024:.0f} MB limit): {url}"
-                    )
-                    return None
-                if content[:4] == b"%PDF":
-                    return content
-                content_type = response.headers.get("content-type", "")
-                if "pdf" in content_type.lower():
-                    return content
-                cd = response.headers.get("content-disposition", "")
-                if ".pdf" in cd.lower():
-                    return content
-                # Got 200 but HTML/non-PDF — publisher returned a login or paywall page.
-                # (ScienceDirect, Nature, and others do this for non-OA content.)
-                logger.info(f"Got 200 non-PDF from {url}, trying open access APIs...")
-                try_oa_fallback = True
-            elif response.status_code in (403, 401, 451):
-                logger.info(
-                    f"Got {response.status_code} from {url}, trying open access APIs..."
-                )
-                try_oa_fallback = True
-            else:
-                logger.warning(
-                    f"Failed to download PDF from {url}: status {response.status_code}"
-                )
-
-        if not try_oa_fallback:
-            return None
-
-        # Step 3: Open-access API fallback (Unpaywall → Semantic Scholar).
-        doi = _extract_doi(url)
-        # ScienceDirect URLs contain only a PII, not a DOI — resolve via CrossRef.
-        if not doi and "sciencedirect.com" in url:
-            pii_match = re.search(r"/pii/([A-Z0-9]+)", url, re.IGNORECASE)
-            if pii_match:
-                doi = await _try_crossref_doi_from_pii(pii_match.group(1).upper())
-
-        oa_bytes = await _try_unpaywall_download(url, doi)
-        if oa_bytes:
-            return oa_bytes
-        oa_bytes = await _try_semantic_scholar_download(url, doi)
-        if oa_bytes:
-            return oa_bytes
-
-        logger.warning(f"All download attempts failed for {url}")
-        return None
-    except (httpx.ConnectError, httpx.ConnectTimeout) as e:
-        logger.error(f"Network unreachable when downloading PDF from {url}: {e}")
-        return None
-    except httpx.TimeoutException as e:
-        logger.error(f"Download timed out for PDF from {url}: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Error downloading PDF from {url}: {e}")
-        return None
 
 
 def _parse_pdf_with_pymupdf(
@@ -5023,6 +3545,432 @@ async def process_pdf_url(
         )
 
     return result
+
+
+class _PaperMeta(TypedDict):
+    url: str
+    meta: dict[str, Any]
+    title: str
+    parse_method: str | None
+    image_count: int
+    is_academic: bool
+
+
+def extract_text_from_content(content: object) -> str:
+    """Extract text content from message content (handles both string and multimodal format)"""
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, list):
+        # Multimodal format: [{"type": "text", "text": "..."}, {"type": "image_url", ...}]
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                text_parts.append(part.get("text", ""))
+        return " ".join(text_parts)
+    return ""
+
+
+# Prompt fragment appended when PDF context is rebuilt for follow-up questions.
+_PDF_FOLLOWUP_NOTE = {
+    "en": (
+        "NOTE: The PDF content below has been semantically searched to show the most relevant "
+        "chunks for the user's latest question, along with the first and last pages for context. "
+        "Retrieved blocks are labelled with page number and block type (e.g. `Page 3, Table 5`). "
+        "When citing, use [N, p.Y] format where N is the paper number. If the user asks about content not shown here, "
+        "tell them to ask a more specific follow-up question so the system can retrieve it.\n"
+        "STRICT GROUNDING: Your answer MUST be based ENTIRELY on the paper content below. "
+        "Do NOT use training knowledge to fill gaps. "
+        "When quoting original text from the paper, use blockquotes (> ...) to clearly distinguish "
+        "the paper's original words from your own analysis.\n"
+        "Do NOT mention internal parser names, upgrade steps, or GPU/CPU execution details.\n"
+        "If the user asks about processing status, only state whether the PDF is processing, available, or failed.\n"
+        "If a paper's images are available (shown in Paper Registry), include image links verbatim."
+    ),
+    "zh_CN": (
+        "注意：以下 PDF 内容已通过语义搜索筛选，展示与用户最新提问最相关的文本片段以及首尾页作为上下文。"
+        "片段标记了页码和块类型（如 `Page 3, Table 5`）。引用格式：[N, p.Y]，其中 N 是论文编号。"
+        "如果用户询问的信息不在这些片段中，请告诉用户提出更具体的追问以便系统检索。\n"
+        "严格 Grounding：你的回答**必须完全基于**下方论文内容，**禁止**用训练知识填补空白。"
+        "引用论文原文时，请使用引用块（> ...）来清楚区分论文原文和你自己的分析。\n"
+        "不要提及内部解析器名称、升级流程或 GPU/CPU 执行细节。\n"
+        "如果用户询问处理状态，只能说明 PDF 处于处理中、可用或失败。\n"
+        "如果论文图片可用（见 Paper Registry），请将图片链接原样包含在回答中。"
+    ),
+    "zh_HK": (
+        "注意：以下 PDF 內容已透過語義搜尋篩選，展示與用戶最新提問最相關的文本片段以及首尾頁作為上下文。"
+        "片段標記了頁碼和塊類型（如 `Page 3, Table 5`）。引用格式：[N, p.Y]，其中 N 是論文編號。"
+        "如果用戶詢問的資訊不在這些片段中，請告訴用戶提出更具體的追問以便系統檢索。\n"
+        "嚴格 Grounding：你的回答**必須完全基於**下方論文內容，**禁止**用訓練知識填補空白。"
+        "引用論文原文時，請使用引用區塊（> ...）來清楚區分論文原文和你自己的分析。\n"
+        "不要提及內部解析器名稱、升級流程或 GPU/CPU 執行細節。\n"
+        "如果用戶詢問處理狀態，只能說明 PDF 處於處理中、可用或失敗。\n"
+        "如果論文圖片可用（見 Paper Registry），請將圖片連結原樣包含在回答中。"
+    ),
+}
+
+
+def _describe_pdf_image_status(image_count: int) -> str:
+    return f"{image_count} figures ✅" if image_count > 0 else "none"
+
+
+def _format_pdf_block_label(chunk: dict[str, Any]) -> str:
+    block_type_raw = str(chunk.get("block_type") or "chunk").strip().lower()
+    block_index = int(chunk.get("chunk_index", 0)) + 1
+    label_map = {
+        "paragraph": "Paragraph",
+        "list": "List",
+        "code": "Code",
+        "table": "Table",
+        "figure": "Figure",
+        "equation": "Equation",
+        "section": "Section",
+    }
+    block_label = label_map.get(block_type_raw, block_type_raw.title() or "Chunk")
+    section_path = str(chunk.get("section_path") or "").strip()
+    label = f"Page {chunk.get('page_num', 0)}, {block_label} {block_index}"
+    if section_path:
+        label += f" [{section_path}]"
+    return label
+
+
+def _collect_pdf_urls_from_contexts(messages: list[dict[str, object]]) -> list[str]:
+    """Extract all unique PDF URLs from all [PDF_CONTEXT] blocks in conversation history.
+
+    Returns a deduplicated list of URLs preserving first-seen order.
+    """
+    pdf_ctx_re = re.compile(r"\[PDF_CONTEXT\]\n?([\s\S]*?)\n?\[/PDF_CONTEXT\]")
+    seen: dict[str, None] = {}  # ordered dict for dedup
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        raw = extract_text_from_content(msg.get("content", ""))
+        m = pdf_ctx_re.search(raw)
+        if m:
+            urls = re.findall(r"- \*\*URL\*\*: (https?://[^\s\n]+)", m.group(1))
+            for u in urls:
+                seen.setdefault(u, None)
+    return list(seen.keys())
+
+
+def _replace_images_with_fig_aliases(md_content: str, url_hash: str) -> str:
+    """Replace hash-based image filenames with simple ``fig-N`` aliases.
+
+    LLMs cannot reliably reproduce 64-char SHA-256 hashes, leading to
+    hallucinated filenames and cascading 404 errors.  This replaces e.g.
+
+        ![](http://host/pdf-images/hash/abc123…def.jpg)
+
+    with:
+
+        ![Figure 3](http://host/pdf-images/hash/fig-3.jpg)
+
+    The server endpoint ``get_pdf_image_path`` resolves ``fig-N`` back to
+    the real file by alphabetically sorted directory listing.
+    """
+    images_dir = get_pdf_cache_dir() / "images" / url_hash
+    if not images_dir.is_dir():
+        return md_content
+
+    # Canonical file list — sorted, excluding any fig-* aliases or meta files
+    image_files = sorted(
+        f.name
+        for f in images_dir.iterdir()
+        if f.is_file() and not f.name.startswith("fig-") and not f.name.startswith("_")
+    )
+    if not image_files:
+        return md_content
+
+    # Reverse map: real filename → fig-N number (1-based)
+    file_to_fig: dict[str, int] = {name: i + 1 for i, name in enumerate(image_files)}
+
+    def _replacer(match: re.Match[str]) -> str:
+        alt = match.group(1)
+        prefix = match.group(2)  # up to and including …/pdf-images/hash/
+        filename_with_ext = match.group(3)  # e.g. "abc123…def.jpg"
+
+        fig_num = file_to_fig.get(filename_with_ext)
+        if fig_num is None:
+            return match.group(0)  # unknown file — leave as-is
+
+        ext = filename_with_ext.rsplit(".", 1)[-1]
+        new_alt = alt.strip() if alt.strip() else f"Figure {fig_num}"
+        return f"![{new_alt}]({prefix}fig-{fig_num}.{ext})"
+
+    # Pattern: ![alt](…/pdf-images/{url_hash}/filename.ext)
+    pattern = (
+        r"!\[([^\]]*)\]\("
+        + r"((?:[^\)]*?/)?pdf-images/"
+        + re.escape(url_hash)
+        + r"/)"
+        + r"([^/\)\s]+)"
+        + r"\)"
+    )
+    return re.sub(pattern, _replacer, md_content, flags=re.IGNORECASE)
+
+
+def _build_merged_pdf_context(
+    all_urls: list[str], user_query: str, detected_lang: str = "en"
+) -> str:
+    """Build a single merged PDF context from all unique URLs with BM25 page selection.
+
+    This replaces the old per-block `_enhance_pdf_context_for_query` with a
+    global merge that:
+      1. Builds a Paper Registry with global sequential numbering and image status.
+      2. Re-reads the **latest** cached markdown for each URL from disk.
+      3. Uses BM25 to select the most relevant pages per paper.
+      4. Returns one unified context string.
+    """
+    _PDF_MAX_CHARS_PER_PAPER = 40_000
+
+    if not all_urls:
+        return ""
+
+    total = len(all_urls)
+    enhanced_parts: list[str] = []
+
+    # ── Global Document Registry ─────────────────────────────────────────────
+    registry_lines = [f"## Document Registry ({total} documents):\n"]
+    paper_metas: list[_PaperMeta] = []
+    for idx, url in enumerate(all_urls, 1):
+        meta = get_cached_pdf_meta(url) or {}
+        title = meta.get("title", "Unknown")
+        parse_method = meta.get("parse_method")
+
+        # Determine academic status from cache meta (persisted by process_pdf_url).
+        # If not in cache (legacy), re-detect from cached markdown + source type.
+        if "is_academic" in meta:
+            is_academic = meta["is_academic"]
+        else:
+            cached_md = get_cached_markdown(url)
+            src_type = detect_source_type(url)
+            is_academic = (
+                is_academic_content(cached_md or "", src_type) if cached_md else False
+            )
+
+        label = "Paper" if is_academic else "Doc"
+
+        # Image status detection
+        url_hash = get_url_hash(url)
+        images_dir = get_pdf_cache_dir() / "images" / url_hash
+        image_count = 0
+        if images_dir.is_dir():
+            image_count = sum(1 for f in images_dir.iterdir() if f.is_file())
+        image_status = _describe_pdf_image_status(image_count)
+
+        registry_lines.append(
+            f"- [{label} {idx}] {title} ({url}) | Images: {image_status}"
+        )
+        paper_metas.append(
+            {
+                "url": url,
+                "meta": meta,
+                "title": title,
+                "parse_method": parse_method,
+                "image_count": image_count,
+                "is_academic": is_academic,
+            }
+        )
+
+        logger.info(
+            f"[BM25] {label} {idx} '{title}': parse_method={parse_method},"
+            + f" is_academic={is_academic}, images_available={image_count > 0} ({image_count} images)"
+        )
+
+    registry_lines.append("")
+    enhanced_parts.extend(registry_lines)
+
+    followup_note = _PDF_FOLLOWUP_NOTE.get(detected_lang, _PDF_FOLLOWUP_NOTE["en"])
+    enhanced_parts.append(followup_note + "\n")
+    enhanced_parts.append("## PDF Content (query-relevant pages):\n")
+
+    # ── Per-document rebuild ─────────────────────────────────────────────────
+    for paper_idx, pd in enumerate(paper_metas, 1):
+        url = pd["url"]
+        meta = pd["meta"]
+        title = pd["title"]
+        page_count = meta.get("page_count")
+        parse_method = pd["parse_method"]
+        is_academic = pd.get("is_academic", False)
+        label = "Paper" if is_academic else "Doc"
+        content_type = "Academic Paper" if is_academic else "General Document"
+        page_info = f"{page_count} pages" if page_count else "page count unknown"
+
+        enhanced_parts.append(
+            f"### [{label} {paper_idx} of {total}] {title}\n"
+            + f"- **URL**: {url}\n"
+            + f"- **Content type**: {content_type}\n"
+            + f"- **Total pages**: {page_info}\n"
+        )
+
+        # Read full cached markdown (always re-reads from disk → picks up newer high-quality cache)
+        full_md = get_cached_markdown(url)
+        if not full_md:
+            enhanced_parts.append(
+                "[Content not available — cache may have expired]\n---\n"
+            )
+            continue
+
+        # 改动 9: Replace hash-based image filenames with fig-N aliases.
+        # LLMs hallucinate 64-char SHA-256 hashes → cascading 404 errors.
+        url_hash_for_imgs = get_url_hash(url)
+        full_md = _replace_images_with_fig_aliases(full_md, url_hash_for_imgs)
+
+        # Short papers: include everything
+        if len(full_md) <= _PDF_MAX_CHARS_PER_PAPER:
+            enhanced_parts.append(full_md)
+            enhanced_parts.append("---\n")
+            continue
+
+        # ── Vector search for relevant chunks (with BM25 fallback) ──────────
+        url_hash = get_url_hash(url)
+        vector_results = search_pdf_chunks(user_query, url_hashes=[url_hash], top_k=15)
+
+        if vector_results:
+            # Use vector search results — group by page, sorted by page_num
+            logger.info(
+                f"[VectorSearch] {label} {paper_idx}: {len(vector_results)} chunks"
+                + f" retrieved (best distance={vector_results[0]['_distance']:.3f})"
+            )
+            # Always include first and last page for context
+            all_pages = split_md_into_pages(full_md)
+            first_pn, first_content = all_pages[0] if all_pages else (0, "")
+            last_pn, last_content = all_pages[-1] if all_pages else (0, "")
+
+            content_parts: list[str] = []
+            char_count = 0
+
+            # Add first page
+            if first_content:
+                first_text = f"--- Page {first_pn} ---\n{first_content}\n"
+                content_parts.append(first_text)
+                char_count += len(first_text)
+
+            # Add vector-retrieved chunks, sorted by page then chunk_index
+            sorted_chunks = sorted(
+                vector_results, key=lambda c: (c["page_num"], c["chunk_index"])
+            )
+            seen_chunks = set()
+            for chunk in sorted_chunks:
+                chunk_key = (chunk["page_num"], chunk["chunk_index"])
+                if chunk_key in seen_chunks:
+                    continue
+                seen_chunks.add(chunk_key)
+                # Skip if this chunk is from first or last page (already included)
+                if chunk["page_num"] == first_pn or chunk["page_num"] == last_pn:
+                    continue
+                chunk_body = chunk.get("display_text") or chunk.get("chunk_text") or ""
+                chunk_text = f"--- {_format_pdf_block_label(chunk)} ---\n{chunk_body}\n"
+                if char_count + len(chunk_text) > _PDF_MAX_CHARS_PER_PAPER:
+                    break
+                content_parts.append(chunk_text)
+                char_count += len(chunk_text)
+
+            # Add last page
+            if last_pn != first_pn and last_content:
+                last_text = f"--- Page {last_pn} ---\n{last_content}\n"
+                if char_count + len(last_text) <= _PDF_MAX_CHARS_PER_PAPER:
+                    content_parts.append(last_text)
+
+            # ── Re-hydrate image links from pages referenced by vector results ──
+            # Image markdown (![...](http://...pdf-images/...)) often ends up in
+            # its own chunk and scores poorly in semantic search.  To ensure the
+            # LLM can reference figures, we scan the *full* page text for every
+            # page that contributed a chunk and collect any image links that are
+            # NOT already present in the assembled content.
+            chunk_page_nums = {c["page_num"] for c in sorted_chunks}
+            # Also include first/last page nums which are already fully included
+            chunk_page_nums.discard(first_pn)
+            chunk_page_nums.discard(last_pn)
+            page_map = {pn: content for pn, content in all_pages}
+            assembled_text = "\n".join(content_parts)
+            image_lines: list[str] = []
+            for pn in sorted(chunk_page_nums):
+                page_content = page_map.get(pn, "")
+                for m in re.finditer(r"!\[[^\]]*\]\([^\)]+\)", page_content):
+                    img_md = m.group(0)
+                    if img_md not in assembled_text:
+                        image_lines.append(f"[From Page {pn}] {img_md}")
+            if image_lines:
+                img_section = (
+                    "\n\n--- Figures from relevant pages ---\n"
+                    + "\n".join(image_lines)
+                    + "\n"
+                )
+                if char_count + len(img_section) <= _PDF_MAX_CHARS_PER_PAPER:
+                    content_parts.append(img_section)
+                    logger.info(
+                        f"[ImageRehydrate] Added {len(image_lines)} image links from relevant pages"
+                    )
+
+            total_p = page_count or (len(all_pages) if all_pages else 0)
+            note = (
+                f"[Semantic search: showing {len(seen_chunks)} most relevant chunks "
+                f"from {total_p} total pages. Ask about specific topics for more.]\n"
+            )
+            content_parts.insert(0, note)
+            enhanced_parts.append("\n".join(content_parts))
+        else:
+            # ── BM25 fallback for documents not yet vector-indexed ────────────
+            logger.info(
+                f"[BM25 Fallback] {label} {paper_idx}: no vector results, using BM25"
+            )
+            all_pages = split_md_into_pages(full_md)
+            if not all_pages:
+                enhanced_parts.append(
+                    full_md[:_PDF_MAX_CHARS_PER_PAPER] + "\n[...truncated]\n"
+                )
+            else:
+                first_pn, first_content = all_pages[0]
+                last_pn, last_content = all_pages[-1]
+
+                bm25_results = search_pdf_pages(full_md, user_query, top_k=10)
+                bm25_extras = [
+                    (pn, content, score)
+                    for pn, content, score in bm25_results
+                    if pn != first_pn and pn != last_pn
+                ]
+
+                selected: list[tuple[int, str]] = [(first_pn, first_content)]
+                for pn, content, _ in sorted(bm25_extras, key=lambda x: x[0]):
+                    selected.append((pn, content))
+                if last_pn != first_pn:
+                    selected.append((last_pn, last_content))
+
+                content_parts = []
+                char_count = 0
+                prev_pn = None
+                for pn, page_content in selected:
+                    page_text = f"--- Page {pn} ---\n{page_content}\n"
+                    if char_count + len(page_text) > _PDF_MAX_CHARS_PER_PAPER:
+                        remaining = _PDF_MAX_CHARS_PER_PAPER - char_count
+                        if remaining > 200:
+                            content_parts.append(
+                                page_text[:remaining]
+                                + "\n[...page truncated for length]"
+                            )
+                        break
+                    if prev_pn is not None and pn > prev_pn + 1:
+                        content_parts.append(
+                            f"\n[...pages {prev_pn + 1}–{pn - 1} omitted — ask about them if needed...]\n"
+                        )
+                    content_parts.append(page_text)
+                    char_count += len(page_text)
+                    prev_pn = pn
+
+                shown = len([p for p in content_parts if p.startswith("--- Page")])
+                total_p = page_count or len(all_pages)
+                if shown < total_p:
+                    note = (
+                        f"[Showing {shown} of {total_p} pages: page 1 + "
+                        f"{max(shown - 2, 0)} query-relevant pages + last page. "
+                        f"Ask about specific pages or topics for more.]\n"
+                    )
+                    content_parts.insert(0, note)
+                enhanced_parts.append("\n".join(content_parts))
+
+        enhanced_parts.append("---\n")
+
+    return "\n".join(enhanced_parts)
 
 
 @router.get("/pdf-images/{url_hash}/{filename}")

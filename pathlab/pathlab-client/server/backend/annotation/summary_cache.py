@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 from backend.common.config import Config
-from backend.common.coco_utils import coco_to_roi_annotations
+from .coco_utils import coco_to_roi_annotations
 from backend.common.file_types import is_patch_file
 
 

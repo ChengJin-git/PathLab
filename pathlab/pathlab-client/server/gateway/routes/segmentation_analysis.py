@@ -31,6 +31,8 @@ from .analysis_utils import (
     unpack_progress_config,
     utc_timestamp_z,
     _get_random_seed_from_task,
+    _normalize_segmentation_class_names,
+    _resolve_segmentation_metric_value,
 )
 from .analysis_metrics import (
     _render_loss_chart_sync,
@@ -39,17 +41,6 @@ from .analysis_metrics import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_segmentation_class_names(labels: Optional[List[Any]]) -> List[str]:
-    normalized: List[str] = []
-    seen = set()
-    for label in labels or []:
-        value = str(label).strip()
-        if value and value not in seen:
-            seen.add(value)
-            normalized.append(value)
-    return normalized
 
 
 def _resolve_segmentation_class_names(
@@ -252,21 +243,6 @@ def _is_multiclass_segmentation(
             return True
 
     return False
-
-
-def _resolve_segmentation_metric_value(
-    metrics: Optional[Dict[str, Any]], metric_key: str
-) -> Optional[float]:
-    if not isinstance(metrics, dict):
-        return None
-
-    value = metrics.get(metric_key)
-    if value is None and metric_key == "miou":
-        value = metrics.get("iou")
-    elif value is None and metric_key == "iou":
-        value = metrics.get("miou")
-
-    return float(value) if value is not None else None
 
 
 def _calculate_segmentation_bootstrap_ci(

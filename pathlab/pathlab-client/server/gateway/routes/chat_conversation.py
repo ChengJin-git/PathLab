@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_db
 from backend.database.repositories import ChatRepository
 from backend.auth import current_active_user, User
-from backend.common.permissions import require_conversation_access
+from gateway.chat.permissions import require_conversation_access
 from ..models import CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
 from .chat_patch_inference import (
     cleanup_conversation_chat_patch_tasks,

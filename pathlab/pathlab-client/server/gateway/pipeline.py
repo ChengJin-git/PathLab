@@ -19,7 +19,7 @@ from typing import Any, List, Dict, Set, Tuple
 from contextlib import asynccontextmanager
 
 from backend.ai.schemas.base import TaskStatus
-from backend.common.coco_utils import (
+from backend.annotation.coco_utils import (
     extract_coco_wsi_label_sets,
     materialize_coco_to_disk,
     merge_coco_datasets,

@@ -54,7 +54,7 @@ from ..utils import (
     SEGMENTATION_TASK_TYPE,
 )
 from backend.ai.schemas.base import TaskStatus
-from backend.common.annotation_summary_cache import (
+from backend.annotation.summary_cache import (
     get_dataset_annotation_summary_cache_path,
     get_draft_annotation_summary_cache_path,
     rebuild_dataset_annotation_summary_cache,

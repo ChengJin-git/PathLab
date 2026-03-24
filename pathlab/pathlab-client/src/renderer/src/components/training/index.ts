@@ -22,7 +22,6 @@ export { RegistrationProgress } from './RegistrationProgress'
 export { DeleteConfirmModal } from './DeleteConfirmModal'
 export { EditMetadataModal } from './EditMetadataModal'
 export { BatchEditModal } from './BatchEditModal'
-export { FileMetadataModal } from './FileMetadataModal'
 
 // Re-export types from individual components
 export type { DataSelectionStepProps } from './DataSelectionStep'
@@ -32,5 +31,4 @@ export type { RegistrationProgressProps } from './RegistrationProgress'
 export type { DeleteConfirmModalProps, WSIDeleteInfo } from './DeleteConfirmModal'
 export type { EditMetadataModalProps, WSIEditInfo } from './EditMetadataModal'
 export type { BatchEditModalProps } from './BatchEditModal'
-export type { FileMetadataModalProps } from './FileMetadataModal'
 
