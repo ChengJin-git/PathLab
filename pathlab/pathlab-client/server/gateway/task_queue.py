@@ -106,6 +106,7 @@ class TaskQueueManager:
             str, int
         ] = {}  # task_id -> GPU index for running tasks
         self._bad_gpus: set = set()  # GPU indices confirmed to have hardware failures
+        self._patching_tasks: Dict[str, asyncio.Task] = {}  # pre-queue patching tasks
         self._condition: Optional[asyncio.Condition] = (
             None  # For dynamic concurrency control
         )
@@ -195,6 +196,18 @@ class TaskQueueManager:
         """Return a snapshot of GPU indices currently marked as unhealthy."""
         return frozenset(self._bad_gpus)
 
+    def register_patching_task(self, task_id: str, task: asyncio.Task) -> None:
+        self._patching_tasks[task_id] = task
+        logger.info(
+            f"Pre-queue patching task {task_id} registered. "
+            f"Active patching tasks: {len(self._patching_tasks)}"
+        )
+
+    def deregister_patching_task(self, task_id: str) -> None:
+        removed = self._patching_tasks.pop(task_id, None)
+        if removed is not None:
+            logger.debug(f"Pre-queue patching task {task_id} deregistered")
+
     def _select_optimal_gpu(self) -> int:
         """
         Select the optimal GPU for a new task.
@@ -256,6 +269,13 @@ class TaskQueueManager:
         if best_gpu >= 0:
             logger.debug(
                 f"All healthy GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
+            )
+        else:
+            logger.warning(
+                f"_select_optimal_gpu: no suitable GPU found. "
+                f"Checked {len(gpu_info_list)} GPU(s), required {self.min_vram_mb:.0f} MB free. "
+                f"Bad GPUs: {sorted(self._bad_gpus)}, "
+                f"GPUs with running tasks: {sorted(gpus_with_tasks)}"
             )
         return best_gpu
 
@@ -729,8 +749,10 @@ class TaskQueueManager:
             "running_count": len(self._running_tasks),
             "pending_count": len(self._pending_tasks),
             "queue_size": self._queue.qsize() if self._queue else 0,
+            "patching_count": len(self._patching_tasks),
+            "patching_task_ids": list(self._patching_tasks.keys()),
             "running_task_ids": list(self._running_tasks.keys()),
-            "running_tasks": running_tasks_info,  # Tasks with GPU assignments
+            "running_tasks": running_tasks_info,
             "pending_task_ids": list(self._pending_tasks.keys()),
             "is_running": self._worker_task is not None and not self._shutdown,
         }
@@ -781,8 +803,12 @@ class TaskQueueManager:
         logger.info(f"max_concurrent changed from {old_value} to {max_concurrent}")
 
     def is_task_in_queue(self, task_id: str) -> bool:
-        """Check if a task is in the queue (pending or running)"""
-        return task_id in self._running_tasks or task_id in self._pending_tasks
+        """Check if a task is tracked (patching pre-queue, pending in queue, or running)."""
+        return (
+            task_id in self._running_tasks
+            or task_id in self._pending_tasks
+            or task_id in self._patching_tasks
+        )
 
     async def cancel_pending_task(self, task_id: str) -> bool:
         """Remove a task only if it is still pending and has not started running."""
@@ -806,6 +832,13 @@ class TaskQueueManager:
         Returns:
             True if task was cancelled, False if not found or not running
         """
+        if task_id in self._patching_tasks:
+            patching_task = self._patching_tasks.pop(task_id)
+            patching_task.cancel()
+            logger.info(f"Pre-queue patching task {task_id} cancelled")
+            await self._notify_queue_state_changed()
+            return True
+
         if task_id in self._running_tasks:
             task = self._running_tasks[task_id]
             task.cancel()
