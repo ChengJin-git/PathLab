@@ -3,7 +3,7 @@ import pytest_asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 from httpx import AsyncClient, ASGITransport
 
-from tests.conftest import make_settings_app, _make_user
+from helpers import make_settings_app, _make_user
 
 
 @pytest.fixture(autouse=True)

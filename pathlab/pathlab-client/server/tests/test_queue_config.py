@@ -3,7 +3,7 @@ import pytest_asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
 from httpx import AsyncClient, ASGITransport
 
-from tests.conftest import _make_user
+from helpers import _make_user
 
 
 def _make_queue_stub(
