@@ -195,7 +195,7 @@ def check_extval_compatibility(
         ):
             return "Training data overlap: target dataset shares WSIs with the training set."
 
-    return None
+        return None
 
     if not model_is_survival:
         model_classes = set(_norm_labels(model_info["classes"]))
@@ -893,3 +893,331 @@ async def _run_external_validation_classification_analysis(
     )
 
     return make_analysis_result(task_id, timestamp, analysis_dir, summary, chart_paths)
+
+
+async def _run_external_validation_survival_analysis(
+    task,
+    request,
+    db,
+    model_config,
+    progress_callback=None,
+    progress_config=None,
+    submitted_by=None,
+):
+    p_start, p_ci_start, p_ci_end = unpack_progress_config(progress_config)
+    task_id = task.task_id
+    dataset_id = model_config.get("dataset_id")
+    model_task_id = model_config.get("model_task_id")
+
+    ai_results_dir = Config.get_uploads_dir() / "ai_results"
+
+    def _sync_load_survival_results():
+        _risks = []
+        _times = []
+        _events = []
+        _surv_probs = []
+        _wsi_results = []
+        _bin_edges = None
+        _is_kfold = False
+        _num_folds = None
+        _aggregation_level = "file"
+        _metadata_read = False
+
+        if ai_results_dir.exists():
+            for wsi_dir in ai_results_dir.iterdir():
+                if wsi_dir.is_dir():
+                    result_file = wsi_dir / f"extval_{task_id}_result.json"
+                    if result_file.exists():
+                        try:
+                            with open(result_file, "r") as f:
+                                data = json.load(f)
+                                if data.get("validation_task_id") == task_id:
+                                    if not _metadata_read:
+                                        _is_kfold = data.get("is_kfold", False)
+                                        _num_folds = data.get("num_folds")
+                                        _aggregation_level = data.get(
+                                            "aggregation_level", "file"
+                                        )
+                                        _metadata_read = True
+
+                                    risk_score = data.get("risk_score")
+                                    event_time = data.get("event_time")
+                                    event_status = data.get("event_status")
+
+                                    if (
+                                        risk_score is not None
+                                        and event_time is not None
+                                    ):
+                                        _risks.append(risk_score)
+                                        _times.append(event_time)
+                                        _events.append(
+                                            event_status
+                                            if event_status is not None
+                                            else 0
+                                        )
+
+                                        if data.get("surv_probs"):
+                                            _surv_probs.append(data["surv_probs"])
+
+                                        if _bin_edges is None and data.get("bin_edges"):
+                                            _bin_edges = data["bin_edges"]
+
+                                        _wsi_results.append(
+                                            {
+                                                "wsi_id": data.get("wsi_id"),
+                                                "filename": None,
+                                                "case_id": data.get(
+                                                    "case_id", data.get("wsi_id")
+                                                ),
+                                                "risk_score": risk_score,
+                                                "event_time": event_time,
+                                                "event_status": event_status,
+                                                "surv_probs": data.get("surv_probs"),
+                                            }
+                                        )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to load result from {result_file}: {e}"
+                            )
+                            continue
+
+        return (
+            _risks,
+            _times,
+            _events,
+            _surv_probs,
+            _wsi_results,
+            _bin_edges,
+            _is_kfold,
+            _num_folds,
+            _aggregation_level,
+        )
+
+    (
+        risks,
+        times,
+        events,
+        surv_probs,
+        wsi_results,
+        bin_edges,
+        is_kfold,
+        num_folds,
+        aggregation_level,
+    ) = await asyncio.to_thread(_sync_load_survival_results)
+
+    if not risks:
+        raise HTTPException(
+            status_code=400,
+            detail="No survival results found for this external validation task",
+        )
+
+    is_case_level = aggregation_level == "case"
+    logger.info(
+        f"External survival analysis for task {task_id}: aggregation_level={aggregation_level}, "
+        f"is_case_level={is_case_level}, is_kfold={is_kfold}, num_folds={num_folds}"
+    )
+
+    if is_case_level and wsi_results:
+        case_results_map: Dict[str, Dict[str, Any]] = {}
+        for res in wsi_results:
+            case_id = res["case_id"]
+            if case_id not in case_results_map:
+                case_results_map[case_id] = res
+
+        wsi_results = list(case_results_map.values())
+        risks = [r["risk_score"] for r in wsi_results]
+        times = [r["event_time"] for r in wsi_results]
+        events = [r["event_status"] for r in wsi_results]
+        surv_probs = [r["surv_probs"] for r in wsi_results if r.get("surv_probs")]
+
+        logger.info(
+            f"Case-level external survival analysis: aggregated to {len(case_results_map)} cases"
+        )
+
+    import numpy as np
+    from sksurv.metrics import concordance_index_censored
+
+    risks_arr = np.array(risks, dtype=float)
+    times_arr = np.array(times, dtype=float)
+    events_arr = np.array(events, dtype=bool)
+
+    if progress_callback:
+        await progress_callback(p_start + 3)
+
+    try:
+        c_index, _, _, _, _ = concordance_index_censored(
+            events_arr, times_arr, risks_arr
+        )
+    except Exception as e:
+        logger.warning(f"Failed to compute C-Index: {e}")
+        c_index = None
+
+    metrics = {"c_index": c_index}
+
+    if "integrated_brier_score" in request.metrics:
+        ibs = _calculate_integrated_brier_score(times, events, surv_probs, bin_edges)
+        if ibs is not None:
+            metrics["integrated_brier_score"] = round(ibs, 4)
+
+    if progress_callback:
+        await progress_callback(p_ci_start)
+
+    bootstrap_ci_result = None
+    ci_metrics = (
+        request.bootstrap_ci_metrics
+        if request.bootstrap_ci_metrics
+        else (request.metrics if request.compute_bootstrap_ci else [])
+    )
+    if ci_metrics:
+        logger.info(
+            f"Computing bootstrap 95% CI for external validation survival task {task_id}, metrics: {ci_metrics}..."
+        )
+        loop = asyncio.get_event_loop()
+        bootstrap_progress_sync = make_bootstrap_progress_sync(
+            progress_callback, p_ci_start, p_ci_end, loop
+        )
+        bootstrap_ci_result = await loop.run_in_executor(
+            None,
+            functools.partial(
+                _calculate_survival_bootstrap_ci,
+                risks,
+                times,
+                events,
+                surv_probs,
+                bin_edges,
+                ci_metrics,
+                progress_callback=bootstrap_progress_sync,
+            ),
+        )
+        if bootstrap_ci_result:
+            logger.info(f"Bootstrap CI calculated: {bootstrap_ci_result['metrics_ci']}")
+
+    if progress_callback:
+        await progress_callback(p_ci_end)
+
+    analysis_dir, timestamp = make_analysis_dir(task_id)
+
+    chart_paths = {}
+    chart_data = {}
+
+    km_coro = None
+    km_path = None
+    if "km_curve" in request.charts and len(risks) > 0:
+        km_path = analysis_dir / "km_curve.png"
+        include_km_ci = "c_index" in ci_metrics
+        km_coro = run_chart_in_process(
+            _generate_km_analysis, times, events, risks, km_path, include_km_ci
+        )
+
+    random_seed = _get_random_seed_from_task(task)
+    kfold_coro = _get_kfold_metrics(model_task_id) if model_task_id else None
+
+    parallel_tasks = []
+    task_names = []
+    for name, coro in [("km", km_coro), ("kfold", kfold_coro)]:
+        if coro is not None:
+            parallel_tasks.append(coro)
+            task_names.append(name)
+
+    if parallel_tasks:
+        parallel_results = await asyncio.gather(*parallel_tasks, return_exceptions=True)
+        result_map = {}
+        for name, result in zip(task_names, parallel_results):
+            if isinstance(result, Exception):
+                logger.error(f"Parallel task '{name}' failed: {result}")
+                result_map[name] = None
+            else:
+                result_map[name] = result
+    else:
+        result_map = {}
+
+    km_data = result_map.get("km")
+    if km_data:
+        chart_data["km_curve"] = km_data
+        chart_paths["km_curve"] = str(km_path)
+
+    kfold_metrics = result_map.get("kfold")
+
+    summary = {
+        "task_id": task_id,
+        "task_type": "external_validation_survival",
+        "timestamp": utc_timestamp_z(),
+        "description": request.description,
+        "num_samples": len(risks),
+        "metrics": metrics,
+        "requested_metrics": request.metrics,
+        "requested_charts": request.charts,
+        "dataset_id": dataset_id,
+        "model_id": model_config.get("model_id"),
+        "model_task_id": model_task_id,
+        "aggregation_level": aggregation_level,
+        "is_kfold": is_kfold,
+        "num_folds": num_folds,
+        "chart_paths": chart_paths,
+        "chart_data": chart_data,
+        "random_seed": random_seed,
+        "submitted_by": submitted_by,
+    }
+
+    if bootstrap_ci_result:
+        summary["bootstrap_ci"] = bootstrap_ci_result
+
+    if kfold_metrics:
+        summary["kfold_training"] = kfold_metrics
+
+    if progress_callback:
+        await progress_callback(97)
+
+    await asyncio.to_thread(_write_json_sync, analysis_dir / "summary.json", summary)
+
+    await fill_wsi_filenames(db, wsi_results)
+
+    await asyncio.to_thread(
+        _write_json_sync,
+        analysis_dir / "results.json",
+        {"wsi_results": wsi_results, "metrics": metrics},
+    )
+
+    logger.info(
+        f"External validation survival analysis completed for task {task_id}, saved to {analysis_dir}"
+    )
+
+    return make_analysis_result(task_id, timestamp, analysis_dir, summary, chart_paths)
+
+
+async def _run_external_validation_analysis(
+    task, request, db, progress_callback=None, progress_config=None, submitted_by=None
+):
+    model_config = task.model_config if isinstance(task.model_config, dict) else {}
+    model_task_type = model_config.get("model_task_type", "classification")
+
+    if _is_extval_segmentation_task(model_task_type):
+        return await _run_external_validation_segmentation_analysis(
+            task,
+            request,
+            db,
+            model_config=model_config,
+            progress_callback=progress_callback,
+            progress_config=progress_config,
+            submitted_by=submitted_by,
+        )
+    elif model_task_type in ("survival", "wsi_survival"):
+        return await _run_external_validation_survival_analysis(
+            task,
+            request,
+            db,
+            model_config=model_config,
+            progress_callback=progress_callback,
+            progress_config=progress_config,
+            submitted_by=submitted_by,
+        )
+    else:
+        return await _run_external_validation_classification_analysis(
+            task,
+            request,
+            db,
+            model_config=model_config,
+            progress_callback=progress_callback,
+            progress_config=progress_config,
+            submitted_by=submitted_by,
+        )
