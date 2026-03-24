@@ -536,9 +536,26 @@ async def run_patching_stage(
     wsi_ids: List[str],
     preprocessing_config: Dict[str, Any],
 ) -> None:
+    """
+    Run the CPU-only patch coordinate extraction stage for WSI tasks.
+
+    Runs OUTSIDE the GPU task queue — does not consume a GPU concurrency slot.
+    Called as a pre-queue step by run_patching_then_submit() before GPU stages.
+
+    Cancellation:
+      - asyncio.Task.cancel() raises CancelledError at each await asyncio.sleep(0) point
+      - DB status poll per WSI also stops early if status == TaskStatus.CANCELLED (belt-and-suspenders)
+
+    Progress: updates DB from 0% to 33% across WSIs. GPU stages (EXTRACTING, TRAINING) use 33%-100%.
+    """
     logger_manager = ScopedLogger(task_id)
 
     total_wsi = len(wsi_ids)
+    if total_wsi == 0:
+        logger.warning(
+            f"[{task_id}] run_patching_stage called with empty wsi_ids — nothing to do"
+        )
+        return
     level = preprocessing_config.get("level", 0)
     sthresh = preprocessing_config.get("sthresh", 8)
     mthresh = preprocessing_config.get("mthresh", 7)
@@ -701,7 +718,7 @@ async def run_training_pipeline(
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
     user_id: str = None,  # User who submitted the task (for permission checks)
     user_is_admin: bool = False,  # Whether the submitting user is admin
-    patching_complete: bool = False,
+    patching_complete: bool = False,  # True when patching was run pre-queue (WSI tasks only)
 ):
     """
     Run the training pipeline based on data level:
