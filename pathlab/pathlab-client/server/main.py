@@ -32,6 +32,17 @@ from backend.common.config import Config
 
 
 def _detect_and_exclude_bad_gpus() -> list[int]:
+    # If operator has already configured CUDA_VISIBLE_DEVICES (e.g. via server/.env),
+    # respect it unconditionally — do not overwrite with auto-detected healthy list.
+    existing_cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if existing_cvd:
+        print(
+            f"[GPUCheck] CUDA_VISIBLE_DEVICES already set to '{existing_cvd}' "
+            f"— respecting operator config, skipping auto-exclusion.",
+            flush=True,
+        )
+        return []
+
     # CUDA_VISIBLE_DEVICES only takes effect when cuInit() itself succeeds.
     # If a faulty GPU poisons cuInit(), the operator must first unbind it at the
     # driver level (requires root) before restarting this process:
