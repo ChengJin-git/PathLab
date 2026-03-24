@@ -3,25 +3,8 @@ import { useAsyncAction } from "../../lib/useAsyncAction";
 import { useDebounce } from "../../lib/useDebounce";
 import { useTranslation } from "react-i18next";
 import { ModalShell } from "../ui/modal-shell";
-import { PaginationFooter } from "../ui/pagination-footer";
-import {
-  ArrowRightLeft,
-  Clock,
-  Database,
-  Eye,
-  Globe,
-  Key,
-  Lock,
-  Search,
-  Trash2,
-  Users,
-  X,
-} from "lucide-react";
+import { Database, Key, Users, X } from "lucide-react";
 import { Button } from "../ui/button";
-import { Checkbox } from "../ui/checkbox";
-import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { Select } from "../ui/select";
 import { cn } from "../../lib/utils";
 import {
   batchGrantDatasetGrants,
@@ -38,6 +21,8 @@ import type { DatasetGrant } from "../../api/grants";
 import type { UserListItem } from "../../api/users";
 import type { DatasetSummary } from "../../api/wsi";
 import type { ShowConfirmDialog } from "./ConfirmDialog";
+import { PermissionUserPanel } from "./PermissionUserPanel";
+import { PermissionDatasetPanel } from "./PermissionDatasetPanel";
 
 type PermissionMode = "user" | "dataset";
 type PermissionDataset = DatasetSummary & { dataset_id: string };
@@ -73,69 +58,6 @@ function parsePositiveHours(value: string): number | undefined {
 
 function getUserDisplayName(user?: Partial<UserListItem> | null) {
   return user?.nickname || user?.email || "-";
-}
-
-function BulkSelectionBanner({
-  allPageSelected,
-  allMatchingSelected,
-  pageCount,
-  selectedCount,
-  selectingAll,
-  onSelectAllMatching,
-  onClearSelection,
-}: {
-  allPageSelected: boolean;
-  allMatchingSelected: boolean;
-  pageCount: number;
-  selectedCount: number;
-  selectingAll?: boolean;
-  onSelectAllMatching: () => void;
-  onClearSelection: () => void;
-}) {
-  const { t } = useTranslation();
-
-  if (allMatchingSelected && selectedCount > 0) {
-    return (
-      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-gray-700">
-        <span className="font-medium">
-          {t("settings.permissionCenterModal.allMatchingItemsSelected", {
-            count: selectedCount,
-          })}
-        </span>
-        <button
-          type="button"
-          onClick={onClearSelection}
-          className="ml-2 font-semibold text-blue-600 hover:text-blue-800 hover:underline"
-        >
-          {t("settings.permissionCenterModal.clearSelection")}
-        </button>
-      </div>
-    );
-  }
-
-  if (allPageSelected && pageCount > 0) {
-    return (
-      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-gray-700">
-        <span className="font-medium">
-          {t("settings.permissionCenterModal.allPageItemsSelected", {
-            count: pageCount,
-          })}
-        </span>
-        <button
-          type="button"
-          onClick={onSelectAllMatching}
-          disabled={selectingAll}
-          className="ml-2 font-semibold text-blue-600 hover:text-blue-800 hover:underline disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {selectingAll
-            ? t("settings.permissionCenterModal.selectingAll")
-            : t("settings.permissionCenterModal.selectAllMatchingItems")}
-        </button>
-      </div>
-    );
-  }
-
-  return null;
 }
 
 export function PermissionCenterModal({
@@ -996,979 +918,118 @@ export function PermissionCenterModal({
         )}
 
         {mode === "user" ? (
-          <>
-            <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                <div className="flex-1">
-                  <Label>
-                    {t("settings.permissionCenterModal.userBrowser")}
-                  </Label>
-                  <div className="relative mt-2">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                    <Input
-                      value={userSearchQuery}
-                      onChange={(e) => {
-                        setUserSearchQuery(e.target.value);
-                        setUserPage(1);
-                      }}
-                      placeholder={t(
-                        "settings.permissionCenterModal.searchUsers",
-                      )}
-                      className="pl-9"
-                      disabled={submitting}
-                    />
-                  </div>
-                </div>
-                <div className="text-sm text-gray-500">
-                  {t("settings.permissionCenterModal.userCount", {
-                    count: userTotal,
-                  })}
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {loadingUsers ? (
-                  <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.loadingUsers")}
-                  </div>
-                ) : userItems.length === 0 ? (
-                  <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.noUsers")}
-                  </div>
-                ) : (
-                  userItems.map((user) => {
-                    const isSelected = user.id === selectedUserId;
-                    return (
-                      <button
-                        key={user.id}
-                        type="button"
-                        onClick={() => {
-                           setSelectedUserId(user.id);
-                           setSelectedDatasetIds([]);
-                           setAllMatchingDatasetsSelected(false);
-                           setAllMatchingDatasetCount(0);
-                           setExpiresInHours("");
-                           clearError();
-                         }}
-                        className={cn(
-                          "rounded-xl border p-4 text-left transition-all",
-                          isSelected
-                            ? "border-gray-900 bg-gray-900 text-white shadow-md"
-                            : "border-gray-200 bg-white hover:border-gray-300",
-                        )}
-                      >
-                        <div className="truncate text-sm font-semibold">
-                          {getUserDisplayName(user)}
-                        </div>
-                        <div
-                          className={cn(
-                            "mt-1 truncate text-xs",
-                            isSelected ? "text-gray-300" : "text-gray-500",
-                          )}
-                        >
-                          {user.email}
-                        </div>
-                        <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <span
-                            className={cn(
-                              "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium",
-                              isSelected
-                                ? "border-white/20 bg-white/10 text-white"
-                                : getRoleBadgeColor(user.role),
-                            )}
-                          >
-                            {t(`settings.usersTab.role_${user.role}`)}
-                          </span>
-                          <span
-                            className={cn(
-                              "inline-flex items-center rounded px-2 py-0.5 text-xs",
-                              isSelected
-                                ? "bg-white/10 text-white"
-                                : user.is_active
-                                  ? "bg-green-100 text-green-700"
-                                  : "bg-gray-200 text-gray-600",
-                            )}
-                          >
-                            {user.is_active
-                              ? t("settings.usersTab.active")
-                              : t("settings.usersTab.inactive")}
-                          </span>
-                        </div>
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-              <div className="mt-4">
-                <PaginationFooter
-                  page={userPage}
-                  pageSize={userPageSize}
-                  total={userTotal}
-                  disabled={loadingUsers || submitting}
-                  onPageChange={setUserPage}
-                  onPageSizeChange={(pageSize) => {
-                    setUserPageSize(pageSize);
-                    setUserPage(1);
-                  }}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-900">
-                      {t("settings.permissionCenterModal.currentPermissions")}
-                    </h4>
-                    <p className="mt-1 text-xs text-gray-500">
-                      {selectedUser
-                        ? t("settings.permissionCenterModal.selectedUserName", {
-                            name: getUserDisplayName(selectedUser),
-                          })
-                        : t("settings.permissionCenterModal.selectUserHint")}
-                    </p>
-                    <p className="mt-1 text-xs text-gray-500">
-                      {t(
-                        "settings.permissionCenterModal.currentPermissionsCount",
-                        { count: validUserPermissions.length },
-                      )}
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleRevokeAllFromUser}
-                    disabled={
-                      !selectedUser ||
-                      validUserPermissions.length === 0 ||
-                      submitting ||
-                      loadingUserPermissions
-                    }
-                    className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                  >
-                    <Trash2 className="mr-1 h-3.5 w-3.5" />
-                    {t("settings.permissionCenterModal.revokeAll")}
-                  </Button>
-                </div>
-                {loadingUserPermissions ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.loadingUserPermissions")}
-                  </div>
-                ) : sortedUserPermissions.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.noCurrentPermissions")}
-                  </div>
-                ) : (
-                  <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
-                    {sortedUserPermissions.map((permission) => (
-                      <div
-                        key={permission.id}
-                        className={cn(
-                          "flex items-start justify-between gap-3 rounded-xl border p-3",
-                          permission.is_valid
-                            ? "border-green-200 bg-green-50/40"
-                            : "border-gray-200 bg-gray-50 opacity-70",
-                        )}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-gray-900">
-                            {permission.dataset_name || permission.dataset_id}
-                          </div>
-                          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
-                            <span className="inline-flex items-center gap-1">
-                              <Clock className="h-3 w-3" />
-                              {permission.expires_at
-                                ? t("settings.permissionModal.expires", {
-                                    date: new Date(
-                                      permission.expires_at,
-                                    ).toLocaleString(),
-                                  })
-                                : t("settings.permissionModal.noExpiration")}
-                            </span>
-                            {!permission.is_valid && (
-                              <span className="font-medium text-red-600">
-                                {t("settings.permissionModal.expired")}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {permission.can_read && (
-                              <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                                <Eye className="h-3 w-3" />
-                                {t("settings.permissionCenterModal.read")}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRevokeFromUser(permission)}
-                          disabled={submitting}
-                          className="h-8 w-8 p-0 text-red-600 hover:bg-red-50 hover:text-red-700"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-900">
-                      {t("settings.permissionCenterModal.grantDatasets")}
-                    </h4>
-                    <p className="mt-1 text-xs text-gray-500">
-                      {selectedUser
-                        ? t("settings.permissionCenterModal.selectedUserName", {
-                            name: getUserDisplayName(selectedUser),
-                          })
-                        : t("settings.permissionCenterModal.selectUserHint")}
-                    </p>
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {t("settings.permissionCenterModal.datasetCount", {
-                      count: datasetTotal,
-                    })}
-                  </div>
-                </div>
-                <div className="relative mb-3">
-                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                  <Input
-                    value={datasetSearchQuery}
-                    onChange={(e) => {
-                      setDatasetSearchQuery(e.target.value);
-                      setGrantDatasetPage(1);
-                    }}
-                    placeholder={t(
-                      "settings.permissionCenterModal.searchDatasets",
-                    )}
-                    className="pl-9"
-                    disabled={submitting}
-                  />
-                </div>
-                <div className="mb-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
-                  <Checkbox
-                    checked={allVisibleDatasetsSelected}
-                    onCheckedChange={handleToggleAllDatasets}
-                  />
-                  <span className="text-sm text-gray-700">
-                    {t("settings.permissionCenterModal.selectVisibleDatasets", {
-                      count: selectableDatasetIdsOnPage.length,
-                    })}
-                  </span>
-                </div>
-                <BulkSelectionBanner
-                  allPageSelected={allVisibleDatasetsSelected}
-                  allMatchingSelected={allMatchingDatasetsSelected}
-                  pageCount={selectableDatasetIdsOnPage.length}
-                  selectedCount={
-                    allMatchingDatasetsSelected
-                      ? allMatchingDatasetCount
-                      : selectedDatasetIds.length
-                  }
-                  selectingAll={selectingAllDatasets}
-                  onSelectAllMatching={handleSelectAllMatchingDatasets}
-                  onClearSelection={handleClearDatasetSelection}
-                />
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                  {loadingDatasets ? (
-                    <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                      {t("settings.permissionCenterModal.loadingDatasets")}
-                    </div>
-                  ) : pagedDatasets.length === 0 ? (
-                    <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                      {t("settings.permissionCenterModal.noDatasets")}
-                    </div>
-                  ) : (
-                    pagedDatasets.map((dataset) => {
-                      const alreadyGranted = validUserDatasetIds.has(
-                        dataset.dataset_id,
-                      );
-                      const isDatasetOwner =
-                        dataset.user_id !== null &&
-                        dataset.user_id === selectedUser?.id;
-                      return (
-                        <div
-                          key={dataset.dataset_id}
-                          className="rounded-xl border border-gray-200 bg-gray-50 p-4"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-semibold text-gray-900">
-                                {dataset.dataset_name}
-                              </div>
-                              <div className="mt-1 text-xs text-gray-500">
-                                {t(
-                                  "settings.permissionCenterModal.datasetMeta",
-                                  { count: dataset.file_count },
-                                )}
-                              </div>
-                              <div className="mt-2">
-                                {dataset.is_public ? (
-                                  <span className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
-                                    <Globe className="h-3 w-3" />
-                                    {t(
-                                      "settings.permissionCenterModal.publicDataset",
-                                    )}
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                                    <Lock className="h-3 w-3" />
-                                    {t(
-                                      "settings.permissionCenterModal.privateDataset",
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                            <Checkbox
-                              checked={selectedDatasetIds.includes(
-                                dataset.dataset_id,
-                              )}
-                              disabled={
-                                dataset.is_public ||
-                                alreadyGranted ||
-                                isDatasetOwner ||
-                                submitting ||
-                                !selectedUser
-                              }
-                              onCheckedChange={(checked) =>
-                                handleToggleDataset(dataset.dataset_id, checked)
-                              }
-                            />
-                          </div>
-                          {isDatasetOwner && (
-                            <div className="mt-3 inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
-                              {t("settings.permissionCenterModal.datasetOwner")}
-                            </div>
-                          )}
-                          {!isDatasetOwner && alreadyGranted && (
-                            <div className="mt-3 inline-flex rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-700">
-                              {t(
-                                "settings.permissionCenterModal.alreadyGranted",
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-                <div className="mt-4">
-                  <PaginationFooter
-                    page={grantDatasetPage}
-                    pageSize={grantDatasetPageSize}
-                    total={datasetTotal}
-                    disabled={loadingDatasets || submitting}
-                    onPageChange={setGrantDatasetPage}
-                    onPageSizeChange={(pageSize) => {
-                      setGrantDatasetPageSize(pageSize);
-                      setGrantDatasetPage(1);
-                    }}
-                  />
-                </div>
-                <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-800">
-                    <Lock className="h-4 w-4 text-amber-600" />
-                    {t(
-                      "settings.permissionCenterModal.privateTempVisibilityOnly",
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                    <div className="sm:w-48">
-                      <Label className="mb-1.5 block text-xs text-gray-500">
-                        {t("settings.permissionModal.expirationHours")}
-                      </Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        value={expiresInHours}
-                        onChange={(e) => setExpiresInHours(e.target.value)}
-                        placeholder={t("settings.permissionModal.forever")}
-                        disabled={submitting || !selectedUser}
-                      />
-                    </div>
-                    <div className="flex-1 text-xs text-gray-400">
-                      {t("settings.permissionModal.leaveEmptyForPermanent")}
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={handleGrantToUser}
-                      disabled={
-                        selectedGrantableDatasetIds.length === 0 ||
-                        !selectedUser ||
-                        submitting
-                      }
-                      className="bg-purple-600 hover:bg-purple-700"
-                    >
-                      {submitting
-                        ? t("settings.permissionCenterModal.granting")
-                        : t(
-                            "settings.permissionCenterModal.grantSelectedDatasets",
-                            { count: selectedGrantableDatasetIds.length },
-                          )}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
+          <PermissionUserPanel
+            submitting={submitting}
+            clearError={clearError}
+            expiresInHours={expiresInHours}
+            onExpiresInHoursChange={setExpiresInHours}
+            userSearchQuery={userSearchQuery}
+            onUserSearchChange={setUserSearchQuery}
+            userPage={userPage}
+            userPageSize={userPageSize}
+            onUserPageChange={setUserPage}
+            onUserPageSizeChange={setUserPageSize}
+            userTotal={userTotal}
+            loadingUsers={loadingUsers}
+            userItems={userItems}
+            selectedUserId={selectedUserId}
+            selectedUser={selectedUser}
+            onSelectUserWithReset={(userId) => {
+              setSelectedUserId(userId);
+              setSelectedDatasetIds([]);
+              setAllMatchingDatasetsSelected(false);
+              setAllMatchingDatasetCount(0);
+              setExpiresInHours("");
+              clearError();
+            }}
+            loadingUserPermissions={loadingUserPermissions}
+            sortedUserPermissions={sortedUserPermissions}
+            validUserPermissions={validUserPermissions}
+            onRevokeFromUser={handleRevokeFromUser}
+            onRevokeAllFromUser={handleRevokeAllFromUser}
+            datasetSearchQuery={datasetSearchQuery}
+            onDatasetSearchChange={setDatasetSearchQuery}
+            grantDatasetPage={grantDatasetPage}
+            grantDatasetPageSize={grantDatasetPageSize}
+            onGrantDatasetPageChange={setGrantDatasetPage}
+            onGrantDatasetPageSizeChange={setGrantDatasetPageSize}
+            datasetTotal={datasetTotal}
+            loadingDatasets={loadingDatasets}
+            pagedDatasets={pagedDatasets}
+            validUserDatasetIds={validUserDatasetIds}
+            selectedDatasetIds={selectedDatasetIds}
+            selectableDatasetIdsOnPage={selectableDatasetIdsOnPage}
+            allVisibleDatasetsSelected={allVisibleDatasetsSelected}
+            selectedGrantableDatasetIds={selectedGrantableDatasetIds}
+            allMatchingDatasetsSelected={allMatchingDatasetsSelected}
+            allMatchingDatasetCount={allMatchingDatasetCount}
+            selectingAllDatasets={selectingAllDatasets}
+            onToggleDataset={handleToggleDataset}
+            onToggleAllDatasets={handleToggleAllDatasets}
+            onSelectAllMatchingDatasets={handleSelectAllMatchingDatasets}
+            onClearDatasetSelection={handleClearDatasetSelection}
+            onGrantToUser={handleGrantToUser}
+          />
         ) : (
-          <>
-            <div className="mb-6 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-              <div className="mb-3 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
-                <div className="flex-1">
-                  <Label>
-                    {t("settings.permissionCenterModal.datasetBrowser")}
-                  </Label>
-                  <div className="relative mt-2">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                    <Input
-                      value={datasetSearchQuery}
-                      onChange={(e) => {
-                        setDatasetSearchQuery(e.target.value);
-                        setDatasetPage(1);
-                      }}
-                      placeholder={t(
-                        "settings.permissionCenterModal.searchDatasets",
-                      )}
-                      className="pl-9"
-                      disabled={submitting}
-                    />
-                  </div>
-                </div>
-                <div className="text-sm text-gray-500">
-                  {t("settings.permissionCenterModal.datasetCount", {
-                    count: datasetTotal,
-                  })}
-                </div>
-              </div>
-              <div className="mb-4 rounded-xl border border-gray-200 bg-white p-3">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-sm font-medium text-gray-800">
-                    <ArrowRightLeft className="h-4 w-4 text-primary-600" />
-                    {t("settings.permissionCenterModal.bulkDatasetVisibility")}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={visibilityTarget}
-                      onChange={(value) =>
-                        setVisibilityTarget(value as "public" | "private")
-                      }
-                      options={[
-                        {
-                          value: "public",
-                          label: t("settings.permissionCenterModal.setPublic"),
-                        },
-                        {
-                          value: "private",
-                          label: t("settings.permissionCenterModal.setPrivate"),
-                        },
-                      ]}
-                      className="w-40"
-                      disabled={submitting}
-                    />
-                    <Button
-                      type="button"
-                      size="sm"
-                      onClick={handleBatchUpdateVisibility}
-                      disabled={
-                        selectedVisibilityDatasetIds.length === 0 || submitting
-                      }
-                    >
-                      {t(
-                        "settings.permissionCenterModal.applyToSelectedDatasets",
-                        { count: selectedVisibilityDatasetIds.length },
-                      )}
-                    </Button>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    checked={allVisibleVisibilityDatasetsSelected}
-                    onCheckedChange={handleToggleAllVisibilityDatasets}
-                  />
-                  <span className="text-sm text-gray-700">
-                    {t(
-                      "settings.permissionCenterModal.selectVisibleDatasetsForVisibility",
-                      { count: pagedDatasets.length },
-                    )}
-                  </span>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
-                {loadingDatasets ? (
-                  <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.loadingDatasets")}
-                  </div>
-                ) : pagedDatasets.length === 0 ? (
-                  <div className="col-span-full rounded-xl border border-dashed border-gray-200 bg-white px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.noDatasets")}
-                  </div>
-                ) : (
-                  pagedDatasets.map((dataset) => {
-                    const isSelected = selectedDatasetId === dataset.dataset_id;
-                    return (
-                      <div
-                        key={dataset.dataset_id}
-                        className={cn(
-                          "rounded-xl border p-4 transition-all",
-                          isSelected
-                            ? "border-gray-900 bg-gray-900 text-white shadow-md"
-                            : "border-gray-200 bg-white hover:border-gray-300",
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedDatasetId(dataset.dataset_id);
-                              setSelectedGrantUserIds([]);
-                              setAllMatchingUsersSelected(false);
-                              setAllMatchingUserCount(0);
-                              setExpiresInHours("");
-                              clearError();
-                            }}
-                            className="min-w-0 flex-1 text-left"
-                          >
-                            <div className="truncate text-sm font-semibold">
-                              {dataset.dataset_name}
-                            </div>
-                            <div
-                              className={cn(
-                                "mt-1 text-xs",
-                                isSelected ? "text-gray-300" : "text-gray-500",
-                              )}
-                            >
-                              {t("settings.permissionCenterModal.datasetMeta", {
-                                count: dataset.file_count,
-                              })}
-                            </div>
-                            <div className="mt-2">
-                              {dataset.is_public ? (
-                                <span
-                                  className={cn(
-                                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-                                    isSelected
-                                      ? "bg-white/20 text-white"
-                                      : "bg-sky-100 text-sky-700",
-                                  )}
-                                >
-                                  <Globe className="h-3 w-3" />
-                                  {t(
-                                    "settings.permissionCenterModal.publicDataset",
-                                  )}
-                                </span>
-                              ) : (
-                                <span
-                                  className={cn(
-                                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
-                                    isSelected
-                                      ? "bg-white/20 text-white"
-                                      : "bg-amber-100 text-amber-700",
-                                  )}
-                                >
-                                  <Lock className="h-3 w-3" />
-                                  {t(
-                                    "settings.permissionCenterModal.privateDataset",
-                                  )}
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                          <Checkbox
-                            checked={selectedVisibilityDatasetIds.includes(
-                              dataset.dataset_id,
-                            )}
-                            onCheckedChange={(checked) =>
-                              handleToggleVisibilityDataset(
-                                dataset.dataset_id,
-                                checked,
-                              )
-                            }
-                            disabled={submitting}
-                          />
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-              <div className="mt-4">
-                <PaginationFooter
-                  page={datasetPage}
-                  pageSize={datasetPageSize}
-                  total={datasetTotal}
-                  disabled={loadingDatasets || submitting}
-                  onPageChange={setDatasetPage}
-                  onPageSizeChange={(pageSize) => {
-                    setDatasetPageSize(pageSize);
-                    setDatasetPage(1);
-                  }}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-              <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-900">
-                      {t("settings.permissionCenterModal.currentAccess")}
-                    </h4>
-                    <p className="mt-1 text-xs text-gray-500">
-                      {selectedDataset
-                        ? t(
-                            "settings.permissionCenterModal.selectedDatasetName",
-                            { name: selectedDataset.dataset_name },
-                          )
-                        : t("settings.permissionCenterModal.selectDatasetHint")}
-                    </p>
-                    {selectedDatasetIsPublic ? (
-                      <p className="mt-1 text-xs text-amber-700">
-                        {t(
-                          "settings.permissionCenterModal.publicDatasetGrantDisabled",
-                        )}
-                      </p>
-                    ) : (
-                      <p className="mt-1 text-xs text-gray-500">
-                        {t("settings.permissionCenterModal.currentAccessCount", {
-                          count: validDatasetGrants.length,
-                        })}
-                      </p>
-                    )}
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleRevokeAllFromDataset}
-                    disabled={
-                      !selectedDatasetId ||
-                      validDatasetGrants.length === 0 ||
-                      submitting ||
-                      loadingDatasetGrants
-                    }
-                    className="text-red-600 hover:bg-red-50 hover:text-red-700"
-                  >
-                    <Trash2 className="mr-1 h-3.5 w-3.5" />
-                    {t("settings.permissionCenterModal.revokeAll")}
-                  </Button>
-                </div>
-                {loadingDatasetGrants ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.loadingDatasetGrants")}
-                  </div>
-                ) : selectedDatasetIsPublic ? (
-                  <div className="rounded-xl border border-dashed border-amber-200 bg-amber-50/60 px-4 py-8 text-center text-sm text-amber-700">
-                    {t(
-                      "settings.permissionCenterModal.publicDatasetGrantDisabled",
-                    )}
-                  </div>
-                ) : sortedDatasetGrants.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                    {t("settings.permissionCenterModal.noCurrentAccess")}
-                  </div>
-                ) : (
-                  <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
-                    {sortedDatasetGrants.map((permission) => {
-                      const displayName =
-                        permission.user_nickname ||
-                        permission.user_email ||
-                        permission.user_id;
-                      return (
-                        <div
-                          key={permission.id}
-                          className={cn(
-                            "flex items-start justify-between gap-3 rounded-xl border p-3",
-                            permission.is_valid
-                              ? "border-green-200 bg-green-50/40"
-                              : "border-gray-200 bg-gray-50 opacity-70",
-                          )}
-                        >
-                          <div className="min-w-0 flex-1">
-                            <div className="truncate text-sm font-medium text-gray-900">
-                              {displayName}
-                            </div>
-                            {permission.user_email && (
-                              <div className="mt-1 truncate text-xs text-gray-500">
-                                {permission.user_email}
-                              </div>
-                            )}
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                              {permission.user_role && (
-                                <span
-                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getRoleBadgeColor(permission.user_role)}`}
-                                >
-                                  {t(
-                                    `settings.usersTab.role_${permission.user_role}`,
-                                  )}
-                                </span>
-                              )}
-                              {typeof permission.user_is_active ===
-                                "boolean" && (
-                                <span
-                                  className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${permission.user_is_active ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-600"}`}
-                                >
-                                  {permission.user_is_active
-                                    ? t("settings.usersTab.active")
-                                    : t("settings.usersTab.inactive")}
-                                </span>
-                              )}
-                              <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                                <Clock className="h-3 w-3" />
-                                {permission.expires_at
-                                  ? t("settings.permissionModal.expires", {
-                                      date: new Date(
-                                        permission.expires_at,
-                                      ).toLocaleString(),
-                                    })
-                                  : t("settings.permissionModal.noExpiration")}
-                              </span>
-                              {!permission.is_valid && (
-                                <span className="text-xs font-medium text-red-600">
-                                  {t("settings.permissionModal.expired")}
-                                </span>
-                              )}
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {permission.can_read && (
-                                <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                                  <Eye className="h-3 w-3" />
-                                  {t("settings.permissionCenterModal.read")}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleRevokeFromDataset(permission)}
-                            disabled={submitting}
-                            className="h-8 w-8 p-0 text-red-600 hover:bg-red-50 hover:text-red-700"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-              <div className="rounded-2xl border border-gray-200 bg-white p-4">
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-medium text-gray-900">
-                      {t("settings.permissionCenterModal.grantUsers")}
-                    </h4>
-                    <p className="mt-1 text-xs text-gray-500">
-                      {selectedDataset
-                        ? t(
-                            "settings.permissionCenterModal.selectedDatasetName",
-                            { name: selectedDataset.dataset_name },
-                          )
-                        : t("settings.permissionCenterModal.selectDatasetHint")}
-                    </p>
-                    {selectedDatasetIsPublic && (
-                      <p className="mt-1 text-xs text-amber-700">
-                        {t(
-                          "settings.permissionCenterModal.publicDatasetGrantDisabled",
-                        )}
-                      </p>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-500">
-                    {t("settings.permissionCenterModal.userCount", {
-                      count: grantUserTotal,
-                    })}
-                  </div>
-                </div>
-                <div className="relative mb-3">
-                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-gray-400" />
-                  <Input
-                    value={grantUserSearchQuery}
-                    onChange={(e) => {
-                      setGrantUserSearchQuery(e.target.value);
-                      setGrantUserPage(1);
-                    }}
-                    placeholder={t(
-                      "settings.permissionCenterModal.searchUsers",
-                    )}
-                    className="pl-9"
-                    disabled={submitting || selectedDatasetIsPublic}
-                  />
-                </div>
-                <div className="mb-4 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
-                  <Checkbox
-                    checked={allVisibleUsersSelected}
-                    onCheckedChange={handleToggleAllUsers}
-                    disabled={selectedDatasetIsPublic}
-                  />
-                  <span className="text-sm text-gray-700">
-                    {t("settings.permissionCenterModal.selectVisibleUsers", {
-                      count: selectableGrantUsers.length,
-                    })}
-                  </span>
-                </div>
-                <BulkSelectionBanner
-                  allPageSelected={allVisibleUsersSelected}
-                  allMatchingSelected={allMatchingUsersSelected}
-                  pageCount={selectableGrantUsers.length}
-                  selectedCount={
-                    allMatchingUsersSelected
-                      ? allMatchingUserCount
-                      : selectedGrantUserIds.length
-                  }
-                  selectingAll={selectingAllUsers}
-                  onSelectAllMatching={handleSelectAllMatchingUsers}
-                  onClearSelection={handleClearUserSelection}
-                />
-                <div className="space-y-2">
-                  {loadingGrantUsers ? (
-                    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                      {t("settings.permissionCenterModal.loadingUsers")}
-                    </div>
-                  ) : grantUserItems.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-500">
-                      {t("settings.permissionCenterModal.noUsers")}
-                    </div>
-                  ) : (
-                    <div className="max-h-[320px] space-y-2 overflow-y-auto pr-1">
-                      {grantUserItems.map((user) => {
-                        const alreadyGranted = validDatasetGrantUserIds.has(
-                          user.id,
-                        );
-                        const isDatasetOwner =
-                          selectedDataset?.user_id !== null &&
-                          user.id === selectedDataset?.user_id;
-                        return (
-                          <div
-                            key={user.id}
-                            className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3"
-                          >
-                            <Checkbox
-                              checked={selectedGrantUserIds.includes(user.id)}
-                              disabled={
-                                alreadyGranted ||
-                                isDatasetOwner ||
-                                submitting ||
-                                !selectedDatasetId ||
-                                selectedDatasetIsPublic
-                              }
-                              onCheckedChange={(checked) =>
-                                handleToggleGrantUser(user.id, checked)
-                              }
-                            />
-                            <div className="min-w-0 flex-1">
-                              <div className="truncate text-sm font-medium text-gray-900">
-                                {getUserDisplayName(user)}
-                              </div>
-                              <div className="mt-1 truncate text-xs text-gray-500">
-                                {user.email}
-                              </div>
-                              <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <span
-                                  className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getRoleBadgeColor(user.role)}`}
-                                >
-                                  {t(`settings.usersTab.role_${user.role}`)}
-                                </span>
-                                <span
-                                  className={`inline-flex items-center rounded px-2 py-0.5 text-xs ${user.is_active ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-600"}`}
-                                >
-                                  {user.is_active
-                                    ? t("settings.usersTab.active")
-                                    : t("settings.usersTab.inactive")}
-                                </span>
-                                {isDatasetOwner && (
-                                  <span className="inline-flex rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-700">
-                                    {t(
-                                      "settings.permissionCenterModal.datasetOwner",
-                                    )}
-                                  </span>
-                                )}
-                                {!isDatasetOwner && alreadyGranted && (
-                                  <span className="inline-flex rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                                    {t(
-                                      "settings.permissionCenterModal.alreadyGranted",
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-                <div className="mt-4">
-                  <PaginationFooter
-                    page={grantUserPage}
-                    pageSize={grantUserPageSize}
-                    total={grantUserTotal}
-                    disabled={loadingGrantUsers || submitting}
-                    onPageChange={setGrantUserPage}
-                    onPageSizeChange={(pageSize) => {
-                      setGrantUserPageSize(pageSize);
-                      setGrantUserPage(1);
-                    }}
-                  />
-                </div>
-                <div className="mt-4 rounded-xl border border-gray-100 bg-gray-50 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-sm font-medium text-gray-800">
-                    <Lock className="h-4 w-4 text-amber-600" />
-                    {t(
-                      "settings.permissionCenterModal.privateTempVisibilityOnly",
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-                    <div className="sm:w-48">
-                      <Label className="mb-1.5 block text-xs text-gray-500">
-                        {t("settings.permissionModal.expirationHours")}
-                      </Label>
-                      <Input
-                        type="number"
-                        min="1"
-                        value={expiresInHours}
-                        onChange={(e) => setExpiresInHours(e.target.value)}
-                        placeholder={t("settings.permissionModal.forever")}
-                        disabled={
-                          submitting ||
-                          !selectedDatasetId ||
-                          selectedDatasetIsPublic
-                        }
-                      />
-                    </div>
-                    <div className="flex-1 text-xs text-gray-400">
-                      {t("settings.permissionModal.leaveEmptyForPermanent")}
-                    </div>
-                    <Button
-                      type="button"
-                      onClick={handleGrantToDataset}
-                      disabled={
-                        !selectedDatasetId ||
-                        selectedGrantUserIds.length === 0 ||
-                        submitting ||
-                        selectedDatasetIsPublic
-                      }
-                      className="bg-purple-600 hover:bg-purple-700"
-                    >
-                      {submitting
-                        ? t("settings.permissionCenterModal.granting")
-                        : t(
-                            "settings.permissionCenterModal.grantSelectedUsers",
-                            { count: selectedGrantUserIds.length },
-                          )}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </>
+          <PermissionDatasetPanel
+            submitting={submitting}
+            clearError={clearError}
+            expiresInHours={expiresInHours}
+            onExpiresInHoursChange={setExpiresInHours}
+            datasetSearchQuery={datasetSearchQuery}
+            onDatasetSearchChange={setDatasetSearchQuery}
+            datasetPage={datasetPage}
+            datasetPageSize={datasetPageSize}
+            onDatasetPageChange={setDatasetPage}
+            onDatasetPageSizeChange={setDatasetPageSize}
+            datasetTotal={datasetTotal}
+            loadingDatasets={loadingDatasets}
+            pagedDatasets={pagedDatasets}
+            selectedDatasetId={selectedDatasetId}
+            selectedDataset={selectedDataset}
+            selectedDatasetIsPublic={selectedDatasetIsPublic}
+            onSelectDatasetWithReset={(datasetId) => {
+              setSelectedDatasetId(datasetId);
+              setSelectedGrantUserIds([]);
+              setAllMatchingUsersSelected(false);
+              setAllMatchingUserCount(0);
+              setExpiresInHours("");
+              clearError();
+            }}
+            loadingDatasetGrants={loadingDatasetGrants}
+            sortedDatasetGrants={sortedDatasetGrants}
+            validDatasetGrants={validDatasetGrants}
+            onRevokeFromDataset={handleRevokeFromDataset}
+            onRevokeAllFromDataset={handleRevokeAllFromDataset}
+            visibilityTarget={visibilityTarget}
+            onVisibilityTargetChange={setVisibilityTarget}
+            selectedVisibilityDatasetIds={selectedVisibilityDatasetIds}
+            allVisibleVisibilityDatasetsSelected={allVisibleVisibilityDatasetsSelected}
+            onToggleVisibilityDataset={handleToggleVisibilityDataset}
+            onToggleAllVisibilityDatasets={handleToggleAllVisibilityDatasets}
+            onBatchUpdateVisibility={handleBatchUpdateVisibility}
+            grantUserSearchQuery={grantUserSearchQuery}
+            onGrantUserSearchChange={setGrantUserSearchQuery}
+            grantUserPage={grantUserPage}
+            grantUserPageSize={grantUserPageSize}
+            onGrantUserPageChange={setGrantUserPage}
+            onGrantUserPageSizeChange={setGrantUserPageSize}
+            grantUserTotal={grantUserTotal}
+            loadingGrantUsers={loadingGrantUsers}
+            grantUserItems={grantUserItems}
+            selectableGrantUsers={selectableGrantUsers}
+            selectedGrantUserIds={selectedGrantUserIds}
+            validDatasetGrantUserIds={validDatasetGrantUserIds}
+            allVisibleUsersSelected={allVisibleUsersSelected}
+            allMatchingUsersSelected={allMatchingUsersSelected}
+            allMatchingUserCount={allMatchingUserCount}
+            selectingAllUsers={selectingAllUsers}
+            onToggleGrantUser={handleToggleGrantUser}
+            onToggleAllUsers={handleToggleAllUsers}
+            onSelectAllMatchingUsers={handleSelectAllMatchingUsers}
+            onClearUserSelection={handleClearUserSelection}
+            onGrantToDataset={handleGrantToDataset}
+          />
         )}
         <div className="mt-6 flex justify-end border-t border-gray-200 pt-4">
           <Button type="button" variant="outline" onClick={onClose}>
