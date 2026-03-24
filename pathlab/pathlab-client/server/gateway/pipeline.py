@@ -531,6 +531,165 @@ async def _generate_patch_segmentation_visualizations(
         )
 
 
+async def run_patching_stage(
+    task_id: str,
+    wsi_ids: List[str],
+    preprocessing_config: Dict[str, Any],
+) -> None:
+    logger_manager = ScopedLogger(task_id)
+
+    total_wsi = len(wsi_ids)
+    level = preprocessing_config.get("level", 0)
+    sthresh = preprocessing_config.get("sthresh", 8)
+    mthresh = preprocessing_config.get("mthresh", 7)
+    close = preprocessing_config.get("close", 4)
+    use_otsu = preprocessing_config.get("use_otsu", False)
+    contour_fn = preprocessing_config.get("contour_fn", "four_pt")
+    use_padding = preprocessing_config.get("use_padding", True)
+    a_t = preprocessing_config.get("a_t", 1)
+    a_h = preprocessing_config.get("a_h", 256)
+    max_n_holes = preprocessing_config.get("max_n_holes", 100)
+    coords_request_params = {
+        "level": level,
+        "force_recompute": False,
+        "sthresh": sthresh,
+        "mthresh": mthresh,
+        "close": close,
+        "use_otsu": use_otsu,
+        "contour_fn": contour_fn,
+        "use_padding": use_padding,
+        "a_t": a_t,
+        "a_h": a_h,
+        "max_n_holes": max_n_holes,
+        "save_mask": True,
+    }
+
+    async with logger_manager.session() as (log, db):
+        await TrainingTaskRepository.update_status(
+            db, task_id, TaskStatus.PATCHING, progress=0
+        )
+        await log.info(f"Extracting patches from {total_wsi} WSI slides")
+        await log.info(f"Level: {level}", metadata={"level": level})
+
+    for idx, wsi_id in enumerate(wsi_ids, 1):
+        await asyncio.sleep(0)
+
+        async with logger_manager.session() as (_, db):
+            task_record = await TrainingTaskRepository.get_by_id(db, task_id)
+            if task_record is None or task_record.status == TaskStatus.CANCELLED:
+                logger.info(
+                    f"[{task_id}] Task cancelled during patch extraction at WSI {idx}/{total_wsi}, stopping"
+                )
+                raise asyncio.CancelledError()
+
+        try:
+            async with logger_manager.session() as (log, db):
+                await log.info(
+                    f"Processing WSI {idx}/{total_wsi}: {wsi_id}",
+                    metadata={
+                        "wsi_index": idx,
+                        "total_wsi": total_wsi,
+                        "wsi_id": wsi_id,
+                    },
+                )
+
+            async def _log_retry(
+                attempt: int, max_retries: int, retry_err: Exception, wait_secs: int
+            ):
+                async with logger_manager.session() as (log, db):
+                    await log.warning(
+                        f"[{idx}/{total_wsi}] compute_patches attempt {attempt}/{max_retries} "
+                        f"failed for {wsi_id}: {type(retry_err).__name__}. "
+                        f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
+                        metadata={
+                            "wsi_id": wsi_id,
+                            "attempt": attempt,
+                            "error": str(retry_err),
+                        },
+                    )
+
+            async def _log_lock_wait(wait_seconds: float):
+                async with logger_manager.session() as (log, db):
+                    await log.info(
+                        f"[{idx}/{total_wsi}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
+                        metadata={"wsi_id": wsi_id, "wait_seconds": wait_seconds},
+                    )
+
+            result = await ensure_coords_ready(
+                wsi_id,
+                params=coords_request_params,
+                timeout=600.0,
+                uploads_root=Config.get_uploads_dir(),
+                on_retry=_log_retry,
+                on_lock_wait=_log_lock_wait,
+            )
+
+            num_patches = result.get("num_patches", 0)
+            cached = result.get("cached", False)
+
+            async with logger_manager.session() as (log, db):
+                if num_patches == 0:
+                    await log.warning(
+                        f"[{idx}/{total_wsi}] No tissue patches found for {wsi_id} — "
+                        f"the slide may be blank or contain no detectable tissue. "
+                        f"It will be skipped during feature extraction.",
+                        metadata={"wsi_id": wsi_id, "num_patches": 0, "cached": cached},
+                    )
+                elif cached:
+                    await log.info(
+                        f"[{idx}/{total_wsi}] Coords cache hit for {wsi_id}",
+                        metadata={
+                            "wsi_id": wsi_id,
+                            "num_patches": num_patches,
+                            "cached": True,
+                        },
+                    )
+                else:
+                    await log.info(
+                        f"[{idx}/{total_wsi}] Extracted {num_patches} patches from {wsi_id}",
+                        metadata={
+                            "wsi_id": wsi_id,
+                            "num_patches": num_patches,
+                            "cached": False,
+                        },
+                    )
+
+                progress = int((idx / total_wsi) * 33)
+                await TrainingTaskRepository.update_status(
+                    db, task_id, TaskStatus.PATCHING, progress=progress
+                )
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            import traceback as _tb
+
+            err_type = type(e).__name__
+            err_msg = str(e) or repr(e)
+            err_tb = _tb.format_exc()
+            resp_body = ""
+            if isinstance(e, httpx.HTTPStatusError):
+                try:
+                    resp_body = e.response.text[:1000]
+                except Exception:
+                    resp_body = "(unable to read response body)"
+            async with logger_manager.session() as (log, db):
+                await log.error(
+                    f"Failed to extract patches from {wsi_id}: [{err_type}] {err_msg}",
+                    metadata={
+                        "wsi_id": wsi_id,
+                        "error": err_msg,
+                        "error_type": err_type,
+                        "response_body": resp_body,
+                        "traceback": err_tb,
+                    },
+                )
+            raise
+
+    async with logger_manager.session() as (log, db):
+        await log.info(f"Patch extraction completed for all {total_wsi} WSI slides")
+
+
 async def run_training_pipeline(
     task_id: str,
     data_type: str,
@@ -542,6 +701,7 @@ async def run_training_pipeline(
     assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
     user_id: str = None,  # User who submitted the task (for permission checks)
     user_is_admin: bool = False,  # Whether the submitting user is admin
+    patching_complete: bool = False,
 ):
     """
     Run the training pipeline based on data level:
@@ -772,159 +932,17 @@ async def run_training_pipeline(
             return
 
         # Step 1: Patch extraction for WSI-level tasks
-        # Note: patch_size and stride are now auto-determined by PrePATH-style tiling
-        # based on WSI magnification to ensure consistent physical coverage (~128μm)
-        total_wsi = len(wsi_ids)
-        level = preprocessing_config.get("level", 0)
-
-        # Tissue segmentation parameters (defaults match constants/training.ts)
-        sthresh = preprocessing_config.get("sthresh", 8)
-        mthresh = preprocessing_config.get("mthresh", 7)
-        close = preprocessing_config.get("close", 4)
-        use_otsu = preprocessing_config.get("use_otsu", False)
-        contour_fn = preprocessing_config.get("contour_fn", "four_pt")
-        use_padding = preprocessing_config.get("use_padding", True)
-
-        # Filter parameters
-        a_t = preprocessing_config.get("a_t", 1)
-        a_h = preprocessing_config.get("a_h", 256)
-        max_n_holes = preprocessing_config.get("max_n_holes", 100)
-        coords_request_params = {
-            "level": level,
-            "force_recompute": False,
-            "sthresh": sthresh,
-            "mthresh": mthresh,
-            "close": close,
-            "use_otsu": use_otsu,
-            "contour_fn": contour_fn,
-            "use_padding": use_padding,
-            "a_t": a_t,
-            "a_h": a_h,
-            "max_n_holes": max_n_holes,
-            "save_mask": True,
-        }
-
-        async with logger_manager.session() as (logger, db):
-            await TrainingTaskRepository.update_status(
-                db, task_id, TaskStatus.PATCHING, progress=0
-            )
-            await logger.info(f"Extracting patches from {total_wsi} WSI slides")
-            await logger.info(f"Level: {level}", metadata={"level": level})
-
-        for idx, wsi_id in enumerate(wsi_ids, 1):
-            # Yield control to allow cancellation signals to be processed
-            # This is important when cache hits cause fast iterations
-            await asyncio.sleep(0)
-
-            try:
-                async with logger_manager.session() as (logger, db):
-                    await logger.info(
-                        f"Processing WSI {idx}/{total_wsi}: {wsi_id}",
-                        metadata={
-                            "wsi_index": idx,
-                            "total_wsi": total_wsi,
-                            "wsi_id": wsi_id,
-                        },
-                    )
-
-                async def _log_retry(
-                    attempt: int, max_retries: int, retry_err: Exception, wait_secs: int
-                ):
-                    async with logger_manager.session() as (logger, db):
-                        await logger.warning(
-                            f"[{idx}/{total_wsi}] compute_patches attempt {attempt}/{max_retries} "
-                            f"failed for {wsi_id}: {type(retry_err).__name__}. "
-                            f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "attempt": attempt,
-                                "error": str(retry_err),
-                            },
-                        )
-
-                async def _log_lock_wait(wait_seconds: float):
-                    async with logger_manager.session() as (logger, db):
-                        await logger.info(
-                            f"[{idx}/{total_wsi}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
-                            metadata={"wsi_id": wsi_id, "wait_seconds": wait_seconds},
-                        )
-
-                result = await ensure_coords_ready(
-                    wsi_id,
-                    params=coords_request_params,
-                    timeout=600.0,
-                    uploads_root=Config.get_uploads_dir(),
-                    on_retry=_log_retry,
-                    on_lock_wait=_log_lock_wait,
+        if patching_complete:
+            async with logger_manager.session() as (log, db):
+                await log.info(
+                    f"Patch extraction already complete (pre-queue), "
+                    f"skipping patching stage for {len(wsi_ids)} WSI slides"
                 )
-
-                num_patches = result.get("num_patches", 0)
-                cached = result.get("cached", False)
-
-                async with logger_manager.session() as (logger, db):
-                    if num_patches == 0:
-                        await logger.warning(
-                            f"[{idx}/{total_wsi}] No tissue patches found for {wsi_id} — "
-                            f"the slide may be blank or contain no detectable tissue. "
-                            f"It will be skipped during feature extraction.",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "num_patches": 0,
-                                "cached": cached,
-                            },
-                        )
-                    elif cached:
-                        await logger.info(
-                            f"[{idx}/{total_wsi}] Coords cache hit for {wsi_id}",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "num_patches": num_patches,
-                                "cached": True,
-                            },
-                        )
-                    else:
-                        await logger.info(
-                            f"[{idx}/{total_wsi}] Extracted {num_patches} patches from {wsi_id}",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "num_patches": num_patches,
-                                "cached": False,
-                            },
-                        )
-
-                    # Update progress (0-33%)
-                    progress = int((idx / total_wsi) * 33)
-                    await TrainingTaskRepository.update_status(
-                        db, task_id, TaskStatus.PATCHING, progress=progress
-                    )
-
-            except Exception as e:
-                err_type = type(e).__name__
-                err_msg = str(e) or repr(e)
-                err_tb = traceback.format_exc()
-                # For HTTP errors, include the response body for debugging
-                resp_body = ""
-                if isinstance(e, httpx.HTTPStatusError):
-                    try:
-                        resp_body = e.response.text[:1000]
-                    except Exception:
-                        resp_body = "(unable to read response body)"
-                async with logger_manager.session() as (logger, db):
-                    await logger.error(
-                        f"Failed to extract patches from {wsi_id}: [{err_type}] {err_msg}",
-                        metadata={
-                            "wsi_id": wsi_id,
-                            "error": err_msg,
-                            "error_type": err_type,
-                            "response_body": resp_body,
-                            "traceback": err_tb,
-                        },
-                    )
-                raise
-
-        async with logger_manager.session() as (logger, db):
-            await logger.info(
-                f"Patch extraction completed for all {total_wsi} WSI slides"
+        else:
+            await run_patching_stage(
+                task_id=task_id,
+                wsi_ids=wsi_ids,
+                preprocessing_config=preprocessing_config,
             )
 
         # Step 2: Feature extraction via AI service
