@@ -1,5 +1,5 @@
-// Upload mode type: classification (label), survival (event_time, event_status), or segmentation (COCO JSON annotations)
-export type UploadMode = 'classification' | 'survival' | 'segmentation'
+// Upload mode type is re-exported from TaskType (classification, survival, or segmentation)
+export type { TaskType as UploadMode } from '../../constants/training'
 // Aggregation level type: case (case-level grouping) or file (file-level, each file independent)
 export type DataLevel = 'case' | 'file'
 // Data type: wsi (whole slide images) or patch (image patches/tiles)
