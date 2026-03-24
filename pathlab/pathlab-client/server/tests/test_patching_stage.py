@@ -1,6 +1,6 @@
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock, call
+from unittest.mock import AsyncMock, patch, MagicMock
 
 from backend.ai.schemas.base import TaskStatus
 
@@ -130,3 +130,83 @@ async def test_run_patching_stage_single_wsi_progress_reaches_33():
     assert 33 in progress_values, (
         f"Expected progress=33 in calls, got: {progress_values}"
     )
+
+
+@pytest.mark.asyncio
+async def test_run_patching_then_submit_happy_path():
+    """On success: runs patching, submits to GPU queue with patching_complete=True."""
+    task_id = "test_happy"
+    pipeline_kwargs = {
+        "data_type": "wsi",
+        "wsi_ids": ["wsi_1"],
+        "preprocessing_config": {},
+        "model_config": {},
+        "training_task_type": "classification",
+    }
+
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock()
+    mock_queue.deregister_patching_task = MagicMock()
+
+    with (
+        patch(
+            "gateway.pipeline.run_patching_stage", new_callable=AsyncMock
+        ) as mock_patching,
+        patch("gateway.task_queue.get_task_queue", return_value=mock_queue),
+        patch("gateway.pipeline.TrainingTaskRepository") as mock_repo,
+        patch("gateway.pipeline.safe_session") as mock_safe_session,
+    ):
+        mock_task = MagicMock(status=TaskStatus.PATCHING)
+        mock_repo.get_by_id = AsyncMock(return_value=mock_task)
+        mock_repo.update_status = AsyncMock()
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_safe_session.return_value = ctx
+
+        from gateway.pipeline import run_patching_then_submit
+
+        await run_patching_then_submit(task_id, pipeline_kwargs)
+
+    mock_patching.assert_awaited_once()
+    mock_queue.submit.assert_awaited_once()
+    submitted_kwargs = mock_queue.submit.call_args.kwargs
+    assert submitted_kwargs.get("patching_complete") is True
+    mock_queue.deregister_patching_task.assert_called_once_with(task_id)
+
+
+@pytest.mark.asyncio
+async def test_run_patching_then_submit_cancellation():
+    """On CancelledError during patching: deregisters from queue manager and re-raises."""
+    task_id = "test_cancel"
+    pipeline_kwargs = {
+        "data_type": "wsi",
+        "wsi_ids": ["wsi_1"],
+        "preprocessing_config": {},
+    }
+
+    mock_queue = MagicMock()
+    mock_queue.deregister_patching_task = MagicMock()
+
+    with (
+        patch(
+            "gateway.pipeline.run_patching_stage", side_effect=asyncio.CancelledError
+        ),
+        patch("gateway.task_queue.get_task_queue", return_value=mock_queue),
+        patch("gateway.pipeline.TrainingTaskRepository") as mock_repo,
+        patch("gateway.pipeline.safe_session") as mock_safe_session,
+    ):
+        mock_task = MagicMock(status=TaskStatus.PATCHING)
+        mock_repo.get_by_id = AsyncMock(return_value=mock_task)
+        mock_repo.update_status = AsyncMock()
+        ctx = AsyncMock()
+        ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_safe_session.return_value = ctx
+
+        from gateway.pipeline import run_patching_then_submit
+
+        with pytest.raises(asyncio.CancelledError):
+            await run_patching_then_submit(task_id, pipeline_kwargs)
+
+    mock_queue.deregister_patching_task.assert_called_once_with(task_id)

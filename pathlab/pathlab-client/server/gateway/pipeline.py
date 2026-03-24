@@ -707,6 +707,108 @@ async def run_patching_stage(
         await log.info(f"Patch extraction completed for all {total_wsi} WSI slides")
 
 
+async def run_patching_then_submit(task_id: str, pipeline_kwargs: dict) -> None:
+    """
+    Coordinator for WSI tasks: run CPU-only patching outside the GPU gate, then
+    submit the GPU pipeline (feature extraction + training) to the task queue.
+
+    Lifecycle:
+      PENDING → PATCHING (set by run_patching_stage) → QUEUED (submitted to GPU queue)
+
+    Called as a background asyncio.Task registered with TaskQueueManager._patching_tasks.
+    Cancellation via asyncio.Task.cancel() propagates as CancelledError; the handler
+    updates DB status to CANCELLED and deregisters from the queue manager.
+    """
+    from .task_queue import get_task_queue, TaskType
+
+    try:
+        await run_patching_stage(
+            task_id=task_id,
+            wsi_ids=pipeline_kwargs["wsi_ids"],
+            preprocessing_config=pipeline_kwargs.get("preprocessing_config", {}),
+        )
+
+        async with safe_session() as db:
+            task_record = await TrainingTaskRepository.get_by_id(db, task_id)
+            if not task_record or task_record.status == TaskStatus.CANCELLED:
+                logger.info(
+                    f"[{task_id}] Task cancelled after patching completion, not submitting to GPU queue"
+                )
+                return
+
+        gpu_kwargs = {**pipeline_kwargs, "patching_complete": True}
+        task_queue = get_task_queue()
+        await task_queue.submit(
+            task_id=task_id,
+            task_type=TaskType.TRAINING,
+            coro_func=run_training_pipeline,
+            **gpu_kwargs,
+        )
+
+        async with safe_session() as db:
+            await TrainingTaskRepository.update_status(
+                db, task_id, TaskStatus.QUEUED, progress=33
+            )
+            await db.commit()
+
+        logger.info(
+            f"[{task_id}] Patching complete, submitted to GPU queue (progress=33%)"
+        )
+
+    except asyncio.CancelledError:
+        logger.info(f"[{task_id}] Pre-queue patching cancelled")
+        try:
+            async with safe_session() as db:
+                task_record = await TrainingTaskRepository.get_by_id(db, task_id)
+                if task_record and task_record.status not in (
+                    TaskStatus.CANCELLED,
+                    TaskStatus.FAILED,
+                    TaskStatus.COMPLETED,
+                ):
+                    await TrainingTaskRepository.update_status(
+                        db, task_id, TaskStatus.CANCELLED
+                    )
+                    await db.commit()
+        except Exception as db_err:
+            logger.error(
+                f"[{task_id}] Failed to update cancelled status after patching cancellation: {db_err}"
+            )
+        raise
+
+    except Exception as e:
+        err_msg = str(e) or repr(e)
+        logger.error(
+            f"[{task_id}] Pre-queue patching failed: [{type(e).__name__}] {err_msg}"
+        )
+        try:
+            async with safe_session() as db:
+                task_record = await TrainingTaskRepository.get_by_id(db, task_id)
+                if task_record and task_record.status not in (
+                    TaskStatus.CANCELLED,
+                    TaskStatus.FAILED,
+                    TaskStatus.COMPLETED,
+                ):
+                    await TrainingTaskRepository.update_status(
+                        db,
+                        task_id,
+                        TaskStatus.FAILED,
+                        error_message=f"Patch extraction failed: [{type(e).__name__}] {err_msg}",
+                    )
+                    await db.commit()
+        except Exception as db_err:
+            logger.error(
+                f"[{task_id}] Failed to update failed status after patching error: {db_err}"
+            )
+
+    finally:
+        try:
+            from .task_queue import get_task_queue
+
+            get_task_queue().deregister_patching_task(task_id)
+        except Exception:
+            pass
+
+
 async def run_training_pipeline(
     task_id: str,
     data_type: str,
