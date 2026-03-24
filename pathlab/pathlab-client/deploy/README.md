@@ -114,6 +114,35 @@ PostgreSQL 由 `embedded-postgres` npm 包在运行时自动管理，无需预�
 
 这与 `PATHLAB_DEBUG=1` 下的 sidecar 端口保持一致，便于浏览器调试与反向代理复用。
 
+### GPU 控制（CUDA_VISIBLE_DEVICES）
+
+若机器上某几块 GPU 存在硬件故障，可在 `server/.env` 中设置 `CUDA_VISIBLE_DEVICES` 来全局排除坏卡。此设置会同时影响 `start.sh`、`hot-reload.sh` 和 `systemd` 三条部署链路下的所有训练和推理任务。
+
+**配置方式：**
+
+```bash
+# 在 server/.env 中加一行（排除物理 GPU 2，只使用 GPU 0、1、3）
+CUDA_VISIBLE_DEVICES=0,1,3
+```
+
+**生效范围：**
+
+| 入口 | 生效机制 |
+|---|---|
+| `start.sh` | 已 `source server/.env`，直接继承 |
+| `hot-reload.sh` | 已 `source server/.env`，直接继承 |
+| `systemd/pathlab.service` | `EnvironmentFile=server/.env` 加载 |
+
+**启动日志中的验证输出：**
+
+```
+  [GPU] CUDA_VISIBLE_DEVICES=0,1,3
+  [GPU] 系统物理 GPU 索引: 0 1 2 3
+  [GPU][✓] 配置有效
+```
+
+`server/main.py` 中的自动坏卡探测（`_detect_and_exclude_bad_gpus`）会尊重此配置：若检测到 `CUDA_VISIBLE_DEVICES` 已设，直接跳过自动排除逻辑，以运维配置为准。
+
 ### `start.sh` 当前行为
 
 `./deploy/start.sh` 当前会依次执行：
