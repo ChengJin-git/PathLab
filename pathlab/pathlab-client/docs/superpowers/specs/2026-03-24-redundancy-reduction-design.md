@@ -150,16 +150,14 @@ Three consumers (`BulkEditModal.tsx`, `DatasetConfigStep.tsx`, `UploadPage.tsx`)
 **File**: `src/renderer/src/components/taskDetail/types.ts`
 
 ```typescript
-// Before
-import type { TrainingTaskStatus } from '../../contexts/backgroundTask/types'
-
+// Before — no import, inline union
 export interface TaskDetail {
   // ...
   status: 'creating' | 'pending' | 'queued' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled' | 'resuming'
   // ...
 }
 
-// After
+// After — import and use named type
 import type { TrainingTaskStatus } from '../../contexts/backgroundTask/types'
 
 export interface TaskDetail {
