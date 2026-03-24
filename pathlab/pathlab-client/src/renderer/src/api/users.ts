@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, buildSearchParams } from './client'
+import { apiFetch, buildSearchParams, type PaginatedResponse } from './client'
 import type { AdminUserUpdateRequest, AuthUser } from './auth'
 
 // ============================================================================
@@ -17,12 +17,7 @@ export interface ListUsersPagedOptions {
   exclude_admin?: boolean
 }
 
-export interface PaginatedUserListResponse {
-  items: UserListItem[]
-  total: number
-  page: number
-  page_size: number
-}
+export type PaginatedUserListResponse = PaginatedResponse<UserListItem>
 
 /**
  * List all users (admin only)

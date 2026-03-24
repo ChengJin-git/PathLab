@@ -5,27 +5,27 @@
  */
 
 import { DatasetSummary, TrainingTaskDetail } from '../api'
+import type { WSISummary } from '../api/wsi'
 import { TaskType, DataLevel, SplitStrategy, TrainingStatus, ExtractorOption } from '../constants/training'
 
 // ============================================================================
 // WSI Item Types
 // ============================================================================
 
-export interface WSIItem {
-  wsi_id: string
-  original_filename?: string
-  label?: string | null
-  case_id?: string | null
-  age?: number | null
-  gender?: string | null
-  source?: string | null
-  split?: string | null
-  file_extension?: string | null  // e.g. ".svs", ".png" - for file type determination (wsi_path no longer exposed)
-  file_size?: number | null
-  data_type?: 'wsi' | 'patch' | null
-  event_time?: number | null
-  event_status?: number | null
-}
+export type WSIItem = Pick<WSISummary,
+  | 'wsi_id'
+  | 'label'
+  | 'case_id'
+  | 'age'
+  | 'gender'
+  | 'source'
+  | 'split'
+  | 'file_extension'
+  | 'file_size'
+  | 'data_type'
+  | 'event_time'
+  | 'event_status'
+> & { original_filename?: string }
 
 export interface FileMetadata {
   label: string

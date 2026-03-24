@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, ACTIVITY_CACHE_TTL } from '../lib/cache'
-import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken, type DownloadApiFileResult } from './client'
+import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken, type DownloadApiFileResult, type PaginatedResponse } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
 // ============================================================================
@@ -66,12 +66,8 @@ export interface AITaskResponse {
 /**
  * WSI List response (server-side case-level pagination)
  */
-export interface WSIListResponse {
-  items: WSISummary[]
-  total: number
+export interface WSIListResponse extends PaginatedResponse<WSISummary> {
   total_cases: number
-  page: number
-  page_size: number
   has_multi_slide_cases: boolean
 }
 

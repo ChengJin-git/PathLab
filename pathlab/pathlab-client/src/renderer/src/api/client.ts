@@ -445,11 +445,14 @@ export function downloadBlobFile(blob: Blob, filename: string): void {
 // ============================================================================
 
 /**
- * Standard paginated list response
+ * Standard paginated list response.
+ * Optional pagination fields are present when the server returns paginated results.
  */
 export interface PaginatedResponse<T> {
   items: T[]
   total: number
+  page?: number
+  page_size?: number
 }
 
 /**
