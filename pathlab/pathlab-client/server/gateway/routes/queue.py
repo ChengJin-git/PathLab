@@ -6,7 +6,6 @@ Provides API endpoints for monitoring and managing the GPU task queue.
 
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..task_queue import get_task_queue
@@ -18,21 +17,11 @@ from backend.database.repositories import TrainingTaskRepository, AITaskReposito
 from backend.common.config import Config
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin, check_data_ownership
+from gateway.models import QueueConfigRequest
 from .access_control import assert_owner
 from .analysis_state import get_analysis_state
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
-
-
-class QueueConfigRequest(BaseModel):
-    """Request to update queue configuration"""
-
-    max_concurrent: Optional[int] = Field(
-        None, ge=1, le=10, description="Maximum concurrent GPU tasks (1-10)"
-    )
-    task_timeout: Optional[int] = Field(
-        None, ge=60, le=259200, description="Task timeout in seconds (60-259200)"
-    )
 
 
 @router.get("/config")

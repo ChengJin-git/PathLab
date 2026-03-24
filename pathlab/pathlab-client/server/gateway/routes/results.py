@@ -19,7 +19,6 @@ from typing import List, Dict, Any, Optional, Callable, Tuple, cast as type_cast
 from collections import defaultdict
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, cast, String
 from sqlalchemy.orm import selectinload
@@ -66,6 +65,7 @@ from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
+from gateway.models import ExternalValidationRequest, QuickAnalysisRequest
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
@@ -1356,26 +1356,6 @@ async def get_datasets_for_validation(
     return {"items": result, "total": len(result)}
 
 
-class ExternalValidationRequest(BaseModel):
-    """Request for external validation - use a trained model on a dataset."""
-
-    model_id: str  # TrainedModel ID from the models table
-    dataset_id: str  # Dataset whose WSIs will be used for validation
-    rerun_from_task_id: Optional[str] = (
-        None  # Admin rerun only: preserve owner from source task
-    )
-    # Analysis options
-    metrics: Optional[List[str]] = (
-        None  # Metrics to compute (default: accuracy, precision, recall, f1, auc, weighted_kappa)
-    )
-    charts: Optional[List[str]] = (
-        None  # Charts to generate (default: confusion_matrix, roc_curve)
-    )
-    compute_bootstrap_ci: Optional[bool] = (
-        False  # Whether to compute 95% CI via bootstrap
-    )
-
-
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
@@ -2304,14 +2284,6 @@ async def stream_analysis_tasks(user: User = Depends(get_user_from_token_param))
             "X-Accel-Buffering": "no",  # Disable nginx buffering
         },
     )
-
-
-class QuickAnalysisRequest(BaseModel):
-    """Request body for quick analysis - specify what metrics/charts to return."""
-
-    metrics: Optional[List[str]] = None  # If None, return all available metrics
-    charts: Optional[List[str]] = None  # If None, return all available charts
-    run_if_missing: bool = True  # If True, run analysis if not available
 
 
 @router.get("/tasks/{task_id}/quick-analysis")

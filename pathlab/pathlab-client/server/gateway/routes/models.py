@@ -14,7 +14,6 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
-from pydantic import BaseModel
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,18 +24,12 @@ from backend.database.models import TrainedModel as TrainedModelORM, TrainingTas
 from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_pathologist_or_admin
+from gateway.models import ModelUpdateRequest
 from .access_control import assert_owner
 from gateway.chat.context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/models", tags=["Trained Models"])
 logger = logging.getLogger(__name__)
-
-
-class ModelUpdateRequest(BaseModel):
-    """Request body for updating model properties"""
-
-    is_default: Optional[bool] = None
-    is_active: Optional[bool] = None
 
 
 def _cleanup_temp_file(path: str) -> None:

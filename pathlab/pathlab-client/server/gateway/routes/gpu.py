@@ -12,7 +12,6 @@ import logging
 
 import torch
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 
 from backend.auth import User
 from backend.auth.dependencies import require_can_use_gpu
@@ -21,37 +20,12 @@ from backend.common.gpu_utils import (
     get_optimal_device,
     NoGPUAvailableError,
 )
+from gateway.models import GPUInfo, GPUStatusResponse
 from ..task_queue import get_task_queue
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/gpu", tags=["GPU"])
-
-
-class GPUInfo(BaseModel):
-    """Information about a single GPU."""
-
-    index: int
-    name: str
-    total_mb: float
-    allocated_mb: float
-    free_mb: float
-    utilization_percent: float
-    is_optimal: bool = False
-    is_healthy: bool = True
-
-
-class GPUStatusResponse(BaseModel):
-    """Response containing GPU status information."""
-
-    available: bool
-    error: Optional[str] = None
-    gpu_count: int = 0
-    bad_gpu_count: int = 0
-    gpus: List[GPUInfo] = []
-    optimal_device: Optional[str] = None
-    optimal_device_index: Optional[int] = None
-    cuda_version: Optional[str] = None
 
 
 @router.get("/info", response_model=GPUStatusResponse)

@@ -6,6 +6,7 @@ from enum import Enum
 from pydantic import BaseModel, Field, model_validator
 from typing import Optional, Dict, List, Any, Literal
 from backend.ai.segmentors.specs import is_fm_segmentation_backbone
+from backend.auth.schemas import UserReadAdmin
 
 
 class DatasetUpdateVisibilityRequest(BaseModel):
@@ -384,3 +385,209 @@ class BulkDeleteRegionsByCreatorRequest(BaseModel):
 
 class AddCollaboratorRequest(BaseModel):
     user_id: str
+
+
+class PublicSettingsResponse(BaseModel):
+    turnstile_enabled: bool
+    turnstile_site_key: str
+
+
+class GlobalSettingsResponse(BaseModel):
+    openrouter_api_key: str
+    openrouter_base_url: str
+    openrouter_model: str
+    huggingface_token: str
+    dashscope_api_key: str
+    exa_api_key: str
+    local_vllm_enabled: bool
+    local_vllm_base_url: str
+    local_vllm_model: str
+    local_vllm_api_key: str
+    local_asr_enabled: bool
+    local_asr_base_url: str
+    local_asr_model: str
+    local_asr_api_key: str
+    turnstile_enabled: bool
+    turnstile_site_key: str
+    turnstile_secret_key: str
+    resend_enabled: bool
+    resend_api_key: str
+    admin_notify_email: str
+    email_templates: dict
+
+
+class GlobalSettingsUpdateRequest(BaseModel):
+    openrouter_api_key: Optional[str] = None
+    openrouter_base_url: Optional[str] = None
+    openrouter_model: Optional[str] = None
+    huggingface_token: Optional[str] = None
+    dashscope_api_key: Optional[str] = None
+    exa_api_key: Optional[str] = None
+    local_vllm_enabled: Optional[bool] = None
+    local_vllm_base_url: Optional[str] = None
+    local_vllm_model: Optional[str] = None
+    local_vllm_api_key: Optional[str] = None
+    local_asr_enabled: Optional[bool] = None
+    local_asr_base_url: Optional[str] = None
+    local_asr_model: Optional[str] = None
+    local_asr_api_key: Optional[str] = None
+    turnstile_enabled: Optional[bool] = None
+    turnstile_site_key: Optional[str] = None
+    turnstile_secret_key: Optional[str] = None
+    resend_enabled: Optional[bool] = None
+    resend_api_key: Optional[str] = None
+    admin_notify_email: Optional[str] = None
+    email_templates: Optional[dict] = None
+
+
+class VllmCheckRequest(BaseModel):
+    base_url: str
+    api_key: Optional[str] = None
+
+
+class VllmCheckResponse(BaseModel):
+    online: bool
+    model: Optional[str] = None
+    error: Optional[str] = None
+
+
+class AsrCheckRequest(BaseModel):
+    base_url: str
+    model: Optional[str] = None
+    api_key: Optional[str] = None
+
+
+class AsrCheckResponse(BaseModel):
+    online: bool
+    model: Optional[str] = None
+    error: Optional[str] = None
+
+
+class QueueConfigRequest(BaseModel):
+    max_concurrent: Optional[int] = Field(
+        None, ge=1, le=10, description="Maximum concurrent GPU tasks (1-10)"
+    )
+    task_timeout: Optional[int] = Field(
+        None, ge=60, le=259200, description="Task timeout in seconds (60-259200)"
+    )
+
+
+class GPUInfo(BaseModel):
+    index: int
+    name: str
+    total_mb: float
+    allocated_mb: float
+    free_mb: float
+    utilization_percent: float
+    is_optimal: bool = False
+    is_healthy: bool = True
+
+
+class GPUStatusResponse(BaseModel):
+    available: bool
+    error: Optional[str] = None
+    gpu_count: int = 0
+    bad_gpu_count: int = 0
+    gpus: List[GPUInfo] = []
+    optimal_device: Optional[str] = None
+    optimal_device_index: Optional[int] = None
+    cuda_version: Optional[str] = None
+
+
+class BatchGrantDatasetGrantRequest(BaseModel):
+    user_ids: List[str] = Field(default_factory=list)
+    expires_in_hours: Optional[int] = None
+    can_read: Optional[bool] = True
+    can_collaborate: Optional[bool] = False
+    can_use_gpu: Optional[bool] = False
+
+
+class BatchRevokeDatasetGrantRequest(BaseModel):
+    user_ids: List[str] = Field(default_factory=list)
+
+
+class ModelUpdateRequest(BaseModel):
+    is_default: Optional[bool] = None
+    is_active: Optional[bool] = None
+
+
+class AccessRequest(BaseModel):
+    username: str = Field(description="Desired username (stored in email field)")
+    password: str = Field(description="Account password")
+    registration_email: str = Field(
+        description="Educational email for identity verification"
+    )
+    nickname: Optional[str] = Field(default=None, description="Display name")
+    turnstile_token: Optional[str] = Field(
+        default=None, description="Cloudflare Turnstile token"
+    )
+
+
+class SecureLoginRequest(BaseModel):
+    username: str
+    hashed_password: str
+    timestamp: int
+    turnstile_token: Optional[str] = None
+
+
+class PaginatedUserListResponse(BaseModel):
+    items: List[UserReadAdmin]
+    total: int
+    page: int
+    page_size: int
+
+
+class AcceptAgreementRequest(BaseModel):
+    ip: Optional[str] = Field(
+        default=None, description="Client IP address when accepting the agreement"
+    )
+
+
+class BatchUserIdsRequest(BaseModel):
+    user_ids: List[str]
+
+
+class MaintenanceModeRequest(BaseModel):
+    enabled: bool
+
+
+class MaintenanceNoticeRequest(BaseModel):
+    message: Optional[str] = Field(
+        default=None, description="Notice message. Empty or null to clear."
+    )
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password_sha256: str
+    new_password_sha256: str
+
+
+class AnalysisRequest(BaseModel):
+    metrics: List[str] = [
+        "accuracy",
+        "precision",
+        "recall",
+        "specificity",
+        "f1",
+        "auc",
+        "weighted_kappa",
+    ]
+    charts: List[str] = ["roc_curve", "confusion_matrix", "loss_curve"]
+    description: Optional[str] = None
+    bootstrap_ci_metrics: List[str] = []
+    compute_bootstrap_ci: bool = False
+
+
+class ExternalValidationRequest(BaseModel):
+    model_id: str
+    dataset_id: str
+    rerun_from_task_id: Optional[str] = None
+    metrics: Optional[List[str]] = None
+    charts: Optional[List[str]] = None
+    compute_bootstrap_ci: Optional[bool] = False
+
+
+class QuickAnalysisRequest(BaseModel):
+    metrics: Optional[List[str]] = None
+    charts: Optional[List[str]] = None
+    run_if_missing: bool = True

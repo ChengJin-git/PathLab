@@ -32,7 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from backend.database import get_db
 from backend.auth import (
@@ -48,6 +48,16 @@ from backend.auth import (
 from backend.auth.schemas import UserReadAdmin, AdminUserUpdate
 from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
+from gateway.models import (
+    AccessRequest,
+    SecureLoginRequest,
+    PaginatedUserListResponse,
+    AcceptAgreementRequest,
+    BatchUserIdsRequest,
+    MaintenanceModeRequest,
+    MaintenanceNoticeRequest,
+    ChangePasswordRequest,
+)
 from ..email_notifications import send_templated_email
 from ..dependencies import logger
 
@@ -100,20 +110,6 @@ def is_educational_email(email: str) -> bool:
         r"\.ac\.[a-z]{2,6}$",
     ]
     return any(_re.search(pat, domain) for pat in _FALLBACK)
-
-
-class AccessRequest(BaseModel):
-    """Request body for public self-registration (access request)."""
-
-    username: str = Field(description="Desired username (stored in email field)")
-    password: str = Field(description="Account password")
-    registration_email: str = Field(
-        description="Educational email for identity verification"
-    )
-    nickname: Optional[str] = Field(default=None, description="Display name")
-    turnstile_token: Optional[str] = Field(
-        default=None, description="Cloudflare Turnstile token"
-    )
 
 
 async def _send_activation_email(user: "User") -> None:
@@ -212,24 +208,6 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
     except Exception as e:
         logger.error(f"Turnstile verification error: {e}")
         return False
-
-
-class SecureLoginRequest(BaseModel):
-    """Request body for secure login with client-side hashed password."""
-
-    username: str
-    hashed_password: str  # SHA256(SHA256(password) + timestamp + APP_SALT)
-    timestamp: int  # Unix timestamp in milliseconds
-    turnstile_token: Optional[str] = None  # Cloudflare Turnstile token (optional)
-
-
-class PaginatedUserListResponse(BaseModel):
-    """Paginated admin user list response."""
-
-    items: List[UserReadAdmin]
-    total: int
-    page: int
-    page_size: int
 
 
 # Create main auth router
@@ -771,15 +749,6 @@ async def delete_user(
     return {"success": True, "message": f"User {user.email} deleted"}
 
 
-# Agreement acceptance endpoints
-class AcceptAgreementRequest(BaseModel):
-    """Request body for accepting the agreement."""
-
-    ip: Optional[str] = Field(
-        default=None, description="Client IP address when accepting the agreement"
-    )
-
-
 @router.post("/auth/accept-agreement", response_model=UserRead, tags=["Authentication"])
 async def accept_agreement(
     request: AcceptAgreementRequest = None,
@@ -842,17 +811,6 @@ async def revoke_user_agreement(
 
     logger.info(f"Admin {admin.email} revoked agreement for user {user.email}")
     return user
-
-
-# ============================================================================
-# Batch User Operations (Admin only)
-# ============================================================================
-
-
-class BatchUserIdsRequest(BaseModel):
-    """Request model for batch user operations."""
-
-    user_ids: List[str]
 
 
 @router.post("/auth/users/batch/activate", tags=["User Management"])
@@ -960,17 +918,6 @@ async def batch_delete_users(
     return {"deleted": deleted}
 
 
-# ============================================================================
-# Maintenance Mode (Admin only)
-# ============================================================================
-
-
-class MaintenanceModeRequest(BaseModel):
-    """Request model for setting maintenance mode."""
-
-    enabled: bool
-
-
 @router.get("/auth/maintenance-mode", tags=["User Management"])
 async def get_maintenance_mode():
     """
@@ -1049,19 +996,6 @@ async def set_maintenance_mode(
         )
 
     return {"enabled": request.enabled, "affected_users": affected_users}
-
-
-# ============================================================================
-# Maintenance Notice (Announcement for non-admin users)
-# ============================================================================
-
-
-class MaintenanceNoticeRequest(BaseModel):
-    """Request model for setting maintenance notice."""
-
-    message: Optional[str] = Field(
-        default=None, description="Notice message. Empty or null to clear."
-    )
 
 
 @router.get("/auth/maintenance-notice/public", tags=["User Management"])
@@ -1167,16 +1101,6 @@ async def acknowledge_notice(
             f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
         )
     return user
-
-
-# ============================================================================
-# Self-service Password Change
-# ============================================================================
-
-
-class ChangePasswordRequest(BaseModel):
-    current_password_sha256: str
-    new_password_sha256: str
 
 
 @router.post(

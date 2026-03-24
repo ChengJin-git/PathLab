@@ -6,6 +6,7 @@ Unified entry/exit design:
 - All responses return a unified format
 - Routed by task_type
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -17,7 +18,6 @@ from typing import List, Dict, Optional, Any
 import torch
 import torch.nn.functional as F
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.schemas.base import TaskStatus
@@ -43,9 +43,16 @@ from backend.ai.schemas import (
     InferenceResponse,
     TaskType,
 )
+from backend.ai.schemas.requests import (
+    InferenceRequest,
+    SyncInferenceRequest,
+    WSIClassificationInferRequest,
+)
 from backend.common.config import Config
 from backend.common.gpu_utils import get_device_string
-from backend.preprocessing.heatmap_preview_cache import ensure_recommendation_preview_cache
+from backend.preprocessing.heatmap_preview_cache import (
+    ensure_recommendation_preview_cache,
+)
 
 logger = logging.getLogger("inference_routes")
 
@@ -55,24 +62,11 @@ UPLOADS_DIR = Config.get_uploads_dir()
 router = APIRouter(tags=["inference"])
 
 
-# =============================================================================
-# Inference Request Models (backward compatible)
-# =============================================================================
-
-class InferenceRequest(BaseModel):
-    """Inference request - backward compatible"""
-    task: str  # "wsi_classification"
-    wsi_id: str
-    classes: List[str]
-    model_id: Optional[str] = None
-    params: Optional[Dict[str, Any]] = None
-
-
 @router.post("/analyze")
 async def analyze_wsi(
     req: InferenceRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Start asynchronous WSI inference task (legacy endpoint).
@@ -95,9 +89,12 @@ async def analyze_wsi(
         models = await TrainedModelRepository.get_all(db)
         model = next((m for m in models if m.is_active), None)
         if not model:
-             # If no trained model, we cannot proceed for now.
-             # In a real app, this might fall back to a pretrained system model.
-             raise HTTPException(status_code=400, detail="No trained model available. Please train a model first.")
+            # If no trained model, we cannot proceed for now.
+            # In a real app, this might fall back to a pretrained system model.
+            raise HTTPException(
+                status_code=400,
+                detail="No trained model available. Please train a model first.",
+            )
 
     # 3. Create Task ID & Record
     task_id = f"inf_{uuid.uuid4().hex[:16]}"
@@ -108,27 +105,19 @@ async def analyze_wsi(
         task_id=task_id,
         wsi_id=req.wsi_id,
         model_id=model.model_id,
-        device=get_device_string()
+        device=get_device_string(),
     )
 
     return {
         "task_id": task_id,
         "status": TaskStatus.PENDING,
-        "message": "Inference started successfully"
+        "message": "Inference started successfully",
     }
-
-
-class SyncInferenceRequest(BaseModel):
-    """Request for synchronous inference execution"""
-    task_id: str
-    wsi_id: str
-    model_id: str
 
 
 @router.post("/analyze/sync")
 async def analyze_wsi_sync(
-    req: SyncInferenceRequest,
-    db: AsyncSession = Depends(get_db)
+    req: SyncInferenceRequest, db: AsyncSession = Depends(get_db)
 ):
     """
     Execute WSI inference synchronously (blocking).
@@ -145,7 +134,7 @@ async def analyze_wsi_sync(
             task_id=req.task_id,
             wsi_id=req.wsi_id,
             model_id=req.model_id,
-            device=get_device_string()
+            device=get_device_string(),
         )
         return result
     except Exception as e:
@@ -153,12 +142,7 @@ async def analyze_wsi_sync(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-async def run_inference_pipeline(
-    task_id: str,
-    wsi_id: str,
-    model_id: str,
-    device: str
-):
+async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, device: str):
     """
     Background inference pipeline:
     1. Extract features (if needed)
@@ -173,11 +157,15 @@ async def run_inference_pipeline(
             # Note: The Gateway creates the AITask record, so we wait briefly to ensure it exists
             # or we accept that AITask creation race condition might happen.
             # Ideally, we should update status here.
-            await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=0)
+            await AITaskRepository.update_status(
+                db, task_id, TaskStatus.PATCHING, progress=0
+            )
             await db.commit()
 
             # --- Step 1: Load Model (need to know extractor first) ---
-            await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=10)
+            await AITaskRepository.update_status(
+                db, task_id, TaskStatus.PATCHING, progress=10
+            )
 
             model_record = await TrainedModelRepository.get_by_id(db, model_id)
             if not model_record:
@@ -190,17 +178,23 @@ async def run_inference_pipeline(
             # Check coordinates first (search across all params_hash directories)
             coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
             if coords_h5 is None:
-                raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
+                raise FileNotFoundError(
+                    f"Coordinates not found for {wsi_id}. Please run preprocessing first."
+                )
 
             # Read params from coordinates to compute cache key
             params_hash = read_params_from_coords_h5(coords_h5)
             if not params_hash:
                 # Fallback: use a default hash if we can't read params
-                logger.warning(f"Could not read params from {coords_h5}, using default hash")
+                logger.warning(
+                    f"Could not read params from {coords_h5}, using default hash"
+                )
                 params_hash = "default0"
 
             # Check global feature cache
-            cached_path = find_cached_features(UPLOADS_DIR, extractor_name, wsi_id, params_hash)
+            cached_path = find_cached_features(
+                UPLOADS_DIR, extractor_name, wsi_id, params_hash
+            )
 
             features = None
             if cached_path:
@@ -209,18 +203,28 @@ async def run_inference_pipeline(
                     safe_load_features, cached_path, delete_if_corrupted=True
                 )
                 if feats is not None:
-                    logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
+                    logger.info(
+                        f"Cache hit for {wsi_id} with extractor {extractor_name}"
+                    )
                     features = feats.to(device)
-                    await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=30)
+                    await AITaskRepository.update_status(
+                        db, task_id, TaskStatus.PATCHING, progress=30
+                    )
                 else:
                     # Cached file was corrupted, will re-extract
-                    logger.warning(f"Corrupted cached features for {wsi_id}, will re-extract: {load_error}")
+                    logger.warning(
+                        f"Corrupted cached features for {wsi_id}, will re-extract: {load_error}"
+                    )
                     cached_path = None  # Treat as cache miss
 
             if not cached_path:
                 # Cache miss - extract features
-                await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=20)
-                logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")
+                await AITaskRepository.update_status(
+                    db, task_id, TaskStatus.PATCHING, progress=20
+                )
+                logger.info(
+                    f"Cache miss for {wsi_id}, extracting features with {extractor_name}"
+                )
 
                 # Get WSI path
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
@@ -228,7 +232,9 @@ async def run_inference_pipeline(
                 # Use WSIClassificationTrainer's logic (reusing code)
                 trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
                 extractor = await asyncio.to_thread(
-                    lambda: get_extractor(extractor_name, pretrained=True).to(device).eval()
+                    lambda: (
+                        get_extractor(extractor_name, pretrained=True).to(device).eval()
+                    )
                 )
 
                 feats = await asyncio.to_thread(
@@ -236,7 +242,7 @@ async def run_inference_pipeline(
                     extractor=extractor,
                     wsi_path=wsi.wsi_path,
                     coords_h5=str(coords_h5),
-                    batch_size=64  # Default batch size
+                    batch_size=64,  # Default batch size
                 )
 
                 # Save to global cache (blocking disk I/O → thread)
@@ -248,24 +254,30 @@ async def run_inference_pipeline(
                 logger.info(f"Saved features to cache: {cache_feat_path}")
 
                 features = feats.to(device)
-                await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=30)
+                await AITaskRepository.update_status(
+                    db, task_id, TaskStatus.PATCHING, progress=30
+                )
 
             # --- Step 3: Load Model Checkpoint ---
-            await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=50)
+            await AITaskRepository.update_status(
+                db, task_id, TaskStatus.PATCHING, progress=50
+            )
 
             checkpoint = torch.load(model_record.model_path, map_location=device)
-            
+
             # Initialize Aggregator
             aggregator = get_aggregator(
                 model_record.aggregator or "abmil",
                 in_dim=checkpoint["in_dim"],
-                num_classes=checkpoint["num_classes"]
+                num_classes=checkpoint["num_classes"],
             ).to(device)
             aggregator.load_state_dict(checkpoint["state_dict"])
             aggregator.eval()
 
             # --- Step 4: Inference ---
-            await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=80)
+            await AITaskRepository.update_status(
+                db, task_id, TaskStatus.PATCHING, progress=80
+            )
 
             with torch.inference_mode():
                 logits, attention = aggregator(features)
@@ -277,8 +289,7 @@ async def run_inference_pipeline(
 
             # Map probabilities to class names
             probs_dict = {
-                cls: float(prob)
-                for cls, prob in zip(trained_classes, probs.flatten())
+                cls: float(prob) for cls, prob in zip(trained_classes, probs.flatten())
             }
 
             # Get prediction (max prob)
@@ -289,6 +300,7 @@ async def run_inference_pipeline(
             attention_path = None
             if attention is not None:
                 import numpy as np
+
                 # Save attention weights to file
                 ai_results_dir = UPLOADS_DIR / "ai_results" / wsi_id
                 ai_results_dir.mkdir(parents=True, exist_ok=True)
@@ -303,7 +315,9 @@ async def run_inference_pipeline(
                     file_size=wsi.file_size,
                 )
                 attention_path = str(attention_file)
-                logger.info(f"Saved attention weights ({len(attention_np)} patches) to {attention_path}")
+                logger.info(
+                    f"Saved attention weights ({len(attention_np)} patches) to {attention_path}"
+                )
 
             # --- Step 6: Save Results ---
             result_data = {
@@ -315,23 +329,23 @@ async def run_inference_pipeline(
                     "model_id": model_id,
                     "model_name": model_record.model_name,
                     "attention_path": attention_path,
-                }
+                },
             }
 
             # Save to AIResult
             await AIResultRepository.create(db, result_data)
-            
+
             # Mark task complete
-            await AITaskRepository.update_status(db, task_id, TaskStatus.COMPLETED, progress=100)
+            await AITaskRepository.update_status(
+                db, task_id, TaskStatus.COMPLETED, progress=100
+            )
             await db.commit()
-            
+
         except Exception as e:
             tb = traceback.format_exc()
             logger.error(f"Inference failed: {e}\n{tb}")
             await AITaskRepository.update_status(
-                db, task_id, TaskStatus.FAILED,
-                progress=0,
-                error_message=str(e)
+                db, task_id, TaskStatus.FAILED, progress=0, error_message=str(e)
             )
             await db.commit()
         # Note: db session is automatically closed by get_db() context manager
@@ -339,11 +353,7 @@ async def run_inference_pipeline(
 
 
 async def run_inference_pipeline_sync(
-    db: AsyncSession,
-    task_id: str,
-    wsi_id: str,
-    model_id: str,
-    device: str
+    db: AsyncSession, task_id: str, wsi_id: str, model_id: str, device: str
 ) -> Dict[str, Any]:
     """
     Synchronous inference pipeline for queue-managed execution.
@@ -376,7 +386,9 @@ async def run_inference_pipeline_sync(
     # Check coordinates first (search across all params_hash directories)
     coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
     if coords_h5 is None:
-        raise FileNotFoundError(f"Coordinates not found for {wsi_id}. Please run preprocessing first.")
+        raise FileNotFoundError(
+            f"Coordinates not found for {wsi_id}. Please run preprocessing first."
+        )
 
     params_hash = read_params_from_coords_h5(coords_h5)
     if not params_hash:
@@ -394,17 +406,25 @@ async def run_inference_pipeline_sync(
         if feats is not None:
             logger.info(f"Cache hit for {wsi_id} with extractor {extractor_name}")
             features = feats.to(device)
-            await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=30)
+            await AITaskRepository.update_status(
+                db, task_id, TaskStatus.PATCHING, progress=30
+            )
             await db.commit()
         else:
             # Cached file was corrupted, will re-extract
-            logger.warning(f"Corrupted cached features for {wsi_id}, will re-extract: {load_error}")
+            logger.warning(
+                f"Corrupted cached features for {wsi_id}, will re-extract: {load_error}"
+            )
             cached_path = None  # Treat as cache miss
 
     if not cached_path:
-        await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=20)
+        await AITaskRepository.update_status(
+            db, task_id, TaskStatus.PATCHING, progress=20
+        )
         await db.commit()
-        logger.info(f"Cache miss for {wsi_id}, extracting features with {extractor_name}")
+        logger.info(
+            f"Cache miss for {wsi_id}, extracting features with {extractor_name}"
+        )
 
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
@@ -417,16 +437,20 @@ async def run_inference_pipeline_sync(
             extractor=extractor,
             wsi_path=wsi.wsi_path,
             coords_h5=str(coords_h5),
-            batch_size=64
+            batch_size=64,
         )
 
-        cache_feat_path = get_cache_save_path(UPLOADS_DIR, extractor_name, params_hash, wsi_id)
+        cache_feat_path = get_cache_save_path(
+            UPLOADS_DIR, extractor_name, params_hash, wsi_id
+        )
         feats_cpu = feats.cpu()
         await asyncio.to_thread(save_features, cache_feat_path, feats_cpu)
         logger.info(f"Saved features to cache: {cache_feat_path}")
 
         features = feats.to(device)
-        await AITaskRepository.update_status(db, task_id, TaskStatus.PATCHING, progress=30)
+        await AITaskRepository.update_status(
+            db, task_id, TaskStatus.PATCHING, progress=30
+        )
         await db.commit()
 
     # --- Step 3: Load Model Checkpoint ---
@@ -438,7 +462,7 @@ async def run_inference_pipeline_sync(
     aggregator = get_aggregator(
         model_record.aggregator or "abmil",
         in_dim=checkpoint["in_dim"],
-        num_classes=checkpoint["num_classes"]
+        num_classes=checkpoint["num_classes"],
     ).to(device)
     aggregator.load_state_dict(checkpoint["state_dict"])
     aggregator.eval()
@@ -453,8 +477,7 @@ async def run_inference_pipeline_sync(
 
     trained_classes = model_record.classes
     probs_dict = {
-        cls: float(prob)
-        for cls, prob in zip(trained_classes, probs.flatten())
+        cls: float(prob) for cls, prob in zip(trained_classes, probs.flatten())
     }
 
     pred_idx = probs.argmax()
@@ -476,7 +499,9 @@ async def run_inference_pipeline_sync(
             file_size=wsi.file_size,
         )
         attention_path = str(attention_file)
-        logger.info(f"Saved attention weights ({len(attention_np)} patches) to {attention_path}")
+        logger.info(
+            f"Saved attention weights ({len(attention_np)} patches) to {attention_path}"
+        )
 
     # --- Step 6: Save Results ---
     result_data = {
@@ -488,11 +513,13 @@ async def run_inference_pipeline_sync(
             "model_id": model_id,
             "model_name": model_record.model_name,
             "attention_path": attention_path,
-        }
+        },
     }
 
     await AIResultRepository.create(db, result_data)
-    await AITaskRepository.update_status(db, task_id, TaskStatus.COMPLETED, progress=100)
+    await AITaskRepository.update_status(
+        db, task_id, TaskStatus.COMPLETED, progress=100
+    )
     await db.commit()
 
     return {
@@ -504,22 +531,11 @@ async def run_inference_pipeline_sync(
     }
 
 
-# =============================================================================
-# WSI Classification Inference (Unified Entry)
-# =============================================================================
-
-class WSIClassificationInferRequest(BaseModel):
-    """WSI classification inference request"""
-    wsi_id: str
-    model_id: Optional[str] = None
-    classes: List[str] = []
-
-
 @router.post("/wsi_classification")
 async def infer_wsi_classification(
     req: WSIClassificationInferRequest,
     background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> InferenceResponse:
     """
     WSI classification inference unified entry.
@@ -551,7 +567,7 @@ async def infer_wsi_classification(
         task_id=task_id,
         wsi_id=req.wsi_id,
         model_id=model.model_id,
-        device=get_device_string()
+        device=get_device_string(),
     )
 
     return InferenceResponse.pending(

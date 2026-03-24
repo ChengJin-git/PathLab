@@ -28,7 +28,6 @@ from typing import List, Optional, Dict, Any
 
 import torch
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
 
 from backend.database.database import AsyncSession
 from backend.database.repositories import (
@@ -44,6 +43,13 @@ from backend.ai.schemas import (
     TrainResponse,
     TrainMetrics,
     TaskType,
+)
+from backend.ai.schemas.requests import (
+    FeatureExtractionRequest,
+    WSIClassificationTrainRequest,
+    WSISurvivalTrainRequest,
+    PatchClassificationTrainRequest,
+    PatchSegmentationTrainRequest,
 )
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
@@ -411,18 +417,6 @@ async def list_ai_extractors():
 # =============================================================================
 
 
-class FeatureExtractionRequest(BaseModel):
-    """Feature extraction request"""
-
-    task_id: str
-    wsi_ids: List[str]
-    feature_extractor: str = "resnet50"
-    batch_size: int = 64  # Default batch size
-    force_recompute: bool = False
-    huggingface_token: Optional[str] = None
-    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
-
-
 @router.post("/extract_features")
 async def extract_features(req: FeatureExtractionRequest):
     """Extract features using WSI Classification Trainer.
@@ -503,21 +497,6 @@ async def extract_features(req: FeatureExtractionRequest):
 # =============================================================================
 # WSI Classification Training (Unified Entry)
 # =============================================================================
-
-
-class WSIClassificationTrainRequest(BaseModel):
-    """WSI classification training request"""
-
-    task_id: str
-    epochs: int = 50
-    lr: float = 2e-4
-    aggregator: str = "abmil"
-    feature_extractor: str = "resnet50"
-    optimizer: str = "adam"  # adam, sgd, adamw
-    auto_balance: bool = False  # Auto-balance class weights
-    early_stopping_patience: int = 20  # Epochs to wait before early stopping
-    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
-    seed: Optional[int] = 42  # Random seed for reproducibility
 
 
 @router.post("/wsi_classification")
@@ -731,21 +710,6 @@ async def train_wsi_classification(req: WSIClassificationTrainRequest) -> TrainR
 # =============================================================================
 
 
-class WSISurvivalTrainRequest(BaseModel):
-    """WSI survival training request"""
-
-    task_id: str
-    epochs: int = 30
-    lr: float = 0.0002
-    aggregator: str = "abmil"
-    feature_extractor: str = "resnet50"
-    num_bins: int = 4  # Number of discrete time bins
-    optimizer: str = "adam"  # adam, sgd, adamw
-    early_stopping_patience: int = 20  # Epochs to wait before early stopping
-    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
-    seed: Optional[int] = 42  # Random seed for reproducibility
-
-
 @router.post("/wsi_survival")
 async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
     """
@@ -886,23 +850,6 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
 # =============================================================================
 # Patch Classification Training
 # =============================================================================
-
-
-class PatchClassificationTrainRequest(BaseModel):
-    """Patch classification training request - aligned with WSI classification style"""
-
-    task_id: str
-    epochs: int = 50
-    lr: float = 0.0002
-    feature_extractor: str = "resnet50"
-    batch_size: int = 64
-    huggingface_token: Optional[str] = None
-    classifier: str = "linear"  # Classifier head: linear, mlp, attention
-    optimizer: str = "adam"  # adam, sgd, adamw
-    auto_balance: bool = False  # Auto-balance class weights
-    early_stopping_patience: int = 20  # Epochs to wait before early stopping
-    device: Optional[str] = None  # GPU device (e.g., "cuda:0") - auto-selected if None
-    seed: Optional[int] = 42  # Random seed for reproducibility
 
 
 @router.post("/patch_classification")
@@ -1063,24 +1010,6 @@ async def train_patch_classification(
 # =============================================================================
 # Patch Segmentation Training
 # =============================================================================
-
-
-class PatchSegmentationTrainRequest(BaseModel):
-    """Patch segmentation training request - aligned with other training endpoints"""
-
-    task_id: str
-    architecture: str = "unet"
-    backbone: str = "resnet50"
-    loss_names: List[str] = ["DiceLoss", "JaccardLoss"]
-    loss_weights: List[float] = [0.5, 0.5]
-    epochs: int = 50
-    lr: float = 0.0001
-    batch_size: int = 8
-    optimizer: str = "adamw"
-    early_stopping_patience: int = 15
-    device: Optional[str] = None
-    seed: Optional[int] = 42
-    num_classes: int = 1
 
 
 @router.post("/patch_segmentation")

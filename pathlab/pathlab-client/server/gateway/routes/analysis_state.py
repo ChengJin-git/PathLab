@@ -4,14 +4,15 @@ Analysis Task State Management (Redis-backed)
 Task metadata stored in Redis hashes (survives restarts).
 Running asyncio.Task references stay in-memory (not serializable).
 """
+
 import asyncio
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
-from pydantic import BaseModel
 
 from backend.ai.schemas.base import TaskStatus
 from backend.common.redis_client import get_redis, make_key
+from gateway.models import AnalysisRequest
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class AnalysisTaskState:
         user_id: str,
         title: str = "",
         analysis_type: str = "internal",
-        task_category: Optional[str] = None
+        task_category: Optional[str] = None,
     ) -> Dict[str, Any]:
         state = {
             "analysis_id": analysis_id,
@@ -92,7 +93,9 @@ class AnalysisTaskState:
         key = self._key(analysis_id)
         await r.hset(key, mapping=self._dict_to_hash(state))
         await r.expire(key, _HASH_TTL)
-        logger.info(f"AnalysisTaskState.create: analysis_id={analysis_id}, task_id={task_id}, title={title}, user_id={user_id}")
+        logger.info(
+            f"AnalysisTaskState.create: analysis_id={analysis_id}, task_id={task_id}, title={title}, user_id={user_id}"
+        )
         return state.copy()
 
     async def get(self, analysis_id: str) -> Optional[Dict[str, Any]]:
@@ -126,18 +129,14 @@ class AnalysisTaskState:
         return await self._hash_to_dict(data)
 
     async def set_queued(self, analysis_id: str) -> Optional[Dict[str, Any]]:
-        return await self.update(
-            analysis_id,
-            status=TaskStatus.QUEUED,
-            progress=0
-        )
+        return await self.update(analysis_id, status=TaskStatus.QUEUED, progress=0)
 
     async def set_running(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         return await self.update(
             analysis_id,
             status=TaskStatus.PATCHING,
             progress=10,
-            started_at=datetime.now(timezone.utc).isoformat()
+            started_at=datetime.now(timezone.utc).isoformat(),
         )
 
     async def set_completed(self, analysis_id: str) -> Optional[Dict[str, Any]]:
@@ -145,22 +144,24 @@ class AnalysisTaskState:
             analysis_id,
             status=TaskStatus.COMPLETED,
             progress=100,
-            finished_at=datetime.now(timezone.utc).isoformat()
+            finished_at=datetime.now(timezone.utc).isoformat(),
         )
 
-    async def set_failed(self, analysis_id: str, error: str) -> Optional[Dict[str, Any]]:
+    async def set_failed(
+        self, analysis_id: str, error: str
+    ) -> Optional[Dict[str, Any]]:
         return await self.update(
             analysis_id,
             status=TaskStatus.FAILED,
             error_message=error,
-            finished_at=datetime.now(timezone.utc).isoformat()
+            finished_at=datetime.now(timezone.utc).isoformat(),
         )
 
     async def set_cancelled(self, analysis_id: str) -> Optional[Dict[str, Any]]:
         return await self.update(
             analysis_id,
             status=TaskStatus.CANCELLED,
-            finished_at=datetime.now(timezone.utc).isoformat()
+            finished_at=datetime.now(timezone.utc).isoformat(),
         )
 
     def register_task(self, analysis_id: str, task: asyncio.Task[Any]) -> None:
@@ -186,7 +187,9 @@ class AnalysisTaskState:
                 results.append(await self._hash_to_dict(data))
         return results
 
-    async def get_all(self, user_id: Optional[str] = None, max_age_minutes: int = 10) -> List[Dict[str, Any]]:
+    async def get_all(
+        self, user_id: Optional[str] = None, max_age_minutes: int = 10
+    ) -> List[Dict[str, Any]]:
         r = get_redis()
         now = datetime.now(timezone.utc)
         cutoff = now - timedelta(minutes=max_age_minutes)
@@ -205,7 +208,9 @@ class AnalysisTaskState:
                 finished = state.get("finished_at")
                 if finished:
                     try:
-                        finished_dt = datetime.fromisoformat(finished.replace('Z', '+00:00'))
+                        finished_dt = datetime.fromisoformat(
+                            finished.replace("Z", "+00:00")
+                        )
                         if finished_dt < cutoff:
                             continue
                     except Exception:
@@ -225,7 +230,9 @@ class AnalysisTaskState:
                 finished = data.get("finished_at", "")
                 if finished:
                     try:
-                        finished_ts = datetime.fromisoformat(finished.replace('Z', '+00:00')).timestamp()
+                        finished_ts = datetime.fromisoformat(
+                            finished.replace("Z", "+00:00")
+                        ).timestamp()
                         if finished_ts < cutoff:
                             await r.delete(key)
                     except Exception:
@@ -237,11 +244,3 @@ _analysis_state = AnalysisTaskState()
 
 def get_analysis_state() -> AnalysisTaskState:
     return _analysis_state
-
-
-class AnalysisRequest(BaseModel):
-    metrics: List[str] = ["accuracy", "precision", "recall", "specificity", "f1", "auc", "weighted_kappa"]
-    charts: List[str] = ["roc_curve", "confusion_matrix", "loss_curve"]
-    description: Optional[str] = None
-    bootstrap_ci_metrics: List[str] = []
-    compute_bootstrap_ci: bool = False

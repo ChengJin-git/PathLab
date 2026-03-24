@@ -7,81 +7,22 @@ These settings are shared across all users.
 
 import httpx
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
 from typing import Optional
 
 from backend.common.config import Config
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin
+from gateway.models import (
+    PublicSettingsResponse,
+    GlobalSettingsResponse,
+    GlobalSettingsUpdateRequest,
+    VllmCheckRequest,
+    VllmCheckResponse,
+    AsrCheckRequest,
+    AsrCheckResponse,
+)
 
 router = APIRouter(prefix="/settings", tags=["Global Settings"])
-
-
-class PublicSettingsResponse(BaseModel):
-    """Response model for public settings (no authentication required)"""
-
-    turnstile_enabled: bool
-    turnstile_site_key: str
-
-
-class GlobalSettingsResponse(BaseModel):
-    """Response model for global settings"""
-
-    openrouter_api_key: str
-    openrouter_base_url: str
-    openrouter_model: str
-    huggingface_token: str
-    dashscope_api_key: str
-    # Exa Search API key for web search functionality
-    exa_api_key: str
-    # Local vLLM settings (OpenAI-compatible server for LLM)
-    local_vllm_enabled: bool
-    local_vllm_base_url: str
-    local_vllm_model: str
-    local_vllm_api_key: str
-    # Local ASR settings (OpenAI-compatible server for ASR)
-    local_asr_enabled: bool
-    local_asr_base_url: str
-    local_asr_model: str
-    local_asr_api_key: str
-    # Cloudflare Turnstile settings
-    turnstile_enabled: bool
-    turnstile_site_key: str
-    turnstile_secret_key: str
-    resend_enabled: bool
-    resend_api_key: str
-    admin_notify_email: str
-    email_templates: dict
-
-
-class GlobalSettingsUpdateRequest(BaseModel):
-    """Request model for updating global settings"""
-
-    openrouter_api_key: Optional[str] = None
-    openrouter_base_url: Optional[str] = None
-    openrouter_model: Optional[str] = None
-    huggingface_token: Optional[str] = None
-    dashscope_api_key: Optional[str] = None
-    # Exa Search API key
-    exa_api_key: Optional[str] = None
-    # Local vLLM settings
-    local_vllm_enabled: Optional[bool] = None
-    local_vllm_base_url: Optional[str] = None
-    local_vllm_model: Optional[str] = None
-    local_vllm_api_key: Optional[str] = None
-    # Local ASR settings
-    local_asr_enabled: Optional[bool] = None
-    local_asr_base_url: Optional[str] = None
-    local_asr_model: Optional[str] = None
-    local_asr_api_key: Optional[str] = None
-    # Cloudflare Turnstile settings
-    turnstile_enabled: Optional[bool] = None
-    turnstile_site_key: Optional[str] = None
-    turnstile_secret_key: Optional[str] = None
-    resend_enabled: Optional[bool] = None
-    resend_api_key: Optional[str] = None
-    admin_notify_email: Optional[str] = None
-    email_templates: Optional[dict] = None
 
 
 @router.get("/public")
@@ -136,21 +77,6 @@ async def update_global_settings(
     return GlobalSettingsResponse(**settings)
 
 
-class VllmCheckRequest(BaseModel):
-    """Request model for checking vLLM server status"""
-
-    base_url: str
-    api_key: Optional[str] = None
-
-
-class VllmCheckResponse(BaseModel):
-    """Response model for vLLM server status check"""
-
-    online: bool
-    model: Optional[str] = None
-    error: Optional[str] = None
-
-
 @router.post("/check-vllm")
 async def check_vllm_status(
     request: VllmCheckRequest, user: User = Depends(require_admin)
@@ -187,22 +113,6 @@ async def check_vllm_status(
         return VllmCheckResponse(online=False, error="Connection refused")
     except Exception as e:
         return VllmCheckResponse(online=False, error=str(e))
-
-
-class AsrCheckRequest(BaseModel):
-    """Request model for checking ASR server status"""
-
-    base_url: str  # Can be ws:// or http://
-    model: Optional[str] = None
-    api_key: Optional[str] = None
-
-
-class AsrCheckResponse(BaseModel):
-    """Response model for ASR server status check"""
-
-    online: bool
-    model: Optional[str] = None
-    error: Optional[str] = None
 
 
 @router.post("/check-asr")

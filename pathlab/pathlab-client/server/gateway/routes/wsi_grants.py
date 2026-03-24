@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Form, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,25 +20,17 @@ from backend.database.repositories import (
     TrainingTaskRepository,
 )
 from ..dependencies import AI_SERVICE_URL, logger
-from ..models import DatasetUpdateVisibilityRequest
+from ..models import (
+    DatasetUpdateVisibilityRequest,
+    BatchGrantDatasetGrantRequest,
+    BatchRevokeDatasetGrantRequest,
+)
 from gateway.chat.context_cache import (
     invalidate_chat_context,
     invalidate_all_user_chat_contexts,
 )
 
 router = APIRouter(tags=["WSI Grants"])
-
-
-class BatchGrantDatasetGrantRequest(BaseModel):
-    user_ids: List[str] = Field(default_factory=list)
-    expires_in_hours: Optional[int] = None
-    can_read: Optional[bool] = True
-    can_collaborate: Optional[bool] = False
-    can_use_gpu: Optional[bool] = False
-
-
-class BatchRevokeDatasetGrantRequest(BaseModel):
-    user_ids: List[str] = Field(default_factory=list)
 
 
 def _calculate_expires_at(expires_in_hours: Optional[int]) -> Optional[datetime]:
