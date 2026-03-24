@@ -32,7 +32,7 @@ from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
 
-from .analysis_helpers import (
+from .analysis_utils import (
     _coerce_str,
     _coerce_str_list,
     _normalize_label_names,

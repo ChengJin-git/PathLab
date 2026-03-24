@@ -25,7 +25,7 @@ from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
 
-from .analysis_helpers import (
+from .analysis_utils import (
     _split_case_attention_to_slides_static,
 )
 from .inference_base import resolve_device, report_progress

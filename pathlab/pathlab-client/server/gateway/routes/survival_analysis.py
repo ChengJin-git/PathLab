@@ -19,15 +19,15 @@ from backend.common.config import Config
 from backend.database.models import TrainingTaskWSI
 from backend.database.repositories import TrainingTaskRepository
 
-from .analysis_base import (
+from .analysis_utils import (
     fill_wsi_filenames,
     make_analysis_dir,
     make_analysis_result,
     make_bootstrap_progress_sync,
     unpack_progress_config,
     utc_timestamp_z,
+    _get_random_seed_from_task,
 )
-from .analysis_helpers import _get_random_seed_from_task
 from .analysis_metrics import (
     _calculate_integrated_brier_score,
     _calculate_survival_bootstrap_ci,

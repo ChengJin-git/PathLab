@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.common.config import Config
 from backend.database.repositories import WSIRepository
 
-from .analysis_helpers import (
+from .analysis_utils import (
     _coerce_str,
     _coerce_str_list,
 )

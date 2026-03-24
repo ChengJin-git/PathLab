@@ -22,7 +22,7 @@ from backend.common.config import Config
 from backend.database.models import AIResult, TrainingTaskWSI
 from backend.database.repositories import TrainedModelRepository
 
-from .analysis_base import (
+from .analysis_utils import (
     fill_wsi_filenames,
     make_analysis_dir,
     make_analysis_result,
@@ -30,8 +30,8 @@ from .analysis_base import (
     run_chart_tasks,
     unpack_progress_config,
     utc_timestamp_z,
+    _get_random_seed_from_task,
 )
-from .analysis_helpers import _get_random_seed_from_task
 from .analysis_metrics import (
     _render_loss_chart_sync,
     run_chart_in_process,

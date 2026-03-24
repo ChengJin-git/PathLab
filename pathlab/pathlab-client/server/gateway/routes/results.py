@@ -69,7 +69,7 @@ from backend.preprocessing.heatmap_preview_cache import (
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
-from .analysis_helpers import (
+from .analysis_utils import (
     _get_random_seed_from_task,
     _get_task_with_access,
     _require_task_access,

@@ -20,7 +20,7 @@ from backend.database.repositories import (
     TrainingTaskRepository,
 )
 
-from .analysis_base import (
+from .analysis_utils import (
     fill_wsi_filenames,
     make_analysis_dir,
     make_analysis_result,
@@ -28,8 +28,8 @@ from .analysis_base import (
     run_chart_tasks,
     unpack_progress_config,
     utc_timestamp_z,
+    _get_random_seed_from_task,
 )
-from .analysis_helpers import _get_random_seed_from_task
 from .analysis_metrics import (
     _calculate_all_metrics,
     _calculate_bootstrap_ci,
@@ -757,7 +757,7 @@ async def _run_external_validation_segmentation_analysis(
         progress_config: Optional dict with 'start', 'ci_start', 'ci_end', 'has_ci' for dynamic progress ranges.
     """
     import numpy as np
-    from .analysis_helpers import _get_random_seed_from_task
+    from .analysis_utils import _get_random_seed_from_task
 
     p_start, _, _ = unpack_progress_config(
         progress_config,
