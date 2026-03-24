@@ -7,20 +7,15 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
+import { AuthUser, logout as apiLogout, getCurrentUser, loginWithCredentials } from '../api/auth'
+import { ApiError, clearAuthToken, SESSION_EXPIRED_EVENT } from '../api/client'
 import {
-  AuthUser,
-  ApiError,
-  logout as apiLogout,
-  getCurrentUser,
-  loginWithCredentials,
-  clearAuthToken,
   acceptAgreement as apiAcceptAgreement,
-  getMyDatasetGrants,
   getClientIP,
   getMaintenanceNotice,
-  acknowledgeNotice as apiAcknowledgeNotice,
-  SESSION_EXPIRED_EVENT
-} from '../api'
+  acknowledgeNotice as apiAcknowledgeNotice
+} from '../api/users'
+import { getMyDatasetGrants } from '../api/grants'
 import { useToast } from './ToastContext'
 import { useTranslation } from 'react-i18next'
 import { queryClient } from '../lib/queryClient'

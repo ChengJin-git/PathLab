@@ -14,7 +14,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
 
-// ─── Mock @renderer/api ────────────────────────────────────────────────────
+// ─── Mock api submodules ───────────────────────────────────────────────────
 
 const mockGetCurrentUser = vi.fn()
 const mockLoginWithCredentials = vi.fn()
@@ -26,16 +26,14 @@ const mockGetClientIP = vi.fn()
 const mockGetMaintenanceNotice = vi.fn()
 const mockApiAcknowledgeNotice = vi.fn()
 
-vi.mock('@renderer/api', () => ({
+vi.mock('@renderer/api/auth', () => ({
   getCurrentUser: (...args: unknown[]) => mockGetCurrentUser(...args),
   loginWithCredentials: (...args: unknown[]) => mockLoginWithCredentials(...args),
   logout: (...args: unknown[]) => mockApiLogout(...args),
+}))
+
+vi.mock('@renderer/api/client', () => ({
   clearAuthToken: (...args: unknown[]) => mockClearAuthToken(...args),
-  acceptAgreement: (...args: unknown[]) => mockApiAcceptAgreement(...args),
-  getMyDatasetGrants: (...args: unknown[]) => mockGetMyDatasetGrants(...args),
-  getClientIP: (...args: unknown[]) => mockGetClientIP(...args),
-  getMaintenanceNotice: (...args: unknown[]) => mockGetMaintenanceNotice(...args),
-  acknowledgeNotice: (...args: unknown[]) => mockApiAcknowledgeNotice(...args),
   SESSION_EXPIRED_EVENT: 'pathlab:session-expired',
   ApiError: class ApiError extends Error {
     status: number
@@ -47,6 +45,17 @@ vi.mock('@renderer/api', () => ({
     isNetworkError() { return this.status === 0 }
     isServerError() { return this.status >= 500 }
   },
+}))
+
+vi.mock('@renderer/api/users', () => ({
+  acceptAgreement: (...args: unknown[]) => mockApiAcceptAgreement(...args),
+  getClientIP: (...args: unknown[]) => mockGetClientIP(...args),
+  getMaintenanceNotice: (...args: unknown[]) => mockGetMaintenanceNotice(...args),
+  acknowledgeNotice: (...args: unknown[]) => mockApiAcknowledgeNotice(...args),
+}))
+
+vi.mock('@renderer/api/grants', () => ({
+  getMyDatasetGrants: (...args: unknown[]) => mockGetMyDatasetGrants(...args),
 }))
 
 // ─── Mock ToastContext ──────────────────────────────────────────────────────
