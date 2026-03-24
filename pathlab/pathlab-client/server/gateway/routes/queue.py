@@ -3,6 +3,7 @@ Task Queue Management Routes
 
 Provides API endpoints for monitoring and managing the GPU task queue.
 """
+
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
@@ -17,14 +18,21 @@ from backend.database.repositories import TrainingTaskRepository, AITaskReposito
 from backend.common.config import Config
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import require_admin, check_data_ownership
+from .access_control import assert_owner
 from .analysis_state import get_analysis_state
 
 router = APIRouter(prefix="/queue", tags=["Task Queue"])
 
+
 class QueueConfigRequest(BaseModel):
     """Request to update queue configuration"""
-    max_concurrent: Optional[int] = Field(None, ge=1, le=10, description="Maximum concurrent GPU tasks (1-10)")
-    task_timeout: Optional[int] = Field(None, ge=60, le=259200, description="Task timeout in seconds (60-259200)")
+
+    max_concurrent: Optional[int] = Field(
+        None, ge=1, le=10, description="Maximum concurrent GPU tasks (1-10)"
+    )
+    task_timeout: Optional[int] = Field(
+        None, ge=60, le=259200, description="Task timeout in seconds (60-259200)"
+    )
 
 
 @router.get("/config")
@@ -41,10 +49,7 @@ async def get_queue_config(user: User = Depends(require_admin)):
     queue = get_task_queue()
     max_concurrent = queue.max_concurrent if queue else 4
 
-    return {
-        "max_concurrent": max_concurrent,
-        "task_timeout": Config.get_task_timeout()
-    }
+    return {"max_concurrent": max_concurrent, "task_timeout": Config.get_task_timeout()}
 
 
 @router.get("")
@@ -72,8 +77,7 @@ async def get_queue_status(user: User = Depends(require_admin)):
 
 @router.post("/config")
 async def update_queue_config(
-    req: QueueConfigRequest,
-    user: User = Depends(require_admin)
+    req: QueueConfigRequest, user: User = Depends(require_admin)
 ):
     """
     Update queue configuration. Admin only.
@@ -100,7 +104,7 @@ async def update_queue_config(
         if queue.gpu_count == 1 and req.max_concurrent != 1:
             raise HTTPException(
                 status_code=400,
-                detail="Cannot change max_concurrent with single GPU. Only 1 concurrent task allowed."
+                detail="Cannot change max_concurrent with single GPU. Only 1 concurrent task allowed.",
             )
 
         try:
@@ -120,7 +124,9 @@ async def update_queue_config(
             raise HTTPException(status_code=400, detail=str(e))
 
     if not messages:
-        raise HTTPException(status_code=400, detail="No configuration parameters provided")
+        raise HTTPException(
+            status_code=400, detail="No configuration parameters provided"
+        )
 
     # Get current config
     queue = get_task_queue()
@@ -128,8 +134,8 @@ async def update_queue_config(
         "message": "; ".join(messages),
         "config": {
             "max_concurrent": queue.max_concurrent if queue else 4,
-            "task_timeout": Config.get_task_timeout()
-        }
+            "task_timeout": Config.get_task_timeout(),
+        },
     }
 
 
@@ -137,7 +143,7 @@ async def update_queue_config(
 async def cancel_queued_task(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Cancel a task in the queue. Users can only cancel their own tasks.
@@ -160,38 +166,47 @@ async def cancel_queued_task(
     if analysis_task:
         # This is an analysis task - check ownership
         if not user.is_admin() and analysis_task.get("user_id") != str(user.id):
-            raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+            raise HTTPException(
+                status_code=403, detail="You don't have permission to cancel this task"
+            )
 
         # Try to cancel the running asyncio.Task (for CPU-only analysis)
         task_cancelled = await analysis_state.cancel_running_task(task_id)
 
         # Update analysis state to cancelled
-        if analysis_task.get("status") not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+        if analysis_task.get("status") not in [
+            TaskStatus.COMPLETED,
+            TaskStatus.FAILED,
+            TaskStatus.CANCELLED,
+        ]:
             await analysis_state.set_cancelled(task_id)
-            logger.info(f"Analysis task {task_id} cancelled by user (task_cancelled={task_cancelled})")
+            logger.info(
+                f"Analysis task {task_id} cancelled by user (task_cancelled={task_cancelled})"
+            )
             return {
                 "cancelled": True,
-                "message": f"Analysis task {task_id} cancelled successfully"
+                "message": f"Analysis task {task_id} cancelled successfully",
             }
         elif task_cancelled:
-            return {
-                "cancelled": True,
-                "message": f"Analysis task {task_id} cancelled"
-            }
+            return {"cancelled": True, "message": f"Analysis task {task_id} cancelled"}
         else:
             return {
                 "cancelled": False,
-                "message": f"Analysis task {task_id} already completed or not found"
+                "message": f"Analysis task {task_id} already completed or not found",
             }
 
     # Check if this is a training task (stored in database)
     ai_task = await AITaskRepository.get_by_id(db, task_id)
-    if ai_task and not check_data_ownership(ai_task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+    if ai_task:
+        assert_owner(
+            ai_task.user_id, user, "You don't have permission to cancel this task"
+        )
 
     task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if task and not check_data_ownership(task.user_id, user):
-        raise HTTPException(status_code=403, detail="You don't have permission to cancel this task")
+    if task:
+        assert_owner(
+            task.user_id, user, "You don't have permission to cancel this task"
+        )
 
     queue = get_task_queue()
     if not queue:
@@ -205,41 +220,40 @@ async def cancel_queued_task(
     await cancel_ai_service_training(task_id)
 
     # Always try to update database status (handles orphaned tasks after restart)
-    if ai_task and ai_task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+    if ai_task and ai_task.status not in [
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    ]:
         await AITaskRepository.update_status(
             db,
             task_id,
             status=TaskStatus.CANCELLED,
-            error_message="Task cancelled by user"
+            error_message="Task cancelled by user",
         )
         await db.commit()
 
-        return {
-            "cancelled": True,
-            "message": f"Task {task_id} cancelled successfully"
-        }
-    elif task and task.status not in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
+        return {"cancelled": True, "message": f"Task {task_id} cancelled successfully"}
+    elif task and task.status not in [
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    ]:
         await TrainingTaskRepository.update_status(
             db,
             task_id,
             status=TaskStatus.CANCELLED,
-            error_message="Task cancelled by user"
+            error_message="Task cancelled by user",
         )
         await db.commit()
 
-        return {
-            "cancelled": True,
-            "message": f"Task {task_id} cancelled successfully"
-        }
+        return {"cancelled": True, "message": f"Task {task_id} cancelled successfully"}
     elif cancelled_in_queue:
-        return {
-            "cancelled": True,
-            "message": f"Task {task_id} cancelled from queue"
-        }
+        return {"cancelled": True, "message": f"Task {task_id} cancelled from queue"}
     else:
         return {
             "cancelled": False,
-            "message": f"Task {task_id} not found or already completed"
+            "message": f"Task {task_id} not found or already completed",
         }
 
 
@@ -247,7 +261,7 @@ async def cancel_queued_task(
 async def check_task_in_queue(
     task_id: str,
     user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Check if a task is in the queue.
@@ -265,11 +279,7 @@ async def check_task_in_queue(
 
         if analysis_task:
             if analysis_task.get("user_id") != str(user.id):
-                return {
-                    "task_id": task_id,
-                    "in_queue": False,
-                    "status": "not_found"
-                }
+                return {"task_id": task_id, "in_queue": False, "status": "not_found"}
         else:
             ai_task = await AITaskRepository.get_by_id(db, task_id)
             if ai_task:
@@ -277,15 +287,17 @@ async def check_task_in_queue(
                     return {
                         "task_id": task_id,
                         "in_queue": False,
-                        "status": "not_found"
+                        "status": "not_found",
                     }
             else:
                 training_task = await TrainingTaskRepository.get_by_id(db, task_id)
-                if not training_task or not check_data_ownership(training_task.user_id, user):
+                if not training_task or not check_data_ownership(
+                    training_task.user_id, user
+                ):
                     return {
                         "task_id": task_id,
                         "in_queue": False,
-                        "status": "not_found"
+                        "status": "not_found",
                     }
 
     queue = get_task_queue()
@@ -295,21 +307,8 @@ async def check_task_in_queue(
     status_info = queue.get_status()
 
     if task_id in status_info["running_task_ids"]:
-        return {
-            "task_id": task_id,
-            "in_queue": True,
-            "status": "running"
-        }
+        return {"task_id": task_id, "in_queue": True, "status": "running"}
     elif task_id in status_info["pending_task_ids"]:
-        return {
-            "task_id": task_id,
-            "in_queue": True,
-            "status": "pending"
-        }
+        return {"task_id": task_id, "in_queue": True, "status": "pending"}
     else:
-        return {
-            "task_id": task_id,
-            "in_queue": False,
-            "status": "not_found"
-        }
-
+        return {"task_id": task_id, "in_queue": False, "status": "not_found"}

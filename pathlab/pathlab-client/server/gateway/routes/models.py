@@ -24,7 +24,8 @@ from backend.database import get_db
 from backend.database.models import TrainedModel as TrainedModelORM, TrainingTask
 from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_pathologist_or_admin, check_data_ownership
+from backend.auth.dependencies import require_pathologist_or_admin
+from .access_control import assert_owner
 from backend.common.chat_context_cache import invalidate_chat_context
 
 router = APIRouter(prefix="/models", tags=["Trained Models"])
@@ -272,11 +273,7 @@ async def get_trained_model(
     if not model:
         raise HTTPException(status_code=404, detail="Trained model not found")
 
-    # Check ownership
-    if not check_data_ownership(model.user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to view this model"
-        )
+    assert_owner(model.user_id, user, "You don't have permission to view this model")
 
     return model.to_dict()
 
@@ -296,10 +293,7 @@ async def export_trained_model(
     if not model:
         raise HTTPException(status_code=404, detail="Trained model not found")
 
-    if not check_data_ownership(model.user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to export this model"
-        )
+    assert_owner(model.user_id, user, "You don't have permission to export this model")
 
     task = await TrainingTaskRepository.get_by_id(db, model.task_id)
     if not task:
@@ -342,11 +336,7 @@ async def update_trained_model(
     if not model:
         raise HTTPException(status_code=404, detail="Trained model not found")
 
-    # Check ownership
-    if not check_data_ownership(model.user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to update this model"
-        )
+    assert_owner(model.user_id, user, "You don't have permission to update this model")
 
     model_owner_id = str(model.user_id or user.id)
 
@@ -377,11 +367,7 @@ async def delete_trained_model(
     if not model:
         raise HTTPException(status_code=404, detail="Trained model not found")
 
-    # Check ownership
-    if not check_data_ownership(model.user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to delete this model"
-        )
+    assert_owner(model.user_id, user, "You don't have permission to delete this model")
 
     model_owner_id = str(model.user_id or user.id)
     deleted = await TrainedModelRepository.delete(db, model_id)

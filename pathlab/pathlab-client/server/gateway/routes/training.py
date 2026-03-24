@@ -28,11 +28,11 @@ from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import (
     require_can_use_gpu,
     require_pathologist_or_admin,
-    check_data_ownership,
     check_dataset_gpu_permission,
     get_user_id_filter,
     check_wsi_access_permission,
 )
+from .access_control import assert_owner
 from ..utils import ensure_dataset_segmentation_contract
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
@@ -722,10 +722,7 @@ async def get_training_task(
 
     # Check ownership
     task_user_id = task["user_id"] if include_username else task.user_id
-    if not check_data_ownership(task_user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to view this task"
-        )
+    assert_owner(task_user_id, user, "You don't have permission to view this task")
 
     # Get associated WSI IDs
     wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task_id)
@@ -779,11 +776,9 @@ async def update_training_task(
         raise HTTPException(status_code=404, detail="Training task not found")
 
     # Check ownership - only task creator or admin can update
-    if not check_data_ownership(task.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="Only the task creator or admin can update this task",
-        )
+    assert_owner(
+        task.user_id, user, "Only the task creator or admin can update this task"
+    )
 
     # Validate task name
     if not req.task_name or not req.task_name.strip():
@@ -842,10 +837,9 @@ async def delete_training_task(
             )
 
         # Check ownership
-        if not check_data_ownership(task.user_id, user):
-            raise HTTPException(
-                status_code=403, detail="You don't have permission to delete this task"
-            )
+        assert_owner(
+            task.user_id, user, "You don't have permission to delete this task"
+        )
 
         # If task is still active, cancel it first in both gateway queue and AI service.
         # This makes delete behave as "cancel then delete" for running/queued tasks.
@@ -934,11 +928,9 @@ async def get_training_logs(
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
-    # Check ownership
-    if not check_data_ownership(task.user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to view this task's logs"
-        )
+    assert_owner(
+        task.user_id, user, "You don't have permission to view this task's logs"
+    )
 
     # Get logs from database
     logs = await TrainingLogRepository.get_by_task_id(db, task_id, level, limit, offset)
@@ -979,11 +971,9 @@ async def stream_training_logs(
             raise HTTPException(status_code=404, detail="Training task not found")
 
         # Check ownership
-        if not check_data_ownership(task.user_id, user):
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to stream this task's logs",
-            )
+        assert_owner(
+            task.user_id, user, "You don't have permission to stream this task's logs"
+        )
 
     async def log_event_generator():
         """Generate SSE events with new logs and task status updates"""
@@ -1232,11 +1222,9 @@ async def get_recent_training_logs(
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
-    # Check ownership
-    if not check_data_ownership(task.user_id, user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to view this task's logs"
-        )
+    assert_owner(
+        task.user_id, user, "You don't have permission to view this task's logs"
+    )
 
     # Get recent logs
     logs = await TrainingLogRepository.get_recent(db, task_id, count)
@@ -1260,12 +1248,9 @@ async def get_task_models(
     if not task:
         raise HTTPException(status_code=404, detail="Training task not found")
 
-    # Check ownership
-    if not check_data_ownership(task.user_id, user):
-        raise HTTPException(
-            status_code=403,
-            detail="You don't have permission to view this task's models",
-        )
+    assert_owner(
+        task.user_id, user, "You don't have permission to view this task's models"
+    )
 
     models = await TrainedModelRepository.get_by_task_id(db, task_id)
     return {"items": [model.to_dict() for model in models], "total": len(models)}

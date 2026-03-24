@@ -42,10 +42,10 @@ from backend.database.models import (
 )
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import (
-    check_data_ownership,
     get_user_id_filter,
     get_user_from_header_or_param,
 )
+from .access_control import assert_owner
 from backend.common.permissions import require_conversation_access
 from backend.common.chat_context_cache import (
     get_cached_context_kwargs_admin,
@@ -869,10 +869,9 @@ async def _get_patch_model_for_chat(
     trained_model = await TrainedModelRepository.get_by_id(db, model_id)
     if not trained_model:
         raise HTTPException(status_code=404, detail="Trained model not found")
-    if not check_data_ownership(str(trained_model.user_id), user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to use this model"
-        )
+    assert_owner(
+        str(trained_model.user_id), user, "You don't have permission to use this model"
+    )
 
     training_task = await TrainingTaskRepository.get_by_id(
         db, str(trained_model.task_id)

@@ -20,11 +20,11 @@ from backend.database.repositories import (
 )
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import (
-    check_data_ownership,
     require_dataset_gpu_permission,
     check_wsi_access_permission,
     get_permitted_dataset_ids,
 )
+from .access_control import assert_owner
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
 from ..task_queue import get_task_queue, TaskType
@@ -368,21 +368,15 @@ async def get_task(
     # Try AI task first
     task = await AITaskRepository.get_by_id(db, task_id)
     if task:
-        # Check ownership
-        if not check_data_ownership(task.user_id, user):
-            raise HTTPException(
-                status_code=403, detail="You don't have permission to view this task"
-            )
+        assert_owner(task.user_id, user, "You don't have permission to view this task")
         return task.to_dict()
 
     # Try training task
     training_task = await TrainingTaskRepository.get_by_id(db, task_id)
     if training_task:
-        # Check ownership
-        if not check_data_ownership(training_task.user_id, user):
-            raise HTTPException(
-                status_code=403, detail="You don't have permission to view this task"
-            )
+        assert_owner(
+            training_task.user_id, user, "You don't have permission to view this task"
+        )
         return training_task.to_dict()
 
     return {"task_id": task_id, "status": "not_found"}

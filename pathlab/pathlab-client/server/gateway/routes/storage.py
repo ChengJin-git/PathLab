@@ -21,7 +21,8 @@ from backend.database.repositories import (
     OrphanedRecordsRepository,
 )
 from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_admin, check_data_ownership
+from backend.auth.dependencies import require_admin
+from .access_control import assert_owner
 from ..dependencies import logger, storage_manager, migration_manager
 from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest
 from backend.common.config import Config
@@ -357,12 +358,11 @@ async def get_wsi_storage_info(
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
-        # Check ownership
-        if not check_data_ownership(wsi.user_id, user):
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to view this WSI's storage info",
-            )
+        assert_owner(
+            wsi.user_id,
+            user,
+            "You don't have permission to view this WSI's storage info",
+        )
 
         # Run file operations in thread pool to avoid blocking event loop
         info = await asyncio.to_thread(
@@ -403,12 +403,11 @@ async def get_training_task_storage_info(
                 status_code=404, detail=f"Training task not found: {task_id}"
             )
 
-        # Check ownership
-        if not check_data_ownership(task.user_id, user):
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to view this task's storage info",
-            )
+        assert_owner(
+            task.user_id,
+            user,
+            "You don't have permission to view this task's storage info",
+        )
 
         # Get trained models
         trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)

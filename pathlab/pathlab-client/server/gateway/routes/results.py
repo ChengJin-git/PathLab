@@ -57,11 +57,11 @@ from backend.auth import (
 )
 from backend.auth.dependencies import (
     require_pathologist_or_admin,
-    check_data_ownership,
     check_dataset_access_permission,
     check_dataset_gpu_permission,
     check_wsi_access_permission,
 )
+from .access_control import assert_owner
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
@@ -2687,9 +2687,11 @@ async def delete_task_analysis(
     db: AsyncSession = Depends(get_db),
 ):
     task = await TrainingTaskRepository.get_by_id(db, task_id)
-    if task is not None and not check_data_ownership(_coerce_str(task.user_id), user):
-        raise HTTPException(
-            status_code=403, detail="You don't have permission to delete this analysis"
+    if task is not None:
+        assert_owner(
+            _coerce_str(task.user_id),
+            user,
+            "You don't have permission to delete this analysis",
         )
 
     analysis_dir = (
@@ -2920,12 +2922,11 @@ async def delete_wsi_results(
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
-        # Check ownership
-        if not check_data_ownership(_coerce_str(wsi.user_id), user):
-            raise HTTPException(
-                status_code=403,
-                detail="You don't have permission to delete results for this WSI",
-            )
+        assert_owner(
+            _coerce_str(wsi.user_id),
+            user,
+            "You don't have permission to delete results for this WSI",
+        )
 
         # Delete from database
         database_deleted = 0
