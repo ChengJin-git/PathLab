@@ -147,8 +147,20 @@ export function PermissionCenterModal({
 }: PermissionCenterModalProps) {
   const { t } = useTranslation();
   const [mode, setMode] = useState<PermissionMode>(initialMode);
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, runSubmitting] = useAsyncAction<void>({ onError: (err) => setError(err instanceof Error ? err.message : String(err)) });
+  const [submitting, runSubmitting, asyncError, clearAsyncError] = useAsyncAction<void>({ withError: true });
+  const [loadingError, setLoadingError] = useState<string | null>(null);
+  const error = asyncError || loadingError;
+  const clearError = () => {
+    clearAsyncError();
+    setLoadingError(null);
+  };
+  const setError = (msg: string | null) => {
+    if (msg === null) {
+      setLoadingError(null);
+    } else {
+      setLoadingError(msg);
+    }
+  };
   const [expiresInHours, setExpiresInHours] = useState("");
   const [datasetSearchQuery, setDatasetSearchQuery] = useState("");
 
@@ -573,7 +585,7 @@ export function PermissionCenterModal({
   const handleModeChange = (nextMode: PermissionMode) => {
     setMode(nextMode);
     onModeChange?.(nextMode);
-    setError(null);
+    clearError();
     setExpiresInHours("");
     setSelectedDatasetIds([]);
     setSelectedGrantUserIds([]);
@@ -640,7 +652,7 @@ export function PermissionCenterModal({
   const handleSelectAllMatchingDatasets = async () => {
     try {
       setSelectingAllDatasets(true);
-      setError(null);
+      clearError();
       const ids = await fetchAllSelectableDatasetIds();
       setSelectedDatasetIds(ids);
       setAllMatchingDatasetsSelected(true);
@@ -665,7 +677,7 @@ export function PermissionCenterModal({
   const handleSelectAllMatchingUsers = async () => {
     try {
       setSelectingAllUsers(true);
-      setError(null);
+      clearError();
       const ids = await fetchAllSelectableGrantUserIds();
       setSelectedGrantUserIds(ids);
       setAllMatchingUsersSelected(true);
@@ -689,7 +701,7 @@ export function PermissionCenterModal({
 
   const handleGrantToUser = () => {
     if (!selectedUser || selectedGrantableDatasetIds.length === 0) return;
-    setError(null);
+    clearError();
     void runSubmitting(async () => {
       const hours = parsePositiveHours(expiresInHours);
       const results = await Promise.allSettled(
@@ -711,12 +723,6 @@ export function PermissionCenterModal({
             failed: failedCount,
           }),
         );
-    }).catch((err: unknown) => {
-      setError(
-        err instanceof Error
-          ? err.message
-          : t("settings.permissionCenterModal.failedToGrantUserPermissions"),
-      );
     });
   };
 
@@ -732,18 +738,10 @@ export function PermissionCenterModal({
       confirmVariant: "warning",
       onConfirm: async () => {
         closeConfirmDialog();
-        setError(null);
+        clearError();
         void runSubmitting(async () => {
           await revokeDatasetGrant(permission.dataset_id, selectedUser.id);
           await loadUserPermissions(selectedUser.id);
-        }).catch((err: unknown) => {
-          setError(
-            err instanceof Error
-              ? err.message
-              : t(
-                  "settings.permissionCenterModal.failedToRevokeUserPermission",
-                ),
-          );
         });
       },
     });
@@ -764,7 +762,7 @@ export function PermissionCenterModal({
       confirmVariant: "danger",
       onConfirm: async () => {
         closeConfirmDialog();
-        setError(null);
+        clearError();
         void runSubmitting(async () => {
           const results = await Promise.allSettled(
             validUserPermissions.map((permission) =>
@@ -781,14 +779,6 @@ export function PermissionCenterModal({
                 failed: failedCount,
               }),
             );
-        }).catch((err: unknown) => {
-          setError(
-            err instanceof Error
-              ? err.message
-              : t(
-                  "settings.permissionCenterModal.failedToRevokeUserPermissions",
-                ),
-          );
         });
       },
     });
@@ -801,7 +791,7 @@ export function PermissionCenterModal({
       selectedDatasetIsPublic
     )
       return;
-    setError(null);
+    clearError();
     void runSubmitting(async () => {
       const hours = parsePositiveHours(expiresInHours);
       const response = await batchGrantDatasetGrants(
@@ -820,12 +810,6 @@ export function PermissionCenterModal({
             failed: response.failed,
           }),
         );
-    }).catch((err: unknown) => {
-      setError(
-        err instanceof Error
-          ? err.message
-          : t("settings.permissionCenterModal.failedToGrantDatasetGrants"),
-      );
     });
   };
 
@@ -843,7 +827,7 @@ export function PermissionCenterModal({
       confirmVariant: "warning",
       onConfirm: async () => {
         closeConfirmDialog();
-        setError(null);
+        clearError();
         void runSubmitting(async () => {
           const response = await batchRevokeDatasetGrants(
             permission.dataset_id,
@@ -856,12 +840,6 @@ export function PermissionCenterModal({
                 failed: response.failed,
               }),
             );
-        }).catch((err: unknown) => {
-          setError(
-            err instanceof Error
-              ? err.message
-              : t("settings.permissionCenterModal.failedToRevokeDatasetGrant"),
-          );
         });
       },
     });
@@ -882,7 +860,7 @@ export function PermissionCenterModal({
       confirmVariant: "danger",
       onConfirm: async () => {
         closeConfirmDialog();
-        setError(null);
+        clearError();
         void runSubmitting(async () => {
           const response = await batchRevokeDatasetGrants(
             selectedDatasetId,
@@ -895,12 +873,6 @@ export function PermissionCenterModal({
                 failed: response.failed,
               }),
             );
-        }).catch((err: unknown) => {
-          setError(
-            err instanceof Error
-              ? err.message
-              : t("settings.permissionCenterModal.failedToRevokeDatasetGrants"),
-          );
         });
       },
     });
@@ -939,7 +911,7 @@ export function PermissionCenterModal({
 
   const handleBatchUpdateVisibility = () => {
     if (selectedVisibilityDatasetIds.length === 0) return;
-    setError(null);
+    clearError();
     void runSubmitting(async () => {
       const targetIsPublic = visibilityTarget === "public";
       const results = await Promise.allSettled(
@@ -962,12 +934,6 @@ export function PermissionCenterModal({
       if (mode === "dataset" && selectedDatasetId) {
         await loadDatasetGrants(selectedDatasetId);
       }
-    }).catch((err: unknown) => {
-      setError(
-        err instanceof Error
-          ? err.message
-          : t("settings.permissionCenterModal.failedToBatchUpdateVisibility"),
-      );
     });
   };
 
@@ -1076,13 +1042,13 @@ export function PermissionCenterModal({
                         key={user.id}
                         type="button"
                         onClick={() => {
-                          setSelectedUserId(user.id);
-                          setSelectedDatasetIds([]);
-                          setAllMatchingDatasetsSelected(false);
-                          setAllMatchingDatasetCount(0);
-                          setExpiresInHours("");
-                          setError(null);
-                        }}
+                           setSelectedUserId(user.id);
+                           setSelectedDatasetIds([]);
+                           setAllMatchingDatasetsSelected(false);
+                           setAllMatchingDatasetCount(0);
+                           setExpiresInHours("");
+                           clearError();
+                         }}
                         className={cn(
                           "rounded-xl border p-4 text-left transition-all",
                           isSelected
@@ -1565,7 +1531,7 @@ export function PermissionCenterModal({
                               setAllMatchingUsersSelected(false);
                               setAllMatchingUserCount(0);
                               setExpiresInHours("");
-                              setError(null);
+                              clearError();
                             }}
                             className="min-w-0 flex-1 text-left"
                           >

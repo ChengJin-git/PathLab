@@ -131,4 +131,50 @@ describe('useAsyncAction', () => {
     })
     expect(result.current[0]).toBe(false)
   })
+
+  it('withError: true sets error state when function throws', async () => {
+    const { result } = renderHook(() => useAsyncAction({ withError: true }))
+
+    await act(async () => {
+      const [, run] = result.current
+      await run(async () => { throw new Error('test error') })
+    })
+
+    const [, , error] = result.current
+    expect(error).toBe('test error')
+  })
+
+  it('withError: true and custom onError both trigger on error', async () => {
+    const onError = vi.fn()
+    const { result } = renderHook(() => useAsyncAction({ withError: true, onError }))
+    const err = new Error('test error')
+
+    await act(async () => {
+      const [, run] = result.current
+      await run(async () => { throw err })
+    })
+
+    const [, , error] = result.current
+    expect(error).toBe('test error')
+    expect(onError).toHaveBeenCalledWith(err)
+  })
+
+  it('clearError resets error state', async () => {
+    const { result } = renderHook(() => useAsyncAction({ withError: true }))
+
+    await act(async () => {
+      const [, run] = result.current
+      await run(async () => { throw new Error('test error') })
+    })
+
+    let [, , error, clearError] = result.current
+    expect(error).toBe('test error')
+
+    act(() => {
+      clearError()
+    })
+
+    const [, , errorAfter] = result.current
+    expect(errorAfter).toBeNull()
+  })
 })
