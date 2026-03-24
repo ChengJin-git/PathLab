@@ -1,22 +1,28 @@
 """
 AIResultRepository - Data Access Layer
 """
+
 import logging
-from datetime import datetime
-from typing import List, Optional, Dict, Any
-from sqlalchemy import select, delete, func, desc, insert
+from typing import Any, Dict, List, Optional
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 from ..models import AIResult
+from .base import BaseRepository
 
 
-class AIResultRepository:
+class AIResultRepository(BaseRepository[AIResult]):
     """Repository for AI Result operations"""
 
+    model = AIResult
+    pk_field = "id"
+
     @staticmethod
-    async def create(db: AsyncSession, result_data: Dict[str, Any]) -> AIResult:
+    async def create(  # pyright: ignore[reportIncompatibleMethodOverride]
+        db: AsyncSession, result_data: Dict[str, Any]
+    ) -> AIResult:
         """Create a new AI result"""
         result = AIResult(**result_data)
         db.add(result)
@@ -25,7 +31,9 @@ class AIResultRepository:
         return result
 
     @staticmethod
-    async def bulk_create(db: AsyncSession, results_data: List[Dict[str, Any]], batch_size: int = 100) -> int:
+    async def bulk_create(
+        db: AsyncSession, results_data: List[Dict[str, Any]], batch_size: int = 100
+    ) -> int:
         """
         Bulk insert AI results for performance optimization.
 
@@ -42,7 +50,7 @@ class AIResultRepository:
 
         total_inserted = 0
         for i in range(0, len(results_data), batch_size):
-            batch = results_data[i:i + batch_size]
+            batch = results_data[i : i + batch_size]
             objects = [AIResult(**data) for data in batch]
             db.add_all(objects)
             await db.flush()
@@ -64,9 +72,7 @@ class AIResultRepository:
     @staticmethod
     async def get_by_task_id(db: AsyncSession, task_id: str) -> Optional[AIResult]:
         """Get result by task_id"""
-        result = await db.execute(
-            select(AIResult).where(AIResult.task_id == task_id)
-        )
+        result = await db.execute(select(AIResult).where(AIResult.task_id == task_id))
         return result.scalar_one_or_none()
 
     @staticmethod
@@ -97,9 +103,6 @@ class AIResultRepository:
         Returns:
             Number of deleted records
         """
-        result = await db.execute(
-            delete(AIResult).where(AIResult.task_id == task_id)
-        )
+        result = await db.execute(delete(AIResult).where(AIResult.task_id == task_id))
         await db.flush()
         return result.rowcount
-

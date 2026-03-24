@@ -1,36 +1,34 @@
 """
 TrainedModelRepository - Data Access Layer
 """
+
 import logging
-from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from sqlalchemy import select, update, delete, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 from ..models import TrainedModel
+from .base import BaseRepository
 
 
-class TrainedModelRepository:
+class TrainedModelRepository(BaseRepository[TrainedModel]):
     """Repository for Trained Model operations"""
 
+    model = TrainedModel
+    pk_field = "model_id"
+
     @staticmethod
-    async def create(db: AsyncSession, model_data: Dict[str, Any]) -> TrainedModel:
+    async def create(  # pyright: ignore[reportIncompatibleMethodOverride]
+        db: AsyncSession, model_data: Dict[str, Any]
+    ) -> TrainedModel:
         """Create a new trained model"""
         model = TrainedModel(**model_data)
         db.add(model)
         await db.flush()
         await db.refresh(model)
         return model
-
-    @staticmethod
-    async def get_by_id(db: AsyncSession, model_id: str) -> Optional[TrainedModel]:
-        """Get trained model by model_id"""
-        result = await db.execute(
-            select(TrainedModel).where(TrainedModel.model_id == model_id)
-        )
-        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_task_id(db: AsyncSession, task_id: str) -> List[TrainedModel]:
@@ -40,10 +38,15 @@ class TrainedModelRepository:
             .where(TrainedModel.task_id == task_id)
             .order_by(desc(TrainedModel.created_at))
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
-    async def get_all(db: AsyncSession, limit: int = 100, offset: int = 0, user_id: Optional[str] = None) -> List[TrainedModel]:
+    async def get_all(
+        db: AsyncSession,
+        limit: int = 100,
+        offset: int = 0,
+        user_id: Optional[str] = None,
+    ) -> List[TrainedModel]:
         """Get all trained models.
 
         Args:
@@ -56,9 +59,11 @@ class TrainedModelRepository:
         query = select(TrainedModel)
         if user_id is not None:
             query = query.where(TrainedModel.user_id == user_id)
-        query = query.order_by(desc(TrainedModel.created_at)).limit(limit).offset(offset)
+        query = (
+            query.order_by(desc(TrainedModel.created_at)).limit(limit).offset(offset)
+        )
         result = await db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
     async def count(db: AsyncSession, user_id: Optional[str] = None) -> int:
@@ -73,7 +78,7 @@ class TrainedModelRepository:
         if user_id is not None:
             query = query.where(TrainedModel.user_id == user_id)
         result = await db.execute(query)
-        return result.scalar()
+        return result.scalar_one()
 
     @staticmethod
     async def delete(db: AsyncSession, model_id: str) -> bool:
@@ -104,7 +109,7 @@ class TrainedModelRepository:
             .where(TrainedModel.is_active == True)
             .order_by(desc(TrainedModel.created_at))
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
     async def set_default(db: AsyncSession, model_id: str) -> Optional[TrainedModel]:
@@ -116,14 +121,10 @@ class TrainedModelRepository:
         set_default calls that could leave multiple models as default.
         """
         # Lock all TrainedModel rows to prevent concurrent set_default interleaving
-        await db.execute(
-            select(TrainedModel).with_for_update()
-        )
+        await db.execute(select(TrainedModel).with_for_update())
 
         # First, unset all default flags
-        await db.execute(
-            update(TrainedModel).values(is_default=False)
-        )
+        await db.execute(update(TrainedModel).values(is_default=False))
 
         # Then set the specified model as default
         await db.execute(
@@ -135,7 +136,9 @@ class TrainedModelRepository:
         return await TrainedModelRepository.get_by_id(db, model_id)
 
     @staticmethod
-    async def set_active(db: AsyncSession, model_id: str, is_active: bool) -> Optional[TrainedModel]:
+    async def set_active(
+        db: AsyncSession, model_id: str, is_active: bool
+    ) -> Optional[TrainedModel]:
         """Activate or deactivate a model"""
         await db.execute(
             update(TrainedModel)
@@ -144,4 +147,3 @@ class TrainedModelRepository:
         )
         await db.flush()
         return await TrainedModelRepository.get_by_id(db, model_id)
-

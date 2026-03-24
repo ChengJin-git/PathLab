@@ -1,28 +1,32 @@
 """
 StorageTaskRepository - Data Access Layer
 """
+
 import logging
-from datetime import datetime
-from typing import List, Optional, Dict, Any
-from sqlalchemy import select, update, delete, desc
+from typing import Any, Dict, List, Optional
+from sqlalchemy import select, update, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 from ..models import StorageTask, utc_now
+from .base import BaseRepository
 
 
-class StorageTaskRepository:
+class StorageTaskRepository(BaseRepository[StorageTask]):
     """Repository for Storage Task operations (batch import, delete external files)"""
 
+    model = StorageTask
+    pk_field = "task_id"
+
     @staticmethod
-    async def create(
+    async def create(  # pyright: ignore[reportIncompatibleMethodOverride]
         db: AsyncSession,
         task_id: str,
         user_id: str,
         task_type: str,
         total_items: int = 0,
-        params: Optional[Dict[str, Any]] = None
+        params: Optional[Dict[str, Any]] = None,
     ) -> StorageTask:
         """Create a new storage task"""
         task = StorageTask(
@@ -31,7 +35,7 @@ class StorageTaskRepository:
             task_type=task_type,
             total_items=total_items,
             params=params,
-            status='pending'
+            status="pending",
         )
         db.add(task)
         await db.flush()
@@ -39,28 +43,20 @@ class StorageTaskRepository:
         return task
 
     @staticmethod
-    async def get_by_id(db: AsyncSession, task_id: str) -> Optional[StorageTask]:
-        """Get storage task by ID"""
-        result = await db.execute(
-            select(StorageTask).where(StorageTask.task_id == task_id)
-        )
-        return result.scalar_one_or_none()
-
-    @staticmethod
     async def update_status(
         db: AsyncSession,
         task_id: str,
         status: str,
-        progress: int = None,
-        processed_items: int = None,
-        success_count: int = None,
-        failed_count: int = None,
-        skipped_count: int = None,
-        error_message: str = None,
-        results: list[Any] = None
+        progress: Optional[int] = None,
+        processed_items: Optional[int] = None,
+        success_count: Optional[int] = None,
+        failed_count: Optional[int] = None,
+        skipped_count: Optional[int] = None,
+        error_message: Optional[str] = None,
+        results: Optional[list[Any]] = None,
     ) -> bool:
         """Update storage task status"""
-        update_data = {"status": status}
+        update_data: Dict[str, Any] = {"status": status}
 
         if progress is not None:
             update_data["progress"] = progress
@@ -77,9 +73,9 @@ class StorageTaskRepository:
         if results is not None:
             update_data["results"] = results
 
-        if status == 'processing' and 'started_at' not in update_data:
+        if status == "processing" and "started_at" not in update_data:
             update_data["started_at"] = utc_now()
-        if status in ('completed', 'failed', 'cancelled'):
+        if status in ("completed", "failed", "cancelled"):
             update_data["completed_at"] = utc_now()
 
         result = await db.execute(
@@ -92,42 +88,41 @@ class StorageTaskRepository:
 
     @staticmethod
     async def get_user_tasks(
-        db: AsyncSession,
-        user_id: str = None,
-        limit: int = 50
+        db: AsyncSession, user_id: Optional[str] = None, limit: int = 50
     ) -> List[StorageTask]:
         """Get recent storage tasks. If user_id is None, get all tasks (admin)."""
         query = select(StorageTask).order_by(StorageTask.created_at.desc()).limit(limit)
         if user_id:
             query = query.where(StorageTask.user_id == user_id)
         result = await db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
     async def get_active_tasks(
-        db: AsyncSession,
-        user_id: str = None
+        db: AsyncSession, user_id: Optional[str] = None
     ) -> List[StorageTask]:
         """Get active (non-completed) storage tasks. If user_id is None, get all (admin)."""
-        query = select(StorageTask).where(
-            StorageTask.status.in_(['pending', 'processing'])
-        ).order_by(StorageTask.created_at.desc())
+        query = (
+            select(StorageTask)
+            .where(StorageTask.status.in_(["pending", "processing"]))
+            .order_by(StorageTask.created_at.desc())
+        )
         if user_id:
             query = query.where(StorageTask.user_id == user_id)
         result = await db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
     async def cleanup_old_tasks(db: AsyncSession, days: int = 7) -> int:
         """Delete failed/cancelled storage tasks older than specified days (keep completed tasks permanently)"""
         from datetime import timedelta
+
         cutoff = utc_now() - timedelta(days=days)
 
         result = await db.execute(
             delete(StorageTask).where(
-                StorageTask.status.in_(['failed', 'cancelled']),
-                StorageTask.completed_at < cutoff
+                StorageTask.status.in_(["failed", "cancelled"]),
+                StorageTask.completed_at < cutoff,
             )
         )
         return result.rowcount
-

@@ -1,37 +1,35 @@
 """
 AITaskRepository - Data Access Layer
 """
+
 import logging
-from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 from sqlalchemy import select, update, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
 from ..models import AITask, utc_now
-from backend.ai.schemas.base import TaskStatus
+from ...ai.schemas.base import TaskStatus
+from .base import BaseRepository
 
 
-class AITaskRepository:
+class AITaskRepository(BaseRepository[AITask]):
     """Repository for AI Task operations"""
 
+    model = AITask
+    pk_field = "task_id"
+
     @staticmethod
-    async def create(db: AsyncSession, task_data: Dict[str, Any]) -> AITask:
+    async def create(  # pyright: ignore[reportIncompatibleMethodOverride]
+        db: AsyncSession, task_data: Dict[str, Any]
+    ) -> AITask:
         """Create a new AI task"""
         task = AITask(**task_data)
         db.add(task)
         await db.flush()
         await db.refresh(task)
         return task
-
-    @staticmethod
-    async def get_by_id(db: AsyncSession, task_id: str) -> Optional[AITask]:
-        """Get task by task_id"""
-        result = await db.execute(
-            select(AITask).where(AITask.task_id == task_id)
-        )
-        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_wsi_id(db: AsyncSession, wsi_id: str) -> List[AITask]:
@@ -41,7 +39,7 @@ class AITaskRepository:
             .where(AITask.wsi_id == wsi_id)
             .order_by(desc(AITask.created_at))
         )
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
     async def get_latest_by_wsi_id(db: AsyncSession, wsi_id: str) -> Optional[AITask]:
@@ -60,10 +58,10 @@ class AITaskRepository:
         task_id: str,
         status: str,
         progress: Optional[int] = None,
-        error_message: Optional[str] = None
+        error_message: Optional[str] = None,
     ) -> Optional[AITask]:
         """Update task status"""
-        update_data = {"status": status}
+        update_data: Dict[str, Any] = {"status": status}
 
         if progress is not None:
             update_data["progress"] = progress
@@ -71,7 +69,9 @@ class AITaskRepository:
         if error_message is not None:
             update_data["error_message"] = error_message
 
-        if status == TaskStatus.PATCHING and not await AITaskRepository._has_started(db, task_id):
+        if status == TaskStatus.PATCHING and not await AITaskRepository._has_started(
+            db, task_id
+        ):
             update_data["started_at"] = utc_now()
 
         if status in [TaskStatus.COMPLETED, TaskStatus.FAILED, TaskStatus.CANCELLED]:
@@ -80,9 +80,7 @@ class AITaskRepository:
                 update_data["progress"] = 100
 
         await db.execute(
-            update(AITask)
-            .where(AITask.task_id == task_id)
-            .values(**update_data)
+            update(AITask).where(AITask.task_id == task_id).values(**update_data)
         )
         await db.flush()
         return await AITaskRepository.get_by_id(db, task_id)
@@ -120,14 +118,18 @@ class AITaskRepository:
             user_id: Optional user ID filter. If provided, only counts completed tasks belonging to this user.
                      If None, counts all completed tasks (for admin users).
         """
-        query = select(func.count(AITask.id)).where(AITask.status == TaskStatus.COMPLETED)
+        query = select(func.count(AITask.id)).where(
+            AITask.status == TaskStatus.COMPLETED
+        )
         if user_id is not None:
             query = query.where(AITask.user_id == user_id)
         result = await db.execute(query)
         return result.scalar_one()
 
     @staticmethod
-    async def get_recent(db: AsyncSession, limit: int = 10, user_id: Optional[str] = None) -> List[AITask]:
+    async def get_recent(
+        db: AsyncSession, limit: int = 10, user_id: Optional[str] = None
+    ) -> List[AITask]:
         """Get recent AI tasks (inference tasks).
 
         Args:
@@ -143,10 +145,12 @@ class AITaskRepository:
             query = query.where(AITask.user_id == user_id)
         query = query.order_by(desc(AITask.created_at)).limit(limit)
         result = await db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     @staticmethod
-    async def get_status_counts(db: AsyncSession, user_id: Optional[str] = None) -> Dict[str, int]:
+    async def get_status_counts(
+        db: AsyncSession, user_id: Optional[str] = None
+    ) -> Dict[str, int]:
         """Get counts of AI tasks by status.
 
         Args:
@@ -160,10 +164,18 @@ class AITaskRepository:
 
         query = select(
             func.count(AITask.id).label("total"),
-            func.sum(case((AITask.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
-            func.sum(case((AITask.status == TaskStatus.PATCHING, 1), else_=0)).label("running"),
-            func.sum(case((AITask.status == TaskStatus.PENDING, 1), else_=0)).label("pending"),
-            func.sum(case((AITask.status == TaskStatus.FAILED, 1), else_=0)).label("failed"),
+            func.sum(case((AITask.status == TaskStatus.COMPLETED, 1), else_=0)).label(
+                "completed"
+            ),
+            func.sum(case((AITask.status == TaskStatus.PATCHING, 1), else_=0)).label(
+                "running"
+            ),
+            func.sum(case((AITask.status == TaskStatus.PENDING, 1), else_=0)).label(
+                "pending"
+            ),
+            func.sum(case((AITask.status == TaskStatus.FAILED, 1), else_=0)).label(
+                "failed"
+            ),
         )
         if user_id is not None:
             query = query.where(AITask.user_id == user_id)
@@ -176,4 +188,3 @@ class AITaskRepository:
             "pending": row.pending or 0,
             "failed": row.failed or 0,
         }
-
