@@ -34,7 +34,7 @@ from backend.database.repositories import (
 from backend.database.models import TrainingTask
 from sqlalchemy.orm import selectinload
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
-from .pipeline import run_training_pipeline
+from .pipeline import run_training_pipeline, run_patching_then_submit
 from .task_queue import init_task_queue, shutdown_task_queue, get_task_queue, TaskType
 from .routes.chat_training_recommendation import (
     get_bundled_training_knowledge_status,
@@ -622,20 +622,50 @@ async def resume_interrupted_tasks():
                             "wsi_ids": wsi_ids,
                             "preprocessing_config": task.preprocessing_config or {},
                             "model_config": task.model_config or {},
-                            # Token is not persisted for security. During resume:
-                            # - If features are already cached: no model loading needed, works fine
-                            # - If model checkpoint already downloaded: no token needed, works fine
-                            # - If model needs downloading (first use of a private HF model): will fail
-                            #   with auth error — user must re-submit the task with their HF token
                             "huggingface_token": None,
-                            "training_task_type": task_type,  # Use same param name as pipeline
+                            "training_task_type": task_type,
                         }
-                        await task_queue.submit(
-                            task_id=task.task_id,
-                            task_type=TaskType.TRAINING,
-                            coro_func=run_training_pipeline,
-                            **pipeline_kwargs,
-                        )
+
+                        if data_type == "wsi" and task.status in (
+                            TaskStatus.EXTRACTING,
+                            TaskStatus.TRAINING,
+                        ):
+                            gpu_kwargs = {**pipeline_kwargs, "patching_complete": True}
+                            await task_queue.submit(
+                                task_id=task.task_id,
+                                task_type=TaskType.TRAINING,
+                                coro_func=run_training_pipeline,
+                                **gpu_kwargs,
+                            )
+                            logger.info(
+                                f"  - Resumed at GPU stage (patching already done, "
+                                f"submitting with patching_complete=True)"
+                            )
+
+                        elif data_type == "wsi":
+                            patching_coro = run_patching_then_submit(
+                                task.task_id, pipeline_kwargs
+                            )
+                            patching_task = asyncio.create_task(patching_coro)
+                            task_queue.register_patching_task(
+                                task.task_id, patching_task
+                            )
+                            logger.info(
+                                f"  - Resumed at patching stage (pre-queue, "
+                                f"status was '{task.status}')"
+                            )
+
+                        else:
+                            await task_queue.submit(
+                                task_id=task.task_id,
+                                task_type=TaskType.TRAINING,
+                                coro_func=run_training_pipeline,
+                                **pipeline_kwargs,
+                            )
+                            logger.info(
+                                f"  - Patch task resumed directly to GPU queue "
+                                f"(data_type=patch, no patching stage)"
+                            )
 
                     logger.info(
                         f"✓ Task {task.task_id} queued for resume (claimed by this instance)"
