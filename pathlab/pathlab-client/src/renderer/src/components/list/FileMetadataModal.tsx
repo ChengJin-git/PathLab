@@ -1,10 +1,11 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
+import type { FileMetadata } from '../../types/training'
 import { Select } from '../ui/select'
 import { ModalShell } from '../ui/modal-shell'
 import { organSources, organSourceKeyMap } from '../upload/types'
 
-export type FileMetadataMap = Map<string, { label: string; case_id: string; age: string; gender: string }>
+export type FileMetadataMap = Map<string, FileMetadata>
 
 export interface FileMetadataModalProps {
   selectedFiles: File[]
