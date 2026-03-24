@@ -111,6 +111,10 @@ from .external_validation_analysis import (
 
 router = APIRouter(tags=["Chat & Conversations"])
 
+from .chat_conversation import router as chat_conversation_router
+
+router.include_router(chat_conversation_router)
+
 SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
 ACTIVE_TRAINING_STATUSES = {
     "pending",
@@ -3664,146 +3668,6 @@ After saving, return here and start chatting!"""
         yield f"data: {json.dumps({'content': ref_block})}\n\n"
 
     yield "data: [DONE]\n\n"
-
-
-@router.post("/conversations")
-async def create_conversation(
-    req: CreateConversationRequest,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a new conversation for the current user"""
-    conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
-    conversation_data = {
-        "conversation_id": conversation_id,
-        "user_id": str(user.id),  # Use authenticated user's ID
-        "title": req.title or "New Conversation",
-    }
-    conversation = await ChatRepository.create_conversation(db, conversation_data)
-    await db.commit()
-    return conversation.to_dict()
-
-
-@router.get("/conversations")
-async def list_conversations(
-    skip: int = 0,
-    limit: int = 50,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """List all conversations for the current user"""
-    user_id = str(user.id)
-    conversations = await ChatRepository.get_user_conversations(
-        db, user_id, skip, limit
-    )
-    total = await ChatRepository.count_user_conversations(db, user_id)
-    return {"items": [conv.to_dict() for conv in conversations], "total": total}
-
-
-@router.get("/conversations/{conversation_id}")
-async def get_conversation(
-    conversation_id: str,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get a conversation with all messages. Users can only view their own conversations."""
-    conversation = await require_conversation_access(db, conversation_id, user)
-
-    # Sort messages by id to ensure chronological order (defense-in-depth)
-    sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
-    return {
-        **conversation.to_dict(),
-        "messages": [msg.to_dict() for msg in sorted_messages],
-    }
-
-
-@router.delete("/conversations/{conversation_id}")
-async def delete_conversation(
-    conversation_id: str,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Delete a conversation. Users can only delete their own conversations."""
-    await require_conversation_access(db, conversation_id, user)
-
-    await cleanup_conversation_chat_patch_tasks(conversation_id)
-    success = await ChatRepository.delete_conversation(db, conversation_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    await db.commit()
-    return {"message": "Conversation deleted successfully"}
-
-
-@router.patch("/conversations/{conversation_id}/messages/{message_id}")
-async def update_message(
-    conversation_id: str,
-    message_id: int,
-    req: UpdateMessageRequest,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Update a message's content. Used to persist task submission status."""
-    await require_conversation_access(db, conversation_id, user)
-
-    # Update the message
-    message = await ChatRepository.update_message(
-        db, message_id, req.content, req.metadata
-    )
-    if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
-
-    await db.commit()
-    return message.to_dict()
-
-
-@router.delete("/conversations/{conversation_id}/messages/{message_id}")
-async def delete_messages_from(
-    conversation_id: str,
-    message_id: int,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Delete a message and all subsequent messages in a conversation.
-    Used for conversation branching - allows users to delete from a point and restart.
-    Users can only delete messages in their own conversations.
-    """
-    await require_conversation_access(db, conversation_id, user)
-
-    await cleanup_chat_patch_tasks_from_message(conversation_id, message_id)
-    # Delete the message and all subsequent messages
-    deleted_count = await ChatRepository.delete_messages_from_id(
-        db, conversation_id, message_id
-    )
-    if deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Message not found")
-
-    await db.commit()
-    return {
-        "message": f"Deleted {deleted_count} message(s)",
-        "deleted_count": deleted_count,
-    }
-
-
-@router.post("/conversations/{conversation_id}/messages")
-async def add_message(
-    conversation_id: str,
-    req: AddMessageRequest,
-    user: User = Depends(current_active_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Add a message to a conversation. Used to persist task submission success messages."""
-    await require_conversation_access(db, conversation_id, user)
-
-    # Add the message
-    message_data = {
-        "conversation_id": conversation_id,
-        "role": req.role,
-        "content": req.content,
-    }
-    message = await ChatRepository.add_message(db, message_data)
-    await db.commit()
-    return message.to_dict()
 
 
 @router.post("/patch-inference")
