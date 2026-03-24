@@ -1,8 +1,3 @@
-/**
- * AssistantMessage — renders a single AI assistant message with special block parsing.
- *
- * Extracted from AIChatPage.tsx to reduce file size.
- */
 import React, { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -58,8 +53,8 @@ import {
   cardTransition
 } from './CardSkeletons'
 import { stripChatBlocks } from './chatBlockParsing'
+import { FUNCTIONAL_CARD_INCOMPLETE_TAGS, SPECIAL_BLOCK_TAGS, getIncompleteBlock } from '../../lib/chatBlockRegistry'
 
-// Props interface for AssistantMessage component
 export interface AssistantMessageProps {
   content: string
   messageId: string
@@ -91,102 +86,6 @@ export interface AssistantMessageProps {
   referenceImages?: string[]
   onMessageContentReplace?: (messageId: string, updatedContent: string, errorToastKey?: string) => void | Promise<void>
   searchArtifacts?: MessageArtifacts | null
-}
-
-const FUNCTIONAL_CARD_INCOMPLETE_TAGS = new Set([
-  'TASK_CONFIG', 'ANALYSIS_CONFIG', 'IMAGE_RECOMMENDATION', 'PATCH_INFERENCE',
-  'QUICK_ANALYSIS_CONFIG', 'METRIC_CONFIG', 'CHART_CONFIG', 'OPTIONS',
-])
-
-const SPECIAL_BLOCK_TAGS = [
-  'OPTIONS',
-  'TASK_CONFIG',
-  'IMAGE_RECOMMENDATION',
-  'CSV_ACTION',
-  'NAVIGATE',
-  'ANALYSIS_CONFIG',
-  'METRIC_CONFIG',
-  'CHART_CONFIG',
-  'QUICK_ANALYSIS_CONFIG',
-  'CSV_PREVIEW',
-  'CANCEL_TASK',
-  'RENAME_TASK',
-  'TASK_HISTORY_CONFIG',
-  'VOICE_CONTROL',
-  'SUBMIT_TASK',  // Voice command to trigger submit on existing TaskConfigCard
-  'CANCEL_TASK_NOW',  // Voice command to trigger cancel on existing CancelTaskCard
-  'DATASET_REGISTRATION',
-  'METADATA_UPLOAD',
-  'MODEL_LIST',
-  'PATCH_INFERENCE',
-  'REFERENCE',
-  'PDF_PARSE_STATUS',
-  'SEARCH_STATUS',
-  'WEB_SEARCH_RESULT',
-  'WEB_SEARCH',
-  'READ_ARTICLE',
-  'CITATION_CONTEXTS'
-]
-
-/**
- * Identify any incomplete/streaming special blocks in content.
- * Returns the cleaned content (without the incomplete block) and the tag of the incomplete block.
- *
- * When isStreaming is true, also detects partial tag prefixes at the end of the content.
- * For example, if the AI is streaming "[OPTIO" (not yet complete "[OPTIONS]"),
- * this function will detect it as an incomplete OPTIONS block and show the skeleton.
- */
-function getIncompleteBlock(content: string, isStreaming: boolean = false): { content: string; incompleteTag: string | null } {
-  let result = content
-  let incompleteTag: string | null = null
-
-  for (const tag of SPECIAL_BLOCK_TAGS) {
-    // Pattern: [TAG_NAME] exists but [/TAG_NAME] doesn't exist
-    const openTag = `[${tag}]`
-    const closeTag = `[/${tag}]`
-    const openIndex = result.indexOf(openTag)
-
-    // Check if tag is opened but not closed
-    // Also ensuring regular text before the tag is preserved
-    if (openIndex !== -1 && result.indexOf(closeTag) === -1) {
-      // Remove everything from the opening tag to the end for display
-      result = result.substring(0, openIndex).trim()
-      incompleteTag = tag
-      break // Assume only one incomplete block at a time
-    }
-  }
-
-  // During streaming, detect partial tag prefixes at the end of content.
-  // e.g. content ending with "[OPTIO" should be recognised as an incomplete OPTIONS block.
-  if (isStreaming && !incompleteTag) {
-    const lastBracket = result.lastIndexOf('[')
-    if (lastBracket !== -1) {
-      const trailing = result.substring(lastBracket)
-      // Only consider if the bracket is unclosed (no ']' after it)
-      if (!trailing.includes(']')) {
-        const partialTag = trailing.substring(1) // text after '['
-        if (partialTag.length > 0) {
-          for (const tag of SPECIAL_BLOCK_TAGS) {
-            if (tag.startsWith(partialTag)) {
-              result = result.substring(0, lastBracket).trim()
-              incompleteTag = tag
-              break
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // When streaming has ended, don't report incomplete tags – this prevents
-  // skeleton loading UI from rendering forever when the AI finishes without
-  // completing a block (e.g. [OPTIONS] without [/OPTIONS]).
-  // The content cleanup above still applies so broken markup is stripped.
-  if (!isStreaming) {
-    incompleteTag = null
-  }
-
-  return { content: result, incompleteTag }
 }
 
 // Parse [SUBMIT_TASK] block - triggers submit on existing TaskConfigCard
