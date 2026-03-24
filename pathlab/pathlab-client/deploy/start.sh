@@ -191,6 +191,29 @@ export GATEWAY_PORT=6100
 export PREPROCESSING_PORT=6101
 export AI_PORT=6102
 
+if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
+    echo -e "  ${CYAN}[GPU]${NC} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+    if command -v nvidia-smi &> /dev/null; then
+        available_raw=$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | tr '\n' ' ' | sed 's/ $//')
+        echo -e "  ${CYAN}[GPU]${NC} 系统物理 GPU 索引: ${available_raw:-未知}"
+        invalid=""
+        IFS=',' read -ra _configured_gpus <<< "$CUDA_VISIBLE_DEVICES"
+        for _idx in "${_configured_gpus[@]}"; do
+            _idx=$(echo "$_idx" | tr -d ' ')
+            if ! echo " $available_raw " | grep -qE " $_idx "; then
+                invalid="${invalid:+$invalid,}$_idx"
+            fi
+        done
+        if [ -n "$invalid" ]; then
+            echo -e "  ${YELLOW}[GPU][!]${NC} 以下卡号在系统中不存在，请检查: ${invalid}"
+        else
+            echo -e "  ${GREEN}[GPU][✓]${NC} 配置有效"
+        fi
+    fi
+else
+    echo -e "  ${CYAN}[GPU]${NC} CUDA_VISIBLE_DEVICES 未设置，使用全部可用 GPU"
+fi
+
 nohup "$PYTHON" main.py > "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo $BACKEND_PID > "$LOG_DIR/backend.pid"
