@@ -12,6 +12,8 @@ Usage:
 """
 
 import logging
+import threading
+import time
 from typing import Tuple, Any
 
 import torch
@@ -31,6 +33,56 @@ try:
 except Exception as e:
     logger.warning(
         f"pynvml not available ({e}), falling back to PyTorch memory detection"
+    )
+
+_cuda_to_nvml_handle: dict[int, Any] = {}
+
+_RESERVATION_TTL_SEC: float = 600.0
+_vram_reservation_lock = threading.Lock()
+_vram_reservations: list[tuple[float, int, float]] = []  # (expiry, cuda_idx, mb)
+
+
+def _add_vram_reservation(cuda_idx: int, mb: float) -> None:
+    with _vram_reservation_lock:
+        _vram_reservations.append(
+            (time.monotonic() + _RESERVATION_TTL_SEC, cuda_idx, mb)
+        )
+
+
+def _get_pending_reserved_mb(cuda_idx: int) -> float:
+    now = time.monotonic()
+    with _vram_reservation_lock:
+        active = [(exp, idx, m) for exp, idx, m in _vram_reservations if exp > now]
+        _vram_reservations[:] = active
+        return sum(m for exp, idx, m in active if idx == cuda_idx)
+
+
+def _get_nvml_handle_for_cuda_device(cuda_index: int) -> Any:
+    """
+    Resolve a CUDA logical device index to its pynvml handle via UUID matching.
+
+    nvmlDeviceGetHandleByIndex uses physical GPU indices, which diverge from CUDA
+    logical indices whenever CUDA_VISIBLE_DEVICES skips a GPU (e.g. "0,1,3" makes
+    CUDA:2 point to physical GPU 3, but nvml index 2 still means physical GPU 2).
+    UUID matching is the only reliable cross-API bridge.
+    """
+    if cuda_index in _cuda_to_nvml_handle:
+        return _cuda_to_nvml_handle[cuda_index]
+
+    cuda_uuid = torch.cuda.get_device_properties(cuda_index).uuid
+    num_nvml = pynvml.nvmlDeviceGetCount()
+    for i in range(num_nvml):
+        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+        if pynvml.nvmlDeviceGetUUID(handle) == cuda_uuid:
+            _cuda_to_nvml_handle[cuda_index] = handle
+            logger.debug(
+                f"CUDA:{cuda_index} → physical GPU {i} (UUID {cuda_uuid[:24]}…) cached"
+            )
+            return handle
+
+    raise RuntimeError(
+        f"No pynvml device matched CUDA:{cuda_index} (UUID={cuda_uuid}). "
+        f"Searched {num_nvml} physical GPU(s)."
     )
 
 
@@ -57,7 +109,7 @@ def get_gpu_memory_info(device_index: int) -> Tuple[float, float, float]:
     """
     if _nvml_available:
         try:
-            handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
+            handle = _get_nvml_handle_for_cuda_device(device_index)
             info = pynvml.nvmlDeviceGetMemoryInfo(handle)
             total_mb = info.total / (1024**2)
             used_mb = info.used / (1024**2)
@@ -535,10 +587,14 @@ def select_optimal_gpu_for_task(min_vram_mb: float = 0) -> Tuple[int, float]:
     best_free_mb = 0.0
 
     for i in range(num_gpus):
-        _, free_mb, _ = get_gpu_memory_info(i)
-        # Select GPU with most free VRAM that meets minimum requirement
-        if free_mb >= min_vram_mb and free_mb > best_free_mb:
-            best_free_mb = free_mb
+        _, raw_free_mb, _ = get_gpu_memory_info(i)
+        pending = _get_pending_reserved_mb(i)
+        effective_free = max(0.0, raw_free_mb - pending)
+        if effective_free >= min_vram_mb and effective_free > best_free_mb:
+            best_free_mb = effective_free
             best_gpu_idx = i
+
+    if best_gpu_idx >= 0:
+        _add_vram_reservation(best_gpu_idx, min_vram_mb)
 
     return (best_gpu_idx, best_free_mb)
