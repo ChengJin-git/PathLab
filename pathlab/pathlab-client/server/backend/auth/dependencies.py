@@ -282,8 +282,6 @@ async def get_wsi_with_access(
 async def check_task_access_permission(
     user: User,
     task_user_id: Optional[str],
-    task_dataset_id: Optional[str],
-    db: AsyncSession,
 ) -> bool:
     if user.is_admin():
         return True

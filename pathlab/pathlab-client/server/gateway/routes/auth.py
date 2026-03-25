@@ -214,7 +214,16 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
 router = APIRouter(tags=["Authentication"])
 
 
-# Include FastAPI-Users auth routes (/auth/jwt/login disabled via config, /auth/jwt/logout active)
+# SECURITY: Must precede include_router — FastAPI matches first registered route.
+# Blocks /auth/jwt/login to prevent Turnstile + hashed-password bypass.
+@router.post("/auth/jwt/login", include_in_schema=False)
+async def disabled_jwt_login() -> None:
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="Direct JWT login is disabled. Use POST /auth/secure-login instead.",
+    )
+
+
 router.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/auth/jwt",

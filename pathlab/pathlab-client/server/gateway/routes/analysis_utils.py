@@ -247,8 +247,6 @@ async def _require_task_access(
     if not await check_task_access_permission(
         user,
         owner_user_id or task.user_id,
-        task_dataset_id,
-        db,
     ):
         raise HTTPException(status_code=403, detail=forbidden_detail)
     return task_dataset_id
