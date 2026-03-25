@@ -53,6 +53,12 @@ from backend.ai.schemas.requests import (
 )
 from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
+from backend.ai.utils.vram_guard import (
+    check_vram_before_model_load,
+    VRAMInsufficientError,
+    VRAM_WAIT_POLL_INTERVAL_SEC,
+)
+from backend.common.gpu_utils import select_optimal_gpu_for_task
 
 logger = logging.getLogger("training_routes")
 
@@ -1115,10 +1121,37 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         if segmentation_class_names:
             config.setdefault("dataset", {})["class_names"] = segmentation_class_names
 
+        device_str = req.device
+        device_obj = torch.device(device_str) if device_str else None
+        if device_obj and device_obj.type == "cuda":
+            _waited = 0
+            _vram_wait_max = Config.get_task_timeout()
+            while True:
+                try:
+                    await asyncio.to_thread(
+                        check_vram_before_model_load,
+                        model_name=req.backbone,
+                        device=device_obj,
+                    )
+                    break
+                except VRAMInsufficientError as e:
+                    if _waited >= _vram_wait_max:
+                        raise RuntimeError(
+                            f"VRAM protection triggered: {e.message}"
+                        ) from e
+                    await asyncio.sleep(VRAM_WAIT_POLL_INTERVAL_SEC)
+                    _waited += VRAM_WAIT_POLL_INTERVAL_SEC
+                    best_idx, _ = select_optimal_gpu_for_task(
+                        min_vram_mb=e.required_vram_mb
+                    )
+                    if best_idx >= 0:
+                        device_obj = torch.device(f"cuda:{best_idx}")
+                        device_str = str(device_obj)
+
         trainer = SegmentationTrainer(
             task_id=req.task_id,
             uploads_root=UPLOADS_DIR,
-            device=req.device,
+            device=device_str,
             batch_size=req.batch_size,
             config=config,
         )

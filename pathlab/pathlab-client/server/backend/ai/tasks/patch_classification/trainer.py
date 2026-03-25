@@ -36,7 +36,10 @@ from backend.ai.classifiers import get_classifier
 from backend.ai.utils.vram_guard import (
     check_vram_before_model_load,
     VRAMInsufficientError,
+    VRAM_WAIT_POLL_INTERVAL_SEC,
 )
+from backend.common.gpu_utils import select_optimal_gpu_for_task
+from backend.common.config import Config
 from backend.ai.utils.patch_resize import (
     build_patch_classification_transform,
     resolve_patch_resize_size,
@@ -406,15 +409,53 @@ class PatchClassificationTrainer(BaseTrainer):
 
         device_obj = torch.device(self.device)
         if device_obj.type == "cuda":
-            try:
-                await asyncio.to_thread(
-                    check_vram_before_model_load,
-                    model_name=extractor_name,
-                    device=device_obj,
-                    batch_size=self.batch_size,
-                )
-            except VRAMInsufficientError as e:
-                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
+            _waited = 0
+            _vram_wait_max = Config.get_task_timeout()
+            while True:
+                try:
+                    await asyncio.to_thread(
+                        check_vram_before_model_load,
+                        model_name=extractor_name,
+                        device=device_obj,
+                        batch_size=self.batch_size,
+                    )
+                    break
+                except VRAMInsufficientError as e:
+                    if _waited >= _vram_wait_max:
+                        raise RuntimeError(
+                            f"VRAM protection triggered: {e.message}"
+                        ) from e
+                    if is_task_cancelled(self.task_id):
+                        raise TrainingCancelledException(
+                            "Training cancelled while waiting for VRAM"
+                        )
+                    if is_permission_revoked(self.task_id):
+                        raise PermissionRevokedException(
+                            "Training stopped while waiting for VRAM: permission revoked"
+                        )
+                    await logger.warning(
+                        f"VRAM insufficient for '{extractor_name}' "
+                        f"(need {e.required_vram_mb:.0f} MB, free {e.available_vram_mb:.0f} MB / "
+                        f"{e.total_vram_mb:.0f} MB total). "
+                        f"Retrying in {VRAM_WAIT_POLL_INTERVAL_SEC}s "
+                        f"(waited {_waited}s / max {_vram_wait_max}s)...",
+                        metadata={
+                            "model_name": extractor_name,
+                            "required_mb": e.required_vram_mb,
+                            "available_mb": e.available_vram_mb,
+                            "total_mb": e.total_vram_mb,
+                            "waited_sec": _waited,
+                            "max_wait_sec": _vram_wait_max,
+                        },
+                    )
+                    await asyncio.sleep(VRAM_WAIT_POLL_INTERVAL_SEC)
+                    _waited += VRAM_WAIT_POLL_INTERVAL_SEC
+                    best_idx, _ = select_optimal_gpu_for_task(
+                        min_vram_mb=e.required_vram_mb
+                    )
+                    if best_idx >= 0:
+                        device_obj = torch.device(f"cuda:{best_idx}")
+                        self.device = str(device_obj)
 
         extractor = (
             get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)
@@ -860,15 +901,53 @@ class PatchClassificationTrainer(BaseTrainer):
 
         device_obj = torch.device(self.device)
         if device_obj.type == "cuda":
-            try:
-                await asyncio.to_thread(
-                    check_vram_before_model_load,
-                    model_name=extractor_name,
-                    device=device_obj,
-                    batch_size=self.batch_size,
-                )
-            except VRAMInsufficientError as e:
-                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
+            _waited = 0
+            _vram_wait_max = Config.get_task_timeout()
+            while True:
+                try:
+                    await asyncio.to_thread(
+                        check_vram_before_model_load,
+                        model_name=extractor_name,
+                        device=device_obj,
+                        batch_size=self.batch_size,
+                    )
+                    break
+                except VRAMInsufficientError as e:
+                    if _waited >= _vram_wait_max:
+                        raise RuntimeError(
+                            f"VRAM protection triggered: {e.message}"
+                        ) from e
+                    if is_task_cancelled(self.task_id):
+                        raise TrainingCancelledException(
+                            "Training cancelled while waiting for VRAM"
+                        )
+                    if is_permission_revoked(self.task_id):
+                        raise PermissionRevokedException(
+                            "Training stopped while waiting for VRAM: permission revoked"
+                        )
+                    await logger.warning(
+                        f"VRAM insufficient for '{extractor_name}' "
+                        f"(need {e.required_vram_mb:.0f} MB, free {e.available_vram_mb:.0f} MB / "
+                        f"{e.total_vram_mb:.0f} MB total). "
+                        f"Retrying in {VRAM_WAIT_POLL_INTERVAL_SEC}s "
+                        f"(waited {_waited}s / max {_vram_wait_max}s)...",
+                        metadata={
+                            "model_name": extractor_name,
+                            "required_mb": e.required_vram_mb,
+                            "available_mb": e.available_vram_mb,
+                            "total_mb": e.total_vram_mb,
+                            "waited_sec": _waited,
+                            "max_wait_sec": _vram_wait_max,
+                        },
+                    )
+                    await asyncio.sleep(VRAM_WAIT_POLL_INTERVAL_SEC)
+                    _waited += VRAM_WAIT_POLL_INTERVAL_SEC
+                    best_idx, _ = select_optimal_gpu_for_task(
+                        min_vram_mb=e.required_vram_mb
+                    )
+                    if best_idx >= 0:
+                        device_obj = torch.device(f"cuda:{best_idx}")
+                        self.device = str(device_obj)
 
         extractor = (
             get_extractor(extractor_name, pretrained=True, hf_token=self.hf_token)

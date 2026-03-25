@@ -44,10 +44,7 @@ from backend.ai.cancellation import is_task_cancelled, TrainingCancelledExceptio
 from backend.ai.schemas.base import TaskStatus
 from backend.ai.schemas import TaskType
 from backend.ai.tasks.base import BaseTrainer
-from backend.ai.utils.vram_guard import (
-    check_vram_before_model_load,
-    VRAMInsufficientError,
-)
+
 from backend.ai.tasks.training_utils import (
     safe_update_progress as _safe_update_progress,
     save_resume_checkpoint_sync,
@@ -180,16 +177,6 @@ class SegmentationTrainer(BaseTrainer):
             in_channels=self.config["dataset"]["channels"],
             classes=self.config["dataset"]["classes"],
         )
-
-        _device_obj = torch.device(self.device)
-        if _device_obj.type == "cuda":
-            try:
-                check_vram_before_model_load(
-                    model_name=self.config["backbone"],
-                    device=_device_obj,
-                )
-            except VRAMInsufficientError as e:
-                raise RuntimeError(f"VRAM protection triggered: {e.message}") from e
 
         self.is_fm = segmentor.is_fm
         self.model = segmentor.build_model().to(self.device)
