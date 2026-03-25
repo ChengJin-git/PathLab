@@ -12,10 +12,13 @@ Supports:
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
-from typing import Dict, Callable, Awaitable, Any, Optional, List
+from typing import Dict, Callable, Awaitable, Any, Optional, List, Tuple
 from enum import Enum
 from datetime import datetime
+
+_SOFT_RESERVATION_TTL_SEC: float = 600.0
 from sqlalchemy import select
 
 from backend.common.config import Config
@@ -107,6 +110,7 @@ class TaskQueueManager:
         ] = {}  # task_id -> GPU index for running tasks
         self._bad_gpus: set = set()  # GPU indices confirmed to have hardware failures
         self._patching_tasks: Dict[str, asyncio.Task] = {}  # pre-queue patching tasks
+        self._soft_vram_reservations: Dict[str, Tuple[int, float, float]] = {}
         self._condition: Optional[asyncio.Condition] = (
             None  # For dynamic concurrency control
         )
@@ -208,76 +212,73 @@ class TaskQueueManager:
         if removed is not None:
             logger.debug(f"Pre-queue patching task {task_id} deregistered")
 
-    def _select_optimal_gpu(self) -> int:
+    def _reserve_soft_vram(self, task_id: str, cuda_idx: int, mb: float) -> None:
+        self._soft_vram_reservations[task_id] = (
+            cuda_idx,
+            mb,
+            time.monotonic() + _SOFT_RESERVATION_TTL_SEC,
+        )
+
+    def _release_soft_vram(self, task_id: str) -> None:
+        self._soft_vram_reservations.pop(task_id, None)
+
+    def _get_soft_reserved_mb(self, cuda_idx: int) -> float:
+        now = time.monotonic()
+        expired = [
+            tid
+            for tid, (idx, mb, exp) in self._soft_vram_reservations.items()
+            if exp <= now
+        ]
+        for tid in expired:
+            del self._soft_vram_reservations[tid]
+        return sum(
+            mb
+            for idx, mb, exp in self._soft_vram_reservations.values()
+            if idx == cuda_idx
+        )
+
+    def _select_optimal_gpu(self) -> Tuple[int, float]:
         """
-        Select the optimal GPU for a new task.
+        Select the GPU with the most effective free VRAM that meets the minimum requirement.
 
-        Selection strategy:
-        1. First, try to find a GPU that has NO running tasks and meets VRAM requirement
-        2. If all GPUs have tasks, fall back to selecting the one with most free VRAM
-
-        This ensures tasks are distributed across GPUs when max_concurrent > 1.
-
-        Returns:
-            GPU index with most free VRAM that meets minimum requirement,
-            or -1 if no suitable GPU found.
+        Effective free VRAM = pynvml free VRAM minus any active soft reservations for
+        tasks whose models have not yet finished loading. Multiple tasks may share a GPU
+        once soft reservations expire (TTL = _SOFT_RESERVATION_TTL_SEC).
         """
         try:
             from backend.common.gpu_utils import get_all_gpu_info
         except ImportError:
             logger.warning("Could not import gpu_utils, defaulting to GPU 0")
-            return 0
+            return (0, 0.0)
 
         gpu_info_list = get_all_gpu_info()
         if not gpu_info_list:
-            return -1
+            return (-1, 0.0)
 
-        gpus_with_tasks = set(self._gpu_assignments.values())
-
-        # Strategy 1: idle GPU (no running tasks) that is healthy and meets VRAM requirement
-        best_idle_gpu = -1
-        best_idle_free_mb = 0.0
-        for info in gpu_info_list:
-            gpu_idx = info["index"]
-            free_mb = info["free_mb"]
-            if gpu_idx in self._bad_gpus:
-                continue
-            if gpu_idx not in gpus_with_tasks and free_mb >= self.min_vram_mb:
-                if free_mb > best_idle_free_mb:
-                    best_idle_free_mb = free_mb
-                    best_idle_gpu = gpu_idx
-
-        if best_idle_gpu >= 0:
-            logger.debug(
-                f"Selected idle GPU {best_idle_gpu} with {best_idle_free_mb:.0f} MB free VRAM "
-                f"(GPUs with tasks: {gpus_with_tasks}, bad GPUs: {self._bad_gpus})"
-            )
-            return best_idle_gpu
-
-        # Strategy 2: all healthy GPUs have tasks — pick the one with most free VRAM
         best_gpu = -1
         best_free_mb = 0.0
         for info in gpu_info_list:
             gpu_idx = info["index"]
-            free_mb = info["free_mb"]
             if gpu_idx in self._bad_gpus:
                 continue
-            if free_mb >= self.min_vram_mb and free_mb > best_free_mb:
-                best_free_mb = free_mb
+            soft_reserved = self._get_soft_reserved_mb(gpu_idx)
+            effective_free = max(0.0, info["free_mb"] - soft_reserved)
+            if effective_free >= self.min_vram_mb and effective_free > best_free_mb:
+                best_free_mb = effective_free
                 best_gpu = gpu_idx
 
         if best_gpu >= 0:
             logger.debug(
-                f"All healthy GPUs have tasks, selected GPU {best_gpu} with {best_free_mb:.0f} MB free VRAM"
+                f"Selected GPU {best_gpu} with {best_free_mb:.0f} MB effective free VRAM "
+                f"(bad GPUs: {sorted(self._bad_gpus)})"
             )
         else:
             logger.warning(
                 f"_select_optimal_gpu: no suitable GPU found. "
-                f"Checked {len(gpu_info_list)} GPU(s), required {self.min_vram_mb:.0f} MB free. "
-                f"Bad GPUs: {sorted(self._bad_gpus)}, "
-                f"GPUs with running tasks: {sorted(gpus_with_tasks)}"
+                f"Checked {len(gpu_info_list)} GPU(s), required {self.min_vram_mb:.0f} MB effective free. "
+                f"Bad GPUs: {sorted(self._bad_gpus)}"
             )
-        return best_gpu
+        return (best_gpu, best_free_mb)
 
     async def _wait_for_gpu_vram(self, task_id: str, gpu_index: int) -> bool:
         """
@@ -368,9 +369,9 @@ class TaskQueueManager:
                 logger.info(f"Task {task_id} was cancelled while waiting for GPU")
                 return -1
 
-            # Try to find a GPU with enough VRAM
-            gpu_idx = self._select_optimal_gpu()
+            gpu_idx, effective_free = self._select_optimal_gpu()
             if gpu_idx >= 0:
+                self._reserve_soft_vram(task_id, gpu_idx, effective_free)
                 if wait_count > 0:
                     logger.info(
                         f"GPU {gpu_idx} now available for task {task_id} after {wait_count} waits"
@@ -505,6 +506,7 @@ class TaskQueueManager:
             )
             asyncio.create_task(self._notify_task_status_change(queued_task, "failed"))
         finally:
+            self._release_soft_vram(queued_task.task_id)
             await self._invalidate_context_for_task(queued_task)
             self._running_tasks.pop(queued_task.task_id, None)
             self._gpu_assignments.pop(queued_task.task_id, None)
