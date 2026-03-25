@@ -333,7 +333,7 @@ def format_user_data_context(
     if is_admin:
         can_use_gpu = "Yes"
     elif can_use_gpu_base:
-        can_use_gpu = "Yes (GPU usage details not available)"
+        can_use_gpu = "Yes"
     else:
         can_use_gpu = "No (contact administrator to request access)"
 

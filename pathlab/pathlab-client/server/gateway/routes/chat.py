@@ -2472,6 +2472,27 @@ async def chat_with_ai(
     if _ctx_cached is not None and "other_public_datasets_count" not in _ctx_cached:
         _ctx_cached = None
 
+    if _ctx_cached is not None:
+        _cached_models_count = _ctx_cached.get("trained_models_total", 0)
+        _model_summaries_from_cache = _ctx_cached.get("model_summaries") or []
+        if _model_summaries_from_cache:
+            if use_semantic_model_ranking:
+                _cached_model_entries = await asyncio.to_thread(
+                    _semantic_top_k_models,
+                    semantic_query_text,
+                    _model_summaries_from_cache,
+                )
+            else:
+                _cached_model_entries = _model_summaries_from_cache[
+                    :TOP_K_MODELS_IN_CHAT_CONTEXT
+                ]
+            _cached_models_list = (
+                "\n".join(s["line"] for s in _cached_model_entries)
+                if _cached_model_entries
+                else "  None - user needs to train a model first"
+            )
+            _cached_models_shown = len(_cached_model_entries)
+
     gpu_summary = (
         get_gpu_summary_for_prompt()
         if user.is_admin()
@@ -2625,6 +2646,25 @@ async def chat_with_ai(
                 else:
                     _fb_own_private += 1
                 _d_marker = ""
+            _d_source = _d.get("source_organ") or "unknown"
+            _d_task_type = _d.get("group_task_type")
+            _d_task_type_suffix = f", task_type={_d_task_type}" if _d_task_type else ""
+            _d_labels_suffix = ""
+            _d_labels = _d.get("labels") or {}
+            if _d_labels:
+                _d_label_parts = [
+                    f"{lbl}:{cnt}" for lbl, cnt in sorted(_d_labels.items())
+                ]
+                _d_labels_suffix = f", labels={{{', '.join(_d_label_parts)}}}"
+            _d_survival_suffix = ""
+            _d_survival = _d.get("survival_count", 0)
+            if _d_survival:
+                _d_event_dist = _d.get("event_status") or {}
+                _d_ev = _d_event_dist.get("event", 0)
+                _d_cens = _d_event_dist.get("censored", 0)
+                _d_survival_suffix = (
+                    f", survival_data={_d_survival} (event={_d_ev}, censored={_d_cens})"
+                )
             _d_split_suffix = ""
             if _d.get("has_predefined_splits"):
                 _d_sc = _d.get("predefined_split_counts", {})
@@ -2634,7 +2674,7 @@ async def chat_with_ai(
                     f" train={_d_sc.get('train', 0)}, val={_d_sc.get('val', 0)}, test={_d_sc.get('test', 0)}"
                 )
             _fb_datasets_details.append(
-                f"  - {_d_name} (dataset_id={_d_id}): {_d_fc} files, type={_d_type}{_d_marker}{_d_split_suffix}"
+                f"  - {_d_name} (dataset_id={_d_id}): {_d_fc} files, type={_d_type}, source={_d_source}{_d_task_type_suffix}{_d_labels_suffix}{_d_survival_suffix}{_d_marker}{_d_split_suffix}"
             )
         _fb_datasets_list = (
             "\n".join(_fb_datasets_details) if _fb_datasets_details else "  None"
@@ -2673,10 +2713,27 @@ async def chat_with_ai(
                     "dataset_names": [],
                     "dataset_sources": [],
                     "task_name": _m_tn.lower(),
-                    "line": f"  - {_m.model_name} (id={_m.model_id}, task_type={_m_tt}, trained_on_task={_m.task_id}, task_name={_m_tn or 'unknown'})",
+                    "line": f"  - {_m.model_name} (id={_m.model_id}, task_type={_m_tt}, data_type={_m_dt}, trained_on_task={_m.task_id}, task_name={_m_tn or 'unknown'}, feature_extractor={_m.feature_extractor or 'unknown'}, aggregator={_m.aggregator or 'unknown'}, classes={[c.lower() for c in (_m.classes or [])]})",
                     "embedding": None,
                 }
             )
+
+        if _fb_model_summaries:
+            try:
+                from gateway.routes.chat_pdf_vectorstore import (
+                    _embed_texts as _ctx_embed_texts,
+                )
+
+                _fb_lines_for_embed = [s["line"] for s in _fb_model_summaries]
+                _fb_vecs = await asyncio.to_thread(
+                    _ctx_embed_texts, _fb_lines_for_embed
+                )
+                for _fb_i, _fb_s in enumerate(_fb_model_summaries):
+                    _fb_s["embedding"] = _fb_vecs[_fb_i].tolist()
+            except Exception as _fb_emb_exc:
+                logger.warning(
+                    f"[ChatCtxFallback] model embedding failed: {_fb_emb_exc}"
+                )
 
         if _fb_model_summaries:
             if use_semantic_model_ranking:

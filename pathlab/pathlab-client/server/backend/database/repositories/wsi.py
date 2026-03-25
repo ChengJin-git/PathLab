@@ -511,6 +511,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 Dataset.name.label("dataset_name"),
                 Dataset.user_id.label("dataset_owner_id"),
                 Dataset.is_public.label("is_public"),
+                Dataset.source_organ.label("source_organ"),
                 DataGroup.data_type.label("group_data_type"),
                 DataGroup.task_type.label("group_task_type"),
                 DataGroup.aggregation_level.label("aggregation_level"),
@@ -531,6 +532,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             Dataset.name,
             Dataset.user_id,
             Dataset.is_public,
+            Dataset.source_organ,
             DataGroup.data_type,
             DataGroup.task_type,
             DataGroup.aggregation_level,
@@ -738,6 +740,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 {
                     "dataset_id": row.dataset_id,
                     "dataset_name": row.dataset_name or "Uncategorized",
+                    "source_organ": row.source_organ or None,
                     "file_count": row.file_count,
                     "data_type": data_type,
                     "group_task_type": row.group_task_type,

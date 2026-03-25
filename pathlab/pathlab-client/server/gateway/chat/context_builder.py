@@ -91,6 +91,23 @@ async def build_chat_context_for_user(user_id: str | None) -> dict[str, Any]:
             else:
                 own_private_datasets_count += 1
             marker = ""
+        _d_source = d.get("source_organ") or "unknown"
+        _d_task_type = d.get("group_task_type")
+        task_type_suffix = f", task_type={_d_task_type}" if _d_task_type else ""
+        labels_suffix = ""
+        _d_labels = d.get("labels") or {}
+        if _d_labels:
+            _label_parts = [f"{lbl}:{cnt}" for lbl, cnt in sorted(_d_labels.items())]
+            labels_suffix = f", labels={{{', '.join(_label_parts)}}}"
+        survival_suffix = ""
+        _d_survival = d.get("survival_count", 0)
+        if _d_survival:
+            _d_event = d.get("event_status") or {}
+            _ev = _d_event.get("event", 0)
+            _cens = _d_event.get("censored", 0)
+            survival_suffix = (
+                f", survival_data={_d_survival} (event={_ev}, censored={_cens})"
+            )
         split_suffix = ""
         if d.get("has_predefined_splits"):
             sc = d.get("predefined_split_counts", {})
@@ -100,7 +117,7 @@ async def build_chat_context_for_user(user_id: str | None) -> dict[str, Any]:
                 f" train={sc.get('train', 0)}, val={sc.get('val', 0)}, test={sc.get('test', 0)}"
             )
         datasets_details.append(
-            f"  - {name} (dataset_id={did}): {fc} files, type={dt}{marker}{split_suffix}"
+            f"  - {name} (dataset_id={did}): {fc} files, type={dt}, source={_d_source}{task_type_suffix}{labels_suffix}{survival_suffix}{marker}{split_suffix}"
         )
     if datasets_details:
         datasets_list = "\n".join(datasets_details)
@@ -139,7 +156,7 @@ async def build_chat_context_for_user(user_id: str | None) -> dict[str, Any]:
                 "dataset_names": [],
                 "dataset_sources": [],
                 "task_name": _tn.lower(),
-                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, trained_on_task={m.task_id}, task_name={_tn or 'unknown'})",
+                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, data_type={_dt}, trained_on_task={m.task_id}, task_name={_tn or 'unknown'}, feature_extractor={m.feature_extractor or 'unknown'}, aggregator={m.aggregator or 'unknown'}, classes={[c.lower() for c in (m.classes or [])]})",
                 # embedding field populated below (after batch encode)
                 "embedding": None,
             }
