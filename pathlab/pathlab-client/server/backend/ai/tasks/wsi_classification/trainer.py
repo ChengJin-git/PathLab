@@ -141,9 +141,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     break
                 except VRAMInsufficientError as e:
                     if _waited >= _vram_wait_max:
-                        raise RuntimeError(
-                            f"VRAM protection triggered: {e.message}"
-                        ) from e
+                        raise RuntimeError(f"VRAM protection triggered: {e}") from e
                     if is_task_cancelled(self.task_id):
                         raise TrainingCancelledException(
                             "Feature extraction cancelled while waiting for VRAM"
@@ -600,9 +598,8 @@ class WSIClassificationTrainer(BaseTrainer):
                     )
                     _log.info("[FeatureExtract] VRAM check passed")
                 except VRAMExceededError as e:
-                    # Re-raise with clear message for upstream handling
                     raise RuntimeError(
-                        f"VRAM protection triggered: {e.message}. "
+                        f"VRAM protection triggered: {e}. "
                         f"Please reduce batch_size to {e.suggested_batch_size} or lower."
                     ) from e
                 # Clean up probe loader
