@@ -78,7 +78,7 @@ function isSegmentationTask(taskType: string): boolean {
 
 /** Check if task type is survival */
 function isSurvivalTask(taskType: string): boolean {
-  return taskType === 'survival'
+  return taskType === 'survival' || taskType === 'wsi_survival' || taskType === 'external_validation_survival'
 }
 
 /** Get header gradient classes based on task type */
