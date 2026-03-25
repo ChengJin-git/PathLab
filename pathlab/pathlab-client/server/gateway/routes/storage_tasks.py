@@ -557,6 +557,13 @@ async def _run_batch_import_task(
 
                     await WSIRepository.create(db, wsi_data)
 
+                    try:
+                        storage_manager.save_wsi_metadata(wsi_id, wsi_data)
+                    except Exception as meta_err:
+                        logger.warning(
+                            f"Failed to save metadata file for {wsi_id}: {meta_err}"
+                        )
+
                     # For segmentation tasks: import matched COCO JSON annotation file
                     if task_type == "segmentation":
                         annotation_id = f"label_{wsi_id}"
