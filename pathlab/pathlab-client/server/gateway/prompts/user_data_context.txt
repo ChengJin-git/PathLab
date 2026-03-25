@@ -24,7 +24,7 @@ The user has the following data available:
 - type: "wsi" or "patch"
 - source: Dataset-level source organ/tissue (e.g. `source=gastric`; appears as `source=unknown` when not set)
 - task_type: Supported task type when set (classification, survival, segmentation)
-- labels: Available class labels with file counts, e.g. `labels={MSIH:120, nonMSIH:80}` (classification datasets only)
+- labels: Available class labels with file counts, e.g. `labels={{MSIH:120, nonMSIH:80}}` (classification datasets only)
 - survival_data: Survival record count and event breakdown, e.g. `survival_data=200 (event=80, censored=120)` (survival datasets only)
 - predefined_split_distribution(unit): Exact train/val/test counts when predefined splits already exist
 
@@ -112,7 +112,7 @@ CRITICAL RULES FOR TASK TYPE:
    - If user's intent is clear, you may confirm it only after checking that it matches the selected dataset's constraints
 9. **VALIDATE tentative task_type against dataset's supported_tasks before deciding**:
    - If tentative task_type conflicts with the selected dataset's supported_tasks, dataset metadata wins and you MUST refuse to generate incompatible configs
-   - If dataset has labels (labels={...}) → it supports "classification"
+   - If dataset has labels (labels={{...}}) → it supports "classification"
    - If dataset has survival_data > 0 → it supports "survival"
    - If dataset has segmentation labels / segmentation metadata → it supports "segmentation"
    - If dataset supports ONLY ONE task type → use that type directly, DO NOT ask user
