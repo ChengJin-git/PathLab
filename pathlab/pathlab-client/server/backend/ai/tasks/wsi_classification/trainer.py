@@ -28,6 +28,7 @@ from backend.ai.aggregators import get_aggregator
 from backend.ai.utils.dataset import build_dataloader
 from backend.ai.utils.feature_dataset import WSIFeatureDataset, CaseFeatureDataset
 from backend.common.config import Config
+from backend.common.gpu_utils import select_optimal_gpu_for_task
 from backend.ai.utils.vram_guard import (
     check_vram_before_model_load,
     check_vram_before_batch_processing,
@@ -168,6 +169,12 @@ class WSIClassificationTrainer(BaseTrainer):
                     )
                     await asyncio.sleep(VRAM_WAIT_POLL_INTERVAL_SEC)
                     _waited += VRAM_WAIT_POLL_INTERVAL_SEC
+                    best_idx, _ = select_optimal_gpu_for_task(
+                        min_vram_mb=e.required_vram_mb
+                    )
+                    if best_idx >= 0:
+                        device = torch.device(f"cuda:{best_idx}")
+                        self.device = str(device)
 
         # Build extractor once and reuse (blocking: model download + GPU transfer)
         def _load_extractor():
