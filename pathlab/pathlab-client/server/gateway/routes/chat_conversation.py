@@ -274,7 +274,12 @@ async def generate_conversation_title(
             logger.info(
                 f"Title generation raw_content for {conversation_id}: {raw_content!r}"
             )
-            title = (raw_content or "").strip().strip('"').strip("'")
+            # Strip <think>...</think> blocks produced by reasoning/thinking models
+            # (e.g. QwQ, DeepSeek-R1) before extracting the actual title text.
+            cleaned_content = re.sub(
+                r"<think>[\s\S]*?</think>", "", raw_content or "", flags=re.IGNORECASE
+            ).strip()
+            title = cleaned_content.strip('"').strip("'")
     except Exception as e:
         logger.error(f"Title generation failed for {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate title")
