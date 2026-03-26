@@ -16,6 +16,7 @@ Concurrency:
     Uses file locking (fcntl.flock) to prevent race conditions when
     multiple tasks try to extract features for the same WSI simultaneously.
 """
+
 import asyncio
 import fcntl
 import hashlib
@@ -44,6 +45,7 @@ class FeatureLockTimeoutError(TimeoutError):
 
     Contains additional context for graceful handling.
     """
+
     def __init__(self, lock_path: Path, timeout: float, wsi_id: str = None):
         self.lock_path = lock_path
         self.timeout = timeout
@@ -52,6 +54,22 @@ class FeatureLockTimeoutError(TimeoutError):
         if wsi_id:
             message = f"Feature extraction lock timeout for WSI {wsi_id}: {message}"
         super().__init__(message)
+
+
+class LockBusyError(Exception):
+    """
+    Raised by try_file_lock_nowait when the lock is currently held by another process.
+
+    Unlike FeatureLockTimeoutError (which implies a long wait that expired),
+    LockBusyError is raised immediately without any waiting.
+    Callers should handle this by deferring the WSI to a later pass.
+    """
+
+    def __init__(self, wsi_id: Optional[str] = None, lock_path: Optional[Path] = None):
+        self.wsi_id = wsi_id
+        self.lock_path = lock_path
+        who = wsi_id or str(lock_path) or "unknown"
+        super().__init__(f"Feature lock busy (held by another task) for {who}")
 
 
 @asynccontextmanager
@@ -95,7 +113,7 @@ async def file_lock(
         timeout = Config.FEATURE_LOCK_TIMEOUT
 
     lock_path.parent.mkdir(parents=True, exist_ok=True)
-    lock_file = open(lock_path, 'w')
+    lock_file = open(lock_path, "w")
 
     start_time = time.time()
     last_log_time = start_time
@@ -120,7 +138,10 @@ async def file_lock(
                     )
 
                 # Periodic callback for progress reporting
-                if wait_callback and (time.time() - last_log_time) >= LOCK_WAIT_LOG_INTERVAL:
+                if (
+                    wait_callback
+                    and (time.time() - last_log_time) >= LOCK_WAIT_LOG_INTERVAL
+                ):
                     wait_callback(elapsed)
                     last_log_time = time.time()
 
@@ -136,6 +157,30 @@ async def file_lock(
         if acquired:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
         lock_file.close()
+
+
+@asynccontextmanager
+async def try_file_lock_nowait(lock_path: Path, wsi_id: Optional[str] = None):
+    """
+    Async context manager: acquire file lock non-blocking.
+    Raises LockBusyError immediately if the lock is held. Never waits.
+    """
+    lock_path = Path(lock_path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_file = open(lock_path, "w")
+    acquired = False
+    try:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            acquired = True
+        except BlockingIOError:
+            lock_file.close()
+            raise LockBusyError(wsi_id=wsi_id, lock_path=lock_path)
+        yield lock_file
+    finally:
+        if acquired:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
 
 
 def get_lock_path(
@@ -157,7 +202,7 @@ def compute_params_hash(
     level: int = 0,
     seg_params: Optional[Dict[str, Any]] = None,
     filter_params: Optional[Dict[str, Any]] = None,
-    contour_fn: str = 'four_pt',
+    contour_fn: str = "four_pt",
     use_padding: bool = True,
     seg_level: int = -1,
     **kwargs,  # Ignore legacy patch_size, stride parameters
@@ -178,19 +223,19 @@ def compute_params_hash(
 
     params = {
         # Basic tiling parameters (NOT patch_size/stride - they're auto-determined by MPP)
-        'level': level,
-        'contour_fn': contour_fn,
-        'use_padding': use_padding,
+        "level": level,
+        "contour_fn": contour_fn,
+        "use_padding": use_padding,
         # Segmentation parameters (always included with defaults)
-        'seg_level': seg_level,
-        'sthresh': seg_params.get('sthresh', 5),
-        'mthresh': seg_params.get('mthresh', 7),
-        'close': seg_params.get('close', 4),
-        'use_otsu': seg_params.get('use_otsu', False),
+        "seg_level": seg_level,
+        "sthresh": seg_params.get("sthresh", 5),
+        "mthresh": seg_params.get("mthresh", 7),
+        "close": seg_params.get("close", 4),
+        "use_otsu": seg_params.get("use_otsu", False),
         # Filter parameters (always included with defaults)
-        'a_t': filter_params.get('a_t', 100),
-        'a_h': filter_params.get('a_h', 16),
-        'max_n_holes': filter_params.get('max_n_holes', 8),
+        "a_t": filter_params.get("a_t", 100),
+        "a_h": filter_params.get("a_h", 16),
+        "max_n_holes": filter_params.get("max_n_holes", 8),
     }
 
     # Create deterministic JSON string and hash it
@@ -316,7 +361,7 @@ def safe_load_features(
         if device is not None:
             feats = torch.load(feature_path, map_location=device, weights_only=True)
         else:
-            feats = torch.load(feature_path, map_location='cpu', weights_only=True)
+            feats = torch.load(feature_path, map_location="cpu", weights_only=True)
         return feats, None
     except (RuntimeError, pickle.UnpicklingError, EOFError) as e:
         error_msg = str(e)
@@ -327,7 +372,11 @@ def safe_load_features(
         if delete_if_corrupted:
             try:
                 # Resolve symlink if needed to delete the actual corrupted file
-                actual_path = feature_path.resolve() if feature_path.is_symlink() else feature_path
+                actual_path = (
+                    feature_path.resolve()
+                    if feature_path.is_symlink()
+                    else feature_path
+                )
 
                 # Delete the corrupted file
                 actual_path.unlink()
@@ -374,9 +423,17 @@ def get_cache_save_path(
 # Required attributes that must exist in coords.h5 for valid cache
 # Note: patch_size and stride are NOT required for hash - they're auto-determined by MPP
 REQUIRED_COORDS_ATTRS = [
-    'patch_level', 'contour_fn', 'use_padding',
-    'seg_level', 'sthresh', 'mthresh', 'close', 'use_otsu',
-    'a_t', 'a_h', 'max_n_holes',
+    "patch_level",
+    "contour_fn",
+    "use_padding",
+    "seg_level",
+    "sthresh",
+    "mthresh",
+    "close",
+    "use_otsu",
+    "a_t",
+    "a_h",
+    "max_n_holes",
 ]
 
 
@@ -401,7 +458,9 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
         return None
 
     # Use safe loading to handle corrupted files (e.g., from power loss)
-    _, attrs, load_error = safe_load_h5_coords(coords_h5_path, delete_if_corrupted=False)
+    _, attrs, load_error = safe_load_h5_coords(
+        coords_h5_path, delete_if_corrupted=False
+    )
 
     if attrs is None:
         logger.warning(f"Failed to load coords H5 for params: {load_error}")
@@ -418,28 +477,28 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
             return None
 
         # Required parameters (NOT patch_size/stride - they're auto-determined)
-        level = int(attrs['patch_level'])
-        contour_fn = attrs['contour_fn']
-        use_padding = bool(attrs['use_padding'])
-        seg_level = int(attrs['seg_level'])
+        level = int(attrs["patch_level"])
+        contour_fn = attrs["contour_fn"]
+        use_padding = bool(attrs["use_padding"])
+        seg_level = int(attrs["seg_level"])
 
         # Handle bytes vs string for contour_fn
         if isinstance(contour_fn, bytes):
-            contour_fn = contour_fn.decode('utf-8')
+            contour_fn = contour_fn.decode("utf-8")
 
         # Segmentation parameters
         seg_params = {
-            'sthresh': int(attrs['sthresh']),
-            'mthresh': int(attrs['mthresh']),
-            'close': int(attrs['close']),
-            'use_otsu': bool(attrs['use_otsu']),
+            "sthresh": int(attrs["sthresh"]),
+            "mthresh": int(attrs["mthresh"]),
+            "close": int(attrs["close"]),
+            "use_otsu": bool(attrs["use_otsu"]),
         }
 
         # Filter parameters
         filter_params = {
-            'a_t': int(attrs['a_t']),
-            'a_h': int(attrs['a_h']),
-            'max_n_holes': int(attrs['max_n_holes']),
+            "a_t": int(attrs["a_t"]),
+            "a_h": int(attrs["a_h"]),
+            "max_n_holes": int(attrs["max_n_holes"]),
         }
 
         return compute_params_hash(
@@ -456,9 +515,7 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
 
 
 def create_symlink_to_cache(
-    task_features_dir: Path,
-    wsi_id: str,
-    cached_features_path: Path
+    task_features_dir: Path, wsi_id: str, cached_features_path: Path
 ) -> Path:
     """
     Create a symbolic link in the task features directory pointing to cached features.
@@ -480,7 +537,9 @@ def create_symlink_to_cache(
     except OSError as e:
         # Fallback to absolute path if relative fails
         symlink_path.symlink_to(cached_features_path)
-        logger.warning(f"Created absolute symlink (relative failed): {symlink_path} -> {cached_features_path}")
+        logger.warning(
+            f"Created absolute symlink (relative failed): {symlink_path} -> {cached_features_path}"
+        )
 
     return symlink_path
 
@@ -553,8 +612,7 @@ def get_cache_reference_count(
 
 
 def find_symlinks_to_cache(
-    uploads_root: Path,
-    cached_features_path: Path
+    uploads_root: Path, cached_features_path: Path
 ) -> List[Path]:
     """
     Find all symlinks in training directories that point to a specific cached feature file.
@@ -612,7 +670,7 @@ def delete_cached_features_with_symlinks(
         "deleted_cache_file": None,
         "deleted_symlinks": [],
         "failed": [],
-        "success": True
+        "success": True,
     }
 
     cached_features_path = get_cached_features_path(
@@ -639,7 +697,9 @@ def delete_cached_features_with_symlinks(
         except Exception as e:
             result["failed"].append((str(cached_features_path), str(e)))
             result["success"] = False
-            logger.error(f"Failed to delete cached features {cached_features_path}: {e}")
+            logger.error(
+                f"Failed to delete cached features {cached_features_path}: {e}"
+            )
 
     return result
 
@@ -659,11 +719,7 @@ def cleanup_dangling_symlinks(uploads_root: Path) -> Dict[str, Any]:
             "total_checked": int
         }
     """
-    result = {
-        "deleted_symlinks": [],
-        "failed": [],
-        "total_checked": 0
-    }
+    result = {"deleted_symlinks": [], "failed": [], "total_checked": 0}
 
     training_dir = uploads_root / "training"
     if not training_dir.exists():
@@ -689,10 +745,14 @@ def cleanup_dangling_symlinks(uploads_root: Path) -> Dict[str, Any]:
                             try:
                                 feat_file.unlink()
                                 result["deleted_symlinks"].append(str(feat_file))
-                                logger.info(f"Deleted unresolvable symlink: {feat_file}")
+                                logger.info(
+                                    f"Deleted unresolvable symlink: {feat_file}"
+                                )
                             except Exception as e2:
                                 result["failed"].append((str(feat_file), str(e2)))
-                                logger.error(f"Failed to delete symlink {feat_file}: {e2}")
+                                logger.error(
+                                    f"Failed to delete symlink {feat_file}: {e2}"
+                                )
 
     return result
 
@@ -762,6 +822,17 @@ def acquire_feature_lock(
     )
 
 
+def try_acquire_feature_lock_nowait(
+    uploads_root: Path,
+    extractor_name: str,
+    params_hash: str,
+    wsi_id: str,
+):
+    """Non-blocking variant of acquire_feature_lock. Raises LockBusyError immediately if held."""
+    lock_path = get_lock_path(uploads_root, extractor_name, params_hash, wsi_id)
+    return try_file_lock_nowait(lock_path, wsi_id=wsi_id)
+
+
 def cleanup_lock_files(uploads_root: Path) -> Dict[str, Any]:
     """
     Clean up stale lock files.
@@ -776,11 +847,7 @@ def cleanup_lock_files(uploads_root: Path) -> Dict[str, Any]:
             "total_checked": int
         }
     """
-    result = {
-        "deleted_locks": [],
-        "failed": [],
-        "total_checked": 0
-    }
+    result = {"deleted_locks": [], "failed": [], "total_checked": 0}
 
     locks_dir = uploads_root / "features" / ".locks"
     if not locks_dir.exists():
@@ -790,7 +857,7 @@ def cleanup_lock_files(uploads_root: Path) -> Dict[str, Any]:
         result["total_checked"] += 1
         try:
             # Try to acquire lock - if successful, the lock is stale
-            with open(lock_file, 'w') as f:
+            with open(lock_file, "w") as f:
                 try:
                     fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                     # Lock acquired - file is stale, delete it
