@@ -1,17 +1,6 @@
-"""
-FM-powered Segmentation Model.
-
-Wraps a frozen Foundation Model (FM) feature extractor as backbone and adds
-a lightweight convolutional decoder for dense pixel-wise prediction.
-
-The FM backbone produces a spatial token map via ``forward_spatial()``
-(shape ``(B, D, H', W')``), and the decoder upsamples it back to the
-original input resolution ``(B, classes, H, W)``.
-"""
-
 from __future__ import annotations
 
-from typing import Tuple, Any
+from typing import Any, Dict, Tuple
 
 import torch
 import torch.nn as nn
@@ -19,10 +8,10 @@ import torch.nn.functional as F
 
 from backend.ai.extractors.base import BaseExtractor
 
+_VALID_DECODER_TYPES = frozenset({"conv", "linear", "dpt", "unetr"})
+
 
 class _DecoderBlock(nn.Module):
-    """Conv + BN + ReLU + 2x bilinear upsample."""
-
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
         self.conv = nn.Conv2d(in_ch, out_ch, kernel_size=3, padding=1, bias=False)
@@ -30,124 +19,119 @@ class _DecoderBlock(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.conv(x)
-        x = self.bn(x)
-        x = self.relu(x)
-        x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
-        return x
+        x = self.relu(self.bn(self.conv(x)))
+        return F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
 
 
 class FMSegmentationModel(nn.Module):
-    """Frozen FM backbone + lightweight upsampling decoder for segmentation.
-
-    Parameters
-    ----------
-    extractor : BaseExtractor
-        A feature extractor that supports ``forward_spatial()``.
-        Its weights are frozen (``requires_grad=False``).
-    classes : int
-        Number of output segmentation classes (channels).
-    input_size : int
-        Expected spatial size of input images (height == width).
-    decoder_channels : tuple[int, ...]
-        Channel sizes for successive decoder blocks.  Each block performs 2×
-        bilinear upsampling.  The default ``(256, 128, 64, 32)`` gives 16×
-        total upsampling which matches ViT patch_size=16.
-    """
-
     def __init__(
         self,
         extractor: BaseExtractor,
         classes: int = 1,
         input_size: int = 224,
-        decoder_channels: Tuple[int, ...] = (256, 128, 64, 32),
+        decoder_type: str = "conv",
+        decoder_kwargs: Dict[str, Any] | None = None,
     ):
         super().__init__()
+
+        if decoder_type not in _VALID_DECODER_TYPES:
+            raise ValueError(
+                f"Invalid decoder_type={decoder_type!r}. "
+                f"Choose from {sorted(_VALID_DECODER_TYPES)}."
+            )
         if not extractor.supports_spatial:
             raise ValueError(
                 f"Extractor {extractor.__class__.__name__} does not support "
                 "spatial feature extraction (supports_spatial=False)."
             )
 
-        # Freeze the backbone
         self.extractor = extractor
-        for param in self.extractor.parameters():
-            param.requires_grad = False
+        for p in self.extractor.parameters():
+            p.requires_grad = False
         self.extractor.eval()
 
         self.input_size = input_size
         self.classes = classes
+        self.decoder_type = decoder_type
 
-        # Build decoder from the spatial feature-map channel dimension.
-        # Some extractors expose a pooled/aggregated ``output_dim`` for
-        # classification that differs from the patch-token dimension returned by
-        # ``forward_spatial()`` (e.g. CONCH / Virchow variants).
         embed_dim = extractor.spatial_output_dim
-        channels = [embed_dim] + list(decoder_channels)
-        blocks = []
-        for i in range(len(decoder_channels)):
-            blocks.append(_DecoderBlock(channels[i], channels[i + 1]))
-        self.decoder = nn.Sequential(*blocks)
+        kw = decoder_kwargs or {}
 
-        # Final 1×1 conv to produce class logits
-        self.head = nn.Conv2d(decoder_channels[-1], classes, kernel_size=1)
+        if decoder_type == "conv":
+            decoder_channels: Tuple[int, ...] = kw.get(
+                "decoder_channels", (256, 128, 64, 32)
+            )
+            ch = [embed_dim] + list(decoder_channels)
+            self.decoder: nn.Module = nn.Sequential(
+                *[_DecoderBlock(ch[i], ch[i + 1]) for i in range(len(decoder_channels))]
+            )
+            self.head: nn.Module = nn.Conv2d(decoder_channels[-1], classes, 1)
 
-    # ------------------------------------------------------------------
-    # Ensure backbone stays in eval mode even when model.train() is called
-    # ------------------------------------------------------------------
+        elif decoder_type == "linear":
+            self.decoder = nn.Identity()
+            self.head = nn.Conv2d(embed_dim, classes, 1)
+
+        elif decoder_type == "dpt":
+            from segmentation_models_pytorch.decoders.dpt.decoder import (
+                DPTDecoder,
+                DPTSegmentationHead,
+            )
+
+            inter_ch = kw.get("intermediate_channels", (256, 512, 1024, 1024))
+            fusion_ch: int = kw.get("fusion_channels", 256)
+            patch_sz = extractor.patch_size
+            self.decoder = DPTDecoder(
+                encoder_out_channels=(embed_dim,) * 4,
+                encoder_output_strides=(patch_sz,) * 4,
+                encoder_has_prefix_tokens=False,
+                readout="ignore",
+                intermediate_channels=inter_ch,
+                fusion_channels=fusion_ch,
+            )
+            self.head = DPTSegmentationHead(
+                in_channels=fusion_ch,
+                out_channels=classes,
+                kernel_size=3,
+                upsampling=2,
+            )
+
+        elif decoder_type == "unetr":
+            from backend.ai.segmentors.decoders.unetr import UNETRDecoder
+
+            base_ch: int = kw.get("base_channels", 64)
+            self.decoder = UNETRDecoder(embed_dim=embed_dim, base_channels=base_ch)
+            self.head = nn.Conv2d(base_ch, classes, 1)
+
     def train(self, mode: bool = True):
         super().train(mode)
         self.extractor.eval()
         return self
 
     def decoder_state_dict(self) -> dict[str, Any]:
-        """Return only the trainable decoder + head weights (excludes frozen backbone).
-
-        Use this when saving checkpoints to avoid storing the large FM backbone
-        weights (~1-2 GB) that are already available locally.
-        """
-        full = self.state_dict()
-        return {k: v for k, v in full.items() if not k.startswith("extractor.")}
+        return {
+            k: v for k, v in self.state_dict().items() if not k.startswith("extractor.")
+        }
 
     def load_decoder_state_dict(self, state_dict: dict[str, Any]) -> None:
-        """Load decoder + head weights saved by :meth:`decoder_state_dict`.
-
-        The frozen backbone weights are **not** expected in *state_dict*;
-        they are already loaded from the pre-trained FM checkpoint.
-        """
         self.load_state_dict(state_dict, strict=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: Input images ``(B, 3, H, W)``  (H == W == input_size).
-
-        Returns:
-            Logits ``(B, classes, H, W)`` at the original input resolution.
-        """
         _, _, H, W = x.shape
 
-        # Frozen backbone → spatial feature map (B, D, H', W')
         with torch.no_grad():
-            feat = self.extractor.forward_spatial(x)
+            if self.decoder_type in ("dpt", "unetr"):
+                feat = self.extractor.forward_multi_scale(x)
+            else:
+                feat = self.extractor.forward_spatial(x)
 
-        first_block = self.decoder[0] if len(self.decoder) > 0 else None
-        expected_in_channels = getattr(getattr(first_block, "conv", None), "in_channels", feat.shape[1])
-        if feat.shape[1] != expected_in_channels:
-            raise RuntimeError(
-                "FM segmentation decoder channel mismatch: "
-                f"extractor={self.extractor.__class__.__name__}, "
-                f"spatial_output_dim={expected_in_channels}, "
-                f"forward_spatial returned {feat.shape[1]} channels. "
-                "Please ensure the extractor's spatial_output_dim matches its patch-token dimension."
-            )
+        if self.decoder_type == "dpt":
+            out = self.decoder(feat, [None] * len(feat))
+        else:
+            out = self.decoder(feat)
 
-        # Decoder upsampling
-        out = self.decoder(feat)  # (B, last_ch, H'*2^n, W'*2^n)
+        out = self.head(out)
 
-        # Final interpolation to exact input size (handles non-power-of-2 patches)
         if out.shape[-2] != H or out.shape[-1] != W:
             out = F.interpolate(out, size=(H, W), mode="bilinear", align_corners=False)
 
-        out = self.head(out)  # (B, classes, H, W)
         return out

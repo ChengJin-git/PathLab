@@ -140,3 +140,56 @@ def test_unetr_decoder_wrong_feature_count():
     decoder = UNETRDecoder(embed_dim=64, base_channels=32)
     with pytest.raises((AssertionError, ValueError)):
         decoder([torch.zeros(1, 64, 14, 14)] * 3)
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — FMSegmentationModel with decoder_type
+# ---------------------------------------------------------------------------
+
+from backend.ai.segmentors.fm_segmentation_model import FMSegmentationModel
+
+
+@pytest.mark.parametrize("decoder_type", ["conv", "linear", "dpt", "unetr"])
+def test_fm_model_forward_shape(decoder_type):
+    ext = _FakeExtractor(embed_dim=64)
+    kw = {"decoder_channels": (32, 16, 8, 4)} if decoder_type == "conv" else {}
+    model = FMSegmentationModel(
+        extractor=ext,
+        classes=2,
+        input_size=224,
+        decoder_type=decoder_type,
+        decoder_kwargs=kw,
+    )
+    model.eval()
+    with torch.no_grad():
+        out = model(torch.zeros(2, 3, 224, 224))
+    assert out.shape == (2, 2, 224, 224), f"[{decoder_type}] got {out.shape}"
+
+
+def test_fm_model_decoder_state_dict_no_extractor_keys():
+    ext = _FakeExtractor(embed_dim=64)
+    for dt in ("conv", "linear", "dpt", "unetr"):
+        m = FMSegmentationModel(
+            extractor=ext, classes=1, input_size=224, decoder_type=dt
+        )
+        sd = m.decoder_state_dict()
+        assert not any(k.startswith("extractor.") for k in sd), (
+            f"[{dt}] decoder_state_dict contains extractor keys"
+        )
+
+
+def test_fm_model_conv_default_no_decoder_type_arg():
+    ext = _FakeExtractor(embed_dim=64)
+    m = FMSegmentationModel(extractor=ext, classes=1, input_size=224)
+    assert m.decoder_type == "conv"
+    with torch.no_grad():
+        out = m(torch.zeros(1, 3, 224, 224))
+    assert out.shape == (1, 1, 224, 224)
+
+
+def test_fm_model_invalid_decoder_type_raises():
+    ext = _FakeExtractor(embed_dim=64)
+    with pytest.raises(ValueError, match="decoder_type"):
+        FMSegmentationModel(
+            extractor=ext, classes=1, input_size=224, decoder_type="bad"
+        )
