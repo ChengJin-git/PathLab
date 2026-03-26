@@ -4,6 +4,7 @@ Handles AI chat, conversation persistence, and task parsing
 """
 
 import asyncio
+from copy import deepcopy
 import json
 import math
 import mimetypes
@@ -804,6 +805,148 @@ def _is_context_length_exceeded_error(exc: Exception) -> bool:
     return requested_tokens and ("context" in haystack or "length" in haystack)
 
 
+_AUTO_CONTINUE_PROMPTS = {
+    "zh_CN": (
+        "你上一条回答因为输出长度限制而中断了。请从刚才停止的位置继续，"
+        "不要重复已经写过的内容，不要重新开头，不要重复标题。"
+        "保持相同语言、结构、引用格式、表格和列表连续性。"
+        "如果上一句尚未完成，就从该句继续。直接输出续写内容。"
+    ),
+    "zh_HK": (
+        "你上一條回答因輸出長度限制而中斷了。請從剛才停止的位置繼續，"
+        "不要重複已經寫過的內容，不要重新開頭，不要重複標題。"
+        "保持相同語言、結構、引用格式、表格和列表連續性。"
+        "如果上一句尚未完成，就從該句繼續。直接輸出續寫內容。"
+    ),
+    "en": (
+        "Your previous answer was cut off by the output-length limit. Continue exactly from where you stopped. "
+        "Do not repeat earlier content, do not restart, and do not repeat headings. "
+        "Preserve the same language, structure, citations, tables, and list continuity. "
+        "If the last sentence was incomplete, resume from that sentence. Output only the continuation."
+    ),
+}
+_CONTEXT_COMPACTION_MARKER = (
+    "\n\n...[earlier content omitted to fit the model context window]...\n\n"
+)
+_CONTEXT_RETRY_PLANS = (
+    {"recent_messages": 8, "max_chars": 24_000, "pdf_context_chars": 24_000},
+    {"recent_messages": 4, "max_chars": 12_000, "pdf_context_chars": 12_000},
+)
+_MAX_AUTO_CONTINUATIONS = 3
+
+
+def _message_has_pdf_context(content: object) -> bool:
+    raw = extract_text_from_content(content)
+    trimmed = raw.strip()
+    return trimmed.startswith("[PDF_CONTEXT]") and trimmed.endswith("[/PDF_CONTEXT]")
+
+
+def _compact_text_for_context_retry(text: str, max_chars: int) -> str:
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    marker = _CONTEXT_COMPACTION_MARKER
+    if max_chars <= len(marker) + 64:
+        return text[:max_chars]
+
+    head_chars = (max_chars - len(marker)) * 2 // 3
+    tail_chars = max_chars - len(marker) - head_chars
+    if tail_chars < 32:
+        tail_chars = 32
+        head_chars = max_chars - len(marker) - tail_chars
+    return f"{text[:head_chars]}{marker}{text[-tail_chars:]}"
+
+
+def _compact_message_content_for_context_retry(
+    content: object, max_chars: int
+) -> object:
+    if isinstance(content, str):
+        return _compact_text_for_context_retry(content, max_chars)
+    if isinstance(content, list):
+        compacted_parts: list[object] = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                updated_part = dict(part)
+                updated_part["text"] = _compact_text_for_context_retry(
+                    str(part.get("text", "")), max_chars
+                )
+                compacted_parts.append(updated_part)
+            else:
+                compacted_parts.append(deepcopy(part))
+        return compacted_parts
+    return content
+
+
+def _build_context_retry_messages(
+    messages: list[dict[str, object]], retry_count: int
+) -> list[dict[str, object]] | None:
+    if retry_count >= len(_CONTEXT_RETRY_PLANS):
+        return None
+
+    plan = _CONTEXT_RETRY_PLANS[retry_count]
+    keep_indices: set[int] = set()
+    pdf_indices: list[int] = []
+    non_system_indices: list[int] = []
+
+    for idx, msg in enumerate(messages):
+        role = msg.get("role")
+        if role == "system":
+            keep_indices.add(idx)
+            continue
+        if _message_has_pdf_context(msg.get("content", "")):
+            pdf_indices.append(idx)
+            continue
+        non_system_indices.append(idx)
+
+    if pdf_indices:
+        keep_indices.add(pdf_indices[-1])
+    keep_indices.update(non_system_indices[-int(plan["recent_messages"]) :])
+
+    if not keep_indices:
+        return None
+
+    compacted_messages: list[dict[str, object]] = []
+    changed = len(keep_indices) != len(messages)
+    pdf_index_set = set(pdf_indices)
+
+    for idx, msg in enumerate(messages):
+        if idx not in keep_indices:
+            continue
+        cloned = deepcopy(msg)
+        max_chars = int(
+            plan["pdf_context_chars"] if idx in pdf_index_set else plan["max_chars"]
+        )
+        compacted_content = _compact_message_content_for_context_retry(
+            cloned.get("content", ""), max_chars
+        )
+        if compacted_content != cloned.get("content"):
+            cloned["content"] = compacted_content
+            changed = True
+        compacted_messages.append(cloned)
+
+    return compacted_messages if changed else None
+
+
+def _build_auto_continue_messages(
+    messages: list[dict[str, object]], partial_response: str, detected_lang: str
+) -> list[dict[str, object]]:
+    prompt = _AUTO_CONTINUE_PROMPTS.get(detected_lang, _AUTO_CONTINUE_PROMPTS["en"])
+    return messages + [
+        {"role": "assistant", "content": partial_response},
+        {"role": "user", "content": prompt},
+    ]
+
+
+def _should_auto_continue_response(
+    response_text: str, was_truncated: bool, continuation_count: int
+) -> bool:
+    if not was_truncated or continuation_count >= _MAX_AUTO_CONTINUATIONS:
+        return False
+    stripped = response_text.strip()
+    if not stripped:
+        return False
+    return "[WEB_SEARCH]" not in stripped and "[READ_ARTICLE]" not in stripped
+
+
 def _should_fallback_from_local_vllm_error(exc: Exception) -> bool:
     """Return True when a local vLLM upstream request failure should trigger remote fallback."""
     return isinstance(exc, httpx.HTTPError)
@@ -1379,9 +1522,9 @@ After saving, return here and start chatting!"""
         provider_name = "OpenRouter"
         return True
 
-    # Tool loop: up to 5 iterations (web search + read article)
-    # Need enough iterations for: search → re-search → read article → stream summary
-    max_tool_iterations = 5
+    # Tool loop also covers automatic continuation / context-compaction retries.
+    # Need enough iterations for: search → re-search → read article → auto-continue.
+    max_tool_iterations = 8
     current_messages = _prepare_generation_messages(
         messages, detected_lang, disable_web_search, conversation_mode
     )
@@ -1440,10 +1583,13 @@ After saving, return here and start chatting!"""
     _stream_next_iteration = False
     _response_already_streamed = False
     full_response = ""
+    aggregated_response = ""
     _final_response_truncated = False
     _search_count = 0  # Track consecutive web searches to prevent infinite loops
     _search_artifacts_emitted = False
     _MAX_SEARCHES = 2  # Max web searches per user message
+    _auto_continue_count = 0
+    _context_retry_count = 0
 
     for iteration in range(max_tool_iterations):
         # ── Streaming path: yield tokens directly to the client ──────────
@@ -1487,6 +1633,17 @@ After saving, return here and start chatting!"""
                     )
                     continue
                 if _is_context_length_exceeded_error(e):
+                    retry_messages = _build_context_retry_messages(
+                        current_messages, _context_retry_count
+                    )
+                    if retry_messages is not None:
+                        _context_retry_count += 1
+                        current_messages = retry_messages
+                        logger.info(
+                            "Retrying streaming AI completion after context compaction "
+                            f"(attempt {_context_retry_count}/{len(_CONTEXT_RETRY_PLANS)})"
+                        )
+                        continue
                     logger.warning(
                         f"Context length exceeded during streaming AI completion: {e}"
                     )
@@ -1515,13 +1672,30 @@ After saving, return here and start chatting!"""
                 )
                 yield f"data: {json.dumps({'content': fb})}\n\n"
 
+            if _should_auto_continue_response(
+                full_response, response_truncated, _auto_continue_count
+            ):
+                aggregated_response += full_response
+                current_messages = _build_auto_continue_messages(
+                    current_messages, full_response, detected_lang
+                )
+                _auto_continue_count += 1
+                _stream_next_iteration = True
+                logger.info(
+                    "Auto-continuing truncated streamed response "
+                    f"(attempt {_auto_continue_count}/{_MAX_AUTO_CONTINUATIONS})"
+                )
+                continue
+
+            combined_response = aggregated_response + full_response
+
             # Streaming path always breaks after emitting — no tool detection needed
             # because the AI was given article content and asked to summarize.
             # Inject CITATION_CONTEXTS before [DONE] if article was read
-            if article_pdf_content:
+            if article_pdf_content and combined_response:
                 try:
                     ctx = _extract_citation_contexts(
-                        full_response,
+                        combined_response,
                         article_pdf_content,
                         _per_paper_pdf_content,
                         _per_paper_source_ids,
@@ -1625,6 +1799,17 @@ After saving, return here and start chatting!"""
                 )
                 continue
             if _is_context_length_exceeded_error(e):
+                retry_messages = _build_context_retry_messages(
+                    current_messages, _context_retry_count
+                )
+                if retry_messages is not None:
+                    _context_retry_count += 1
+                    current_messages = retry_messages
+                    logger.info(
+                        "Retrying AI completion after context compaction "
+                        f"(attempt {_context_retry_count}/{len(_CONTEXT_RETRY_PLANS)})"
+                    )
+                    continue
                 logger.warning(f"Context length exceeded during AI completion: {e}")
                 yield f"data: {json.dumps({'context_limit': True})}\n\n"
                 yield "data: [DONE]\n\n"
@@ -2171,11 +2356,32 @@ After saving, return here and start chatting!"""
             for i in range(0, len(full_response), _CHUNK_SIZE):
                 yield f"data: {json.dumps({'content': full_response[i : i + _CHUNK_SIZE]})}\n\n"
 
+        aggregated_response += full_response
+
+        if _should_auto_continue_response(
+            full_response, iteration_response_truncated, _auto_continue_count
+        ):
+            current_messages = _build_auto_continue_messages(
+                current_messages, full_response, detected_lang
+            )
+            _auto_continue_count += 1
+            _stream_next_iteration = True
+            _response_already_streamed = True
+            logger.info(
+                "Auto-continuing truncated response "
+                f"(attempt {_auto_continue_count}/{_MAX_AUTO_CONTINUATIONS})"
+            )
+            continue
+
+        _final_response_truncated = iteration_response_truncated and bool(
+            full_response.strip()
+        )
+
         # No tool requested — break out of loop
         break
 
     # ── Emit final AI response ──
-    final_response_text = full_response or ""
+    final_response_text = aggregated_response or full_response or ""
     if _requires_training_recommendation_search:
         final_response_text = _sanitize_training_recommendation_output(
             final_response_text

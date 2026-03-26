@@ -55,6 +55,20 @@ export function preserveContentOnClearMarker(_content: string): string {
 
 
 /**
+ * Strip internal metadata blocks that should not appear in copied/exported user-facing text.
+ */
+export function removeInternalMetadataBlocks(content: string): string {
+  let sanitized = content
+  sanitized = sanitized.replace(/\[CITATION_CONTEXTS\][\s\S]*?\[\/CITATION_CONTEXTS\]/g, '')
+  sanitized = sanitized.replace(/\[REFERENCE\][\s\S]*?\[\/REFERENCE\]/g, '')
+  sanitized = sanitized.replace(/\[RESPONSE_TRUNCATED\][\s\S]*?\[\/RESPONSE_TRUNCATED\]/g, '')
+  sanitized = sanitized.replace(/\[CONTEXT_LIMIT\][\s\S]*?\[\/CONTEXT_LIMIT\]/g, '')
+  sanitized = sanitized.replace(/\[PDF_CONTEXT\][\s\S]*?\[\/PDF_CONTEXT\]/g, '')
+  return sanitized.trim()
+}
+
+
+/**
  * Check if a user message is a hidden PDF context message (not for UI display).
  * These are saved to DB by the backend to provide PDF content for follow-up questions.
  * The AI can see them in conversation history; only the UI rendering is skipped.

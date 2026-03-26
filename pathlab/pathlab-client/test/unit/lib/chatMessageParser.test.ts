@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   sanitizeConfigBlocksForAI,
   isPdfContextMessage,
+  removeInternalMetadataBlocks,
 } from '@renderer/lib/chatMessageParser'
 
 describe('sanitizeConfigBlocksForAI', () => {
@@ -115,5 +116,29 @@ describe('isPdfContextMessage', () => {
 
   it('returns false for other block types', () => {
     expect(isPdfContextMessage('[CITATION_CONTEXTS]data[/CITATION_CONTEXTS]')).toBe(false)
+  })
+})
+
+describe('removeInternalMetadataBlocks', () => {
+  it('removes citation, reference, truncation, context-limit, and pdf-context blocks', () => {
+    const input = [
+      'visible text',
+      '[REFERENCE]title: Paper[/REFERENCE]',
+      '[CITATION_CONTEXTS]{"1-p.1": {"page": 1}}[/CITATION_CONTEXTS]',
+      '[RESPONSE_TRUNCATED][/RESPONSE_TRUNCATED]',
+      '[CONTEXT_LIMIT][/CONTEXT_LIMIT]',
+      '[PDF_CONTEXT]hidden[/PDF_CONTEXT]',
+      'tail text',
+    ].join('\n')
+
+    const result = removeInternalMetadataBlocks(input)
+
+    expect(result).toContain('visible text')
+    expect(result).toContain('tail text')
+    expect(result).not.toContain('[REFERENCE]')
+    expect(result).not.toContain('[CITATION_CONTEXTS]')
+    expect(result).not.toContain('[RESPONSE_TRUNCATED]')
+    expect(result).not.toContain('[CONTEXT_LIMIT]')
+    expect(result).not.toContain('[PDF_CONTEXT]')
   })
 })

@@ -104,6 +104,7 @@ import { SCENARIO_CARDS } from "../constants/scenarios";
 import { BEFORE_LOGOUT_EVENT, useAuth } from "../contexts/AuthContext";
 import {
 	isPdfContextMessage,
+		removeInternalMetadataBlocks,
 	preserveContentOnClearMarker,
 	sanitizeConfigBlocksForAI,
 } from "../lib/chatMessageParser";
@@ -1254,7 +1255,8 @@ export default function AIChatPage() {
 			lines.push("");
 
 			const visibleMessages = conversation.messages.filter(
-				(msg) => !isInternalOnlyMessage(msg.content),
+				(msg) =>
+					!isInternalOnlyMessage(msg.content) && !isPdfContextMessage(msg.content),
 			);
 
 			for (const msg of visibleMessages) {
@@ -1265,9 +1267,13 @@ export default function AIChatPage() {
 					const displayIdx = activeIdx >= 0 ? activeIdx + 1 : rawVariants.length;
 					roleLabel = `Assistant (Regeneration ${displayIdx}/${rawVariants.length})`;
 				}
+					const cleanedContent = cleanMessageContent(msg.content);
+					if (!cleanedContent) {
+						continue;
+					}
 				lines.push(`## ${roleLabel}`);
 				lines.push("");
-				lines.push(msg.content.trim());
+					lines.push(cleanedContent);
 				lines.push("");
 				lines.push("---");
 				lines.push("");
@@ -2515,6 +2521,7 @@ export default function AIChatPage() {
 		cleaned = removeContextLimitBlock(cleaned);
 		// Remove RESPONSE_TRUNCATED block - UI-only warning card
 		cleaned = removeResponseTruncatedBlock(cleaned);
+			cleaned = removeInternalMetadataBlocks(cleaned);
 		return cleaned.trim();
 	}, []);
 
