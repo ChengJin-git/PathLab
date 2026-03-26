@@ -2077,6 +2077,13 @@
       "foundationSegmentationDesc": "使用支持空间特征的基础模型提取器，并配合固定轻量解码器。",
       "architecture": "架构",
       "backbone": "骨干网络",
+      "decoderType": "解码头",
+      "decoder": {
+        "conv": "卷积",
+        "linear": "线性",
+        "dpt": "DPT",
+        "unetr": "UNETR"
+      },
       "lossFunction": "损失函数",
       "search": "搜索...",
       "trainingParams": "训练参数",
@@ -3559,15 +3566,15 @@
       "gtDeleted": "GT 已删除",
       "autoSeeded": "已将您的个人草稿导入到协作草稿",
       "autoSeedConfirmTitle": "标注内容冲突",
-        "autoSeedConfirmMessage": "个人标注与协作标注均有内容。选择用个人标注覆盖协作内容，还是直接进入协作模式？",
-        "autoSeedConfirmMessageSharedEmpty": "你有个人标注内容，协作空间当前为空。是否将个人标注导入协作空间，还是直接进入？",
+      "autoSeedConfirmMessage": "个人标注与协作标注均有内容。选择用个人标注覆盖协作内容，还是直接进入协作模式？",
+      "autoSeedConfirmMessageSharedEmpty": "你有个人标注内容，协作空间当前为空。是否将个人标注导入协作空间，还是直接进入？",
       "autoSeedConfirmUse": "导入协作",
-        "autoSeedConfirmSkip": "直接进入",
+      "autoSeedConfirmSkip": "直接进入",
       "removedUnsavedLost": "你已被移出协作，未保存的修改已丢失",
       "exitSharedTitle": "标注内容冲突",
-        "exitSharedMessage": "你有协作标注内容，切换到个人模式后将不再显示。是否将协作标注导入个人空间？",
+      "exitSharedMessage": "你有协作标注内容，切换到个人模式后将不再显示。是否将协作标注导入个人空间？",
       "exitSharedImport": "导入个人",
-        "exitSharedDiscard": "直接进入",
+      "exitSharedDiscard": "直接进入",
       "dialog": {
         "title": "管理协作者",
         "ownerRole": "所有者",
@@ -3686,6 +3693,162 @@
     "labelSource": {
       "imported": "导入 GT",
       "userLabel": "用户标注"
+    }
+  },
+  "landing": {
+    "nav": {
+      "product": "产品",
+      "capabilities": "核心能力",
+      "solutions": "解决方案",
+      "pricing": "定价",
+      "resources": "资源",
+      "getStarted": "开始使用"
+    },
+    "hero": {
+      "badge": "由 AI 智能体强力驱动",
+      "title1": "用自然语言掌控 ",
+      "title2": "病理 AI 工作流",
+      "subtitle": "全流程数字病理智能工作台。从数据导入、自动配置到任务日志监控与医学图像证据层，全程自然语言交互。",
+      "primaryCta": "开始使用",
+      "secondaryCta": "预约演示",
+      "supports": "支持 SVS, NDPI, DICOM • 私有与公开数据集 • English / 中文"
+    },
+    "trustStrip": {
+      "nlp": "自然语言任务配置",
+      "formats": "多格式病理数据接入",
+      "tracking": "任务监控与日志追踪",
+      "viz": "结果分析与可视化",
+      "i18n": "多语言无缝切换"
+    },
+    "story": {
+      "header": "只需三步，从灵感到可验证的诊断证据",
+      "step1": {
+        "title": "1. 告诉 AI 你的目标",
+        "desc": "用日常语言描述你想在图像上执行的任务，告别复杂的表单。"
+      },
+      "step2": {
+        "title": "2. 智能自动配置",
+        "desc": "引擎在几秒内将您的意图解析为底层配置和数据集分配。"
+      },
+      "step3": {
+        "title": "3. 监控进度与研判",
+        "desc": "通过控制台跟踪分析进度，并直接在查看器里叠加数字切片证据。"
+      }
+    },
+    "capabilities": {
+      "title": "完整的 AI 病理工具集",
+      "main": {
+        "title": "您的智能研究协作台"
+      }
+    },
+    "evidence": {
+      "title": "深度的视觉证据层，就在同一工作台",
+      "desc": "停止在孤立工具间切换。在同一界面查看AI结果与切片原图的精准热图叠加。",
+      "f1": {
+        "title": "零延迟平滑渲染",
+        "desc": "通过深度优化的 WebGL 查看器，毫秒级缩放和探索图像。"
+      },
+      "f2": {
+        "title": "同步动态可视化",
+        "desc": "将多模态推理结果叠加在切片的原始物理坐标上分析区域。"
+      }
+    },
+    "solutions": {
+      "title": "为团队中每个角色专门打造",
+      "clinician": {
+        "label": "临床医生",
+        "desc": "为您的诊断流提供实时智能辅佐。",
+        "bullet1": "快速的复核心筛提示",
+        "bullet2": "自动AI病灶圈选标记",
+        "bullet3": "医疗无缝兼容"
+      },
+      "researcher": {
+        "label": "研究团队",
+        "desc": "显著加速迭代试错与大规模实验。",
+        "bullet1": "大规模自动化运行",
+        "bullet2": "可定制的高阶指标导出",
+        "bullet3": "高度可复现任务"
+      },
+      "institution": {
+        "label": "医疗实验室",
+        "desc": "私有化、数据不出院的计算基座。",
+        "bullet1": "精细颗粒的角色权限管控",
+        "bullet2": "隐私增强隔离层",
+        "bullet3": "端到端监控预警"
+      }
+    },
+    "trust": {
+      "header": "为可信的私有环境设计",
+      "privacy": {
+        "title": "数据可见性掌控",
+        "desc": "对您的私有标本数据进行完善的角色可见度限制。"
+      },
+      "deployment": {
+        "title": "安全的容器执行层",
+        "desc": "所有AI预测被控制和分配在授权的工作节点下独立运行。"
+      },
+      "audit": {
+        "title": "可验证与溯源的结果",
+        "desc": "计算的每一环指标及报告全部完整归档，满足严苛验证要求。"
+      },
+      "i18n": {
+        "title": "全球一致的国际化体验",
+        "desc": "中英双语言流畅自适应布局架构，满足中外联合机构需求。"
+      }
+    },
+    "pricing": {
+      "title": "透明、清晰的定价模式",
+      "individual": {
+        "title": "个人版",
+        "price": "免费",
+        "desc": "适合科研工作者与爱好者进行实验。",
+        "feat1": "WSI图像原生浏览",
+        "feat2": "多模态推断引擎支持",
+        "feat3": "极高的隐私标准保障",
+        "feat4": "内嵌零样本自然助手",
+        "feat5": "社区文档开放获取",
+        "cta": "免费开始体验"
+      },
+      "enterprise": {
+        "title": "团队版",
+        "price": "定制",
+        "desc": "针对实验室和大型医院组织的完整套件。",
+        "feat1": "无感私有存储对接",
+        "feat2": "最高优先级的支持响应用",
+        "feat3": "SSO 单点登录鉴权管控",
+        "feat4": "私有集群性能调度分配",
+        "feat5": "专属部署客户成功经理",
+        "cta": "与销售团队对话"
+      }
+    },
+    "finalCta": {
+      "title": "输入您的第一段自然语言，启动 AI 病理",
+      "subtitle": "把复杂的参数配置交还给引擎解决。专注您的精力在判断、研制和创新性发现。",
+      "primary": "立刻体验操作",
+      "secondary": "预约企业演示"
+    },
+    "footer": {
+      "description": "通过临床级的智能引擎，构建下一代智慧病理平台。",
+      "links": "站点导航",
+      "legal": "合规与协议",
+      "privacy": "隐私政策",
+      "terms": "用户服务协议"
+    },
+    "mock": {
+      "pipeline": "推理任务",
+      "extraction": "数据提取",
+      "active": "运行中",
+      "queued": "排队中",
+      "heatmapAlpha": "热图透明度",
+      "analysisComplete": "分析完成",
+      "analysisDesc": "识别到高密度区域。置信度得分：0.94",
+      "inferenceComplete": "推理完成",
+      "restart": "重置",
+      "addHeatmap": "+热度图",
+      "precision": "精确率",
+      "recall": "召回率",
+      "searchPlaceholder": "使用自然语言查询任务进度、数据状态或操作集群...",
+      "gpuAllocation": "GPU 算力分配"
     }
   }
 }

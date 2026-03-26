@@ -22,6 +22,8 @@ import {
   DEFAULT_SEG_BACKBONE,
   DEFAULT_SEG_LOSS_NAMES,
   DEFAULT_SEG_LOSS_WEIGHTS,
+  DEFAULT_FM_DECODER_TYPE,
+  FmDecoderType,
   SplitStrategy,
 } from '../../constants/training'
 import { useDraftState } from './useDraftState'
@@ -80,6 +82,8 @@ export interface UseTrainingConfigReturn {
   setSegArchitecture: (arch: string) => void
   segBackbone: string
   setSegBackbone: (backbone: string) => void
+  segFmDecoderType: FmDecoderType
+  setSegFmDecoderType: (decoder: FmDecoderType) => void
   segLossNames: string[]
   setSegLossNames: (names: string[]) => void
   segLossWeights: number[]
@@ -135,6 +139,7 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
 
   const [segArchitecture, setSegArchitecture] = useDraftState(`${D}segArchitecture`, DEFAULT_SEG_ARCHITECTURE)
   const [segBackbone, setSegBackbone] = useDraftState(`${D}segBackbone`, DEFAULT_SEG_BACKBONE)
+  const [segFmDecoderType, setSegFmDecoderType] = useDraftState<FmDecoderType>(`${D}segFmDecoderType`, DEFAULT_FM_DECODER_TYPE)
   const [segLossNames, setSegLossNames] = useDraftState<string[]>(`${D}segLossNames`, DEFAULT_SEG_LOSS_NAMES)
   const [segLossWeights, setSegLossWeights] = useDraftState<number[]>(`${D}segLossWeights`, DEFAULT_SEG_LOSS_WEIGHTS)
 
@@ -192,6 +197,8 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
     setSegArchitecture,
     segBackbone,
     setSegBackbone,
+    segFmDecoderType,
+    setSegFmDecoderType,
     segLossNames,
     setSegLossNames,
     segLossWeights,

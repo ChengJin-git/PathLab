@@ -24,6 +24,8 @@ import {
   BACKBONE_GROUPS,
   DEFAULT_SEG_BACKBONE,
   isSegFmEncoder,
+  FmDecoderType,
+  FM_DECODER_TYPES,
 } from '../../constants/training'
 
 export interface ModelConfigStepProps {
@@ -50,6 +52,8 @@ export interface ModelConfigStepProps {
   setSegArchitecture: (arch: string) => void
   segBackbone: string
   setSegBackbone: (backbone: string) => void
+  segFmDecoderType: FmDecoderType
+  setSegFmDecoderType: (decoder: FmDecoderType) => void
   segLossNames: string[]
   setSegLossNames: (names: string[]) => void
   segLossWeights: number[]
@@ -93,6 +97,8 @@ export function ModelConfigStep({
   setSegArchitecture,
   segBackbone,
   setSegBackbone,
+  segFmDecoderType,
+  setSegFmDecoderType,
   segLossNames,
   setSegLossNames,
   segLossWeights,
@@ -284,6 +290,36 @@ export function ModelConfigStep({
                     </span>
                   </div>
                 </div>
+
+                {isFmSegmentation && (
+                  <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm space-y-2.5">
+                    <label className="block text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-widest">
+                      {t('training.modelConfig.decoderType')}
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {FM_DECODER_TYPES.map((type) => (
+                        <div
+                          key={type}
+                          onClick={() => setSegFmDecoderType(type)}
+                          className={`p-2.5 rounded-xl border transition-all cursor-pointer hover:shadow-sm ${
+                            segFmDecoderType === type
+                              ? 'bg-white border-primary-500 ring-1 ring-primary-500 shadow-sm'
+                              : 'bg-white border-gray-100 hover:border-gray-200'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="font-bold text-gray-900 text-xs sm:text-sm capitalize">
+                              {t(`training.modelConfig.decoder.${type}`, type)}
+                            </div>
+                            {segFmDecoderType === type && (
+                              <CheckCircle2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-primary-600 flex-shrink-0" />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {!isFmSegmentation && (
                   <div className="rounded-2xl border border-gray-200 bg-white p-3 shadow-sm space-y-2.5">

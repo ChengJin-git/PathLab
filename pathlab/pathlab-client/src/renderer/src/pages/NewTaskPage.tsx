@@ -523,6 +523,7 @@ export default function NewTaskPage() {
         ? {
             architecture: isSegFmTask ? FM_SEGMENTATION_ARCHITECTURE : trainingConfig.segArchitecture,
             backbone: trainingConfig.segBackbone,
+            decoder_type: isSegFmTask ? trainingConfig.segFmDecoderType : undefined,
             loss_names: trainingConfig.segLossNames,
             loss_weights: trainingConfig.segLossWeights,
             learning_rate: trainingConfig.learningRate,
@@ -857,6 +858,8 @@ export default function NewTaskPage() {
               setSegArchitecture={trainingConfig.setSegArchitecture}
               segBackbone={trainingConfig.segBackbone}
               setSegBackbone={trainingConfig.setSegBackbone}
+              segFmDecoderType={trainingConfig.segFmDecoderType}
+              setSegFmDecoderType={trainingConfig.setSegFmDecoderType}
               segLossNames={trainingConfig.segLossNames}
               setSegLossNames={trainingConfig.setSegLossNames}
               segLossWeights={trainingConfig.segLossWeights}
@@ -903,6 +906,7 @@ export default function NewTaskPage() {
               classifier={trainingConfig.classifier}
               segArchitecture={trainingConfig.segArchitecture}
               segBackbone={trainingConfig.segBackbone}
+              segFmDecoderType={trainingConfig.segFmDecoderType}
               segLossNames={trainingConfig.segLossNames}
               segLossWeights={trainingConfig.segLossWeights}
               validateConfiguration={validateConfiguration}

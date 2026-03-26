@@ -60,6 +60,7 @@ export interface TaskDetail {
     early_stopping_patience?: number  // Number of epochs to wait before early stopping
     // Segmentation-specific fields
     architecture?: string      // Segmentation architecture (unet, deeplabv3, etc.)
+    decoder_type?: string      // Segmentation decoder type for FM (conv, linear, dpt, unetr)
     loss_names?: string[]      // Segmentation loss function names
     loss_weights?: number[]    // Segmentation loss function weights
     // External validation specific fields

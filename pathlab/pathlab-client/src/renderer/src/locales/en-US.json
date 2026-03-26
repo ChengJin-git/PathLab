@@ -2082,6 +2082,13 @@
       "foundationSegmentationDesc": "Use a spatial-capable foundation model extractor with a fixed lightweight decoder.",
       "architecture": "Architecture",
       "backbone": "Backbone",
+      "decoderType": "Decoder Head",
+      "decoder": {
+        "conv": "Convolutional",
+        "linear": "Linear",
+        "dpt": "DPT",
+        "unetr": "UNETR"
+      },
       "lossFunction": "Loss Function",
       "search": "Search...",
       "trainingParams": "Training Parameters",
@@ -3564,15 +3571,15 @@
       "gtDeleted": "GT deleted",
       "autoSeeded": "Your personal draft has been imported into the collaborative draft",
       "autoSeedConfirmTitle": "Annotation conflict",
-        "autoSeedConfirmMessage": "Both personal and collaborative annotations have content. Overwrite the collaborative annotations with your personal ones, or enter collaborative mode as-is?",
-        "autoSeedConfirmMessageSharedEmpty": "You have personal annotations and the collaborative space is currently empty. Import your personal annotations into the collaborative space, or enter directly?",
+      "autoSeedConfirmMessage": "Both personal and collaborative annotations have content. Overwrite the collaborative annotations with your personal ones, or enter collaborative mode as-is?",
+      "autoSeedConfirmMessageSharedEmpty": "You have personal annotations and the collaborative space is currently empty. Import your personal annotations into the collaborative space, or enter directly?",
       "autoSeedConfirmUse": "Import to collaboration",
-        "autoSeedConfirmSkip": "Enter directly",
+      "autoSeedConfirmSkip": "Enter directly",
       "removedUnsavedLost": "You have been removed from the collaboration. Unsaved changes were lost.",
       "exitSharedTitle": "Annotation conflict",
-        "exitSharedMessage": "You have collaborative annotations that will not carry over to personal mode. Import the collaborative annotations to your personal space, or switch directly?",
+      "exitSharedMessage": "You have collaborative annotations that will not carry over to personal mode. Import the collaborative annotations to your personal space, or switch directly?",
       "exitSharedImport": "Import to personal",
-        "exitSharedDiscard": "Enter directly",
+      "exitSharedDiscard": "Enter directly",
       "dialog": {
         "title": "Manage Collaborators",
         "ownerRole": "Owner",
@@ -3691,6 +3698,162 @@
     "labelSource": {
       "imported": "Imported GT",
       "userLabel": "User Label"
+    }
+  },
+  "landing": {
+    "nav": {
+      "product": "Product",
+      "capabilities": "Capabilities",
+      "solutions": "Solutions",
+      "pricing": "Pricing",
+      "resources": "Resources",
+      "getStarted": "Get Started"
+    },
+    "hero": {
+      "badge": "Powered by Agentic AI",
+      "title1": "Master pathology workflows with ",
+      "title2": "natural language",
+      "subtitle": "A true clinical-grade AI workspace. From data import and zero-shot configuration to log tracking and viewer evidence—all guided seamlessly by natural language.",
+      "primaryCta": "Get Started",
+      "secondaryCta": "Book Demo",
+      "supports": "Supports SVS, NDPI, DICOM • Public & Private • English / 中文"
+    },
+    "trustStrip": {
+      "nlp": "Natural Language Config",
+      "formats": "Multi-format Data Support",
+      "tracking": "Task & Log Tracking",
+      "viz": "Visual Results Analysis",
+      "i18n": "Multilingual Support"
+    },
+    "story": {
+      "header": "From idea to evidence in three simple steps",
+      "step1": {
+        "title": "1. Tell the AI what you need",
+        "desc": "Start with a simple natural language prompt. No complex forms required."
+      },
+      "step2": {
+        "title": "2. Automatic System Configuration",
+        "desc": "The system maps your intent to internal configurations, models, and datasets in seconds."
+      },
+      "step3": {
+        "title": "3. Track and Analyze Results",
+        "desc": "Review the pipeline execution and jump directly into the viewer for in-depth visual evidence."
+      }
+    },
+    "capabilities": {
+      "title": "A Complete AI Pathology Toolset",
+      "main": {
+        "title": "Your Intelligent Research Copilot"
+      }
+    },
+    "evidence": {
+      "title": "Deep visual evidence, right in your workspace",
+      "desc": "Stop switching between disjointed tools. View your pipeline results alongside the original Whole Slide Images, with synchronized heatmaps and opacity controls.",
+      "f1": {
+        "title": "Zero-latency visualization",
+        "desc": "Deep zoom into gigapixel tissue arrays instantly via the WebGL renderer."
+      },
+      "f2": {
+        "title": "Synchronized Overlays",
+        "desc": "Overlay AI inference results accurately onto the tissue source."
+      }
+    },
+    "solutions": {
+      "title": "Built for every role in pathology",
+      "clinician": {
+        "label": "Clinician",
+        "desc": "Empowering your workflow with intelligent assistance.",
+        "bullet1": "Quick diagnosis suggestions",
+        "bullet2": "AI-assisted annotations",
+        "bullet3": "Seamless integration"
+      },
+      "researcher": {
+        "label": "Researcher",
+        "desc": "Accelerate your experiments and model validation.",
+        "bullet1": "Batch processing support",
+        "bullet2": "Custom metric exports",
+        "bullet3": "Reproducible pipelines"
+      },
+      "institution": {
+        "label": "Institution",
+        "desc": "Secure, scalable, and fully managed infrastructure.",
+        "bullet1": "Role-based access",
+        "bullet2": "Data privacy guarantees",
+        "bullet3": "Audit trails"
+      }
+    },
+    "trust": {
+      "header": "Ready for clinical environments",
+      "privacy": {
+        "title": "Data Privacy Control",
+        "desc": "Granular visibility settings for your private datasets."
+      },
+      "deployment": {
+        "title": "Secure Execution",
+        "desc": "Configured exclusively within your authorized environments."
+      },
+      "audit": {
+        "title": "Verifiable Results",
+        "desc": "Full task logs and verifiable output for every model run."
+      },
+      "i18n": {
+        "title": "Global Usability",
+        "desc": "Built-in support for multiple languages without broken layouts."
+      }
+    },
+    "pricing": {
+      "title": "Simple, transparent pricing",
+      "individual": {
+        "title": "Individual",
+        "price": "Free",
+        "desc": "Suitable for clinical researchers.",
+        "feat1": "WSI Visualization",
+        "feat2": "AI Model Inference",
+        "feat3": "Local Privacy First",
+        "feat4": "Agentic Assistant",
+        "feat5": "Community Support",
+        "cta": "Get Started"
+      },
+      "enterprise": {
+        "title": "Enterprise",
+        "price": "Custom",
+        "desc": "For hospitals and large labs.",
+        "feat1": "Custom Integrations",
+        "feat2": "Priority Support",
+        "feat3": "SSO Access Control",
+        "feat4": "Enterprise Security",
+        "feat5": "Dedicated Manager",
+        "cta": "Contact Sales"
+      }
+    },
+    "finalCta": {
+      "title": "Start your AI workflow from the first command",
+      "subtitle": "Leave complex configuration to the system. Focus your time on judgment, verification, and research.",
+      "primary": "Get Started Now",
+      "secondary": "Book a Demo"
+    },
+    "footer": {
+      "description": "Transforming pathology workflows with clinical-grade AI.",
+      "links": "Links",
+      "legal": "Legal",
+      "privacy": "Privacy Policy",
+      "terms": "Terms of Service"
+    },
+    "mock": {
+      "pipeline": "Inference Pipeline",
+      "extraction": "Data Extraction",
+      "active": "Active",
+      "queued": "Queued",
+      "heatmapAlpha": "Heatmap Alpha",
+      "analysisComplete": "Analysis Complete",
+      "analysisDesc": "High density region identified. Confidence score: 0.94.",
+      "inferenceComplete": "Inference Complete",
+      "restart": "Restart",
+      "addHeatmap": "+Heatmap",
+      "precision": "Precision",
+      "recall": "Recall",
+      "searchPlaceholder": "Ask about your active jobs...",
+      "gpuAllocation": "GPU Allocation"
     }
   }
 }

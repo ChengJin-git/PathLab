@@ -37,6 +37,7 @@ export interface ReviewSubmitStepProps {
   // Segmentation-specific
   segArchitecture?: string
   segBackbone?: string
+  segFmDecoderType?: string
   segLossNames?: string[]
   segLossWeights?: number[]
 
@@ -78,6 +79,7 @@ export function ReviewSubmitStep({
   classifier,
   segArchitecture,
   segBackbone,
+  segFmDecoderType,
   segLossNames,
   segLossWeights,
   validateConfiguration,
@@ -156,7 +158,7 @@ export function ReviewSubmitStep({
                           </div>
                           <div className="mt-1 text-[10px] sm:text-xs flex items-center gap-1.5 text-gray-500">
                             <span className="text-gray-400">{t('training.review.segDecoder')}:</span>
-                            <span className="font-bold text-gray-700 truncate">{t('taskDetail.configuration.convDecoder')}</span>
+                             <span className="font-bold text-gray-700 truncate">{t(`training.modelConfig.decoder.${segFmDecoderType || 'conv'}`, (segFmDecoderType || 'conv').toUpperCase())}</span>
                           </div>
                         </>
                       ) : (
