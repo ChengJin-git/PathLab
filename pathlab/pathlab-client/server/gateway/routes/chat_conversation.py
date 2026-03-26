@@ -35,6 +35,7 @@ def _clean_message_for_title(content: str) -> str:
     cleaned = re.sub(r"\s{3,}", "\n\n", cleaned)
     return cleaned.strip()
 
+
 from backend.common.config import Config
 from backend.database import get_db
 from backend.database.repositories import ChatRepository
@@ -295,6 +296,14 @@ async def generate_conversation_title(
                 cleaned_content = re.sub(
                     r"<think>[\s\S]*$", "", cleaned_content, flags=re.IGNORECASE
                 ).strip()
+                if re.match(r"(?i)^Thinking Process:", cleaned_content):
+                    for line in cleaned_content.split("\n"):
+                        m = re.search(r'\*\s+"?([^"(]+)"?\s*\(', line)
+                        if m:
+                            cleaned_content = m.group(1).strip()
+                            break
+                    else:
+                        cleaned_content = ""
 
             # Safety truncation: DB column is VARCHAR(500); titles should be short anyway
             title = cleaned_content.strip('"').strip("'")[:100]
