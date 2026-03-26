@@ -1895,6 +1895,11 @@ Here are your training tasks:
 - **task_type**: Filter by task type: "classification", "survival", etc. (optional)
 - **dataset_id**: Filter by dataset ID (optional), use when user asks about tasks related to a specific dataset
 
+**CRITICAL RULES for displaying task/model lists**:
+1. **ALWAYS use [TASK_HISTORY_CONFIG] when showing training task lists** - NEVER use markdown tables. Even when filtering by a specific dataset, use `dataset_id` field in [TASK_HISTORY_CONFIG].
+2. You do NOT have direct database access - [TASK_HISTORY_CONFIG] triggers the frontend to fetch actual data.
+3. Do NOT fabricate task IDs, status, or metrics.
+
 **Examples**:
 - "Show me all my experiments" → show_completed: true, show_running: true, show_failed: false
 - "Show me failed tasks" → show_completed: false, show_running: false, show_failed: true
