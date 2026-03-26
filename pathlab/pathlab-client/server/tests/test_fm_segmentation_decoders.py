@@ -119,3 +119,24 @@ def test_patch_size_default_when_no_backbone():
             return cls()
 
     assert _NoBB().patch_size == 16
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — UNETR Decoder
+# ---------------------------------------------------------------------------
+
+from backend.ai.segmentors.decoders.unetr import UNETRDecoder
+
+
+def test_unetr_decoder_output_shape():
+    B, D, H_p, W_p = 2, 64, 14, 14
+    feats = [torch.zeros(B, D, H_p, W_p) for _ in range(4)]
+    decoder = UNETRDecoder(embed_dim=D, base_channels=32)
+    out = decoder(feats)
+    assert out.shape == (B, 32, H_p * 16, W_p * 16), out.shape
+
+
+def test_unetr_decoder_wrong_feature_count():
+    decoder = UNETRDecoder(embed_dim=64, base_channels=32)
+    with pytest.raises((AssertionError, ValueError)):
+        decoder([torch.zeros(1, 64, 14, 14)] * 3)
