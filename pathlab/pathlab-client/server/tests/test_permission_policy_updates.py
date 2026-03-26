@@ -203,6 +203,15 @@ async def test_save_annotation_rejects_non_owner_non_admin_personal_draft(monkey
         _dataset_with_access,
     )
 
+    async def _not_owned(_db, _annotation_id, _user_id):
+        return False
+
+    monkeypatch.setattr(
+        SegmentationAnnotationRepository,
+        "is_owned_by_user",
+        staticmethod(_not_owned),
+    )
+
     req = AnnotationSaveRequest(
         annotation_id="annot-owner-only",
         source_dataset_id="ds-1",
