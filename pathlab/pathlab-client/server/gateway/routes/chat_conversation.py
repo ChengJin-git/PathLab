@@ -1,11 +1,38 @@
 import json
 import logging
+import os
+import re
 import uuid
 import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+# Regex patterns for special UI-only blocks that should be stripped before
+# sending user message content to the title-generation AI prompt.
+_SPECIAL_BLOCK_RE = re.compile(
+    r"\["
+    r"(?:CSV_PREVIEW|OPTIONS|TASK_CONFIG|CONTEXT_LIMIT|RESPONSE_TRUNCATED"
+    r"|NAVIGATE|IMAGE_RECOMMENDATION|CSV_ACTION|METRIC_CONFIG|CHART_CONFIG"
+    r"|QUICK_ANALYSIS_CONFIG|VOICE_CONTROL|MODEL_LIST|PATCH_INFERENCE"
+    r"|PDF_CONTEXT|TRAINING_RECOMMENDATION_CONTEXT|ANALYSIS_CONFIG)"
+    r"\][\s\S]*?\[/"
+    r"(?:CSV_PREVIEW|OPTIONS|TASK_CONFIG|CONTEXT_LIMIT|RESPONSE_TRUNCATED"
+    r"|NAVIGATE|IMAGE_RECOMMENDATION|CSV_ACTION|METRIC_CONFIG|CHART_CONFIG"
+    r"|QUICK_ANALYSIS_CONFIG|VOICE_CONTROL|MODEL_LIST|PATCH_INFERENCE"
+    r"|PDF_CONTEXT|TRAINING_RECOMMENDATION_CONTEXT|ANALYSIS_CONFIG)"
+    r"\]",
+    re.IGNORECASE,
+)
+
+
+def _clean_message_for_title(content: str) -> str:
+    """Strip special UI-only blocks from a user message before using it for title generation."""
+    cleaned = _SPECIAL_BLOCK_RE.sub("", content or "")
+    # Collapse excessive whitespace left by removed blocks
+    cleaned = re.sub(r"\s{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 from backend.common.config import Config
 from backend.database import get_db
@@ -22,6 +49,7 @@ from .chat_patch_inference import (
     cleanup_conversation_chat_patch_tasks,
     cleanup_chat_patch_tasks_from_message,
 )
+from .chat_llm_client import _check_local_vllm_available
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -138,39 +166,103 @@ async def generate_conversation_title(
     if not first_message or not first_message.strip():
         raise HTTPException(status_code=400, detail="No user message found")
 
-    api_key = request.headers.get("X-OpenRouter-API-Key")
-    base_url = request.headers.get(
-        "X-OpenRouter-Base-URL",
-        "https://openrouter.ai/api/v1",
+    # ── Model selection: local vLLM → OpenRouter (mirrors stream_ai_response logic) ──
+    global_settings = Config.get_global_settings()
+
+    # OpenRouter settings from headers (user's client-side config) or global settings
+    header_api_key = request.headers.get("X-OpenRouter-API-Key") or ""
+    header_base_url = request.headers.get("X-OpenRouter-Base-URL") or ""
+    header_model = request.headers.get("X-OpenRouter-Model") or ""
+
+    openrouter_api_key = (
+        header_api_key
+        or global_settings.get("openrouter_api_key")
+        or os.environ.get("OPENROUTER_API_KEY", "")
     )
-    model = request.headers.get("X-OpenRouter-Model", "google/gemini-2.0-flash-001")
+    openrouter_base_url = (
+        header_base_url
+        or global_settings.get("openrouter_base_url")
+        or os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    )
+    openrouter_model = (
+        header_model
+        or global_settings.get("openrouter_model")
+        or os.environ.get("OPENROUTER_MODEL", "google/gemini-2.0-flash-001")
+    )
 
-    if not api_key:
-        global_settings = Config.get_global_settings()
-        api_key = global_settings.get("openrouter_api_key") or ""
-        base_url = global_settings.get("openrouter_base_url") or base_url
-        model = global_settings.get("openrouter_model") or model
+    # Local vLLM settings
+    local_vllm_enabled = global_settings.get("local_vllm_enabled", False)
+    local_vllm_base_url = global_settings.get(
+        "local_vllm_base_url", "http://127.0.0.1:8000/v1"
+    )
+    local_vllm_model = global_settings.get("local_vllm_model", "")
+    local_vllm_api_key = global_settings.get("local_vllm_api_key", "")
 
-    if not api_key:
+    # Determine effective endpoint: prefer local vLLM when enabled and available
+    use_local = False
+    effective_base_url: str = str(openrouter_base_url or "")
+    effective_api_key: str = str(openrouter_api_key or "")
+    effective_model: str = str(openrouter_model or "")
+
+    if local_vllm_enabled and local_vllm_base_url:
+        is_available, detected_model = await _check_local_vllm_available(
+            local_vllm_base_url, local_vllm_api_key
+        )
+        if is_available:
+            local_model_resolved = local_vllm_model or detected_model
+            if local_model_resolved:
+                use_local = True
+                effective_base_url = local_vllm_base_url
+                effective_api_key = local_vllm_api_key
+                effective_model = local_model_resolved
+                logger.info(
+                    f"Title generation using local vLLM at {local_vllm_base_url}, "
+                    f"model={effective_model!r}"
+                )
+            else:
+                logger.warning(
+                    "Local vLLM available but no model resolved; falling back to OpenRouter"
+                )
+        else:
+            logger.warning(
+                "Local vLLM server offline for title generation; falling back to OpenRouter"
+            )
+
+    if not use_local and not effective_api_key:
         raise HTTPException(status_code=400, detail="No API key configured")
 
-    truncated = first_message[:300]
+    # Strip special UI-only blocks (e.g. [CSV_PREVIEW], [OPTIONS]) so the AI
+    # receives only the natural-language portion of the user's first message.
+    cleaned_message = _clean_message_for_title(first_message)
+    if not cleaned_message:
+        # If cleaning removed everything (e.g. pure CSV upload), fall back to
+        # the raw truncated content so we still have something to work with.
+        cleaned_message = first_message
+
+    truncated = cleaned_message[:300]
     title_prompt = (
         "Summarize the following message in 10 words or fewer as a concise "
         "conversation title. Output ONLY the title text, nothing else.\n\n"
         f'Message:\n"{truncated}"'
     )
 
+    logger.info(
+        f"Generating title for {conversation_id} using "
+        f"{'local vLLM' if use_local else 'OpenRouter'}, "
+        f"model={effective_model!r}, "
+        f"truncated_len={len(truncated)}, first_60={truncated[:60]!r}"
+    )
+
     try:
         async with httpx.AsyncClient(timeout=15) as client:
+            headers: dict[str, str] = {"Content-Type": "application/json"}
+            if effective_api_key:
+                headers["Authorization"] = f"Bearer {effective_api_key}"
             resp = await client.post(
-                f"{base_url.rstrip('/')}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
+                f"{effective_base_url.rstrip('/')}/chat/completions",
+                headers=headers,
                 json={
-                    "model": model,
+                    "model": effective_model,
                     "messages": [{"role": "user", "content": title_prompt}],
                     "max_tokens": 30,
                     "temperature": 0.3,
@@ -179,13 +271,20 @@ async def generate_conversation_title(
             resp.raise_for_status()
             data = resp.json()
             raw_content = data.get("choices", [{}])[0].get("message", {}).get("content")
+            logger.info(
+                f"Title generation raw_content for {conversation_id}: {raw_content!r}"
+            )
             title = (raw_content or "").strip().strip('"').strip("'")
     except Exception as e:
-        logger.error(f"Title generation failed: {e}")
+        logger.error(f"Title generation failed for {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate title")
 
     if not title:
-        title = first_message[:50]
+        logger.warning(
+            f"Title generation returned empty for {conversation_id}; "
+            f"falling back to message truncation"
+        )
+        title = cleaned_message[:50]
 
     await ChatRepository.update_conversation_title(db, conversation_id, title)
     await db.commit()
