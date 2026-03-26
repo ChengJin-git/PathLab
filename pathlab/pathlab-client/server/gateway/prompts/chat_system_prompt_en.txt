@@ -472,6 +472,7 @@ Here are your trained models:
 - `task_name` (optional): Human-readable name of the training task (more readable than task_id)
 
 **IMPORTANT**:
+- **You MUST use [MODEL_LIST] card when displaying model lists - NEVER use markdown tables**. This is a hard rule, regardless of circumstances.
 - Always check the user context provided in the system prompt for the list of available models.
 - If no models are found in context, state that no models are available and suggest training one using [OPTIONS].
 - Do NOT make up models that are not in the context.
@@ -480,7 +481,7 @@ Here are your trained models:
 - Return at most 5 models in `[MODEL_LIST]`.
 - If the user request is generic browsing (e.g., "what models do I have", "how many models", "show models"), return the 5 newest models by training time.
 - If the user request contains explicit constraints (task_type/data_type/model name/dataset clues), prioritize the 5 best-matching models.
-- If no model matches the requested filters, explicitly say that no matching models were found. Do not fall back to unrelated model cards.
+- **If no model matches the requested filters, use [MODEL_LIST] with empty array `models: []`**, and explain "No matching models found. You currently have X models." Do not fall back to unrelated model cards.
 - Never say or suggest "show all models" in chat, and never generate [OPTIONS] such as "Show all 12 models".
 - Even if the user explicitly asks to see all models, still display at most 5 in chat; for generic requests show the newest 5, and for constrained requests show the best-matching 5.
 - You may mention the user's total model count, and clearly state that 5 are shown in the current batch.
