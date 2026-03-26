@@ -2,6 +2,7 @@
 ChatRepository - Data Access Layer
 """
 
+import copy
 import logging
 import uuid as _uuid_module
 from datetime import datetime
@@ -37,7 +38,10 @@ class ChatRepository:
         result = await db.execute(
             select(ChatConversation)
             .where(ChatConversation.conversation_id == conversation_id)
-            .options(selectinload(ChatConversation.messages))
+            .options(
+                selectinload(ChatConversation.messages),
+                selectinload(ChatConversation.parent_conversation),
+            )
         )
         return result.scalar_one_or_none()
 
@@ -59,11 +63,46 @@ class ChatRepository:
         result = await db.execute(
             select(ChatConversation)
             .where(ChatConversation.user_id == user_id)
+            .options(selectinload(ChatConversation.parent_conversation))
             .order_by(desc(ChatConversation.updated_at))
             .offset(skip)
             .limit(limit)
         )
         return result.scalars().all()
+
+    @staticmethod
+    async def clone_messages_to_conversation(
+        db: AsyncSession,
+        source_conversation: ChatConversation,
+        target_conversation_id: str,
+    ) -> int:
+        """Clone all source messages into a new conversation, preserving order and variants."""
+        cloned_count = 0
+        source_messages = sorted(source_conversation.messages, key=lambda message: message.id)
+
+        for source_message in source_messages:
+            db.add(
+                ChatMessage(
+                    conversation_id=target_conversation_id,
+                    role=source_message.role,
+                    content=source_message.content,
+                    extra_metadata=copy.deepcopy(source_message.extra_metadata),
+                    created_at=source_message.created_at,
+                    variant_group_id=source_message.variant_group_id,
+                    is_active_variant=source_message.is_active_variant,
+                )
+            )
+            cloned_count += 1
+
+        if cloned_count > 0:
+            await db.execute(
+                update(ChatConversation)
+                .where(ChatConversation.conversation_id == target_conversation_id)
+                .values(updated_at=utc_now())
+            )
+
+        await db.flush()
+        return cloned_count
 
     @staticmethod
     async def add_message(

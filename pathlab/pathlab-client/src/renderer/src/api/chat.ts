@@ -263,8 +263,11 @@ export interface Conversation {
   conversation_id: string
   user_id: string
   title: string
+  parent_conversation_id?: string | null
+  parent_conversation_title?: string | null
   created_at: string
   updated_at: string
+  message_count?: number
 }
 
 export interface ConversationWithMessages extends Conversation {
@@ -329,6 +332,10 @@ export interface ChatPatchInferenceExitResponse {
   added_cancel_message: boolean
 }
 
+export interface CreateConversationOptions {
+  sourceConversationId?: string
+}
+
 /**
  * Create a new conversation
  * User ID is automatically determined from JWT token.
@@ -336,14 +343,20 @@ export interface ChatPatchInferenceExitResponse {
  * @returns Created conversation
  * @throws {ApiError} If the request fails
  */
-export async function createConversation(title?: string): Promise<Conversation> {
+export async function createConversation(
+  title?: string,
+  options?: CreateConversationOptions,
+): Promise<Conversation> {
   return apiFetch<Conversation>(
     `${API_BASE}/conversations`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: title || 'New Conversation'
+        title: title || 'New Conversation',
+        ...(options?.sourceConversationId
+          ? { source_conversation_id: options.sourceConversationId }
+          : {})
       })
     },
     'Failed to create conversation'

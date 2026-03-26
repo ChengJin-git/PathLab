@@ -195,6 +195,7 @@ class CreateConversationRequest(BaseModel):
 
     user_id: Optional[str] = "default_user"
     title: Optional[str] = None
+    source_conversation_id: Optional[str] = None
 
 
 class UpdateConversationRequest(BaseModel):

@@ -480,8 +480,25 @@ class ChatConversation(TimestampMixin, Base):
     conversation_id = Column(String(255), unique=True, nullable=False, index=True)
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
+    parent_conversation_id = Column(
+        String(255),
+        ForeignKey("chat_conversations.conversation_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     # Relationships (order_by ensures messages are always returned in chronological order)
+    parent_conversation = relationship(
+        "ChatConversation",
+        remote_side="ChatConversation.conversation_id",
+        foreign_keys="ChatConversation.parent_conversation_id",
+        back_populates="child_conversations",
+    )
+    child_conversations = relationship(
+        "ChatConversation",
+        foreign_keys="ChatConversation.parent_conversation_id",
+        back_populates="parent_conversation",
+    )
     messages = relationship(
         "ChatMessage",
         back_populates="conversation",
@@ -498,11 +515,16 @@ class ChatConversation(TimestampMixin, Base):
         message_count = (
             len(self.messages) if "messages" in insp.dict and self.messages else 0
         )
+        parent_conversation = insp.dict.get("parent_conversation")
 
         return {
             "conversation_id": self.conversation_id,
             "user_id": self.user_id,
             "title": self.title,
+            "parent_conversation_id": self.parent_conversation_id,
+            "parent_conversation_title": (
+                parent_conversation.title if parent_conversation else None
+            ),
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,

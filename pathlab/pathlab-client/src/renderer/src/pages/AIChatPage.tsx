@@ -7,6 +7,7 @@ import {
 	ClipboardList,
 	Database,
 	FileSpreadsheet,
+		GitBranch,
 	Share2,
 	History,
 	Loader2,
@@ -36,7 +37,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
-import { useLocation, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
 	activateMessageVariant,
 	addMessage,
@@ -297,6 +298,9 @@ export default function AIChatPage() {
 
 	// Conversation management
 	const [conversations, setConversations] = useState<Conversation[]>([]);
+	const [currentConversationMeta, setCurrentConversationMeta] = useState<
+		Conversation | ConversationWithMessages | null
+	>(null);
 	const [currentConversationId, setCurrentConversationId] = useState<
 		string | null
 	>(null);
@@ -1011,6 +1015,7 @@ export default function AIChatPage() {
 
 	const handleNewChat = useCallback(() => {
 		setMessages([]);
+		setCurrentConversationMeta(null);
 		setCurrentConversationId(null);
 		setInput("");
 		setImageAttachments([]);
@@ -1116,7 +1121,8 @@ export default function AIChatPage() {
 			};
 		});
 
-		setMessages(messagesToShow);
+			setMessages(messagesToShow);
+			setCurrentConversationMeta(conv);
 		setCurrentConversationId(conversationId);
 		setShowHistory(false);
 			setShowWelcomeHero(false);
@@ -1149,6 +1155,7 @@ export default function AIChatPage() {
 			}
 		} catch (error) {
 			console.error("Failed to load conversation:", error);
+			setCurrentConversationMeta(null);
 			showToastRef.current("error", t("aiChat.conversationLoadFailed"));
 			// If loading fails, navigate back to clean URL
 			if (urlConversationId) {
@@ -2173,6 +2180,7 @@ export default function AIChatPage() {
 				const newConv = await createConversation(t("aiChat.newConversation"));
 				conversationId = newConv.conversation_id;
 				isNewConversation = true;
+				setCurrentConversationMeta(newConv);
 				setCurrentConversationId(conversationId);
 				setPendingTitleConvIds((prev) => new Set(prev).add(conversationId));
 				updateConversationsAndCache((prevConversations) =>
@@ -2288,6 +2296,35 @@ export default function AIChatPage() {
 
 	// Update ref for use in hook callbacks
 	showToastRef.current = showToast;
+
+	const handleBranchConversation = useCallback(async () => {
+		if (!currentConversationId || isGenerating) return;
+
+		try {
+			const branchedConversation = await createConversation(
+				currentConversationMeta?.title,
+				{ sourceConversationId: currentConversationId },
+			);
+
+			updateConversationsAndCache((prevConversations) =>
+				upsertConversation(prevConversations, branchedConversation),
+			);
+
+			await handleLoadConversation(branchedConversation.conversation_id);
+			showToast("success", t("aiChat.branchConversationCreated"));
+		} catch (error) {
+			console.error("Failed to branch conversation:", error);
+			showToast("error", t("aiChat.branchConversationFailed"));
+		}
+	}, [
+		currentConversationId,
+		currentConversationMeta?.title,
+		handleLoadConversation,
+		isGenerating,
+		showToast,
+		t,
+		updateConversationsAndCache,
+	]);
 
 	// --- Persistence helpers (DRY the repeated persist-to-backend patterns) ---
 
@@ -3343,19 +3380,34 @@ export default function AIChatPage() {
 										>
 											<div className="flex items-start justify-between gap-2">
 												<div className="flex-1 min-w-0">
-													<h3
-														className={`text-sm font-medium truncate mb-1 ${
-															currentConversationId === conv.conversation_id
-																? "text-primary-900"
-																: "text-gray-900"
-														}`}
-													>
-														{pendingTitleConvIds.has(conv.conversation_id) ? (
-															<div className="h-4 w-24 rounded bg-gray-200 animate-pulse" />
-														) : (
-															conv.title
-														)}
-													</h3>
+															<div className="flex items-center gap-1.5 mb-1 min-w-0">
+																{conv.parent_conversation_id && (
+																	<Tooltip content={t("aiChat.branchConversation")}>
+																		<span
+																			className={`inline-flex items-center justify-center rounded-md p-1 ${
+																				currentConversationId === conv.conversation_id
+																					? "bg-violet-100 text-violet-700"
+																					: "bg-violet-50 text-violet-600"
+																			}`}
+																		>
+																			<GitBranch className="w-3 h-3" />
+																		</span>
+																	</Tooltip>
+																)}
+																<h3
+																	className={`text-sm font-medium truncate min-w-0 ${
+																		currentConversationId === conv.conversation_id
+																			? "text-primary-900"
+																			: "text-gray-900"
+																	}`}
+																>
+																	{pendingTitleConvIds.has(conv.conversation_id) ? (
+																		<div className="h-4 w-24 rounded bg-gray-200 animate-pulse" />
+																	) : (
+																		conv.title
+																	)}
+																</h3>
+															</div>
 													<div className="flex items-center gap-1 text-xs text-gray-500">
 														<Clock className="w-3 h-3" />
 														{new Date(conv.updated_at).toLocaleDateString([], {
@@ -3469,6 +3521,23 @@ export default function AIChatPage() {
 									</div>
 								</div>
 							)}
+								{currentConversationMeta?.parent_conversation_id && (
+									<div className="flex items-center gap-3">
+										<div className="h-px flex-1 bg-gray-200" />
+										<div className="inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500">
+											<GitBranch className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
+											<span>{t("aiChat.branchedFrom")}</span>
+											<Link
+												to={`/dashboard/${currentConversationMeta.parent_conversation_id}`}
+												className="truncate text-primary-600 hover:text-primary-700 underline underline-offset-2"
+											>
+												{currentConversationMeta.parent_conversation_title ||
+													t("aiChat.originalConversation")}
+											</Link>
+										</div>
+										<div className="h-px flex-1 bg-gray-200" />
+									</div>
+								)}
 							{/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
 							{(() => {
 								// Find the index of the last message that contains a TaskConfigCard
@@ -3734,6 +3803,9 @@ export default function AIChatPage() {
 																	(message.regenerations
 																		? message.regenerations.length - 1
 																		: 0);
+																	const isLatestAssistantMessage = !messages
+																		.slice(index + 1)
+																		.some((nextMessage) => nextMessage.role === "assistant");
 																return (
 																	<>
 																		{message.regenerations &&
@@ -3892,6 +3964,21 @@ export default function AIChatPage() {
 																			</svg>
 																		</button>
 																		</Tooltip>
+																		{isLatestAssistantMessage && (
+																			<>
+																				<Tooltip content={t("aiChat.branchConversation")}>
+																					<button
+																						type="button"
+																						onClick={handleBranchConversation}
+																						disabled={!currentConversationId || isGenerating}
+																						className={`hover:text-gray-600 transition-colors ${!currentConversationId || isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
+																					>
+																						<GitBranch className="w-4 h-4" />
+																					</button>
+																				</Tooltip>
+																				<div className="w-px h-4 bg-gray-200" />
+																			</>
+																		)}
 																		<Tooltip content={t("aiChat.deleteMessageAndContinue")}>
 																		<button
 																			type="button"

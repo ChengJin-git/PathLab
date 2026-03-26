@@ -78,14 +78,34 @@ async def create_conversation(
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
+    source_conversation = None
+    if req.source_conversation_id:
+        source_conversation = await require_conversation_access(
+            db, req.source_conversation_id, user
+        )
+
     conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
     conversation_data = {
         "conversation_id": conversation_id,
         "user_id": str(user.id),
-        "title": req.title or "New Conversation",
+        "title": req.title
+        or (source_conversation.title if source_conversation else None)
+        or "New Conversation",
+        "parent_conversation_id": (
+            source_conversation.conversation_id if source_conversation else None
+        ),
     }
-    conversation = await ChatRepository.create_conversation(db, conversation_data)
+    await ChatRepository.create_conversation(db, conversation_data)
+
+    if source_conversation:
+        await ChatRepository.clone_messages_to_conversation(
+            db, source_conversation, conversation_id
+        )
+
     await db.commit()
+    conversation = await ChatRepository.get_conversation(db, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=500, detail="Conversation creation failed")
     return conversation.to_dict()
 
 

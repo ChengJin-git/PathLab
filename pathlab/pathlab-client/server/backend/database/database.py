@@ -335,11 +335,24 @@ async def init_db():
         )
         await conn.execute(
             text(
+                "ALTER TABLE chat_conversations "
+                "ADD COLUMN IF NOT EXISTS parent_conversation_id VARCHAR(255) "
+                "REFERENCES chat_conversations(conversation_id) ON DELETE SET NULL"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_chat_conversations_parent_conversation "
+                "ON chat_conversations (parent_conversation_id)"
+            )
+        )
+        await conn.execute(
+            text(
                 "CREATE INDEX IF NOT EXISTS idx_chat_messages_variant_group "
                 "ON chat_messages (variant_group_id)"
             )
         )
-        logger.info("chat_messages variant columns ensured")
+        logger.info("chat conversation branch column and chat_messages variant columns ensured")
 
     await _create_default_admin()
 

@@ -218,6 +218,18 @@ describe('createConversation', () => {
     const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
     expect(body.title).toBe('New Conversation')
   })
+
+  it('includes source_conversation_id when branching from an existing conversation', async () => {
+    mockFetch.mockResolvedValueOnce(ok({
+      ...MOCK_CONVERSATION,
+      conversation_id: 'conv_002',
+      parent_conversation_id: 'conv_001',
+      parent_conversation_title: 'BRCA Analysis Chat',
+    }))
+    await createConversation('BRCA Analysis Chat', { sourceConversationId: 'conv_001' })
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.source_conversation_id).toBe('conv_001')
+  })
 })
 
 describe('getConversations', () => {
@@ -243,6 +255,8 @@ describe('getConversation', () => {
   it('fetches a conversation with messages by ID', async () => {
     mockFetch.mockResolvedValueOnce(ok({
       ...MOCK_CONVERSATION,
+      parent_conversation_id: 'conv_root',
+      parent_conversation_title: 'Root conversation',
       messages: [
         { id: 1, conversation_id: 'conv_001', role: 'user', content: 'Hello', created_at: '2024-01-01T00:00:00Z' },
       ],
@@ -252,6 +266,8 @@ describe('getConversation', () => {
     expect(url).toContain('/conversations/conv_001')
     expect(result.messages).toHaveLength(1)
     expect(result.messages[0].content).toBe('Hello')
+    expect(result.parent_conversation_id).toBe('conv_root')
+    expect(result.parent_conversation_title).toBe('Root conversation')
   })
 
   it('throws NOT_FOUND for unknown conversation', async () => {
