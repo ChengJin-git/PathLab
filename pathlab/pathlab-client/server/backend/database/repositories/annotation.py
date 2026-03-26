@@ -101,6 +101,20 @@ class SegmentationAnnotationRepository:
         return annotation_result.scalar_one()
 
     @staticmethod
+    async def is_owned_by_user(
+        db: AsyncSession,
+        annotation_id: str,
+        user_id: str,
+    ) -> bool:
+        result = await db.execute(
+            select(SegmentationAnnotation.user_id).where(
+                SegmentationAnnotation.annotation_id == annotation_id
+            )
+        )
+        owner = result.scalar_one_or_none()
+        return owner == user_id
+
+    @staticmethod
     async def get(
         db: AsyncSession,
         annotation_id: str,

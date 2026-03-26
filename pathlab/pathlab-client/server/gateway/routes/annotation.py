@@ -708,7 +708,13 @@ async def save_annotation(
     try:
         if req.source_dataset_id:
             dataset = await _get_dataset_with_access(req.source_dataset_id, user, db)
-            _require_personal_annotation_owner(dataset, user)
+            if (
+                not req.annotation_id
+                or not await SegmentationAnnotationRepository.is_owned_by_user(
+                    db, req.annotation_id, str(user.id)
+                )
+            ):
+                _require_personal_annotation_owner(dataset, user)
 
         annotation = await SegmentationAnnotationRepository.upsert(
             db,
@@ -1018,7 +1024,8 @@ async def delete_dataset_annotations_by_labels(
     if changed or not resolved["draft_annotation"]:
         try:
             dataset = await _get_dataset_with_access(dataset_id, user, db)
-            _require_personal_annotation_owner(dataset, user)
+            if not resolved["draft_annotation"]:
+                _require_personal_annotation_owner(dataset, user)
             saved_annotation = await SegmentationAnnotationRepository.upsert(
                 db,
                 annotation_id=annotation_id,
