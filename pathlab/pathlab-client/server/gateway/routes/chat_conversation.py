@@ -1,4 +1,3 @@
-import json
 import os
 import re
 import uuid
@@ -26,6 +25,23 @@ _SPECIAL_BLOCK_RE = re.compile(
     r"\]",
     re.IGNORECASE,
 )
+
+
+def _build_title_generation_payload(
+    *, model: str, title_prompt: str, use_local_vllm: bool
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "model": model,
+        "messages": [{"role": "user", "content": title_prompt}],
+        # Keep enough output room in case a provider still emits reasoning or extra text.
+        "max_tokens": 512,
+        "temperature": 0.3,
+    }
+    if use_local_vllm:
+        # Qwen on vLLM enables thinking by default. Title generation is a short,
+        # formatting-sensitive request, so explicitly disable thinking here.
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
+    return payload
 
 
 def _clean_message_for_title(content: str) -> str:
@@ -230,8 +246,17 @@ async def generate_conversation_title(
                 "Local vLLM server offline for title generation; falling back to OpenRouter"
             )
 
+    fallback_title = first_message
+
     if not use_local and not effective_api_key:
-        raise HTTPException(status_code=400, detail="No API key configured")
+        logger.warning(
+            f"No AI provider configured for title generation {conversation_id}; "
+            "falling back to first user message"
+        )
+        title = fallback_title
+        await ChatRepository.update_conversation_title(db, conversation_id, title)
+        await db.commit()
+        return {"conversation_id": conversation_id, "title": title}
 
     # Strip special UI-only blocks (e.g. [CSV_PREVIEW], [OPTIONS]) so the AI
     # receives only the natural-language portion of the user's first message.
@@ -248,75 +273,39 @@ async def generate_conversation_title(
         f'Message:\n"{truncated}"'
     )
 
-    logger.info(
-        f"Generating title for {conversation_id} using "
-        f"{'local vLLM' if use_local else 'OpenRouter'}, "
-        f"model={effective_model!r}, "
-        f"truncated_len={len(truncated)}, first_60={truncated[:60]!r}"
-    )
-
+    title = ""
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             headers: dict[str, str] = {"Content-Type": "application/json"}
             if effective_api_key:
                 headers["Authorization"] = f"Bearer {effective_api_key}"
+            payload = _build_title_generation_payload(
+                model=effective_model,
+                title_prompt=title_prompt,
+                use_local_vllm=use_local,
+            )
             resp = await client.post(
                 f"{effective_base_url.rstrip('/')}/chat/completions",
                 headers=headers,
-                json={
-                    "model": effective_model,
-                    "messages": [{"role": "user", "content": title_prompt}],
-                    # Use enough tokens for thinking models to complete their <think> block
-                    # before emitting the actual title (30 was too small and caused truncation).
-                    "max_tokens": 512,
-                    "temperature": 0.3,
-                },
+                json=payload,
             )
             resp.raise_for_status()
             data = resp.json()
             message = data.get("choices", [{}])[0].get("message", {})
             raw_content = message.get("content") or ""
-            logger.info(
-                f"Title generation raw_content for {conversation_id}: {raw_content!r}"
-            )
-
-            # For thinking/reasoning models the API puts the chain-of-thought in a
-            # separate `reasoning_content` field and the final answer in `content`.
-            # When that field is present and non-empty we can use `content` directly.
-            reasoning_content = message.get("reasoning_content") or ""
-            if reasoning_content.strip():
-                # `content` is already the post-reasoning answer
-                cleaned_content = raw_content.strip()
-            else:
-                # Strip <think>...</think> blocks (XML-tagged thinking models, e.g. QwQ)
-                cleaned_content = re.sub(
-                    r"<think>[\s\S]*?</think>", "", raw_content, flags=re.IGNORECASE
-                ).strip()
-                # Strip unclosed <think> block if reasoning was cut off mid-stream
-                cleaned_content = re.sub(
-                    r"<think>[\s\S]*$", "", cleaned_content, flags=re.IGNORECASE
-                ).strip()
-                if re.match(r"(?i)^Thinking Process:", cleaned_content):
-                    for line in cleaned_content.split("\n"):
-                        m = re.search(r'\*\s+"?([^"(]+)"?\s*\(', line)
-                        if m:
-                            cleaned_content = m.group(1).strip()
-                            break
-                    else:
-                        cleaned_content = ""
-
-            # Safety truncation: DB column is VARCHAR(500); titles should be short anyway
-            title = cleaned_content.strip('"').strip("'")[:100]
+            title = raw_content.strip().strip('"').strip("'")
     except Exception as e:
-        logger.error(f"Title generation failed for {conversation_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate title")
+        logger.warning(
+            f"Title generation failed for {conversation_id}; falling back to first user message: {e}"
+        )
+        title = fallback_title
 
     if not title:
         logger.warning(
             f"Title generation returned empty for {conversation_id}; "
-            f"falling back to message truncation"
+            f"falling back to first user message"
         )
-        title = cleaned_message[:50]
+        title = fallback_title
 
     await ChatRepository.update_conversation_title(db, conversation_id, title)
     await db.commit()
