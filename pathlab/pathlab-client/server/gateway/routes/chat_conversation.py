@@ -1,5 +1,4 @@
 import json
-import logging
 import os
 import re
 import uuid
@@ -7,7 +6,9 @@ import httpx
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+from backend.common import get_logger
+
+logger = get_logger("ChatConversation")
 
 # Regex patterns for special UI-only blocks that should be stripped before
 # sending user message content to the title-generation AI prompt.
