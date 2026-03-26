@@ -264,22 +264,39 @@ async def generate_conversation_title(
                 json={
                     "model": effective_model,
                     "messages": [{"role": "user", "content": title_prompt}],
-                    "max_tokens": 30,
+                    # Use enough tokens for thinking models to complete their <think> block
+                    # before emitting the actual title (30 was too small and caused truncation).
+                    "max_tokens": 512,
                     "temperature": 0.3,
                 },
             )
             resp.raise_for_status()
             data = resp.json()
-            raw_content = data.get("choices", [{}])[0].get("message", {}).get("content")
+            message = data.get("choices", [{}])[0].get("message", {})
+            raw_content = message.get("content") or ""
             logger.info(
                 f"Title generation raw_content for {conversation_id}: {raw_content!r}"
             )
-            # Strip <think>...</think> blocks produced by reasoning/thinking models
-            # (e.g. QwQ, DeepSeek-R1) before extracting the actual title text.
-            cleaned_content = re.sub(
-                r"<think>[\s\S]*?</think>", "", raw_content or "", flags=re.IGNORECASE
-            ).strip()
-            title = cleaned_content.strip('"').strip("'")
+
+            # For thinking/reasoning models the API puts the chain-of-thought in a
+            # separate `reasoning_content` field and the final answer in `content`.
+            # When that field is present and non-empty we can use `content` directly.
+            reasoning_content = message.get("reasoning_content") or ""
+            if reasoning_content.strip():
+                # `content` is already the post-reasoning answer
+                cleaned_content = raw_content.strip()
+            else:
+                # Strip <think>...</think> blocks (XML-tagged thinking models, e.g. QwQ)
+                cleaned_content = re.sub(
+                    r"<think>[\s\S]*?</think>", "", raw_content, flags=re.IGNORECASE
+                ).strip()
+                # Strip unclosed <think> block if reasoning was cut off mid-stream
+                cleaned_content = re.sub(
+                    r"<think>[\s\S]*$", "", cleaned_content, flags=re.IGNORECASE
+                ).strip()
+
+            # Safety truncation: DB column is VARCHAR(500); titles should be short anyway
+            title = cleaned_content.strip('"').strip("'")[:100]
     except Exception as e:
         logger.error(f"Title generation failed for {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate title")
