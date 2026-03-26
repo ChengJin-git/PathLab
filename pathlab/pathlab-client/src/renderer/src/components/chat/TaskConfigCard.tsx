@@ -1,10 +1,10 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, UploadCloud, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
 import { useAuth } from '../../contexts/AuthContext'
-import { Select, SelectOptionGroup } from '../ui/select'
+import { Select } from '../ui/select'
 import {
   markTrainingSubmissionCreated,
   markTrainingSubmissionFailed,
@@ -34,6 +34,7 @@ import {
   DEFAULT_SEG_BACKBONE,
   DEFAULT_SEG_LOSS_NAMES,
   FM_SEGMENTATION_ARCHITECTURE,
+  FM_SEGMENTATION_ARCHITECTURES,
   isSegFmEncoder,
   normalizeSegmentationLossConfig,
 } from '../../constants/training'
@@ -153,6 +154,9 @@ function resolveSegmentationBackbone(config: AgentTaskConfig): string {
 function resolveSegmentationArchitecture(config: AgentTaskConfig, backbone?: string): string {
   const resolvedBackbone = backbone || resolveSegmentationBackbone(config)
   if (isSegFmEncoder(resolvedBackbone)) {
+    if (config.seg_architecture && (FM_SEGMENTATION_ARCHITECTURES as readonly string[]).includes(config.seg_architecture)) {
+      return config.seg_architecture
+    }
     return FM_SEGMENTATION_ARCHITECTURE
   }
   const segArchitecture = typeof config.seg_architecture === 'string' ? config.seg_architecture.trim() : ''
@@ -299,10 +303,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     [config, resolvedSegBackbone]
   )
   const supportsKFold = config.task_type !== 'segmentation'
-  const segmentationFmOptions = useMemo(
-    () => ENCODER_OPTIONS.filter(option => isSegFmEncoder(option.value)),
-    []
-  )
   const unifiedBackboneOptions = useMemo(
     () => [
       {
@@ -463,8 +463,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     }
     if (field === 'seg_backbone') {
       if (isSegFmEncoder(value as string)) {
-        newConfig.seg_architecture = FM_SEGMENTATION_ARCHITECTURE
-      } else if (!newConfig.seg_architecture || newConfig.seg_architecture === FM_SEGMENTATION_ARCHITECTURE) {
+        if (!newConfig.seg_architecture || !(FM_SEGMENTATION_ARCHITECTURES as readonly string[]).includes(newConfig.seg_architecture!)) {
+          newConfig.seg_architecture = FM_SEGMENTATION_ARCHITECTURE
+        }
+      } else if (!newConfig.seg_architecture || (FM_SEGMENTATION_ARCHITECTURES as readonly string[]).includes(newConfig.seg_architecture!)) {
         newConfig.seg_architecture = DEFAULT_SEG_ARCHITECTURE
       }
     }
@@ -875,9 +877,16 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                <div>
                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('chatComponents.taskConfig.segArchitecture')}</label>
                 {isFmSegmentation ? (
-                    <div className={`w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-gray-100 text-gray-500`}>
-                      Conv Decoder (FM)
-                    </div>
+                    <Select
+                      value={resolvedSegArchitecture}
+                      onChange={(v) => updateConfig('seg_architecture', v)}
+                       options={FM_SEGMENTATION_ARCHITECTURES.map((arch) => ({
+                         value: arch,
+                         label: `${t(`training.modelConfig.decoder.${arch.replace('_decoder', '')}`, arch.split('_')[0].toUpperCase())} (FM)`
+                       }))}
+                      disabled={isFormDisabled}
+                      triggerClassName={disabledSelectClass}
+                    />
                   ) : (
                     <Select
                       value={resolvedSegArchitecture}

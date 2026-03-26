@@ -684,6 +684,7 @@ export default function TaskListPage() {
                     {(() => {
                       const segBackbone = task.task_type === 'segmentation' ? (task.model_config as Record<string, unknown>)?.backbone as string : undefined
                       const segIsFm = isSegFmEncoder(segBackbone)
+                      const fmDecoderType = ((task.model_config as Record<string, unknown>)?.decoder_type as string) || 'conv'
                       const col1Label = task.task_type === 'segmentation'
                         ? (segIsFm ? t('taskList.columns.featureExtractorSeg') : t('taskList.columns.backbone'))
                         : t('taskList.columns.extractor')
@@ -715,7 +716,7 @@ export default function TaskListPage() {
                               <span className="text-sm sm:text-base font-bold truncate text-gray-900">
                                 {task.task_type === 'segmentation'
                                   ? (segIsFm
-                                    ? t('taskDetail.configuration.convDecoder')
+                                    ? t(`training.modelConfig.decoder.${fmDecoderType}`, fmDecoderType.toUpperCase())
                                     : ((task.model_config as Record<string, unknown>)?.architecture as string || t('taskList.na')))
                                   : task.data_type === 'patch'
                                     ? t(`taskList.classifiers.${(task.model_config as Record<string, unknown>)?.classifier || 'linear'}`, t('taskList.linearProbe'))

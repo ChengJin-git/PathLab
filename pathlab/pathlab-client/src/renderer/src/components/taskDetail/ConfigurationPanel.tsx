@@ -181,8 +181,8 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                       </div>
                       <div className="flex justify-between items-center text-[11px] sm:text-sm">
                         <span className="text-gray-500 font-medium">{t('taskDetail.configuration.decoder')}</span>
-                        <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm">
-                          {t('taskDetail.configuration.convDecoder')}
+                        <span className="font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-100 shadow-sm capitalize">
+                          {t(`training.modelConfig.decoder.${task.model_config.decoder_type || 'conv'}`, (task.model_config.decoder_type || 'conv').toUpperCase())}
                         </span>
                       </div>
                     </>

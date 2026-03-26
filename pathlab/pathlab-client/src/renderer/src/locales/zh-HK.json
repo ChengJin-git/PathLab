@@ -2081,6 +2081,13 @@
       "foundationSegmentationDesc": "使用支援空間特徵的基礎模型提取器，並配合固定輕量解碼器。",
       "architecture": "架構",
       "backbone": "骨幹網絡",
+      "decoderType": "解碼頭",
+      "decoder": {
+        "conv": "卷積",
+        "linear": "線性",
+        "dpt": "DPT",
+        "unetr": "UNETR"
+      },
       "lossFunction": "損失函數",
       "search": "搜尋...",
       "trainingParams": "訓練參數",
@@ -3563,15 +3570,15 @@
       "gtDeleted": "GT 已刪除",
       "autoSeeded": "已將您的個人草稿匯入協作草稿",
       "autoSeedConfirmTitle": "標注內容衝突",
-        "autoSeedConfirmMessage": "個人標注與協作標注均有內容。選擇用個人標注覆蓋協作內容，還是直接進入協作模式？",
-        "autoSeedConfirmMessageSharedEmpty": "你有個人標注內容，協作空間當前為空。是否將個人標注匯入協作空間，還是直接進入？",
+      "autoSeedConfirmMessage": "個人標注與協作標注均有內容。選擇用個人標注覆蓋協作內容，還是直接進入協作模式？",
+      "autoSeedConfirmMessageSharedEmpty": "你有個人標注內容，協作空間當前為空。是否將個人標注匯入協作空間，還是直接進入？",
       "autoSeedConfirmUse": "導入協作",
-        "autoSeedConfirmSkip": "直接進入",
+      "autoSeedConfirmSkip": "直接進入",
       "removedUnsavedLost": "你已被移出協作，未儲存的修改已丟失",
       "exitSharedTitle": "標注內容衝突",
-        "exitSharedMessage": "你有協作標注內容，切換到個人模式後將不再顯示。是否將協作標注匯入個人空間？",
+      "exitSharedMessage": "你有協作標注內容，切換到個人模式後將不再顯示。是否將協作標注匯入個人空間？",
       "exitSharedImport": "導入個人",
-        "exitSharedDiscard": "直接進入",
+      "exitSharedDiscard": "直接進入",
       "dialog": {
         "title": "管理協作者",
         "ownerRole": "擁有者",
@@ -3690,6 +3697,162 @@
     "labelSource": {
       "imported": "匯入 GT",
       "userLabel": "用戶標注"
+    }
+  },
+  "landing": {
+    "nav": {
+      "product": "產品",
+      "capabilities": "核心能力",
+      "solutions": "解決方案",
+      "pricing": "定價",
+      "resources": "資源",
+      "getStarted": "開始使用"
+    },
+    "hero": {
+      "badge": "由 Agentic AI 強力驅動",
+      "title1": "用自然語言掌控 ",
+      "title2": "病理 AI 工作流",
+      "subtitle": "全流程數位病理智能工作台。從數據匯入、自動零樣本訓練配置，到任務日誌監控與醫學影像證據層，全程自然語言互動。",
+      "primaryCta": "開始使用",
+      "secondaryCta": "預約演示",
+      "supports": "支援 SVS, NDPI, DICOM • 私有與公開資料集 • English / 中文"
+    },
+    "trustStrip": {
+      "nlp": "自然語言任務配置",
+      "formats": "多格式病理數據接入",
+      "tracking": "任務監控與日誌追蹤",
+      "viz": "結果分析與視覺化",
+      "i18n": "多語言無縫切換"
+    },
+    "story": {
+      "header": "只需三步，從靈感到可驗證的診斷證據",
+      "step1": {
+        "title": "1. 告訴 AI 你的目標",
+        "desc": "用日常語言描述你想在影像上執行的任務，告別繁冗表單。"
+      },
+      "step2": {
+        "title": "2. 系統級自動配置",
+        "desc": "引擎在幾秒內將您的意圖解析為底層的模型調用、環境分配和格式轉化指令。"
+      },
+      "step3": {
+        "title": "3. 監控進度與分析結果",
+        "desc": "在一個控制台裡跟蹤執行進度，並可直接在數位切片中比對預測疊層模型。"
+      }
+    },
+    "capabilities": {
+      "title": "完整的 AI 病理工具集",
+      "main": {
+        "title": "您的智能輔助研究計算平台"
+      }
+    },
+    "evidence": {
+      "title": "深入業務的視覺證據層",
+      "desc": "停止在孤立的工具間切換。在同一個工作台內查看管線輸出，疊加熱圖和模型評分到原始全切片影像上。",
+      "f1": {
+        "title": "零延遲渲染",
+        "desc": "透過深度優化的 WebGL 切片查看器，毫秒級縮放數十億像素影像。"
+      },
+      "f2": {
+        "title": "同步映射結果",
+        "desc": "將多模態推理結果精準疊加至切片的原始物理坐標上。"
+      }
+    },
+    "solutions": {
+      "title": "為病理學科每個角色設計",
+      "clinician": {
+        "label": "臨床醫生",
+        "desc": "為您的診斷工作流提供智能輔助與高效支持。",
+        "bullet1": "秒級診斷前置建議",
+        "bullet2": "AI 輔助勾畫標註",
+        "bullet3": "無縫融入系統流程"
+      },
+      "researcher": {
+        "label": "科研團隊",
+        "desc": "加速您的演算法驗證迭代與海量影像評估。",
+        "bullet1": "超大規模批量運行",
+        "bullet2": "自定義多種評估指標",
+        "bullet3": "高度可復現的管線引擎"
+      },
+      "institution": {
+        "label": "醫療機構",
+        "desc": "私有化、安全且完全自主可控。",
+        "bullet1": "細粒度角色與組別權限",
+        "bullet2": "滿足數據不出域要求",
+        "bullet3": "全鏈路審計訪問日誌"
+      }
+    },
+    "trust": {
+      "header": "滿足最嚴苛的醫療 IT 部署要求",
+      "privacy": {
+        "title": "數據能見性全面掌控",
+        "desc": "對您的私有庫文件進行從行級到目錄級的全方位權限配置。"
+      },
+      "deployment": {
+        "title": "安全的容器執行環境",
+        "desc": "模型僅在受到授權並且隔離的容器和集群中運作。"
+      },
+      "audit": {
+        "title": "可追溯的計算流程",
+        "desc": "每一次推理運行的日誌及性能指標輸出全部完整歸檔以便溯源驗證。"
+      },
+      "i18n": {
+        "title": "全鏈路多語言體驗",
+        "desc": "從前端到任務後台無死角的原生中英多語系自適應優化體驗。"
+      }
+    },
+    "pricing": {
+      "title": "透明簡單的定價方案",
+      "individual": {
+        "title": "個人版",
+        "price": "免費",
+        "desc": "適合獨立的研究員試用體驗。",
+        "feat1": "WSI 原生查看分析",
+        "feat2": "多模态 AI 推理分析",
+        "feat3": "本地化隱私優先保障",
+        "feat4": "零樣本智能互動",
+        "feat5": "社區技術論壇支持",
+        "cta": "免費開始使用"
+      },
+      "enterprise": {
+        "title": "企業版",
+        "price": "定制",
+        "desc": "適合醫院、大型科室及實驗室環境。",
+        "feat1": "私有化與本地源集成",
+        "feat2": "白金專家級技術優先支持",
+        "feat3": "SSO/LDAP 企業驗證橋接",
+        "feat4": "全方面高規格數據安全保障",
+        "feat5": "專屬技術實施顧問跟進對接",
+        "cta": "聯繫我們的團隊"
+      }
+    },
+    "finalCta": {
+      "title": "輸入您的第一條語言指令，啟動智能病理",
+      "subtitle": "把複雜的參數與配置留給系統，把病理的最終研製、驗證與突破性發現留給自己。",
+      "primary": "現在就免費開始",
+      "secondary": "預約企業版演示"
+    },
+    "footer": {
+      "description": "利用達到臨床應用標準級別的大語言模型架構轉變智能數位病理生態圈。",
+      "links": "鏈接",
+      "legal": "法律說明",
+      "privacy": "隱私條款",
+      "terms": "用戶服務協議"
+    },
+    "mock": {
+      "pipeline": "推斷管線",
+      "extraction": "數據提取",
+      "active": "運行中",
+      "queued": "排隊中",
+      "heatmapAlpha": "熱圖透明度",
+      "analysisComplete": "分析完成",
+      "analysisDesc": "識別到高密度區域。置信度得分：0.94",
+      "inferenceComplete": "推斷完成",
+      "restart": "重置",
+      "addHeatmap": "+熱度圖",
+      "precision": "精確率",
+      "recall": "召回率",
+      "searchPlaceholder": "使用自然語言查詢任務進度、數據狀態或操作叢集...",
+      "gpuAllocation": "GPU 算力分配"
     }
   }
 }
