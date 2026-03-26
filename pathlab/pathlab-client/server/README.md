@@ -1,6 +1,6 @@
 # PathLab Python Backend
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 `server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI** 三个服务进程，并复用 `backend/` 下的共享模块。
 
@@ -31,13 +31,28 @@ server/
 ├── requirements-test.txt   # 测试依赖（pytest、pytest-asyncio、httpx）
 ├── pytest.ini              # asyncio_mode = auto
 ├── main.spec               # PyInstaller 配置
-├── tests/                  # 后端单元测试
+├── tests/                  # 后端单元测试（19 个测试文件）
 │   ├── conftest.py         # fixtures：auth mock、app factory、load_dotenv
+│   ├── helpers.py          # 测试工具函数
 │   ├── test_config.py      # Config 类测试（28）
 │   ├── test_settings.py    # /settings 路由测试（19）
 │   ├── test_queue_config.py # /queue 路由测试（15）
 │   ├── test_ai_models.py   # AI 模型 GPU 测试（54）
-│   └── test_ai_extractors_pretrained.py  # HF 预训练模型测试（~144）
+│   ├── test_ai_extractors_pretrained.py  # HF 预训练模型测试（~162）
+│   ├── test_fm_segmentation_decoders.py  # 分割 decoder 结构测试
+│   ├── test_feature_cache_nowait.py      # 特征缓存非阻塞写入
+│   ├── test_gpu_control.py               # GPU 坏卡探测与控制
+│   ├── test_patching_stage.py            # 推理流水线 patching 阶段
+│   ├── test_task_queue_patching.py       # 任务队列 patching 操作
+│   ├── test_resume_tasks.py              # 中断任务恢复逻辑
+│   ├── test_training_routing.py          # 训练任务路由与调度
+│   ├── test_chat_continuation_helpers.py # AI 对话续接辅助
+│   ├── test_chat_conversation_title_extraction.py # 会话标题提取
+│   ├── test_permission_logic.py          # 权限判断核心逻辑
+│   ├── test_permission_policy_updates.py # 权限策略行为回归
+│   ├── test_permission_revocation_fixes.py # 权限撤销边界修复
+│   ├── test_permission_closure_regressions.py # 权限闭包回归
+│   └── test_dataset_repository_namespacing.py # 数据集命名空间隔离
 ├── gateway/                # 对外 API 网关
 ├── backend/
 │   ├── ai/                 # AI 服务与任务实现
@@ -100,7 +115,7 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 pip install -r server/requirements-test.txt
 ```
 
-当前后端测试文件（10 个测试文件，116 个常规测试 + ~144 个预训练模型测试；其中 5 个为权限专项测试）：
+当前后端测试文件（19 个测试文件，含 5 个权限专项、4 个 AI 模型测试）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
@@ -109,6 +124,15 @@ pip install -r server/requirements-test.txt
 | `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
 | `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
 | `tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
+| `tests/test_fm_segmentation_decoders.py` | — | 分割模型 decoder 结构与输出维度验证 |
+| `tests/test_feature_cache_nowait.py` | — | 特征缓存非阻塞写入逻辑 |
+| `tests/test_gpu_control.py` | — | GPU 坏卡探测与 CUDA_VISIBLE_DEVICES 控制 |
+| `tests/test_patching_stage.py` | — | 推理流水线 patching 阶段逻辑 |
+| `tests/test_task_queue_patching.py` | — | 任务队列 patching 操作 |
+| `tests/test_resume_tasks.py` | — | 中断任务恢复与重启逻辑 |
+| `tests/test_training_routing.py` | — | 训练任务路由与调度策略 |
+| `tests/test_chat_continuation_helpers.py` | — | AI 对话续接辅助函数 |
+| `tests/test_chat_conversation_title_extraction.py` | — | 会话标题自动提取逻辑 |
 | `tests/test_permission_logic.py` | — | 权限判断核心逻辑（数据集 / WSI 访问层次规则）|
 | `tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归（GPU grant、shared annotation、个人草稿）|
 | `tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证（in-process revoke、GPU 路径、分析提交 403）|

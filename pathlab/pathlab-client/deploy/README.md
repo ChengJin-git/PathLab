@@ -1,6 +1,6 @@
 # PathLab Deployment
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 本文档分两部分：
 1. **桌面打包**（Electron AppImage / DMG / NSIS）— `scripts/` + `npm run build:linux|mac|win`

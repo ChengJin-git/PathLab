@@ -1,6 +1,6 @@
 # PathLab Client 单元测试
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 本目录包含 PathLab 前端的完整单元测试套件，覆盖全部业务逻辑模块。
 
@@ -56,7 +56,7 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数 / Hook 测试（8 个文件）
+    ├── lib/              # 纯工具函数 / Hook 测试（10 个文件）
     │   ├── cache.test.ts
     │   ├── utils.test.ts
     │   ├── chatMessageParser.test.ts
@@ -64,14 +64,19 @@ test/
     │   ├── segmentationUploadUtils.test.ts
     │   ├── externalValidationUtils.test.ts
     │   ├── trainingSubmissionTracker.test.ts
-    │   └── useAsyncAction.test.tsx
+    │   ├── useAsyncAction.test.tsx
+    │   ├── useConfirmDialog.test.tsx
+    │   └── useDebounce.test.tsx
     ├── contexts/         # React Context 测试
     │   └── AuthContext.test.tsx
-    └── components/       # 组件测试（2 个文件）
-        └── settings/
-            ├── PermissionCenterModal.test.tsx
-            └── storage/
-                └── BatchScanResults.test.tsx
+    └── components/       # 组件测试（4 个文件）
+        ├── settings/
+        │   ├── PermissionCenterModal.test.tsx
+        │   └── storage/
+        │       └── BatchScanResults.test.tsx
+        └── ui/
+            ├── modal-shell.test.tsx
+            └── pagination-footer.test.tsx
 ```
 
 ---

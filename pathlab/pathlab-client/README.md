@@ -1,6 +1,6 @@
 # PathLab Client
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 `pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar，以及固定端口部署所需的运维脚本。
 
@@ -25,13 +25,28 @@ pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
 ├── logs/                   # 固定端口脚本输出日志
 ├── server/                 # Python sidecar
-│   ├── tests/              # 后端单元测试（pytest）
+│   ├── tests/              # 后端单元测试（pytest，19 个测试文件）
 │   │   ├── conftest.py     # fixtures（auth mock、app factory）
+│   │   ├── helpers.py      # 测试工具函数
 │   │   ├── test_config.py
 │   │   ├── test_settings.py
 │   │   ├── test_queue_config.py
 │   │   ├── test_ai_models.py
-│   │   └── test_ai_extractors_pretrained.py
+│   │   ├── test_ai_extractors_pretrained.py
+│   │   ├── test_chat_continuation_helpers.py
+│   │   ├── test_chat_conversation_title_extraction.py
+│   │   ├── test_feature_cache_nowait.py
+│   │   ├── test_fm_segmentation_decoders.py
+│   │   ├── test_gpu_control.py
+│   │   ├── test_patching_stage.py
+│   │   ├── test_resume_tasks.py
+│   │   ├── test_task_queue_patching.py
+│   │   ├── test_training_routing.py
+│   │   ├── test_permission_logic.py
+│   │   ├── test_permission_policy_updates.py
+│   │   ├── test_permission_revocation_fixes.py
+│   │   ├── test_permission_closure_regressions.py
+│   │   └── test_dataset_repository_namespacing.py
 │   ├── pytest.ini          # asyncio_mode = auto
 │   └── requirements-test.txt
 ├── src/
@@ -41,9 +56,9 @@ pathlab-client/
 ├── test/                   # 前端单元测试（Vitest）
 │   ├── setup.ts            # 全局 mock 初始化
 │   ├── unit/api/           # API 客户端层测试（19 个文件）
-│   ├── unit/lib/           # 工具函数 / Hook 测试（8 个文件）
+│   ├── unit/lib/           # 工具函数 / Hook 测试（10 个文件）
 │   ├── unit/contexts/      # React Context 测试（1 个文件）
-│   └── unit/components/    # 组件测试（2 个文件）
+│   └── unit/components/    # 组件测试（4 个文件）
 ├── scripts/                # 构建辅助脚本
 │   ├── build-python.sh     # Python sidecar 打包（PyInstaller）
 │   └── prepare-redis.sh    # 嵌入式 Redis 二进制准备
@@ -110,7 +125,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前共 **30 个测试文件**：
+当前共 **34 个测试文件**：
 
 | 分类 | 文件 | 覆盖内容 |
 |------|------|---------|
@@ -141,9 +156,13 @@ npm run test:coverage # 生成覆盖率报告
 | 工具函数 | `unit/lib/externalValidationUtils.test.ts` | 任务类型判断、提取器维度表、数据集兼容性过滤 |
 | 工具函数 | `unit/lib/trainingSubmissionTracker.test.ts` | localStorage 训练提交状态机（pending / created / failed / cancelled / 过期清理）|
 | 工具函数 | `unit/lib/useAsyncAction.test.tsx` | `useAsyncAction` Hook：isPending 状态、并发引用计数、onError 回调、默认 console.error 降级 |
+| 工具函数 | `unit/lib/useConfirmDialog.test.tsx` | `useConfirmDialog` Hook |
+| 工具函数 | `unit/lib/useDebounce.test.tsx` | `useDebounce` Hook |
 | React Context | `unit/contexts/AuthContext.test.tsx` | 认证状态机、角色判断、协议签署、维护公告 |
 | 组件 | `unit/components/settings/PermissionCenterModal.test.tsx` | 权限中心弹窗数据集选择与展示逻辑 |
 | 组件 | `unit/components/settings/storage/BatchScanResults.test.tsx` | 存储批量扫描结果展示组件 |
+| 组件 | `unit/components/ui/modal-shell.test.tsx` | ModalShell 基础弹窗组件 |
+| 组件 | `unit/components/ui/pagination-footer.test.tsx` | PaginationFooter 分页组件 |
 
 全部 API 测试文件均使用 `test/helpers/apiHelpers.ts` 中的工具函数（`ok` / `errResp` / `noContent` / `blobResp` / `createSSEStream`）构造 Response mock，详细说明见 [test/README.md](test/README.md)。
 
@@ -162,7 +181,7 @@ python -m pytest server/tests/ -v -k "not pretrained"
 python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 ```
 
-当前共 **116 个常规测试 + ~144 个预训练模型测试**，分布在 **10 个测试文件**（含 5 个权限专项测试文件）：
+当前共 **19 个测试文件**（含 5 个权限专项、4 个 AI 模型测试）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
@@ -171,6 +190,15 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 | `server/tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id} |
 | `server/tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
 | `server/tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载与推理验证 |
+| `server/tests/test_fm_segmentation_decoders.py` | — | 分割模型 decoder 结构与输出维度 |
+| `server/tests/test_feature_cache_nowait.py` | — | 特征缓存非阻塞写入逻辑 |
+| `server/tests/test_gpu_control.py` | — | GPU 坏卡探测与 CUDA_VISIBLE_DEVICES 控制 |
+| `server/tests/test_patching_stage.py` | — | 推理流水线 patching 阶段逻辑 |
+| `server/tests/test_task_queue_patching.py` | — | 任务队列 patching 操作 |
+| `server/tests/test_resume_tasks.py` | — | 中断任务恢复逻辑 |
+| `server/tests/test_training_routing.py` | — | 训练任务路由与调度 |
+| `server/tests/test_chat_continuation_helpers.py` | — | AI 对话续接辅助函数 |
+| `server/tests/test_chat_conversation_title_extraction.py` | — | 会话标题提取逻辑 |
 | `server/tests/test_permission_logic.py` | — | 权限判断核心逻辑 |
 | `server/tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归 |
 | `server/tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证 |

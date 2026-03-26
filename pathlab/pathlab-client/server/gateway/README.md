@@ -1,6 +1,6 @@
 # PathLab Gateway
 
-> 适用版本：`PathLab v1.0.4`
+> 适用版本：`PathLab v1.0.5`
 
 Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚合、静态资源挂载以及与 Preprocessing / AI 内部服务的协作。
 
@@ -57,14 +57,16 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **39 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **46 个路由模块文件**（不含 `__init__.py`）。
 
 除了上面 17 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
 - 推理实现：`inference_external_validation.py`、`inference_wsi_survival.py`、`inference_patch_segmentation.py`、`inference_patch_classification.py`、`inference_wsi_classification.py`（各推理路径的实现逻辑，由 `results` router 调用）
+- 推理基础：`inference_base.py`（推理路径共享的基础逻辑）
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
-- 分析辅助：`analysis_helpers.py`、`analysis_metrics.py`、`analysis_state.py`
-- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`、`chat_intent_policy.py`
+- 分析辅助：`analysis_utils.py`、`analysis_metrics.py`、`analysis_state.py`
+- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_pdf_document.py`、`chat_pdf_sources.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`、`chat_intent_policy.py`、`chat_conversation.py`、`chat_llm_client.py`、`chat_model_selector.py`
+- 访问控制：`access_control.py`
 - 训练辅助：`training_options.py`（为 `training_options_router` 提供 `/training/options` 接口）
 - 运行时辅助：`transformers_runtime.py`
 - 存储辅助：`storage_scan.py`、`storage_tasks.py`
@@ -97,7 +99,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 | `POST` | `/datasets/{dataset_id}/delete-by-labels` | 按 label 类别删除标注 |
 | `POST` | `/annotation/extract` | 提取标注 ROI 到新数据集（触发 `promoted_to_training_reference` 审计） |
 
-注意：`/ground-truth` 路径已在 v1.0.4 之前的重构中改名为 `/labels`，旧路径不再有效。
+注意：`/ground-truth` 路径已在 v1.0.5 之前的重构中改名为 `/labels`，旧路径不再有效。
 
 ## 存储路由补充说明
 
