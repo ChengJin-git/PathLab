@@ -120,6 +120,38 @@ class ChatRepository:
         return message
 
     @staticmethod
+    async def update_conversation_title(
+        db: AsyncSession,
+        conversation_id: str,
+        title: str,
+    ) -> bool:
+        """Update a conversation's title. Returns True if found and updated."""
+        result = await db.execute(
+            update(ChatConversation)
+            .where(ChatConversation.conversation_id == conversation_id)
+            .values(title=title)
+        )
+        return result.rowcount > 0
+
+    @staticmethod
+    async def get_conversation_first_user_message(
+        db: AsyncSession,
+        conversation_id: str,
+    ) -> Optional[str]:
+        """Return the content of the first user message in a conversation (for title generation)."""
+        result = await db.execute(
+            select(ChatMessage.content)
+            .where(
+                ChatMessage.conversation_id == conversation_id,
+                ChatMessage.role == "user",
+            )
+            .order_by(ChatMessage.id)
+            .limit(1)
+        )
+        row = result.scalar_one_or_none()
+        return row
+
+    @staticmethod
     async def delete_messages_from_id(
         db: AsyncSession, conversation_id: str, message_id: int
     ) -> int:

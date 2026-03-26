@@ -50,6 +50,7 @@ import {
 	deleteConversation,
 	deleteMessagesFrom,
 	downloadBlobFile,
+	generateConversationTitle,
 	getConversation,
 	getConversationFeedbacks,
 	getConversations,
@@ -301,6 +302,7 @@ export default function AIChatPage() {
 	>(null);
 	const currentConversationIdRef = useRef<string | null>(null);
 	currentConversationIdRef.current = currentConversationId;
+	const [pendingTitleConvIds, setPendingTitleConvIds] = useState<Set<string>>(new Set());
 	// Initialize from localStorage, defaulting to true on desktop, false on mobile
 	const [showHistory, setShowHistory] = useState(() => {
 		// Mobile always defaults to hidden (false) regardless of previous state
@@ -1018,6 +1020,7 @@ export default function AIChatPage() {
 		setFeedbacks(new Map());
 		setPendingFeedbackIds(new Set());
 		setHelpfulnessFeedbacks(new Map());
+		setPendingTitleConvIds(new Set());
 		// Update URL to base path (remove conversationId from URL)
 		if (urlConversationId) {
 			navigate("/dashboard", { replace: true });
@@ -2164,16 +2167,14 @@ export default function AIChatPage() {
 
 		// Create a new conversation if this is the first user message
 		let conversationId = currentConversationId;
+		let isNewConversation = false;
 		if (!conversationId && messages.length === 0) {
 			try {
-				// Generate title from first message (truncate if too long)
-				const title =
-					userMessage.content.length > 50
-						? `${userMessage.content.substring(0, 50)}...`
-						: userMessage.content || t("aiChat.imageAnalysis");
-				const newConv = await createConversation(title);
+				const newConv = await createConversation();
 				conversationId = newConv.conversation_id;
+				isNewConversation = true;
 				setCurrentConversationId(conversationId);
+				setPendingTitleConvIds((prev) => new Set(prev).add(conversationId));
 				updateConversationsAndCache((prevConversations) =>
 					upsertConversation(prevConversations, newConv),
 				);
@@ -2213,6 +2214,29 @@ export default function AIChatPage() {
 						lastMessage?.role === "assistant" ? lastMessage.content : "";
 					notifyVoiceResponseComplete(aiContent);
 				}, 150);
+
+				if (isNewConversation && conversationId) {
+					generateConversationTitle(conversationId)
+						.then((result) => {
+							updateConversationsAndCache((prev) =>
+								prev.map((c) =>
+									c.conversation_id === conversationId
+										? { ...c, title: result.title }
+										: c,
+								),
+							);
+						})
+						.catch((err) => {
+							console.error("Failed to generate title:", err);
+						})
+						.finally(() => {
+							setPendingTitleConvIds((prev) => {
+								const next = new Set(prev);
+								next.delete(conversationId);
+								return next;
+							});
+						});
+				}
 			},
 		});
 	};
@@ -3305,7 +3329,11 @@ export default function AIChatPage() {
 																: "text-gray-900"
 														}`}
 													>
-														{conv.title}
+														{pendingTitleConvIds.has(conv.conversation_id) ? (
+															<div className="h-4 w-24 rounded bg-gray-200 animate-pulse" />
+														) : (
+															conv.title
+														)}
 													</h3>
 													<div className="flex items-center gap-1 text-xs text-gray-500">
 														<Clock className="w-3 h-3" />

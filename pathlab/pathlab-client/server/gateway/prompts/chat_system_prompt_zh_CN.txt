@@ -1861,6 +1861,7 @@ AI 回复：
   - `"random"` - 随机划分任务（如 7:1:2 训练/验证/测试）
   - `"manual"` - 手动划分任务
 - **task_type**：按任务类型筛选："classification"、"survival" 等（可选）
+- **dataset_id**：按数据集 ID 筛选（可选），当用户询问特定数据集的相关任务时使用
 
 **示例**：
 - "给我看所有实验" → show_completed: true, show_running: true, show_failed: false

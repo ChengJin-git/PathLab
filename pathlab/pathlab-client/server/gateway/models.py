@@ -197,6 +197,12 @@ class CreateConversationRequest(BaseModel):
     title: Optional[str] = None
 
 
+class UpdateConversationRequest(BaseModel):
+    """Request model for updating a conversation's title"""
+
+    title: str
+
+
 class UpdateMessageRequest(BaseModel):
     """Request model for updating a message's content"""
 

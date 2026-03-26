@@ -19,6 +19,7 @@ export interface CachedTaskData {
   finished_at: string | null
   num_classes?: number
   split_strategy?: string
+  source_dataset_id?: string | null
 }
 
 export interface AgentTaskHistoryConfig {
@@ -28,6 +29,7 @@ export interface AgentTaskHistoryConfig {
   limit?: number
   split_strategy?: 'random' | 'k_fold' | 'manual'
   task_type?: string
+  dataset_id?: string
   cached_tasks?: CachedTaskData[]
   cached_at?: string
 }
@@ -76,7 +78,12 @@ function getStatusDisplay(status: string, t: TFunction) {
 
 export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCardProps) {
   const { t } = useTranslation()
-  const cachedTasks = Array.isArray(config.cached_tasks) ? config.cached_tasks : []
+  const datasetIdFilter = config.dataset_id
+  const cachedTasksRaw = Array.isArray(config.cached_tasks) ? config.cached_tasks : []
+  // Filter cached tasks by dataset_id if filter is provided
+  const cachedTasks = datasetIdFilter
+    ? cachedTasksRaw.filter(task => task.source_dataset_id === datasetIdFilter)
+    : cachedTasksRaw
   const hasCachedData = cachedTasks.length > 0
 
   const [isLoading, setIsLoading] = useState(!hasCachedData)
@@ -125,7 +132,8 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     created_at: task.created_at,
     finished_at: task.finished_at,
     num_classes: task.classes?.length,
-    split_strategy: getTaskSplitStrategy(task)
+    split_strategy: getTaskSplitStrategy(task),
+    source_dataset_id: task.source_dataset_id
   })
 
   const getNumClasses = (task: TrainingTask | CachedTaskData): number => {
@@ -159,6 +167,8 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
         if (splitStrategyFilter && getTaskSplitStrategy(task) !== splitStrategyFilter) return false
 
         if (taskTypeFilter && task.task_type !== taskTypeFilter) return false
+
+        if (datasetIdFilter && task.source_dataset_id !== datasetIdFilter) return false
 
         return true
       })
@@ -197,7 +207,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
     }
 
     fetchData()
-  }, [showCompleted, showRunning, showFailed, limit, splitStrategyFilter, taskTypeFilter, hasCachedData])
+  }, [showCompleted, showRunning, showFailed, limit, splitStrategyFilter, taskTypeFilter, datasetIdFilter, hasCachedData])
 
   const handleRefresh = async () => {
     setIsLoading(true)

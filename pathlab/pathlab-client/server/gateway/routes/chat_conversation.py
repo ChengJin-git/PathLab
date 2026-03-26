@@ -1,12 +1,23 @@
+import json
+import logging
 import uuid
-from fastapi import APIRouter, HTTPException, Depends
+import httpx
+from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+logger = logging.getLogger(__name__)
+
+from backend.common.config import Config
 from backend.database import get_db
 from backend.database.repositories import ChatRepository
 from backend.auth import current_active_user, User
 from gateway.chat.permissions import require_conversation_access
-from ..models import CreateConversationRequest, UpdateMessageRequest, AddMessageRequest
+from ..models import (
+    CreateConversationRequest,
+    UpdateConversationRequest,
+    UpdateMessageRequest,
+    AddMessageRequest,
+)
 from .chat_patch_inference import (
     cleanup_conversation_chat_patch_tasks,
     cleanup_chat_patch_tasks_from_message,
@@ -93,6 +104,93 @@ async def activate_variant(
         )
     await db.commit()
     return {"message": "Variant activated"}
+
+
+@router.patch("/conversations/{conversation_id}")
+async def update_conversation(
+    conversation_id: str,
+    req: UpdateConversationRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_conversation_access(db, conversation_id, user)
+    success = await ChatRepository.update_conversation_title(
+        db, conversation_id, req.title
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    await db.commit()
+    return {"conversation_id": conversation_id, "title": req.title}
+
+
+@router.post("/conversations/{conversation_id}/generate-title")
+async def generate_conversation_title(
+    conversation_id: str,
+    request: Request,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_conversation_access(db, conversation_id, user)
+
+    first_message = await ChatRepository.get_conversation_first_user_message(
+        db, conversation_id
+    )
+    if not first_message or not first_message.strip():
+        raise HTTPException(status_code=400, detail="No user message found")
+
+    api_key = request.headers.get("X-OpenRouter-API-Key")
+    base_url = request.headers.get(
+        "X-OpenRouter-Base-URL",
+        "https://openrouter.ai/api/v1",
+    )
+    model = request.headers.get("X-OpenRouter-Model", "google/gemini-2.0-flash-001")
+
+    if not api_key:
+        global_settings = Config.get_global_settings()
+        api_key = global_settings.get("openrouter_api_key") or ""
+        base_url = global_settings.get("openrouter_base_url") or base_url
+        model = global_settings.get("openrouter_model") or model
+
+    if not api_key:
+        raise HTTPException(status_code=400, detail="No API key configured")
+
+    truncated = first_message[:300]
+    title_prompt = (
+        "Summarize the following message in 10 words or fewer as a concise "
+        "conversation title. Output ONLY the title text, nothing else.\n\n"
+        f'Message:\n"{truncated}"'
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{base_url.rstrip('/')}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": title_prompt}],
+                    "max_tokens": 30,
+                    "temperature": 0.3,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            title = (
+                data["choices"][0]["message"]["content"].strip().strip('"').strip("'")
+            )
+    except Exception as e:
+        logger.error(f"Title generation failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to generate title")
+
+    if not title:
+        title = first_message[:50]
+
+    await ChatRepository.update_conversation_title(db, conversation_id, title)
+    await db.commit()
+    return {"conversation_id": conversation_id, "title": title}
 
 
 @router.delete("/conversations/{conversation_id}")

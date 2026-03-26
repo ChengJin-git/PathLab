@@ -532,3 +532,41 @@ export async function activateMessageVariant(
   )
 }
 
+/**
+ * Generate an AI-powered title for a conversation based on its first user message.
+ * The backend calls OpenRouter non-streaming with a title-generation prompt.
+ * @param conversationId - Conversation ID
+ * @returns The generated title string
+ */
+export async function generateConversationTitle(
+  conversationId: string,
+): Promise<{ title: string }> {
+  return apiFetch<{ title: string }>(
+    `${API_BASE}/conversations/${conversationId}/generate-title`,
+    {
+      method: 'POST',
+    },
+    'Failed to generate conversation title',
+  )
+}
+
+/**
+ * Update a conversation's title directly.
+ * @param conversationId - Conversation ID
+ * @param title - New title
+ */
+export async function updateConversationTitle(
+  conversationId: string,
+  title: string,
+): Promise<void> {
+  await apiFetch(
+    `${API_BASE}/conversations/${conversationId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title }),
+    },
+    'Failed to update conversation title',
+  )
+}
+

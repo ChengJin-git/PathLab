@@ -1893,6 +1893,7 @@ Here are your training tasks:
   - `"random"` - Random split tasks (e.g., 7:1:2 train/val/test)
   - `"manual"` - Manual split tasks
 - **task_type**: Filter by task type: "classification", "survival", etc. (optional)
+- **dataset_id**: Filter by dataset ID (optional), use when user asks about tasks related to a specific dataset
 
 **Examples**:
 - "Show me all my experiments" → show_completed: true, show_running: true, show_failed: false
