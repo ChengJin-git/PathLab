@@ -4,7 +4,7 @@ DatasetRepository - Data Access Layer
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, List, Optional, Dict
 from sqlalchemy import select, update, delete, func, insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +35,15 @@ class DatasetRepository(BaseRepository[Dataset]):
 
     model = Dataset
     pk_field = "dataset_id"
+
+    @classmethod
+    async def get_by_id(cls, db: AsyncSession, pk_value: Any) -> Optional[Dataset]:
+        result = await db.execute(
+            select(Dataset)
+            .options(selectinload(Dataset.data_group))
+            .where(Dataset.dataset_id == pk_value)
+        )
+        return result.scalar_one_or_none()
 
     @staticmethod
     async def get_by_name(
