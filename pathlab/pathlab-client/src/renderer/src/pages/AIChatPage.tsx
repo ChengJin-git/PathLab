@@ -1,6 +1,7 @@
 import {
 	Bot,
 	ChevronDown,
+	ChevronLeft,
 	ChevronRight,
 	Clock,
 	ClipboardList,
@@ -107,6 +108,13 @@ import { xlsxToCSV } from "../lib/csvImporter";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { formatFileSize } from "../lib/utils";
 
+interface RegenerationVariant {
+	id: string;
+	content: string;
+	timestamp: Date;
+	artifacts?: MessageArtifacts;
+}
+
 interface Message {
 	id: string;
 	role: "user" | "assistant";
@@ -115,6 +123,8 @@ interface Message {
 	timestamp: Date;
 	csvAttachments?: { fileName: string; content: string }[]; // CSV file contents for processing
 	artifacts?: MessageArtifacts;
+	regenerations?: RegenerationVariant[];
+	activeRegenerationIndex?: number;
 }
 
 interface ImageAttachment {
@@ -155,6 +165,24 @@ const PENDING_PATCH_INFERENCE_CANCEL_KEY_PREFIX =
 const PENDING_PATCH_INFERENCE_CANCEL_RETRY_DELAY_MS = 1200;
 const PENDING_PATCH_INFERENCE_CANCEL_MAX_RETRIES = 5;
 const conversationHistoryCache = new Map<string, Conversation[]>();
+
+interface VariantCacheSlot {
+	variants: Array<{
+		id: string;
+		content: string;
+		timestamp: number;
+		artifacts?: MessageArtifacts;
+	}>;
+	activeIndex: number;
+}
+const variantCache = new Map<string, Map<string, VariantCacheSlot>>();
+
+function getOrCreateConvVariantMap(conversationId: string): Map<string, VariantCacheSlot> {
+	if (!variantCache.has(conversationId)) {
+		variantCache.set(conversationId, new Map());
+	}
+	return variantCache.get(conversationId)!;
+}
 
 const getPendingCancelledResponseKey = (conversationId: string) =>
 	`${PENDING_CANCELLED_RESPONSE_KEY_PREFIX}${conversationId}`;
@@ -997,6 +1025,9 @@ export default function AIChatPage() {
 	}, [isAuthLoading, loadConversations, user?.id]);
 
 	const handleNewChat = useCallback(() => {
+		if (currentConversationId) {
+			variantCache.delete(currentConversationId);
+		}
 		setMessages([]);
 		setCurrentConversationId(null);
 		setInput("");
@@ -1011,7 +1042,7 @@ export default function AIChatPage() {
 		if (urlConversationId) {
 			navigate("/dashboard", { replace: true });
 		}
-	}, [navigate, urlConversationId]);
+	}, [currentConversationId, navigate, urlConversationId]);
 
 	const handleLoadConversation = async (conversationId: string) => {
 		try {
@@ -1078,9 +1109,37 @@ export default function AIChatPage() {
 				}
 			}
 
-			setMessages(messagesToShow);
-			setCurrentConversationId(conversationId);
-			setShowHistory(false);
+		// Rehydrate variant cache into messages (survives SPA navigation)
+		const convVariantMap = variantCache.get(conversationId);
+		if (convVariantMap && convVariantMap.size > 0) {
+			messagesToShow = messagesToShow.map((msg, i) => {
+				if (msg.role !== "assistant") return msg;
+				const prevMsg = messagesToShow[i - 1];
+				const userBackendId = prevMsg ? getPersistedMessageId(prevMsg.id) : null;
+				if (userBackendId === null) return msg;
+				const slot = convVariantMap.get(String(userBackendId));
+				if (!slot || slot.variants.length <= 1) return msg;
+				const activeVariant = slot.variants[slot.activeIndex];
+				return {
+					...msg,
+					id: activeVariant.id,
+					content: activeVariant.content,
+					timestamp: new Date(activeVariant.timestamp),
+					artifacts: activeVariant.artifacts,
+					regenerations: slot.variants.map((v) => ({
+						id: v.id,
+						content: v.content,
+						timestamp: new Date(v.timestamp),
+						artifacts: v.artifacts,
+					})),
+					activeRegenerationIndex: slot.activeIndex,
+				};
+			});
+		}
+
+		setMessages(messagesToShow);
+		setCurrentConversationId(conversationId);
+		setShowHistory(false);
 			setShowWelcomeHero(false);
 			setPendingFeedbackIds(new Set());
 
@@ -1152,8 +1211,20 @@ export default function AIChatPage() {
 				(msg) => !isInternalOnlyMessage(msg.content),
 			);
 
+			const convVariantMap = variantCache.get(conversationId);
+
+			let userMsgBackendId: number | null = null;
 			for (const msg of visibleMessages) {
-				const roleLabel = msg.role === "user" ? "User" : "Assistant";
+				if (msg.role === "user") {
+					userMsgBackendId = msg.id;
+				}
+				let roleLabel = msg.role === "user" ? "User" : "Assistant";
+				if (msg.role === "assistant" && convVariantMap && userMsgBackendId !== null) {
+					const slot = convVariantMap.get(String(userMsgBackendId));
+					if (slot && slot.variants.length > 1) {
+						roleLabel = `Assistant (Regeneration ${slot.variants.length}/${slot.variants.length})`;
+					}
+				}
 				lines.push(`## ${roleLabel}`);
 				lines.push("");
 				lines.push(msg.content.trim());
@@ -2578,59 +2649,108 @@ export default function AIChatPage() {
 				return;
 			}
 
-			// Update local state
+			if (currentConversationId) {
+				const convMap = variantCache.get(currentConversationId);
+				if (convMap) {
+					const prevMsg = currentMessages[messageIndex - 1];
+					const userBackendId = prevMsg ? getPersistedMessageId(prevMsg.id) : null;
+					if (userBackendId !== null) {
+						convMap.delete(String(userBackendId));
+					}
+				}
+			}
+
 			const newMessages = currentMessages.slice(0, messageIndex);
 			setMessages(newMessages);
 			showToast("info", t("aiChat.messageDeleted"));
 		},
-		[deleteConversationBranchFromMessage, isGenerating, showToast, t],
+		[currentConversationId, deleteConversationBranchFromMessage, isGenerating, showToast, t],
 	);
 
-	const handleResubmitMessage = useCallback(
+	const handleRegenerate = useCallback(
 		async (messageIndex: number) => {
 			if (isGenerating) return;
 
 			const replayContext = resolveReplayContext(messageIndex);
-			if (!replayContext) {
+			if (!replayContext) return;
+
+			const aiMessage = replayContext.targetMessage;
+			if (aiMessage.role !== "assistant") return;
+
+			const userMessage = replayContext.userMessage;
+			const convId = currentConversationId;
+			const userBackendId = getPersistedMessageId(userMessage.id);
+
+			const existingVariants = aiMessage.regenerations ?? [];
+			const savedVariants: VariantCacheSlot["variants"] =
+				existingVariants.length === 0
+					? [
+							{
+								id: aiMessage.id,
+								content: aiMessage.content,
+								timestamp: aiMessage.timestamp.getTime(),
+								artifacts: aiMessage.artifacts,
+							},
+						]
+					: existingVariants.map((v) => ({
+							id: v.id,
+							content: v.content,
+							timestamp: v.timestamp.getTime(),
+							artifacts: v.artifacts,
+						}));
+
+			if (!(await deleteConversationBranchFromMessage(aiMessage.id))) {
 				return;
 			}
 
-			if (
-				!(await deleteConversationBranchFromMessage(
-					replayContext.userMessage.id,
-				))
-			) {
-				return;
-			}
-
-			const resentUserMessage: Message = {
-				id: Date.now().toString(),
-				role: "user",
-				content: replayContext.userMessage.content,
-				images: replayContext.userMessage.images
-					? [...replayContext.userMessage.images]
-					: undefined,
-				csvAttachments: replayContext.userMessage.csvAttachments?.map(
-					(attachment) => ({ ...attachment }),
-				),
-				timestamp: new Date(),
-			};
-
-			const newMessages = replayContext.currentMessages.slice(
+			const messagesUpToUser = replayContext.currentMessages.slice(
 				0,
-				replayContext.userMessageIndex,
+				messageIndex,
 			);
-			const messagesToSend = [...newMessages, resentUserMessage];
 			setShowWelcomeHero(false);
 			userScrolledAwayRef.current = false;
 			setHasScrolledAway(false);
-			setMessages(messagesToSend);
+			setMessages(messagesUpToUser);
 
-			const chatMessages = buildChatMessages(messagesToSend);
-			await executeChatGeneration(
-				chatMessages,
-				currentConversationId || undefined,
-			);
+			const chatMessages = buildChatMessages(messagesUpToUser);
+			await executeChatGeneration(chatMessages, currentConversationId || undefined, {
+				onFinally: () => {
+					setMessages((prev) => {
+						if (prev.length === 0) return prev;
+						const newAiMsg = prev[prev.length - 1];
+						if (newAiMsg.role !== "assistant") return prev;
+
+						const newVariant: VariantCacheSlot["variants"][0] = {
+							id: newAiMsg.id,
+							content: newAiMsg.content,
+							timestamp: newAiMsg.timestamp.getTime(),
+							artifacts: newAiMsg.artifacts,
+						};
+						const allVariants = [...savedVariants, newVariant];
+						const newActiveIndex = allVariants.length - 1;
+
+						if (convId && userBackendId !== null) {
+							const convMap = getOrCreateConvVariantMap(convId);
+							convMap.set(String(userBackendId), {
+								variants: allVariants,
+								activeIndex: newActiveIndex,
+							});
+						}
+
+						const mergedAiMsg: Message = {
+							...newAiMsg,
+							regenerations: allVariants.map((v) => ({
+								id: v.id,
+								content: v.content,
+								timestamp: new Date(v.timestamp),
+								artifacts: v.artifacts,
+							})),
+							activeRegenerationIndex: newActiveIndex,
+						};
+						return [...prev.slice(0, -1), mergedAiMsg];
+					});
+				},
+			});
 		},
 		[
 			buildChatMessages,
@@ -2640,6 +2760,55 @@ export default function AIChatPage() {
 			isGenerating,
 			resolveReplayContext,
 		],
+	);
+
+	const handleNavigateVariant = useCallback(
+		(messageIndex: number, direction: "prev" | "next") => {
+			const currentMessages = messagesRef.current;
+			const prevMsg = currentMessages[messageIndex - 1];
+			const userBackendId = prevMsg ? getPersistedMessageId(prevMsg.id) : null;
+			const convId = currentConversationIdRef.current;
+
+			setMessages((prev) =>
+				prev.map((msg, i) => {
+					if (
+						i !== messageIndex ||
+						!msg.regenerations ||
+						msg.regenerations.length <= 1
+					)
+						return msg;
+
+					const total = msg.regenerations.length;
+					const current = msg.activeRegenerationIndex ?? total - 1;
+					const newIndex =
+						direction === "prev"
+							? Math.max(0, current - 1)
+							: Math.min(total - 1, current + 1);
+
+					if (newIndex === current) return msg;
+
+					const activeVariant = msg.regenerations[newIndex];
+
+					if (convId && userBackendId !== null) {
+						const convMap = variantCache.get(convId);
+						if (convMap) {
+							const slot = convMap.get(String(userBackendId));
+							if (slot) slot.activeIndex = newIndex;
+						}
+					}
+
+					return {
+						...msg,
+						id: activeVariant.id,
+						content: activeVariant.content,
+						timestamp: activeVariant.timestamp,
+						artifacts: activeVariant.artifacts,
+						activeRegenerationIndex: newIndex,
+					};
+				}),
+			);
+		},
+		[],
 	);
 
 	// Stop AI generation and voice recording
@@ -3567,13 +3736,62 @@ export default function AIChatPage() {
 													message.content !== "" && (
 														<div className="flex items-center gap-3 mt-2 text-gray-400">
 															{(() => {
-																const persistedMessageId =
-																	getPersistedMessageId(message.id);
+																const isLatestVariant =
+																	!message.regenerations ||
+																	message.activeRegenerationIndex ===
+																		message.regenerations.length - 1;
+																const persistedMessageId = isLatestVariant
+																	? getPersistedMessageId(message.id)
+																	: null;
 																const feedbackPending =
 																	persistedMessageId !== null &&
 																	pendingFeedbackIds.has(persistedMessageId);
+																const activeIdx =
+																	message.activeRegenerationIndex ??
+																	(message.regenerations
+																		? message.regenerations.length - 1
+																		: 0);
 																return (
 																	<>
+																		{message.regenerations &&
+																			message.regenerations.length > 1 && (
+																				<>
+																					<div className="flex items-center gap-1">
+																						<Tooltip content={t("aiChat.previousVariant")}>
+																						<button
+																							type="button"
+																							onClick={() =>
+																								handleNavigateVariant(index, "prev")
+																							}
+																							disabled={activeIdx === 0}
+																							className={`transition-colors ${activeIdx === 0 ? "opacity-30 cursor-not-allowed" : "hover:text-gray-600"}`}
+																						>
+																							<ChevronLeft className="w-4 h-4" />
+																						</button>
+																						</Tooltip>
+																						<span className="text-xs text-gray-500 min-w-[28px] text-center tabular-nums">
+																							{activeIdx + 1}/{message.regenerations.length}
+																						</span>
+																						<Tooltip content={t("aiChat.nextVariant")}>
+																						<button
+																							type="button"
+																							onClick={() =>
+																								handleNavigateVariant(index, "next")
+																							}
+																							disabled={
+																								activeIdx ===
+																								message.regenerations.length - 1
+																							}
+																							className={`transition-colors ${activeIdx === message.regenerations.length - 1 ? "opacity-30 cursor-not-allowed" : "hover:text-gray-600"}`}
+																						>
+																							<ChevronRight className="w-4 h-4" />
+																						</button>
+																						</Tooltip>
+																					</div>
+																					<div className="w-px h-4 bg-gray-200" />
+																				</>
+																			)}
+
 																		{/* Timestamp */}
 																		<span
 																			className="text-xs text-gray-400"
@@ -3668,7 +3886,7 @@ export default function AIChatPage() {
 																		<button
 																			type="button"
 																			onClick={() =>
-																				handleResubmitMessage(index)
+																				handleRegenerate(index)
 																			}
 																			disabled={isGenerating}
 																			className={`hover:text-gray-600 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -3720,71 +3938,46 @@ export default function AIChatPage() {
 
 														<div className="w-px h-4 bg-gray-200" />
 
-														<Tooltip content={t("aiChat.copy")}>
-														<button
-															type="button"
-															onClick={() => handleCopy(message.content)}
-															className="hover:text-gray-600 transition-colors"
-														>
-															<svg
-																aria-hidden="true"
-																width="16"
-																height="16"
-																viewBox="0 0 24 24"
-																fill="none"
-																stroke="currentColor"
-																strokeWidth="2"
-																strokeLinecap="round"
-																strokeLinejoin="round"
-															>
-																<rect
-																	x="9"
-																	y="9"
-																	width="13"
-																	height="13"
-																	rx="2"
-																	ry="2"
-																></rect>
-																<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-																			</svg>
-																		</button>
-																		</Tooltip>
-																		<Tooltip content={t("aiChat.resubmit")}>
+																		<Tooltip content={t("aiChat.copy")}>
 																<button
 																	type="button"
-																	onClick={() => handleResubmitMessage(index)}
-																	disabled={isGenerating}
-																	className={`hover:text-gray-600 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
+																	onClick={() => handleCopy(message.content)}
+																	className="hover:text-gray-600 transition-colors"
 																>
-															<svg
-																aria-hidden="true"
-																width="16"
-																height="16"
-																viewBox="0 0 24 24"
-																fill="none"
-																stroke="currentColor"
-																strokeWidth="2"
-																strokeLinecap="round"
-																strokeLinejoin="round"
-															>
-																<path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path>
-																<path d="M3 3v5h5"></path>
-																<path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"></path>
-																<path d="M16 16h5v5"></path>
-															</svg>
-														</button>
-														</Tooltip>
+																	<svg
+																		aria-hidden="true"
+																		width="16"
+																		height="16"
+																		viewBox="0 0 24 24"
+																		fill="none"
+																		stroke="currentColor"
+																		strokeWidth="2"
+																		strokeLinecap="round"
+																		strokeLinejoin="round"
+																	>
+																		<rect
+																			x="9"
+																			y="9"
+																			width="13"
+																			height="13"
+																			rx="2"
+																			ry="2"
+																		></rect>
+																		<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+																	</svg>
+																</button>
+																</Tooltip>
 
-														<Tooltip content={t("aiChat.deleteMessageAndContinue")}>
-														<button
-															type="button"
-															onClick={() => handleDeleteMessage(index)}
-															disabled={isGenerating}
-															className={`hover:text-red-500 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
-														>
-															<Trash2 className="w-4 h-4" />
-														</button>
-														</Tooltip>
+															<Tooltip content={t("aiChat.deleteMessageAndContinue")}>
+															<button
+																type="button"
+																onClick={() => handleDeleteMessage(index)}
+																disabled={isGenerating}
+																className={`hover:text-red-500 transition-colors ${isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
+															>
+																<Trash2 className="w-4 h-4" />
+															</button>
+															</Tooltip>
 													</div>
 												)}
 											</div>

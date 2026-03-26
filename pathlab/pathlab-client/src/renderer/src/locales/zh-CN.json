@@ -1442,6 +1442,8 @@
     "copied": "已复制",
     "copyCodeBlockAria": "复制代码块",
     "regenerate": "重新生成",
+    "previousVariant": "上一个回复",
+    "nextVariant": "下一个回复",
     "resubmit": "重新提交",
     "deleteMessageAndContinue": "删除此消息并从此处继续",
     "attachment": "附件",

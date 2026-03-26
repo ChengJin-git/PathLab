@@ -1442,6 +1442,8 @@
     "copied": "Copied",
     "copyCodeBlockAria": "Copy code block",
     "regenerate": "Regenerate",
+    "previousVariant": "Previous response",
+    "nextVariant": "Next response",
     "resubmit": "Resubmit",
     "deleteMessageAndContinue": "Delete this message and continue from here",
     "attachment": "Attachment",
