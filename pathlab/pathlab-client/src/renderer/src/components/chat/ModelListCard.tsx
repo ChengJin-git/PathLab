@@ -19,6 +19,8 @@ export interface ModelInfo {
   created_at?: string
   task_id?: string
   task_name?: string
+  source_dataset_id?: string | null
+  dataset_names?: string[]
 }
 
 export interface ModelListConfig {
