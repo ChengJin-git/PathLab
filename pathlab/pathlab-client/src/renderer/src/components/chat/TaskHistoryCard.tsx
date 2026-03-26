@@ -147,7 +147,7 @@ export function TaskHistoryCard({ config, onError, onDataLoaded }: TaskHistoryCa
   }
 
   const loadFilteredTasks = async (): Promise<TrainingTask[]> => {
-    const response = await getTrainingTasks()
+    const response = await getTrainingTasks({ page_size: 100 })
     const allTasks = Array.isArray(response)
       ? response
       : Array.isArray(response?.items)
