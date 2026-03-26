@@ -42,6 +42,19 @@ _vram_reservation_lock = threading.Lock()
 _vram_reservations: list[tuple[float, int, float]] = []  # (expiry, cuda_idx, mb)
 
 
+def _normalize_uuid(uuid_str: str) -> str:
+    """Strip GPU-/MIG- prefixes so torch and pynvml UUIDs can be compared.
+
+    torch.cuda.get_device_properties().uuid → bare UUID (no prefix)
+    pynvml.nvmlDeviceGetUUID()             → "GPU-<uuid>" or "MIG-<uuid>"
+    """
+    s = str(uuid_str).lower()
+    for prefix in ("mig-gpu-", "mig-", "gpu-"):
+        if s.startswith(prefix):
+            return s[len(prefix) :]
+    return s
+
+
 def _add_vram_reservation(cuda_idx: int, mb: float) -> None:
     with _vram_reservation_lock:
         _vram_reservations.append(
@@ -70,13 +83,14 @@ def _get_nvml_handle_for_cuda_device(cuda_index: int) -> Any:
         return _cuda_to_nvml_handle[cuda_index]
 
     cuda_uuid = torch.cuda.get_device_properties(cuda_index).uuid
+    cuda_uuid_normalized = _normalize_uuid(str(cuda_uuid))
     num_nvml = pynvml.nvmlDeviceGetCount()
     for i in range(num_nvml):
         handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-        if pynvml.nvmlDeviceGetUUID(handle) == cuda_uuid:
+        if _normalize_uuid(pynvml.nvmlDeviceGetUUID(handle)) == cuda_uuid_normalized:
             _cuda_to_nvml_handle[cuda_index] = handle
             logger.debug(
-                f"CUDA:{cuda_index} → physical GPU {i} (UUID {cuda_uuid[:24]}…) cached"
+                f"CUDA:{cuda_index} → physical GPU {i} (UUID {cuda_uuid_normalized[:24]}…) cached"
             )
             return handle
 
