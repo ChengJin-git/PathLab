@@ -28,6 +28,7 @@ import {
   listCollaborators,
   addCollaborator,
   removeCollaborator,
+  getMyAnnotationAccess,
   deleteDatasetLabels,
   listAnnotationAudit,
   exportAnnotationAuditUrl,
@@ -398,6 +399,31 @@ describe('removeCollaborator', () => {
     await removeCollaborator('ds_1', 'user/special')
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('user%2Fspecial')
+  })
+})
+
+describe('getMyAnnotationAccess', () => {
+  it('returns can_annotate true when user has access', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ can_annotate: true }))
+    const result = await getMyAnnotationAccess('ds_1')
+    expect(result.can_annotate).toBe(true)
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:6100/annotation/datasets/ds_1/my-access',
+      expect.objectContaining({ headers: expect.any(Object) })
+    )
+  })
+
+  it('returns can_annotate false when user has no access', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ can_annotate: false }))
+    const result = await getMyAnnotationAccess('ds_1')
+    expect(result.can_annotate).toBe(false)
+  })
+
+  it('URL-encodes dataset ID with special characters', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ can_annotate: true }))
+    await getMyAnnotationAccess('ds/with spaces')
+    const [url] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('ds%2Fwith%20spaces')
   })
 })
 

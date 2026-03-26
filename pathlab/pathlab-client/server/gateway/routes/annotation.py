@@ -1665,6 +1665,20 @@ async def list_collaborators(
     return {"dataset_id": dataset_id, "members": members}
 
 
+@router.get("/datasets/{dataset_id}/my-access")
+async def get_my_annotation_access(
+    dataset_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        dataset = await _get_dataset_with_access(dataset_id, user, db)
+    except HTTPException:
+        return {"can_annotate": False}
+    can_annotate = await can_access_shared(user, dataset, db)
+    return {"can_annotate": can_annotate}
+
+
 @router.post("/datasets/{dataset_id}/collaborators")
 async def add_collaborator(
     dataset_id: str,

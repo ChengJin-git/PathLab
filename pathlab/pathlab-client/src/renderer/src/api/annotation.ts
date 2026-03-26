@@ -403,6 +403,14 @@ export async function removeCollaborator(
   )
 }
 
+export async function getMyAnnotationAccess(datasetId: string): Promise<{ can_annotate: boolean }> {
+  return apiFetch<{ can_annotate: boolean }>(
+    `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/my-access`,
+    {},
+    'Failed to check annotation access'
+  )
+}
+
 export async function deleteDatasetLabels(datasetId: string): Promise<{ ok: boolean }> {
   return apiFetch(
     `${API_BASE}/annotation/datasets/${encodeURIComponent(datasetId)}/labels`,

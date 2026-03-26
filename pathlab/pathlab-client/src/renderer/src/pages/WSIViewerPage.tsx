@@ -47,6 +47,7 @@ import {
   SharedAnnotationEvent,
   deleteSharedAnnotation,
   listCollaborators,
+  getMyAnnotationAccess,
 } from '../api/annotation'
 import { useToast } from '../contexts/ToastContext'
 import { useAuth } from '../contexts/AuthContext'
@@ -270,6 +271,7 @@ export default function WSIViewerPage() {
 
   // Annotation state
   const [annotationMode, setAnnotationMode] = useState(false)
+  const [canAnnotate, setCanAnnotate] = useState(true)
   const [showGT, setShowGT] = useState(false)
   const [gtRegions, setGtRegions] = useState<AnnotationRegion[]>([])
   const [hasGTAnnotations, setHasGTAnnotations] = useState(false)
@@ -416,6 +418,16 @@ export default function WSIViewerPage() {
       setLoadingDatasetAnnotationSummary(false)
     }
   }, [annotationId, effectiveDatasetId])
+
+  useEffect(() => {
+    if (!effectiveDatasetId) {
+      setCanAnnotate(true)
+      return
+    }
+    getMyAnnotationAccess(effectiveDatasetId)
+      .then(r => setCanAnnotate(r.can_annotate))
+      .catch(() => setCanAnnotate(true))
+  }, [effectiveDatasetId])
 
   // Load WSI list for navigation
   // If coming from a dataset, load only that dataset's WSIs; otherwise load all
@@ -1469,6 +1481,8 @@ export default function WSIViewerPage() {
                toast.warning(t('annotation.collab.removedFromCollaborators'))
              }
              exitSharedMode()
+             setAnnotationMode(false)
+             setCanAnnotate(false)
            }
         } else if (data.type === 'shared_deleted') {
            toast.warning(t('annotation.collab.sharedDeletedRemote'))
@@ -1859,57 +1873,61 @@ export default function WSIViewerPage() {
               </Tooltip>
             </div>
 
-            <div className="w-px h-5 bg-gray-200" />
-            <AnnotationToolbar
-              annotationMode={annotationMode}
-              onToggleMode={() => {
-                setAnnotationMode(m => {
-                  if (!m && !currentLabel) {
-                    // Entering annotation mode with no label — set default
-                    const defaultLabel = t('annotation.defaultLabel')
-                    handleLabelChange(defaultLabel)
-                  }
-                  return !m
-                })
-              }}
-              drawingTool={drawingTool}
-              onToolChange={setDrawingTool}
-              currentLabel={currentLabel}
-              onLabelChange={handleLabelChange}
-              labelColors={labelColors}
-              allLabels={allLabels}
-              onDropdownOpenChange={setIsLabelDropdownOpen}
-              editingMode={editingMode}
-              onToggleEditingMode={handleToggleEditingMode}
-              modeTransitioning={modeTransitioning}
-              sharedSaving={sharedSaving}
-              hasDatasetContext={!!effectiveDatasetId}
-              isDatasetOwnerOrAdmin={isDatasetOwnerOrAdmin}
-              onShareManage={() => setShowShareDialog(true)}
-            />
+            {canAnnotate && (
+              <>
+                <div className="w-px h-5 bg-gray-200" />
+                <AnnotationToolbar
+                  annotationMode={annotationMode}
+                  onToggleMode={() => {
+                    setAnnotationMode(m => {
+                      if (!m && !currentLabel) {
+                        // Entering annotation mode with no label — set default
+                        const defaultLabel = t('annotation.defaultLabel')
+                        handleLabelChange(defaultLabel)
+                      }
+                      return !m
+                    })
+                  }}
+                  drawingTool={drawingTool}
+                  onToolChange={setDrawingTool}
+                  currentLabel={currentLabel}
+                  onLabelChange={handleLabelChange}
+                  labelColors={labelColors}
+                  allLabels={allLabels}
+                  onDropdownOpenChange={setIsLabelDropdownOpen}
+                  editingMode={editingMode}
+                  onToggleEditingMode={handleToggleEditingMode}
+                  modeTransitioning={modeTransitioning}
+                  sharedSaving={sharedSaving}
+                  hasDatasetContext={!!effectiveDatasetId}
+                  isDatasetOwnerOrAdmin={isDatasetOwnerOrAdmin}
+                  onShareManage={() => setShowShareDialog(true)}
+                />
 
-            {/* Save Annotations Button — visible only in annotation mode */}
-            {annotationMode && (
-              <Tooltip content={t('annotation.saveAnnotations')}>
-              <button
-                onClick={handleManualSave}
-                disabled={savingAnnotations || !hasUnsavedChanges}
-                className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                  hasUnsavedChanges
-                    ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                    : 'bg-gray-100 text-gray-400 cursor-default'
-                }`}
-              >
-                {savingAnnotations ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Save className="w-3.5 h-3.5" />
+                {/* Save Annotations Button — visible only in annotation mode */}
+                {annotationMode && (
+                  <Tooltip content={t('annotation.saveAnnotations')}>
+                  <button
+                    onClick={handleManualSave}
+                    disabled={savingAnnotations || !hasUnsavedChanges}
+                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                      hasUnsavedChanges
+                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
+                        : 'bg-gray-100 text-gray-400 cursor-default'
+                    }`}
+                  >
+                    {savingAnnotations ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Save className="w-3.5 h-3.5" />
+                    )}
+                    <span className="hidden sm:inline">
+                      {savingAnnotations ? t('annotation.saving') : t('annotation.saveAnnotations')}
+                    </span>
+                  </button>
+                  </Tooltip>
                 )}
-                <span className="hidden sm:inline">
-                  {savingAnnotations ? t('annotation.saving') : t('annotation.saveAnnotations')}
-                </span>
-              </button>
-              </Tooltip>
+              </>
             )}
 
             <button
