@@ -157,7 +157,7 @@ export function getDatasetCompatibilityError(
   }
 
   if (!modelIsSurvival) {
-    const dsLabels = new Set(dataset.distinct_labels || [])
+    const dsLabels = new Set(normalizeLabels(dataset.distinct_labels || []))
     if (modelClasses.size !== dsLabels.size) {
       return 'Label sets must exactly match between source model and target dataset.'
     }
