@@ -32,7 +32,7 @@ class Segmentor:
         in_channels: int = 3,
         classes: int = 1,
         decoder_type: str = "conv",
-        decoder_kwargs: dict | None = None,
+        decoder_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ):
         self.is_fm = is_fm_encoder(encoder_name)
