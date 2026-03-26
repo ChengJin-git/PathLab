@@ -185,10 +185,9 @@ class ChatRequest(BaseModel):
       ]}
     """
 
-    conversation_id: Optional[str] = None  # Optional conversation ID for persistence
-    messages: List[
-        Dict[str, Any]
-    ]  # Changed from Dict[str, str] to Dict[str, Any] to support multimodal content
+    conversation_id: Optional[str] = None
+    messages: List[Dict[str, Any]]
+    regenerate_message_id: Optional[int] = None
 
 
 class CreateConversationRequest(BaseModel):

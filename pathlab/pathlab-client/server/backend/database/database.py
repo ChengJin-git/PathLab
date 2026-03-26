@@ -321,6 +321,26 @@ async def init_db():
         await conn.execute(text("DROP TABLE IF EXISTS annotation_collaborators"))
         await conn.execute(text("DROP TABLE IF EXISTS dataset_permissions"))
 
+        await conn.execute(
+            text(
+                "ALTER TABLE chat_messages "
+                "ADD COLUMN IF NOT EXISTS variant_group_id VARCHAR(36)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE chat_messages "
+                "ADD COLUMN IF NOT EXISTS is_active_variant BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_chat_messages_variant_group "
+                "ON chat_messages (variant_group_id)"
+            )
+        )
+        logger.info("chat_messages variant columns ensured")
+
     await _create_default_admin()
 
 

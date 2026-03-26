@@ -38,6 +38,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
+	activateMessageVariant,
 	addMessage,
 	type ChatMessage,
 	type ChatMessageContent,
@@ -165,24 +166,6 @@ const PENDING_PATCH_INFERENCE_CANCEL_KEY_PREFIX =
 const PENDING_PATCH_INFERENCE_CANCEL_RETRY_DELAY_MS = 1200;
 const PENDING_PATCH_INFERENCE_CANCEL_MAX_RETRIES = 5;
 const conversationHistoryCache = new Map<string, Conversation[]>();
-
-interface VariantCacheSlot {
-	variants: Array<{
-		id: string;
-		content: string;
-		timestamp: number;
-		artifacts?: MessageArtifacts;
-	}>;
-	activeIndex: number;
-}
-const variantCache = new Map<string, Map<string, VariantCacheSlot>>();
-
-function getOrCreateConvVariantMap(conversationId: string): Map<string, VariantCacheSlot> {
-	if (!variantCache.has(conversationId)) {
-		variantCache.set(conversationId, new Map());
-	}
-	return variantCache.get(conversationId)!;
-}
 
 const getPendingCancelledResponseKey = (conversationId: string) =>
 	`${PENDING_CANCELLED_RESPONSE_KEY_PREFIX}${conversationId}`;
@@ -1025,9 +1008,6 @@ export default function AIChatPage() {
 	}, [isAuthLoading, loadConversations, user?.id]);
 
 	const handleNewChat = useCallback(() => {
-		if (currentConversationId) {
-			variantCache.delete(currentConversationId);
-		}
 		setMessages([]);
 		setCurrentConversationId(null);
 		setInput("");
@@ -1042,7 +1022,7 @@ export default function AIChatPage() {
 		if (urlConversationId) {
 			navigate("/dashboard", { replace: true });
 		}
-	}, [currentConversationId, navigate, urlConversationId]);
+	}, [navigate, urlConversationId]);
 
 	const handleLoadConversation = async (conversationId: string) => {
 		try {
@@ -1109,33 +1089,29 @@ export default function AIChatPage() {
 				}
 			}
 
-		// Rehydrate variant cache into messages (survives SPA navigation)
-		const convVariantMap = variantCache.get(conversationId);
-		if (convVariantMap && convVariantMap.size > 0) {
-			messagesToShow = messagesToShow.map((msg, i) => {
-				if (msg.role !== "assistant") return msg;
-				const prevMsg = messagesToShow[i - 1];
-				const userBackendId = prevMsg ? getPersistedMessageId(prevMsg.id) : null;
-				if (userBackendId === null) return msg;
-				const slot = convVariantMap.get(String(userBackendId));
-				if (!slot || slot.variants.length <= 1) return msg;
-				const activeVariant = slot.variants[slot.activeIndex];
-				return {
-					...msg,
-					id: activeVariant.id,
-					content: activeVariant.content,
-					timestamp: new Date(activeVariant.timestamp),
-					artifacts: activeVariant.artifacts,
-					regenerations: slot.variants.map((v) => ({
-						id: v.id,
-						content: v.content,
-						timestamp: new Date(v.timestamp),
-						artifacts: v.artifacts,
-					})),
-					activeRegenerationIndex: slot.activeIndex,
-				};
-			});
-		}
+		messagesToShow = messagesToShow.map((msg) => {
+			if (msg.role !== "assistant") return msg;
+			const rawMsg = sortedApiMessages.find((m) => String(m.id) === msg.id);
+			const rawVariants = (rawMsg as { variants?: Array<{ id: number; content: string; created_at: string; is_active_variant: boolean; metadata?: { artifacts?: MessageArtifacts } | null }> })?.variants;
+			if (!rawVariants || rawVariants.length <= 1) return msg;
+			const activeIdx = rawVariants.findIndex((v) => v.is_active_variant);
+			const resolvedActiveIdx = activeIdx >= 0 ? activeIdx : rawVariants.length - 1;
+			const activeVariant = rawVariants[resolvedActiveIdx];
+			return {
+				...msg,
+				id: String(activeVariant.id),
+				content: activeVariant.content,
+				timestamp: new Date(activeVariant.created_at),
+				artifacts: activeVariant.metadata?.artifacts,
+				regenerations: rawVariants.map((v) => ({
+					id: String(v.id),
+					content: v.content,
+					timestamp: new Date(v.created_at),
+					artifacts: v.metadata?.artifacts,
+				})),
+				activeRegenerationIndex: resolvedActiveIdx,
+			};
+		});
 
 		setMessages(messagesToShow);
 		setCurrentConversationId(conversationId);
@@ -1211,19 +1187,13 @@ export default function AIChatPage() {
 				(msg) => !isInternalOnlyMessage(msg.content),
 			);
 
-			const convVariantMap = variantCache.get(conversationId);
-
-			let userMsgBackendId: number | null = null;
 			for (const msg of visibleMessages) {
-				if (msg.role === "user") {
-					userMsgBackendId = msg.id;
-				}
 				let roleLabel = msg.role === "user" ? "User" : "Assistant";
-				if (msg.role === "assistant" && convVariantMap && userMsgBackendId !== null) {
-					const slot = convVariantMap.get(String(userMsgBackendId));
-					if (slot && slot.variants.length > 1) {
-						roleLabel = `Assistant (Regeneration ${slot.variants.length}/${slot.variants.length})`;
-					}
+				const rawVariants = (msg as { variants?: Array<{ is_active_variant: boolean }> }).variants;
+				if (msg.role === "assistant" && rawVariants && rawVariants.length > 1) {
+					const activeIdx = rawVariants.findIndex((v) => v.is_active_variant);
+					const displayIdx = activeIdx >= 0 ? activeIdx + 1 : rawVariants.length;
+					roleLabel = `Assistant (Regeneration ${displayIdx}/${rawVariants.length})`;
 				}
 				lines.push(`## ${roleLabel}`);
 				lines.push("");
@@ -1612,6 +1582,7 @@ export default function AIChatPage() {
 			options?: {
 				onError?: () => void;
 				onFinally?: () => void;
+				regenerateMessageId?: number;
 			},
 		) => {
 			const aiMessageId = (Date.now() + 1).toString();
@@ -1958,20 +1929,21 @@ export default function AIChatPage() {
 						}
 						const buffered = chunkBuffer;
 						chunkBuffer = "";
-						const currentId = trackingId;
-						setMessages((prev) =>
-							prev.map((m) =>
-								m.id === currentId
-									? { ...m, content: m.content + buffered }
-									: m,
-							),
-						);
-					},
-				);
-			} catch (error) {
-				if (error instanceof DOMException && error.name === "AbortError") {
-					if (isTimeoutAbort) {
-						console.log("AI generation timed out (no output for 60 seconds)");
+					const currentId = trackingId;
+					setMessages((prev) =>
+						prev.map((m) =>
+							m.id === currentId
+								? { ...m, content: m.content + buffered }
+								: m,
+						),
+					);
+				},
+				options?.regenerateMessageId,
+			);
+		} catch (error) {
+			if (error instanceof DOMException && error.name === "AbortError") {
+				if (isTimeoutAbort) {
+					console.log("AI generation timed out (no output for 60 seconds)");
 						// Fill timed-out message with i18n text (append if partial content exists)
 						const timeoutText = t("aiChat.generationTimeout");
 						setMessages((prev) =>
@@ -2649,22 +2621,11 @@ export default function AIChatPage() {
 				return;
 			}
 
-			if (currentConversationId) {
-				const convMap = variantCache.get(currentConversationId);
-				if (convMap) {
-					const prevMsg = currentMessages[messageIndex - 1];
-					const userBackendId = prevMsg ? getPersistedMessageId(prevMsg.id) : null;
-					if (userBackendId !== null) {
-						convMap.delete(String(userBackendId));
-					}
-				}
-			}
-
 			const newMessages = currentMessages.slice(0, messageIndex);
 			setMessages(newMessages);
 			showToast("info", t("aiChat.messageDeleted"));
 		},
-		[currentConversationId, deleteConversationBranchFromMessage, isGenerating, showToast, t],
+		[deleteConversationBranchFromMessage, isGenerating, showToast, t],
 	);
 
 	const handleRegenerate = useCallback(
@@ -2677,31 +2638,21 @@ export default function AIChatPage() {
 			const aiMessage = replayContext.targetMessage;
 			if (aiMessage.role !== "assistant") return;
 
-			const userMessage = replayContext.userMessage;
-			const convId = currentConversationId;
-			const userBackendId = getPersistedMessageId(userMessage.id);
+			const persistedAiId = getPersistedMessageId(aiMessage.id);
+			if (!persistedAiId) return;
 
-			const existingVariants = aiMessage.regenerations ?? [];
-			const savedVariants: VariantCacheSlot["variants"] =
+			const existingVariants: RegenerationVariant[] = aiMessage.regenerations ?? [];
+			const savedVariants: RegenerationVariant[] =
 				existingVariants.length === 0
 					? [
 							{
 								id: aiMessage.id,
 								content: aiMessage.content,
-								timestamp: aiMessage.timestamp.getTime(),
+								timestamp: aiMessage.timestamp,
 								artifacts: aiMessage.artifacts,
 							},
 						]
-					: existingVariants.map((v) => ({
-							id: v.id,
-							content: v.content,
-							timestamp: v.timestamp.getTime(),
-							artifacts: v.artifacts,
-						}));
-
-			if (!(await deleteConversationBranchFromMessage(aiMessage.id))) {
-				return;
-			}
+					: existingVariants;
 
 			const messagesUpToUser = replayContext.currentMessages.slice(
 				0,
@@ -2714,37 +2665,27 @@ export default function AIChatPage() {
 
 			const chatMessages = buildChatMessages(messagesUpToUser);
 			await executeChatGeneration(chatMessages, currentConversationId || undefined, {
+				regenerateMessageId: persistedAiId,
 				onFinally: () => {
 					setMessages((prev) => {
 						if (prev.length === 0) return prev;
 						const newAiMsg = prev[prev.length - 1];
 						if (newAiMsg.role !== "assistant") return prev;
 
-						const newVariant: VariantCacheSlot["variants"][0] = {
-							id: newAiMsg.id,
-							content: newAiMsg.content,
-							timestamp: newAiMsg.timestamp.getTime(),
-							artifacts: newAiMsg.artifacts,
-						};
-						const allVariants = [...savedVariants, newVariant];
+						const allVariants: RegenerationVariant[] = [
+							...savedVariants,
+							{
+								id: newAiMsg.id,
+								content: newAiMsg.content,
+								timestamp: newAiMsg.timestamp,
+								artifacts: newAiMsg.artifacts,
+							},
+						];
 						const newActiveIndex = allVariants.length - 1;
-
-						if (convId && userBackendId !== null) {
-							const convMap = getOrCreateConvVariantMap(convId);
-							convMap.set(String(userBackendId), {
-								variants: allVariants,
-								activeIndex: newActiveIndex,
-							});
-						}
 
 						const mergedAiMsg: Message = {
 							...newAiMsg,
-							regenerations: allVariants.map((v) => ({
-								id: v.id,
-								content: v.content,
-								timestamp: new Date(v.timestamp),
-								artifacts: v.artifacts,
-							})),
+							regenerations: allVariants,
 							activeRegenerationIndex: newActiveIndex,
 						};
 						return [...prev.slice(0, -1), mergedAiMsg];
@@ -2755,7 +2696,6 @@ export default function AIChatPage() {
 		[
 			buildChatMessages,
 			currentConversationId,
-			deleteConversationBranchFromMessage,
 			executeChatGeneration,
 			isGenerating,
 			resolveReplayContext,
@@ -2764,9 +2704,6 @@ export default function AIChatPage() {
 
 	const handleNavigateVariant = useCallback(
 		(messageIndex: number, direction: "prev" | "next") => {
-			const currentMessages = messagesRef.current;
-			const prevMsg = currentMessages[messageIndex - 1];
-			const userBackendId = prevMsg ? getPersistedMessageId(prevMsg.id) : null;
 			const convId = currentConversationIdRef.current;
 
 			setMessages((prev) =>
@@ -2789,12 +2726,9 @@ export default function AIChatPage() {
 
 					const activeVariant = msg.regenerations[newIndex];
 
-					if (convId && userBackendId !== null) {
-						const convMap = variantCache.get(convId);
-						if (convMap) {
-							const slot = convMap.get(String(userBackendId));
-							if (slot) slot.activeIndex = newIndex;
-						}
+					const targetId = getPersistedMessageId(activeVariant.id);
+					if (convId && targetId) {
+						activateMessageVariant(convId, targetId).catch(console.error);
 					}
 
 					return {

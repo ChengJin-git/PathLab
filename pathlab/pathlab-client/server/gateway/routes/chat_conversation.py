@@ -55,10 +55,44 @@ async def get_conversation(
 ):
     conversation = await require_conversation_access(db, conversation_id, user)
     sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
+
+    variant_groups: dict[str, list] = {}
+    for msg in sorted_messages:
+        if msg.variant_group_id:
+            variant_groups.setdefault(msg.variant_group_id, []).append(msg)
+
+    result_messages = []
+    for msg in sorted_messages:
+        if msg.variant_group_id and not msg.is_active_variant:
+            continue
+        msg_dict = msg.to_dict()
+        if msg.variant_group_id and msg.variant_group_id in variant_groups:
+            siblings = sorted(variant_groups[msg.variant_group_id], key=lambda m: m.id)
+            if len(siblings) > 1:
+                msg_dict["variants"] = [v.to_dict() for v in siblings]
+        result_messages.append(msg_dict)
+
     return {
         **conversation.to_dict(),
-        "messages": [msg.to_dict() for msg in sorted_messages],
+        "messages": result_messages,
     }
+
+
+@router.patch("/conversations/{conversation_id}/messages/{message_id}/activate-variant")
+async def activate_variant(
+    conversation_id: str,
+    message_id: int,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await require_conversation_access(db, conversation_id, user)
+    success = await ChatRepository.activate_variant(db, message_id)
+    if not success:
+        raise HTTPException(
+            status_code=404, detail="Message not found or not part of a variant group"
+        )
+    await db.commit()
+    return {"message": "Variant activated"}
 
 
 @router.delete("/conversations/{conversation_id}")

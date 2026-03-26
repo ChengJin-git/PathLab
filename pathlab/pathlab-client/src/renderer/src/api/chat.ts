@@ -77,7 +77,7 @@ export async function chatWithAI(
   messages: ChatMessage[],
   onChunk: (chunk: string) => void,
   conversationId?: string,
-  onMessageId?: (messageId: number) => void,
+  onMessageId?: (messageId: number, oldMessageId?: number) => void,
   signal?: AbortSignal,
   onContextLimit?: () => void,
   onResponseTruncated?: () => void,
@@ -87,7 +87,8 @@ export async function chatWithAI(
   onSearchPhase?: (phase: 'summarizing') => void,
   onWebSearchResult?: (event: WebSearchResultEvent) => void,
   onPdfParseResult?: (event: PdfParseResultEvent) => void,
-  onSearchClear?: () => void
+  onSearchClear?: () => void,
+  regenerateMessageId?: number,
 ): Promise<void> {
   const apiKey = localStorage.getItem('openrouter_api_key') || ''
   const baseUrl = localStorage.getItem('openrouter_base_url') || ''
@@ -116,7 +117,8 @@ export async function chatWithAI(
       headers,
       body: JSON.stringify({
         messages,
-        conversation_id: conversationId
+        conversation_id: conversationId,
+        ...(regenerateMessageId !== undefined ? { regenerate_message_id: regenerateMessageId } : {}),
       }),
       signal
     }))
@@ -173,7 +175,7 @@ export async function chatWithAI(
       }
       // Handle message_id event for persistence
       if (parsed.message_id && onMessageId) {
-        onMessageId(parsed.message_id)
+        onMessageId(parsed.message_id, parsed.old_message_id ?? undefined)
       }
       // Handle true context-window overflow signaled by the backend.
       if (parsed.context_limit && onContextLimit) {
@@ -509,6 +511,24 @@ export async function cancelChatPatchInferenceOnExit(
       keepalive: options?.keepalive ?? false
     },
     'Failed to cancel chat image inference on page exit'
+  )
+}
+
+/**
+ * Activate a specific variant (regeneration) of an AI message.
+ * Marks the target message as the active variant and deactivates all siblings.
+ * Fire-and-forget — callers should use .catch() to suppress errors.
+ * @param conversationId - Conversation ID
+ * @param messageId - The backend message ID of the variant to activate
+ */
+export async function activateMessageVariant(
+  conversationId: string,
+  messageId: number,
+): Promise<void> {
+  await apiFetch(
+    `${API_BASE}/conversations/${conversationId}/messages/${messageId}/activate-variant`,
+    { method: 'PATCH' },
+    'Failed to activate message variant'
   )
 }
 

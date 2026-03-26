@@ -1,7 +1,9 @@
 """
 ChatRepository - Data Access Layer
 """
+
 import logging
+import uuid as _uuid_module
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, desc
@@ -17,7 +19,9 @@ class ChatRepository:
     """Repository for Chat Conversation and Message operations"""
 
     @staticmethod
-    async def create_conversation(db: AsyncSession, conversation_data: Dict[str, Any]) -> ChatConversation:
+    async def create_conversation(
+        db: AsyncSession, conversation_data: Dict[str, Any]
+    ) -> ChatConversation:
         """Create a new conversation"""
         conversation = ChatConversation(**conversation_data)
         db.add(conversation)
@@ -26,7 +30,9 @@ class ChatRepository:
         return conversation
 
     @staticmethod
-    async def get_conversation(db: AsyncSession, conversation_id: str) -> Optional[ChatConversation]:
+    async def get_conversation(
+        db: AsyncSession, conversation_id: str
+    ) -> Optional[ChatConversation]:
         """Get conversation by ID with messages"""
         result = await db.execute(
             select(ChatConversation)
@@ -47,10 +53,7 @@ class ChatRepository:
 
     @staticmethod
     async def get_user_conversations(
-        db: AsyncSession,
-        user_id: str,
-        skip: int = 0,
-        limit: int = 50
+        db: AsyncSession, user_id: str, skip: int = 0, limit: int = 50
     ) -> List[ChatConversation]:
         """Get all conversations for a user"""
         result = await db.execute(
@@ -63,7 +66,9 @@ class ChatRepository:
         return result.scalars().all()
 
     @staticmethod
-    async def add_message(db: AsyncSession, message_data: Dict[str, Any]) -> ChatMessage:
+    async def add_message(
+        db: AsyncSession, message_data: Dict[str, Any]
+    ) -> ChatMessage:
         """Add a message to a conversation"""
         message = ChatMessage(**message_data)
         db.add(message)
@@ -81,10 +86,7 @@ class ChatRepository:
 
     @staticmethod
     async def get_messages(
-        db: AsyncSession,
-        conversation_id: str,
-        skip: int = 0,
-        limit: int = 100
+        db: AsyncSession, conversation_id: str, skip: int = 0, limit: int = 100
     ) -> List[ChatMessage]:
         """Get messages for a conversation"""
         result = await db.execute(
@@ -101,7 +103,7 @@ class ChatRepository:
         db: AsyncSession,
         message_id: int,
         content: str,
-        extra_metadata: Optional[Dict[str, Any]] = None
+        extra_metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[ChatMessage]:
         """Update a message's content"""
         result = await db.execute(
@@ -119,23 +121,8 @@ class ChatRepository:
 
     @staticmethod
     async def delete_messages_from_id(
-        db: AsyncSession,
-        conversation_id: str,
-        message_id: int
+        db: AsyncSession, conversation_id: str, message_id: int
     ) -> int:
-        """
-        Delete a message and all subsequent messages in a conversation.
-        Used for conversation branching - delete from a point to start a new branch.
-
-        Args:
-            db: Database session
-            conversation_id: Conversation ID
-            message_id: The message ID from which to start deletion (inclusive)
-
-        Returns:
-            Number of deleted messages
-        """
-        # Get the message to find its created_at timestamp
         result = await db.execute(
             select(ChatMessage)
             .where(ChatMessage.id == message_id)
@@ -146,16 +133,66 @@ class ChatRepository:
         if not target_message:
             return 0
 
-        # Delete all messages with id >= message_id in this conversation
-        # (messages are ordered by id which corresponds to creation order)
+        group_result = await db.execute(
+            select(ChatMessage.variant_group_id)
+            .where(ChatMessage.conversation_id == conversation_id)
+            .where(ChatMessage.id >= message_id)
+            .where(ChatMessage.variant_group_id.is_not(None))
+        )
+        variant_group_ids = [row[0] for row in group_result.fetchall()]
+
         delete_result = await db.execute(
             delete(ChatMessage)
             .where(ChatMessage.conversation_id == conversation_id)
             .where(ChatMessage.id >= message_id)
         )
 
+        if variant_group_ids:
+            await db.execute(
+                delete(ChatMessage).where(
+                    ChatMessage.variant_group_id.in_(variant_group_ids)
+                )
+            )
+
         await db.flush()
         return delete_result.rowcount
+
+    @staticmethod
+    async def prepare_variant_group(db: AsyncSession, old_ai_message_id: int) -> str:
+        result = await db.execute(
+            select(ChatMessage).where(ChatMessage.id == old_ai_message_id)
+        )
+        old_msg = result.scalar_one_or_none()
+        if not old_msg:
+            raise ValueError(f"Message {old_ai_message_id} not found")
+
+        group_id = old_msg.variant_group_id or str(_uuid_module.uuid4())
+        old_msg.variant_group_id = group_id
+        old_msg.is_active_variant = False
+        await db.flush()
+        return group_id
+
+    @staticmethod
+    async def activate_variant(db: AsyncSession, message_id: int) -> bool:
+        result = await db.execute(
+            select(ChatMessage).where(ChatMessage.id == message_id)
+        )
+        msg = result.scalar_one_or_none()
+        if not msg or not msg.variant_group_id:
+            return False
+
+        await db.execute(
+            update(ChatMessage)
+            .where(ChatMessage.variant_group_id == msg.variant_group_id)
+            .values(is_active_variant=False)
+        )
+        await db.execute(
+            update(ChatMessage)
+            .where(ChatMessage.id == message_id)
+            .values(is_active_variant=True)
+        )
+        await db.flush()
+        return True
 
     @staticmethod
     async def delete_conversation(db: AsyncSession, conversation_id: str) -> bool:
@@ -167,7 +204,9 @@ class ChatRepository:
 
         # Then delete the conversation
         result = await db.execute(
-            delete(ChatConversation).where(ChatConversation.conversation_id == conversation_id)
+            delete(ChatConversation).where(
+                ChatConversation.conversation_id == conversation_id
+            )
         )
         await db.flush()
         return result.rowcount > 0
@@ -176,8 +215,8 @@ class ChatRepository:
     async def count_user_conversations(db: AsyncSession, user_id: str) -> int:
         """Count total conversations for a user"""
         result = await db.execute(
-            select(func.count(ChatConversation.id))
-            .where(ChatConversation.user_id == user_id)
+            select(func.count(ChatConversation.id)).where(
+                ChatConversation.user_id == user_id
+            )
         )
         return result.scalar()
-

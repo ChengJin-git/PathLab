@@ -2860,15 +2860,11 @@ async def chat_with_ai(
         }
         messages.insert(0, system_prompt)
 
-    # If conversation_id is provided, save user message to database
-    # For multimodal messages, save text content and persist images in extra_metadata
-    if req.conversation_id and len(req.messages) > 0:
+    if req.conversation_id and len(req.messages) > 0 and not req.regenerate_message_id:
         last_user_message = req.messages[-1]
         if last_user_message.get("role") == "user":
-            # Extract text content (handles both string and multimodal format)
             content = last_user_message.get("content", "")
             text_content = extract_text_from_content(content)
-            # Extract image URLs from multimodal content for persistence
             images = _extract_images_from_content(content)
             message_data = {
                 "conversation_id": req.conversation_id,
@@ -3022,9 +3018,7 @@ async def chat_with_ai(
                     except (json.JSONDecodeError, KeyError):
                         pass
 
-                # Don't yield [DONE] yet - we need to send message_id first
                 if chunk == "data: [DONE]\n\n":
-                    # Save assistant response to database and return message_id BEFORE [DONE]
                     if req.conversation_id and full_response:
                         async for db_session in get_db():
                             try:
@@ -3036,20 +3030,30 @@ async def chat_with_ai(
                                     "role": "assistant",
                                     "content": save_content,
                                 }
+                                if req.regenerate_message_id:
+                                    group_id = (
+                                        await ChatRepository.prepare_variant_group(
+                                            db_session, req.regenerate_message_id
+                                        )
+                                    )
+                                    message_data["variant_group_id"] = group_id
+                                    message_data["is_active_variant"] = True
                                 saved_message = await ChatRepository.add_message(
                                     db_session, message_data
                                 )
                                 await db_session.commit()
                                 saved_to_db = True
-                                # Send message_id back to frontend so it can update the message ID
-                                # This enables proper persistence of task submission status
                                 if saved_message:
-                                    yield f"data: {json.dumps({'message_id': saved_message.id})}\n\n"
+                                    event_payload = {"message_id": saved_message.id}
+                                    if req.regenerate_message_id:
+                                        event_payload["old_message_id"] = (
+                                            req.regenerate_message_id
+                                        )
+                                    yield f"data: {json.dumps(event_payload)}\n\n"
                             finally:
                                 await db_session.close()
                     else:
-                        saved_to_db = True  # Nothing to save
-                    # Now yield [DONE] after message_id has been sent
+                        saved_to_db = True
                     yield chunk
                 else:
                     yield chunk
@@ -3069,11 +3073,11 @@ async def chat_with_ai(
                         except:
                             pass
         finally:
-            # Save a "cancelled" assistant message on abnormal exit (client disconnect,
-            # error, etc.) so the conversation isn't left with a dangling user message
-            # and no reply.  When the user returns, they see a clean cancel notice
-            # instead of a broken UI state.
-            if not saved_to_db and req.conversation_id:
+            if (
+                not saved_to_db
+                and req.conversation_id
+                and not req.regenerate_message_id
+            ):
                 cancel_text = _get_generation_cancelled_text(detected_lang)
                 # If there was partial content, append cancel notice after it
                 if full_response.strip():

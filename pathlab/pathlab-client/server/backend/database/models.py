@@ -538,6 +538,14 @@ class ChatMessage(Base):
     # Timestamp
     created_at = Column(DateTime, default=utc_now, nullable=False)
 
+    # Regeneration variant support: groups all AI responses to the same user message
+    # variant_group_id: shared UUID across all variants; NULL for non-regenerated messages
+    # is_active_variant: True for the currently displayed variant in each group
+    variant_group_id = Column(String(36), nullable=True, index=True)
+    is_active_variant = Column(
+        Boolean, default=True, nullable=False, server_default="true"
+    )
+
     # Relationships
     conversation = relationship("ChatConversation", back_populates="messages")
 
@@ -554,6 +562,8 @@ class ChatMessage(Base):
             "role": self.role,
             "content": self.content,
             "metadata": self.extra_metadata,  # Map back to 'metadata' for API compatibility
+            "variant_group_id": self.variant_group_id,
+            "is_active_variant": self.is_active_variant,
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,
