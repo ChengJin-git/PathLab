@@ -165,7 +165,7 @@ async def build_chat_context_for_user(user_id: str | None) -> dict[str, Any]:
 
                 _datasets = await DatasetRepository.get_by_ids(_db, _unique_dataset_ids)
                 _dataset_names = {
-                    d.dataset_id: d.dataset_name for d in _datasets if d.dataset_id
+                    d.dataset_id: d.name for d in _datasets if d.dataset_id
                 }
 
     model_summaries = []
