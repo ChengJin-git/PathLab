@@ -52,6 +52,30 @@ def _clean_message_for_title(content: str) -> str:
     return cleaned.strip()
 
 
+def _get_title_source_message(conversation) -> str | None:
+    """Pick the first user message that should drive title generation.
+
+    For branched conversations, use the first user message after the recorded
+    branch boundary instead of the original conversation's first user message.
+    """
+
+    active_messages = [
+        message
+        for message in sorted(conversation.messages, key=lambda msg: msg.id)
+        if not message.variant_group_id or message.is_active_variant
+    ]
+
+    search_messages = active_messages
+    if conversation.parent_conversation_id and conversation.branch_source_message_count:
+        search_messages = active_messages[conversation.branch_source_message_count :]
+
+    for message in search_messages:
+        if message.role == "user" and (message.content or "").strip():
+            return message.content
+
+    return None
+
+
 from backend.common.config import Config
 from backend.database import get_db
 from backend.database.repositories import ChatRepository
@@ -79,21 +103,26 @@ async def create_conversation(
     db: AsyncSession = Depends(get_db),
 ):
     source_conversation = None
+    source_message_count = None
     if req.source_conversation_id:
         source_conversation = await require_conversation_access(
             db, req.source_conversation_id, user
+        )
+        source_message_count = sum(
+            1
+            for message in source_conversation.messages
+            if not message.variant_group_id or message.is_active_variant
         )
 
     conversation_id = f"conv_{uuid.uuid4().hex[:16]}"
     conversation_data = {
         "conversation_id": conversation_id,
         "user_id": str(user.id),
-        "title": req.title
-        or (source_conversation.title if source_conversation else None)
-        or "New Conversation",
+        "title": req.title or "New Conversation",
         "parent_conversation_id": (
             source_conversation.conversation_id if source_conversation else None
         ),
+        "branch_source_message_count": source_message_count,
     }
     await ChatRepository.create_conversation(db, conversation_data)
 
@@ -196,13 +225,18 @@ async def generate_conversation_title(
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await require_conversation_access(db, conversation_id, user)
+    conversation = await require_conversation_access(db, conversation_id, user)
 
-    first_message = await ChatRepository.get_conversation_first_user_message(
-        db, conversation_id
-    )
+    first_message = _get_title_source_message(conversation)
     if not first_message or not first_message.strip():
-        raise HTTPException(status_code=400, detail="No user message found")
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "No user message found after branch point"
+                if conversation.parent_conversation_id
+                else "No user message found"
+            ),
+        )
 
     # ── Model selection: local vLLM → OpenRouter (mirrors stream_ai_response logic) ──
     global_settings = Config.get_global_settings()

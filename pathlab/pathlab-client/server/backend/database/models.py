@@ -486,6 +486,7 @@ class ChatConversation(TimestampMixin, Base):
         nullable=True,
         index=True,
     )
+    branch_source_message_count = Column(Integer, nullable=True)
 
     # Relationships (order_by ensures messages are always returned in chronological order)
     parent_conversation = relationship(
@@ -525,6 +526,7 @@ class ChatConversation(TimestampMixin, Base):
             "parent_conversation_title": (
                 parent_conversation.title if parent_conversation else None
             ),
+            "branch_source_message_count": self.branch_source_message_count,
             "created_at": self.created_at.isoformat() + "Z"
             if self.created_at
             else None,

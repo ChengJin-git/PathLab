@@ -7,7 +7,6 @@ import {
 	ClipboardList,
 	Database,
 	FileSpreadsheet,
-		GitBranch,
 	Share2,
 	History,
 	Loader2,
@@ -29,6 +28,7 @@ import {
 } from "lucide-react";
 import type React from "react";
 import {
+		Fragment,
 	useCallback,
 	useEffect,
 	useLayoutEffect,
@@ -158,6 +158,34 @@ const getPersistedMessageId = (messageId: string): number | null => {
 
 const hasReplayableAttachmentData = (message: Message): boolean =>
 	!parseCSVPreview(message.content) || Boolean(message.csvAttachments?.length);
+
+const BranchForkIcon = ({
+	className,
+	...props
+}: React.SVGProps<SVGSVGElement>) => (
+	<svg
+		viewBox="0 0 24 24"
+		fill="none"
+		stroke="currentColor"
+		strokeWidth="1.9"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		className={className}
+		aria-hidden="true"
+		{...props}
+	>
+		<circle cx="7" cy="5" r="2.25" />
+		<circle cx="17" cy="5" r="2.25" />
+		<circle cx="12" cy="19" r="2.25" />
+		<path d="M7 7.25v2.5a4 4 0 0 0 4 4h1" />
+		<path d="M17 7.25v2.5a4 4 0 0 1-4 4h-1" />
+		<path d="M12 14v2.75" />
+	</svg>
+);
+
+const isMessageHiddenInTimeline = (message: Message): boolean =>
+	(message.role === "assistant" && isInternalOnlyMessage(message.content)) ||
+	(message.role === "user" && isPdfContextMessage(message.content));
 
 const PENDING_CANCELLED_RESPONSE_KEY_PREFIX =
 	"ai-chat-pending-cancelled-response:";
@@ -517,6 +545,26 @@ export default function AIChatPage() {
 		}
 		return map;
 	}, [messages.length, messages]);
+
+	const branchSeparatorAfterIndex = useMemo(() => {
+		if (!currentConversationMeta?.parent_conversation_id) return null;
+
+		const branchCount = currentConversationMeta.branch_source_message_count;
+		if (!branchCount || branchCount < 1) return null;
+
+		const cappedCount = Math.min(branchCount, messages.length);
+		for (let i = cappedCount - 1; i >= 0; i -= 1) {
+			if (!isMessageHiddenInTimeline(messages[i])) {
+				return i;
+			}
+		}
+
+		return null;
+	}, [
+		currentConversationMeta?.branch_source_message_count,
+		currentConversationMeta?.parent_conversation_id,
+		messages,
+	]);
 
 	const mapConversationMessages = useCallback(
 		(apiMessages: ConversationWithMessages["messages"]): Message[] => {
@@ -2182,7 +2230,7 @@ export default function AIChatPage() {
 				isNewConversation = true;
 				setCurrentConversationMeta(newConv);
 				setCurrentConversationId(conversationId);
-				setPendingTitleConvIds((prev) => new Set(prev).add(conversationId));
+					setPendingTitleConvIds((prev) => new Set(prev).add(newConv.conversation_id));
 				updateConversationsAndCache((prevConversations) =>
 					upsertConversation(prevConversations, newConv),
 				);
@@ -2194,6 +2242,25 @@ export default function AIChatPage() {
 				console.error("Failed to create conversation:", error);
 			}
 		}
+
+			const isPlaceholderTitle = (title?: string | null) =>
+				!title ||
+				title === "New Conversation" ||
+				title === t("aiChat.newConversation");
+
+			const isUntitledBranchConversation =
+				Boolean(conversationId) &&
+				Boolean(currentConversationMeta?.parent_conversation_id) &&
+				currentConversationMeta?.conversation_id === conversationId &&
+				isPlaceholderTitle(currentConversationMeta?.title);
+
+			const shouldGenerateTitleAfterReply =
+				Boolean(conversationId) &&
+				(isNewConversation || isUntitledBranchConversation);
+
+			if (conversationId && shouldGenerateTitleAfterReply) {
+				setPendingTitleConvIds((prev) => new Set(prev).add(conversationId));
+			}
 
 		// Build chat messages and execute generation with shared helper
 		const chatMessages = buildChatMessages(messages.concat([userMessage]));
@@ -2223,9 +2290,14 @@ export default function AIChatPage() {
 					notifyVoiceResponseComplete(aiContent);
 				}, 150);
 
-				if (isNewConversation && conversationId) {
+					if (shouldGenerateTitleAfterReply && conversationId) {
 					generateConversationTitle(conversationId)
 						.then((result) => {
+								setCurrentConversationMeta((prev) =>
+									prev && prev.conversation_id === conversationId
+										? { ...prev, title: result.title }
+										: prev,
+								);
 							updateConversationsAndCache((prev) => {
 								const updated = prev.map((c) =>
 									c.conversation_id === conversationId
@@ -2250,6 +2322,11 @@ export default function AIChatPage() {
 								userMessage.content.length > 20
 									? `${userMessage.content.substring(0, 20)}...`
 									: userMessage.content || t("aiChat.imageAnalysis");
+								setCurrentConversationMeta((prev) =>
+									prev && prev.conversation_id === conversationId
+										? { ...prev, title: fallbackTitle }
+										: prev,
+								);
 							updateConversationsAndCache((prev) =>
 								prev.map((c) =>
 									c.conversation_id === conversationId
@@ -2301,10 +2378,10 @@ export default function AIChatPage() {
 		if (!currentConversationId || isGenerating) return;
 
 		try {
-			const branchedConversation = await createConversation(
-				currentConversationMeta?.title,
-				{ sourceConversationId: currentConversationId },
-			);
+				const branchedConversation = await createConversation(
+					t("aiChat.newConversation"),
+					{ sourceConversationId: currentConversationId },
+				);
 
 			updateConversationsAndCache((prevConversations) =>
 				upsertConversation(prevConversations, branchedConversation),
@@ -2318,7 +2395,6 @@ export default function AIChatPage() {
 		}
 	}, [
 		currentConversationId,
-		currentConversationMeta?.title,
 		handleLoadConversation,
 		isGenerating,
 		showToast,
@@ -3390,7 +3466,7 @@ export default function AIChatPage() {
 																					: "bg-violet-50 text-violet-600"
 																			}`}
 																		>
-																			<GitBranch className="w-3 h-3" />
+																			<BranchForkIcon className="w-3.5 h-3.5" />
 																		</span>
 																	</Tooltip>
 																)}
@@ -3521,23 +3597,6 @@ export default function AIChatPage() {
 									</div>
 								</div>
 							)}
-								{currentConversationMeta?.parent_conversation_id && (
-									<div className="flex items-center gap-3">
-										<div className="h-px flex-1 bg-gray-200" />
-										<div className="inline-flex max-w-full items-center gap-1.5 text-xs text-gray-500">
-											<GitBranch className="w-3.5 h-3.5 text-violet-500 flex-shrink-0" />
-											<span>{t("aiChat.branchedFrom")}</span>
-											<Link
-												to={`/dashboard/${currentConversationMeta.parent_conversation_id}`}
-												className="truncate text-primary-600 hover:text-primary-700 underline underline-offset-2"
-											>
-												{currentConversationMeta.parent_conversation_title ||
-													t("aiChat.originalConversation")}
-											</Link>
-										</div>
-										<div className="h-px flex-1 bg-gray-200" />
-									</div>
-								)}
 							{/* Find the last message with a TaskConfigCard/CancelTaskCard to only pass triggers to it */}
 							{(() => {
 								// Find the index of the last message that contains a TaskConfigCard
@@ -3568,25 +3627,14 @@ export default function AIChatPage() {
 									}
 								}
 								return messages.map((message, index) => {
-									// Skip rendering assistant messages that contain only internal blocks (e.g., VOICE_CONTROL only)
-									if (
-										message.role === "assistant" &&
-										isInternalOnlyMessage(message.content)
-									) {
-										return null;
-									}
-									// Skip rendering hidden PDF context user messages (stored for AI follow-up context only)
-									if (
-										message.role === "user" &&
-										isPdfContextMessage(message.content)
-									) {
+										if (isMessageHiddenInTimeline(message)) {
 										return null;
 									}
 									return (
-										<div
-											key={message.id}
-											className={`group flex gap-4 ${message.role === "user" ? "flex-row-reverse" : "flex-row"} items-start`}
-										>
+											<Fragment key={message.id}>
+												<div
+													className={`group flex gap-4 ${message.role === "user" ? "flex-row-reverse" : "flex-row"} items-start`}
+												>
 											{/* Avatar */}
 											<div className="flex-shrink-0 mt-1">
 												<div
@@ -3973,7 +4021,7 @@ export default function AIChatPage() {
 																						disabled={!currentConversationId || isGenerating}
 																						className={`hover:text-gray-600 transition-colors ${!currentConversationId || isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
 																					>
-																						<GitBranch className="w-4 h-4" />
+																			<BranchForkIcon className="w-4 h-4" />
 																					</button>
 																				</Tooltip>
 																				<div className="w-px h-4 bg-gray-200" />
@@ -4050,9 +4098,28 @@ export default function AIChatPage() {
 															</Tooltip>
 													</div>
 												)}
-											</div>
-										</div>
-									);
+																</div>
+															</div>
+															{branchSeparatorAfterIndex === index &&
+																currentConversationMeta?.parent_conversation_id && (
+																	<div className="flex items-center gap-3 py-1">
+																		<div className="h-px flex-1 bg-gray-200" />
+																		<div className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-violet-100 bg-white px-2.5 py-1 text-xs text-gray-500 shadow-sm">
+																			<BranchForkIcon className="h-3.5 w-3.5 flex-shrink-0 text-violet-500" />
+																			<span>{t("aiChat.branchedFrom")}</span>
+																			<Link
+																				to={`/dashboard/${currentConversationMeta.parent_conversation_id}`}
+																				className="max-w-[260px] truncate text-primary-600 hover:text-primary-700 underline underline-offset-2"
+																			>
+																				{currentConversationMeta.parent_conversation_title ||
+																					t("aiChat.originalConversation")}
+																			</Link>
+																		</div>
+																		<div className="h-px flex-1 bg-gray-200" />
+																	</div>
+																)}
+											</Fragment>
+														);
 								});
 							})()}
 

@@ -342,6 +342,12 @@ async def init_db():
         )
         await conn.execute(
             text(
+                "ALTER TABLE chat_conversations "
+                "ADD COLUMN IF NOT EXISTS branch_source_message_count INTEGER"
+            )
+        )
+        await conn.execute(
+            text(
                 "CREATE INDEX IF NOT EXISTS idx_chat_conversations_parent_conversation "
                 "ON chat_conversations (parent_conversation_id)"
             )

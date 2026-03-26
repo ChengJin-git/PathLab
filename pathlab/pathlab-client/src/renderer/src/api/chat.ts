@@ -265,6 +265,7 @@ export interface Conversation {
   title: string
   parent_conversation_id?: string | null
   parent_conversation_title?: string | null
+  branch_source_message_count?: number | null
   created_at: string
   updated_at: string
   message_count?: number

@@ -225,6 +225,7 @@ describe('createConversation', () => {
       conversation_id: 'conv_002',
       parent_conversation_id: 'conv_001',
       parent_conversation_title: 'BRCA Analysis Chat',
+      branch_source_message_count: 7,
     }))
     await createConversation('BRCA Analysis Chat', { sourceConversationId: 'conv_001' })
     const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
@@ -257,6 +258,7 @@ describe('getConversation', () => {
       ...MOCK_CONVERSATION,
       parent_conversation_id: 'conv_root',
       parent_conversation_title: 'Root conversation',
+      branch_source_message_count: 3,
       messages: [
         { id: 1, conversation_id: 'conv_001', role: 'user', content: 'Hello', created_at: '2024-01-01T00:00:00Z' },
       ],
@@ -268,6 +270,7 @@ describe('getConversation', () => {
     expect(result.messages[0].content).toBe('Hello')
     expect(result.parent_conversation_id).toBe('conv_root')
     expect(result.parent_conversation_title).toBe('Root conversation')
+    expect(result.branch_source_message_count).toBe(3)
   })
 
   it('throws NOT_FOUND for unknown conversation', async () => {
