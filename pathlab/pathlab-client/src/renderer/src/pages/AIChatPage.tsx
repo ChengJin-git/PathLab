@@ -2216,21 +2216,32 @@ export default function AIChatPage() {
 				}, 150);
 
 				if (isNewConversation && conversationId) {
-					const fallbackTitle =
-						userMessage.content.length > 20
-							? `${userMessage.content.substring(0, 20)}...`
-							: userMessage.content || t("aiChat.imageAnalysis");
 					generateConversationTitle(conversationId)
 						.then((result) => {
-							updateConversationsAndCache((prev) =>
-								prev.map((c) =>
+							updateConversationsAndCache((prev) => {
+								const updated = prev.map((c) =>
 									c.conversation_id === conversationId
 										? { ...c, title: result.title }
 										: c,
-								),
-							);
+								);
+								// If conversation not in cache yet, add it
+								if (!updated.some((c) => c.conversation_id === conversationId)) {
+									updated.push({
+										conversation_id: conversationId,
+										user_id: user?.id || "",
+										title: result.title,
+										created_at: new Date().toISOString(),
+										updated_at: new Date().toISOString(),
+									});
+								}
+								return updated;
+							});
 						})
 						.catch(() => {
+							const fallbackTitle =
+								userMessage.content.length > 20
+									? `${userMessage.content.substring(0, 20)}...`
+									: userMessage.content || t("aiChat.imageAnalysis");
 							updateConversationsAndCache((prev) =>
 								prev.map((c) =>
 									c.conversation_id === conversationId
