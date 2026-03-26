@@ -334,6 +334,7 @@ export default function AIChatPage() {
 	>(null);
 	const currentConversationIdRef = useRef<string | null>(null);
 	currentConversationIdRef.current = currentConversationId;
+	const untitledBranchConversationIdsRef = useRef<Set<string>>(new Set());
 	const [pendingTitleConvIds, setPendingTitleConvIds] = useState<Set<string>>(new Set());
 	// Initialize from localStorage, defaulting to true on desktop, false on mobile
 	const [showHistory, setShowHistory] = useState(() => {
@@ -1065,6 +1066,7 @@ export default function AIChatPage() {
 		setMessages([]);
 		setCurrentConversationMeta(null);
 		setCurrentConversationId(null);
+		untitledBranchConversationIdsRef.current.clear();
 		setInput("");
 		setImageAttachments([]);
 		setFileAttachments([]);
@@ -1168,6 +1170,16 @@ export default function AIChatPage() {
 				activeRegenerationIndex: resolvedActiveIdx,
 			};
 		});
+
+			const isPlaceholderTitle =
+				!conv.title ||
+				conv.title === "New Conversation" ||
+				conv.title === t("aiChat.newConversation");
+			if (conv.parent_conversation_id && isPlaceholderTitle) {
+				untitledBranchConversationIdsRef.current.add(conv.conversation_id);
+			} else {
+				untitledBranchConversationIdsRef.current.delete(conv.conversation_id);
+			}
 
 			setMessages(messagesToShow);
 			setCurrentConversationMeta(conv);
@@ -2249,10 +2261,13 @@ export default function AIChatPage() {
 				title === t("aiChat.newConversation");
 
 			const isUntitledBranchConversation =
-				Boolean(conversationId) &&
-				Boolean(currentConversationMeta?.parent_conversation_id) &&
-				currentConversationMeta?.conversation_id === conversationId &&
-				isPlaceholderTitle(currentConversationMeta?.title);
+				conversationId != null &&
+				(
+					untitledBranchConversationIdsRef.current.has(conversationId) ||
+					(Boolean(currentConversationMeta?.parent_conversation_id) &&
+						currentConversationMeta?.conversation_id === conversationId &&
+						isPlaceholderTitle(currentConversationMeta?.title))
+				);
 
 			const shouldGenerateTitleAfterReply =
 				Boolean(conversationId) &&
@@ -2293,6 +2308,7 @@ export default function AIChatPage() {
 					if (shouldGenerateTitleAfterReply && conversationId) {
 					generateConversationTitle(conversationId)
 						.then((result) => {
+								untitledBranchConversationIdsRef.current.delete(conversationId);
 								setCurrentConversationMeta((prev) =>
 									prev && prev.conversation_id === conversationId
 										? { ...prev, title: result.title }
@@ -2322,6 +2338,7 @@ export default function AIChatPage() {
 								userMessage.content.length > 20
 									? `${userMessage.content.substring(0, 20)}...`
 									: userMessage.content || t("aiChat.imageAnalysis");
+								untitledBranchConversationIdsRef.current.delete(conversationId);
 								setCurrentConversationMeta((prev) =>
 									prev && prev.conversation_id === conversationId
 										? { ...prev, title: fallbackTitle }
@@ -2381,6 +2398,9 @@ export default function AIChatPage() {
 				const branchedConversation = await createConversation(
 					t("aiChat.newConversation"),
 					{ sourceConversationId: currentConversationId },
+				);
+				untitledBranchConversationIdsRef.current.add(
+					branchedConversation.conversation_id,
 				);
 
 			updateConversationsAndCache((prevConversations) =>
