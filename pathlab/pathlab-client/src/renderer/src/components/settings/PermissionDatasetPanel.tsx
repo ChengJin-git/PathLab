@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { ArrowRightLeft, Clock, Eye, Globe, Lock, Search, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Clock, Globe, Lock, Search, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
@@ -412,14 +412,7 @@ export function PermissionDatasetPanel({
                           </span>
                         )}
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {permission.can_read && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                            <Eye className="h-3 w-3" />
-                            {t("settings.permissionCenterModal.read")}
-                          </span>
-                        )}
-                      </div>
+
                     </div>
                     <Button
                       type="button"

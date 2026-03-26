@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { Clock, Eye, Globe, Lock, Search, Trash2 } from "lucide-react";
+import { Clock, Globe, Lock, Search, Trash2 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Input } from "../ui/input";
@@ -283,7 +283,7 @@ export function PermissionUserPanel({
                 >
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium text-gray-900">
-                      {permission.dataset_name || permission.dataset_id}
+                      {(permission.dataset_name || permission.dataset_id).trim()}
                     </div>
                     <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-500">
                       <span className="inline-flex items-center gap-1">
@@ -300,14 +300,7 @@ export function PermissionUserPanel({
                         </span>
                       )}
                     </div>
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {permission.can_read && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-600">
-                          <Eye className="h-3 w-3" />
-                          {t("settings.permissionCenterModal.read")}
-                        </span>
-                      )}
-                    </div>
+
                   </div>
                   <Button
                     type="button"
