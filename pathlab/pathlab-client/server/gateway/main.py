@@ -23,6 +23,7 @@ from gateway.chat.context_cache import (
 )
 from backend.database.repositories import (
     AITaskRepository,
+    DatasetRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
     ExportTaskRepository,
@@ -529,8 +530,24 @@ async def resume_interrupted_tasks():
                             )
                             continue
 
-                    # Get associated WSI IDs
-                    wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, task.task_id)
+                    data_type = task.data_group.data_type if task.data_group else "wsi"
+                    task_type = (
+                        task.data_group.task_type
+                        if task.data_group
+                        else "classification"
+                    )
+
+                    if task_type == "external_validation":
+                        _ev_dataset_id = (task.model_config or {}).get("dataset_id", "")
+                        wsi_ids = (
+                            await DatasetRepository.get_wsi_ids(db, _ev_dataset_id)
+                            if _ev_dataset_id
+                            else []
+                        )
+                    else:
+                        wsi_ids = await TrainingTaskRepository.get_wsi_ids(
+                            db, task.task_id
+                        )
 
                     if not wsi_ids:
                         logger.warning(
@@ -550,20 +567,7 @@ async def resume_interrupted_tasks():
                     logger.info(f"  - Progress before interruption: {task.progress}%")
                     logger.info(f"  - WSI count: {len(wsi_ids)}")
 
-                    # Submit task to queue instead of directly creating asyncio task
-                    # The queue manages concurrency to prevent GPU overload
-                    # Note: The pipeline uses force_recompute=False, so it will
-                    # reuse cached patches and features where available
                     task_queue = get_task_queue()
-                    # Pass pipeline args as kwargs dict
-                    # Note: task_id is automatically added by task_queue.submit(), don't include it here
-                    # Get data_type and task_type from DataGroup relationship
-                    data_type = task.data_group.data_type if task.data_group else "wsi"
-                    task_type = (
-                        task.data_group.task_type
-                        if task.data_group
-                        else "classification"
-                    )
 
                     if task_type == "external_validation":
                         # External validation tasks use a dedicated pipeline, not run_training_pipeline.
