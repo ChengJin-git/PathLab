@@ -10,6 +10,7 @@ import httpx
 from fastapi import Request
 
 from ..dependencies import logger
+from .chat_model_selector import extract_text_from_content
 from .chat_pdf import detect_source_type, ACADEMIC_SOURCE_TYPES
 
 
@@ -203,7 +204,7 @@ async def _call_ai_complete(
     data = response.json()
 
     if "choices" in data and len(data["choices"]) > 0:
-        return data["choices"][0]["message"]["content"]
+        return extract_text_from_content(data["choices"][0]["message"].get("content"))
     return ""
 
 

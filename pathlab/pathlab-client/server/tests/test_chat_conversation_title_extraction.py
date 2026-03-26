@@ -4,6 +4,7 @@ from gateway.routes.chat_conversation import (
     _build_title_generation_payload,
     _build_title_prompt,
     _clean_message_for_title,
+    _extract_title_response_text,
     _get_title_source_message,
     _normalize_title_language,
     _resolve_title_language,
@@ -43,6 +44,21 @@ def test_build_title_prompt_uses_requested_language():
     assert "必须使用简体中文" in zh_prompt
     assert "消息：" in zh_prompt
     assert "in English" in en_prompt
+
+
+def test_extract_title_response_text_supports_string_content():
+    assert _extract_title_response_text({"content": "查看 ucec 任务"}) == "查看 ucec 任务"
+
+
+def test_extract_title_response_text_supports_content_parts():
+    message = {
+        "content": [
+            {"type": "text", "text": "AI 病理学研究方向"},
+            {"type": "image_url", "image_url": {"url": "https://example.com/a.png"}},
+        ]
+    }
+
+    assert _extract_title_response_text(message) == "AI 病理学研究方向"
 
 
 def test_get_title_source_message_uses_first_branch_user_message():

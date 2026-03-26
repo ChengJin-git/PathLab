@@ -91,6 +91,10 @@ def _build_title_prompt(message: str, lang: str) -> str:
     )
 
 
+def _extract_title_response_text(message: dict[str, object]) -> str:
+    return extract_text_from_content(message.get("content")).strip()
+
+
 def _get_title_source_message(conversation) -> str | None:
     """Pick the first user message that should drive title generation.
 
@@ -131,6 +135,7 @@ from .chat_patch_inference import (
     cleanup_conversation_chat_patch_tasks,
     cleanup_chat_patch_tasks_from_message,
 )
+from .chat_model_selector import extract_text_from_content
 from .chat_llm_client import _check_local_vllm_available
 
 router = APIRouter(tags=["Chat & Conversations"])
@@ -383,7 +388,7 @@ async def generate_conversation_title(
             resp.raise_for_status()
             data = resp.json()
             message = data.get("choices", [{}])[0].get("message", {})
-            raw_content = message.get("content") or ""
+            raw_content = _extract_title_response_text(message)
             title = raw_content.strip().strip('"').strip("'")
     except Exception as e:
         logger.warning(
