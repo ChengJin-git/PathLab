@@ -3715,8 +3715,7 @@
       "title2": "natural language",
       "subtitle": "A true clinical-grade AI workspace. From data import and zero-shot configuration to log tracking and viewer evidence—all guided seamlessly by natural language.",
       "primaryCta": "Get Started",
-      "secondaryCta": "Book Demo",
-      "supports": "Supports SVS, NDPI, DICOM • Public & Private • English / 中文"
+      "secondaryCta": "Book Demo"
     },
     "trustStrip": {
       "nlp": "Natural Language Config",
@@ -3729,15 +3728,29 @@
       "header": "From idea to evidence in three simple steps",
       "step1": {
         "title": "1. Tell the AI what you need",
-        "desc": "Start with a simple natural language prompt. No complex forms required."
+        "desc": "Start with a simple natural language prompt. No complex forms required.",
+        "mock": "\"Train a cancer subtyping model on SKCM001 dataset...\"",
+        "tag1": "Classification",
+        "tag2": "Training"
       },
       "step2": {
         "title": "2. Automatic System Configuration",
-        "desc": "The system maps your intent to internal configurations, models, and datasets in seconds."
+        "desc": "The system maps your intent to internal configurations, models, and datasets in seconds.",
+        "mockTitle": "System Configuration",
+        "mockPipeline": "Pipeline",
+        "mockPipelineValue": "WSI Classification",
+        "mockModel": "Model"
       },
       "step3": {
         "title": "3. Track and Analyze Results",
-        "desc": "Review the pipeline execution and jump directly into the viewer for in-depth visual evidence."
+        "desc": "Review the pipeline execution and jump directly into the viewer for in-depth visual evidence.",
+        "mockStatus": "Task Status",
+        "mockCompleted": "Completed",
+        "mockDuration": "2m 34s",
+        "mockPredTitle": "Pred. Confidence",
+        "mockClass1": "BCC",
+        "mockClass2": "SCC",
+        "mockClass3": "Others"
       }
     },
     "capabilities": {
@@ -3751,7 +3764,7 @@
       "desc": "Stop switching between disjointed tools. View your pipeline results alongside the original Whole Slide Images, with synchronized heatmaps and opacity controls.",
       "f1": {
         "title": "Zero-latency visualization",
-        "desc": "Deep zoom into gigapixel tissue arrays instantly via the WebGL renderer."
+        "desc": "Deep zoom into gigapixel tissue arrays instantly via the Aslide renderer."
       },
       "f2": {
         "title": "Synchronized Overlays",

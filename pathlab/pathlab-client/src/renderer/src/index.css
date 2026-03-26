@@ -4,6 +4,18 @@
   --animate-tooltip-in: tooltip-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
   --animate-tooltip-out: tooltip-out 0.08s ease-in forwards;
 
+  /* Landing page specific colors */
+  --landing-page-bg: #f7fbfd;
+  --landing-surface: #ffffff;
+  --landing-surface-muted: #f1f7fb;
+  --landing-border: #dce8f2;
+  --landing-text-primary: #0f172a;
+  --landing-text-secondary: #5b6b7f;
+  --landing-primary: #2f6bff;
+  --landing-primary-deep: #1d4ed8;
+  --landing-accent: #14b8a6;
+  --landing-soft-glow: rgba(47, 107, 255, 0.14);
+
   /* Primary color palette */
   --color-primary-50: #f5f7ff;
   --color-primary-100: #ebf0ff;

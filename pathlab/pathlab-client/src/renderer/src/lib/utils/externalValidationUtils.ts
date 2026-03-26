@@ -30,6 +30,9 @@ export const EXTRACTOR_EMBED_DIM: Record<string, number> = {
   'H-Optimus-0': 1536,
   mSTAR: 1024,
   GPFM: 1024,
+  SmartCCS: 1024,
+  SmartCyto: 768,
+  CytoFM: 1024,
 }
 
 /**
@@ -58,7 +61,7 @@ export interface TrainingTaskMetadata {
 
 function normalizeLabels(labels: string[] | null | undefined): string[] {
   const normalized = (labels || [])
-    .map(label => label?.trim())
+    .map(label => label?.trim().toLowerCase())
     .filter((label): label is string => Boolean(label))
   return [...new Set(normalized)].sort()
 }

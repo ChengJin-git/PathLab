@@ -459,6 +459,13 @@ async def _get_elevated_dataset_ids(
     ]
 
 
+async def _get_all_granted_dataset_ids(user: User, db: AsyncSession) -> set[str]:
+    if user.is_admin():
+        return set()
+    permissions = await DatasetGrantRepository.get_valid_by_user(db, str(user.id))
+    return {_coerce_str(p.dataset_id) for p in permissions if p.is_valid()}
+
+
 def _build_owned_ai_result_filter(user: User):
     """
     Restrict AI result visibility to the current user's own derived artifacts.
@@ -1271,9 +1278,11 @@ async def get_datasets_for_validation(
     missing features are extracted automatically when validation starts.
     """
     datasets = await DatasetRepository.get_all(db)
-    elevated_dataset_ids = set()
+    elevated_dataset_ids: set[str] = set()
+    all_granted_dataset_ids: set[str] = set()
     if not user.is_admin():
         elevated_dataset_ids = set(await _get_elevated_dataset_ids(user, db) or [])
+        all_granted_dataset_ids = await _get_all_granted_dataset_ids(user, db)
 
     result = []
     for ds in datasets:
@@ -1281,7 +1290,6 @@ async def get_datasets_for_validation(
         if not dg:
             continue
 
-        # Skip external_validation datasets - only show real datasets
         if dg.task_type == "external_validation":
             continue
 
@@ -1289,8 +1297,14 @@ async def get_datasets_for_validation(
 
         if not user.is_admin():
             owns_dataset = _coerce_str(ds.user_id) == str(user.id)
-            has_temp_access = dataset_id in elevated_dataset_ids
-            if not owns_dataset and not has_temp_access:
+            is_public = bool(getattr(ds, "is_public", False))
+            has_dataset_access = (
+                owns_dataset or is_public or dataset_id in all_granted_dataset_ids
+            )
+            has_gpu_permission = (
+                user.can_use_gpu() or dataset_id in elevated_dataset_ids
+            )
+            if not has_dataset_access or not has_gpu_permission:
                 continue
 
         # Get WSI IDs

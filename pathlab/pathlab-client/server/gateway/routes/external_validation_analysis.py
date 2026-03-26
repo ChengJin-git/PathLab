@@ -103,7 +103,7 @@ def _is_extval_segmentation_task(task_type: Optional[str]) -> bool:
 
 
 def _norm_labels(labels: List[str]) -> List[str]:
-    return sorted({str(lbl).strip() for lbl in labels if str(lbl).strip()})
+    return sorted({str(lbl).strip().lower() for lbl in labels if str(lbl).strip()})
 
 
 def check_extval_compatibility(

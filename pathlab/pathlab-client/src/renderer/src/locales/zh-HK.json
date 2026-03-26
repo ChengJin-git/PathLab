@@ -3714,8 +3714,7 @@
       "title2": "病理 AI 工作流",
       "subtitle": "全流程數位病理智能工作台。從數據匯入、自動零樣本訓練配置，到任務日誌監控與醫學影像證據層，全程自然語言互動。",
       "primaryCta": "開始使用",
-      "secondaryCta": "預約演示",
-      "supports": "支援 SVS, NDPI, DICOM • 私有與公開資料集 • English / 中文"
+      "secondaryCta": "預約演示"
     },
     "trustStrip": {
       "nlp": "自然語言任務配置",
@@ -3728,15 +3727,29 @@
       "header": "只需三步，從靈感到可驗證的診斷證據",
       "step1": {
         "title": "1. 告訴 AI 你的目標",
-        "desc": "用日常語言描述你想在影像上執行的任務，告別繁冗表單。"
+        "desc": "用日常語言描述你想在影像上執行的任務，告別繁冗表單。",
+        "mock": "\"訓練一個癌症分類模型，使用 SKCM001 數據集...\"",
+        "tag1": "分割",
+        "tag2": "訓練"
       },
       "step2": {
         "title": "2. 系統級自動配置",
-        "desc": "引擎在幾秒內將您的意圖解析為底層的模型調用、環境分配和格式轉化指令。"
+        "desc": "引擎在幾秒內將您的意圖解析為底層的模型調用、環境分配和格式轉化指令。",
+        "mockTitle": "系統配置",
+        "mockPipeline": "流程",
+        "mockPipelineValue": "WSI 分類",
+        "mockModel": "模型"
       },
       "step3": {
         "title": "3. 監控進度與分析結果",
-        "desc": "在一個控制台裡跟蹤執行進度，並可直接在數位切片中比對預測疊層模型。"
+        "desc": "在一個控制台裡跟蹤執行進度，並可直接在數位切片中比對預測疊層模型。",
+        "mockStatus": "任務狀態",
+        "mockCompleted": "已完成",
+        "mockDuration": "2m 34s",
+        "mockPredTitle": "預測置信度",
+        "mockClass1": "基底細胞癌",
+        "mockClass2": "鱗狀細胞癌",
+        "mockClass3": "其他"
       }
     },
     "capabilities": {
