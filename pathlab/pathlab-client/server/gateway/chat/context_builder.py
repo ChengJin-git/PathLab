@@ -148,21 +148,44 @@ async def build_chat_context_for_user(user_id: str | None) -> dict[str, Any]:
                     str(_task.task_name or ""),
                 )
 
+    # Get source dataset IDs for all tasks
+    _source_dataset_ids: dict[str, str | None] = {}
+    _dataset_names: dict[str, str] = {}
+    if _task_ids:
+        async with async_session() as _db:
+            _source_dataset_ids = (
+                await TrainingTaskRepository.get_source_dataset_ids_batch(
+                    _db, _task_ids
+                )
+            )
+            # Get dataset names for unique dataset IDs
+            _unique_dataset_ids = list({v for v in _source_dataset_ids.values() if v})
+            if _unique_dataset_ids:
+                from backend.database.repositories import DatasetRepository
+
+                _datasets = await DatasetRepository.get_by_ids(_db, _unique_dataset_ids)
+                _dataset_names = {
+                    d.dataset_id: d.dataset_name for d in _datasets if d.dataset_id
+                }
+
     model_summaries = []
     for m in trained_models:
         _tt, _dt, _tn = _task_meta.get(
             str(m.task_id) if m.task_id else "", ("unknown", "unknown", "")
         )
+        _dataset_id = _source_dataset_ids.get(str(m.task_id)) if m.task_id else None
+        _ds_name = _dataset_names.get(_dataset_id, "") if _dataset_id else ""
         model_summaries.append(
             {
                 "id": m.model_id,
                 "task_type": _tt,
                 "data_type": _dt,
                 "classes": [c.lower() for c in (m.classes or [])],
-                "dataset_names": [],
+                "source_dataset_id": _dataset_id,
+                "dataset_names": [_ds_name] if _ds_name else [],
                 "dataset_sources": [],
                 "task_name": _tn.lower(),
-                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, data_type={_dt}, trained_on_task={m.task_id}, task_name={_tn or 'unknown'}, feature_extractor={m.feature_extractor or 'unknown'}, aggregator={m.aggregator or 'unknown'}, classes={[c.lower() for c in (m.classes or [])]})",
+                "line": f"  - {m.model_name} (id={m.model_id}, task_type={_tt}, data_type={_dt}, trained_on_task={m.task_id}, task_name={_tn or 'unknown'}, feature_extractor={m.feature_extractor or 'unknown'}, aggregator={m.aggregator or 'unknown'}, classes={[c.lower() for c in (m.classes or [])]}, dataset={_ds_name or 'unknown'})",
                 # embedding field populated below (after batch encode)
                 "embedding": None,
             }
