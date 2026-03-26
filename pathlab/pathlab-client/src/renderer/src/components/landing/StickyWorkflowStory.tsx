@@ -236,21 +236,21 @@ export function StickyWorkflowStory() {
                       <p className="text-xs font-semibold text-slate-500 mb-3">{t('landing.story.step3.mockPredTitle', 'Pred. Confidence')}</p>
                       <div className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 w-14 shrink-0">{t('landing.story.step3.mockClass1', 'Tumor')}</span>
-                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
-                            <div className="bg-[color:var(--landing-primary)] h-full rounded-full w-[87%]" />
-                          </div>
-                          <span className="text-xs font-bold text-slate-600 w-7 text-right">87%</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 w-14 shrink-0">{t('landing.story.step3.mockClass2', 'Stroma')}</span>
-                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
-                            <div className="bg-blue-300 h-full rounded-full w-[8%]" />
-                          </div>
-                          <span className="text-xs font-bold text-slate-600 w-7 text-right">8%</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 w-14 shrink-0">{t('landing.story.step3.mockClass3', 'Necrosis')}</span>
+                           <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass1', 'Tumor')}</span>
+                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
+                             <div className="bg-[color:var(--landing-primary)] h-full rounded-full w-[87%]" />
+                           </div>
+                           <span className="text-xs font-bold text-slate-600 w-7 text-right">87%</span>
+                         </div>
+                         <div className="flex items-center gap-2">
+                           <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass2', 'Stroma')}</span>
+                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
+                             <div className="bg-blue-300 h-full rounded-full w-[8%]" />
+                           </div>
+                           <span className="text-xs font-bold text-slate-600 w-7 text-right">8%</span>
+                         </div>
+                         <div className="flex items-center gap-2">
+                           <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass3', 'Necrosis')}</span>
                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
                             <div className="bg-blue-200 h-full rounded-full w-[5%]" />
                           </div>
