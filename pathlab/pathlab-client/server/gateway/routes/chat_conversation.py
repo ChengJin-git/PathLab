@@ -178,9 +178,8 @@ async def generate_conversation_title(
             )
             resp.raise_for_status()
             data = resp.json()
-            title = (
-                data["choices"][0]["message"]["content"].strip().strip('"').strip("'")
-            )
+            raw_content = data.get("choices", [{}])[0].get("message", {}).get("content")
+            title = (raw_content or "").strip().strip('"').strip("'")
     except Exception as e:
         logger.error(f"Title generation failed: {e}")
         raise HTTPException(status_code=500, detail="Failed to generate title")
