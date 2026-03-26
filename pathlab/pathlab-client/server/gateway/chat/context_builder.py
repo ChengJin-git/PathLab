@@ -18,6 +18,7 @@ from backend.database import async_session
 from backend.database.models import TrainingTask
 from backend.database.repositories import (
     AITaskRepository,
+    DatasetGrantRepository,
     TrainingTaskRepository,
     TrainedModelRepository,
     WSIRepository,
@@ -33,8 +34,13 @@ async def build_chat_context_for_user(user_id: str | None) -> dict[str, Any]:
     Returns the dict passed to set_cached_context_kwargs() / set_cached_context_kwargs_admin().
     """
     async with async_session() as db:
+        elevated_dataset_ids = None
+        if user_id is not None:
+            elevated_dataset_ids = (
+                await DatasetGrantRepository.list_read_dataset_ids_for_user(db, user_id)
+            )
         stats = await WSIRepository.get_chat_context_stats(
-            db, user_id=user_id, elevated_dataset_ids=None
+            db, user_id=user_id, elevated_dataset_ids=elevated_dataset_ids or None
         )
         trained_models = await TrainedModelRepository.get_all(
             db, limit=200, offset=0, user_id=user_id

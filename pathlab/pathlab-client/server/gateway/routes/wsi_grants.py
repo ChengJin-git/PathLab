@@ -472,6 +472,13 @@ async def grant_dataset_grant(
             detail="Valid permission already exists for this user on this dataset",
         )
 
+    try:
+        await invalidate_chat_context(user_id)
+    except Exception as _exc:
+        logger.warning(
+            "[ChatCtxCache] grant invalidate failed for user %s: %s", user_id, _exc
+        )
+
     return {"message": message, "grant": grant}
 
 
@@ -546,6 +553,13 @@ async def batch_grant_dataset_grants(
             )
             results.append({"user_id": uid, "success": False, "error": str(exc)})
 
+    granted_user_ids = [r["user_id"] for r in results if r.get("success")]
+    if granted_user_ids:
+        try:
+            await invalidate_all_user_chat_contexts(granted_user_ids)
+        except Exception as _exc:
+            logger.warning("[ChatCtxCache] batch-grant invalidate failed: %s", _exc)
+
     return {
         "dataset_id": dataset_id,
         "granted": granted,
@@ -587,6 +601,16 @@ async def revoke_dataset_grant(
         db, dataset_id, str(user.id), target_user_id, "revoke_permission", {}
     )
     await db.commit()
+
+    try:
+        await invalidate_chat_context(target_user_id)
+    except Exception as _exc:
+        logger.warning(
+            "[ChatCtxCache] revoke invalidate failed for user %s: %s",
+            target_user_id,
+            _exc,
+        )
+
     return result
 
 
@@ -640,6 +664,13 @@ async def batch_revoke_dataset_grants(
                 f"Failed to batch revoke for user {uid} on dataset {dataset_id}: {exc}"
             )
             results.append({"user_id": uid, "success": False, "error": str(exc)})
+
+    revoked_user_ids = [r["user_id"] for r in results if r.get("success")]
+    if revoked_user_ids:
+        try:
+            await invalidate_all_user_chat_contexts(revoked_user_ids)
+        except Exception as _exc:
+            logger.warning("[ChatCtxCache] batch-revoke invalidate failed: %s", _exc)
 
     return {
         "dataset_id": dataset_id,
