@@ -28,7 +28,11 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
           </div>
 
           <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.15] tracking-tight mb-6 text-[color:var(--landing-text-primary)]">
-            {t('landing.hero.title1', 'Master pathology workflows with ')}
+            {t('landing.hero.title1', 'Master pathology')}
+            <br />
+            {!isZh && (
+              <>{t('landing.hero.title1b', 'workflows with')}<br /></>
+            )}
             <span className="text-transparent bg-clip-text bg-gradient-to-r from-[color:var(--landing-primary)] to-cyan-500">
               {t('landing.hero.title2', 'natural language')}
             </span>

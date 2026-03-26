@@ -3711,7 +3711,8 @@
     },
     "hero": {
       "badge": "Powered by Agentic AI",
-      "title1": "Master pathology workflows with ",
+      "title1": "Master pathology",
+      "title1b": "workflows with",
       "title2": "natural language",
       "subtitle": "A true clinical-grade AI workspace. From data import and zero-shot configuration to log tracking and viewer evidence—all guided seamlessly by natural language.",
       "primaryCta": "Get Started",
