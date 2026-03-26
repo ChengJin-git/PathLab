@@ -193,3 +193,27 @@ def test_fm_model_invalid_decoder_type_raises():
         FMSegmentationModel(
             extractor=ext, classes=1, input_size=224, decoder_type="bad"
         )
+
+
+# ---------------------------------------------------------------------------
+# Task 4 — Segmentor integration
+# ---------------------------------------------------------------------------
+
+from unittest.mock import patch as mock_patch
+from backend.ai.segmentors import Segmentor
+
+
+def test_segmentor_passes_decoder_type():
+    fake_ext = _FakeExtractor(embed_dim=64)
+
+    with mock_patch("backend.ai.segmentors.get_extractor", return_value=fake_ext):
+        seg = Segmentor(
+            architecture="unet",
+            encoder_name="uni",
+            classes=1,
+            decoder_type="linear",
+        )
+        model = seg.build_model()
+
+    assert isinstance(model, FMSegmentationModel)
+    assert model.decoder_type == "linear"

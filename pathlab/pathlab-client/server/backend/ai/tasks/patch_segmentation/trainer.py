@@ -176,6 +176,8 @@ class SegmentationTrainer(BaseTrainer):
             encoder_name=self.config["backbone"],
             in_channels=self.config["dataset"]["channels"],
             classes=self.config["dataset"]["classes"],
+            decoder_type=self.config.get("decoder_type", "conv"),
+            decoder_kwargs=self.config.get("decoder_kwargs", {}),
         )
 
         self.is_fm = segmentor.is_fm
