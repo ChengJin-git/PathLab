@@ -3820,7 +3820,7 @@
       "individual": {
         "title": "Individual",
         "price": "Free",
-        "desc": "Suitable for clinical researchers.",
+        "desc": "During research preview, PathLab is free for individual clinicians and researchers.",
         "feat1": "WSI Visualization",
         "feat2": "AI Model Inference",
         "feat3": "Local Privacy First",
