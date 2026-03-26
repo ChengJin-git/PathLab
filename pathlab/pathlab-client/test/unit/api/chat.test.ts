@@ -10,6 +10,7 @@ vi.mock('@renderer/config', () => ({
 import {
   chatWithAI,
   createConversation,
+  generateConversationTitle,
   getConversations,
   getConversation,
   deleteConversation,
@@ -39,10 +40,12 @@ const MOCK_MESSAGES: ChatMessage[] = [
 ]
 
 beforeEach(() => {
+  mockFetch.mockReset()
   setAuthToken('test_token')
   localStorage.setItem('openrouter_api_key', 'or_test_key')
   localStorage.setItem('openrouter_model', 'qwen/qwen3-plus')
   localStorage.setItem('openrouter_base_url', 'https://openrouter.ai/api/v1')
+  localStorage.setItem('i18nextLng', 'en-US')
 })
 
 describe('chatWithAI (streaming)', () => {
@@ -230,6 +233,20 @@ describe('createConversation', () => {
     await createConversation('BRCA Analysis Chat', { sourceConversationId: 'conv_001' })
     const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
     expect(body.source_conversation_id).toBe('conv_001')
+  })
+})
+
+describe('generateConversationTitle', () => {
+  it('passes the current i18n language header to the backend', async () => {
+    localStorage.setItem('i18nextLng', 'zh-CN')
+    mockFetch.mockResolvedValueOnce(ok({ title: '查看 ucec 任务' }))
+
+    await generateConversationTitle('conv_001')
+
+    const [url, opts] = mockFetch.mock.lastCall ?? []
+    expect(url).toContain('/conversations/conv_001/generate-title')
+    const headers = new Headers(opts?.headers)
+    expect(headers.get('X-Language')).toBe('zh-CN')
   })
 })
 

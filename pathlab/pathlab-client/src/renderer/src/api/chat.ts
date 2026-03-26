@@ -555,6 +555,8 @@ export async function activateMessageVariant(
 export async function generateConversationTitle(
   conversationId: string,
 ): Promise<{ title: string }> {
+  const uiLang = localStorage.getItem('i18nextLng') || 'en-US'
+
   return apiFetch<{ title: string }>(
     `${API_BASE}/conversations/${conversationId}/generate-title`,
     {
@@ -563,6 +565,7 @@ export async function generateConversationTitle(
         'X-OpenRouter-API-Key': localStorage.getItem('openrouter_api_key') || '',
         'X-OpenRouter-Base-URL': localStorage.getItem('openrouter_base_url') || '',
         'X-OpenRouter-Model': localStorage.getItem('openrouter_model') || '',
+        'X-Language': uiLang,
       },
     },
     'Failed to generate conversation title',

@@ -52,6 +52,45 @@ def _clean_message_for_title(content: str) -> str:
     return cleaned.strip()
 
 
+def _normalize_title_language(ui_lang_header: str | None) -> str | None:
+    raw = (ui_lang_header or "").strip()
+    if not raw:
+        return None
+
+    normalized = raw.replace("-", "_")
+    if normalized.startswith("en"):
+        return "en"
+    if normalized in {"zh_HK", "zh_TW"}:
+        return "zh_HK"
+    if normalized.startswith("zh"):
+        return "zh_CN"
+    return None
+
+
+def _resolve_title_language(ui_lang_header: str | None, message_text: str) -> str:
+    return _normalize_title_language(ui_lang_header) or detect_language(message_text)
+
+
+def _build_title_prompt(message: str, lang: str) -> str:
+    if lang == "zh_CN":
+        return (
+            "请将下面这条消息概括成一个简洁的对话标题，最多 10 个词或 10 个字。"
+            "必须使用简体中文。只输出标题文本，不要输出其他任何内容。\n\n"
+            f'消息：\n"{message}"'
+        )
+    if lang == "zh_HK":
+        return (
+            "請將下面這條訊息概括成一個簡潔的對話標題，最多 10 個詞或 10 個字。"
+            "必須使用繁體中文。只輸出標題文字，不要輸出其他任何內容。\n\n"
+            f'訊息：\n"{message}"'
+        )
+    return (
+        "Summarize the following message as a concise conversation title in English. "
+        "Use 10 words or fewer. Output ONLY the title text, nothing else.\n\n"
+        f'Message:\n"{message}"'
+    )
+
+
 def _get_title_source_message(conversation) -> str | None:
     """Pick the first user message that should drive title generation.
 
@@ -81,6 +120,7 @@ from backend.database import get_db
 from backend.database.repositories import ChatRepository
 from backend.auth import current_active_user, User
 from gateway.chat.permissions import require_conversation_access
+from ..prompts import detect_language
 from ..models import (
     CreateConversationRequest,
     UpdateConversationRequest,
@@ -321,11 +361,8 @@ async def generate_conversation_title(
         cleaned_message = first_message
 
     truncated = cleaned_message[:300]
-    title_prompt = (
-        "Summarize the following message in 10 words or fewer as a concise "
-        "conversation title. Output ONLY the title text, nothing else.\n\n"
-        f'Message:\n"{truncated}"'
-    )
+    title_lang = _resolve_title_language(request.headers.get("X-Language"), truncated)
+    title_prompt = _build_title_prompt(truncated, title_lang)
 
     title = ""
     try:

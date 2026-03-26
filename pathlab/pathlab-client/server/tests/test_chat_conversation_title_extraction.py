@@ -2,8 +2,11 @@ from types import SimpleNamespace
 
 from gateway.routes.chat_conversation import (
     _build_title_generation_payload,
+    _build_title_prompt,
     _clean_message_for_title,
     _get_title_source_message,
+    _normalize_title_language,
+    _resolve_title_language,
 )
 
 
@@ -21,6 +24,25 @@ def test_build_title_generation_payload_disables_thinking_for_local_vllm():
 
     assert payload["model"] == "Qwen/Qwen3.5-397B-A17B-FP8"
     assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_normalize_title_language_accepts_frontend_i18n_codes():
+    assert _normalize_title_language("zh-CN") == "zh_CN"
+    assert _normalize_title_language("zh-HK") == "zh_HK"
+    assert _normalize_title_language("en-US") == "en"
+
+
+def test_resolve_title_language_prefers_explicit_ui_language():
+    assert _resolve_title_language("en-US", "我想开始一个新的病理项目") == "en"
+
+
+def test_build_title_prompt_uses_requested_language():
+    zh_prompt = _build_title_prompt("我想看 ucec 任务", "zh_CN")
+    en_prompt = _build_title_prompt("我想看 ucec 任务", "en")
+
+    assert "必须使用简体中文" in zh_prompt
+    assert "消息：" in zh_prompt
+    assert "in English" in en_prompt
 
 
 def test_get_title_source_message_uses_first_branch_user_message():
