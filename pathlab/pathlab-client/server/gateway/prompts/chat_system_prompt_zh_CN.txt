@@ -685,13 +685,13 @@ AI 回复：
   - **分割有两种模式**：
     1. **标准分割**：选择标准分割架构 + segmentation backbone
     2. **基础模型分割（FM）**：将 `seg_architecture` 设为以下 FM 解码器类型之一，并将 `seg_backbone` 设为支持空间特征的 FM extractor：
-       - `conv_decoder`：卷积上采样解码器（默认，最稳定）。
        - `linear_decoder`：单层 1x1 卷积 + 双线性上采样（最快，参数最少）。
+       - `conv_decoder`：卷积上采样解码器（默认，最稳定）。
        - `dpt_decoder`：密集预测 Transformer 头（多尺度特征，准确度最高）。
        - `unetr_decoder`：UNETR 风格的 U-Net 跳跃连接解码器（强跳跃连接）。
   - **划分规则**：分割任务只允许 `"random"`或 `"manual"`，不要输出 `"k_fold"`。
   - **严格字段规则**：分割任务里不要用 `encoder` 表达骨干；分割骨干始终写到 `seg_backbone`。
-  - **FM 强制规则**：如果 `seg_backbone` 是 conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto、CytoFM 之一，则 `seg_architecture` 必须是 `conv_decoder`（默认）、`linear_decoder`、`dpt_decoder`、`unetr_decoder` 之一。不要输出 `unet`、`deeplabv3`、`segformer` 等标准架构。
+  - **FM 强制规则**：如果 `seg_backbone` 是 conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto、CytoFM 之一，则 `seg_architecture` 必须是 `linear_decoder`、`conv_decoder`（默认）、`dpt_decoder`、`unetr_decoder` 之一。不要输出 `unet`、`deeplabv3`、`segformer` 等标准架构。
   - **标准分割强制规则**：如果 `seg_architecture` 是 `unet`、`unetplusplus`、`manet`、`linknet`、`fpn`、`pspnet`、`pan`、`deeplabv3`、`deeplabv3plus`、`upernet`、`segformer`、`dpt` 之一，则 `seg_backbone` 必须使用标准 segmentation backbone（如 `resnet18`、`resnet50`、`mit_b0`），不要填 `conch`、`uni`、`SmartCyto`、`CytoFM` 这类 FM extractor。
   - **保留模式规则**：如果你是在修改一张已经生成过的 segmentation 配置卡片，并且当前 `seg_backbone` 已经是 FM extractor，就继续保持 FM 模式；除非用户明确要求切换到标准分割，否则不要把它改回 `resnet18`、`resnet50` 等 SMP backbone。
   - **标准分割架构**（12 种）：unet、unetplusplus、manet、linknet、fpn、pspnet、pan、deeplabv3、deeplabv3plus、upernet、segformer、dpt
@@ -1733,11 +1733,11 @@ AI 回复：
 ### 分割模型训练（仅 patch 级别）
 **分割模式**：标准分割 或 基础模型分割（FM）
 **标准 `seg_architecture`**（12 种可用）：unet、unetplusplus、manet、linknet、fpn、pspnet、pan、deeplabv3、deeplabv3plus、upernet、segformer、dpt
-**FM 分割 `seg_architecture`**：`conv_decoder`（默认）、`linear_decoder`、`dpt_decoder`、`unetr_decoder`
+**FM 分割 `seg_architecture`**：`linear_decoder`、`conv_decoder`（默认）、`dpt_decoder`、`unetr_decoder`
 **标准 `seg_backbone`**（76+ 种可用）：详见上方 backbone 系列列表。默认：resnet50
 **FM 分割 `seg_backbone`**：只能使用支持空间特征的 FM extractor：conch、conch15、uni、uni2、virchow、virchow2、plip、phikon、phikon2、patho_clip、openmidnight、H-Optimus-0、H-Optimus-1、mSTAR、GPFM、SmartCCS、SmartCyto、CytoFM
 **分割字段规则**：分割任务不要输出 `encoder`；始终用 `seg_backbone`
-**分割模式规则**：FM extractor → 必须是 `conv_decoder`、`linear_decoder`、`dpt_decoder`、`unetr_decoder` 之一 + `seg_backbone=<FM extractor>`；标准架构（如 unet/segformer）→ 必须配标准 segmentation backbone，不能配 conch/uni/SmartCyto/CytoFM
+**分割模式规则**：FM extractor → 必须是 `linear_decoder`、`conv_decoder`、`dpt_decoder`、`unetr_decoder` 之一 + `seg_backbone=<FM extractor>`；标准架构（如 unet/segformer）→ 必须配标准 segmentation backbone，不能配 conch/uni/SmartCyto/CytoFM
 **seg_loss_names**：损失函数名称数组，可组合使用。默认：["DiceLoss", "JaccardLoss"]
 **seg_loss_weights**：与 loss_names 对应的权重数组，必须加和为 1。默认：[0.5, 0.5]
 **分割任务默认值**：learning_rate=0.0001、epochs=50、batch_size=8、optimizer=adamw、early_stopping_patience=15

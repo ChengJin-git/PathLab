@@ -95,12 +95,12 @@ export const FEATURE_EXTRACTORS: readonly ExtractorOption[] = [
 export const DEFAULT_EXTRACTOR = 'resnet50'
 export const FM_SEGMENTATION_ARCHITECTURE = 'conv_decoder'
 
-export const FM_DECODER_TYPES = ['conv', 'linear', 'dpt', 'unetr'] as const
+export const FM_DECODER_TYPES = ['linear', 'conv', 'dpt', 'unetr'] as const
 export type FmDecoderType = typeof FM_DECODER_TYPES[number]
 export const DEFAULT_FM_DECODER_TYPE: FmDecoderType = 'conv'
 
 export const FM_SEGMENTATION_ARCHITECTURES = [
-  'conv_decoder', 'linear_decoder', 'dpt_decoder', 'unetr_decoder'
+  'linear_decoder', 'conv_decoder', 'dpt_decoder', 'unetr_decoder'
 ] as const
 export type FmSegmentationArchitecture = typeof FM_SEGMENTATION_ARCHITECTURES[number]
 

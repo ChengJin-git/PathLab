@@ -685,13 +685,13 @@ IMPORTANT for [TASK_CONFIG]:
   - **Segmentation has TWO modes**:
     1. **Standard segmentation**: choose a standard segmentation architecture + segmentation backbone.
     2. **Foundation model segmentation**: use `seg_architecture` set to one of the following FM decoder types, and set `seg_backbone` to a spatial-capable FM extractor:
-       - `conv_decoder`: Convolutional upsampling decoder (default, most stable).
        - `linear_decoder`: Single 1x1 conv + bilinear upsample (fastest, fewest parameters).
+       - `conv_decoder`: Convolutional upsampling decoder (default, most stable).
        - `dpt_decoder`: Dense Prediction Transformer head (multi-scale features, best accuracy).
        - `unetr_decoder`: UNETR-style U-Net skip-connection decoder (strong skip connections).
   - **Split rule**: segmentation supports only `"random"` or `"manual"`. Do NOT output `"k_fold"` for segmentation.
   - **Strict field rule**: for segmentation, NEVER use `encoder` to represent the backbone; always write the segmentation backbone into `seg_backbone`.
-  - **FM hard rule**: if `seg_backbone` is one of conch, conch15, uni, uni2, virchow, virchow2, plip, phikon, phikon2, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM, SmartCCS, SmartCyto, CytoFM, then `seg_architecture` MUST be one of: `conv_decoder` (default), `linear_decoder`, `dpt_decoder`, `unetr_decoder`. Do NOT output standard architectures such as `unet`, `deeplabv3`, or `segformer`.
+  - **FM hard rule**: if `seg_backbone` is one of conch, conch15, uni, uni2, virchow, virchow2, plip, phikon, phikon2, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM, SmartCCS, SmartCyto, CytoFM, then `seg_architecture` MUST be one of: `linear_decoder`, `conv_decoder` (default), `dpt_decoder`, `unetr_decoder`. Do NOT output standard architectures such as `unet`, `deeplabv3`, or `segformer`.
   - **Standard segmentation hard rule**: if `seg_architecture` is one of `unet`, `unetplusplus`, `manet`, `linknet`, `fpn`, `pspnet`, `pan`, `deeplabv3`, `deeplabv3plus`, `upernet`, `segformer`, `dpt`, then `seg_backbone` MUST be a standard segmentation backbone such as `resnet18`, `resnet50`, or `mit_b0`. Do NOT pair these architectures with FM extractors like `conch`, `uni`, or `SmartCyto`.
   - **Mode preservation rule**: when editing an already shown segmentation config card, if the current `seg_backbone` is already an FM extractor, keep the task in FM mode unless the user explicitly asks to switch back to standard segmentation.
   - **Standard segmentation architectures** (12): unet, unetplusplus, manet, linknet, fpn, pspnet, pan, deeplabv3, deeplabv3plus, upernet, segformer, dpt
@@ -1764,11 +1764,11 @@ When user asks to **view** specific metrics or charts (e.g., "show me the ROC cu
 ### Segmentation Model (patch-level only)
 **Segmentation modes**: standard segmentation OR foundation model segmentation
 **Standard `seg_architecture`** (12 available): unet, unetplusplus, manet, linknet, fpn, pspnet, pan, deeplabv3, deeplabv3plus, upernet, segformer, dpt
-**FM segmentation `seg_architecture`**: `conv_decoder` (default), `linear_decoder`, `dpt_decoder`, `unetr_decoder`
+**FM segmentation `seg_architecture`**: `linear_decoder`, `conv_decoder` (default), `dpt_decoder`, `unetr_decoder`
 **Standard `seg_backbone`** (76+ available): See backbone families above. Default: resnet50
 **FM segmentation `seg_backbone`**: spatial-capable FM extractors only: conch, conch15, uni, uni2, virchow, virchow2, plip, phikon, phikon2, patho_clip, openmidnight, H-Optimus-0, H-Optimus-1, mSTAR, GPFM, SmartCCS, SmartCyto, CytoFM
 **Segmentation field rule**: do not output `encoder` for segmentation; always use `seg_backbone`
-**Segmentation mode rule**: FM extractor → must be one of: `conv_decoder`, `linear_decoder`, `dpt_decoder`, `unetr_decoder` + `seg_backbone=<FM extractor>`; standard architecture (for example unet/segformer) → must use a standard segmentation backbone, not conch/uni/SmartCyto/CytoFM
+**Segmentation mode rule**: FM extractor → must be one of: `linear_decoder`, `conv_decoder`, `dpt_decoder`, `unetr_decoder` + `seg_backbone=<FM extractor>`; standard architecture (for example unet/segformer) → must use a standard segmentation backbone, not conch/uni/SmartCyto/CytoFM
 **seg_loss_names**: Array of loss names to combine. Default: ["DiceLoss", "JaccardLoss"]
 **seg_loss_weights**: Array of weights matching loss_names, must sum to 1. Default: [0.5, 0.5]
 **Segmentation defaults**: learning_rate=0.0001, epochs=50, batch_size=8, optimizer=adamw, early_stopping_patience=15
