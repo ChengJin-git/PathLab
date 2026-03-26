@@ -545,6 +545,11 @@ export async function generateConversationTitle(
     `${API_BASE}/conversations/${conversationId}/generate-title`,
     {
       method: 'POST',
+      headers: {
+        'X-OpenRouter-API-Key': localStorage.getItem('openrouter_api_key') || '',
+        'X-OpenRouter-Base-URL': localStorage.getItem('openrouter_base_url') || '',
+        'X-OpenRouter-Model': localStorage.getItem('openrouter_model') || '',
+      },
     },
     'Failed to generate conversation title',
   )

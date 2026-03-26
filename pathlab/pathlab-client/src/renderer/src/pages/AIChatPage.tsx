@@ -2216,6 +2216,10 @@ export default function AIChatPage() {
 				}, 150);
 
 				if (isNewConversation && conversationId) {
+					const fallbackTitle =
+						userMessage.content.length > 20
+							? `${userMessage.content.substring(0, 20)}...`
+							: userMessage.content || t("aiChat.imageAnalysis");
 					generateConversationTitle(conversationId)
 						.then((result) => {
 							updateConversationsAndCache((prev) =>
@@ -2226,8 +2230,14 @@ export default function AIChatPage() {
 								),
 							);
 						})
-						.catch((err) => {
-							console.error("Failed to generate title:", err);
+						.catch(() => {
+							updateConversationsAndCache((prev) =>
+								prev.map((c) =>
+									c.conversation_id === conversationId
+										? { ...c, title: fallbackTitle }
+										: c,
+								),
+							);
 						})
 						.finally(() => {
 							setPendingTitleConvIds((prev) => {
