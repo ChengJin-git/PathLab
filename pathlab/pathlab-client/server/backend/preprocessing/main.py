@@ -631,7 +631,7 @@ async def compute_patches(
     ),
     use_padding: bool = Query(True, description="Allow patches at tissue boundary"),
     # Filter parameters
-    a_t: int = Query(100, description="Minimum tissue area (in 512x512 patches)"),
+    a_t: int = Query(5, description="Minimum tissue area (in 512x512 patches)"),
     a_h: int = Query(16, description="Minimum hole area"),
     max_n_holes: int = Query(8, description="Maximum number of holes per contour"),
     # Visualization

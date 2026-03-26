@@ -58,7 +58,7 @@ PREPROCESSING_COMPUTE_PATCHES_DEFAULTS = {
     "use_otsu": False,
     "contour_fn": "four_pt",
     "use_padding": True,
-    "a_t": 100,
+    "a_t": 5,
     "a_h": 16,
     "max_n_holes": 8,
     "save_mask": True,

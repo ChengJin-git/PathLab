@@ -1,9 +1,13 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LANDING_NAV_ITEMS } from '../../data/landing/landing-nav'
+import { DisclaimerModal } from '../DisclaimerModal'
+import { PrivacyPolicyModal } from '../PrivacyPolicyModal'
 
 export function LandingFooter() {
   const { t } = useTranslation()
+  const [showTerms, setShowTerms] = useState(false)
+  const [showPrivacy, setShowPrivacy] = useState(false)
 
   return (
     <footer className="bg-white border-t border-[color:var(--landing-border)] py-12">
@@ -30,8 +34,8 @@ export function LandingFooter() {
           <div>
             <h4 className="font-semibold text-[color:var(--landing-text-primary)] mb-4">{t('landing.footer.legal', 'Legal')}</h4>
             <ul className="space-y-3">
-              <li><a href="/privacy" className="text-sm text-[color:var(--landing-text-secondary)] hover:text-[color:var(--landing-primary)] transition-colors">{t('landing.footer.privacy', 'Privacy Policy')}</a></li>
-              <li><a href="/terms" className="text-sm text-[color:var(--landing-text-secondary)] hover:text-[color:var(--landing-primary)] transition-colors">{t('landing.footer.terms', 'Terms of Service')}</a></li>
+              <li><button type="button" onClick={() => setShowPrivacy(true)} className="text-sm text-[color:var(--landing-text-secondary)] hover:text-[color:var(--landing-primary)] transition-colors cursor-pointer">{t('landing.footer.privacy', 'Privacy Policy')}</button></li>
+              <li><button type="button" onClick={() => setShowTerms(true)} className="text-sm text-[color:var(--landing-text-secondary)] hover:text-[color:var(--landing-primary)] transition-colors cursor-pointer">{t('landing.footer.terms', 'Terms of Service')}</button></li>
             </ul>
           </div>
         </div>
@@ -41,6 +45,20 @@ export function LandingFooter() {
           </p>
         </div>
       </div>
+      <DisclaimerModal
+        isOpen={showTerms}
+        isLoading={false}
+        previewOnly
+        onAccept={() => {}}
+        onDecline={() => setShowTerms(false)}
+        onClose={() => setShowTerms(false)}
+        onOpenPrivacyPolicy={() => { setShowTerms(false); setShowPrivacy(true) }}
+      />
+      <PrivacyPolicyModal
+        isOpen={showPrivacy}
+        onClose={() => setShowPrivacy(false)}
+        onBackToTerms={() => { setShowPrivacy(false); setShowTerms(true) }}
+      />
     </footer>
   )
 }
