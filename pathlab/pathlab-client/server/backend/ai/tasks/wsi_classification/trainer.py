@@ -49,6 +49,8 @@ from backend.ai.tasks.feature_cache import (
     create_symlink_to_cache,
     read_params_from_coords_h5,
     acquire_feature_lock,
+    try_acquire_feature_lock_nowait,
+    LockBusyError,
     safe_load_features,
     save_features,
     FeatureLockTimeoutError,
@@ -115,16 +117,22 @@ class WSIClassificationTrainer(BaseTrainer):
         preprocessing_config: Optional[Dict[str, Any]] = None,
     ) -> FeatureExtractionResponse:
         """
-        Extract features for all WSI slides sequentially (single-GPU optimized).
+        Extract features for all WSI slides using a two-pass parallel strategy.
+
+        Pass 1 — Non-blocking sweep: each WSI tries a nowait lock.
+          Cache hit or lock-free → extract immediately.
+          Lock busy → defer to pass 2 (another task is already extracting it).
+
+        Pass 2 — Blocking catch-up: deferred WSIs are expected to be global cache hits
+          by the time pass 1 completes. Falls back to blocking lock + extraction only
+          if the other task was cancelled before finishing.
 
         Uses global feature cache to avoid redundant extraction:
         - Cache location: uploads/features/{extractor_name}/{params_hash}/{wsi_id}.pt
         - Task directory: uploads/training/{task_id}/features/{wsi_id}.pt (symlink)
 
-        The params_hash ensures features are only reused when preprocessing config matches.
-
         Args:
-            session_maker: Factory to create short-lived DB sessions (replaces db parameter)
+            session_maker: Factory to create short-lived DB sessions
         """
         device = torch.device(self.device)
         if device.type == "cuda":
@@ -187,139 +195,387 @@ class WSIClassificationTrainer(BaseTrainer):
         results = []
         skipped_wsi_ids = []
         total = len(wsi_ids)
+        processed_count = 0
         task_features_dir = self.uploads_root / "training" / self.task_id / "features"
         task_features_dir.mkdir(parents=True, exist_ok=True)
 
-        for i, wsi_id in enumerate(wsi_ids, 1):
-            # Check for cancellation at each iteration (important for cache hit scenarios)
-            if is_task_cancelled(self.task_id):
-                raise TrainingCancelledException(
-                    "Feature extraction cancelled during cache check"
+        deferred: List[str] = []
+        deferred_info: Dict[str, Any] = {}
+
+        try:
+            # ── PASS 1: Non-blocking sweep — grab what we can without waiting ─────
+            for i, wsi_id in enumerate(wsi_ids, 1):
+                if is_task_cancelled(self.task_id):
+                    raise TrainingCancelledException(
+                        "Feature extraction cancelled during cache check"
+                    )
+                if is_permission_revoked(self.task_id):
+                    raise PermissionRevokedException(
+                        "Feature extraction stopped: permission revoked"
+                    )
+
+                task_feat_path = task_features_dir / f"{wsi_id}.pt"
+                coords_h5 = find_any_cached_coords_for_wsi(self.uploads_root, wsi_id)
+                if not coords_h5:
+                    await logger.warning(
+                        f"[{i}/{total}] Skipping {wsi_id}: no coordinate file found. "
+                        f"The slide likely produced 0 patches during preprocessing "
+                        f"(blank or no detectable tissue).",
+                        metadata={"wsi_id": wsi_id, "reason": "no_coords_file"},
+                    )
+                    skipped_wsi_ids.append(wsi_id)
+                    continue
+
+                params_hash = read_params_from_coords_h5(coords_h5)
+                if not params_hash:
+                    preprocessing_config = preprocessing_config or {}
+                    params_hash = compute_params_hash(
+                        patch_size=preprocessing_config.get("tile_size", 512),
+                        stride=preprocessing_config.get("stride", 512),
+                        level=preprocessing_config.get("level", 0),
+                        seg_params={
+                            "sthresh": preprocessing_config.get("sthresh", 5),
+                            "mthresh": preprocessing_config.get("mthresh", 7),
+                            "close": preprocessing_config.get("close", 4),
+                            "use_otsu": preprocessing_config.get("use_otsu", False),
+                        },
+                        filter_params={
+                            "a_t": preprocessing_config.get("a_t", 100),
+                            "a_h": preprocessing_config.get("a_h", 16),
+                            "max_n_holes": preprocessing_config.get("max_n_holes", 8),
+                        },
+                        contour_fn=preprocessing_config.get("contour_fn", "four_pt"),
+                        use_padding=preprocessing_config.get("use_padding", True),
+                        seg_level=preprocessing_config.get("seg_level", -1),
+                    )
+
+                if task_feat_path.exists() and not force_recompute:
+                    results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
+                    processed_count += 1
+                    if processed_count % 100 == 0 or processed_count == total:
+                        progress = 33 + int(processed_count / total * 33)
+                        await _safe_update_progress(
+                            session_maker, self.task_id, TaskStatus.EXTRACTING, progress
+                        )
+                    continue
+
+                cached_path = find_cached_features(
+                    self.uploads_root, extractor_name, params_hash, wsi_id
                 )
+                if cached_path and not force_recompute:
+                    create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                    results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
+                    processed_count += 1
+                    if processed_count % 100 == 0 or processed_count == total:
+                        progress = 33 + int(processed_count / total * 33)
+                        await _safe_update_progress(
+                            session_maker, self.task_id, TaskStatus.EXTRACTING, progress
+                        )
+                    continue
 
-            task_feat_path = task_features_dir / f"{wsi_id}.pt"
-            # Find coords_h5 from new cache structure: coordinates/{params_hash}/{wsi_id}_coords.h5
-            coords_h5 = find_any_cached_coords_for_wsi(self.uploads_root, wsi_id)
-            if not coords_h5:
-                await logger.warning(
-                    f"[{i}/{total}] Skipping {wsi_id}: no coordinate file found. "
-                    f"The slide likely produced 0 patches during preprocessing "
-                    f"(blank or no detectable tissue).",
-                    metadata={"wsi_id": wsi_id, "reason": "no_coords_file"},
-                )
-                skipped_wsi_ids.append(wsi_id)
-                continue
+                try:
+                    async with try_acquire_feature_lock_nowait(
+                        self.uploads_root, extractor_name, params_hash, wsi_id
+                    ):
+                        cached_path = find_cached_features(
+                            self.uploads_root, extractor_name, params_hash, wsi_id
+                        )
+                        if cached_path and not force_recompute:
+                            feats, load_error = await asyncio.to_thread(
+                                safe_load_features,
+                                cached_path,
+                                delete_if_corrupted=True,
+                            )
+                            if feats is not None:
+                                create_symlink_to_cache(
+                                    task_features_dir, wsi_id, cached_path
+                                )
+                                shape = tuple(feats.shape)
+                                results.append(
+                                    {
+                                        "wsi_id": wsi_id,
+                                        "shape": shape,
+                                        "path": str(task_feat_path),
+                                    }
+                                )
+                                processed_count += 1
+                                progress = 33 + int(processed_count / total * 33)
+                                await _safe_update_progress(
+                                    session_maker,
+                                    self.task_id,
+                                    TaskStatus.EXTRACTING,
+                                    progress,
+                                )
+                                await logger.info(
+                                    f"[{i}/{total}] Cache hit after nowait lock for {wsi_id}",
+                                    metadata={"wsi_id": wsi_id},
+                                )
+                                continue
 
-            # Compute params_hash from coords.h5 to ensure consistency
-            # The coords.h5 file contains the actual preprocessing parameters used
-            params_hash = read_params_from_coords_h5(coords_h5)
-            if not params_hash:
-                # Fallback to preprocessing_config if coords.h5 doesn't have params
-                preprocessing_config = preprocessing_config or {}
-                params_hash = compute_params_hash(
-                    patch_size=preprocessing_config.get("tile_size", 512),
-                    stride=preprocessing_config.get("stride", 512),
-                    level=preprocessing_config.get("level", 0),
-                    seg_params={
-                        "sthresh": preprocessing_config.get("sthresh", 5),
-                        "mthresh": preprocessing_config.get("mthresh", 7),
-                        "close": preprocessing_config.get("close", 4),
-                        "use_otsu": preprocessing_config.get("use_otsu", False),
-                    },
-                    filter_params={
-                        "a_t": preprocessing_config.get("a_t", 100),
-                        "a_h": preprocessing_config.get("a_h", 16),
-                        "max_n_holes": preprocessing_config.get("max_n_holes", 8),
-                    },
-                    contour_fn=preprocessing_config.get("contour_fn", "four_pt"),
-                    use_padding=preprocessing_config.get("use_padding", True),
-                    seg_level=preprocessing_config.get("seg_level", -1),
-                )
+                        async with scoped_db(session_maker) as db:
+                            wsi = await WSIRepository.get_by_id(db, wsi_id)
+                            if not wsi:
+                                raise ValueError(f"WSI not found: {wsi_id}")
+                            wsi_path = wsi.wsi_path
 
-            # Step 1: Check if task-specific features already exist (file or symlink)
-            # Just check existence, don't load the file - loading is too slow for many WSIs
-            if task_feat_path.exists() and not force_recompute:
-                results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
-                # Only update DB every 100 items or at the end to avoid slow commits
-                if i % 100 == 0 or i == total:
-                    progress = 33 + int(i / total * 33)
-                    await _safe_update_progress(
-                        session_maker, self.task_id, TaskStatus.EXTRACTING, progress
-                    )
-                    await logger.info(
-                        f"[{i}/{total}] Feature check progress (all cached so far)"
-                    )
-                continue
+                        if not coords_h5.exists():
+                            await logger.warning(
+                                f"[{i}/{total}] Skipping {wsi_id}: coordinate file disappeared "
+                                f"before feature extraction ({coords_h5}).",
+                                metadata={
+                                    "wsi_id": wsi_id,
+                                    "reason": "coords_file_missing",
+                                },
+                            )
+                            skipped_wsi_ids.append(wsi_id)
+                            continue
 
-            # Step 2: Check global feature cache
-            cached_path = find_cached_features(
-                self.uploads_root, extractor_name, params_hash, wsi_id
-            )
-
-            if cached_path and not force_recompute:
-                # Cache hit: create symlink directly without loading the file
-                # Loading large feature files just for validation is too slow for many WSIs
-                create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
-                results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
-                # Only update DB every 100 items or at the end to avoid slow commits
-                if i % 100 == 0 or i == total:
-                    progress = 33 + int(i / total * 33)
-                    await _safe_update_progress(
-                        session_maker, self.task_id, TaskStatus.EXTRACTING, progress
-                    )
-                    await logger.info(
-                        f"[{i}/{total}] Feature check progress (creating symlinks)"
-                    )
-                continue
-
-            # Step 3: Extract features (cache miss) - use file lock to prevent race conditions
-            # When multiple tasks try to extract features for the same WSI simultaneously,
-            # only one will actually extract, others will wait and then use the cached result
-
-            # Define cancellation/revocation check for lock waiting
-            def check_cancelled_or_revoked():
-                return is_task_cancelled(self.task_id) or is_permission_revoked(
-                    self.task_id
-                )
-
-            # Track if we logged waiting message (to avoid spam)
-            wait_logged = [False]  # Use list to allow modification in closure
-
-            # Define callback for lock wait progress
-            def on_lock_wait(wait_seconds: float):
-                if not wait_logged[0]:
-                    # Log only once when we start waiting
-                    import logging
-
-                    lock_logger = logging.getLogger("feature_cache")
-                    lock_logger.info(
-                        f"[{i}/{total}] Waiting for another task to finish extracting {wsi_id} "
-                        f"(waited {wait_seconds:.0f}s, will reuse cached result)"
-                    )
-                    wait_logged[0] = True
-
-            try:
-                async with acquire_feature_lock(
-                    self.uploads_root,
-                    extractor_name,
-                    params_hash,
-                    wsi_id,
-                    cancellation_check=check_cancelled_or_revoked,
-                    wait_callback=on_lock_wait,
-                ):
-                    # Log if we were waiting
-                    if wait_logged[0]:
                         await logger.info(
-                            f"[{i}/{total}] Lock acquired for {wsi_id} after waiting",
-                            metadata={"wsi_id": wsi_id},
+                            f"[{i}/{total}] Extracting features for {wsi_id} (pass 1, cache miss)",
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "wsi_index": i,
+                                "total_wsi": total,
+                            },
                         )
 
-                    # Re-check cache after acquiring lock - another process may have just finished
+                        feats = await asyncio.to_thread(
+                            self._extract_wsi_features,
+                            extractor=extractor,
+                            wsi_path=str(wsi_path),
+                            coords_h5=str(coords_h5),
+                            batch_size=batch_size,
+                        )
+
+                        num_patches = feats.shape[0]
+                        if num_patches < MIN_PATCHES_THRESHOLD:
+                            await logger.warning(
+                                f"[{i}/{total}] Skipping {wsi_id}: only {num_patches} patches "
+                                f"(minimum {MIN_PATCHES_THRESHOLD}).",
+                                metadata={
+                                    "wsi_id": wsi_id,
+                                    "num_patches": num_patches,
+                                    "threshold": MIN_PATCHES_THRESHOLD,
+                                },
+                            )
+                            skipped_wsi_ids.append(wsi_id)
+                            processed_count += 1
+                            progress = 33 + int(processed_count / total * 33)
+                            await _safe_update_progress(
+                                session_maker,
+                                self.task_id,
+                                TaskStatus.EXTRACTING,
+                                progress,
+                            )
+                            continue
+
+                        cache_feat_path = get_cache_save_path(
+                            self.uploads_root, extractor_name, params_hash, wsi_id
+                        )
+                        feats_contiguous = feats.contiguous()
+                        await asyncio.to_thread(
+                            save_features, cache_feat_path, feats_contiguous
+                        )
+                        create_symlink_to_cache(
+                            task_features_dir, wsi_id, cache_feat_path
+                        )
+                        shape = tuple(feats.shape)
+
+                        await logger.info(
+                            f"[{i}/{total}] Features saved to cache for {wsi_id} (pass 1)",
+                            metadata={
+                                "wsi_id": wsi_id,
+                                "shape": list(shape),
+                                "cache_path": str(cache_feat_path),
+                            },
+                        )
+
+                        results.append(
+                            {
+                                "wsi_id": wsi_id,
+                                "shape": shape,
+                                "path": str(task_feat_path),
+                            }
+                        )
+                        processed_count += 1
+                        progress = 33 + int(processed_count / total * 33)
+                        await _safe_update_progress(
+                            session_maker, self.task_id, TaskStatus.EXTRACTING, progress
+                        )
+
+                except LockBusyError:
+                    deferred.append(wsi_id)
+                    deferred_info[wsi_id] = {
+                        "coords_h5": coords_h5,
+                        "params_hash": params_hash,
+                        "task_feat_path": task_feat_path,
+                    }
+                    await logger.info(
+                        f"[{i}/{total}] {wsi_id} lock busy — deferred to pass 2",
+                        metadata={"wsi_id": wsi_id, "deferred_count": len(deferred)},
+                    )
+
+            # ── PASS 2: Blocking catch-up for deferred WSIs ───────────────────────
+            if deferred:
+                await logger.info(
+                    f"Pass 2: processing {len(deferred)} deferred WSIs "
+                    f"(expected to be global cache hits)",
+                )
+
+            deferred_total = len(deferred)
+            for defer_idx, wsi_id in enumerate(deferred, 1):
+                if is_task_cancelled(self.task_id):
+                    raise TrainingCancelledException(
+                        "Feature extraction cancelled (pass 2)"
+                    )
+                if is_permission_revoked(self.task_id):
+                    raise PermissionRevokedException(
+                        "Feature extraction stopped: permission revoked (pass 2)"
+                    )
+
+                info = deferred_info[wsi_id]
+                coords_h5 = info["coords_h5"]
+                params_hash = info["params_hash"]
+                task_feat_path = info["task_feat_path"]
+
+                cached_path = find_cached_features(
+                    self.uploads_root, extractor_name, params_hash, wsi_id
+                )
+                if cached_path and not force_recompute:
+                    create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
+                    results.append({"wsi_id": wsi_id, "path": str(task_feat_path)})
+                    processed_count += 1
+                    progress = 33 + int(processed_count / total * 33)
+                    await _safe_update_progress(
+                        session_maker, self.task_id, TaskStatus.EXTRACTING, progress
+                    )
+                    await logger.info(
+                        f"[pass2 {defer_idx}/{deferred_total}] Cache hit for deferred {wsi_id}",
+                        metadata={"wsi_id": wsi_id},
+                    )
+                    continue
+
+                def check_cancelled_or_revoked():
+                    return is_task_cancelled(self.task_id) or is_permission_revoked(
+                        self.task_id
+                    )
+
+                wait_logged = [False]
+
+                def on_lock_wait(wait_seconds: float):
+                    if not wait_logged[0]:
+                        import logging as _logging
+
+                        _logging.getLogger("feature_cache").info(
+                            f"[pass2 {defer_idx}/{deferred_total}] Waiting for lock on {wsi_id} "
+                            f"(waited {wait_seconds:.0f}s)"
+                        )
+                        wait_logged[0] = True
+
+                try:
+                    async with acquire_feature_lock(
+                        self.uploads_root,
+                        extractor_name,
+                        params_hash,
+                        wsi_id,
+                        cancellation_check=check_cancelled_or_revoked,
+                        wait_callback=on_lock_wait,
+                    ):
+                        if wait_logged[0]:
+                            await logger.info(
+                                f"[pass2 {defer_idx}/{deferred_total}] Lock acquired for {wsi_id} after waiting",
+                            )
+
+                        cached_path = find_cached_features(
+                            self.uploads_root, extractor_name, params_hash, wsi_id
+                        )
+                        if cached_path and not force_recompute:
+                            feats, load_error = await asyncio.to_thread(
+                                safe_load_features,
+                                cached_path,
+                                delete_if_corrupted=True,
+                            )
+                            if feats is not None:
+                                create_symlink_to_cache(
+                                    task_features_dir, wsi_id, cached_path
+                                )
+                                shape = tuple(feats.shape)
+                                results.append(
+                                    {
+                                        "wsi_id": wsi_id,
+                                        "shape": shape,
+                                        "path": str(task_feat_path),
+                                    }
+                                )
+                                processed_count += 1
+                                progress = 33 + int(processed_count / total * 33)
+                                await _safe_update_progress(
+                                    session_maker,
+                                    self.task_id,
+                                    TaskStatus.EXTRACTING,
+                                    progress,
+                                )
+                                continue
+
+                        async with scoped_db(session_maker) as db:
+                            wsi = await WSIRepository.get_by_id(db, wsi_id)
+                            if not wsi:
+                                raise ValueError(f"WSI not found in pass 2: {wsi_id}")
+                            wsi_path = wsi.wsi_path
+
+                        if not coords_h5.exists():
+                            await logger.warning(
+                                f"[pass2 {defer_idx}/{deferred_total}] Skipping {wsi_id}: coord file missing",
+                            )
+                            skipped_wsi_ids.append(wsi_id)
+                            processed_count += 1
+                            continue
+
+                        await logger.info(
+                            f"[pass2 {defer_idx}/{deferred_total}] Extracting {wsi_id} "
+                            f"(other task was cancelled before completing)",
+                        )
+                        feats = await asyncio.to_thread(
+                            self._extract_wsi_features,
+                            extractor=extractor,
+                            wsi_path=str(wsi_path),
+                            coords_h5=str(coords_h5),
+                            batch_size=batch_size,
+                        )
+                        num_patches = feats.shape[0]
+                        if num_patches < MIN_PATCHES_THRESHOLD:
+                            skipped_wsi_ids.append(wsi_id)
+                            processed_count += 1
+                            continue
+
+                        cache_feat_path = get_cache_save_path(
+                            self.uploads_root, extractor_name, params_hash, wsi_id
+                        )
+                        await asyncio.to_thread(
+                            save_features, cache_feat_path, feats.contiguous()
+                        )
+                        create_symlink_to_cache(
+                            task_features_dir, wsi_id, cache_feat_path
+                        )
+                        shape = tuple(feats.shape)
+                        results.append(
+                            {
+                                "wsi_id": wsi_id,
+                                "shape": shape,
+                                "path": str(task_feat_path),
+                            }
+                        )
+                        processed_count += 1
+                        progress = 33 + int(processed_count / total * 33)
+                        await _safe_update_progress(
+                            session_maker, self.task_id, TaskStatus.EXTRACTING, progress
+                        )
+
+                except FeatureLockTimeoutError as e:
                     cached_path = find_cached_features(
                         self.uploads_root, extractor_name, params_hash, wsi_id
                     )
-                    if cached_path and not force_recompute:
-                        # Another process just finished extracting - try to use their result
+                    if cached_path:
                         feats, load_error = await asyncio.to_thread(
                             safe_load_features, cached_path, delete_if_corrupted=True
                         )
@@ -328,14 +584,6 @@ class WSIClassificationTrainer(BaseTrainer):
                                 task_features_dir, wsi_id, cached_path
                             )
                             shape = tuple(feats.shape)
-                            await logger.info(
-                                f"[{i}/{total}] Cache hit after lock for {wsi_id} (reusing result from another task)",
-                                metadata={
-                                    "wsi_id": wsi_id,
-                                    "shape": list(shape),
-                                    "cached_path": str(cached_path),
-                                },
-                            )
                             results.append(
                                 {
                                     "wsi_id": wsi_id,
@@ -343,7 +591,8 @@ class WSIClassificationTrainer(BaseTrainer):
                                     "path": str(task_feat_path),
                                 }
                             )
-                            progress = 33 + int(i / total * 33)
+                            processed_count += 1
+                            progress = 33 + int(processed_count / total * 33)
                             await _safe_update_progress(
                                 session_maker,
                                 self.task_id,
@@ -351,139 +600,17 @@ class WSIClassificationTrainer(BaseTrainer):
                                 progress,
                             )
                             continue
-                        else:
-                            # Cached file was corrupted, log and proceed to extract
-                            await logger.warning(
-                                f"[{i}/{total}] Corrupted cached file after lock for {wsi_id}, will re-extract",
-                                metadata={
-                                    "wsi_id": wsi_id,
-                                    "cached_path": str(cached_path),
-                                    "error": load_error,
-                                },
-                            )
-
-                    # Actually extract features - get WSI path with short-lived session
-                    async with scoped_db(session_maker) as db:
-                        wsi = await WSIRepository.get_by_id(db, wsi_id)
-                        if not wsi:
-                            raise ValueError(f"WSI not found: {wsi_id}")
-                        wsi_path = wsi.wsi_path
-
-                    if not coords_h5.exists():
-                        await logger.warning(
-                            f"[{i}/{total}] Skipping {wsi_id}: coordinate file disappeared "
-                            f"before feature extraction ({coords_h5}). "
-                            f"The slide may have been deleted or had 0 patches.",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "reason": "coords_file_missing",
-                                "coords_h5": str(coords_h5),
-                            },
-                        )
-                        skipped_wsi_ids.append(wsi_id)
-                        continue
-
-                    await logger.info(
-                        f"[{i}/{total}] Extracting features for {wsi_id} (cache miss)",
-                        metadata={"wsi_id": wsi_id, "wsi_index": i, "total_wsi": total},
+                    await logger.error(
+                        f"[pass2 {defer_idx}/{deferred_total}] Lock timeout for {wsi_id} with no cache",
+                        metadata={"wsi_id": wsi_id, "timeout": e.timeout},
                     )
+                    raise
 
-                    feats = await asyncio.to_thread(
-                        self._extract_wsi_features,
-                        extractor=extractor,
-                        wsi_path=str(wsi_path),
-                        coords_h5=str(coords_h5),
-                        batch_size=batch_size,
-                    )
-
-                    num_patches = feats.shape[0]
-                    if num_patches < MIN_PATCHES_THRESHOLD:
-                        await logger.warning(
-                            f"[{i}/{total}] Skipping {wsi_id}: only {num_patches} patches "
-                            f"(minimum {MIN_PATCHES_THRESHOLD}). WSI may lack detectable tissue.",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "num_patches": num_patches,
-                                "threshold": MIN_PATCHES_THRESHOLD,
-                            },
-                        )
-                        skipped_wsi_ids.append(wsi_id)
-                        progress = 33 + int(i / total * 33)
-                        await _safe_update_progress(
-                            session_maker, self.task_id, TaskStatus.EXTRACTING, progress
-                        )
-                        continue
-
-                    # Save to global cache (blocking disk I/O → thread)
-                    cache_feat_path = get_cache_save_path(
-                        self.uploads_root, extractor_name, params_hash, wsi_id
-                    )
-                    feats_contiguous = feats.contiguous()
-                    await asyncio.to_thread(
-                        save_features, cache_feat_path, feats_contiguous
-                    )
-
-                    # Create symlink in task directory
-                    create_symlink_to_cache(task_features_dir, wsi_id, cache_feat_path)
-                    shape = tuple(feats.shape)
-
-                    await logger.info(
-                        f"[{i}/{total}] Features saved to cache for {wsi_id}",
-                        metadata={
-                            "wsi_id": wsi_id,
-                            "shape": list(shape),
-                            "cache_path": str(cache_feat_path),
-                        },
-                    )
-
-            except FeatureLockTimeoutError as e:
-                # Lock timeout - check if features were completed by another process
-                cached_path = find_cached_features(
-                    self.uploads_root, extractor_name, params_hash, wsi_id
-                )
-                if cached_path:
-                    feats, load_error = await asyncio.to_thread(
-                        safe_load_features, cached_path, delete_if_corrupted=True
-                    )
-                    if feats is not None:
-                        create_symlink_to_cache(task_features_dir, wsi_id, cached_path)
-                        shape = tuple(feats.shape)
-                        await logger.info(
-                            f"[{i}/{total}] Lock timeout but cache found for {wsi_id} (using cached result)",
-                            metadata={
-                                "wsi_id": wsi_id,
-                                "shape": list(shape),
-                                "cached_path": str(cached_path),
-                            },
-                        )
-                        results.append(
-                            {
-                                "wsi_id": wsi_id,
-                                "shape": shape,
-                                "path": str(task_feat_path),
-                            }
-                        )
-                        progress = 33 + int(i / total * 33)
-                        await _safe_update_progress(
-                            session_maker, self.task_id, TaskStatus.EXTRACTING, progress
-                        )
-                        continue
-
-                # No cache available after timeout - this is a real error
-                await logger.error(
-                    f"[{i}/{total}] Feature lock timeout for {wsi_id} and no cache available",
-                    metadata={"wsi_id": wsi_id, "timeout": e.timeout},
-                )
-                raise
-
-            progress = 33 + int(i / total * 33)
-            await _safe_update_progress(
-                session_maker, self.task_id, TaskStatus.EXTRACTING, progress
-            )
-
-            results.append(
-                {"wsi_id": wsi_id, "shape": shape, "path": str(task_feat_path)}
-            )
+        except LockBusyError as _unexpected_busy:
+            raise RuntimeError(
+                f"Feature extraction internal error: LockBusyError escaped the two-pass "
+                f"loop. This is a bug — please file a report. Original: {_unexpected_busy}"
+            ) from _unexpected_busy
 
         # Bulk update feature_extracted flag for all processed WSIs
         processed_wsi_ids = [r["wsi_id"] for r in results]
