@@ -1139,6 +1139,9 @@ export default function WSIViewerPage() {
         return true
       } catch (err) {
         console.error('Failed to save annotation:', err)
+        if (err instanceof ApiError && (err.status === 403 || err.status === 401)) {
+          setHasUnsavedChanges(false)
+        }
         if (showToast) {
           toast.error(t('annotation.saveFailed'))
         }
@@ -1235,15 +1238,16 @@ export default function WSIViewerPage() {
 
   const handleSharedExitChoice = useCallback((importToPersonal: boolean) => {
     setShowSharedExitDialog(false)
-    if (importToPersonal) {
+    if (importToPersonal && isDatasetOwnerOrAdmin) {
       clearPendingSaveTimer()
       locallyModifiedWsiIdsRef.current.clear()
+      draftCacheRef.current = null
       setEditingMode('personal')
       setHasUnsavedChanges(true)
     } else {
       exitSharedMode()
     }
-  }, [clearPendingSaveTimer, exitSharedMode])
+  }, [clearPendingSaveTimer, exitSharedMode, isDatasetOwnerOrAdmin])
 
   const handleDeleteCrossSlideByLabel = useCallback(async (labels: string[]) => {
     const labelSet = new Set(labels)
@@ -1639,23 +1643,22 @@ export default function WSIViewerPage() {
         await saveShared()
       }, isImmediate ? 0 : 2000)
     } else {
+      const isImmediatePersonal = immediatePersonalSaveRef.current
+      immediatePersonalSaveRef.current = false
       const totalRegions = Object.values(allAnnotations).reduce((sum, r) => sum + r.length, 0)
 
-      // For dataset-scoped annotations, persist empty drafts so intentional GT clearing
-      // does not resurrect the dataset GT on the next load.
       if (totalRegions === 0) {
-        if (effectiveDatasetId) {
-          void persistAnnotations({ showToast: false })
-        } else if (annotationIdRef.current) {
-          void persistAnnotations({ showToast: false })
+        if (effectiveDatasetId || annotationIdRef.current) {
+          saveTimerRef.current = setTimeout(async () => {
+            saveTimerRef.current = null
+            await persistAnnotations({ showToast: false })
+          }, isImmediatePersonal ? 0 : 2000)
         } else {
           setHasUnsavedChanges(false)
         }
         return
       }
 
-      const isImmediatePersonal = immediatePersonalSaveRef.current
-      immediatePersonalSaveRef.current = false
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
         await persistAnnotations({ showToast: false })
@@ -2251,9 +2254,11 @@ export default function WSIViewerPage() {
               <button type="button" onClick={() => handleSharedExitChoice(false)} className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
                 {t('annotation.collab.exitSharedDiscard')}
               </button>
-              <button type="button" onClick={() => handleSharedExitChoice(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
-                {t('annotation.collab.exitSharedImport')}
-              </button>
+              {isDatasetOwnerOrAdmin && (
+                <button type="button" onClick={() => handleSharedExitChoice(true)} className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors">
+                  {t('annotation.collab.exitSharedImport')}
+                </button>
+              )}
             </div>
           </div>
         </div>

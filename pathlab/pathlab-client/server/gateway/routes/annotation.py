@@ -650,11 +650,7 @@ async def _resolve_effective_dataset_annotations(
     }
     valid_wsi_ids = {wsi.wsi_id for wsi in wsis}
 
-    overlay = (
-        shared_annotations if shared_annotations is not None else draft_annotations
-    )
-
-    for wsi_id, regions in overlay.items():
+    for wsi_id, regions in draft_annotations.items():
         if wsi_id not in valid_wsi_ids:
             continue
         effective_annotations[wsi_id] = (
