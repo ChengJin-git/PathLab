@@ -2170,7 +2170,7 @@ export default function AIChatPage() {
 		let isNewConversation = false;
 		if (!conversationId && messages.length === 0) {
 			try {
-				const newConv = await createConversation();
+				const newConv = await createConversation(t("aiChat.newConversation"));
 				conversationId = newConv.conversation_id;
 				isNewConversation = true;
 				setCurrentConversationId(conversationId);

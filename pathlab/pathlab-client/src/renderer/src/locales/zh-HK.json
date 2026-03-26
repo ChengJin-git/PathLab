@@ -1425,6 +1425,7 @@
     "loadingConversations": "正在載入對話...",
     "noConversationsYet": "暫無對話",
     "startNewChat": "開始新對話",
+    "newConversation": "新對話",
     "deleteConversation": "刪除對話",
     "exportConversation": "匯出對話",
     "exportFailed": "匯出對話失敗",

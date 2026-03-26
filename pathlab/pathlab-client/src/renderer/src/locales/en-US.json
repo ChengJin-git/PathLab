@@ -1425,6 +1425,7 @@
     "loadingConversations": "Loading conversations...",
     "noConversationsYet": "No conversations yet",
     "startNewChat": "Start a new chat to begin",
+    "newConversation": "New conversation",
     "deleteConversation": "Delete conversation",
     "exportConversation": "Export conversation",
     "exportFailed": "Failed to export conversation",
