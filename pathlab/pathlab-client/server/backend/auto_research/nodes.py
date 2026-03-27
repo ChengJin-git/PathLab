@@ -54,14 +54,56 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 def _get_llm(temperature: float = 0.0, bind_tools: list | None = None) -> ChatOpenAI:
-    """Get a ChatOpenAI instance pointing to the local vLLM or configured LLM."""
-    base_url = os.getenv("LLM_BASE_URL", os.getenv("VLLM_URL", "http://127.0.0.1:8000/v1"))
-    model = os.getenv("LLM_MODEL", os.getenv("VLLM_MODEL", ""))
-    api_key = os.getenv("LLM_API_KEY", os.getenv("VLLM_KEY", "not-needed"))
+    """Get a ChatOpenAI instance from PathLab global settings or env vars."""
+    # Try PathLab global settings first (local vLLM or OpenRouter)
+    base_url = None
+    model = None
+    api_key = "not-needed"
+
+    try:
+        from backend.common.config import Config
+        settings = Config.get_global_settings()
+
+        if settings.get("local_vllm_enabled") and settings.get("local_vllm_base_url"):
+            base_url = settings["local_vllm_base_url"]
+            model = settings.get("local_vllm_model") or None
+            api_key = settings.get("local_vllm_api_key") or "not-needed"
+        elif settings.get("openrouter_api_key"):
+            base_url = settings.get("openrouter_base_url", "https://openrouter.ai/api/v1")
+            model = settings.get("openrouter_model", "qwen/qwen3.5-plus-02-15")
+            api_key = settings["openrouter_api_key"]
+    except Exception:
+        pass
+
+    # Fallback to env vars
+    if not base_url:
+        base_url = os.getenv("LLM_BASE_URL", os.getenv("VLLM_URL", "http://127.0.0.1:8000/v1"))
+    if not model:
+        model = os.getenv("LLM_MODEL", os.getenv("VLLM_MODEL", None))
+    if api_key == "not-needed":
+        api_key = os.getenv("LLM_API_KEY", os.getenv("VLLM_KEY", "not-needed"))
+
+    if not model:
+        # Last resort: try to detect from vLLM /models endpoint
+        try:
+            import httpx
+            headers = {}
+            if api_key and api_key != "not-needed":
+                headers["Authorization"] = f"Bearer {api_key}"
+            resp = httpx.get(f"{base_url}/models", headers=headers, timeout=3.0)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("data"):
+                    model = data["data"][0].get("id")
+        except Exception:
+            pass
+
+    if not model:
+        model = "default"
 
     llm = ChatOpenAI(
         base_url=base_url,
-        model=model or None,
+        model=model,
         api_key=api_key,
         temperature=temperature,
         max_tokens=4096,
