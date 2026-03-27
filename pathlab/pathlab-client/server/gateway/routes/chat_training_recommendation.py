@@ -1187,12 +1187,22 @@ def _looks_like_model_availability_query(normalized: str) -> bool:
         "是否有",  # is there? / do we have?
         "有没有这个",  # do we have this?
         "这个有吗",  # does this exist?
+        # Chinese ownership/listing patterns
+        "我有什么",  # "what do I have" — ownership listing
+        "我有哪些",  # "which ones do I have" — ownership listing
+        "有什么模型",  # "what models are there" (owned)
+        "有哪些模型",  # "which models are there" (owned)
+        "训练好的模型",  # "already-trained models" — referring to completed models
+        "已训练",  # "already trained"
+        "训练过的",  # "have trained"
         # English patterns
         "is there",
         "do you have",
         "isn't there",
         "doesn't exist",
         "does it exist",
+        "what models do i have",  # English ownership listing
+        "what trained models",  # English ownership listing
     )
 
     return any(pattern in normalized for pattern in availability_patterns)
