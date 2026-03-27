@@ -19,10 +19,11 @@ import {
   getCurrentUser,
   updateCurrentUser,
   registerUser,
+  requestAccess,
   uploadAvatar,
   deleteAvatar,
 } from '@renderer/api/auth'
-import { getAuthToken, setAuthToken, clearAuthToken } from '@renderer/api/client'
+import { getAuthToken, setAuthToken } from '@renderer/api/client'
 import { invalidateRecentActivityCache } from '@renderer/api/stats'
 
 const mockFetch = vi.mocked(fetch)
@@ -201,7 +202,7 @@ describe('registerUser', () => {
       email: 'newuser@test.com',
       password: 'pass123',
       nickname: 'Newbie',
-      role: 'pathologist',
+      role: 'guest',
     })
     const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toContain('/auth/register')
@@ -217,6 +218,33 @@ describe('registerUser', () => {
       status: 409,
       code: 'CONFLICT',
     })
+  })
+})
+
+describe('requestAccess', () => {
+  it('sends POST request to /auth/request-access with registration payload', async () => {
+    mockFetch.mockResolvedValueOnce(ok(MOCK_USER, 201))
+    const result = await requestAccess({
+      username: 'newuser',
+      password: 'pass123',
+      registration_email: 'newuser@university.edu',
+      nickname: 'Researcher',
+      turnstile_token: 'ts-token',
+    })
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toContain('/auth/request-access')
+    expect(opts?.method).toBe('POST')
+
+    const body = JSON.parse(opts?.body as string)
+    expect(body).toMatchObject({
+      username: 'newuser',
+      password: 'pass123',
+      registration_email: 'newuser@university.edu',
+      nickname: 'Researcher',
+      turnstile_token: 'ts-token',
+    })
+    expect(result).toMatchObject({ email: 'doctor@hospital.com' })
   })
 })
 

@@ -74,7 +74,7 @@ export interface RegisterRequest {
   email: string
   password: string
   nickname?: string
-  role?: 'pathologist' | 'guest'
+  role?: 'guest'
   registration_email?: string
 }
 
@@ -261,4 +261,3 @@ export async function updateCurrentUser(data: CurrentUserUpdateRequest): Promise
     'Failed to update user'
   )
 }
-
