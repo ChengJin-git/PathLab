@@ -231,7 +231,7 @@ export function StickyWorkflowStory() {
                       <div className="h-1.5 w-full bg-slate-200 rounded-full">
                         <div className="h-full bg-emerald-500 rounded-full w-full" />
                       </div>
-                      <p className="text-xs text-[color:var(--landing-text-secondary)] mt-2">{t('landing.story.step3.mockCompleted', 'Completed')} · {t('landing.story.step3.mockDuration', '2m 34s')}</p>
+                      <p className="text-xs text-[color:var(--landing-text-secondary)] mt-2">{t('landing.story.step3.mockCompleted', 'Completed')} · {t('landing.story.step3.mockDuration', '20m 34s')}</p>
                     </div>
                     <div className="flex-1 bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-4 flex flex-col justify-center">
                       <p className="text-xs font-semibold text-slate-500 mb-3">{t('landing.story.step3.mockPredTitle', 'Pred. Confidence')}</p>
