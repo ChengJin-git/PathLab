@@ -124,7 +124,7 @@ function SubCard({ card, icon: Icon, type, isVisible }: { card: any, icon: any, 
          </div>
        )}
        {type === 'bar' && (
-         <div className="mt-5 flex justify-between items-end relative z-10 w-full gap-2">
+         <div className="mt-8 flex justify-between items-end relative z-10 w-full gap-2">
            {/* Bar Chart */}
            <div className="flex gap-1.5 items-end h-12 pb-2">
              <div className="flex flex-col items-center gap-1">
