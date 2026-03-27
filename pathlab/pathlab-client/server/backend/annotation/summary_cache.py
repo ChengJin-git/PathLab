@@ -375,6 +375,7 @@ async def rebuild_dataset_annotation_summary_cache(
         exact_lookup, stem_lookup = _build_dataset_wsi_lookups(wsis)
 
         for record in records_to_use:
+            record_annotation_id = getattr(record, "annotation_id", None)
             record_annotations = getattr(record, "annotations", {})
             if not isinstance(record_annotations, dict):
                 continue
@@ -385,6 +386,13 @@ async def rebuild_dataset_annotation_summary_cache(
             )
             for wsi_id, regions in roi_map.items():
                 merged_annotations.setdefault(wsi_id, []).extend(regions)
+            if (
+                isinstance(record_annotation_id, str)
+                and record_annotation_id.startswith("label_")
+                and not record_annotation_id == f"label_{dataset_id}"
+            ):
+                inferred_wsi_id = record_annotation_id[len("label_") :]
+                merged_annotations.setdefault(inferred_wsi_id, [])
 
     finalized_annotations_key = {
         "count": len(gt_records),
