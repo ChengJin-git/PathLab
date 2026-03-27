@@ -44,7 +44,7 @@ export function ModalShell({
       <div
         role="dialog"
         className={cn(
-          'bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto',
+          'bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto text-left',
           MAX_WIDTH[maxWidth] ?? 'max-w-md',
           className
         )}
