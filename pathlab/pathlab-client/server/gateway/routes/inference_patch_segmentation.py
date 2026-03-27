@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, cast as type_cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -233,8 +234,15 @@ async def _run_inference_patch_segmentation(
     if deleted_count > 0:
         logger.info(f"Deleted {deleted_count} old AIResult records for task {task_id}")
 
-    # Discover COCO annotations for ground truth metrics
-    def _discover_annotations():
+    def _resolve_annotations_from_config() -> tuple[Optional[str], Optional[str]]:
+        test_cfg = (model_config.get("dataset") or {}).get("test", {})
+        ann_path = test_cfg.get("annotations_path")
+        img_dir = test_cfg.get("image_dir")
+        if ann_path and Path(ann_path).exists():
+            return ann_path, img_dir
+        return None, None
+
+    def _discover_annotations() -> tuple[Optional[str], Optional[str]]:
         from pathlib import Path as _Path
 
         image_dirs = set()
@@ -259,17 +267,24 @@ async def _run_inference_patch_segmentation(
                         continue
         return None, None
 
-    annotations_path, annotations_img_dir = await asyncio.to_thread(
-        _discover_annotations
-    )
-    has_annotations = annotations_path is not None
-
-    if has_annotations:
-        logger.info(f"Found COCO annotations: {annotations_path}")
-    else:
+    annotations_path, annotations_img_dir = _resolve_annotations_from_config()
+    if annotations_path:
         logger.info(
-            "No COCO annotations found — running inference only (no per-image metrics)"
+            f"Using test-split annotations from model config: {annotations_path}"
         )
+    else:
+        annotations_path, annotations_img_dir = await asyncio.to_thread(
+            _discover_annotations
+        )
+        if annotations_path:
+            logger.info(
+                f"Found COCO annotations via filesystem scan: {annotations_path}"
+            )
+        else:
+            logger.info(
+                "No COCO annotations found — running inference only (no per-image metrics)"
+            )
+    has_annotations = annotations_path is not None
 
     # Run inference
     val_transform = get_transforms(
@@ -459,6 +474,8 @@ async def _run_inference_patch_segmentation(
                             "metrics": per_image_metrics,
                             "has_ground_truth": has_gt,
                             "class_names": class_names,
+                            "num_classes": num_classes,
+                            "image_size": list(original_size),
                             "pred_mask_file": str(mask_file),
                             "result_file": str(result_file),
                         }
@@ -490,6 +507,8 @@ async def _run_inference_patch_segmentation(
                     "aggregation_level": "file",
                     "has_ground_truth": r["has_ground_truth"],
                     "class_names": r.get("class_names", []),
+                    "num_classes": r.get("num_classes"),
+                    "image_size": r.get("image_size"),
                     "metrics": r["metrics"],
                     "pred_mask_file": r["pred_mask_file"],
                     "result_file": r["result_file"],
