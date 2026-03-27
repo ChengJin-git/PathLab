@@ -2682,14 +2682,23 @@ async def chat_with_ai(
         _cached_models_count = _ctx_cached.get("trained_models_total", 0)
         _model_summaries_from_cache = _ctx_cached.get("model_summaries") or []
         if _model_summaries_from_cache:
+            _summaries_for_ranking = _model_summaries_from_cache
+            if inferred_model_filters:
+                _pre_filtered = [
+                    s
+                    for s in _model_summaries_from_cache
+                    if _matches_model_request_filters(s, inferred_model_filters)
+                ]
+                if _pre_filtered:
+                    _summaries_for_ranking = _pre_filtered
             if use_semantic_model_ranking:
                 _cached_model_entries = await asyncio.to_thread(
                     _semantic_top_k_models,
                     semantic_query_text,
-                    _model_summaries_from_cache,
+                    _summaries_for_ranking,
                 )
             else:
-                _cached_model_entries = _model_summaries_from_cache[
+                _cached_model_entries = _summaries_for_ranking[
                     :TOP_K_MODELS_IN_CHAT_CONTEXT
                 ]
             _cached_models_list = (
@@ -2904,22 +2913,47 @@ async def chat_with_ai(
                         str(_fb_task.task_name or ""),
                     )
 
+        _fb_source_dataset_ids: dict[str, str | None] = {}
+        _fb_dataset_names: dict[str, str] = {}
+        if _fb_task_ids:
+            async with async_session() as _fb_ds_db:
+                _fb_source_dataset_ids = (
+                    await TrainingTaskRepository.get_source_dataset_ids_batch(
+                        _fb_ds_db, _fb_task_ids
+                    )
+                )
+                _fb_unique_ds_ids = list(
+                    {v for v in _fb_source_dataset_ids.values() if v}
+                )
+                if _fb_unique_ds_ids:
+                    _fb_ds_list = await DatasetRepository.get_by_ids(
+                        _fb_ds_db, _fb_unique_ds_ids
+                    )
+                    _fb_dataset_names = {
+                        d.dataset_id: d.name for d in _fb_ds_list if d.dataset_id
+                    }
+
         _fb_model_summaries = []
         for _m in _fb_trained_models:
             _m_tt, _m_dt, _m_tn = _fb_task_meta.get(
                 str(_m.task_id) if _m.task_id else "",
                 ("unknown", "unknown", ""),
             )
+            _fb_ds_id = (
+                _fb_source_dataset_ids.get(str(_m.task_id)) if _m.task_id else None
+            )
+            _fb_ds_name = _fb_dataset_names.get(_fb_ds_id, "") if _fb_ds_id else ""
             _fb_model_summaries.append(
                 {
                     "id": _m.model_id,
                     "task_type": _m_tt,
                     "data_type": _m_dt,
                     "classes": [c.lower() for c in (_m.classes or [])],
-                    "dataset_names": [],
+                    "source_dataset_id": _fb_ds_id,
+                    "dataset_names": [_fb_ds_name] if _fb_ds_name else [],
                     "dataset_sources": [],
                     "task_name": _m_tn.lower(),
-                    "line": f"  - {_m.model_name} (id={_m.model_id}, task_type={_m_tt}, data_type={_m_dt}, trained_on_task={_m.task_id}, task_name={_m_tn or 'unknown'}, feature_extractor={_m.feature_extractor or 'unknown'}, aggregator={_m.aggregator or 'unknown'}, classes={[c.lower() for c in (_m.classes or [])]})",
+                    "line": f"  - {_m.model_name} (id={_m.model_id}, task_type={_m_tt}, data_type={_m_dt}, trained_on_task={_m.task_id}, task_name={_m_tn or 'unknown'}, feature_extractor={_m.feature_extractor or 'unknown'}, aggregator={_m.aggregator or 'unknown'}, classes={[c.lower() for c in (_m.classes or [])]}, dataset={_fb_ds_name or 'unknown'})",
                     "embedding": None,
                 }
             )
@@ -2942,12 +2976,23 @@ async def chat_with_ai(
                 )
 
         if _fb_model_summaries:
+            _fb_summaries_for_ranking = _fb_model_summaries
+            if inferred_model_filters:
+                _fb_pre_filtered = [
+                    s
+                    for s in _fb_model_summaries
+                    if _matches_model_request_filters(s, inferred_model_filters)
+                ]
+                if _fb_pre_filtered:
+                    _fb_summaries_for_ranking = _fb_pre_filtered
             if use_semantic_model_ranking:
                 _fb_models_list_entries = await asyncio.to_thread(
-                    _semantic_top_k_models, semantic_query_text, _fb_model_summaries
+                    _semantic_top_k_models,
+                    semantic_query_text,
+                    _fb_summaries_for_ranking,
                 )
             else:
-                _fb_models_list_entries = _fb_model_summaries[
+                _fb_models_list_entries = _fb_summaries_for_ranking[
                     :TOP_K_MODELS_IN_CHAT_CONTEXT
                 ]
         else:
