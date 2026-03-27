@@ -1285,3 +1285,109 @@ class PermissionAuditLog(Base):
             if self.created_at
             else None,
         }
+
+
+# =============================================================================
+# Auto Research Agent Tables
+# =============================================================================
+
+class AutoResearchSession(Base):
+    """Tracks an automated research session from question to final report."""
+    __tablename__ = "auto_research_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(255), unique=True, nullable=False, index=True)
+    user_id = Column(String(255), nullable=False, index=True)
+    research_question = Column(Text, nullable=False)
+    phase = Column(String(50), nullable=False, default="literature")
+    status = Column(String(20), nullable=False, default="running")
+    thread_id = Column(String(255), unique=True, nullable=False)
+    experiment_plan = Column(JSON, nullable=True)
+    best_metric = Column(Float, nullable=True)
+    best_metric_name = Column(String(50), default="auc")
+    best_experiment = Column(JSON, nullable=True)
+    comparison_results = Column(JSON, nullable=True)
+    final_report = Column(Text, nullable=True)
+    current_iteration = Column(Integer, default=0)
+    max_iterations = Column(Integer, default=3)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now, nullable=False)
+
+    experiments = relationship("AutoResearchExperiment", back_populates="session",
+                               cascade="all, delete-orphan")
+    events = relationship("AutoResearchEvent", back_populates="session",
+                           cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_ar_session_user_status", "user_id", "status"),
+    )
+
+    def to_dict(self):
+        return {
+            "session_id": self.session_id,
+            "user_id": self.user_id,
+            "research_question": self.research_question,
+            "phase": self.phase,
+            "status": self.status,
+            "best_metric": self.best_metric,
+            "best_metric_name": self.best_metric_name,
+            "current_iteration": self.current_iteration,
+            "max_iterations": self.max_iterations,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
+        }
+
+
+class AutoResearchExperiment(Base):
+    """Tracks individual experiments within a research session."""
+    __tablename__ = "auto_research_experiments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(255), ForeignKey("auto_research_sessions.session_id",
+                        ondelete="CASCADE"), nullable=False, index=True)
+    experiment_name = Column(String(500))
+    training_task_id = Column(String(255), index=True)
+    dataset_id = Column(String(255))
+    feature_extractor = Column(String(100))
+    aggregator = Column(String(100))
+    hyperparams = Column(JSON, nullable=True)
+    status = Column(String(20), default="pending")
+    metrics = Column(JSON, nullable=True)
+    analysis_id = Column(String(255), nullable=True)
+    iteration = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    session = relationship("AutoResearchSession", back_populates="experiments")
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "experiment_name": self.experiment_name,
+            "training_task_id": self.training_task_id,
+            "feature_extractor": self.feature_extractor,
+            "aggregator": self.aggregator,
+            "status": self.status,
+            "metrics": self.metrics,
+            "iteration": self.iteration,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+        }
+
+
+class AutoResearchEvent(Base):
+    """SSE events for auto-research sessions with cursor-based replay."""
+    __tablename__ = "auto_research_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    session_id = Column(String(255), ForeignKey("auto_research_sessions.session_id",
+                        ondelete="CASCADE"), nullable=False, index=True)
+    event_type = Column(String(50), nullable=False)
+    event_data = Column(JSON, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    session = relationship("AutoResearchSession", back_populates="events")
+
+    __table_args__ = (
+        Index("idx_ar_events_session_seq", "session_id", "sequence"),
+    )
