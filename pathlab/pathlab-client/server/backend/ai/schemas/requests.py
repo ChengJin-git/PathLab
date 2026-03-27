@@ -177,6 +177,7 @@ class PatchSegmentationTrainRequest(BaseModel):
     task_id: str
     architecture: str = "unet"
     backbone: str = "resnet50"
+    decoder_type: Optional[str] = None
     loss_names: List[str] = ["DiceLoss", "JaccardLoss"]
     loss_weights: List[float] = [0.5, 0.5]
     epochs: int = 50

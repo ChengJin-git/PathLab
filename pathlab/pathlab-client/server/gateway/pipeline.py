@@ -936,25 +936,33 @@ async def run_training_pipeline(
                 await _ensure_gpu_vram_for_step(
                     assigned_device, "patch_segmentation", logger_manager
                 )
+                _decoder_type = (
+                    architecture.replace("_decoder", "")
+                    if architecture.endswith("_decoder")
+                    else None
+                )
+                _seg_payload: dict = {
+                    "task_id": task_id,
+                    "architecture": architecture,
+                    "backbone": backbone,
+                    "loss_names": loss_names,
+                    "loss_weights": loss_weights,
+                    "epochs": epochs,
+                    "lr": lr,
+                    "batch_size": batch_size,
+                    "optimizer": optimizer,
+                    "early_stopping_patience": early_stopping_patience,
+                    "device": assigned_device,
+                    "seed": seed,
+                    "num_classes": num_classes,
+                }
+                if _decoder_type is not None:
+                    _seg_payload["decoder_type"] = _decoder_type
                 await _call_ai_service(
                     logger_manager=logger_manager,
                     task_id=task_id,
                     endpoint=f"{AI_SERVICE_URL}/api/ai/training/patch_segmentation",
-                    payload={
-                        "task_id": task_id,
-                        "architecture": architecture,
-                        "backbone": backbone,
-                        "loss_names": loss_names,
-                        "loss_weights": loss_weights,
-                        "epochs": epochs,
-                        "lr": lr,
-                        "batch_size": batch_size,
-                        "optimizer": optimizer,
-                        "early_stopping_patience": early_stopping_patience,
-                        "device": assigned_device,
-                        "seed": seed,
-                        "num_classes": num_classes,
-                    },
+                    payload=_seg_payload,
                     operation_name="patch segmentation training",
                 )
 

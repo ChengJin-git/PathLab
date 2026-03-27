@@ -1038,8 +1038,17 @@ def _normalize_segmentation_task_config(
     if resolved_backbone:
         normalized["seg_backbone"] = resolved_backbone
 
+    FM_DECODER_ARCHITECTURES = {
+        "linear_decoder",
+        "conv_decoder",
+        "dpt_decoder",
+        "unetr_decoder",
+    }
     if is_fm_segmentation_backbone(resolved_backbone):
-        normalized["seg_architecture"] = "conv_decoder"
+        if seg_architecture in FM_DECODER_ARCHITECTURES:
+            normalized["seg_architecture"] = seg_architecture
+        else:
+            normalized["seg_architecture"] = "conv_decoder"
     elif seg_architecture:
         normalized["seg_architecture"] = seg_architecture
 

@@ -112,15 +112,23 @@ class TrainingTaskRequest(BaseModel):
                 "Segmentation tasks must use model.backbone instead of model.encoder."
             )
 
+        FM_DECODER_ARCHITECTURES = {
+            "linear_decoder",
+            "conv_decoder",
+            "dpt_decoder",
+            "unetr_decoder",
+        }
+
         is_fm_backbone = is_fm_segmentation_backbone(backbone)
-        if is_fm_backbone and architecture != "conv_decoder":
+        if is_fm_backbone and architecture not in FM_DECODER_ARCHITECTURES:
             raise ValueError(
-                f"Segmentation FM backbone '{backbone}' requires model.architecture='conv_decoder'."
+                f"Segmentation FM backbone '{backbone}' requires model.architecture to be one of "
+                f"{sorted(FM_DECODER_ARCHITECTURES)}, got '{architecture}'."
             )
 
-        if architecture == "conv_decoder" and not is_fm_backbone:
+        if architecture in FM_DECODER_ARCHITECTURES and not is_fm_backbone:
             raise ValueError(
-                f"Segmentation architecture 'conv_decoder' requires an FM backbone, got '{backbone}'."
+                f"Segmentation architecture '{architecture}' requires an FM backbone, got '{backbone}'."
             )
 
         return self

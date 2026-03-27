@@ -1075,9 +1075,11 @@ async def train_patch_segmentation(req: PatchSegmentationTrainRequest) -> TrainR
         model_dir = UPLOADS_DIR / "models" / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
         save_dir = str(model_dir)
+        _decoder_type = req.decoder_type or req.architecture.replace("_decoder", "")
         config = {
             "architecture": req.architecture,
             "backbone": req.backbone,
+            "decoder_type": _decoder_type,
             "loss": {"names": req.loss_names, "weights": req.loss_weights},
             "training": {
                 "epochs": req.epochs,
