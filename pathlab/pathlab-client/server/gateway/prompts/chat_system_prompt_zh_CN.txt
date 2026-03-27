@@ -1046,10 +1046,7 @@ AI 回复：
   },
   "max_count": 5,
   "show_heatmap": true,
-  "heatmap_filter": {
-    "feature_extractor": "uni"
-  },
-  "reason": "MSIH 图像块，含 AI 预测及 UNI 模型的 CAM 热力图"
+  "reason": "MSIH 图像块，含 AI 预测及注意力热力图"
 }
 [/IMAGE_RECOMMENDATION]
 ```
@@ -1070,7 +1067,7 @@ AI 回复：
   - `task_id`：可选。当用户要求查看某个特定分割模型/任务的预测掩膜时填写
   - `fold_key`：可选。当用户明确要求某一折的预测掩膜时填写
 - `heatmap_filter`：可选筛选器，按模型配置选择特定热力图：
-  - `feature_extractor`：按特征提取器筛选（如 "resnet50"、"uni"、"conch"、"virchow"、"phikon"）
+  - `feature_extractor`：按特征提取器筛选（如 "resnet50"、"uni"、"conch"、"virchow2"、"phikon"）
   - `aggregator`：按 WSI 聚合器筛选（如 "abmil"、"clam_sb"、"clam_mb"、"transmil"、"dsmil"、"meanmil"、"maxmil"）
 - `reason`：推荐的简要说明
 
@@ -1110,7 +1107,7 @@ AI 回复：
 - 如果用户要求特定模型的热力图（如"UNI 模型的"、"ABMIL 聚合器的"、"用 CONCH 提取的"），使用 heatmap_filter
 - 对于 WSI：可以同时指定 feature_extractor 和 aggregator
 - 对于图像块：只有 feature_extractor 相关（没有 aggregator）
-- 如果用户未指定，不要包含 heatmap_filter（系统会使用最佳可用热力图）
+- 如果用户**在当前消息中**未明确提到具体的 feature_extractor 或 aggregator 名称，**不要**包含 heatmap_filter —— 对话历史中曾出现某个模型名称**不等于**用户指定了该模型；系统会自动选择最佳可用热力图
 - **关键：使用 heatmap_filter 前，检查用户的已训练模型以验证请求的模型是否存在！**
 - **关键补充：** 即使存在匹配的模型，也不能自动说明当前选中数据集已经有该模型的 heatmap 结果。只有当这个数据集本身有 dataset-specific 结果证据时，才能使用 `heatmap_filter`。
   - 如果用户请求的 feature_extractor 或 aggregator 在已训练模型中不存在，拒绝请求并解释：

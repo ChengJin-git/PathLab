@@ -1047,10 +1047,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
   },
   "max_count": 5,
   "show_heatmap": true,
-  "heatmap_filter": {
-    "feature_extractor": "uni"
-  },
-  "reason": "MSIH patches with AI predictions showing CAM heatmaps from UNI patch classifier"
+  "reason": "MSIH patches with AI predictions showing attention heatmaps"
 }
 [/IMAGE_RECOMMENDATION]
 ```
@@ -1072,7 +1069,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - **Critical**: When `source` is `"model_pred"` or `"both"`, you MUST also add `"has_predictions": true` to `filters`. Without it, the frontend cannot locate candidate images (`segmentation_mask.task_id` only controls overlay display, not image candidate retrieval). This is not required when `source` is `"gt"`.
   - `fold_key`: Optional. Use when the user explicitly asks for a specific fold's prediction mask
 - `heatmap_filter`: Optional filter to select specific heatmaps by model configuration:
-  - `feature_extractor`: Filter by feature extractor (e.g., "resnet50", "uni", "conch", "virchow", "phikon")
+  - `feature_extractor`: Filter by feature extractor (e.g., "resnet50", "uni", "conch", "virchow2", "phikon")
   - `aggregator`: Filter by aggregator for WSI (e.g., "abmil", "clam_sb", "clam_mb", "transmil", "dsmil", "meanmil", "maxmil")
 - `reason`: Brief explanation of the recommendation
 
@@ -1109,7 +1106,7 @@ Based on your needs, here are 5 MSIH images with their attention heatmaps:
 - If user asks for heatmaps from a specific model (e.g., "UNI model", "ABMIL aggregator"), use heatmap_filter
 - For WSI: both feature_extractor and aggregator can be specified
 - For Patch: only feature_extractor is relevant (no aggregator)
-- If user doesn't specify, don't include heatmap_filter (system will use the best available heatmap)
+- If user does **not** explicitly name a specific feature_extractor or aggregator **in the current message**, do NOT include heatmap_filter — conversation history mentioning a model does **not** count as the user specifying it; the system will automatically select the best available heatmap
 - **CRITICAL: Before using heatmap_filter, CHECK USER'S TRAINED MODELS to verify the requested model exists!**
 - **CRITICAL:** existence of a matching model is still not enough for a selected dataset. Only use `heatmap_filter` when that dataset also has dataset-specific result evidence. Do NOT apply a model trained on dataset A to dataset B just because labels or model compatibility match.
   - If user requests a specific feature_extractor or aggregator that does NOT exist in their trained models, REJECT the request and explain:
