@@ -3741,7 +3741,7 @@
         "desc": "通过控制台跟踪分析进度，并直接在查看器里叠加数字切片证据。",
         "mockStatus": "任务状态",
         "mockCompleted": "已完成",
-        "mockDuration": "2m 34s",
+        "mockDuration": "20m 34s",
         "mockPredTitle": "预测置信度",
         "mockClass1": "基底细胞癌",
         "mockClass2": "鳞状细胞癌",
@@ -3861,7 +3861,9 @@
       "precision": "精确率",
       "recall": "召回率",
       "searchPlaceholder": "使用自然语言查询任务进度、数据状态或操作集群...",
-      "gpuAllocation": "GPU 算力分配"
+      "gpuAllocation": "GPU 算力分配",
+      "aiAutoConfig": "AI 自动配置",
+      "parsed": "已解析"
     }
   }
 }

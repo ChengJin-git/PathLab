@@ -3747,7 +3747,7 @@
         "desc": "Review the pipeline execution and jump directly into the viewer for in-depth visual evidence.",
         "mockStatus": "Task Status",
         "mockCompleted": "Completed",
-        "mockDuration": "2m 34s",
+        "mockDuration": "20m 34s",
         "mockPredTitle": "Pred. Confidence",
         "mockClass1": "BCC",
         "mockClass2": "SCC",
@@ -3867,7 +3867,9 @@
       "precision": "Precision",
       "recall": "Recall",
       "searchPlaceholder": "Ask about your active jobs...",
-      "gpuAllocation": "GPU Allocation"
+      "gpuAllocation": "GPU Allocation",
+      "aiAutoConfig": "AI Auto Configuration",
+      "parsed": "Parsed"
     }
   }
 }

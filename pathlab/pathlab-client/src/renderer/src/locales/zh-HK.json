@@ -3745,7 +3745,7 @@
         "desc": "在一個控制台裡跟蹤執行進度，並可直接在數位切片中比對預測疊層模型。",
         "mockStatus": "任務狀態",
         "mockCompleted": "已完成",
-        "mockDuration": "2m 34s",
+        "mockDuration": "20m 34s",
         "mockPredTitle": "預測置信度",
         "mockClass1": "基底細胞癌",
         "mockClass2": "鱗狀細胞癌",
@@ -3865,7 +3865,9 @@
       "precision": "精確率",
       "recall": "召回率",
       "searchPlaceholder": "使用自然語言查詢任務進度、數據狀態或操作叢集...",
-      "gpuAllocation": "GPU 算力分配"
+      "gpuAllocation": "GPU 算力分配",
+      "aiAutoConfig": "AI 自動配置",
+      "parsed": "已解析"
     }
   }
 }

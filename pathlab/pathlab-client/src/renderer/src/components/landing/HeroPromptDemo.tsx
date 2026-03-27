@@ -63,8 +63,8 @@ export function HeroPromptDemo({ scenario }: { scenario: HeroDemoScenario }) {
           {showConfig && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="bg-white border border-[color:var(--landing-border)] rounded-xl overflow-hidden shadow-sm">
                <div className="px-4 py-3 bg-[#F1F7FB] border-b border-[color:var(--landing-border)] flex items-center justify-between">
-                 <span className="text-sm font-semibold text-[color:var(--landing-text-primary)]">AI Auto Configuration</span>
-                 <span className="text-xs text-[color:var(--landing-primary)] bg-blue-100/50 px-2 py-0.5 rounded-md">Parsed</span>
+                 <span className="text-sm font-semibold text-[color:var(--landing-text-primary)]">{t('landing.mock.aiAutoConfig', 'AI Auto Configuration')}</span>
+                  <span className="text-xs text-[color:var(--landing-primary)] bg-blue-100/50 px-2 py-0.5 rounded-md">{t('landing.mock.parsed', 'Parsed')}</span>
                </div>
                <div className="p-4 flex flex-col gap-3">
                  {scenario.config.map((item, idx) => (
