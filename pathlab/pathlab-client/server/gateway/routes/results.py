@@ -1768,6 +1768,9 @@ async def start_external_validation(
             "dataset_name": target_dataset.name,  # Store dataset name for display
             "total_wsi": len(wsi_ids),
             "aggregator": trained_model.aggregator,  # Store aggregator name for task list display
+            "classifier": (model_task.model_config or {}).get(
+                "classifier"
+            ),  # Store classifier for patch task list display
             # Store pipeline params needed to re-submit after system restart (resume_interrupted_tasks)
             "model_task_type": model_task_type,  # e.g. "classification", "survival", "wsi_survival"
             "model_data_type": model_data_type,  # "wsi" or "patch"
