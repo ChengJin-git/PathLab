@@ -15,7 +15,7 @@ import { Select } from '../components/ui/select'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
 import { formatFileSize } from '../lib/utils'
-import { clampDatasetPage, clampFilePage } from '../lib/datasetPagination'
+import { clampDatasetPage, clampFilePage, getListPageFileViewState } from '../lib/datasetPagination'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
@@ -453,6 +453,14 @@ export default function ListPage() {
   const hasFileContent = (wsiListQuery.data?.items ?? []).length > 0 || (wsiListQuery.data?.total ?? wsiListQuery.data?.items?.length ?? 0) > 0 || (wsiListQuery.data?.total_cases ?? 0) > 0
   const showInitialFilesLoading = wsiListQuery.isLoading && !hasFileContent
   const isFilesRefreshing = wsiListQuery.isLoading && hasFileContent
+  const filesViewState = getListPageFileViewState({
+    selectedDatasetId,
+    showInitialFilesLoading,
+    hasFilesError: Boolean(wsiListQuery.error ? String(wsiListQuery.error) : undefined),
+    itemCount: (wsiListQuery.data?.items ?? []).length,
+    searchQuery,
+    debouncedSearch,
+  })
 
   const hasActiveDatasetFilters =
     datasetTaskFilter !== 'all' || datasetTypeFilter !== 'all' || datasetLevelFilter !== 'all' || datasetVisibilityFilter !== 'all' || datasetSourceFilter !== 'all' || datasetSearchQuery !== '' || datasetDebouncedSearch !== ''
@@ -2243,7 +2251,7 @@ export default function ListPage() {
           )}
 
           {/* Empty State */}
-          {!wsiListQuery.isLoading && !(wsiListQuery.error ? String(wsiListQuery.error) : undefined) && (wsiListQuery.data?.items ?? []).length === 0 && (
+          {filesViewState.showDatasetEmptyState && (
             <div className="flex flex-col items-center justify-center py-16 px-4 border-2 border-dashed border-gray-200 rounded-lg bg-gray-50">
               <div className="bg-white p-4 rounded-full border border-gray-200 shadow-sm mb-4">
                 <Microscope className="w-8 h-8 text-gray-400" />
@@ -2258,7 +2266,7 @@ export default function ListPage() {
       )}
 
       {/* Search and Batch Actions */}
-      {selectedDatasetId && (
+      {filesViewState.showSearchActions && (
         <div className="flex flex-col sm:flex-row gap-3 mb-3 items-stretch sm:items-center justify-between">
           <div className="relative flex-1 max-w-md w-full">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
@@ -2297,9 +2305,9 @@ export default function ListPage() {
       )}
 
       {/* Table - only show when a dataset is selected */}
-      {selectedDatasetId && !showInitialFilesLoading && !(wsiListQuery.error ? String(wsiListQuery.error) : undefined) && (((wsiListQuery.data?.items ?? []).length > 0) || debouncedSearch !== '' || searchQuery !== '') && (
+      {filesViewState.showFileTableArea && (
         <>
-          {(wsiListQuery.data?.items ?? []).length === 0 ? (
+          {filesViewState.showNoMatchingFilesState ? (
             <Card className="p-12 flex flex-col items-center justify-center bg-gray-50/50 border-dashed border-2 border-gray-200 rounded-2xl">
               <Search className="w-12 h-12 text-gray-300 mb-4" />
               <h3 className="text-lg font-medium text-gray-900">{t('listPage.noMatchingFiles')}</h3>
