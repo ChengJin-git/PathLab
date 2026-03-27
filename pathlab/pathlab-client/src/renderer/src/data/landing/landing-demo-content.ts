@@ -82,7 +82,7 @@ export const CAPABILITY_CARDS_ZH: CapabilityCardData[] = [
   },
   {
     title: "结果查看器",
-    description: "直观评估模型性能与混淆矩阵",
+    description: "直观评估模型性能",
   },
   {
     title: "数据与文件",
@@ -97,7 +97,7 @@ export const CAPABILITY_CARDS_ZH_HK: CapabilityCardData[] = [
   },
   {
     title: "結果查看器",
-    description: "直觀評估模型性能與混淆矩陣",
+    description: "直觀評估模型性能",
   },
   {
     title: "數據與文件",
@@ -112,7 +112,7 @@ export const CAPABILITY_CARDS_EN: CapabilityCardData[] = [
   },
   {
     title: "Results Viewer",
-    description: "Intuitively evaluate model performance and matrices",
+    description: "Intuitively evaluate model performance",
   },
   {
     title: "Data & Files",
