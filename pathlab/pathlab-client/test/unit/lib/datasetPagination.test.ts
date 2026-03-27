@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampDatasetPage } from '../../../src/renderer/src/lib/datasetPagination'
+import { clampDatasetPage, clampFilePage } from '../../../src/renderer/src/lib/datasetPagination'
 
 describe('clampDatasetPage', () => {
   it('does not reset page during transient refetch without data', () => {
@@ -30,5 +30,27 @@ describe('clampDatasetPage', () => {
     })
 
     expect(next).toBe(2)
+  })
+})
+
+describe('clampFilePage', () => {
+  it('does not reset file page during transient page fetch without data', () => {
+    const next = clampFilePage(6, 1, {
+      isError: false,
+      isFetching: true,
+      hasQueryData: false,
+    })
+
+    expect(next).toBe(6)
+  })
+
+  it('clamps file page after stable query data arrives', () => {
+    const next = clampFilePage(6, 3, {
+      isError: false,
+      isFetching: false,
+      hasQueryData: true,
+    })
+
+    expect(next).toBe(3)
   })
 })
