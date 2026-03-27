@@ -596,7 +596,7 @@ async def upload_wsi_file(
                     user_id=str(user.id),
                     source_organ=source_organ or None,
                     is_public=is_public,
-                    reuse_existing=False,
+                    reuse_existing=True,
                 )
             except DatasetNameConflictError:
                 raise HTTPException(
@@ -613,6 +613,14 @@ async def upload_wsi_file(
                 context="WSI upload",
             )
             resolved_dataset_id = dataset.dataset_id
+            existing_with_name = await WSIRepository.get_by_filename_in_dataset(
+                db, resolved_dataset_id, original_filename
+            )
+            if existing_with_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A file with filename '{original_filename}' already exists in this dataset",
+                )
 
         if is_json_annotation_upload:
             if resolved_dataset_id is None:
@@ -1021,7 +1029,7 @@ async def upload_wsi_by_path(
                     user_id=str(user.id),
                     source_organ=req.source_organ or None,
                     is_public=req.is_public,
-                    reuse_existing=False,
+                    reuse_existing=True,
                 )
             except DatasetNameConflictError:
                 raise HTTPException(
@@ -1038,6 +1046,14 @@ async def upload_wsi_by_path(
                 context="WSI path registration",
             )
             resolved_dataset_id = dataset.dataset_id
+            existing_with_name = await WSIRepository.get_by_filename_in_dataset(
+                db, resolved_dataset_id, original_filename
+            )
+            if existing_with_name:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A file with filename '{original_filename}' already exists in this dataset",
+                )
 
         if is_json_annotation_path:
             if resolved_dataset_id is None:
