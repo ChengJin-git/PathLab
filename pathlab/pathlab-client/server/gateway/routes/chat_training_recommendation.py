@@ -1167,6 +1167,37 @@ def detect_no_web_search_mode(messages: List[Dict[str, Any]]) -> str | None:
     return None
 
 
+def _looks_like_model_availability_query(normalized: str) -> bool:
+    """
+    Detect if query is a yes/no confirmation or availability check,
+    rather than a training recommendation request.
+
+    Patterns to detect:
+    - Chinese: "有吗" (has it?), "这不是...吗" (isn't this...?), "是不是有" (is there?),
+              "有没有" (is there?), "是否有" (is there?), "有没有这个" (do we have this?),
+              "这个有吗" (does this exist?)
+    - English: "is there", "do you have", "isn't there", "doesn't exist", "does it exist"
+    """
+    # Chinese availability patterns
+    availability_patterns = (
+        "有吗",  # has it? / do we have?
+        "这不是",  # isn't this...? (combined with 有吗 = "isn't this available?")
+        "是不是有",  # is there? / do we have?
+        "有没有",  # is there? / do we have?
+        "是否有",  # is there? / do we have?
+        "有没有这个",  # do we have this?
+        "这个有吗",  # does this exist?
+        # English patterns
+        "is there",
+        "do you have",
+        "isn't there",
+        "doesn't exist",
+        "does it exist",
+    )
+
+    return any(pattern in normalized for pattern in availability_patterns)
+
+
 def looks_like_training_recommendation_query(text: str) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
@@ -1174,6 +1205,8 @@ def looks_like_training_recommendation_query(text: str) -> bool:
     if looks_like_heatmap_visualization_query(normalized):
         return False
     if looks_like_image_visualization_query(normalized):
+        return False
+    if _looks_like_model_availability_query(normalized):
         return False
     has_training_status = any(
         keyword in normalized for keyword in _TRAINING_STATUS_KEYWORDS
