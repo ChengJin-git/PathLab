@@ -86,7 +86,7 @@ import logging
 # Minimum number of patches required for a WSI to be considered valid.
 # WSIs with fewer patches are skipped during feature extraction and training
 # to avoid low-quality inputs that would degrade model performance.
-MIN_PATCHES_THRESHOLD = 100
+MIN_PATCHES_THRESHOLD = 5
 
 # Throttle WSI-classification result persistence to reduce end-of-training I/O spikes.
 SAVE_FILE_IO_MAX_WORKERS = 4

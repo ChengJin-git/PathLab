@@ -304,6 +304,19 @@ def cytofm(hf_token: str) -> str:
     return local_ckpt_path
 
 
+def kronos(hf_token: str) -> str:
+    """Download and return the local directory for the KRONOS model checkpoint."""
+    local_dir = os.path.join(FEATURE_EXTRACTOR_CKPT_SAVE_DIR, "KRONOS")
+    os.makedirs(local_dir, exist_ok=True)
+    if not os.path.exists(os.path.join(local_dir, "kronos_vits16_model.pt")):
+        snapshot_download(
+            repo_id="MahmoodLab/KRONOS",
+            local_dir=local_dir,
+            token=hf_token,
+        )
+    return local_dir
+
+
 __supported_extractors = {
     "CONCH": conch,
     "UNI": uni,
@@ -323,6 +336,7 @@ __supported_extractors = {
     "SmartCCS": smartccs,
     "SmartCyto": smartcyto,
     "CytoFM": cytofm,
+    "KRONOS": kronos,
 }
 
 

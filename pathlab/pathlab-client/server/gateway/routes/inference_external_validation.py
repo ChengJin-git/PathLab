@@ -961,7 +961,7 @@ async def _run_external_validation(
     wsi_ids = wsi_ids or []
 
     # Minimum patches threshold for valid WSI (same as trainer.py)
-    MIN_PATCHES_THRESHOLD = 100
+    MIN_PATCHES_THRESHOLD = 5
 
     # ScopedLogger writes to training_logs table so SSE log stream works
     logger_manager = ScopedLogger(task_id)

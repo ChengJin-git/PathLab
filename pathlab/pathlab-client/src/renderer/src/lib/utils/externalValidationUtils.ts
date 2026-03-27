@@ -33,6 +33,7 @@ export const EXTRACTOR_EMBED_DIM: Record<string, number> = {
   SmartCCS: 1024,
   SmartCyto: 768,
   CytoFM: 1024,
+  KRONOS: 384,
 }
 
 /**

@@ -38,6 +38,7 @@ _EXTRACTOR_LAZY_REGISTRY: Dict[str, Tuple[str, str]] = {
     "SmartCCS": (".smartccs_model", "SmartCCSExtractor"),
     "SmartCyto": (".smartcyto_model", "SmartCytoExtractor"),
     "CytoFM": (".cytofm_model", "CytoFMExtractor"),
+    "KRONOS": (".kronos_model", "KRONOSExtractor"),
 }
 
 # Cache for already-imported extractor classes
@@ -142,6 +143,11 @@ _EXTRACTOR_METADATA: Dict[str, Dict[str, Any]] = {
     "CytoFM": {
         "name": "CytoFM",
         "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), pure vision self-supervised, recommended for cytopathology",
+        "supports_spatial": True,
+    },
+    "KRONOS": {
+        "name": "KRONOS",
+        "description": "Multiplex ViT-S/16, 384-dim (Mahmood Lab), panel-agnostic foundation model for spatial proteomics",
         "supports_spatial": True,
     },
 }
