@@ -1,4 +1,3 @@
-import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Zap } from 'lucide-react'
 import { Button } from '../ui/button'
@@ -14,7 +13,7 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
   else if (isZh) scenario = HERO_DEMO_SCENARIO_ZH
 
   return (
-    <section className="relative overflow-hidden pt-24 lg:pt-32 pb-16 lg:pb-24">
+    <section className="relative overflow-hidden pt-20 lg:pt-32 pb-12 lg:pb-24">
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute right-[-10%] top-0 w-[500px] h-[500px] bg-[#2f6bff]/5 rounded-full blur-[100px] opacity-70 translate-x-1/3 -translate-y-1/3" />
         <div className="absolute left-[-10%] bottom-[-10%] w-[400px] h-[400px] bg-[#14b8a6]/5 rounded-full blur-[100px] opacity-60 -translate-x-1/3 translate-y-1/3" />

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { SOLUTIONS_TABS } from '../../data/landing/landing-solutions'
 import { SolutionTabKey } from '../../types/landing'
@@ -11,9 +11,9 @@ export function SolutionsSection() {
   const activeContent = SOLUTIONS_TABS.find(tab => tab.key === activeTab)
 
   return (
-    <section id="solutions" className="py-24 bg-white">
+    <section id="solutions" className="py-12 sm:py-16 lg:py-24 bg-white">
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
-        <div className="text-center mb-16">
+        <div className="text-center mb-8 sm:mb-12 lg:mb-16">
           <h2 className="text-3xl sm:text-4xl font-bold text-[color:var(--landing-text-primary)] mb-4">
             {t('landing.solutions.title', 'Built for every role in pathology')}
           </h2>
@@ -25,6 +25,7 @@ export function SolutionsSection() {
               const Icon = tab.icon
               return (
                 <button
+                  type="button"
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
                   className={`flex items-center gap-3 text-left px-5 py-4 rounded-xl transition-all whitespace-nowrap lg:whitespace-normal group ${
@@ -51,8 +52,8 @@ export function SolutionsSection() {
                   {t(activeContent.descKey, 'Empowering your workflow with intelligent assistance.')}
                 </p>
                 <div className="grid sm:grid-cols-2 gap-4">
-                  {activeContent.bulletKeys.map((bullet, idx) => (
-                    <div key={idx} className="flex items-start gap-3">
+                  {activeContent.bulletKeys.map((bullet) => (
+                    <div key={bullet} className="flex items-start gap-3">
                       <CheckCircle2 className="w-5 h-5 text-[color:var(--landing-accent)] shrink-0 mt-0.5" />
                       <span className="text-[color:var(--landing-text-primary)]">{t(bullet, bullet)}</span>
                     </div>

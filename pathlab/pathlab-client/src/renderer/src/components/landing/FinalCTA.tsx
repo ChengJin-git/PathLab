@@ -1,4 +1,3 @@
-import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
 import { ArrowRight } from 'lucide-react'
@@ -7,7 +6,7 @@ export function FinalCTA({ onPrimaryCta }: { onPrimaryCta: () => void }) {
   const { t } = useTranslation()
 
   return (
-    <section className="relative py-24 lg:py-32 overflow-hidden bg-gradient-to-br from-[#F7FBFD] to-[#E9F3FA]">
+    <section className="relative py-12 sm:py-20 lg:py-32 overflow-hidden bg-gradient-to-br from-[#F7FBFD] to-[#E9F3FA]">
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -left-1/4 -bottom-1/4 w-[150%] h-[150%] bg-gradient-to-tr from-[color:var(--landing-soft-glow)] to-transparent rounded-[100%] blur-[120px] mix-blend-multiply opacity-60"></div>
       </div>

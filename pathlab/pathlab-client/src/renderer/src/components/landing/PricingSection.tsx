@@ -1,4 +1,3 @@
-import React from 'react'
 import { useTranslation } from 'react-i18next'
 import { Check, Heart, ExternalLink, ArrowRight } from 'lucide-react'
 import { PRICING_TIERS } from '../../data/landing/landing-pricing'
@@ -8,9 +7,9 @@ export function PricingSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
   const { t } = useTranslation()
 
   return (
-    <section id="pricing" className="relative py-24 lg:py-32 bg-[color:var(--landing-page-bg)]">
+    <section id="pricing" className="relative py-12 sm:py-20 lg:py-32 bg-[color:var(--landing-page-bg)]">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 z-10 relative">
-        <div className="text-center mb-16">
+        <div className="text-center mb-8 sm:mb-12 lg:mb-16">
           <p className="text-[color:var(--landing-primary)] font-bold text-sm uppercase tracking-wider mb-3">
             {t('landing.nav.pricing', 'Pricing')}
           </p>
