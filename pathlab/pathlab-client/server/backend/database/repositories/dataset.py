@@ -82,7 +82,7 @@ class DatasetRepository(BaseRepository[Dataset]):
         dataset_id = str(uuid.uuid4())
         try:
             async with db.begin_nested():
-                return await DatasetRepository.create(
+                await DatasetRepository.create(
                     db,
                     dataset_id=dataset_id,
                     name=name,
@@ -92,6 +92,10 @@ class DatasetRepository(BaseRepository[Dataset]):
                     parent_dataset_id=parent_dataset_id,
                     is_public=is_public,
                 )
+            fetched = await DatasetRepository.get_by_id(db, dataset_id)
+            if fetched is not None:
+                return fetched
+            raise RuntimeError(f"Dataset {dataset_id} not found after creation")
         except IntegrityError:
             logger.debug(
                 f"Dataset concurrent insert detected for name='{name}', re-querying"
