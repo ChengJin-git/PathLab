@@ -1,7 +1,7 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useInView } from 'framer-motion'
-import { CAPABILITY_CARDS_EN, CAPABILITY_CARDS_ZH, CAPABILITY_CARDS_ZH_HK } from '../../data/landing/landing-demo-content'
+import { CAPABILITY_CARDS_EN, CAPABILITY_CARDS_ZH, CAPABILITY_CARDS_ZH_HK } from '../../constants/landing/landing-demo-content'
 import { Search, Bot, Database, BarChart, Settings, MousePointer2, GitBranch, Cpu } from 'lucide-react'
 
 const GPU_NODES = Array.from({ length: 16 }, (_, i) => ({ id: `node-${i}`, active: i < 8 }))

@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 import { Check, Heart, ExternalLink, ArrowRight } from 'lucide-react'
-import { PRICING_TIERS } from '../../data/landing/landing-pricing'
+import { PRICING_TIERS } from '../../constants/landing/landing-pricing'
 import { Button } from '../ui/button'
 
 export function PricingSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {

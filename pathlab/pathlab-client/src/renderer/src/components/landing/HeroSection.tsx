@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next'
 import { Zap } from 'lucide-react'
 import { Button } from '../ui/button'
 import { HeroPromptDemo } from './HeroPromptDemo'
-import { HERO_DEMO_SCENARIO_EN, HERO_DEMO_SCENARIO_ZH, HERO_DEMO_SCENARIO_ZH_HK } from '../../data/landing/landing-demo-content'
+import { HERO_DEMO_SCENARIO_EN, HERO_DEMO_SCENARIO_ZH, HERO_DEMO_SCENARIO_ZH_HK } from '../../constants/landing/landing-demo-content'
 
 export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
   const { t, i18n } = useTranslation()

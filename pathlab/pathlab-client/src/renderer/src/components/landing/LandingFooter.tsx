@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { LANDING_NAV_ITEMS } from '../../data/landing/landing-nav'
+import { LANDING_NAV_ITEMS } from '../../constants/landing/landing-nav'
 import { DisclaimerModal } from '../DisclaimerModal'
 import { PrivacyPolicyModal } from '../PrivacyPolicyModal'
 

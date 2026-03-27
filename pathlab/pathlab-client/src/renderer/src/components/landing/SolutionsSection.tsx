@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { SOLUTIONS_TABS } from '../../data/landing/landing-solutions'
+import { SOLUTIONS_TABS } from '../../constants/landing/landing-solutions'
 import { SolutionTabKey } from '../../types/landing'
 import { CheckCircle2 } from 'lucide-react'
 
