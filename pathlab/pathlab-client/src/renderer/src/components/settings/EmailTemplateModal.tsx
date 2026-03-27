@@ -147,19 +147,19 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
 
   return (
     <ModalShell isOpen={true} onClose={onClose} maxWidth="xl" className="max-w-5xl">
-        <div className="px-5 py-4 border-b flex items-center justify-between">
-          <div>
+        <div className="px-5 py-4 border-b">
+          <div className="flex items-center justify-between">
             <h3 className="text-lg font-semibold text-gray-900">{t('settings.emailTemplateModal.title')}</h3>
-            <p className="text-sm text-gray-500 mt-0.5">
-              {t('settings.emailTemplateModal.variables')}
-              {['{display_name}', '{username}', '{task_id}', '{registration_email}'].map(v => (
-                <code key={v} className="bg-gray-100 px-1 rounded text-xs mx-0.5">{v}</code>
-              ))}
-            </p>
+            <Button variant="ghost" size="sm" type="button" onClick={onClose} className="h-8 w-8 p-0">
+              <X className="w-4 h-4" />
+            </Button>
           </div>
-          <Button variant="ghost" size="sm" type="button" onClick={onClose} className="h-8 w-8 p-0">
-            <X className="w-4 h-4" />
-          </Button>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {t('settings.emailTemplateModal.variables')}
+            {['{display_name}', '{username}', '{task_id}', '{registration_email}'].map(v => (
+              <code key={v} className="bg-gray-100 px-1 rounded text-xs mx-0.5">{v}</code>
+            ))}
+          </p>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] min-h-[560px]">

@@ -622,6 +622,7 @@
       "failedToSendNotice": "发送公告失败",
       "createUser": "创建用户",
       "openPermissionCenter": "授权中心",
+      "emailTemplates": "邮件模板",
       "managePermissionsByDataset": "按数据授权",
       "refresh": "刷新",
       "usersSelected": "已选择 {{count}} 个",

@@ -622,6 +622,7 @@
       "failedToSendNotice": "傳送公告失敗",
       "createUser": "建立使用者",
       "openPermissionCenter": "授權中心",
+      "emailTemplates": "郵件範本",
       "managePermissionsByDataset": "按資料授權",
       "refresh": "重新整理",
       "usersSelected": "已選擇 {{count}} 個",

@@ -622,6 +622,7 @@
       "failedToSendNotice": "Failed to send notice",
       "createUser": "Create User",
       "openPermissionCenter": "Permission Center",
+      "emailTemplates": "Email Templates",
       "managePermissionsByDataset": "By Dataset",
       "refresh": "Refresh",
       "usersSelected": "{{count}} selected",

@@ -486,7 +486,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
           </Button>
           <Button variant="outline" onClick={() => setEmailTemplateOpen(true)} className="gap-2">
             <Mail className="w-4 h-4" />
-            <span className="hidden sm:inline">邮件模板</span>
+            <span className="hidden sm:inline">{t('settings.usersTab.emailTemplates')}</span>
           </Button>
           <Button onClick={() => setShowCreateUser(true)} className="gap-2">
             <UserPlus className="w-4 h-4" />
