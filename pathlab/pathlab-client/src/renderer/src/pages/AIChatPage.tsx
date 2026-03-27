@@ -4196,7 +4196,7 @@ export default function AIChatPage() {
 
 				{/* Input Area - Floating Island - Fixed to viewport bottom */}
 				<div
-					className={`fixed bottom-6 left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? "lg:left-72" : "lg:left-14"}`}
+					className={`fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom,0px)+0.5rem))] left-0 right-0 px-4 z-30 pointer-events-none transition-[left] duration-300 ease-in-out ${showHistory ? "lg:left-72" : "lg:left-14"}`}
 				>
 					<div className="max-w-4xl mx-auto pointer-events-auto relative">
 						{/* Jump to bottom button */}

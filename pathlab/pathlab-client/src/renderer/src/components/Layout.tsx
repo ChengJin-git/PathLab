@@ -122,7 +122,7 @@ export default function Layout({ children }: LayoutProps) {
         ? 'h-screen' // Allow main to handle scroll
         : 'min-h-screen'}`}>
       {/* Top Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-50 shadow-sm flex-shrink-0">
+      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-50 shadow-sm flex-shrink-0 pt-safe">
         <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             {/* Logo Area */}
