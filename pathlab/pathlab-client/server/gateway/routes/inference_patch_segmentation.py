@@ -352,26 +352,33 @@ async def _run_inference_patch_segmentation(
                             mode="multilabel",
                             threshold=None,
                         )
-                        iou_per_class = smp.metrics.iou_score(
-                            tp, fp, fn, tn, reduction="none"
+                        iou_per_class = torch.nan_to_num(
+                            smp.metrics.iou_score(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        dice_per_class = smp.metrics.f1_score(
-                            tp, fp, fn, tn, reduction="none"
+                        dice_per_class = torch.nan_to_num(
+                            smp.metrics.f1_score(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        precision_per_class = smp.metrics.precision(
-                            tp, fp, fn, tn, reduction="none"
+                        precision_per_class = torch.nan_to_num(
+                            smp.metrics.precision(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        recall_per_class = smp.metrics.recall(
-                            tp, fp, fn, tn, reduction="none"
+                        recall_per_class = torch.nan_to_num(
+                            smp.metrics.recall(tp, fp, fn, tn, reduction="none"),
+                            nan=0.0,
                         )
-                        accuracy = smp.metrics.accuracy(
-                            tp, fp, fn, tn, reduction="micro"
+                        accuracy = torch.nan_to_num(
+                            smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro"),
+                            nan=0.0,
                         )
-                        precision_val = smp.metrics.precision(
-                            tp, fp, fn, tn, reduction="micro"
+                        precision_val = torch.nan_to_num(
+                            smp.metrics.precision(tp, fp, fn, tn, reduction="micro"),
+                            nan=0.0,
                         )
-                        recall_val = smp.metrics.recall(
-                            tp, fp, fn, tn, reduction="micro"
+                        recall_val = torch.nan_to_num(
+                            smp.metrics.recall(tp, fp, fn, tn, reduction="micro"),
+                            nan=0.0,
                         )
 
                         per_image_metrics = _build_segmentation_per_image_metrics(
