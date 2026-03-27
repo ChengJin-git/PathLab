@@ -555,7 +555,7 @@ async def _run_batch_import_task(
                     else:
                         wsi_data["label"] = default_label
 
-                    await WSIRepository.create(db, wsi_data)
+                    await WSIRepository.create(db, **wsi_data)
 
                     try:
                         storage_manager.save_wsi_metadata(wsi_id, wsi_data)

@@ -1287,7 +1287,7 @@ async def _extract_single_region(
         "user_id": user_id,
         "parent_wsi_id": source_wsi_id,
     }
-    await WSIRepository.create(db, wsi_data)
+    await WSIRepository.create(db, **wsi_data)
 
     logger.info(f"Extracted region: {new_wsi_id} from {source_wsi_id} ({region.label})")
 
@@ -1503,7 +1503,7 @@ async def _extract_segmentation_dataset(
                 "user_id": user_id,
                 "parent_wsi_id": source_wsi_id,
             }
-            await WSIRepository.create(db, wsi_data)
+            await WSIRepository.create(db, **wsi_data)
 
     # Build categories dict (matches the format used by SegmentationDataset)
     categories = {str(cat_id): label for label, cat_id in label_to_category_id.items()}

@@ -305,7 +305,7 @@ async def upload_wsi_by_csv(
                     "user_id": str(user.id),
                 }
 
-                wsi = await WSIRepository.create(db, wsi_data)
+                wsi = await WSIRepository.create(db, **wsi_data)
                 await db.commit()
 
                 # Save metadata to JSON file for persistence
@@ -701,7 +701,7 @@ async def upload_wsi_file(
         # Race-condition safe: catch IntegrityError if concurrent upload
         # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
         try:
-            await WSIRepository.create(db, wsi_data)
+            await WSIRepository.create(db, **wsi_data)
             if (
                 resolved_task_type == "segmentation"
                 and segmentation_annotation is not None
@@ -1123,7 +1123,7 @@ async def upload_wsi_by_path(
         # Race-condition safe: catch IntegrityError if concurrent register
         # with same wsi_id passes the existence check above (PostgreSQL READ COMMITTED)
         try:
-            wsi = await WSIRepository.create(db, wsi_data)
+            wsi = await WSIRepository.create(db, **wsi_data)
             if (
                 resolved_task_type == "segmentation"
                 and segmentation_annotation is not None
