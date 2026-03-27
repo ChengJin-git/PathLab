@@ -496,10 +496,18 @@ class TimmViTCAMExtractor(BaseCAMExtractor):
             vit = backbone
 
         # 1. Try timm structure: vit.blocks[-1].norm1
-        if hasattr(vit, "blocks"):
+        if hasattr(vit, "blocks") and len(vit.blocks) > 0:
             last_block = vit.blocks[-1]
             if hasattr(last_block, "norm1"):
                 return last_block.norm1, "timm"
+            # Handle chunked blocks (custom DINOv2 DinoVisionTransformer with block_chunks > 0)
+            # When block_chunks > 0, blocks is nn.ModuleList[BlockChunk], where BlockChunk is
+            # nn.ModuleList([Identity]*offset + [Block, Block, ...]). Iterate in reverse to
+            # find the last actual transformer block (which has norm1).
+            if isinstance(last_block, nn.ModuleList):
+                for b in reversed(list(last_block)):
+                    if hasattr(b, "norm1"):
+                        return b.norm1, "dinov2_chunked"
 
         # 2. Try CONCH15 / custom VisionTransformer with trunk: vit.trunk.blocks[-1].norm1
         if hasattr(vit, "trunk"):
