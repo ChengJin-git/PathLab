@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, MessageSquare, ListTodo, ActivitySquare } from 'lucide-react'
 
@@ -67,13 +67,14 @@ export function StickyWorkflowStory() {
   ]
 
   return (
-    <section className="relative bg-[#FDFDFD] py-24">
+    <section className="relative bg-[#FDFDFD] py-12 sm:py-16 lg:py-24">
       <div
         role="none"
         className="max-w-7xl mx-auto px-4 sm:px-6"
         onMouseEnter={() => setPaused(true)}
+        onTouchStart={() => setPaused(true)}
       >
-        <div className="mb-16">
+        <div className="mb-8 sm:mb-12 lg:mb-16">
           <h2 className="text-3xl sm:text-4xl font-bold text-[color:var(--landing-text-primary)] leading-tight">
             {t('landing.story.header', '只需三步，從靈感到可驗證的診斷證據')}
           </h2>
@@ -93,7 +94,7 @@ export function StickyWorkflowStory() {
                   className={`text-left transition-all duration-500 ${
                     isActive
                       ? 'opacity-100 scale-100'
-                      : 'opacity-40 scale-95 origin-left hover:opacity-70'
+                      : 'opacity-40 lg:scale-95 lg:origin-left hover:opacity-70 active:opacity-70'
                   }`}
                 >
                   <div className="flex items-center gap-4 mb-3">
@@ -155,7 +156,7 @@ export function StickyWorkflowStory() {
             </div>
           </div>
 
-          <div className="w-full lg:w-2/3 h-[60vh] lg:h-[70vh] relative">
+          <div className="w-full lg:w-2/3 min-h-[340px] h-[60vw] max-h-[500px] lg:h-[70vh] lg:max-h-none relative">
             <div
               className={`absolute inset-0 flex items-center transition-all duration-700 ${
                 activeStep === 0
