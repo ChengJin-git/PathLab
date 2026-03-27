@@ -842,6 +842,30 @@
       "pdfParseBusy": "當前系統繁忙，暫時無法解析 PDF，請稍後重試",
       "pdfFailedCount": "{{count}} 篇 PDF 失敗",
       "summarizingPdf": "正在生成 PDF 摘要..."
+    },
+    "emailTemplateModal": {
+      "title": "郵件範本設定",
+      "variables": "變數：",
+      "templates": {
+        "new_user_registration_notice": "新用戶註冊通知（用戶）",
+        "account_activated": "帳號啟用通知（用戶）",
+        "task_completed_notice": "任務完成通知（用戶）",
+        "admin_new_user_registration_notice": "新用戶註冊通知（管理員）"
+      },
+      "subject": "主題",
+      "body": "正文",
+      "modeVisual": "編輯",
+      "modePreview": "預覽",
+      "bold": "粗體",
+      "italic": "斜體",
+      "underline": "底線",
+      "insertLink": "插入連結",
+      "link": "連結",
+      "linkPrompt": "連結網址",
+      "clearFormat": "清除格式",
+      "cancel": "取消",
+      "saving": "儲存中…",
+      "save": "儲存範本"
     }
   },
   "layout": {

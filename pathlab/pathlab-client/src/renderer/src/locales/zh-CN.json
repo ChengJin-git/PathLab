@@ -842,6 +842,30 @@
       "pdfParseBusy": "当前系统繁忙，暂时无法处理该文档，请稍后重试",
       "pdfFailedCount": "{{count}} 份文档处理失败",
       "summarizingPdf": "正在生成内容摘要..."
+    },
+    "emailTemplateModal": {
+      "title": "邮件模板配置",
+      "variables": "变量：",
+      "templates": {
+        "new_user_registration_notice": "新用户注册通知（用户）",
+        "account_activated": "账号激活通知（用户）",
+        "task_completed_notice": "任务完成通知（用户）",
+        "admin_new_user_registration_notice": "新用户注册通知（管理员）"
+      },
+      "subject": "主题",
+      "body": "正文",
+      "modeVisual": "编辑",
+      "modePreview": "预览",
+      "bold": "粗体",
+      "italic": "斜体",
+      "underline": "下划线",
+      "insertLink": "插入链接",
+      "link": "链接",
+      "linkPrompt": "链接地址",
+      "clearFormat": "清除格式",
+      "cancel": "取消",
+      "saving": "保存中…",
+      "save": "保存模板"
     }
   },
   "layout": {

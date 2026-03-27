@@ -842,6 +842,30 @@
       "pdfParseBusy": "The system is currently busy and cannot process this document right now. Please try again later.",
       "pdfFailedCount": "{{count}} documents failed",
       "summarizingPdf": "Generating content summary..."
+    },
+    "emailTemplateModal": {
+      "title": "Email Template Configuration",
+      "variables": "Variables:",
+      "templates": {
+        "new_user_registration_notice": "New User Registration (User)",
+        "account_activated": "Account Activated (User)",
+        "task_completed_notice": "Task Completed (User)",
+        "admin_new_user_registration_notice": "New User Registration (Admin)"
+      },
+      "subject": "Subject",
+      "body": "Body",
+      "modeVisual": "Edit",
+      "modePreview": "Preview",
+      "bold": "Bold",
+      "italic": "Italic",
+      "underline": "Underline",
+      "insertLink": "Insert Link",
+      "link": "Link",
+      "linkPrompt": "Enter URL",
+      "clearFormat": "Clear Formatting",
+      "cancel": "Cancel",
+      "saving": "Saving...",
+      "save": "Save Template"
     }
   },
   "layout": {

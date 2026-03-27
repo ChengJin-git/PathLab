@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { useTranslation } from 'react-i18next'
 import { X } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
@@ -40,10 +41,10 @@ const LEGAL_FOOTER_HTML =
   "result of the use of such information." +
   "</p>"
 
-const TOOLBAR: Array<{ cmd: string; label: string; title: string }> = [
-  { cmd: 'bold', label: 'B', title: '粗体' },
-  { cmd: 'italic', label: 'I', title: '斜体' },
-  { cmd: 'underline', label: 'U', title: '下划线' },
+const TOOLBAR_CMDS: Array<{ cmd: string; label: string; titleKey: string }> = [
+  { cmd: 'bold', label: 'B', titleKey: 'bold' },
+  { cmd: 'italic', label: 'I', titleKey: 'italic' },
+  { cmd: 'underline', label: 'U', titleKey: 'underline' },
 ]
 
 interface EmailTemplateModalProps {
@@ -54,14 +55,15 @@ interface EmailTemplateModalProps {
 
 type TemplateKey = keyof EmailTemplatesConfig
 
-const TEMPLATE_META: Array<{ key: TemplateKey; label: string }> = [
-  { key: 'new_user_registration_notice', label: '新用户注册通知（用户）' },
-  { key: 'account_activated', label: '账号激活通知（用户）' },
-  { key: 'task_completed_notice', label: '任务完成通知（用户）' },
-  { key: 'admin_new_user_registration_notice', label: '新用户注册通知（管理员）' }
+const TEMPLATE_KEYS: TemplateKey[] = [
+  'new_user_registration_notice',
+  'account_activated',
+  'task_completed_notice',
+  'admin_new_user_registration_notice',
 ]
 
 export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplateModalProps) {
+  const { t } = useTranslation()
   const [activeKey, setActiveKey] = useState<TemplateKey>('new_user_registration_notice')
   const [draft, setDraft] = useState<EmailTemplatesConfig>(templates)
   const [saving, setSaving] = useState(false)
@@ -147,9 +149,9 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
     <ModalShell isOpen={true} onClose={onClose} maxWidth="xl" className="max-w-5xl">
         <div className="px-5 py-4 border-b flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">邮件模板配置</h3>
+            <h3 className="text-lg font-semibold text-gray-900">{t('settings.emailTemplateModal.title')}</h3>
             <p className="text-sm text-gray-500 mt-0.5">
-              变量：
+              {t('settings.emailTemplateModal.variables')}
               {['{display_name}', '{username}', '{task_id}', '{registration_email}'].map(v => (
                 <code key={v} className="bg-gray-100 px-1 rounded text-xs mx-0.5">{v}</code>
               ))}
@@ -162,18 +164,18 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
 
         <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] min-h-[560px]">
           <div className="border-r bg-gray-50 p-3 space-y-1.5">
-            {TEMPLATE_META.map(item => (
+            {TEMPLATE_KEYS.map(key => (
               <button
-                key={item.key}
+                key={key}
                 type="button"
-                onClick={() => switchTemplate(item.key)}
+                onClick={() => switchTemplate(key)}
                 className={`w-full text-left px-3 py-2 rounded-md text-sm transition ${
-                  activeKey === item.key
+                  activeKey === key
                     ? 'bg-violet-100 text-violet-900 border border-violet-200'
                     : 'hover:bg-gray-100 text-gray-700 border border-transparent'
                 }`}
               >
-                {item.label}
+                {t(`settings.emailTemplateModal.templates.${key}`)}
               </button>
             ))}
           </div>
@@ -181,7 +183,7 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
           <div className="p-5 flex flex-col gap-4">
             <div className="space-y-1.5">
               <label htmlFor="tpl-subject" className="text-xs uppercase tracking-wide font-semibold text-gray-700">
-                主题
+                {t('settings.emailTemplateModal.subject')}
               </label>
               <Input
                 id="tpl-subject"
@@ -193,7 +195,7 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
 
             <div className="flex-1 flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <span className="text-xs uppercase tracking-wide font-semibold text-gray-700">正文</span>
+                <span className="text-xs uppercase tracking-wide font-semibold text-gray-700">{t('settings.emailTemplateModal.body')}</span>
                 <div className="flex rounded-md border overflow-hidden text-xs">
                   {(['visual', 'source', 'preview'] as EditorMode[]).map(m => (
                     <button
@@ -206,7 +208,7 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
                           : 'bg-white text-gray-600 hover:bg-gray-50'
                       }`}
                     >
-                      {m === 'visual' ? '编辑' : m === 'source' ? 'HTML' : '预览'}
+                      {m === 'visual' ? t('settings.emailTemplateModal.modeVisual') : m === 'source' ? 'HTML' : t('settings.emailTemplateModal.modePreview')}
                     </button>
                   ))}
                 </div>
@@ -214,8 +216,8 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
 
               {editorMode === 'visual' && (
                 <div className="flex items-center gap-0.5 px-2 py-1 bg-gray-50 border border-b-0 rounded-t-md">
-                  {TOOLBAR.map(a => (
-                    <Tooltip key={a.cmd} content={a.title}>
+                  {TOOLBAR_CMDS.map(a => (
+                    <Tooltip key={a.cmd} content={t(`settings.emailTemplateModal.${a.titleKey}`)}>
                       <button
                         type="button"
                         onMouseDown={(e) => { e.preventDefault(); execFormat(a.cmd) }}
@@ -226,26 +228,26 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
                     </Tooltip>
                   ))}
                   <div className="w-px h-4 bg-gray-300 mx-1" />
-                  <Tooltip content="插入链接">
+                  <Tooltip content={t('settings.emailTemplateModal.insertLink')}>
                     <button
                       type="button"
                       onMouseDown={(e) => {
                         e.preventDefault()
-                        const url = window.prompt('链接地址')
+                        const url = window.prompt(t('settings.emailTemplateModal.linkPrompt'))
                         if (url) execFormat('createLink', url)
                       }}
                       className="px-2 h-7 flex items-center justify-center rounded text-xs hover:bg-gray-200 transition text-gray-600"
                     >
-                      链接
+                      {t('settings.emailTemplateModal.link')}
                     </button>
                   </Tooltip>
-                  <Tooltip content="清除格式">
+                  <Tooltip content={t('settings.emailTemplateModal.clearFormat')}>
                     <button
                       type="button"
                       onMouseDown={(e) => { e.preventDefault(); execFormat('removeFormat') }}
                       className="px-2 h-7 flex items-center justify-center rounded text-xs hover:bg-gray-200 transition text-gray-500"
                     >
-                      清除格式
+                      {t('settings.emailTemplateModal.clearFormat')}
                     </button>
                   </Tooltip>
                 </div>
@@ -281,9 +283,9 @@ export function EmailTemplateModal({ templates, onSave, onClose }: EmailTemplate
             )}
 
             <div className="flex justify-end gap-2">
-              <Button variant="outline" type="button" onClick={onClose} disabled={saving}>取消</Button>
+              <Button variant="outline" type="button" onClick={onClose} disabled={saving}>{t('settings.emailTemplateModal.cancel')}</Button>
               <Button type="button" onClick={handleSave} disabled={saving}>
-                {saving ? '保存中…' : '保存模板'}
+                {saving ? t('settings.emailTemplateModal.saving') : t('settings.emailTemplateModal.save')}
               </Button>
             </div>
           </div>
