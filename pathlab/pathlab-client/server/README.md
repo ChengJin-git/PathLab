@@ -31,14 +31,14 @@ server/
 ├── requirements-test.txt   # 测试依赖（pytest、pytest-asyncio、httpx）
 ├── pytest.ini              # asyncio_mode = auto
 ├── main.spec               # PyInstaller 配置
-├── tests/                  # 后端单元测试（19 个测试文件）
+├── tests/                  # 后端单元测试（20 个测试文件）
 │   ├── conftest.py         # fixtures：auth mock、app factory、load_dotenv
 │   ├── helpers.py          # 测试工具函数
 │   ├── test_config.py      # Config 类测试（28）
 │   ├── test_settings.py    # /settings 路由测试（19）
 │   ├── test_queue_config.py # /queue 路由测试（15）
 │   ├── test_ai_models.py   # AI 模型 GPU 测试（54）
-│   ├── test_ai_extractors_pretrained.py  # HF 预训练模型测试（~162）
+│   ├── test_ai_extractors_pretrained.py  # HF 预训练模型测试（~216）
 │   ├── test_fm_segmentation_decoders.py  # 分割 decoder 结构测试
 │   ├── test_feature_cache_nowait.py      # 特征缓存非阻塞写入
 │   ├── test_gpu_control.py               # GPU 坏卡探测与控制
@@ -52,7 +52,8 @@ server/
 │   ├── test_permission_policy_updates.py # 权限策略行为回归
 │   ├── test_permission_revocation_fixes.py # 权限撤销边界修复
 │   ├── test_permission_closure_regressions.py # 权限闭包回归
-│   └── test_dataset_repository_namespacing.py # 数据集命名空间隔离
+│   ├── test_dataset_repository_namespacing.py # 数据集命名空间隔离
+│   └── test_batch_inference.py                # 批量推理任务类型、请求模型校验与推理流程回归
 ├── gateway/                # 对外 API 网关
 ├── backend/
 │   ├── ai/                 # AI 服务与任务实现
@@ -115,7 +116,7 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 pip install -r server/requirements-test.txt
 ```
 
-当前后端测试文件（19 个测试文件，含 5 个权限专项、4 个 AI 模型测试）：
+当前后端测试文件（20 个测试文件，含 5 个权限专项、4 个 AI 模型测试）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
@@ -123,7 +124,7 @@ pip install -r server/requirements-test.txt
 | `tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm（在线/离线/超时/无模型）|
 | `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
 | `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
-| `tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
+| `tests/test_ai_extractors_pretrained.py` | ~216 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
 | `tests/test_fm_segmentation_decoders.py` | — | 分割模型 decoder 结构与输出维度验证 |
 | `tests/test_feature_cache_nowait.py` | — | 特征缓存非阻塞写入逻辑 |
 | `tests/test_gpu_control.py` | — | GPU 坏卡探测与 CUDA_VISIBLE_DEVICES 控制 |
@@ -138,6 +139,7 @@ pip install -r server/requirements-test.txt
 | `tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证（in-process revoke、GPU 路径、分析提交 403）|
 | `tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试（CSV 上传路由 guest 可用性等）|
 | `tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
+| `tests/test_batch_inference.py` | — | 批量推理任务类型、请求模型校验与完整推理流程回归 |
 
 **测试设计要点**
 

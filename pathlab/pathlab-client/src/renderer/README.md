@@ -68,11 +68,12 @@ src/renderer/
 
 ## API 客户端现状
 
-`src/api/` 当前已经按业务拆分为 **20 个 TypeScript 模块文件**，包括：
+`src/api/` 当前已经按业务拆分为 **21 个 TypeScript 模块文件**，包括：
 
 - `analysis`
 - `annotation`
 - `auth`
+- `batchInference`（无标签数据集批量推理）
 - `chat`
 - `export`
 - `feedback`

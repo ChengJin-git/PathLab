@@ -36,7 +36,7 @@ test/
 ├── helpers/              # 测试工具函数
 │   └── apiHelpers.ts     # ok() / errResp() / noContent() / blobResp() / createSSEStream()
 └── unit/
-    ├── api/              # API 客户端层测试（19 个文件）
+    ├── api/              # API 客户端层测试（20 个文件）
     │   ├── client.test.ts
     │   ├── crypto.test.ts
     │   ├── auth.test.ts
@@ -49,6 +49,7 @@ test/
     │   ├── users.test.ts
     │   ├── analysis.test.ts
     │   ├── annotation.test.ts
+    │   ├── batchInference.test.ts
     │   ├── export.test.ts
     │   ├── feedback.test.ts
     │   ├── grants.test.ts
@@ -56,11 +57,13 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数 / Hook 测试（10 个文件）
+    ├── lib/              # 纯工具函数 / Hook 测试（12 个文件）
+    │   ├── adminUserCreation.test.ts
     │   ├── cache.test.ts
     │   ├── utils.test.ts
     │   ├── chatMessageParser.test.ts
     │   ├── datasetPagination.test.ts
+    │   ├── listPageFileView.test.ts
     │   ├── segmentationUploadUtils.test.ts
     │   ├── externalValidationUtils.test.ts
     │   ├── trainingSubmissionTracker.test.ts
@@ -838,6 +841,21 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 ---
 
+## unit/api/batchInference.test.ts
+
+**对应源文件**：`src/renderer/src/api/batchInference.ts`
+
+覆盖无标签数据集批量推理的完整接口：
+
+- `fetchDatasetsForInference()`：获取可提交批量推理的无标签数据集列表
+- `startBatchInference()`：提交批量推理任务（指定模型任务 ID 与目标数据集 ID）
+- `listBatchInferenceTasks()`：列出当前用户的批量推理任务列表
+- `getBatchInferenceResults(taskId)`：获取指定推理任务的逐 WSI 预测结果
+- `getBatchInferenceSummary(taskId)`：获取推理汇总摘要（类别分布、处理 slide 数等）
+- `exportBatchInferenceCsv(taskId)`：导出推理结果为 CSV 文件（Blob 响应，触发浏览器下载）
+
+---
+
 ## unit/lib/datasetPagination.test.ts
 
 **对应源文件**：`src/renderer/src/lib/datasetPagination.ts`
@@ -907,6 +925,34 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 - **超时检测**：`isTrainingSubmissionPendingTimedOut()` 基于默认（30 分钟）与自定义超时阈值
 - **清除**：`clearTrainingSubmissionRecord()` 只删除指定 task，不影响其他记录；对不存在的 task 不抛错
 - 所有测试使用 `vi.useFakeTimers()` 精确控制时间推进
+
+---
+
+## unit/lib/adminUserCreation.test.ts
+
+**对应源文件**：`src/renderer/src/lib/adminUserCreation.ts`
+
+覆盖管理员创建用户时的角色规范化逻辑：
+
+- `buildAdminCreateUserPlan()`：
+  - 注册 payload 始终使用 `guest` 角色（满足 `/auth/register` 的公开注册规则），`targetRole` 保留管理员指定的目标角色
+  - 未知角色自动规范化为 `guest`
+  - `pathologist` 与 `admin` 角色在 `targetRole` 中原样保留，供后续 `AdminUserUpdate` 升级
+
+---
+
+## unit/lib/listPageFileView.test.ts
+
+**对应源文件**：`src/renderer/src/lib/utils/listPageFileView.ts`
+
+覆盖 WSI 列表页文件视图区域的显示状态计算逻辑：
+
+- `getListPageFileViewState()`：
+  - 初始文件加载中：只展示加载态，不显示搜索操作栏与空态提示
+  - 无文件且无搜索词：显示数据集空态
+  - 搜索词有效但无匹配：显示"无匹配文件"提示
+  - 有文件且无活跃搜索：正常显示文件表格
+  - 有活跃搜索词（无论是否有结果）：显示搜索操作栏
 
 ---
 

@@ -54,11 +54,12 @@ src/
 
 ## API 客户端现状
 
-旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见 **20 个 API 模块文件**，包括：
+旧文档里提到的单体 `api.ts` 已经拆分为模块化目录。当前可见 **21 个 API 模块文件**，包括：
 
 - `api/analysis.ts`
 - `api/annotation.ts`
 - `api/auth.ts`
+- `api/batchInference.ts`（无标签数据集批量推理）
 - `api/chat.ts`
 - `api/export.ts`
 - `api/feedback.ts`

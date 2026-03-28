@@ -55,8 +55,8 @@ pathlab-client/
 │   └── renderer/           # React + Vite 前端
 ├── test/                   # 前端单元测试（Vitest）
 │   ├── setup.ts            # 全局 mock 初始化
-│   ├── unit/api/           # API 客户端层测试（19 个文件）
-│   ├── unit/lib/           # 工具函数 / Hook 测试（10 个文件）
+│   ├── unit/api/           # API 客户端层测试（20 个文件）
+│   ├── unit/lib/           # 工具函数 / Hook 测试（12 个文件）
 │   ├── unit/contexts/      # React Context 测试（1 个文件）
 │   └── unit/components/    # 组件测试（4 个文件）
 ├── scripts/                # 构建辅助脚本
@@ -125,7 +125,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前共 **34 个测试文件**：
+当前共 **37 个测试文件**：
 
 | 分类 | 文件 | 覆盖内容 |
 |------|------|---------|
@@ -140,6 +140,7 @@ npm run test:coverage # 生成覆盖率报告
 | 业务 API | `unit/api/heatmap.test.ts` | 热图列表、数据获取、URL 构建、缓存失效 |
 | 业务 API | `unit/api/users.test.ts` | 管理员用户 CRUD、权限、维护公告 |
 | 业务 API | `unit/api/analysis.test.ts` | 外部验证提交、分析触发、分析状态轮询 |
+| 业务 API | `unit/api/batchInference.test.ts` | 无标签数据集批量推理任务创建、列表、结果查询、CSV 导出 |
 | 业务 API | `unit/api/annotation.test.ts` | 标注草稿 CRUD、标签读取（/labels）、协作标注全流程、协作者管理、审计日志、WebSocket 协作 URL |
 | 业务 API | `unit/api/export.test.ts` | 异步导出任务创建、状态轮询、文件下载 |
 | 业务 API | `unit/api/feedback.test.ts` | 消息反馈提交 / 删除、管理员查看、统计导出 |
@@ -158,6 +159,8 @@ npm run test:coverage # 生成覆盖率报告
 | 工具函数 | `unit/lib/useAsyncAction.test.tsx` | `useAsyncAction` Hook：isPending 状态、并发引用计数、onError 回调、默认 console.error 降级 |
 | 工具函数 | `unit/lib/useConfirmDialog.test.tsx` | `useConfirmDialog` Hook |
 | 工具函数 | `unit/lib/useDebounce.test.tsx` | `useDebounce` Hook |
+| 工具函数 | `unit/lib/adminUserCreation.test.ts` | `buildAdminCreateUserPlan()` 管理员创建用户时角色规范化逻辑 |
+| 工具函数 | `unit/lib/listPageFileView.test.ts` | `getListPageFileViewState()` 列表页文件视图状态机逻辑 |
 | React Context | `unit/contexts/AuthContext.test.tsx` | 认证状态机、角色判断、协议签署、维护公告 |
 | 组件 | `unit/components/settings/PermissionCenterModal.test.tsx` | 权限中心弹窗数据集选择与展示逻辑 |
 | 组件 | `unit/components/settings/storage/BatchScanResults.test.tsx` | 存储批量扫描结果展示组件 |
@@ -181,7 +184,7 @@ python -m pytest server/tests/ -v -k "not pretrained"
 python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 ```
 
-当前共 **19 个测试文件**（含 5 个权限专项、4 个 AI 模型测试）：
+当前共 **20 个测试文件**（含 5 个权限专项、4 个 AI 模型测试）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
@@ -189,7 +192,7 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 | `server/tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm |
 | `server/tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id} |
 | `server/tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
-| `server/tests/test_ai_extractors_pretrained.py` | ~162 | 18 个 HuggingFace 预训练模型加载与推理验证 |
+| `server/tests/test_ai_extractors_pretrained.py` | ~216 | 18 个 HuggingFace 预训练模型加载与推理验证 |
 | `server/tests/test_fm_segmentation_decoders.py` | — | 分割模型 decoder 结构与输出维度 |
 | `server/tests/test_feature_cache_nowait.py` | — | 特征缓存非阻塞写入逻辑 |
 | `server/tests/test_gpu_control.py` | — | GPU 坏卡探测与 CUDA_VISIBLE_DEVICES 控制 |
@@ -204,6 +207,7 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 | `server/tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证 |
 | `server/tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试 |
 | `server/tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
+| `server/tests/test_batch_inference.py` | — | 批量推理任务类型、请求模型校验与完整推理流程回归 |
 
 详细说明见 [server/README.md](server/README.md)。
 

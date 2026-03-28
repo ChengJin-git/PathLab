@@ -57,10 +57,15 @@
 
 `segmentation_annotations.annotation_id` 字段当前遵循以下命名规范：
 
-| 类型 | 格式 | 说明 |
-|------|------|------|
-| 数据集级别标注（GT/labels） | `label_{dataset_id}` | 由 finalize 或 GT 导入写入 |
-| 个人/共享草稿 | UUID | 由草稿写入逻辑生成 |
+| 类型 | 格式 | `source` | `status` | 说明 |
+|------|------|----------|----------|------|
+| Viewer 标注 finalize | `label_{dataset_id}` | `"viewer"` | `"finalized"` | 一个数据集一条；由 `annotation.py` finalize 流程写入 |
+| 上传 / 导入 GT mask | `label_{wsi_id}` | `"upload"` / `"import"` | `"finalized"` | 每张 WSI 一条；由 `wsi_upload.py` 写入；通过 `source_dataset_id` FK 关联数据集 |
+| 个人草稿 | UUID | `"viewer"` | `"draft"` | 由草稿写入逻辑生成 |
+| 共享草稿 | `shared_{dataset_id}` | `"viewer"` | `"shared_draft"` | 协作标注中间态 |
+
+> **判断数据集是否已有上传 GT**：查询 `source_dataset_id = <dataset_id> AND source != 'viewer' AND status = 'finalized'`。
+> 不能依赖 `annotation_id = label_{dataset_id}`——该格式只由 viewer finalize 写入，upload/import GT 是逐 WSI 记录。
 
 ## annotation_source 派生字段
 
@@ -74,7 +79,7 @@
 ## 与旧文档相比的关键变化
 
 - 标注表当前是 `segmentation_annotations`，不是旧文档里的 `annotation_drafts`
-- `annotation_id` 中的数据集级别记录统一使用 `label_{dataset_id}` 格式（旧 `annot_` 前缀已迁移完毕）
+- `segmentation_annotations` 中同时存在两种 GT 格式：viewer finalize 写入的 `label_{dataset_id}`（`source="viewer"`）和 upload/import 写入的逐 WSI `label_{wsi_id}`（`source="upload"/"import"`）；两者均通过 `source_dataset_id` FK 关联数据集
 - 当前 README 不再把 `accesstoken` 记作项目里明确可见的独立 ORM 模型
 - 认证更贴近"JWT + users + nonce 控制"的实现方式
 - 当前权限体系已统一到 `dataset_grants` / `permission_audit_logs`，旧表 `dataset_permissions` 与 `annotation_collaborators` 不再作为 ORM 模型存在

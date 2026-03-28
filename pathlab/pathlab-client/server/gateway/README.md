@@ -57,11 +57,11 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **46 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **47 个路由模块文件**（不含 `__init__.py`）。
 
 除了上面 17 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
-- 推理实现：`inference_external_validation.py`、`inference_wsi_survival.py`、`inference_patch_segmentation.py`、`inference_patch_classification.py`、`inference_wsi_classification.py`（各推理路径的实现逻辑，由 `results` router 调用）
+- 推理实现：`inference_external_validation.py`、`inference_wsi_survival.py`、`inference_patch_segmentation.py`、`inference_patch_classification.py`、`inference_wsi_classification.py`（各推理路径的实现逻辑，由 `results` router 调用）、`inference_batch.py`（无标签数据集批量推理，由 GPU 任务队列以 `BATCH_INFERENCE` 类型调度）
 - 推理基础：`inference_base.py`（推理路径共享的基础逻辑）
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
 - 分析辅助：`analysis_utils.py`、`analysis_metrics.py`、`analysis_state.py`
