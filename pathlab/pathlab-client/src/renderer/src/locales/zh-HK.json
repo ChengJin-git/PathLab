@@ -1796,10 +1796,17 @@
       "selectModelPlaceholder": "選擇模型...",
       "selectDataset": "目標資料集",
       "selectDatasetPlaceholder": "選擇無標注資料集...",
-      "noUnlabeledDatasets": "未找到無標注資料集",
+       "noUnlabeledDatasets": "未找到無標注資料集",
       "noUnlabeledDatasetsHint": "僅無標籤資料集可參與批量推理。上傳未分配標籤的切片即可建立。",
       "showAllDatasets": "顯示全部資料集",
       "filterUnlabeled": "僅顯示無標注",
+      "dataType": {
+        "patch": "圖像塊",
+        "wsi": "切片",
+        "slide": "切片",
+        "tile": "瓦片"
+      },
+      "items": "張",
       "compatibilityNote": "模型與資料集的任務類型和資料類型必須匹配。",
       "incompatibleDataset": "不相容：任務類型或資料類型不匹配",
       "description": "描述（選填）",

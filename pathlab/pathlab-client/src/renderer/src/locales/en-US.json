@@ -1797,10 +1797,17 @@
       "selectModelPlaceholder": "Select a model...",
       "selectDataset": "Target Dataset",
       "selectDatasetPlaceholder": "Select an unlabeled dataset...",
-      "noUnlabeledDatasets": "No unlabeled datasets found",
+       "noUnlabeledDatasets": "No unlabeled datasets found",
       "noUnlabeledDatasetsHint": "Only datasets without labels are eligible. Upload slides without assigning labels to create one.",
       "showAllDatasets": "Show all datasets",
       "filterUnlabeled": "Unlabeled only",
+      "dataType": {
+        "patch": "patches",
+        "wsi": "slides",
+        "slide": "slides",
+        "tile": "tiles"
+      },
+      "items": "items",
       "compatibilityNote": "Model and dataset must have matching task type and data type.",
       "incompatibleDataset": "Incompatible: task type or data type mismatch",
       "description": "Description (Optional)",

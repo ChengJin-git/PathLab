@@ -239,7 +239,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                       >
                         <div className="font-medium truncate">{d.name}</div>
                         <div className="text-xs text-gray-400 mt-0.5">
-                          {d.task_type} · {d.data_type} · {d.slide_count} {t('resultsPage.batchInference.slideId').toLowerCase()}s
+                          {d.task_type} · {t(`resultsPage.batchInference.dataType.${d.data_type}`, { defaultValue: d.data_type })} · {d.slide_count} {t('resultsPage.batchInference.items')}
                         </div>
                         {!compat && (
                           <div className="text-xs text-red-400 mt-0.5">

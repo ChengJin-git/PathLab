@@ -35,6 +35,7 @@ from backend.database.models import (
     DataGroup,
     Dataset,
     AnalysisRun,
+    SegmentationAnnotation,
 )
 from backend.database.repositories import (
     AIResultRepository,
@@ -1434,8 +1435,17 @@ async def get_datasets_for_inference(
         if unlabeled_only:
             dg_task = dg.task_type
             if "segmentation" in dg_task:
-                # Segmentation: always include — no WSI-level label concept
-                pass
+                gt_check = await db.execute(
+                    select(func.count())
+                    .select_from(SegmentationAnnotation)
+                    .where(
+                        SegmentationAnnotation.annotation_id == f"label_{dataset_id}"
+                    )
+                    .where(SegmentationAnnotation.source != "viewer")
+                    .where(SegmentationAnnotation.status == "finalized")
+                )
+                if (gt_check.scalar() or 0) > 0:
+                    continue
             elif "survival" in dg_task:
                 survival_check = await db.execute(
                     select(func.count(WSISlide.id))
