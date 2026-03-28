@@ -66,7 +66,11 @@ from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
-from gateway.models import ExternalValidationRequest, QuickAnalysisRequest
+from gateway.models import (
+    ExternalValidationRequest,
+    QuickAnalysisRequest,
+    BatchInferenceRequest,
+)
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
@@ -113,6 +117,8 @@ from .inference_external_validation import (
     _run_external_validation,
     _auto_trigger_external_validation_analysis,
 )
+from .inference_batch import _run_batch_inference
+from ..task_queue import get_task_queue, TaskType
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
@@ -1459,6 +1465,131 @@ async def get_datasets_for_inference(
         )
 
     return {"items": result, "total": len(result)}
+
+
+@router.post("/batch-inference")
+async def start_batch_inference(
+    req: BatchInferenceRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import uuid as uuid_module
+
+    effective_user_id = str(user.id)
+
+    if user.is_admin() and req.rerun_from_task_id:
+        source_task = await TrainingTaskRepository.get_by_id(db, req.rerun_from_task_id)
+        if source_task and _coerce_str(source_task.user_id):
+            effective_user_id = _coerce_str(source_task.user_id)
+
+    model_task = await TrainingTaskRepository.get_by_id(db, req.model_task_id)
+    if not model_task:
+        raise HTTPException(
+            status_code=404, detail=f"Model task not found: {req.model_task_id}"
+        )
+
+    trained_models = await TrainedModelRepository.get_by_task_id(db, req.model_task_id)
+    trained_model = next((m for m in trained_models if m.is_active), None)
+    if not trained_model:
+        raise HTTPException(status_code=400, detail="Model is not active")
+
+    await _require_task_access(
+        user,
+        model_task,
+        db,
+        owner_user_id=_coerce_str(trained_model.user_id),
+        forbidden_detail="You don't have permission to use this model",
+    )
+
+    target_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
+    if not target_dataset:
+        raise HTTPException(
+            status_code=404, detail=f"Dataset not found: {req.dataset_id}"
+        )
+
+    has_dataset_access = await _has_external_validation_dataset_access(
+        user, target_dataset, db
+    )
+    if not has_dataset_access:
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to use this dataset"
+        )
+
+    has_gpu_permission = await check_dataset_gpu_permission(user, req.dataset_id, db)
+    if not has_gpu_permission and not user.can_use_gpu():
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have GPU permission for this dataset. Contact admin for temporary access.",
+        )
+
+    model_dg = model_task.data_group
+    dataset_dg = target_dataset.data_group
+    model_task_type = model_dg.task_type if model_dg else ""
+    model_data_type = model_dg.data_type if model_dg else "wsi"
+    dataset_task_type = dataset_dg.task_type if dataset_dg else ""
+    dataset_data_type = dataset_dg.data_type if dataset_dg else "wsi"
+    dataset_aggregation_level = dataset_dg.aggregation_level if dataset_dg else "file"
+
+    if model_task_type != dataset_task_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model task type '{model_task_type}' is incompatible with dataset task type '{dataset_task_type}'",
+        )
+    if model_data_type != dataset_data_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model data level '{model_data_type}' mismatches dataset data level '{dataset_data_type}'",
+        )
+
+    batch_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
+    batch_data_group = await DataGroupRepository.get_or_create(
+        db,
+        data_type=dataset_data_type,
+        aggregation_level=dataset_aggregation_level,
+        task_type="batch_inference",
+    )
+
+    batch_task = TrainingTask(
+        task_id=batch_id,
+        task_name=f"{model_task.task_name} → {target_dataset.name or req.dataset_id}"[
+            :200
+        ],
+        group_id=batch_data_group.group_id,
+        user_id=effective_user_id,
+        status=TaskStatus.PENDING,
+        progress=0,
+        classes=trained_model.classes,
+        preprocessing_config=model_task.preprocessing_config
+        or {
+            "feature_extractor": trained_model.feature_extractor,
+        },
+        model_config={
+            "model_task_id": req.model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": req.dataset_id,
+            "model_task_type": model_task_type,
+            "model_data_type": model_data_type,
+        },
+    )
+    db.add(batch_task)
+    await db.flush()
+    await db.commit()
+
+    task_queue = get_task_queue()
+    await task_queue.submit(
+        task_id=batch_id,
+        task_type=TaskType.BATCH_INFERENCE,
+        coro_func=_run_batch_inference,
+        model_task_id=req.model_task_id,
+        model_id=str(trained_model.model_id),
+        dataset_id=req.dataset_id,
+    )
+
+    return {
+        "task_id": batch_id,
+        "status": "pending",
+        "message": "Batch inference job submitted",
+    }
 
 
 @router.post("/external-validation")
