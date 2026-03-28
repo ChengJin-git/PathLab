@@ -151,7 +151,11 @@ export default function ResultsViewerPage() {
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])
 
-  const [pageMode, setPageMode] = useState<PageMode>('internal-analysis')
+  const [pageMode, setPageMode] = useState<PageMode>(() => {
+    const stored = localStorage.getItem('results-page-mode') as PageMode | null
+    const valid: PageMode[] = ['internal-analysis', 'external-validation', 'batch-inference']
+    return stored && valid.includes(stored) ? stored : 'internal-analysis'
+  })
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [datasetId, setDatasetId] = useState<string | null>(null)
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false)
@@ -246,6 +250,10 @@ export default function ResultsViewerPage() {
     enabled: !!extValQueryTaskId,
     staleTime: 30 * 1000,
   })
+
+  useEffect(() => {
+    localStorage.setItem('results-page-mode', pageMode)
+  }, [pageMode])
 
   useEffect(() => {
     // Check for task_id in URL params first

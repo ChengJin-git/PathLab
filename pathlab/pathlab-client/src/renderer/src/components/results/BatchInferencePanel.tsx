@@ -178,9 +178,9 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                       }`}
                     >
                       <div className="font-medium truncate">{m.task_name ?? m.model_id}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {m.task_type}
-                      </div>
+                       <div className="text-xs text-gray-400 mt-0.5">
+                         {t(`resultsPage.batchInference.taskType.${m.task_type}`, { defaultValue: m.task_type })}
+                       </div>
                     </button>
                   ))
                 )}
@@ -314,7 +314,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                     </Badge>
                   </div>
                   <div className="text-xs text-gray-400">
-                    {task.task_type} · {task.results_count} {t('resultsPage.resultsCount', { count: task.results_count })}
+                    {t(`resultsPage.batchInference.taskType.${task.task_type}`, { defaultValue: task.task_type })} · {task.results_count} {t('resultsPage.resultsCount', { count: task.results_count })}
                   </div>
                   {task.status === 'running' && (
                     <div className="mt-1.5 h-1 bg-gray-200 rounded-full overflow-hidden">
@@ -375,7 +375,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                   {selectedTask?.task_name ?? t('resultsPage.batchInference.results')}
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  {selectedTask?.task_type} · {selectedTask?.data_type} ·{' '}
+                  {t(`resultsPage.batchInference.taskType.${selectedTask?.task_type}`, { defaultValue: selectedTask?.task_type })} · {t(`resultsPage.batchInference.dataType.${selectedTask?.data_type}`, { defaultValue: selectedTask?.data_type })} ·{' '}
                   {resultsTotal} {t('resultsPage.resultsCount', { count: resultsTotal })}
                   {selectedTask?.finished_at && (
                     <> · {formatDateTime(selectedTask.finished_at, '')}</>

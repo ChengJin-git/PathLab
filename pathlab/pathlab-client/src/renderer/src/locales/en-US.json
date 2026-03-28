@@ -1807,6 +1807,13 @@
         "slide": "slides",
         "tile": "tiles"
       },
+      "taskType": {
+        "classification": "Classification",
+        "patch_classification": "Classification",
+        "segmentation": "Segmentation",
+        "patch_segmentation": "Segmentation",
+        "survival": "Survival"
+      },
       "items": "items",
       "compatibilityNote": "Model and dataset must have matching task type and data type.",
       "incompatibleDataset": "Incompatible: task type or data type mismatch",

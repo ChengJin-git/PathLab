@@ -1807,6 +1807,13 @@
         "slide": "切片",
         "tile": "瓦片"
       },
+      "taskType": {
+        "classification": "分类",
+        "patch_classification": "分类",
+        "segmentation": "分割",
+        "patch_segmentation": "分割",
+        "survival": "生存分析"
+      },
       "items": "张",
       "compatibilityNote": "模型与数据集的任务类型和数据类型必须匹配。",
       "incompatibleDataset": "不兼容：任务类型或数据类型不匹配",
