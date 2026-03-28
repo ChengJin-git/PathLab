@@ -1,7 +1,7 @@
 # PathLab Batch Inference on Unlabeled Datasets — Design Spec
 
 **Date**: 2026-03-28  
-**Version**: 2.1  
+**Version**: 2.2  
 **Status**: Pending Final Review
 
 ---
@@ -13,6 +13,7 @@
 | 1.0 | Initial draft |
 | 2.0 | Fixed all 8 Oracle-identified BLOCKERs: new inference handlers, DataGroup/task_type model, TaskType.BATCH_INFERENCE + restart recovery, atomic DB writes + revocation, normalized compatibility checks, model.is_active check, added backend task-list + CSV-export endpoints, fixed segmentation unlabeled filter. Added Chat integration section (AnalysisConfigCard + ConversationMode.BATCH_INFERENCE). Fixed 2 MINORs: SSE token-in-URL note, typos/metadata field names. |
 | 2.1 | Added §4.3 i18n contract (all strings must use translation hook; keys in §9). Added §4.5 Large Dataset Mitigations: CHUNK_SIZE=50 chunked backend processing, server-enforced max limit=500 on results endpoint, frontend server-driven pagination (pageSize=100), large dataset warning banner (>2000 slides). Added i18n keys: largeDatasetWarning, showingCount, pageOf. |
+| 2.2 | Removed `_canonical_task_type()` helper — use direct task_type string comparison throughout (no backward compatibility needed; no existing batch_inference tasks in DB). Extended Chat integration section: added `BatchInferenceSummaryCard` for inline inference summary display in AIChatPage alongside the existing `AnalysisConfigCard` trigger. Added `GET /results/batch-inference/{task_id}/summary` lightweight endpoint. Added `[BATCH_INFERENCE_SUMMARY]` block format. |
 
 ---
 
@@ -169,7 +170,6 @@ task = TrainingTask(
         "dataset_id": req.dataset_id,
         "model_task_type": model_task.data_group.task_type,   # e.g. "wsi_classification"
         "model_data_type": model_task.data_group.data_type,   # e.g. "wsi"
-        "model_task_canonical": _canonical_task_type(model_task.data_group.task_type),  # e.g. "classification"
     }
 )
 ```
@@ -182,32 +182,21 @@ Returns: `{ task_id, status, message }`
 
 **§4.2.2b — Compatibility Check**
 
-The spec defines a helper `_canonical_task_type(raw: str) -> str` that normalizes variants:
+No normalization function. Use direct equality comparison on the raw `task_type` and `data_type` strings stored in the respective `DataGroup` records:
 
 ```python
-def _canonical_task_type(raw: str) -> str:
-    """Normalize task_type variants to canonical form."""
-    _MAP = {
-        "wsi_classification": "classification",
-        "patch_classification": "classification",
-        "wsi_survival": "survival",
-        "survival": "survival",
-        "segmentation": "segmentation",
-        "patch_segmentation": "segmentation",
-    }
-    return _MAP.get(raw, raw)
+model_task_type  = model_task.data_group.task_type   # e.g. "wsi_classification"
+model_data_type  = model_task.data_group.data_type   # e.g. "wsi"
+dataset_task_type = dataset.data_group.task_type     # e.g. "wsi_classification"
+dataset_data_type = dataset.data_group.data_type     # e.g. "wsi"
+
+if model_task_type != dataset_task_type:
+    raise HTTPException(400, f"Model task type '{model_task_type}' is incompatible with dataset task type '{dataset_task_type}'")
+if model_data_type != dataset_data_type:
+    raise HTTPException(400, f"Model data level '{model_data_type}' mismatches dataset data level '{dataset_data_type}'")
 ```
 
-Compatibility check (after normalization):
-```python
-model_canonical = _canonical_task_type(model_task.data_group.task_type)
-dataset_canonical = _canonical_task_type(dataset.data_group.task_type)
-if model_canonical != dataset_canonical:
-    raise HTTPException(400, f"Model type '{model_canonical}' is incompatible with dataset type '{dataset_canonical}'")
-# Also check data_type (wsi vs patch):
-if model_task.data_group.data_type != dataset.data_group.data_type:
-    raise HTTPException(400, f"Model data level '{model_task.data_group.data_type}' mismatches dataset '{dataset.data_group.data_type}'")
-```
+These strings are set at dataset/task creation time and are consistent in the DB. No backward-compatibility mapping is needed.
 
 ---
 
@@ -216,7 +205,7 @@ if model_task.data_group.data_type != dataset.data_group.data_type:
 Returns per-WSI inference results for a completed batch_inference task:
 - Auth: task owner/admin (same as other task endpoints)
 - Query: `AIResult JOIN WSISlide WHERE AIResult.task_id = task_id`
-- Response includes `task_type` (from `task.model_config["model_task_canonical"]`) and `data_type` (from `task.data_group.data_type`) so frontend can render the correct column set
+- Response includes `task_type` (from `task.model_config["model_task_type"]`) and `data_type` (from `task.data_group.data_type`) so frontend can render the correct column set
 - Pagination: `skip` / `limit` params, default limit 500, max 2000
 
 Response schema:
@@ -251,6 +240,12 @@ Lists all batch_inference tasks visible to the requesting user:
 - Filter: `DataGroup.task_type == "batch_inference"` joined to `TrainingTask`
 - Returns: `{ items: [{ task_id, status, dataset_name, model_name, created_at, total_wsi }], total }`
 - Pagination: `skip`/`limit`, default limit 50
+
+---
+
+**`GET /results/batch-inference/{task_id}/summary`**  ← **NEW (Chat integration)**
+
+Lightweight aggregated summary for the `BatchInferenceSummaryCard`. See §5.4.2 for full response schema. Auth: task owner/admin.
 
 ---
 
@@ -317,27 +312,27 @@ async def _run_batch_inference(
         raise PermissionRevokedException(task_id)
 
     try:
-        canonical = _canonical_task_type(model_task.data_group.task_type)
-        data_type  = model_task.data_group.data_type
+        task_type = model_task.data_group.task_type   # raw string: "wsi_classification", "patch_classification", etc.
+        data_type = model_task.data_group.data_type   # "wsi" or "patch"
 
         # 3. Chunk-based processing
         for chunk_start in range(0, len(dataset_wsi_ids), CHUNK_SIZE):
             chunk_ids = dataset_wsi_ids[chunk_start : chunk_start + CHUNK_SIZE]
 
-            # Route to correct unlabeled handler for this chunk
-            if canonical == "segmentation":
+            # Route by exact task_type string — no normalization
+            if task_type == "patch_segmentation":
                 chunk_results = await _run_batch_inference_patch_segmentation(
                     trained_model, chunk_ids, db, progress_callback, assigned_device
                 )
-            elif canonical == "survival":
+            elif task_type in ("wsi_survival", "survival"):
                 chunk_results = await _run_batch_inference_wsi_survival(
                     trained_model, chunk_ids, db, progress_callback, assigned_device
                 )
-            elif data_type == "patch":
+            elif task_type == "patch_classification":
                 chunk_results = await _run_batch_inference_patch_classification(
                     trained_model, chunk_ids, db, progress_callback, assigned_device
                 )
-            else:
+            else:  # "wsi_classification"
                 chunk_results = await _run_batch_inference_wsi_classification(
                     trained_model, chunk_ids, db, progress_callback, assigned_device
                 )
@@ -468,11 +463,18 @@ No other changes to existing tab logic.
 
 ---
 
-## 5. Chat Integration (AIChatPage + AnalysisConfigCard)
+## 5. Chat Integration (AIChatPage + AnalysisConfigCard + BatchInferenceSummaryCard)
 
 ### 5.1 Overview
 
-The AI chat agent in `AIChatPage` can suggest and trigger batch inference jobs in the same way it handles internal/external validation — by emitting a structured `[ANALYSIS_CONFIG]` block that the `AnalysisConfigCard` component renders as an actionable card.
+The AI chat agent in `AIChatPage` integrates with batch inference via **two complementary cards**, mirroring the pattern the existing MetricCard + AnalysisConfigCard pair uses for labeled analyses:
+
+| Card | Block format | Purpose |
+|---|---|---|
+| `AnalysisConfigCard` (extended) | `[ANALYSIS_CONFIG]` | AI suggests a job → user clicks to trigger it |
+| `BatchInferenceSummaryCard` (new) | `[BATCH_INFERENCE_SUMMARY]` | AI shows inline summary of a completed (or in-progress) job |
+
+`MetricCard` (`[METRIC_CONFIG]`) is **not** used for batch inference — it fetches labeled metrics via `getTaskQuickAnalysis` which requires ground truth. Batch inference has no ground truth.
 
 ### 5.2 Backend — New `ConversationMode`
 
@@ -564,6 +566,111 @@ When AI intends to suggest batch inference, it emits:
 }
 [/ANALYSIS_CONFIG]
 ```
+
+---
+
+### 5.4 Frontend — `BatchInferenceSummaryCard` (New Component)
+
+**File**: `src/renderer/src/components/chat/BatchInferenceSummaryCard.tsx`
+
+This card is the batch-inference analogue of `MetricCard`. The AI emits it after a job completes (or to show progress) so the user can see results inline in the chat without navigating to the Results page.
+
+#### 5.4.1 Block Format
+
+```
+[BATCH_INFERENCE_SUMMARY]
+{
+  "task_id": "task_xyz789",
+  "task_name": "Validation Cohort 2026 — TCGA-LUAD Classifier v2"
+}
+[/BATCH_INFERENCE_SUMMARY]
+```
+
+Parsed by a new `parseBatchInferenceSummaryConfig()` function in `chatBlockParsing.ts` (same pattern as `parseMetricConfig` and `parseAnalysisConfig`).
+
+#### 5.4.2 Data Source
+
+The card fetches from a new lightweight backend endpoint:
+
+**`GET /results/batch-inference/{task_id}/summary`**
+
+Returns aggregated statistics (no pagination — always small):
+```json
+{
+  "task_id": "...",
+  "task_name": "...",
+  "status": "completed",
+  "task_type": "wsi_classification",
+  "data_type": "wsi",
+  "total_slides": 120,
+  "processed_slides": 120,
+  "created_at": "2026-03-28T10:00:00Z",
+  "completed_at": "2026-03-28T10:45:00Z",
+  // Classification only:
+  "class_distribution": { "adenocarcinoma": 72, "squamous_cell": 30, "normal": 18 },
+  // Survival only:
+  "risk_high_count": 45,
+  "risk_low_count": 75,
+  "mean_risk_score": 0.58,
+  // Segmentation only:
+  "masks_generated": 120
+}
+```
+
+Auth: task owner/admin (same as other task endpoints). Returns 404 if task not found or not batch_inference type.
+
+#### 5.4.3 Card Rendering
+
+Visual design mirrors `MetricCard` but shows prediction summaries instead of accuracy metrics:
+
+- **Header**: teal gradient (same color as AnalysisConfigCard batch_inference variant) + list icon + task name
+- **Status badge**: `pending` / `running` / `completed` / `failed`
+- **Body** (adapts by task_type):
+  - Classification: horizontal bar chart showing class distribution (class name → count + %)
+  - Survival: two stat tiles (high risk count, low risk count) + mean risk score chip
+  - Segmentation: single stat tile (masks generated / total)
+- **Footer**: "View full results →" link that navigates to `/results` with the batch inference tab pre-selected and the task pre-loaded
+
+#### 5.4.4 Polling for In-Progress Jobs
+
+If `status !== 'completed'`, the card polls `GET /results/batch-inference/{task_id}/summary` every 5 seconds (same interval as `MetricCard`'s refresh pattern) until status becomes `completed` or `failed`. On completion, re-renders with final stats.
+
+#### 5.4.5 i18n Keys
+
+Add under `chatComponents.batchInferenceSummaryCard`:
+```json
+{
+  "chatComponents": {
+    "batchInferenceSummaryCard": {
+      "title": "Batch Inference Summary",
+      "statusBadge": {
+        "pending": "Pending",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed"
+      },
+      "totalSlides": "{{count}} slides",
+      "classDistribution": "Prediction Distribution",
+      "riskHigh": "High Risk",
+      "riskLow": "Low Risk",
+      "meanRiskScore": "Mean Risk Score",
+      "masksGenerated": "Masks Generated",
+      "viewFullResults": "View full results →",
+      "taskNotFound": "Task not found or not accessible.",
+      "loadingStats": "Loading inference summary..."
+    }
+  }
+}
+```
+
+### 5.5 Backend — `ConversationMode.BATCH_INFERENCE` System Prompt
+
+When AI determines intent is batch inference, it may emit **either or both** block types:
+- `[ANALYSIS_CONFIG]` with `analysis_type: "batch_inference"` — to propose a new job
+- `[BATCH_INFERENCE_SUMMARY]` with `task_id` — to display an existing completed job's results
+
+System prompt guidance (addition for `BATCH_INFERENCE` mode):
+> "When showing results of an already-completed batch inference job, emit `[BATCH_INFERENCE_SUMMARY]{"task_id":"...","task_name":"..."}[/BATCH_INFERENCE_SUMMARY]`. When proposing a new job, emit `[ANALYSIS_CONFIG]{...}[/ANALYSIS_CONFIG]`. Never emit `[METRIC_CONFIG]` for batch inference — there are no ground-truth metrics."
 
 ---
 
@@ -697,7 +804,7 @@ New keys in `en-US.json` / `zh-CN.json` / `zh-HK.json` under `results.batchInfer
 
 | File | Change Type | Description |
 |---|---|---|
-| `server/gateway/routes/results.py` | Modified | Add `POST /results/batch-inference`, `GET /results/datasets-for-inference`, `GET /results/batch-inference/{task_id}/results`, `GET /results/batch-inference/tasks`, `GET /results/batch-inference/{task_id}/export-csv` |
+| `server/gateway/routes/results.py` | Modified | Add `POST /results/batch-inference`, `GET /results/datasets-for-inference`, `GET /results/batch-inference/{task_id}/results`, `GET /results/batch-inference/{task_id}/summary`, `GET /results/batch-inference/tasks`, `GET /results/batch-inference/{task_id}/export-csv` |
 | `server/gateway/routes/inference_batch.py` | **New** | `_run_batch_inference()` orchestrator + new unlabeled inference handlers |
 | `server/gateway/models.py` | Modified | Add `BatchInferenceRequest` Pydantic model |
 | `server/gateway/task_queue.py` | Modified | Add `TaskType.BATCH_INFERENCE` to enum |
@@ -718,6 +825,8 @@ New keys in `en-US.json` / `zh-CN.json` / `zh-HK.json` under `results.batchInfer
 | `src/renderer/src/components/results/BatchInferencePanel/BatchInferenceResults/SegmentationResults.tsx` | **New** | Segmentation table |
 | `src/renderer/src/pages/ResultsViewerPage.tsx` | Modified | Add 批量推理 tab |
 | `src/renderer/src/components/chat/AnalysisConfigCard.tsx` | Modified | Add `analysis_type: 'batch_inference'`; teal card variant; `startBatchInference()` submit |
+| `src/renderer/src/components/chat/BatchInferenceSummaryCard.tsx` | **New** | Inline chat summary card (analogous to MetricCard); fetches `/summary`; polls until completed |
+| `src/renderer/src/components/chat/chatBlockParsing.ts` | Modified | Add `parseBatchInferenceSummaryConfig()` for `[BATCH_INFERENCE_SUMMARY]` blocks |
 | `src/renderer/src/locales/en-US.json` | Modified | Add i18n keys |
 | `src/renderer/src/locales/zh-CN.json` | Modified | Add i18n keys |
 | `src/renderer/src/locales/zh-HK.json` | Modified | Add i18n keys |
@@ -738,4 +847,6 @@ New keys in `en-US.json` / `zh-CN.json` / `zh-HK.json` under `results.batchInfer
 - [ ] Model/dataset type mismatch shows clear error before and at submission
 - [ ] Interrupted batch_inference tasks resume correctly via `resume_interrupted_tasks()`
 - [ ] `AnalysisConfigCard` renders teal `batch_inference` card from AI message and triggers `startBatchInference()` on submit
-- [ ] `ConversationMode.BATCH_INFERENCE` injects correct model/dataset context into AI system prompt
+- [ ] `BatchInferenceSummaryCard` renders inline prediction summary from `[BATCH_INFERENCE_SUMMARY]` block; polls until completed
+- [ ] `GET /results/batch-inference/{task_id}/summary` returns correct aggregated stats per task type
+- [ ] `ConversationMode.BATCH_INFERENCE` injects correct model/dataset context into AI system prompt; AI emits correct block type (`[ANALYSIS_CONFIG]` for new jobs, `[BATCH_INFERENCE_SUMMARY]` for existing results)
