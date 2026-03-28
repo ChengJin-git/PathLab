@@ -320,3 +320,226 @@ async def test_batch_inference_submit_success():
     assert "task_id" in result
     assert result["status"] == "pending"
     mock_queue.submit.assert_awaited_once()
+
+
+def _mock_batch_task(
+    task_id: str = "binfer-test-1", task_type: str = "wsi_classification"
+) -> MagicMock:
+    from datetime import datetime, timezone
+
+    dg = MagicMock()
+    dg.task_type = "batch_inference"
+    dg.data_type = "wsi"
+    dg.aggregation_level = "file"
+
+    task = MagicMock()
+    task.task_id = task_id
+    task.task_name = f"Batch {task_id}"
+    task.user_id = "user-1"
+    task.status = "completed"
+    task.progress = 100
+    task.error_message = None
+    task.data_group = dg
+    task.model_config = {
+        "model_task_id": "mt-1",
+        "model_id": "m-1",
+        "dataset_id": "ds-1",
+        "model_task_type": task_type,
+        "model_data_type": "wsi",
+        "total_wsi": 10,
+        "results_count": 10,
+    }
+    task.created_at = datetime(2026, 3, 28, 0, 0, 0, tzinfo=timezone.utc).replace(
+        tzinfo=None
+    )
+    task.finished_at = datetime(2026, 3, 28, 1, 0, 0, tzinfo=timezone.utc).replace(
+        tzinfo=None
+    )
+    return task
+
+
+def _mock_ai_result(wsi_id: str = "wsi-1", task_id: str = "binfer-test-1") -> MagicMock:
+    from datetime import datetime, timezone
+
+    r = MagicMock()
+    r.wsi_id = wsi_id
+    r.task_id = task_id
+    r.user_id = "user-1"
+    r.pred = "ClassA"
+    r.probs = {"ClassA": 0.9, "ClassB": 0.1}
+    r.extra_metadata = {}
+    r.created_at = datetime(2026, 3, 28, 0, 30, 0, tzinfo=timezone.utc).replace(
+        tzinfo=None
+    )
+    r.wsi_slide = MagicMock()
+    r.wsi_slide.original_filename = f"{wsi_id}.svs"
+    r.wsi_slide.case_id = "case-1"
+    r.to_dict = MagicMock(
+        return_value={
+            "wsi_id": wsi_id,
+            "task_id": task_id,
+            "pred": "ClassA",
+            "probs": {"ClassA": 0.9, "ClassB": 0.1},
+            "extra_metadata": {},
+        }
+    )
+    return r
+
+
+@pytest.mark.asyncio
+async def test_list_batch_inference_tasks_returns_items():
+    mock_task = _mock_batch_task()
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_batch_inference_tasks",
+            new_callable=AsyncMock,
+            return_value=[mock_task],
+        ),
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.count_batch_inference_tasks",
+            new_callable=AsyncMock,
+            return_value=1,
+        ),
+        patch(
+            "gateway.routes.results.get_progress",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        from gateway.routes.results import list_batch_inference_tasks
+
+        result = await list_batch_inference_tasks(
+            skip=0, limit=50, user=_make_user("admin"), db=AsyncMock()
+        )
+    assert "items" in result
+    assert "total" in result
+    assert result["total"] == 1
+    assert result["items"][0]["task_id"] == "binfer-test-1"
+
+
+@pytest.mark.asyncio
+async def test_get_batch_inference_results_not_found():
+    with patch(
+        "gateway.routes.results.TrainingTaskRepository.get_by_id",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        from gateway.routes.results import get_batch_inference_results
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_batch_inference_results(
+                task_id="nonexistent",
+                skip=0,
+                limit=100,
+                user=_make_user("admin"),
+                db=AsyncMock(),
+            )
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_batch_inference_results_returns_paginated():
+    mock_task = _mock_batch_task()
+    mock_results = [_mock_ai_result(f"wsi-{i}") for i in range(3)]
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_task,
+        ),
+        patch(
+            "gateway.routes.results.AIResultRepository.get_by_task_paginated",
+            new_callable=AsyncMock,
+            return_value=mock_results,
+        ),
+        patch(
+            "gateway.routes.results.AIResultRepository.count_by_task",
+            new_callable=AsyncMock,
+            return_value=3,
+        ),
+    ):
+        from gateway.routes.results import get_batch_inference_results
+
+        result = await get_batch_inference_results(
+            task_id="binfer-test-1",
+            skip=0,
+            limit=100,
+            user=_make_user("admin"),
+            db=AsyncMock(),
+        )
+    assert result["total"] == 3
+    assert len(result["items"]) == 3
+    assert "task_type" in result
+    assert "data_type" in result
+
+
+@pytest.mark.asyncio
+async def test_get_batch_inference_summary_classification():
+    mock_task = _mock_batch_task()
+    mock_results = [_mock_ai_result(f"wsi-{i}") for i in range(5)]
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_task,
+        ),
+        patch(
+            "gateway.routes.results.AIResultRepository.get_by_task_paginated",
+            new_callable=AsyncMock,
+            return_value=mock_results,
+        ),
+    ):
+        from gateway.routes.results import get_batch_inference_summary
+
+        result = await get_batch_inference_summary(
+            task_id="binfer-test-1", user=_make_user("admin"), db=AsyncMock()
+        )
+    assert result["task_id"] == "binfer-test-1"
+    assert result["total_slides"] == 5
+    assert "class_distribution" in result
+    assert result["class_distribution"]["ClassA"] == 5
+
+
+@pytest.mark.asyncio
+async def test_get_batch_inference_summary_not_found():
+    with patch(
+        "gateway.routes.results.TrainingTaskRepository.get_by_id",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        from gateway.routes.results import get_batch_inference_summary
+        from fastapi import HTTPException
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_batch_inference_summary(
+                task_id="nonexistent", user=_make_user("admin"), db=AsyncMock()
+            )
+    assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_batch_inference_csv_returns_streaming():
+    mock_task = _mock_batch_task()
+    mock_results = [_mock_ai_result("wsi-1"), _mock_ai_result("wsi-2")]
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_task,
+        ),
+        patch(
+            "gateway.routes.results.AIResultRepository.get_by_task_paginated",
+            new_callable=AsyncMock,
+            return_value=mock_results,
+        ),
+    ):
+        from gateway.routes.results import export_batch_inference_csv
+        from fastapi.responses import StreamingResponse
+
+        result = await export_batch_inference_csv(
+            task_id="binfer-test-1", user=_make_user("admin"), db=AsyncMock()
+        )
+    assert isinstance(result, StreamingResponse)
+    assert result.media_type == "text/csv"
+    assert "attachment" in result.headers.get("content-disposition", "")

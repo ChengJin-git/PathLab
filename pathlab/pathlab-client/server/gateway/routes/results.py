@@ -107,6 +107,7 @@ from .analysis_metrics import (
     _generate_km_analysis,
     _calculate_integrated_brier_score,
 )
+from backend.common.progress_store import get_progress
 from .inference_wsi_classification import _run_inference_wsi_classification
 from .inference_patch_classification import _run_inference_patch_classification
 from .inference_patch_segmentation import _run_inference_patch_segmentation
@@ -1592,6 +1593,242 @@ async def start_batch_inference(
     }
 
 
+async def _require_batch_inference_task(
+    task_id: str,
+    user: User,
+    db: AsyncSession,
+) -> TrainingTask:
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404, detail=f"Batch inference task not found: {task_id}"
+        )
+    dg = task.data_group
+    if not dg or dg.task_type != "batch_inference":
+        raise HTTPException(
+            status_code=404, detail=f"Task {task_id} is not a batch inference task"
+        )
+    if not user.is_admin() and _coerce_str(task.user_id) != str(user.id):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to access this task"
+        )
+    return task
+
+
+@router.get("/batch-inference/tasks")
+async def list_batch_inference_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id_filter = None if user.is_admin() else str(user.id)
+    tasks = await TrainingTaskRepository.get_batch_inference_tasks(
+        db, user_id=user_id_filter, skip=skip, limit=limit
+    )
+    total = await TrainingTaskRepository.count_batch_inference_tasks(
+        db, user_id=user_id_filter
+    )
+    items = []
+    for t in tasks:
+        mc = t.model_config if isinstance(t.model_config, dict) else {}
+        dg = t.data_group
+        file_prog = await get_progress(_coerce_str(t.task_id))
+        progress = file_prog if file_prog is not None else (t.progress or 0)
+        items.append(
+            {
+                "task_id": _coerce_str(t.task_id),
+                "task_name": t.task_name,
+                "status": t.status,
+                "progress": progress,
+                "model_task_id": mc.get("model_task_id"),
+                "model_id": mc.get("model_id"),
+                "dataset_id": mc.get("dataset_id"),
+                "model_task_type": mc.get("model_task_type"),
+                "model_data_type": mc.get("model_data_type"),
+                "data_type": dg.data_type if dg else None,
+                "task_type": dg.task_type if dg else None,
+                "total_wsi": mc.get("total_wsi", 0),
+                "results_count": mc.get("results_count", 0),
+                "error": t.error_message,
+                "created_at": (
+                    t.created_at.isoformat() + "Z"
+                    if isinstance(t.created_at, datetime)
+                    else None
+                ),
+                "finished_at": (
+                    t.finished_at.isoformat() + "Z"
+                    if isinstance(t.finished_at, datetime)
+                    else None
+                ),
+            }
+        )
+    return {"items": items, "total": total}
+
+
+@router.get("/batch-inference/{task_id}/results")
+async def get_batch_inference_results(
+    task_id: str,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=skip, limit=limit
+    )
+    total = await AIResultRepository.count_by_task(db, task_id)
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    return {
+        "task_type": mc.get("model_task_type", ""),
+        "data_type": dg.data_type if dg else None,
+        "items": [r.to_dict() for r in results],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
+
+
+@router.get("/batch-inference/{task_id}/summary")
+async def get_batch_inference_summary(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=0, limit=None
+    )
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    task_type = mc.get("model_task_type", "")
+    total = len(results)
+    summary: dict = {
+        "task_id": task_id,
+        "task_name": task.task_name,
+        "status": task.status,
+        "task_type": task_type,
+        "data_type": dg.data_type if dg else None,
+        "model_task_id": mc.get("model_task_id"),
+        "model_id": mc.get("model_id"),
+        "dataset_id": mc.get("dataset_id"),
+        "total_slides": total,
+        "processed_slides": total,
+        "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
+        "completed_at": (
+            task.finished_at.isoformat() + "Z"
+            if task.status == "completed" and task.finished_at
+            else None
+        ),
+    }
+    if "classification" in task_type:
+        from collections import Counter
+
+        dist = Counter(r.pred for r in results if r.pred)
+        summary["class_distribution"] = dict(dist)
+    elif "survival" in task_type:
+        risk_scores = [
+            r.extra_metadata.get("risk_score")
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("risk_score") is not None
+        ]
+        summary["risk_high_count"] = sum(
+            1
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("risk_group") == "high"
+        )
+        summary["risk_low_count"] = sum(
+            1
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("risk_group") == "low"
+        )
+        summary["mean_risk_score"] = (
+            sum(risk_scores) / len(risk_scores) if risk_scores else None
+        )
+    elif "segmentation" in task_type:
+        summary["masks_generated"] = sum(
+            1
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("pred_mask_path")
+        )
+    return summary
+
+
+@router.get("/batch-inference/{task_id}/export-csv")
+async def export_batch_inference_csv(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=0, limit=None
+    )
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    task_type = mc.get("model_task_type", "")
+
+    output = io.StringIO()
+    if "classification" in task_type:
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "pred",
+            "probs",
+            "created_at",
+        ]
+    elif "survival" in task_type:
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "risk_score",
+            "risk_group",
+            "created_at",
+        ]
+    else:
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "pred_mask_path",
+            "created_at",
+        ]
+
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for r in results:
+        wsi = r.wsi_slide
+        meta = r.extra_metadata or {}
+        row = {
+            "wsi_id": r.wsi_id,
+            "original_filename": wsi.original_filename if wsi else "",
+            "case_id": wsi.case_id if wsi else "",
+            "pred": r.pred or "",
+            "probs": str(r.probs) if r.probs else "",
+            "risk_score": meta.get("risk_score", ""),
+            "risk_group": meta.get("risk_group", ""),
+            "pred_mask_path": meta.get("pred_mask_path", ""),
+            "created_at": r.created_at.isoformat() + "Z" if r.created_at else "",
+        }
+        writer.writerow(row)
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="batch_inference_{task_id}.csv"'
+        },
+    )
+
+
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
@@ -2126,8 +2363,6 @@ async def get_validation_progress(
 
     # Overlay file-based progress if available (more up-to-date than DB during inference).
     # This mirrors the pattern used in the training SSE endpoint (training.py lines 306-308).
-    from backend.common.progress_store import get_progress
-
     file_prog = await get_progress(task_id)
     progress = file_prog if file_prog is not None else task.progress
 

@@ -1080,3 +1080,37 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
 
         await db.flush()
         return result.rowcount
+
+    @staticmethod
+    async def get_batch_inference_tasks(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+        skip: int = 0,
+        limit: int = 50,
+    ) -> List[TrainingTask]:
+        query = (
+            select(TrainingTask)
+            .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
+            .options(selectinload(TrainingTask.data_group))
+            .where(DataGroup.task_type == "batch_inference")
+        )
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+        query = query.order_by(TrainingTask.created_at.desc()).offset(skip).limit(limit)
+        result = await db.execute(query)
+        return list(result.scalars().all())
+
+    @staticmethod
+    async def count_batch_inference_tasks(
+        db: AsyncSession,
+        user_id: Optional[str] = None,
+    ) -> int:
+        query = (
+            select(func.count(TrainingTask.id))
+            .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
+            .where(DataGroup.task_type == "batch_inference")
+        )
+        if user_id is not None:
+            query = query.where(TrainingTask.user_id == user_id)
+        result = await db.execute(query)
+        return result.scalar_one()
