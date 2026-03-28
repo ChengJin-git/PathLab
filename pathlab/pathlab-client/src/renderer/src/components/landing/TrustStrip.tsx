@@ -16,7 +16,7 @@ export function TrustStrip() {
   return (
     <div className="w-full py-8 border-y border-[color:var(--landing-border)] bg-white/50 backdrop-blur-sm relative z-20">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex flex-wrap items-center justify-center gap-3 sm:gap-6">
+        <div className="flex flex-col sm:flex-row sm:flex-wrap items-center justify-center gap-3 sm:gap-6">
           {trusts.map((item, idx) => {
             const Icon = item.icon
             return (

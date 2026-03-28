@@ -19,9 +19,9 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
         <div className="absolute left-[-10%] bottom-[-10%] w-[400px] h-[400px] bg-[#14b8a6]/5 rounded-full blur-[100px] opacity-60 -translate-x-1/3 translate-y-1/3" />
       </div>
 
-      <div className="mx-auto max-w-7xl items-center grid gap-12 lg:gap-8 px-4 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] relative z-10">
-        <div className="flex flex-col items-center lg:items-start text-center lg:text-left">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#f1f7fb] border border-[#dce8f2] text-[color:var(--landing-primary)] text-xs font-bold uppercase tracking-wider mb-6 shadow-sm">
+      <div className="mx-auto w-full max-w-7xl items-center grid gap-12 lg:gap-8 px-4 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] relative z-10 min-w-0">
+        <div className="flex flex-col items-center lg:items-start text-center lg:text-left min-w-0">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[#f1f7fb] border border-[#dce8f2] text-[color:var(--landing-primary)] text-xs font-bold uppercase tracking-wider mb-6 shadow-sm max-w-full">
             <Zap className="w-3.5 h-3.5 fill-[color:var(--landing-primary)]" />
             <span>{t('landing.hero.badge', 'Powered by Agentic AI')}</span>
           </div>

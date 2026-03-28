@@ -823,9 +823,7 @@ async def rename_dataset(
             forbidden_detail="You don't have permission to rename this dataset",
         )
 
-        updated = await DatasetRepository.update(
-            db, req.dataset_id, {"name": req.new_name}
-        )
+        updated = await DatasetRepository.update(db, req.dataset_id, name=req.new_name)
         await db.commit()
         await invalidate_chat_context(str(user.id))
         return {"message": "Dataset renamed successfully", "dataset": updated.to_dict()}
@@ -937,9 +935,7 @@ async def update_dataset_type(
         )
 
         # Update dataset's group_id
-        await DatasetRepository.update(
-            db, dataset_id, {"group_id": new_data_group.group_id}
-        )
+        await DatasetRepository.update(db, dataset_id, group_id=new_data_group.group_id)
 
         await db.commit()
         await invalidate_chat_context(str(user.id))

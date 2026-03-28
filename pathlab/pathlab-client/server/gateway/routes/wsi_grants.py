@@ -297,7 +297,7 @@ async def update_dataset_visibility(
     if becoming_public:
         revoked_grants = await DatasetGrantRepository.delete_by_dataset(db, dataset_id)
 
-    await DatasetRepository.update(db, dataset_id, updates)
+    await DatasetRepository.update(db, dataset_id, **updates)
     await db.commit()
 
     if becoming_public or becoming_private:

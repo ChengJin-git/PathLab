@@ -150,10 +150,6 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
         <div className="absolute -bottom-24 -right-24 w-64 h-64 bg-cyan-500/5 rounded-full blur-3xl opacity-50" />
 
         <div className="w-full max-w-sm mx-auto z-10">
-          <div className="mb-4 flex justify-end sm:hidden">
-            <LanguageSwitcher className="w-[140px]" />
-          </div>
-
           <div className="mb-10 text-center lg:text-left">
             <div className="flex items-center justify-center lg:justify-start mb-6">
               <img
