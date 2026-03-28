@@ -47,7 +47,6 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(null)
   const [isModelOpen, setIsModelOpen] = useState(false)
   const [isDatasetOpen, setIsDatasetOpen] = useState(false)
-  const [filterUnlabeled, setFilterUnlabeled] = useState(true)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [resultsPage, setResultsPage] = useState(1)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -57,9 +56,9 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
   ) ?? null
 
   const { data: inferenceDatasets = [] } = useQuery({
-    queryKey: ['inference-datasets', filterUnlabeled],
+    queryKey: ['inference-datasets'],
     queryFn: async () => {
-      const data = await fetchDatasetsForInference(filterUnlabeled)
+      const data = await fetchDatasetsForInference(true)
       return data.items
     },
     staleTime: 3 * 60 * 1000,
@@ -193,21 +192,6 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
           <p className="block text-xs font-medium text-gray-700 mb-1.5">
             {t('resultsPage.batchInference.selectDataset')}
           </p>
-          <div className="flex items-center gap-2 mb-2">
-            <button
-              type="button"
-              onClick={() => setFilterUnlabeled((p) => !p)}
-              className={`text-xs px-2 py-1 rounded-full border transition-colors ${
-                filterUnlabeled
-                  ? 'bg-purple-100 text-purple-700 border-purple-300'
-                  : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
-              }`}
-            >
-              {filterUnlabeled
-                ? t('resultsPage.batchInference.filterUnlabeled')
-                : t('resultsPage.batchInference.showAllDatasets')}
-            </button>
-          </div>
           <div className="relative mb-4">
             <button
               type="button"
@@ -227,9 +211,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
               <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-xl shadow-lg max-h-60 overflow-y-auto">
                 {compatibleDatasets.length === 0 ? (
                   <div className="px-3 py-4 text-sm text-gray-500 text-center">
-                    {filterUnlabeled
-                      ? t('resultsPage.batchInference.noUnlabeledDatasets')
-                      : t('resultsPage.noCompatibleDatasets')}
+                    {t('resultsPage.batchInference.noUnlabeledDatasets')}
                     <p className="text-xs mt-1 text-gray-400">
                       {t('resultsPage.batchInference.noUnlabeledDatasetsHint')}
                     </p>

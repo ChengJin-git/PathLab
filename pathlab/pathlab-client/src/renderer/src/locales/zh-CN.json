@@ -1792,7 +1792,7 @@
     },
     "batchInference": {
       "tabTitle": "批量推理",
-      "panelDescription": "在无标注数据集上运行已训练模型，生成每张切片的预测结果，无需评估指标。",
+      "panelDescription": "在无标注数据集上运行已训练模型，生成预测结果",
       "selectModel": "选择模型",
       "selectModelPlaceholder": "选择模型...",
       "selectDataset": "目标数据集",

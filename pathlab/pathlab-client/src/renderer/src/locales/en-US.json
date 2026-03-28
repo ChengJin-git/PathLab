@@ -1792,7 +1792,7 @@
     },
     "batchInference": {
       "tabTitle": "Batch Inference",
-      "panelDescription": "Run a trained model over an unlabeled dataset to generate per-slide predictions without evaluation metrics.",
+      "panelDescription": "Run a trained model over an unlabeled dataset to generate predictions",
       "selectModel": "Select Model",
       "selectModelPlaceholder": "Select a model...",
       "selectDataset": "Target Dataset",
