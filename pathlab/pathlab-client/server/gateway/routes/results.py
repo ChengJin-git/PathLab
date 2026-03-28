@@ -1371,6 +1371,96 @@ async def get_datasets_for_validation(
     return {"items": result, "total": len(result)}
 
 
+@router.get("/datasets-for-inference")
+async def get_datasets_for_inference(
+    unlabeled_only: bool = True,
+    task_type: Optional[str] = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List datasets available for batch inference on unlabeled slides.
+
+    When unlabeled_only=True (default), only datasets with no existing labels are returned:
+    - Classification: distinct_label_count == 0
+    - Survival: no WSI has event_time set
+    - Segmentation: always included (no WSI-level label concept)
+
+    Excludes batch_inference and external_validation task_type datasets.
+    """
+    datasets = await DatasetRepository.get_all(db)
+    elevated_dataset_ids: set[str] = set()
+    all_granted_dataset_ids: set[str] = set()
+    if not user.is_admin():
+        elevated_dataset_ids = set(await _get_elevated_dataset_ids(user, db) or [])
+        all_granted_dataset_ids = await _get_all_granted_dataset_ids(user, db)
+
+    result = []
+    for ds in datasets:
+        dg = ds.data_group
+        if not dg:
+            continue
+
+        if dg.task_type in ("batch_inference", "external_validation"):
+            continue
+
+        dataset_id = _coerce_str(ds.dataset_id)
+
+        if not user.is_admin():
+            owns_dataset = _coerce_str(ds.user_id) == str(user.id)
+            is_public = bool(getattr(ds, "is_public", False))
+            has_dataset_access = (
+                owns_dataset or is_public or dataset_id in all_granted_dataset_ids
+            )
+            has_gpu_permission = (
+                user.can_use_gpu() or dataset_id in elevated_dataset_ids
+            )
+            if not has_dataset_access or not has_gpu_permission:
+                continue
+
+        if task_type and dg.task_type != task_type:
+            continue
+
+        wsi_ids = await DatasetRepository.get_wsi_ids(db, dataset_id)
+        slide_count = len(wsi_ids)
+
+        if unlabeled_only:
+            dg_task = dg.task_type
+            if "segmentation" in dg_task:
+                # Segmentation: always include — no WSI-level label concept
+                pass
+            elif "survival" in dg_task:
+                # Survival: include if no event_time set on any WSI
+                survival_check = await db.execute(
+                    select(func.count(WSISlide.id))
+                    .where(WSISlide.dataset_id == dataset_id)
+                    .where(WSISlide.event_time.isnot(None))
+                )
+                has_survival_labels = (survival_check.scalar() or 0) > 0
+                if has_survival_labels:
+                    continue
+            else:
+                # Classification: include only if distinct_label_count == 0
+                distinct_label_count = await DatasetRepository.get_distinct_label_count(
+                    db, dataset_id
+                )
+                if distinct_label_count > 0:
+                    continue
+
+        result.append(
+            {
+                "dataset_id": dataset_id,
+                "name": ds.name,
+                "data_type": dg.data_type,
+                "task_type": dg.task_type,
+                "aggregation_level": dg.aggregation_level,
+                "slide_count": slide_count,
+            }
+        )
+
+    return {"items": result, "total": len(result)}
+
+
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
