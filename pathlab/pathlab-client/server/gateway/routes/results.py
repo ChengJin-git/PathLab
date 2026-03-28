@@ -1441,9 +1441,7 @@ async def get_datasets_for_inference(
                 gt_check = await db.execute(
                     select(func.count())
                     .select_from(SegmentationAnnotation)
-                    .where(
-                        SegmentationAnnotation.annotation_id == f"label_{dataset_id}"
-                    )
+                    .where(SegmentationAnnotation.source_dataset_id == dataset_id)
                     .where(SegmentationAnnotation.source != "viewer")
                     .where(SegmentationAnnotation.status == "finalized")
                 )
