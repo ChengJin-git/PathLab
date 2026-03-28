@@ -17,10 +17,10 @@ describe('ModalShell', () => {
 
   it('calls onClose when the backdrop is clicked', () => {
     const onClose = vi.fn()
-    const { container } = render(
+    render(
       <ModalShell isOpen={true} onClose={onClose}><span>content</span></ModalShell>
     )
-    fireEvent.click(container.firstChild as HTMLElement)
+    fireEvent.click(screen.getByTestId('modal-backdrop'))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
