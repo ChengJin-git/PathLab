@@ -1390,7 +1390,7 @@ async def get_datasets_for_inference(
 
     When unlabeled_only=True (default), only datasets with no existing labels are returned:
     - Classification: distinct_label_count == 0
-    - Survival: no WSI has event_time set
+    - Survival: no WSI has both event_time and event_status set
     - Segmentation: always included (no WSI-level label concept)
 
     Excludes batch_inference and external_validation task_type datasets.
@@ -1437,11 +1437,11 @@ async def get_datasets_for_inference(
                 # Segmentation: always include — no WSI-level label concept
                 pass
             elif "survival" in dg_task:
-                # Survival: include if no event_time set on any WSI
                 survival_check = await db.execute(
                     select(func.count(WSISlide.id))
                     .where(WSISlide.dataset_id == dataset_id)
                     .where(WSISlide.event_time.isnot(None))
+                    .where(WSISlide.event_status.isnot(None))
                 )
                 has_survival_labels = (survival_check.scalar() or 0) > 0
                 if has_survival_labels:

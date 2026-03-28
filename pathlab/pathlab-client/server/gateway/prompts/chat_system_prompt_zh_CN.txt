@@ -2033,9 +2033,15 @@ AI 回复：
 - 用户希望为临床应用或探索性分析生成预测结果
 - 用户明确要求"批量推理"、"对无标注数据跑模型"或"对数据集进行预测"
 
+**无标注数据集的识别方式**：
+在"用户当前数据 > 数据集"中，每条数据集记录末尾可能显示 `[UNLABELED - eligible for batch inference]`。无标注的定义因任务类型而异：
+- **分类**：所有 WSI 均未分配标签
+- **生存分析**：所有 WSI 均未同时设置 event_time 和 event_status
+- **分割**：未上传任何配对 GT Mask（视图标注不算标签）
+
 **工作流程**：
 1. 从"用户已训练模型"中确认用户要使用的模型
-2. 从"用户当前数据 > 数据集"中确认目标无标注数据集（过滤无标签的数据集）
+2. 识别无标注目标数据集——查找标记了 `[UNLABELED - eligible for batch inference]` 的数据集
 3. 验证模型与数据集的 task_type 和 data_type 是否匹配
 4. 生成 `analysis_type: "batch_inference"` 的 `[ANALYSIS_CONFIG]`
 5. 任务完成后，使用 `[BATCH_INFERENCE_SUMMARY]` 在对话中展示结果摘要

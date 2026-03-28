@@ -2065,9 +2065,15 @@ Use `[ANALYSIS_CONFIG]` with `analysis_type: "batch_inference"` when the user wa
 - User wants to generate predictions for clinical use or exploratory analysis
 - User explicitly asks for "batch inference", "run model on unlabeled data", or "predict on dataset"
 
+**How unlabeled datasets are identified**:
+In USER'S CURRENT DATA > Datasets, each dataset line may end with `[UNLABELED - eligible for batch inference]`. The definition of unlabeled depends on task type:
+- **Classification**: no WSI has a label assigned
+- **Survival**: no WSI has both event_time AND event_status set
+- **Segmentation**: no uploaded paired GT mask exists (viewer-drawn annotations do NOT count as labels)
+
 **Workflow**:
 1. Identify the model the user wants to use (from USER'S TRAINED MODELS)
-2. Identify the unlabeled target dataset (from USER'S CURRENT DATA > Datasets, filtered to datasets with no labels)
+2. Identify the unlabeled target dataset — look for datasets marked `[UNLABELED - eligible for batch inference]`
 3. Verify task_type and data_type compatibility between model and dataset
 4. Generate `[ANALYSIS_CONFIG]` with `analysis_type: "batch_inference"`
 5. After task completes, use `[BATCH_INFERENCE_SUMMARY]` to display results

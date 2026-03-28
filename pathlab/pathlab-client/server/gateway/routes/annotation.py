@@ -61,6 +61,7 @@ from backend.annotation.summary_cache import (
 )
 from backend.common.progress_store import get_progress, set_task_owner, get_task_owner
 from backend.annotation.pubsub import publish, subscribe_iter
+from gateway.chat.context_cache import invalidate_chat_context
 from backend.annotation.presence_pubsub import publish_presence, subscribe_presence_iter
 from ..dependencies import logger
 from ..models import (
@@ -1860,6 +1861,7 @@ async def delete_dataset_ground_truth(
         raise HTTPException(status_code=404, detail="Ground truth not found")
 
     await db.commit()
+    await invalidate_chat_context(dataset.user_id or str(user.id))
 
     try:
         await rebuild_draft_annotation_summary_cache(

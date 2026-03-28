@@ -638,6 +638,7 @@ async def upload_wsi_file(
                 source="upload_json",
             )
             await db.commit()
+            await invalidate_chat_context(str(user.id))
 
             if resolved_dataset_id:
                 try:
@@ -1071,6 +1072,7 @@ async def upload_wsi_by_path(
                 source="upload_path_json",
             )
             await db.commit()
+            await invalidate_chat_context(str(user.id))
 
             if resolved_dataset_id:
                 try:

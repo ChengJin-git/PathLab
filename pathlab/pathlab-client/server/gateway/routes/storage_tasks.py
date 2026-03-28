@@ -61,6 +61,7 @@ from backend.annotation.summary_cache import (
 )
 from backend.common.config import Config
 from backend.common.file_types import WSI_EXTENSIONS
+from gateway.chat.context_cache import invalidate_chat_context
 
 router = APIRouter()
 
@@ -650,6 +651,10 @@ async def _run_batch_import_task(
                     logger.warning(
                         f"Failed to refresh annotation summary cache for {resolved_dataset_id}: {cache_err}"
                     )
+                try:
+                    await invalidate_chat_context(user_id)
+                except Exception:
+                    pass
 
             logger.info(
                 f"Batch import task {task_id} completed: {success_count} success, {failed_count} failed, {skipped_count} skipped"
