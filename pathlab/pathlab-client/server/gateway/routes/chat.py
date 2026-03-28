@@ -2660,7 +2660,7 @@ async def chat_with_ai(
             elevated_dataset_ids = [
                 perm.dataset_id
                 for perm in temp_permissions
-                if perm.can_use_gpu and perm.is_valid()
+                if perm.can_read and perm.is_valid()
             ]
 
     latest_user_text = ""
