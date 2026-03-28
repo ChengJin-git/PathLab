@@ -1432,6 +1432,9 @@ async def get_datasets_for_inference(
         wsi_ids = await DatasetRepository.get_wsi_ids(db, dataset_id)
         slide_count = len(wsi_ids)
 
+        if slide_count == 0:
+            continue
+
         if unlabeled_only:
             dg_task = dg.task_type
             if "segmentation" in dg_task:
