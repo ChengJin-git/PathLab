@@ -1,7 +1,8 @@
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 
 from backend.ai.schemas.base import TaskStatus
+from gateway.task_queue import TaskType
 
 
 def _make_task(task_id, status, data_type="wsi", task_type="classification"):
@@ -138,3 +139,88 @@ async def test_resume_patch_task_submits_to_queue():
     mock_patching.assert_not_awaited()
     submitted_kwargs = mock_queue.submit.call_args.kwargs
     assert submitted_kwargs.get("patching_complete", False) is False
+
+
+@pytest.mark.asyncio
+async def test_resume_batch_inference_task():
+    """Interrupted batch_inference task is re-submitted with TaskType.BATCH_INFERENCE."""
+    task = _make_task(
+        "task_bi_1", TaskStatus.TRAINING, data_type="wsi", task_type="batch_inference"
+    )
+    task.model_config = {
+        "model_task_id": "src_task_abc",
+        "model_id": "model_xyz",
+        "dataset_id": "ds_999",
+    }
+
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock()
+    mock_repo = MagicMock()
+    mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
+    mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
+    mock_repo.update_status = AsyncMock()
+
+    mock_run_batch = AsyncMock()
+
+    with (
+        patch("gateway.main.TrainingTaskRepository", mock_repo),
+        patch("gateway.main.get_task_queue", return_value=mock_queue),
+        patch("gateway.main.wait_for_services_ready", return_value=True),
+        patch("gateway.routes.inference_batch._run_batch_inference", mock_run_batch),
+        patch("gateway.main.get_db") as mock_get_db,
+    ):
+        db_mock = AsyncMock()
+        db_mock.commit = AsyncMock()
+
+        async def _db_gen():
+            yield db_mock
+
+        mock_get_db.return_value = _db_gen()
+
+        from gateway.main import resume_interrupted_tasks
+
+        await resume_interrupted_tasks()
+
+    mock_queue.submit.assert_awaited_once()
+    call_kwargs = mock_queue.submit.call_args.kwargs
+    assert call_kwargs["task_id"] == "task_bi_1"
+    assert call_kwargs["task_type"] == TaskType.BATCH_INFERENCE
+    assert call_kwargs["model_task_id"] == "src_task_abc"
+    assert call_kwargs["model_id"] == "model_xyz"
+    assert call_kwargs["dataset_id"] == "ds_999"
+    mock_repo.get_wsi_ids.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_batch_inference_skips_wsi_ids_fetch():
+    """Batch inference resume does NOT call TrainingTaskRepository.get_wsi_ids."""
+    task = _make_task(
+        "task_bi_2", TaskStatus.TRAINING, data_type="wsi", task_type="batch_inference"
+    )
+    task.model_config = {"model_task_id": "t", "model_id": "m", "dataset_id": "d"}
+
+    mock_queue = AsyncMock()
+    mock_repo = MagicMock()
+    mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
+    mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
+    mock_repo.get_wsi_ids = AsyncMock(return_value=["should_not_be_called"])
+
+    with (
+        patch("gateway.main.TrainingTaskRepository", mock_repo),
+        patch("gateway.main.get_task_queue", return_value=mock_queue),
+        patch("gateway.main.wait_for_services_ready", return_value=True),
+        patch("gateway.main.get_db") as mock_get_db,
+    ):
+        db_mock = AsyncMock()
+        db_mock.commit = AsyncMock()
+
+        async def _db_gen():
+            yield db_mock
+
+        mock_get_db.return_value = _db_gen()
+
+        from gateway.main import resume_interrupted_tasks
+
+        await resume_interrupted_tasks()
+
+    mock_repo.get_wsi_ids.assert_not_called()
