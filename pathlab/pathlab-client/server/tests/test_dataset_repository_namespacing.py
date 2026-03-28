@@ -43,25 +43,19 @@ async def test_get_or_create_scopes_lookup_to_user_namespace(monkeypatch):
             return existing_other_user
         return None
 
-    async def _fake_create(
-        _db,
-        _dataset_id,
-        _name,
-        group_id,
-        user_id,
-        source_organ=None,
-        parent_dataset_id=None,
-        is_public=False,
-    ):
+    async def _fake_create(_db, **kwargs):
         create_calls.append(
             {
-                "group_id": group_id,
-                "user_id": user_id,
-                "source_organ": source_organ,
-                "parent_dataset_id": parent_dataset_id,
-                "is_public": is_public,
+                "group_id": kwargs.get("group_id"),
+                "user_id": kwargs.get("user_id"),
+                "source_organ": kwargs.get("source_organ"),
+                "parent_dataset_id": kwargs.get("parent_dataset_id"),
+                "is_public": kwargs.get("is_public", False),
             }
         )
+        return created_for_target_user
+
+    async def _fake_get_by_id(_db, _dataset_id):
         return created_for_target_user
 
     monkeypatch.setattr(
@@ -73,6 +67,11 @@ async def test_get_or_create_scopes_lookup_to_user_namespace(monkeypatch):
         DatasetRepository,
         "create",
         staticmethod(_fake_create),
+    )
+    monkeypatch.setattr(
+        DatasetRepository,
+        "get_by_id",
+        staticmethod(_fake_get_by_id),
     )
 
     result = await DatasetRepository.get_or_create(

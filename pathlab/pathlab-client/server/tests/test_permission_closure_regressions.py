@@ -143,8 +143,8 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
     async def _fake_align_dataset_data_type_for_file(db, dataset, **kwargs):
         return dataset
 
-    async def _fake_create_wsi(db, wsi_data):
-        return types.SimpleNamespace(label=wsi_data.get("label"))
+    async def _fake_create_wsi(db, **kwargs):
+        return types.SimpleNamespace(label=kwargs.get("label"))
 
     async def _fake_recompute_dataset_stats(db, dataset_id):
         return None
@@ -203,6 +203,14 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
     monkeypatch.setattr(
         "gateway.routes.wsi_upload.WSIRepository.create",
         staticmethod(_fake_create_wsi),
+    )
+
+    async def _fake_get_by_filename_in_dataset(db, dataset_id, filename):
+        return None
+
+    monkeypatch.setattr(
+        "gateway.routes.wsi_upload.WSIRepository.get_by_filename_in_dataset",
+        staticmethod(_fake_get_by_filename_in_dataset),
     )
     monkeypatch.setattr(
         "gateway.routes.wsi_upload.uuid.uuid4",
