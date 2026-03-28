@@ -543,3 +543,163 @@ async def test_export_batch_inference_csv_returns_streaming():
     assert isinstance(result, StreamingResponse)
     assert result.media_type == "text/csv"
     assert "attachment" in result.headers.get("content-disposition", "")
+
+
+@pytest.mark.asyncio
+async def test_run_batch_inference_routes_to_wsi_classification():
+    """task_type=wsi_classification routes to WSI classification handler (mocked)"""
+    from unittest.mock import patch, AsyncMock, MagicMock
+
+    mock_task = MagicMock()
+    mock_task.data_group.task_type = "wsi_classification"
+    mock_task.data_group.data_type = "wsi"
+
+    mock_model = MagicMock()
+    mock_model.model_id = "m-1"
+
+    wsi_ids = [f"wsi-{i}" for i in range(55)]
+
+    with (
+        patch(
+            "gateway.routes.inference_batch.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_task,
+        ),
+        patch(
+            "gateway.routes.inference_batch.TrainedModelRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_model,
+        ),
+        patch(
+            "gateway.routes.inference_batch.DatasetRepository.get_wsi_ids",
+            new_callable=AsyncMock,
+            return_value=wsi_ids,
+        ),
+        patch(
+            "gateway.routes.inference_batch.is_permission_revoked",
+            return_value=False,
+        ),
+        patch(
+            "gateway.routes.inference_batch.clear_revocation",
+        ),
+        patch(
+            "gateway.routes.inference_batch._run_batch_wsi_classification",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_handler,
+        patch(
+            "gateway.routes.inference_batch.AIResultRepository.bulk_create",
+            new_callable=AsyncMock,
+        ),
+        patch("gateway.routes.inference_batch.set_progress", new_callable=AsyncMock),
+        patch("gateway.routes.inference_batch.clear_progress", new_callable=AsyncMock),
+        patch("gateway.routes.inference_batch.safe_session"),
+        patch("gateway.routes.inference_batch.sql_update"),
+    ):
+        from gateway.routes.inference_batch import _run_batch_inference
+
+        with patch("gateway.routes.inference_batch.safe_session") as mock_safe:
+            mock_ctx = AsyncMock()
+            mock_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+            mock_ctx.__aexit__ = AsyncMock(return_value=None)
+            mock_safe.return_value = mock_ctx
+
+            await _run_batch_inference(
+                task_id="binfer-1",
+                model_task_id="mt-1",
+                model_id="m-1",
+                dataset_id="ds-1",
+                assigned_device="cpu",
+            )
+
+    assert mock_handler.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_run_batch_inference_revocation_raises():
+    """Permission revoked before first chunk → PermissionRevokedException"""
+    from gateway.routes.inference_batch import (
+        _run_batch_inference,
+        PermissionRevokedException,
+    )
+
+    mock_task = MagicMock()
+    mock_task.data_group.task_type = "wsi_classification"
+    mock_task.data_group.data_type = "wsi"
+
+    with (
+        patch(
+            "gateway.routes.inference_batch.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_task,
+        ),
+        patch(
+            "gateway.routes.inference_batch.TrainedModelRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=MagicMock(),
+        ),
+        patch(
+            "gateway.routes.inference_batch.DatasetRepository.get_wsi_ids",
+            new_callable=AsyncMock,
+            return_value=["wsi-1"],
+        ),
+        patch(
+            "gateway.routes.inference_batch.is_permission_revoked",
+            return_value=True,
+        ),
+        patch("gateway.routes.inference_batch.clear_revocation"),
+        patch("gateway.routes.inference_batch.safe_session") as mock_safe,
+        patch("gateway.routes.inference_batch.sql_update"),
+        patch("gateway.routes.inference_batch.set_progress", new_callable=AsyncMock),
+        patch("gateway.routes.inference_batch.clear_progress", new_callable=AsyncMock),
+    ):
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_safe.return_value = mock_ctx
+
+        with pytest.raises(PermissionRevokedException):
+            await _run_batch_inference(
+                task_id="binfer-revoked",
+                model_task_id="mt-1",
+                model_id="m-1",
+                dataset_id="ds-1",
+                assigned_device="cpu",
+            )
+
+
+@pytest.mark.asyncio
+async def test_clear_revocation_called_in_finally():
+    """clear_revocation is called even when an unexpected exception occurs"""
+    from gateway.routes.inference_batch import _run_batch_inference
+
+    mock_task = MagicMock()
+    mock_task.data_group.task_type = "wsi_classification"
+    mock_task.data_group.data_type = "wsi"
+
+    with (
+        patch(
+            "gateway.routes.inference_batch.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("DB down"),
+        ),
+        patch("gateway.routes.inference_batch.clear_revocation") as mock_clear,
+        patch("gateway.routes.inference_batch.safe_session") as mock_safe,
+        patch("gateway.routes.inference_batch.sql_update"),
+        patch("gateway.routes.inference_batch.set_progress", new_callable=AsyncMock),
+        patch("gateway.routes.inference_batch.clear_progress", new_callable=AsyncMock),
+    ):
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
+        mock_ctx.__aexit__ = AsyncMock(return_value=None)
+        mock_safe.return_value = mock_ctx
+
+        with pytest.raises(RuntimeError):
+            await _run_batch_inference(
+                task_id="binfer-err",
+                model_task_id="mt-1",
+                model_id="m-1",
+                dataset_id="ds-1",
+                assigned_device="cpu",
+            )
+    mock_clear.assert_called_once_with("binfer-err")
