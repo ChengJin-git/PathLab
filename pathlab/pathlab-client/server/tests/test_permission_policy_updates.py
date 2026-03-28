@@ -374,7 +374,7 @@ async def test_update_visibility_public_revokes_temp_private_grants(monkeypatch)
     async def _dataset_by_id(_db, _dataset_id):
         return datasets.pop(0)
 
-    async def _update(_db, _dataset_id, _updates):
+    async def _update(_db, _dataset_id, **kwargs):
         calls["update"] += 1
         return None
 
