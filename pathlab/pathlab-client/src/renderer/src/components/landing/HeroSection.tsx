@@ -14,7 +14,7 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
 
   return (
     <section className="relative overflow-hidden pt-20 lg:pt-32 pb-12 lg:pb-24">
-      <div className="absolute inset-0 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute right-[-10%] top-0 w-[500px] h-[500px] bg-[#2f6bff]/5 rounded-full blur-[100px] opacity-70 translate-x-1/3 -translate-y-1/3" />
         <div className="absolute left-[-10%] bottom-[-10%] w-[400px] h-[400px] bg-[#14b8a6]/5 rounded-full blur-[100px] opacity-60 -translate-x-1/3 translate-y-1/3" />
       </div>
@@ -37,7 +37,7 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
             </span>
           </h1>
 
-          <p className="text-[color:var(--landing-text-secondary)] text-lg leading-relaxed max-w-xl mx-auto lg:mx-0 mb-10 break-keep">
+          <p className="text-[color:var(--landing-text-secondary)] text-lg leading-relaxed max-w-xl mx-auto lg:mx-0 mb-10">
             {t('landing.hero.subtitle', 'A true clinical-grade AI workspace. From data import and zero-shot configuration to log tracking and viewer evidence—all guided seamlessly by natural language.')}
           </p>
 
