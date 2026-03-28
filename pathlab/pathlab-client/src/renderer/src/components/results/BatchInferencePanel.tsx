@@ -283,8 +283,8 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
             {t('resultsPage.batchInference.selectTask')}
           </h3>
           {tasksLoading ? (
-            <div className="flex items-center gap-2 text-gray-500 text-sm py-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
+            <div className="flex justify-center py-6">
+              <Loader2 className="w-6 h-6 text-gray-400 animate-spin" />
             </div>
           ) : biTasks.length === 0 ? (
             <div className="text-center py-6">
