@@ -67,6 +67,25 @@ export function Select({
         return () => document.removeEventListener("mousedown", handleClickOutside)
     }, [])
 
+    React.useEffect(() => {
+        if (!isOpen) return
+        const updatePosition = () => {
+            if (triggerRef.current) {
+                const rect = triggerRef.current.getBoundingClientRect()
+                setDropdownStyle({
+                    position: "fixed",
+                    top: rect.bottom + 4,
+                    left: rect.left,
+                    width: rect.width,
+                    zIndex: 9999,
+                })
+            }
+        }
+        // capture:true catches scroll on any ancestor, not just window
+        window.addEventListener("scroll", updatePosition, true)
+        return () => window.removeEventListener("scroll", updatePosition, true)
+    }, [isOpen])
+
     const handleOpen = () => {
         if (disabled) return
         if (!isOpen && triggerRef.current) {
