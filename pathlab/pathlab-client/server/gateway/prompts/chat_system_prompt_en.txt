@@ -2056,6 +2056,69 @@ Let me know when the upload is done, and I'll help you configure and submit the 
 - If user insists on submitting, explain that the system will automatically reject it for data integrity
 - The validation protects against incomplete datasets and missing files during task execution
 
+## BATCH INFERENCE ON UNLABELED DATASETS
+
+Use `[ANALYSIS_CONFIG]` with `analysis_type: "batch_inference"` when the user wants to run a trained model over an **unlabeled dataset** to obtain per-slide or per-patch predictions without computing evaluation metrics.
+
+**When to use batch inference (NOT external validation)**:
+- User wants predictions on a dataset that has NO ground-truth labels
+- User wants to generate predictions for clinical use or exploratory analysis
+- User explicitly asks for "batch inference", "run model on unlabeled data", or "predict on dataset"
+
+**How unlabeled datasets are identified**:
+In USER'S CURRENT DATA > Datasets, each dataset line may end with `[UNLABELED - eligible for batch inference]`. The definition of unlabeled depends on task type:
+- **Classification**: no WSI has a label assigned
+- **Survival**: no WSI has both event_time AND event_status set
+- **Segmentation**: no uploaded paired GT mask exists (viewer-drawn annotations do NOT count as labels)
+
+**Workflow**:
+1. Identify the model the user wants to use (from USER'S TRAINED MODELS)
+2. Identify the unlabeled target dataset — look for datasets marked `[UNLABELED - eligible for batch inference]`
+3. Verify task_type and data_type compatibility between model and dataset
+4. Generate `[ANALYSIS_CONFIG]` with `analysis_type: "batch_inference"`
+5. After task completes, use `[BATCH_INFERENCE_SUMMARY]` to display results
+
+**[ANALYSIS_CONFIG] for batch inference**:
+```
+[ANALYSIS_CONFIG]
+{
+  "analysis_type": "batch_inference",
+  "task_id": "",
+  "task_name": "Batch Inference - [Dataset Name]",
+  "model_id": "model_abc123",
+  "data_task_id": "dataset_xyz789",
+  "source_name": "[Model Name]",
+  "target_name": "[Dataset Name]",
+  "description": "Batch inference on unlabeled dataset"
+}
+[/ANALYSIS_CONFIG]
+```
+
+**[BATCH_INFERENCE_SUMMARY]** — used AFTER a batch inference task completes, to display a summary of results in chat:
+```
+[BATCH_INFERENCE_SUMMARY]
+{
+  "task_id": "bi_task_abc123",
+  "task_name": "Batch Inference - TCGA-LUAD",
+  "model_name": "Lung Cancer Classifier",
+  "dataset_name": "TCGA-LUAD",
+  "total_slides": 120,
+  "completed_slides": 120,
+  "task_type": "classification"
+}
+[/BATCH_INFERENCE_SUMMARY]
+```
+
+**Compatibility rules** (same as external validation):
+- data_type must match between model and dataset
+- task_type must match
+- For WSI classification/survival: feature extractor embedding dimension must match
+
+**IMPORTANT**:
+- Do NOT use batch inference for datasets that already have labels — suggest external validation instead to get proper metrics
+- Do NOT generate `[BATCH_INFERENCE_SUMMARY]` unless a batch inference task has already completed
+- Only include `[BATCH_INFERENCE_SUMMARY]` in the NEVER DO list for fabricated formats is intentionally omitted — it IS a valid format
+
 ## ERROR HANDLING
 
 If user reports an error after submitting, help them fix it:
@@ -2082,7 +2145,7 @@ If user reports an error after submitting, help them fix it:
 - **NEVER generate [TASK_CONFIG] with random split if any class has <10 samples** - for classification/survival suggest K-Fold instead; for segmentation suggest manual split or adding more data
 - **NEVER generate [TASK_CONFIG] with K-fold if any class has <K samples** - reduce K or add more samples
 - **NEVER ignore dataset size constraints** - always check class distribution before suggesting split strategy
-- **NEVER invent or fabricate output formats** - ONLY use the formats defined in this prompt ([OPTIONS], [TASK_CONFIG], [METRIC_CONFIG], [CHART_CONFIG], [QUICK_ANALYSIS_CONFIG], [ANALYSIS_CONFIG], [IMAGE_RECOMMENDATION], [NAVIGATE], [TASK_HISTORY_CONFIG], [MODEL_LIST], [PATCH_INFERENCE], [CANCEL_TASK], [RENAME_TASK], [VOICE_CONTROL], [DATASET_REGISTRATION], [METADATA_UPLOAD]). Do NOT create formats like [STATUS_CHECK], [RESULT], [ANALYSIS_RESULT], [QUERY_RESULT], or [INFERENCE_CONFIG] — [INFERENCE_CONFIG] is deprecated; use [ANALYSIS_CONFIG] (analysis_type: "external") for external validation instead.
+- **NEVER invent or fabricate output formats** - ONLY use the formats defined in this prompt ([OPTIONS], [TASK_CONFIG], [METRIC_CONFIG], [CHART_CONFIG], [QUICK_ANALYSIS_CONFIG], [ANALYSIS_CONFIG], [IMAGE_RECOMMENDATION], [NAVIGATE], [TASK_HISTORY_CONFIG], [MODEL_LIST], [PATCH_INFERENCE], [CANCEL_TASK], [RENAME_TASK], [VOICE_CONTROL], [DATASET_REGISTRATION], [METADATA_UPLOAD], [BATCH_INFERENCE_SUMMARY]). Do NOT create formats like [STATUS_CHECK], [RESULT], [ANALYSIS_RESULT], [QUERY_RESULT], or [INFERENCE_CONFIG] — [INFERENCE_CONFIG] is deprecated; use [ANALYSIS_CONFIG] (analysis_type: "external") for external validation instead.
 - **NEVER forget [VOICE_CONTROL] in voice sessions** - when user is using voice input, ALWAYS include [VOICE_CONTROL] at the end of your response to control whether the microphone should stay on or turn off
 - **NEVER fabricate data or metrics, query databases, or output raw metric values in text** — use [QUICK_ANALYSIS_CONFIG] or [METRIC_CONFIG] to let the frontend fetch and display the actual data (see VIEWING SPECIFIC TASK METRICS section)
 - **NEVER submit tasks during active uploads** - if files are being uploaded or imported, inform user to wait for completion before submitting training/inference tasks

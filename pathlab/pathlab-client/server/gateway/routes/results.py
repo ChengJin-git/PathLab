@@ -66,7 +66,11 @@ from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
-from gateway.models import ExternalValidationRequest, QuickAnalysisRequest
+from gateway.models import (
+    ExternalValidationRequest,
+    QuickAnalysisRequest,
+    BatchInferenceRequest,
+)
 
 # Analysis modules (extracted from this file for maintainability)
 from .analysis_state import get_analysis_state, AnalysisRequest
@@ -103,6 +107,7 @@ from .analysis_metrics import (
     _generate_km_analysis,
     _calculate_integrated_brier_score,
 )
+from backend.common.progress_store import get_progress
 from .inference_wsi_classification import _run_inference_wsi_classification
 from .inference_patch_classification import _run_inference_patch_classification
 from .inference_patch_segmentation import _run_inference_patch_segmentation
@@ -113,6 +118,8 @@ from .inference_external_validation import (
     _run_external_validation,
     _auto_trigger_external_validation_analysis,
 )
+from .inference_batch import _run_batch_inference
+from ..task_queue import get_task_queue, TaskType
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
@@ -1371,6 +1378,457 @@ async def get_datasets_for_validation(
     return {"items": result, "total": len(result)}
 
 
+@router.get("/datasets-for-inference")
+async def get_datasets_for_inference(
+    unlabeled_only: bool = True,
+    task_type: Optional[str] = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    List datasets available for batch inference on unlabeled slides.
+
+    When unlabeled_only=True (default), only datasets with no existing labels are returned:
+    - Classification: distinct_label_count == 0
+    - Survival: no WSI has both event_time and event_status set
+    - Segmentation: always included (no WSI-level label concept)
+
+    Excludes batch_inference and external_validation task_type datasets.
+    """
+    datasets = await DatasetRepository.get_all(db)
+    elevated_dataset_ids: set[str] = set()
+    all_granted_dataset_ids: set[str] = set()
+    if not user.is_admin():
+        elevated_dataset_ids = set(await _get_elevated_dataset_ids(user, db) or [])
+        all_granted_dataset_ids = await _get_all_granted_dataset_ids(user, db)
+
+    result = []
+    for ds in datasets:
+        dg = ds.data_group
+        if not dg:
+            continue
+
+        if dg.task_type in ("batch_inference", "external_validation"):
+            continue
+
+        dataset_id = _coerce_str(ds.dataset_id)
+
+        if not user.is_admin():
+            owns_dataset = _coerce_str(ds.user_id) == str(user.id)
+            is_public = bool(getattr(ds, "is_public", False))
+            has_dataset_access = (
+                owns_dataset or is_public or dataset_id in all_granted_dataset_ids
+            )
+            has_gpu_permission = (
+                user.can_use_gpu() or dataset_id in elevated_dataset_ids
+            )
+            if not has_dataset_access or not has_gpu_permission:
+                continue
+
+        if task_type and dg.task_type != task_type:
+            continue
+
+        wsi_ids = await DatasetRepository.get_wsi_ids(db, dataset_id)
+        slide_count = len(wsi_ids)
+
+        if unlabeled_only:
+            dg_task = dg.task_type
+            if "segmentation" in dg_task:
+                # Segmentation: always include — no WSI-level label concept
+                pass
+            elif "survival" in dg_task:
+                survival_check = await db.execute(
+                    select(func.count(WSISlide.id))
+                    .where(WSISlide.dataset_id == dataset_id)
+                    .where(WSISlide.event_time.isnot(None))
+                    .where(WSISlide.event_status.isnot(None))
+                )
+                has_survival_labels = (survival_check.scalar() or 0) > 0
+                if has_survival_labels:
+                    continue
+            else:
+                # Classification: include only if distinct_label_count == 0
+                distinct_label_count = await DatasetRepository.get_distinct_label_count(
+                    db, dataset_id
+                )
+                if distinct_label_count > 0:
+                    continue
+
+        result.append(
+            {
+                "dataset_id": dataset_id,
+                "name": ds.name,
+                "data_type": dg.data_type,
+                "task_type": dg.task_type,
+                "aggregation_level": dg.aggregation_level,
+                "slide_count": slide_count,
+            }
+        )
+
+    return {"items": result, "total": len(result)}
+
+
+@router.post("/batch-inference")
+async def start_batch_inference(
+    req: BatchInferenceRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import uuid as uuid_module
+
+    effective_user_id = str(user.id)
+
+    if user.is_admin() and req.rerun_from_task_id:
+        source_task = await TrainingTaskRepository.get_by_id(db, req.rerun_from_task_id)
+        if source_task and _coerce_str(source_task.user_id):
+            effective_user_id = _coerce_str(source_task.user_id)
+
+    model_task = await TrainingTaskRepository.get_by_id(db, req.model_task_id)
+    if not model_task:
+        raise HTTPException(
+            status_code=404, detail=f"Model task not found: {req.model_task_id}"
+        )
+
+    trained_models = await TrainedModelRepository.get_by_task_id(db, req.model_task_id)
+    trained_model = next((m for m in trained_models if m.is_active), None)
+    if not trained_model:
+        raise HTTPException(status_code=400, detail="Model is not active")
+
+    await _require_task_access(
+        user,
+        model_task,
+        db,
+        owner_user_id=_coerce_str(trained_model.user_id),
+        forbidden_detail="You don't have permission to use this model",
+    )
+
+    target_dataset = await DatasetRepository.get_by_id(db, req.dataset_id)
+    if not target_dataset:
+        raise HTTPException(
+            status_code=404, detail=f"Dataset not found: {req.dataset_id}"
+        )
+
+    has_dataset_access = await _has_external_validation_dataset_access(
+        user, target_dataset, db
+    )
+    if not has_dataset_access:
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to use this dataset"
+        )
+
+    has_gpu_permission = await check_dataset_gpu_permission(user, req.dataset_id, db)
+    if not has_gpu_permission and not user.can_use_gpu():
+        raise HTTPException(
+            status_code=403,
+            detail="You don't have GPU permission for this dataset. Contact admin for temporary access.",
+        )
+
+    model_dg = model_task.data_group
+    dataset_dg = target_dataset.data_group
+    model_task_type = model_dg.task_type if model_dg else ""
+    model_data_type = model_dg.data_type if model_dg else "wsi"
+    dataset_task_type = dataset_dg.task_type if dataset_dg else ""
+    dataset_data_type = dataset_dg.data_type if dataset_dg else "wsi"
+    dataset_aggregation_level = dataset_dg.aggregation_level if dataset_dg else "file"
+
+    if model_task_type != dataset_task_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model task type '{model_task_type}' is incompatible with dataset task type '{dataset_task_type}'",
+        )
+    if model_data_type != dataset_data_type:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model data level '{model_data_type}' mismatches dataset data level '{dataset_data_type}'",
+        )
+
+    batch_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
+    batch_data_group = await DataGroupRepository.get_or_create(
+        db,
+        data_type=dataset_data_type,
+        aggregation_level=dataset_aggregation_level,
+        task_type="batch_inference",
+    )
+
+    batch_task = TrainingTask(
+        task_id=batch_id,
+        task_name=f"{model_task.task_name} → {target_dataset.name or req.dataset_id}"[
+            :200
+        ],
+        group_id=batch_data_group.group_id,
+        user_id=effective_user_id,
+        status=TaskStatus.PENDING,
+        progress=0,
+        classes=trained_model.classes,
+        preprocessing_config=model_task.preprocessing_config
+        or {
+            "feature_extractor": trained_model.feature_extractor,
+        },
+        model_config={
+            "model_task_id": req.model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": req.dataset_id,
+            "model_task_type": model_task_type,
+            "model_data_type": model_data_type,
+        },
+    )
+    db.add(batch_task)
+    await db.flush()
+    await db.commit()
+
+    task_queue = get_task_queue()
+    await task_queue.submit(
+        task_id=batch_id,
+        task_type=TaskType.BATCH_INFERENCE,
+        coro_func=_run_batch_inference,
+        model_task_id=req.model_task_id,
+        model_id=str(trained_model.model_id),
+        dataset_id=req.dataset_id,
+    )
+
+    return {
+        "task_id": batch_id,
+        "status": "pending",
+        "message": "Batch inference job submitted",
+    }
+
+
+async def _require_batch_inference_task(
+    task_id: str,
+    user: User,
+    db: AsyncSession,
+) -> TrainingTask:
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404, detail=f"Batch inference task not found: {task_id}"
+        )
+    dg = task.data_group
+    if not dg or dg.task_type != "batch_inference":
+        raise HTTPException(
+            status_code=404, detail=f"Task {task_id} is not a batch inference task"
+        )
+    if not user.is_admin() and _coerce_str(task.user_id) != str(user.id):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to access this task"
+        )
+    return task
+
+
+@router.get("/batch-inference/tasks")
+async def list_batch_inference_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id_filter = None if user.is_admin() else str(user.id)
+    tasks = await TrainingTaskRepository.get_batch_inference_tasks(
+        db, user_id=user_id_filter, skip=skip, limit=limit
+    )
+    total = await TrainingTaskRepository.count_batch_inference_tasks(
+        db, user_id=user_id_filter
+    )
+    items = []
+    for t in tasks:
+        mc = t.model_config if isinstance(t.model_config, dict) else {}
+        dg = t.data_group
+        file_prog = await get_progress(_coerce_str(t.task_id))
+        progress = file_prog if file_prog is not None else (t.progress or 0)
+        items.append(
+            {
+                "task_id": _coerce_str(t.task_id),
+                "task_name": t.task_name,
+                "status": t.status,
+                "progress": progress,
+                "model_task_id": mc.get("model_task_id"),
+                "model_id": mc.get("model_id"),
+                "dataset_id": mc.get("dataset_id"),
+                "model_task_type": mc.get("model_task_type"),
+                "model_data_type": mc.get("model_data_type"),
+                "data_type": dg.data_type if dg else None,
+                "task_type": dg.task_type if dg else None,
+                "total_wsi": mc.get("total_wsi", 0),
+                "results_count": mc.get("results_count", 0),
+                "error": t.error_message,
+                "created_at": (
+                    t.created_at.isoformat() + "Z"
+                    if isinstance(t.created_at, datetime)
+                    else None
+                ),
+                "finished_at": (
+                    t.finished_at.isoformat() + "Z"
+                    if isinstance(t.finished_at, datetime)
+                    else None
+                ),
+            }
+        )
+    return {"items": items, "total": total}
+
+
+@router.get("/batch-inference/{task_id}/results")
+async def get_batch_inference_results(
+    task_id: str,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=skip, limit=limit
+    )
+    total = await AIResultRepository.count_by_task(db, task_id)
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    return {
+        "task_type": mc.get("model_task_type", ""),
+        "data_type": dg.data_type if dg else None,
+        "items": [r.to_dict() for r in results],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
+
+
+@router.get("/batch-inference/{task_id}/summary")
+async def get_batch_inference_summary(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=0, limit=None
+    )
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    task_type = mc.get("model_task_type", "")
+    total = len(results)
+    summary: dict = {
+        "task_id": task_id,
+        "task_name": task.task_name,
+        "status": task.status,
+        "task_type": task_type,
+        "data_type": dg.data_type if dg else None,
+        "model_task_id": mc.get("model_task_id"),
+        "model_id": mc.get("model_id"),
+        "dataset_id": mc.get("dataset_id"),
+        "total_slides": total,
+        "processed_slides": total,
+        "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
+        "completed_at": (
+            task.finished_at.isoformat() + "Z"
+            if task.status == "completed" and task.finished_at
+            else None
+        ),
+    }
+    if "classification" in task_type:
+        from collections import Counter
+
+        dist = Counter(r.pred for r in results if r.pred)
+        summary["class_distribution"] = dict(dist)
+    elif "survival" in task_type:
+        risk_scores = [
+            r.extra_metadata.get("risk_score")
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("risk_score") is not None
+        ]
+        summary["risk_high_count"] = sum(
+            1
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("risk_group") == "high"
+        )
+        summary["risk_low_count"] = sum(
+            1
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("risk_group") == "low"
+        )
+        summary["mean_risk_score"] = (
+            sum(risk_scores) / len(risk_scores) if risk_scores else None
+        )
+    elif "segmentation" in task_type:
+        summary["masks_generated"] = sum(
+            1
+            for r in results
+            if r.extra_metadata and r.extra_metadata.get("pred_mask_path")
+        )
+    return summary
+
+
+@router.get("/batch-inference/{task_id}/export-csv")
+async def export_batch_inference_csv(
+    task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import csv
+    import io
+    from fastapi.responses import StreamingResponse
+
+    task = await _require_batch_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=0, limit=None
+    )
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    task_type = mc.get("model_task_type", "")
+
+    output = io.StringIO()
+    if "classification" in task_type:
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "pred",
+            "probs",
+            "created_at",
+        ]
+    elif "survival" in task_type:
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "risk_score",
+            "risk_group",
+            "created_at",
+        ]
+    else:
+        fieldnames = [
+            "wsi_id",
+            "original_filename",
+            "case_id",
+            "pred_mask_path",
+            "created_at",
+        ]
+
+    writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction="ignore")
+    writer.writeheader()
+    for r in results:
+        wsi = r.wsi_slide
+        meta = r.extra_metadata or {}
+        row = {
+            "wsi_id": r.wsi_id,
+            "original_filename": wsi.original_filename if wsi else "",
+            "case_id": wsi.case_id if wsi else "",
+            "pred": r.pred or "",
+            "probs": str(r.probs) if r.probs else "",
+            "risk_score": meta.get("risk_score", ""),
+            "risk_group": meta.get("risk_group", ""),
+            "pred_mask_path": meta.get("pred_mask_path", ""),
+            "created_at": r.created_at.isoformat() + "Z" if r.created_at else "",
+        }
+        writer.writerow(row)
+
+    output.seek(0)
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f'attachment; filename="batch_inference_{task_id}.csv"'
+        },
+    )
+
+
 @router.post("/external-validation")
 async def start_external_validation(
     req: ExternalValidationRequest,
@@ -1905,8 +2363,6 @@ async def get_validation_progress(
 
     # Overlay file-based progress if available (more up-to-date than DB during inference).
     # This mirrors the pattern used in the training SSE endpoint (training.py lines 306-308).
-    from backend.common.progress_store import get_progress
-
     file_prog = await get_progress(task_id)
     progress = file_prog if file_prog is not None else task.progress
 

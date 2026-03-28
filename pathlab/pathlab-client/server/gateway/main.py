@@ -537,6 +537,26 @@ async def resume_interrupted_tasks():
                         else "classification"
                     )
 
+                    # Batch inference tasks have no training_task_wsi records.
+                    # Resume them directly without the wsi_ids fetch.
+                    if task_type == "batch_inference":
+                        from gateway.routes.inference_batch import _run_batch_inference
+
+                        cfg = task.model_config or {}
+                        task_queue = get_task_queue()
+                        await task_queue.submit(
+                            task_id=task.task_id,
+                            task_type=TaskType.BATCH_INFERENCE,
+                            coro_func=_run_batch_inference,
+                            model_task_id=cfg.get("model_task_id", ""),
+                            model_id=cfg.get("model_id", ""),
+                            dataset_id=cfg.get("dataset_id", ""),
+                        )
+                        logger.info(
+                            f"✓ Resumed batch inference task {task.task_id} (claimed by this instance)"
+                        )
+                        continue
+
                     if task_type == "external_validation":
                         _ev_dataset_id = (task.model_config or {}).get("dataset_id", "")
                         wsi_ids = (

@@ -597,6 +597,22 @@ class WSIRepository(BaseRepository[WSISlide]):
         for row in survival_per_dataset_result.all():
             dataset_survival_map[row.dataset_id] = row.survival_count
 
+        from ..models import SegmentationAnnotation
+
+        seg_per_dataset_query = (
+            select(
+                SegmentationAnnotation.source_dataset_id.label("dataset_id"),
+                func.count(SegmentationAnnotation.id).label("annot_count"),
+            )
+            .where(SegmentationAnnotation.source_dataset_id.isnot(None))
+            .where(SegmentationAnnotation.source != "viewer")
+            .group_by(SegmentationAnnotation.source_dataset_id)
+        )
+        seg_per_dataset_result = await db.execute(seg_per_dataset_query)
+        dataset_seg_annotation_map: Dict[str, int] = {
+            row.dataset_id: row.annot_count for row in seg_per_dataset_result.all()
+        }
+
         # Get split counts per dataset (train/val/test)
         splits_per_dataset_query = (
             select(
@@ -711,6 +727,13 @@ class WSIRepository(BaseRepository[WSISlide]):
 
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)
+            task_type_str = row.group_task_type or ""
+            if "segmentation" in task_type_str:
+                is_unlabeled = dataset_seg_annotation_map.get(row.dataset_id, 0) == 0
+            elif "survival" in task_type_str:
+                is_unlabeled = survival_count == 0
+            else:
+                is_unlabeled = len(ds_labels) == 0
             splits_info = dataset_splits_map.get(
                 row.dataset_id,
                 {"has_predefined_splits": False, "train": 0, "val": 0, "test": 0},
@@ -756,6 +779,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                     },
                     "is_public": bool(row.is_public or False),
                     "access_type": access_type,
+                    "is_unlabeled": is_unlabeled,
                 }
             )
 

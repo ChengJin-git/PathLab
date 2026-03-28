@@ -3,7 +3,7 @@ import { useAsyncAction } from '../lib/useAsyncAction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { useNavigate, useLocation, useSearchParams } from 'react-router-dom'
-import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check } from 'lucide-react'
+import { BarChart3, Play, History, ChevronDown, ChevronUp, Loader2, CheckCircle2, CheckCircle, Trash2, AlertCircle, X, FlaskConical, ArrowLeft, Star, Plus, Check, Activity } from 'lucide-react'
 import { Tooltip } from '../components/ui/tooltip'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
@@ -15,6 +15,7 @@ import { getTrainedModels, TrainedModel, buildAuthRequestInit, startExternalVali
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { AnalysisDetails, type AnalysisSummary, type BootstrapCI, type ChartData } from '../components/results/AnalysisDetails'
+import { BatchInferencePanel } from '../components/results/BatchInferencePanel'
 import {
   CLASSIFICATION_METRICS,
   CLASSIFICATION_CHARTS,
@@ -37,7 +38,7 @@ import {
 import { filterCompatibleDatasets, isSurvivalTask as utilIsSurvivalTask, isSegmentationTask as utilIsSegmentationTask } from '../lib/externalValidationUtils'
 import { formatDateTime } from '../lib/utils'
 
-type PageMode = 'internal-analysis' | 'external-validation'
+type PageMode = 'internal-analysis' | 'external-validation' | 'batch-inference'
 
 const getSegmentationClassCount = (task?: Pick<TrainingTask, 'classes'> | null): number => {
   const classCount = task?.classes?.filter(Boolean).length ?? 0
@@ -197,7 +198,7 @@ export default function ResultsViewerPage() {
       return data.items.filter(m => m.is_active) as TrainedModel[]
     },
     staleTime: 2 * 60 * 1000,
-    enabled: pageMode === 'external-validation',
+    enabled: pageMode === 'external-validation' || pageMode === 'batch-inference',
   })
 
   const { data: validationDatasets = [] as ValidationDataset[] } = useQuery({
@@ -771,6 +772,18 @@ export default function ResultsViewerPage() {
           <FlaskConical className="w-4 h-4" />
           {t('resultsPage.externalValidation')}
         </button>
+        <button
+          type="button"
+          onClick={() => setPageMode('batch-inference')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
+            pageMode === 'batch-inference'
+              ? 'bg-purple-600 text-white shadow-md'
+              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
+          }`}
+        >
+          <Activity className="w-4 h-4" />
+          {t('resultsPage.batchInference.tabTitle')}
+        </button>
       </div>
 
       {tasks.length === 0 ? (
@@ -1277,6 +1290,9 @@ export default function ResultsViewerPage() {
             </div>
           </div>
         </div>
+      ) : pageMode === 'batch-inference' ? (
+        /* Batch Inference Mode */
+        <BatchInferencePanel trainedModels={trainedModels} />
       ) : (
         /* Internal Analysis Mode */
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">
