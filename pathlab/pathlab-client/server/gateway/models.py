@@ -601,6 +601,12 @@ class ExternalValidationRequest(BaseModel):
     compute_bootstrap_ci: Optional[bool] = False
 
 
+class BatchInferenceRequest(BaseModel):
+    model_task_id: str
+    dataset_id: str
+    rerun_from_task_id: Optional[str] = None
+
+
 class QuickAnalysisRequest(BaseModel):
     metrics: Optional[List[str]] = None
     charts: Optional[List[str]] = None

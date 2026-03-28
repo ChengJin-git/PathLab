@@ -36,6 +36,7 @@ class TaskType(str, Enum):
     INFERENCE = "inference"
     EXTERNAL_VALIDATION = "external_validation"
     ANALYSIS = "analysis"
+    BATCH_INFERENCE = "batch_inference"
 
 
 @dataclass
