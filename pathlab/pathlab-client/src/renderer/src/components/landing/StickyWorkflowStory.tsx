@@ -160,7 +160,7 @@ export function StickyWorkflowStory() {
                 }`}
             >
               <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
-                <div className="w-full aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10 relative overflow-hidden">
+                <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10 relative overflow-hidden">
                   <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-blue-400 to-cyan-400 left-0" />
                   <p className="text-lg sm:text-xl font-mono text-slate-700 whitespace-pre-wrap">
                     {t('landing.story.step1.mock', '"Train a lymphocyte segmentation model on TCGA-BRCA dataset..."')}
@@ -181,7 +181,7 @@ export function StickyWorkflowStory() {
                 }`}
             >
               <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
-                <div className="w-full aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10">
+                <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10">
                   <div className="flex items-center justify-between mb-6 border-b border-[color:var(--landing-border)] pb-4">
                     <span className="font-semibold text-[color:var(--landing-text-primary)] text-lg">{t('landing.story.step2.mockTitle', 'System Configuration')}</span>
                     <CheckCircle2 className="w-6 h-6 text-emerald-500" />
@@ -207,16 +207,16 @@ export function StickyWorkflowStory() {
                 }`}
             >
               <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
-                <div className="w-full aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] p-4 flex gap-4">
-                  <div className="w-1/2 bg-slate-100 rounded-xl relative overflow-hidden border border-[color:var(--landing-border)]">
+                <div className="w-full aspect-[4/3] sm:aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] p-4 flex flex-col md:flex-row gap-4">
+                  <div className="w-full md:w-1/2 flex-1 md:flex-auto bg-slate-100 rounded-xl relative overflow-hidden border border-[color:var(--landing-border)] min-h-[140px] md:min-h-0">
                     <img src="/images/mock-wsi-2.png" alt="WSI" className="absolute inset-0 w-full h-full object-cover opacity-90" />
                     <img src="/images/mock-heatmap-2.png" alt="Heatmap" className="absolute inset-0 w-full h-full object-cover mix-blend-screen opacity-80" />
                     <div className="absolute bottom-3 left-3 px-3 py-1 bg-white/90 backdrop-blur rounded shadow text-xs font-bold text-slate-700">
                       {t('landing.evidence.f1.title', 'Viewer')}
                     </div>
                   </div>
-                  <div className="w-1/2 flex flex-col gap-3">
-                    <div className="bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-4">
+                  <div className="w-full md:w-1/2 flex flex-col gap-2 sm:gap-3">
+                    <div className="bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-3 sm:p-4">
                       <div className="flex justify-between items-center mb-2">
                         <span className="text-xs font-semibold text-[color:var(--landing-text-secondary)]">{t('landing.story.step3.mockStatus', 'Task Status')}</span>
                         <span className="text-xs font-bold text-emerald-600">100%</span>
@@ -226,9 +226,9 @@ export function StickyWorkflowStory() {
                       </div>
                       <p className="text-xs text-[color:var(--landing-text-secondary)] mt-2">{t('landing.story.step3.mockCompleted', 'Completed')} · {t('landing.story.step3.mockDuration', '20m 34s')}</p>
                     </div>
-                    <div className="flex-1 bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-4 flex flex-col justify-center">
-                      <p className="text-xs font-semibold text-slate-500 mb-3">{t('landing.story.step3.mockPredTitle', 'Pred. Confidence')}</p>
-                      <div className="flex flex-col gap-2.5">
+                    <div className="flex-1 bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-3 sm:p-4 flex flex-col justify-center">
+                      <p className="text-xs font-semibold text-slate-500 mb-2 sm:mb-3">{t('landing.story.step3.mockPredTitle', 'Pred. Confidence')}</p>
+                      <div className="flex flex-col gap-2 sm:gap-2.5">
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass1', 'Tumor')}</span>
                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
