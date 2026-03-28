@@ -305,6 +305,23 @@ def _build_no_web_search_instruction(detected_lang: str, mode: ConversationMode)
             "prefer `[ANALYSIS_CONFIG]` (analysis_type: external) or `[METRIC_CONFIG]`."
         )
 
+    if mode == ConversationMode.BATCH_INFERENCE:
+        if detected_lang == "zh_CN":
+            return (
+                "当前这轮是针对无标注数据集的批量推理流程，不是文献检索。绝对不要使用 `[WEB_SEARCH]`。"
+                "请直接使用已有模型和数据集上下文继续，优先输出 `[ANALYSIS_CONFIG]`（analysis_type: batch_inference）或 `[BATCH_INFERENCE_SUMMARY]`。"
+            )
+        if detected_lang == "zh_HK":
+            return (
+                "當前這輪是針對無標注資料集的批量推理流程，不是文獻檢索。絕對不要使用 `[WEB_SEARCH]`。"
+                "請直接使用已有模型和資料集上下文繼續，優先輸出 `[ANALYSIS_CONFIG]`（analysis_type: batch_inference）或 `[BATCH_INFERENCE_SUMMARY]`。"
+            )
+        return (
+            "This turn is for batch inference on an unlabeled dataset, not literature search. "
+            "Do NOT use `[WEB_SEARCH]`. Continue with the existing model and dataset context, "
+            "prefer `[ANALYSIS_CONFIG]` (analysis_type: batch_inference) or `[BATCH_INFERENCE_SUMMARY]`."
+        )
+
     if mode == ConversationMode.MODEL_CARD:
         if detected_lang == "zh_CN":
             return (

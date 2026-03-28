@@ -47,6 +47,7 @@ class ConversationMode(str, Enum):
     LITERATURE_RESEARCH = "literature_research"
     MODEL_CARD = "model_card"
     SYSTEM_INQUIRY = "system_inquiry"
+    BATCH_INFERENCE = "batch_inference"
 
 
 class SearchPolicy(str, Enum):
@@ -66,6 +67,7 @@ SEARCH_POLICY: Dict[ConversationMode, SearchPolicy] = {
     ConversationMode.LITERATURE_RESEARCH: SearchPolicy.ALLOW_IF_MODEL_REQUESTS,
     ConversationMode.MODEL_CARD: SearchPolicy.DENY,
     ConversationMode.SYSTEM_INQUIRY: SearchPolicy.DENY,
+    ConversationMode.BATCH_INFERENCE: SearchPolicy.DENY,
 }
 
 _ANALYSIS_CONFIG_RE = re.compile(r"\[ANALYSIS_CONFIG\]([\s\S]*?)\[/ANALYSIS_CONFIG\]")
@@ -73,6 +75,7 @@ _ANALYSIS_CONFIG_RE = re.compile(r"\[ANALYSIS_CONFIG\]([\s\S]*?)\[/ANALYSIS_CONF
 _BLOCK_MODE_MAP: List[tuple[str, ConversationMode]] = [
     ("[IMAGE_RECOMMENDATION]", ConversationMode.IMAGE_VISUALIZATION),
     ("[PATCH_INFERENCE]", ConversationMode.PATCH_INFERENCE),
+    ("[BATCH_INFERENCE_SUMMARY]", ConversationMode.BATCH_INFERENCE),
     ("[METRIC_CONFIG]", ConversationMode.ANALYSIS_RESULTS),
     ("[CHART_CONFIG]", ConversationMode.ANALYSIS_RESULTS),
     ("[QUICK_ANALYSIS_CONFIG]", ConversationMode.ANALYSIS_RESULTS),
@@ -97,7 +100,8 @@ def _mode_from_assistant_blocks(assistant_content: str) -> Optional[Conversation
         analysis_type = _parse_analysis_type(assistant_content)
         if analysis_type == "external":
             return ConversationMode.EXTERNAL_EVALUATION
-        # "internal" or any unrecognised value → internal evaluation
+        if analysis_type == "batch_inference":
+            return ConversationMode.BATCH_INFERENCE
         return ConversationMode.INTERNAL_EVALUATION
     return None
 
