@@ -91,38 +91,34 @@ export function StickyWorkflowStory() {
                   key={step.key}
                   type="button"
                   onClick={() => jumpTo(idx)}
-                  className={`text-left transition-all duration-500 ${
-                    isActive
+                  className={`text-left transition-all duration-500 ${isActive
                       ? 'opacity-100 scale-100'
                       : 'opacity-40 lg:scale-95 lg:origin-left hover:opacity-70 active:opacity-70'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-4 mb-3">
                     <div
-                      className={`p-2.5 rounded-xl transition-colors duration-300 ${
-                        isActive
+                      className={`p-2.5 rounded-xl transition-colors duration-300 ${isActive
                           ? 'bg-[color:var(--landing-primary)] text-white shadow-lg shadow-blue-500/30'
                           : 'bg-slate-100 text-slate-500'
-                      }`}
+                        }`}
                     >
                       <Icon className="w-5 h-5" />
                     </div>
                     <h3
-                      className={`font-bold text-lg sm:text-xl transition-colors duration-300 ${
-                        isActive
+                      className={`font-bold text-lg sm:text-xl transition-colors duration-300 ${isActive
                           ? 'text-[color:var(--landing-text-primary)]'
                           : 'text-slate-500'
-                      }`}
+                        }`}
                     >
                       {t(step.titleKey, step.defaultTitle)}
                     </h3>
                   </div>
                   <p
-                    className={`pl-[3.25rem] text-sm sm:text-base leading-relaxed transition-colors duration-300 ${
-                      isActive
+                    className={`pl-[3.25rem] text-sm sm:text-base leading-relaxed transition-colors duration-300 ${isActive
                         ? 'text-[color:var(--landing-text-secondary)]'
                         : 'text-slate-400'
-                    }`}
+                      }`}
                   >
                     {t(step.descKey, step.defaultDesc)}
                   </p>
@@ -158,11 +154,10 @@ export function StickyWorkflowStory() {
 
           <div className="w-full lg:w-2/3 min-h-[340px] h-[60vw] max-h-[500px] lg:h-[70vh] lg:max-h-none relative">
             <div
-              className={`absolute inset-0 flex items-center transition-all duration-700 ${
-                activeStep === 0
+              className={`absolute inset-0 flex items-center transition-all duration-700 ${activeStep === 0
                   ? 'opacity-100 translate-y-0 pointer-events-auto'
                   : 'opacity-0 translate-y-6 pointer-events-none'
-              }`}
+                }`}
             >
               <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
                 <div className="w-full aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10 relative overflow-hidden">
@@ -180,11 +175,10 @@ export function StickyWorkflowStory() {
             </div>
 
             <div
-              className={`absolute inset-0 flex items-center transition-all duration-700 ${
-                activeStep === 1
+              className={`absolute inset-0 flex items-center transition-all duration-700 ${activeStep === 1
                   ? 'opacity-100 translate-y-0 pointer-events-auto'
                   : 'opacity-0 translate-y-6 pointer-events-none'
-              }`}
+                }`}
             >
               <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
                 <div className="w-full aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10">
@@ -207,17 +201,16 @@ export function StickyWorkflowStory() {
             </div>
 
             <div
-              className={`absolute inset-0 flex items-center transition-all duration-700 ${
-                activeStep === 2
+              className={`absolute inset-0 flex items-center transition-all duration-700 ${activeStep === 2
                   ? 'opacity-100 translate-y-0 pointer-events-auto'
                   : 'opacity-0 translate-y-6 pointer-events-none'
-              }`}
+                }`}
             >
               <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
                 <div className="w-full aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] p-4 flex gap-4">
                   <div className="w-1/2 bg-slate-100 rounded-xl relative overflow-hidden border border-[color:var(--landing-border)]">
-                    <img src="/images/mock-wsi.png" alt="WSI" className="absolute inset-0 w-full h-full object-cover opacity-90" />
-                    <img src="/images/mock-heatmap.png" alt="Heatmap" className="absolute inset-0 w-full h-full object-cover mix-blend-screen opacity-80" />
+                    <img src="/images/mock-wsi-2.png" alt="WSI" className="absolute inset-0 w-full h-full object-cover opacity-90" />
+                    <img src="/images/mock-heatmap-2.png" alt="Heatmap" className="absolute inset-0 w-full h-full object-cover mix-blend-screen opacity-80" />
                     <div className="absolute bottom-3 left-3 px-3 py-1 bg-white/90 backdrop-blur rounded shadow text-xs font-bold text-slate-700">
                       {t('landing.evidence.f1.title', 'Viewer')}
                     </div>
@@ -237,21 +230,21 @@ export function StickyWorkflowStory() {
                       <p className="text-xs font-semibold text-slate-500 mb-3">{t('landing.story.step3.mockPredTitle', 'Pred. Confidence')}</p>
                       <div className="flex flex-col gap-2.5">
                         <div className="flex items-center gap-2">
-                           <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass1', 'Tumor')}</span>
-                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
-                             <div className="bg-[color:var(--landing-primary)] h-full rounded-full w-[87%]" />
-                           </div>
-                           <span className="text-xs font-bold text-slate-600 w-7 text-right">87%</span>
-                         </div>
-                         <div className="flex items-center gap-2">
-                           <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass2', 'Stroma')}</span>
-                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
-                             <div className="bg-blue-300 h-full rounded-full w-[8%]" />
-                           </div>
-                           <span className="text-xs font-bold text-slate-600 w-7 text-right">8%</span>
-                         </div>
-                         <div className="flex items-center gap-2">
-                           <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass3', 'Necrosis')}</span>
+                          <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass1', 'Tumor')}</span>
+                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
+                            <div className="bg-[color:var(--landing-primary)] h-full rounded-full w-[87%]" />
+                          </div>
+                          <span className="text-xs font-bold text-slate-600 w-7 text-right">87%</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass2', 'Stroma')}</span>
+                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
+                            <div className="bg-blue-300 h-full rounded-full w-[8%]" />
+                          </div>
+                          <span className="text-xs font-bold text-slate-600 w-7 text-right">8%</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass3', 'Necrosis')}</span>
                           <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
                             <div className="bg-blue-200 h-full rounded-full w-[5%]" />
                           </div>
