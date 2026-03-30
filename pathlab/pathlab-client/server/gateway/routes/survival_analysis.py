@@ -346,16 +346,15 @@ async def _run_survival_analysis(
 
     kfold_metrics = result_map.get("kfold")
 
-    # For K-Fold tasks: override analysis metrics with per-fold aggregated values
-    # (consistent with K-Fold training summary which shows mean ± std per fold)
+    # For K-Fold tasks: replace metrics entirely with per-fold aggregated means.
+    # Green section must mirror purple exactly — same metric set, same values.
+    # Metrics computed from the combined pool (e.g. IBS not in aggregated) are dropped
+    # to avoid showing values that have no per-fold counterpart in the purple section.
     if is_kfold and kfold_metrics:
         aggregated = kfold_metrics.get("aggregated", {})
-        if "c_index" in aggregated:
-            metrics["c_index"] = aggregated["c_index"]["mean"]
-            logger.info(f"  K-Fold C-Index overridden to per-fold mean: {metrics['c_index']}")
-        if "integrated_brier_score" in aggregated and "integrated_brier_score" in metrics:
-            metrics["integrated_brier_score"] = aggregated["integrated_brier_score"]["mean"]
-            logger.info(f"  K-Fold IBS overridden to per-fold mean: {metrics['integrated_brier_score']}")
+        if aggregated:
+            metrics = {k: v["mean"] for k, v in aggregated.items()}
+            logger.info(f"  K-Fold metrics replaced with per-fold aggregated means: {metrics}")
 
     # Extract random seed (serves as invisible watermark for model provenance)
     random_seed = _get_random_seed_from_task(task)
