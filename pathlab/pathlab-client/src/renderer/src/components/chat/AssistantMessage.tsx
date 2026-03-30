@@ -30,6 +30,7 @@ import { MetadataUploadCard, parseMetadataUploadConfig, removeMetadataUploadBloc
 import { ModelListCard, parseModelListConfig, removeModelListBlock } from './ModelListCard'
 import PatchInferenceCard, { parsePatchInferenceConfig, removePatchInferenceBlock } from './PatchInferenceCard'
 import { BatchInferenceSummaryCard, parseBatchInferenceSummary, removeBatchInferenceSummaryBlock } from './BatchInferenceSummaryCard'
+import { BatchInferenceConfigCard, parseBatchInferenceConfig, removeBatchInferenceConfigBlock } from './BatchInferenceConfigCard'
 import { RenameTaskCard, parseRenameTaskConfig, removeRenameTaskBlock } from './RenameTaskCard'
 import { removeVoiceControlBlock } from './VoiceControlBlock'
 import SearchingStatus, {
@@ -379,6 +380,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
     modelListConfig,
     patchInferenceConfig,
     batchInferenceSummaryConfig,
+    batchInferenceConfig,
     referenceCards,
     citationContexts,
   } = useMemo(() => {
@@ -402,6 +404,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
       modelListConfig: parseModelListConfig(content),
       patchInferenceConfig: parsePatchInferenceConfig(content),
       batchInferenceSummaryConfig: parseBatchInferenceSummary(content),
+      batchInferenceConfig: parseBatchInferenceConfig(content),
       referenceCards: parseAllReferenceCards(content),
       citationContexts: parseCitationContexts(content),
     }
@@ -680,6 +683,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
   if (modelListConfig) displayContent = removeModelListBlock(displayContent)
   if (patchInferenceConfig) displayContent = removePatchInferenceBlock(displayContent)
   if (batchInferenceSummaryConfig) displayContent = removeBatchInferenceSummaryBlock(displayContent)
+  if (batchInferenceConfig) displayContent = removeBatchInferenceConfigBlock(displayContent)
   // Remove WEB_SEARCH request block - AI's internal search request
   displayContent = displayContent.replace(/\[WEB_SEARCH\][\s\S]*?\[\/WEB_SEARCH\]/g, '').trim()
   // Remove READ_ARTICLE request block - AI's internal article reading request
@@ -1188,6 +1192,29 @@ const AssistantMessage = React.memo(function AssistantMessage({
           </motion.div>
         )}
 
+        {/* Batch Inference Config Card */}
+        {batchInferenceConfig ? (
+          <motion.div key="batch-inference-config-real" {...cardTransition}>
+            <BatchInferenceConfigCard
+              config={batchInferenceConfig}
+              onSubmitSuccess={(taskId) => onTaskSubmitSuccess(taskId, messageId)}
+              onSubmitError={onTaskSubmitError}
+              messageId={messageId}
+              onConfigChange={(updatedConfig) => {
+                if (onMessageContentReplace) {
+                  const nextBlock = `[BATCH_INFERENCE_CONFIG]\n${JSON.stringify(updatedConfig, null, 2)}\n[/BATCH_INFERENCE_CONFIG]`
+                  const updatedContent = content.replace(/\[BATCH_INFERENCE_CONFIG\][\s\S]*?\[\/BATCH_INFERENCE_CONFIG\]/, nextBlock)
+                  void onMessageContentReplace(messageId, updatedContent)
+                }
+              }}
+            />
+          </motion.div>
+        ) : incompleteTag === 'BATCH_INFERENCE_CONFIG' && (
+          <motion.div key="batch-inference-config-skeleton" {...cardTransition}>
+            <GenericCardSkeleton />
+          </motion.div>
+        )}
+
         {/* Batch Inference Summary Card */}
         {batchInferenceSummaryConfig && (
           <motion.div key="batch-inference-summary-real" {...cardTransition}>
@@ -1236,6 +1263,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
           'METADATA_UPLOAD',
           'MODEL_LIST',
           'PATCH_INFERENCE',
+          'BATCH_INFERENCE_CONFIG',
           'BATCH_INFERENCE_SUMMARY',
           'CITATION_CONTEXTS',
           'REFERENCE',

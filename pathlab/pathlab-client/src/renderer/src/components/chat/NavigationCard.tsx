@@ -19,8 +19,8 @@ export interface NavigationConfig {
   description?: string
   /** i18n key for description — takes priority over description when present */
   descriptionKey?: string
-  /** Navigation type: 'register' for upload page, 'task' for task detail page */
-  type?: 'register' | 'task'
+  /** Navigation type: 'register' for upload page, 'task' for task detail page, 'batch-task' for batch inference task detail */
+  type?: 'register' | 'task' | 'batch-task'
   /** Task ID for task navigation */
   taskId?: string
   /** Task name for display */
@@ -98,6 +98,45 @@ export function NavigationCard({ config, csvContent, csvFileName }: NavigationCa
 
     navigate(config.target, { state })
   }
+
+  // Batch inference task navigation card (purple theme)
+  if (config.type === 'batch-task') {
+    return (
+      <div className="my-4 p-4 bg-gradient-to-r from-purple-50 to-violet-50 border border-purple-200 rounded-xl shadow-sm">
+        {resolvedDescription && (
+          <p className="text-sm text-slate-600 mb-3">{resolvedDescription}</p>
+        )}
+
+        <Button
+          onClick={handleNavigate}
+          className="w-full bg-purple-600 hover:bg-purple-700 text-white font-medium py-3 rounded-lg flex items-center justify-center gap-2 shadow-md hover:shadow-lg transition-all"
+        >
+          <PlayCircle className="w-4 h-4" />
+          {resolvedButtonText}
+          <ArrowRight className="w-4 h-4" />
+        </Button>
+
+        {(config.taskId || config.taskName) && (
+          <div className="mt-3 flex flex-wrap gap-2 text-xs">
+            {config.taskName && (
+              <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
+                {t('chatComponents.navigationCard.task')}{' '}<strong className="text-slate-800">{config.taskName}</strong>
+              </span>
+            )}
+            {config.taskId && (
+              <span className="px-2 py-1 bg-white rounded-md border border-slate-200 text-slate-600">
+                {t('chatComponents.navigationCard.id')}{' '}<strong className="text-slate-800 font-mono text-[10px]">{config.taskId}</strong>
+              </span>
+            )}
+            <span className="px-2 py-1 bg-purple-50 rounded-md border border-purple-200 text-purple-700">
+              ✓ {t('chatComponents.navigationCard.inferenceStarted')}
+            </span>
+          </div>
+        )}
+      </div>
+    )
+  }
+
 
   // Task navigation card (green theme)
   if (config.type === 'task') {

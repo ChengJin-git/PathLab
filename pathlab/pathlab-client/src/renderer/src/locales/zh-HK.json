@@ -1193,6 +1193,22 @@
       "earlyStoppingPatience": "提早停止耐心值",
       "yes": "是",
       "no": "否"
+    },
+    "batchInference": {
+      "summary": "推理摘要",
+      "totalSlides": "總切片數",
+      "processedSlides": "已處理",
+      "classDistribution": "類別分佈",
+      "results": "推理結果",
+      "noResults": "暫無結果",
+      "slideId": "切片 ID",
+      "filename": "檔案名稱",
+      "prediction": "預測類別",
+      "confidence": "置信度",
+      "exportCsv": "匯出 CSV",
+      "showing": "顯示第 {{start}}–{{end}} 條，共 {{total}} 條",
+      "previous": "上一頁",
+      "next": "下一頁"
     }
   },
   "storagePage": {
@@ -1369,7 +1385,9 @@
       "architecture": "架構",
       "backbone": "骨幹網路",
       "decoder": "解碼器",
-      "featureExtractorSeg": "特徵提取器"
+      "featureExtractorSeg": "特徵提取器",
+      "batchModel": "模型",
+      "batchDataset": "資料集"
     },
     "progress": {
       "creatingTask": "正在建立任務",
@@ -2600,9 +2618,23 @@
       "task": "任務：",
       "id": "ID：",
       "trainingStarted": "訓練已開始",
+      "inferenceStarted": "推理已啟動",
       "dataset": "資料集：",
       "type": "類型：",
       "csvReady": "CSV 已就緒"
+    },
+    "batchInferenceConfig": {
+      "title": "批量推理",
+      "description": "在無標注資料集上執行模型推理",
+      "model": "模型",
+      "dataset": "資料集",
+      "submit": "開始批量推理",
+      "submitting": "提交中...",
+      "submitted": "批量推理已提交",
+      "viewTaskDetail": "查看任務詳情",
+      "missingConfig": "缺少必要配置（模型或資料集）",
+      "failedToSubmit": "提交失敗",
+      "inferenceStarted": "推理任務已啟動"
     },
     "renameTask": {
       "title": "重新命名訓練任務",

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3 } from 'lucide-react'
+import { CheckCircle2, Loader2, Clock, XCircle, RotateCcw, AlertCircle, StopCircle, User, BarChart3, Download, Table2, Cpu } from 'lucide-react'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
 import { API_BASE } from '../config'
@@ -23,6 +23,8 @@ import {
   markTrainingSubmissionPending,
 } from '../lib/trainingSubmissionTracker'
 import { formatDateTime } from '../lib/utils'
+import { getBatchInferenceSummary, getBatchInferenceResults, exportBatchInferenceCsv } from '../api/batchInference'
+import type { BatchInferenceSummary, BatchInferenceResult } from '../api/batchInference'
 
 const makeSyntheticTask = (
   taskId: string,
@@ -91,6 +93,13 @@ export default function TaskDetailPage() {
   const [copySuccess, setCopySuccess] = useState(false)
   const [cancelling, runCancelling] = useAsyncAction()
   const [showCancelConfirm, setShowCancelConfirm] = useState(false)
+  const [batchSummary, setBatchSummary] = useState<BatchInferenceSummary | null>(null)
+  const [batchResults, setBatchResults] = useState<BatchInferenceResult[]>([])
+  const [batchResultsTotal, setBatchResultsTotal] = useState(0)
+  const [batchResultsPage, setBatchResultsPage] = useState(0)
+  const batchResultsLimit = 50
+  const [batchResultsLoading, setBatchResultsLoading] = useState(false)
+  const [batchExporting, setBatchExporting] = useState(false)
   const logsEndRef = useRef<HTMLDivElement>(null)
   const logsContainerRef = useRef<HTMLDivElement>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
@@ -227,6 +236,28 @@ export default function TaskDetailPage() {
       }
     }
   }, [task_id, task?.task_id])
+
+  // Load batch inference data when task is batch_inference type
+  useEffect(() => {
+    if (!task || task.task_type !== 'batch_inference') return
+    const loadBatchData = async () => {
+      setBatchResultsLoading(true)
+      try {
+        const [summary, results] = await Promise.all([
+          getBatchInferenceSummary(task.task_id),
+          getBatchInferenceResults(task.task_id, batchResultsPage * batchResultsLimit, batchResultsLimit),
+        ])
+        setBatchSummary(summary)
+        setBatchResults(results.items)
+        setBatchResultsTotal(results.total)
+      } catch (error) {
+        console.error('Failed to load batch inference data:', error)
+      } finally {
+        setBatchResultsLoading(false)
+      }
+    }
+    void loadBatchData()
+  }, [task?.task_id, task?.task_type, task?.status, batchResultsPage, batchResultsLimit])
 
   // Auto-scroll to bottom when new logs arrive
   useEffect(() => {
@@ -530,6 +561,7 @@ export default function TaskDetailPage() {
 
   const isPatchLevel = displayTask.data_type === 'patch'
   const isExternalValidation = displayTask.task_type === 'external_validation'
+  const isBatchInference = displayTask.task_type === 'batch_inference'
 
   // Display task progress directly in the standard 0-100 range.
   const displayProgress = displayTask.status === 'completed'
@@ -561,7 +593,7 @@ export default function TaskDetailPage() {
           </div>
           <div className="flex items-center gap-3 shrink-0">
             {getStatusBadge(displayTask.status, displayTask.task_type)}
-            {displayTask.status === 'completed' && (
+            {displayTask.status === 'completed' && !isBatchInference && (
               <Button
                 variant="default"
                 onClick={() => {
@@ -572,6 +604,26 @@ export default function TaskDetailPage() {
               >
                 <BarChart3 className="w-4 h-4" />
                 {t('taskDetail.viewAnalysis')}
+              </Button>
+            )}
+            {isBatchInference && displayTask.status === 'completed' && (
+              <Button
+                variant="default"
+                onClick={async () => {
+                  setBatchExporting(true)
+                  try {
+                    await exportBatchInferenceCsv(displayTask.task_id)
+                  } catch (e) {
+                    console.error('Export failed:', e)
+                  } finally {
+                    setBatchExporting(false)
+                  }
+                }}
+                disabled={batchExporting}
+                className="flex items-center gap-2 h-9 px-4 rounded-full font-bold shadow-sm transition-all bg-purple-600 hover:bg-purple-700 text-white"
+              >
+                {batchExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {t('taskDetail.batchInference.exportCsv')}
               </Button>
             )}
             {!waitingForCreation && (task?.status === 'failed' || task?.status === 'cancelled') && (
@@ -782,15 +834,134 @@ export default function TaskDetailPage() {
         </Card>
       )}
 
-      {/* Live Logs */}
-      <LogViewer
-        logs={logs}
-        logsContainerRef={logsContainerRef}
-        logsEndRef={logsEndRef}
-      />
+      {!isBatchInference && (
+        <LogViewer
+          logs={logs}
+          logsContainerRef={logsContainerRef}
+          logsEndRef={logsEndRef}
+        />
+      )}
 
-      {/* Configuration */}
-      {task && !waitingForCreation && <ConfigurationPanel task={task} />}
+      {task && !waitingForCreation && !isBatchInference && <ConfigurationPanel task={task} />}
+
+      {isBatchInference && (
+        <div className="space-y-4">
+          {batchSummary && (
+            <Card className="p-4 sm:p-6 border-purple-100 shadow-sm">
+              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider mb-4 flex items-center gap-2">
+                <Cpu className="w-4 h-4 text-purple-500" />
+                {t('taskDetail.batchInference.summary')}
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{t('taskDetail.batchInference.totalSlides')}</div>
+                  <div className="text-2xl font-bold text-gray-900">{batchSummary.total_slides}</div>
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{t('taskDetail.batchInference.processedSlides')}</div>
+                  <div className="text-2xl font-bold text-purple-600">{batchSummary.processed_slides}</div>
+                </div>
+                {batchSummary.class_distribution && Object.keys(batchSummary.class_distribution).length > 0 && (
+                  <div className="col-span-2">
+                    <div className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">{t('taskDetail.batchInference.classDistribution')}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(batchSummary.class_distribution).map(([cls, count]) => (
+                        <span key={cls} className="px-2 py-1 bg-purple-50 border border-purple-200 rounded-md text-xs font-medium text-purple-700">
+                          {cls}: {count}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
+          <Card className="p-4 sm:p-6 border-gray-100 shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wider flex items-center gap-2">
+                <Table2 className="w-4 h-4 text-gray-400" />
+                {t('taskDetail.batchInference.results')}
+                {batchResultsTotal > 0 && (
+                  <span className="text-gray-400 font-normal normal-case text-xs">({batchResultsTotal})</span>
+                )}
+              </h3>
+            </div>
+            {batchResultsLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+              </div>
+            ) : batchResults.length === 0 ? (
+              <div className="text-center py-8 text-gray-400 text-sm">{t('taskDetail.batchInference.noResults')}</div>
+            ) : (
+              <>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.slideId')}</th>
+                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.filename')}</th>
+                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.prediction')}</th>
+                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.confidence')}</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchResults.map((result, idx) => {
+                        const topProb = result.probs
+                          ? Math.max(...Object.values(result.probs))
+                          : null
+                        return (
+                          <tr key={result.wsi_id || idx} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                            <td className="py-2 px-3 font-mono text-xs text-gray-600 truncate max-w-[120px]" title={result.wsi_id}>{result.wsi_id}</td>
+                            <td className="py-2 px-3 text-gray-700 truncate max-w-[200px]" title={result.original_filename ?? ''}>{result.original_filename ?? '—'}</td>
+                            <td className="py-2 px-3">
+                              {result.pred ? (
+                                <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs font-medium text-purple-700">{result.pred}</span>
+                              ) : '—'}
+                            </td>
+                            <td className="py-2 px-3 text-gray-700 text-xs">
+                              {topProb !== null ? `${(topProb * 100).toFixed(1)}%` : '—'}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                {batchResultsTotal > batchResultsLimit && (
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t border-gray-100">
+                    <span className="text-xs text-gray-400">
+                      {t('taskDetail.batchInference.showing', {
+                        start: batchResultsPage * batchResultsLimit + 1,
+                        end: Math.min((batchResultsPage + 1) * batchResultsLimit, batchResultsTotal),
+                        total: batchResultsTotal,
+                      })}
+                    </span>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBatchResultsPage(p => Math.max(0, p - 1))}
+                        disabled={batchResultsPage === 0}
+                        className="px-3 py-1 text-xs font-medium border border-gray-200 rounded-md disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                      >
+                        {t('taskDetail.batchInference.previous')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBatchResultsPage(p => p + 1)}
+                        disabled={(batchResultsPage + 1) * batchResultsLimit >= batchResultsTotal}
+                        className="px-3 py-1 text-xs font-medium border border-gray-200 rounded-md disabled:opacity-40 hover:bg-gray-50 transition-colors"
+                      >
+                        {t('taskDetail.batchInference.next')}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </Card>
+        </div>
+      )}
 
       {/* Cancel Confirmation Modal */}
       {showCancelConfirm && (

@@ -1193,6 +1193,22 @@
       "earlyStoppingPatience": "Early Stopping Patience",
       "yes": "Yes",
       "no": "No"
+    },
+    "batchInference": {
+      "summary": "Inference Summary",
+      "totalSlides": "Total Slides",
+      "processedSlides": "Processed",
+      "classDistribution": "Class Distribution",
+      "results": "Inference Results",
+      "noResults": "No results yet",
+      "slideId": "Slide ID",
+      "filename": "Filename",
+      "prediction": "Prediction",
+      "confidence": "Confidence",
+      "exportCsv": "Export CSV",
+      "showing": "Showing {{start}}–{{end}} of {{total}}",
+      "previous": "Previous",
+      "next": "Next"
     }
   },
   "storagePage": {
@@ -1369,7 +1385,9 @@
       "backbone": "Backbone",
       "architecture": "Architecture",
       "featureExtractorSeg": "Feature Extractor",
-      "decoder": "Decoder"
+      "decoder": "Decoder",
+      "batchModel": "Model",
+      "batchDataset": "Dataset"
     },
     "progress": {
       "creatingTask": "Creating Task",
@@ -2601,9 +2619,23 @@
       "task": "Task:",
       "id": "ID:",
       "trainingStarted": "Training Started",
+      "inferenceStarted": "Inference Started",
       "dataset": "Dataset:",
       "type": "Type:",
       "csvReady": "CSV Ready"
+    },
+    "batchInferenceConfig": {
+      "title": "Batch Inference",
+      "description": "Run model inference on an unlabeled dataset",
+      "model": "Model",
+      "dataset": "Dataset",
+      "submit": "Start Batch Inference",
+      "submitting": "Submitting...",
+      "submitted": "Batch Inference Submitted",
+      "viewTaskDetail": "View Task Detail",
+      "missingConfig": "Missing required configuration (model or dataset)",
+      "failedToSubmit": "Failed to submit",
+      "inferenceStarted": "Inference task started"
     },
     "renameTask": {
       "title": "Rename Training Task",

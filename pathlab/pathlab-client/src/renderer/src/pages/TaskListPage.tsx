@@ -681,7 +681,28 @@ export default function TaskListPage() {
                       </div>
                     </div>
 
-                    {(() => {
+                    {task.task_type === 'batch_inference' ? (
+                      <>
+                        <div className="flex flex-col gap-0.5" title={t('taskList.columns.batchModel')}>
+                          <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.batchModel')}</span>
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
+                            <span className="text-sm sm:text-base font-bold truncate text-gray-900">
+                              {(task.model_config as Record<string, unknown>)?.model_id as string || t('taskList.na')}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex flex-col gap-0.5" title={t('taskList.columns.batchDataset')}>
+                          <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskList.columns.batchDataset')}</span>
+                          <div className="flex items-center gap-1.5 sm:gap-2">
+                            <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-purple-400" />
+                            <span className="text-sm sm:text-base font-bold truncate text-gray-900">
+                              {(task.model_config as Record<string, unknown>)?.dataset_id as string || t('taskList.na')}
+                            </span>
+                          </div>
+                        </div>
+                      </>
+                    ) : (() => {
                       const segBackbone = task.task_type === 'segmentation' ? (task.model_config as Record<string, unknown>)?.backbone as string : undefined
                       const segIsFm = isSegFmEncoder(segBackbone)
                       const fmDecoderType = ((task.model_config as Record<string, unknown>)?.decoder_type as string) || 'conv'

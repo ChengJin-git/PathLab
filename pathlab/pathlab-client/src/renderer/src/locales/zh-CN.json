@@ -1193,6 +1193,22 @@
       "earlyStoppingPatience": "早停耐心值",
       "yes": "是",
       "no": "否"
+      },
+    "batchInference": {
+      "summary": "推理摘要",
+      "totalSlides": "总切片数",
+      "processedSlides": "已处理",
+      "classDistribution": "类别分布",
+      "results": "推理结果",
+      "noResults": "暂无结果",
+      "slideId": "切片 ID",
+      "filename": "文件名",
+      "prediction": "预测类别",
+      "confidence": "置信度",
+      "exportCsv": "导出 CSV",
+      "showing": "显示第 {{start}}–{{end}} 条，共 {{total}} 条",
+      "previous": "上一页",
+      "next": "下一页"
     }
   },
   "storagePage": {
@@ -1369,7 +1385,9 @@
       "backbone": "骨干网络",
       "architecture": "架构",
       "featureExtractorSeg": "特征提取器",
-      "decoder": "解码器"
+      "decoder": "解码器",
+      "batchModel": "模型",
+      "batchDataset": "数据集"
     },
     "progress": {
       "creatingTask": "正在创建任务",
@@ -2596,9 +2614,23 @@
       "task": "任务：",
       "id": "ID：",
       "trainingStarted": "训练已开始",
+      "inferenceStarted": "推理已启动",
       "dataset": "数据集：",
       "type": "类型：",
       "csvReady": "CSV 已就绪"
+    },
+    "batchInferenceConfig": {
+      "title": "批量推理",
+      "description": "在无标注数据集上运行模型推理",
+      "model": "模型",
+      "dataset": "数据集",
+      "submit": "开始批量推理",
+      "submitting": "提交中...",
+      "submitted": "批量推理已提交",
+      "viewTaskDetail": "查看任务详情",
+      "missingConfig": "缺少必要配置（模型或数据集）",
+      "failedToSubmit": "提交失败",
+      "inferenceStarted": "推理任务已启动"
     },
     "renameTask": {
       "title": "重命名训练任务",
