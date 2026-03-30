@@ -343,6 +343,26 @@ a = Analysis(
         'PyQt5', 'PyQt6', 'PySide2', 'PySide6', 'tkinter', 'wx',
         # Exclude matplotlib GUI backend (marker-pdf may import matplotlib)
         'matplotlib.backends._backend_tk',
+        # --- Size optimisation: packages not needed in the sidecar ---------------
+        # Triton: torch JIT-compilation backend (torch.compile). PathLab never
+        # calls torch.compile(), so the ~540 MB Triton wheel is dead weight.
+        'triton',
+        # vLLM and its exclusive dependencies.  The check-vllm endpoint only
+        # pings an *external* vLLM server via httpx — it never imports the vllm
+        # Python package.  vllm, ray, xgrammar and llguidance are all uninstalled
+        # from the environment; these entries are a safety-net for future re-installs.
+        'vllm', 'ray', 'xgrammar', 'llguidance',
+        # HoloViz / Panel visualisation stack pulled in as optional lancedb deps.
+        # None of these are used by the PathLab sidecar.
+        'panel', 'bokeh', 'holoviews', 'hvplot', 'param', 'colorcet',
+        # PyAV — video/audio I/O pulled in as an optional transformers dep.
+        # PathLab only uses transformers for image feature extraction, not video.
+        'av',
+        # Polars — high-performance DataFrame lib used by the HoloViz stack above.
+        # lancedb's core functionality works with pyarrow/pandas without polars.
+        'polars',
+        # CuPy — GPU array library; was a vllm optional dep, not used directly.
+        'cupy', 'cupy_backends',
     ],
     noarchive=False,
     optimize=0,
