@@ -230,7 +230,7 @@ function KFoldDetails({
   validation: KFoldValidation
 }) {
   const { t } = useTranslation()
-  const maxAllowed = Math.min(10, validation.maxK || 10)
+  const maxAllowed = Math.min(20, validation.maxK || 20)
 
   return (
     <div className="space-y-3">
@@ -247,7 +247,7 @@ function KFoldDetails({
             !validation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-300'
           }`}
         />
-        {validation.isValid && validation.maxK < 10 && (
+        {validation.isValid && validation.maxK < 20 && (
           <span className="text-xs text-amber-600">{t('training.dataSplit.maxKNote', { maxK: validation.maxK })}</span>
         )}
       </div>

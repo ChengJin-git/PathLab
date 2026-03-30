@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import shutil
 from datetime import datetime
 from typing import Any, Dict, List, Optional, cast as type_cast
 
@@ -1011,6 +1012,14 @@ async def _run_external_validation(
 
         uploads_dir = Config.get_uploads_dir()
 
+        # Clear stale analysis from a previous run so rerun/resume always
+        # produces fresh metrics. _auto_trigger_external_validation_analysis
+        # guards on dir existence, so we delete it here before new inference.
+        _stale_analysis_dir = uploads_dir / "logs" / "analysis" / task_id
+        if _stale_analysis_dir.exists():
+            shutil.rmtree(_stale_analysis_dir, ignore_errors=True)
+            logger.info(f"Cleared stale analysis dir for task {task_id} (rerun/resume)")
+
         # ================================================================
         # Patch-level tasks: branch to dedicated handlers
         # ================================================================
@@ -1320,7 +1329,7 @@ async def _run_external_validation(
         if missing_wsi_ids:
             async with logger_manager.session() as (tl, _db):
                 await tl.info(
-                    f"Extracting features for {len(missing_wsi_ids)} WSIs missing from cache..."
+                    f"Extracting features for {len(missing_wsi_ids)}/{len(wsi_ids)} WSIs (cache miss, rest already cached)..."
                 )
 
             await update_task_progress(TaskStatus.PATCHING, 5)
@@ -1329,9 +1338,15 @@ async def _run_external_validation(
             # Step 2a: Patch extraction via preprocessing service (with fallback logic)
             # This mirrors the training pipeline pattern from pipeline.py
             total_missing = len(missing_wsi_ids)
+            total_wsi = len(wsi_ids)  # full count for [i/N] log format, matches training pattern
+            missing_wsi_set = set(missing_wsi_ids)
+            missing_processed = 0
             coords_success_wsi_ids = []  # WSIs where coords extraction succeeded
 
-            for idx, wsi_id in enumerate(missing_wsi_ids, 1):
+            for overall_idx, wsi_id in enumerate(wsi_ids, 1):
+                if wsi_id not in missing_wsi_set:
+                    continue  # already symlinked from cache, skip
+                missing_processed += 1
                 await asyncio.sleep(0)  # Yield to event loop
 
                 coords_result = None
@@ -1342,7 +1357,7 @@ async def _run_external_validation(
                 ):
                     async with logger_manager.session() as (tl, _db):
                         await tl.warning(
-                            f"[{idx}/{total_missing}] compute_patches attempt {attempt}/{max_retries} "
+                            f"[{overall_idx}/{total_wsi}] compute_patches attempt {attempt}/{max_retries} "
                             f"failed for {wsi_id}: {type(retry_err).__name__}. "
                             f"Retrying in {wait_secs}s (cached coords will be used on retry)...",
                             metadata={
@@ -1355,7 +1370,7 @@ async def _run_external_validation(
                 async def _log_lock_wait(wait_seconds: float):
                     async with logger_manager.session() as (tl, _db):
                         await tl.info(
-                            f"[{idx}/{total_missing}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
+                            f"[{overall_idx}/{total_wsi}] Waiting {wait_seconds:.0f}s for shared coords extraction lock on {wsi_id}",
                             metadata={"wsi_id": wsi_id, "wait_seconds": wait_seconds},
                         )
 
@@ -1378,7 +1393,7 @@ async def _run_external_validation(
                         resp_body = "(unable to read response body)"
                     async with logger_manager.session() as (tl, _db):
                         await tl.warning(
-                            f"[{idx}/{total_missing}] Patch extraction failed for {wsi_id}: "
+                            f"[{overall_idx}/{total_wsi}] Patch extraction failed for {wsi_id}: "
                             f"HTTP {http_err.response.status_code if http_err.response else 'N/A'} - {resp_body}",
                             metadata={
                                 "wsi_id": wsi_id,
@@ -1398,7 +1413,7 @@ async def _run_external_validation(
                         # 0 patches = no detectable tissue (even after adaptive seg_level fallback)
                         async with logger_manager.session() as (tl, _db):
                             await tl.warning(
-                                f"[{idx}/{total_missing}] Skipping {wsi_id}: 0 patches extracted "
+                                f"[{overall_idx}/{total_wsi}] Skipping {wsi_id}: 0 patches extracted "
                                 f"(no detectable tissue after adaptive seg_level fallback)",
                                 metadata={"wsi_id": wsi_id, "num_patches": 0},
                             )
@@ -1408,7 +1423,7 @@ async def _run_external_validation(
                         # Too few patches for reliable inference
                         async with logger_manager.session() as (tl, _db):
                             await tl.warning(
-                                f"[{idx}/{total_missing}] Skipping {wsi_id}: only {num_patches} patches "
+                                f"[{overall_idx}/{total_wsi}] Skipping {wsi_id}: only {num_patches} patches "
                                 f"(minimum {MIN_PATCHES_THRESHOLD} required for reliable inference)",
                                 metadata={
                                     "wsi_id": wsi_id,
@@ -1425,7 +1440,7 @@ async def _run_external_validation(
                         async with logger_manager.session() as (tl, _db):
                             if cached:
                                 await tl.info(
-                                    f"[{idx}/{total_missing}] Coords cache hit for {wsi_id} ({num_patches} patches)",
+                                    f"[{overall_idx}/{total_wsi}] Coords cache hit for {wsi_id} ({num_patches} patches)",
                                     metadata={
                                         "wsi_id": wsi_id,
                                         "num_patches": num_patches,
@@ -1434,7 +1449,7 @@ async def _run_external_validation(
                                 )
                             else:
                                 await tl.info(
-                                    f"[{idx}/{total_missing}] Extracted {num_patches} patches from {wsi_id}",
+                                    f"[{overall_idx}/{total_wsi}] Extracted {num_patches} patches from {wsi_id}",
                                     metadata={
                                         "wsi_id": wsi_id,
                                         "num_patches": num_patches,
@@ -1449,7 +1464,7 @@ async def _run_external_validation(
                     err_msg = str(coords_error) if coords_error else "Unknown error"
                     async with logger_manager.session() as (tl, _db):
                         await tl.error(
-                            f"[{idx}/{total_missing}] Skipping {wsi_id}: coords extraction failed - [{err_type}] {err_msg}",
+                            f"[{overall_idx}/{total_wsi}] Skipping {wsi_id}: coords extraction failed - [{err_type}] {err_msg}",
                             metadata={
                                 "wsi_id": wsi_id,
                                 "error": err_msg,
@@ -1460,14 +1475,14 @@ async def _run_external_validation(
                     failed_reasons[wsi_id] = f"coords failed: {err_type}"
 
                 # Update progress (5-30% for patch extraction)
-                progress = 5 + int((idx / total_missing) * 25)
+                progress = 5 + int((missing_processed / total_missing) * 25)
                 await update_task_progress(TaskStatus.PATCHING, progress)
                 await set_progress(task_id, progress)
 
             # Log summary of coords extraction
             async with logger_manager.session() as (tl, _db):
                 await tl.info(
-                    f"Patch extraction phase complete: {len(coords_success_wsi_ids)}/{total_missing} WSIs succeeded, "
+                    f"Patch extraction phase complete: {len(coords_success_wsi_ids)}/{total_wsi} WSIs succeeded, "
                     f"{len(failed_wsi_ids)} failed/skipped",
                     metadata={
                         "success_count": len(coords_success_wsi_ids),

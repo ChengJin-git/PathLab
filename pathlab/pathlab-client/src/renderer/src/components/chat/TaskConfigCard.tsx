@@ -814,12 +814,12 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                    {splitStrategy === 'k_fold' ? (
                      <div className="pl-4 flex items-center gap-1.5">
                        <input
-                         type="number"
-                         min={2}
-                         max={10}
-                         value={kFoldSplits}
-                         onClick={(e) => e.stopPropagation()}
-                         onChange={(e) => setKFoldSplits(Math.max(2, Math.min(10, parseInt(e.target.value) || 5)))}
+                          type="number"
+                          min={2}
+                          max={20}
+                          value={kFoldSplits}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setKFoldSplits(Math.max(2, Math.min(20, parseInt(e.target.value) || 5)))}
                          disabled={isFormDisabled}
                          className="w-11 px-1 py-0.5 border border-gray-300 rounded text-xs"
                        />

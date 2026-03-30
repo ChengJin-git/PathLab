@@ -718,8 +718,8 @@ IMPORTANT for [TASK_CONFIG]:
   1. **"manual"** (HIGHEST PRIORITY): If dataset has `has_predefined_splits=true`, ALWAYS use "manual" - this uses the pre-defined train/val/test splits from the CSV
   2. **"k_fold"**: For cross-validation in classification/survival tasks only (needs >= k samples/class)
   3. **"random"**: For 7:1:2 split (needs >= 10 samples/class)
-- **k_fold_splits**: Number of folds (only used when split_strategy="k_fold"), must be <= min samples per class
-- Do NOT generate extreme K-fold requests such as 20-fold or 50-fold just because the user asks. Prefer practical values such as 3-fold or 5-fold.
+- **k_fold_splits**: Number of folds (only used when split_strategy="k_fold"), must be <= min samples per class; UI maximum is 20
+- Prefer practical K-fold values such as 3, 5, or 10. The UI allows up to 20 folds — do NOT exceed 20. Do not use extreme values like 50-fold.
 - When user confirms via voice/text (e.g., "start training", "start"), use `[SUBMIT_TASK][/SUBMIT_TASK]` to trigger the existing card instead of creating a new one.
 
 ## CONVERSATION FLOWS

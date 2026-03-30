@@ -1233,7 +1233,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         ai_results_root = self.uploads_root / "ai_results"
 
         # Per-fold metrics
-        fold_c_indices = []
         fold_ibs_scores = []
         per_fold_ibs = {}  # fold_key -> IBS value
 
@@ -1318,11 +1317,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                                 continue
 
             if len(all_risks) >= 2:
-                # Calculate c_index using the existing function
-                c_index = calculate_c_index(all_times, all_risks, all_statuses)
-                if c_index is not None and not np.isnan(c_index):
-                    fold_c_indices.append(c_index)
-
                 # Calculate IBS if we have survival probabilities and bin edges
                 if len(all_surv_probs) >= 2 and fold_bin_edges is not None:
                     ibs = self._calculate_ibs(
@@ -1335,14 +1329,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         # Calculate mean and std for metrics
         # Round to 4 decimal places, filter out nan values
         aggregated = {}
-        if fold_c_indices:
-            mean_val = float(np.mean(fold_c_indices))
-            std_val = float(np.std(fold_c_indices))
-            if not np.isnan(mean_val) and not np.isnan(std_val):
-                aggregated["c_index"] = {
-                    "mean": round(mean_val, 4),
-                    "std": round(std_val, 4),
-                }
         if fold_ibs_scores:
             mean_val = float(np.mean(fold_ibs_scores))
             std_val = float(np.std(fold_ibs_scores))
