@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
-import { mkdirSync, existsSync, chmodSync } from 'fs'
+import { mkdirSync, existsSync, chmodSync, readdirSync, rmSync } from 'fs'
 import * as net from 'net'
 
 export interface EmbeddedServiceUrls {
@@ -121,6 +121,7 @@ async function startPostgres(): Promise<string> {
   mkdirSync(dataDir, { recursive: true })
 
   const { default: EmbeddedPostgres } = await import('embedded-postgres')
+  const pgLogs: string[] = []
 
   pgInstance = new EmbeddedPostgres({
     databaseDir: dataDir,
@@ -128,17 +129,35 @@ async function startPostgres(): Promise<string> {
     password: 'pathlab',
     port: pgPort,
     persistent: true,
-    onLog: (msg: string) => console.log('[PostgreSQL]', msg),
-    onError: (msg: unknown) => console.error('[PostgreSQL]', msg)
+    onLog: (msg: string) => { pgLogs.push(msg); console.log('[PostgreSQL]', msg) },
+    onError: (msg: unknown) => { pgLogs.push(`ERROR: ${String(msg)}`); console.error('[PostgreSQL]', msg) }
   })
 
   const pgVersionFile = join(dataDir, 'PG_VERSION')
   if (!existsSync(pgVersionFile)) {
+    // Clean up partial initialization from a previous failed run
+    if (existsSync(dataDir) && readdirSync(dataDir).length > 0) {
+      console.log('[PostgreSQL] Cleaning up partial postgres-data directory...')
+      rmSync(dataDir, { recursive: true, force: true })
+      mkdirSync(dataDir, { recursive: true })
+    }
     console.log('[PostgreSQL] Initializing database cluster (first run)...')
-    await pgInstance.initialise()
+    try {
+      await pgInstance.initialise()
+    } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e)
+      const logs = pgLogs.slice(-10).join('\n')
+      throw new Error(`PostgreSQL init failed: ${reason}\n${logs}`)
+    }
   }
 
-  await pgInstance.start()
+  try {
+    await pgInstance.start()
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e)
+    const logs = pgLogs.slice(-10).join('\n')
+    throw new Error(`PostgreSQL start failed: ${reason}\n${logs}`)
+  }
 
   try {
     await pgInstance.createDatabase('pathlab')

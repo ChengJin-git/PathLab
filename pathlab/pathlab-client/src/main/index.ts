@@ -208,7 +208,7 @@ app.whenReady().then(() => {
       if (app.isPackaged) {
         dialog.showErrorBox(
           'PathLab 启动失败',
-          `后台服务启动失败：\n${error.message}`
+          `后台服务启动失败：\n${error instanceof Error ? error.message : String(error ?? 'unknown error')}`
         )
       }
     })
