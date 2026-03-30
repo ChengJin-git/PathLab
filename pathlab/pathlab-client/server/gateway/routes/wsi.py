@@ -1768,7 +1768,7 @@ async def export_dataset_labels(
     strategy: Literal["random", "k_fold"] = Query(
         "random", description="Split strategy for generated splits"
     ),
-    n_splits: int = Query(5, ge=2, description="Number of folds when strategy=k_fold"),
+    n_splits: int = Query(5, ge=2, le=20, description="Number of folds when strategy=k_fold"),
     seed: int = Query(42, description="Random seed for split generation"),
     stratified: bool = Query(
         True, description="Use stratified split (by label or event_status)"

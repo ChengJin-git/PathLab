@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Layers, AlertCircle, CheckCircle2, UploadCloud } from 'lucide-react'
-import { SplitStrategy, TaskType } from '../../constants/training'
+import { SplitStrategy, TaskType, KFOLD_MAX_SPLITS } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation } from '../../types/training'
 
 export interface DataSplitConfigProps {
@@ -230,7 +230,7 @@ function KFoldDetails({
   validation: KFoldValidation
 }) {
   const { t } = useTranslation()
-  const maxAllowed = Math.min(20, validation.maxK || 20)
+  const maxAllowed = Math.min(KFOLD_MAX_SPLITS, validation.maxK || KFOLD_MAX_SPLITS)
 
   return (
     <div className="space-y-3">
@@ -247,7 +247,7 @@ function KFoldDetails({
             !validation.isValid ? 'border-red-300 bg-red-50' : 'border-gray-300'
           }`}
         />
-        {validation.isValid && validation.maxK < 20 && (
+        {validation.isValid && validation.maxK < KFOLD_MAX_SPLITS && (
           <span className="text-xs text-amber-600">{t('training.dataSplit.maxKNote', { maxK: validation.maxK })}</span>
         )}
       </div>

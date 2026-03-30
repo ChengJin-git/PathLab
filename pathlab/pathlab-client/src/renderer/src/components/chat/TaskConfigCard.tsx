@@ -37,6 +37,7 @@ import {
   FM_SEGMENTATION_ARCHITECTURES,
   isSegFmEncoder,
   normalizeSegmentationLossConfig,
+  KFOLD_MAX_SPLITS,
 } from '../../constants/training'
 import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
 
@@ -816,10 +817,10 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                        <input
                           type="number"
                           min={2}
-                          max={20}
+                          max={KFOLD_MAX_SPLITS}
                           value={kFoldSplits}
                           onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => setKFoldSplits(Math.max(2, Math.min(20, parseInt(e.target.value) || 5)))}
+                          onChange={(e) => setKFoldSplits(Math.max(2, Math.min(KFOLD_MAX_SPLITS, parseInt(e.target.value) || 5)))}
                          disabled={isFormDisabled}
                          className="w-11 px-1 py-0.5 border border-gray-300 rounded text-xs"
                        />

@@ -60,7 +60,7 @@ class SplitConfig(BaseModel):
     """Configuration for data splitting strategy"""
 
     strategy: str = "random"  # random, k_fold, manual
-    n_splits: int = 5  # for k_fold
+    n_splits: int = Field(default=5, ge=2, le=20)  # for k_fold
     ratios: Dict[str, float] = {"train": 0.7, "val": 0.1, "test": 0.2}
     manual_splits: Optional[Dict[str, str]] = None  # map wsi_id -> split
     seed: int = 42

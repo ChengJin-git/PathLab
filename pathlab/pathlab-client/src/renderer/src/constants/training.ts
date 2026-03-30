@@ -53,6 +53,9 @@ export type DataLevel = 'wsi' | 'patch'
 export type SplitStrategy = 'random' | 'k_fold' | 'manual'
 export type TrainingStatus = 'idle' | 'validating' | 'submitting' | 'submitted' | 'failed'
 
+/** Maximum number of folds allowed for K-Fold cross-validation. Must stay in sync with backend SplitConfig.n_splits le= constraint. */
+export const KFOLD_MAX_SPLITS = 20
+
 // ============================================================================
 // Feature Extractors
 // ============================================================================
