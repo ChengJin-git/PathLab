@@ -67,10 +67,18 @@ patches = [
         "reject(new Error('Postgres process exited unexpectedly'));",
         1
     ),
+    # Patch 4: Capture initdb stderr so errors are visible in pgLogs.
+    # The initdb spawn only connects process.stdout; errors go to stderr and are silently lost.
+    (
+        "(_a = process.stdout) === null || _a === void 0 ? void 0 : _a.on('data', (chunk) => {\n                    // Parse the data as a string and log it\n                    const message = chunk.toString('utf-8');\n                    this.options.onLog(message);\n                });\n                process.on('exit', (code) => {",
+        "(_a = process.stdout) === null || _a === void 0 ? void 0 : _a.on('data', (chunk) => {\n                    // Parse the data as a string and log it\n                    const message = chunk.toString('utf-8');\n                    this.options.onLog(message);\n                });\n                if (process.stderr) { process.stderr.on('data', (chunk) => { this.options.onLog('[initdb-stderr] ' + chunk.toString('utf-8')); }); }\n                process.on('exit', (code) => {",
+        1
+    ),
 ]
 
 already_patched_markers = [
     "Object.assign({}, globalThis.process.env)",
+    "[initdb-stderr]",
     "reject(new Error(`Postgres init script",
     "reject(new Error('Postgres process exited unexpectedly'",
 ]

@@ -129,6 +129,12 @@ async function startPostgres(): Promise<string> {
     password: 'pathlab',
     port: pgPort,
     persistent: true,
+    // Use C locale so initdb succeeds on any system regardless of locale installation.
+    // embedded-postgres hardcodes --lc-messages=en_US.UTF-8 before our flags; since
+    // initdbFlags are appended AFTER, --locale=C wins for all locale categories including
+    // lc-messages. C locale is always available and still produces English messages that
+    // embedded-postgres relies on for ready-detection. --encoding=UTF8 ensures Unicode.
+    initdbFlags: ['--locale=C', '--encoding=UTF8'],
     onLog: (msg: string) => { pgLogs.push(msg); console.log('[PostgreSQL]', msg) },
     onError: (msg: unknown) => { pgLogs.push(`ERROR: ${String(msg)}`); console.error('[PostgreSQL]', msg) }
   })
