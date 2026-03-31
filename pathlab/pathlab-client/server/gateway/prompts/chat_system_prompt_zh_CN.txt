@@ -965,6 +965,7 @@ AI 回复：
 **CSV/Excel 按 upload_mode 所需列：**
 - **分类**：`filename`（必需）、`label`（必需），可选：`split`、`case_id`、`age`、`gender`
 - **生存预测**：`filename`（必需）、`event_time`（必需）、`event_status`（必需），可选：`split`、`case_id`、`age`、`gender`
+  - `event_status` 约定：`1` = 事件发生（死亡、复发等终点事件），`0` = 数据删失（随访期间未发生事件）
 - **分割**：`filename`（必需），可选：`split`、`case_id`、`age`、`gender`——注意：分割 mask 与类别已通过配套 COCO JSON 文件提供，CSV 仅用于补充图像级元数据，例如划分信息。
 
 **步骤 7：注册完成后**

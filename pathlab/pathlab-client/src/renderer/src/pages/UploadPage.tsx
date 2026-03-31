@@ -27,6 +27,7 @@ import {
   Image,
   FileJson,
   Folder,
+  Info,
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
@@ -1276,7 +1277,14 @@ export default function RegisterPage() {
                         ) : uploadMode === 'survival' ? (
                           <>
                             <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.eventTime')} <span className="text-red-500">*</span></th>
-                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">{t('uploadPage.status')} <span className="text-red-500">*</span></th>
+                            <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">
+                              <span className="flex items-center gap-1">
+                                {t('uploadPage.status')} <span className="text-red-500">*</span>
+                                <Tooltip content={t('uploadPage.statusTooltip')}>
+                                  <Info className="w-3 h-3 text-slate-400 hover:text-slate-600 cursor-help transition-colors" />
+                                </Tooltip>
+                              </span>
+                            </th>
                           </>
                         ) : uploadMode === 'segmentation' ? (
                           <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[100px]">{t('uploadPage.maskStatus')}</th>
@@ -1488,6 +1496,17 @@ export default function RegisterPage() {
                         )}
                         <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                       </ul>
+                      {uploadMode === 'survival' && (
+                        <div className="mt-2 pt-2 border-t border-blue-100 flex flex-col gap-0.5">
+                          <span className="text-[9px] sm:text-[11px] font-semibold text-blue-500 uppercase tracking-widest">
+                            {t('uploadPage.survivalStatusConvention')}
+                          </span>
+                          <div className="flex flex-col gap-0 pl-1 border-l-2 border-blue-200 ml-1">
+                            <span className="text-[9px] sm:text-[11px] text-blue-700 font-mono">{t('uploadPage.survivalStatusEvent')}</span>
+                            <span className="text-[9px] sm:text-[11px] text-blue-700 font-mono">{t('uploadPage.survivalStatusCensored')}</span>
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div

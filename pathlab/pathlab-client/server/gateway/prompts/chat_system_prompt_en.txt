@@ -965,6 +965,7 @@ If you don't have additional metadata, that's fine — the segmentation masks fr
 **Required CSV/Excel columns by upload_mode:**
 - **Classification**: `filename` (required), `label` (required), optional: `split`, `case_id`, `age`, `gender`
 - **Survival**: `filename` (required), `event_time` (required), `event_status` (required), optional: `split`, `case_id`, `age`, `gender`
+  - `event_status` convention: `1` = event occurred (death, recurrence, or other endpoint), `0` = censored (no event observed during follow-up)
 - **Segmentation**: `filename` (required), optional: `split`, `case_id`, `age`, `gender` — Note: segmentation masks and categories are already provided via the paired COCO JSON files; the CSV here is only for extra image-level metadata such as split assignment.
 
 **STEP 7: Post-Registration Completion**
