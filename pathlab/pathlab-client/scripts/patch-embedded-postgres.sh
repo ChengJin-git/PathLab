@@ -52,7 +52,7 @@ patches = [
     # Patch env stripping on initdb spawn (line ~136)
     (
         "], Object.assign(Object.assign({}, permissionIds), { env: { LC_MESSAGES: LC_MESSAGES_LOCALE } }));",
-        "], Object.assign(Object.assign({}, permissionIds), { env: Object.assign(Object.assign({}, process.env), { LC_MESSAGES: LC_MESSAGES_LOCALE }) }));",
+        "], Object.assign(Object.assign({}, permissionIds), { env: Object.assign(Object.assign({}, globalThis.process.env), { LC_MESSAGES: LC_MESSAGES_LOCALE }) }));",
         2  # expect exactly 2 occurrences (initdb + postgres spawns)
     ),
     # Patch string rejection → Error rejection (initdb exit)
@@ -70,7 +70,7 @@ patches = [
 ]
 
 already_patched_markers = [
-    "Object.assign({}, process.env)",
+    "Object.assign({}, globalThis.process.env)",
     "reject(new Error(`Postgres init script",
     "reject(new Error('Postgres process exited unexpectedly'",
 ]
