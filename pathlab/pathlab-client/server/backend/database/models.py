@@ -120,7 +120,7 @@ class Dataset(TimestampMixin, Base):
     __tablename__ = "datasets"
 
     dataset_id = Column(
-        String(255), unique=True, nullable=False, index=True
+        String(255), nullable=False, index=True
     )  # UUID for API
     name = Column(
         String(255), nullable=False
@@ -148,6 +148,15 @@ class Dataset(TimestampMixin, Base):
         ForeignKey("datasets.dataset_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    # Explicit UniqueConstraint so the constraint appears inline in CREATE TABLE DDL.
+    # SQLAlchemy 2.0 emits column-level unique=True as a deferred CREATE UNIQUE INDEX,
+    # which is emitted AFTER CREATE TABLE. Because parent_dataset_id has a
+    # FK → dataset_id, PostgreSQL rejects CREATE TABLE if there is no inline
+    # UNIQUE or PRIMARY KEY constraint on dataset_id at that moment.
+    __table_args__ = (
+        UniqueConstraint("dataset_id", name="uq_datasets_dataset_id"),
     )
 
     # Relationships
@@ -188,7 +197,7 @@ class WSISlide(TimestampMixin, Base):
 
     __tablename__ = "wsi_slides"
 
-    wsi_id = Column(String(255), unique=True, nullable=False, index=True)
+    wsi_id = Column(String(255), nullable=False, index=True)
     original_filename = Column(
         String(500)
     )  # Original filename for internal reference (not exposed to frontend)
@@ -259,7 +268,13 @@ class WSISlide(TimestampMixin, Base):
         "WSISlide", remote_side=[wsi_id], foreign_keys=[parent_wsi_id]
     )
 
+    # Explicit UniqueConstraint so the constraint appears inline in CREATE TABLE DDL.
+    # SQLAlchemy 2.0 emits column-level unique=True as a deferred CREATE UNIQUE INDEX,
+    # which is emitted AFTER CREATE TABLE. Because parent_wsi_id has a
+    # FK → wsi_id, PostgreSQL rejects CREATE TABLE if there is no inline
+    # UNIQUE or PRIMARY KEY constraint on wsi_id at that moment.
     __table_args__ = (
+        UniqueConstraint("wsi_id", name="uq_wsi_slides_wsi_id"),
         Index("idx_wsi_user_dataset", "user_id", "dataset_id"),
         Index("idx_wsi_dataset_created", "dataset_id", "created_at"),
         Index("idx_wsi_user_type", "user_id", "data_type"),
