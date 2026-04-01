@@ -301,9 +301,13 @@ try:
 
     if _aslide_base:
         for _subdir, _dest in [
-            ('sdpc/lib', 'Aslide/sdpc/lib'),
-            ('kfb/lib',  'Aslide/kfb/lib'),
-            ('tron/lib', 'Aslide/tron/lib'),
+            ('sdpc/lib',   'Aslide/sdpc/lib'),
+            ('kfb/lib',    'Aslide/kfb/lib'),
+            ('tron/lib',   'Aslide/tron/lib'),
+            # Aslide.__init__ preloads OpenCV 3.4 libs from Aslide/opencv/lib.
+            # If missing, it warns "Only 0/3 core OpenCV libraries loaded" and
+            # KFB/TMAP/SDPC support may degrade. Keep full lib dir structure.
+            ('opencv/lib', 'Aslide/opencv/lib'),
         ]:
             _src_dir = os.path.join(_aslide_base, *_subdir.split('/'))
             if os.path.isdir(_src_dir):
