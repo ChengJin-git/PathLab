@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 from .users import current_active_user, JWT_SECRET
 from .models import User
 from backend.database.database import get_db
+from backend.database.database import safe_session
 
 
 async def require_admin(user: User = Depends(current_active_user)) -> User:
@@ -346,8 +347,11 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
                 detail="Session expired. Please login again.",
             )
         import json as _json
+
         try:
-            db_nonces: list[str] = _json.loads(getattr(user, "session_nonces", None) or "[]")
+            db_nonces: list[str] = _json.loads(
+                getattr(user, "session_nonces", None) or "[]"
+            )
             if not isinstance(db_nonces, list):
                 db_nonces = []
         except (ValueError, TypeError):
@@ -376,13 +380,13 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
 
 async def get_user_from_token_param(
     token: Optional[str] = Query(None, description="JWT token for SSE authentication"),
-    db: AsyncSession = Depends(get_db),
 ) -> User:
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
-    return await _get_user_from_jwt(token, db)
+    async with safe_session() as db:
+        return await _get_user_from_jwt(token, db)
 
 
 async def get_user_from_header_or_param(
@@ -390,7 +394,6 @@ async def get_user_from_header_or_param(
         None, alias="token", description="JWT token for image authentication"
     ),
     authorization: Optional[str] = Header(None, alias="Authorization"),
-    db: AsyncSession = Depends(get_db),
 ) -> User:
     jwt_token = None
     if authorization and authorization.startswith("Bearer "):
@@ -403,4 +406,5 @@ async def get_user_from_header_or_param(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required"
         )
 
-    return await _get_user_from_jwt(jwt_token, db)
+    async with safe_session() as db:
+        return await _get_user_from_jwt(jwt_token, db)
