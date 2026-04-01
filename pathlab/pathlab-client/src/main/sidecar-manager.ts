@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
 import { join } from 'path'
 import { app, BrowserWindow } from 'electron'
+import { existsSync } from 'fs'
 
 let pythonProcess: ChildProcess | null = null
 
@@ -103,6 +104,23 @@ export function startPythonSidecar(extraEnv?: Record<string, string>): Promise<n
     console.log(`Starting Python sidecar: ${pythonPath} ${scriptPath}`)
 
     const spawnEnv = { ...process.env, ...extraEnv }
+
+    if (!isDev) {
+      const aslideLibRoots = [
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'opencv', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'sdpc', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'kfb', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'tmap', 'lib'),
+        join(process.resourcesPath, 'server', 'main', '_internal', 'Aslide', 'tron', 'lib')
+      ].filter((libPath) => existsSync(libPath))
+
+      const currentLdPath = spawnEnv.LD_LIBRARY_PATH || ''
+      const mergedLdPath = [
+        ...aslideLibRoots,
+        ...currentLdPath.split(':').filter((item) => item.trim().length > 0)
+      ]
+      spawnEnv.LD_LIBRARY_PATH = Array.from(new Set(mergedLdPath)).join(':')
+    }
 
     if (isDev) {
       pythonProcess = spawn(pythonPath, [scriptPath], {

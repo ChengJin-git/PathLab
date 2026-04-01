@@ -166,10 +166,37 @@ async function startPostgres(): Promise<string> {
   }
 
   try {
-    await pgInstance.createDatabase('pathlab')
-    console.log('[PostgreSQL] Database "pathlab" created')
-  } catch (_) {
-    // database already exists on subsequent runs
+    const { Client } = await import('pg')
+    const probe = new Client({
+      host: '127.0.0.1',
+      port: pgPort,
+      user: 'pathlab',
+      password: 'pathlab',
+      database: 'postgres'
+    })
+
+    let exists = false
+    try {
+      await probe.connect()
+      const result = await probe.query(
+        'SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1) AS exists',
+        ['pathlab']
+      )
+      exists = Boolean((result.rows[0] as { exists?: boolean } | undefined)?.exists)
+    } finally {
+      await probe.end().catch(() => undefined)
+    }
+
+    if (!exists) {
+      await pgInstance.createDatabase('pathlab')
+      console.log('[PostgreSQL] Database "pathlab" created')
+    } else {
+      console.log('[PostgreSQL] Database "pathlab" already exists, skipping creation')
+    }
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e)
+    const logs = pgLogs.slice(-10).join('\n')
+    throw new Error(`PostgreSQL database check/create failed: ${reason}\n${logs}`)
   }
 
   console.log(`[PostgreSQL] Started on port ${pgPort}`)
