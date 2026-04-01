@@ -100,3 +100,38 @@ with open(target, "w") as f:
     f.write(content)
 print(f"Patched: {target}")
 PYEOF2
+
+# --- Patch 3: Change LC_MESSAGES_LOCALE from 'en_US.UTF-8' to 'C' ---
+# embedded-postgres hardcodes LC_MESSAGES_LOCALE = 'en_US.UTF-8'. This locale is
+# not installed on all systems, causing initdb to fail with "invalid locale name".
+# Changing to 'C' ensures initdb always succeeds. PostgreSQL still outputs English
+# messages with LC_MESSAGES=C, so ready-detection ("database system is ready to
+# accept connections") continues to work correctly.
+TARGET3="node_modules/embedded-postgres/dist/index.js"
+
+if [ ! -f "$TARGET3" ]; then
+    echo "SKIP: $TARGET3 not found"
+    exit 0
+fi
+
+python3 - <<'PYEOF3'
+import sys
+
+target = "node_modules/embedded-postgres/dist/index.js"
+with open(target, "r") as f:
+    content = f.read()
+
+old = "const LC_MESSAGES_LOCALE = 'en_US.UTF-8';"
+new = "const LC_MESSAGES_LOCALE = 'C';"
+
+if old in content:
+    content = content.replace(old, new)
+    with open(target, "w") as f:
+        f.write(content)
+    print(f"Patched LC_MESSAGES_LOCALE 'en_US.UTF-8' -> 'C': {target}")
+elif new in content:
+    print(f"Already patched: LC_MESSAGES_LOCALE is already 'C'")
+else:
+    print(f"ERROR: LC_MESSAGES_LOCALE pattern not found in {target}", file=sys.stderr)
+    sys.exit(1)
+PYEOF3
