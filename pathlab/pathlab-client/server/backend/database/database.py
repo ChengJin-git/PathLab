@@ -360,6 +360,21 @@ async def init_db():
         )
         logger.info("chat conversation branch column and chat_messages variant columns ensured")
 
+        await conn.execute(
+            text(
+                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                "session_nonces TEXT DEFAULT NULL"
+            )
+        )
+        # Migrate existing single nonce to JSON array format (runs once per row, idempotent)
+        await conn.execute(
+            text(
+                "UPDATE users SET session_nonces = json_build_array(session_nonce)::text "
+                "WHERE session_nonce IS NOT NULL AND session_nonces IS NULL"
+            )
+        )
+        logger.info("users.session_nonces column ensured and backfilled from session_nonce")
+
     await _create_default_admin()
 
 

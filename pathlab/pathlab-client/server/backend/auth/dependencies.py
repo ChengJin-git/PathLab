@@ -338,17 +338,23 @@ async def _get_user_from_jwt(token: str, db: AsyncSession) -> User:
                 status_code=status.HTTP_401_UNAUTHORIZED, detail="User is inactive"
             )
 
-        # Single-device login enforcement: check session_nonce
+        # Multi-session enforcement: nonce must be present and in the active nonces list
         jwt_nonce = payload.get("sn")
         if not jwt_nonce:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Session expired. Please login again.",
             )
-        db_nonce = getattr(user, "session_nonce", None)
-        if jwt_nonce != db_nonce:
+        import json as _json
+        try:
+            db_nonces: list[str] = _json.loads(getattr(user, "session_nonces", None) or "[]")
+            if not isinstance(db_nonces, list):
+                db_nonces = []
+        except (ValueError, TypeError):
+            db_nonces = []
+        if jwt_nonce not in db_nonces:
             logger.info(
-                f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch"
+                f"[Auth] Rejected stale token for user {user.id}: nonce not in active sessions"
             )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

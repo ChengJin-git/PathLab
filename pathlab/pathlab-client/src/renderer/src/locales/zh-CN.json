@@ -72,7 +72,7 @@
     "welcomeBack": "欢迎回来",
     "signedInAs": "登录为",
     "systemMaintenance": "系统正在维护中，请稍后再试。",
-    "sessionExpired": "您的账号已在其他设备登录，当前会话已结束。",
+    "sessionExpired": "您的账号同时在线设备数已超过2台，当前会话已结束。",
     "accountPendingApproval": "您的账号正在等待管理员审核，激活后将发送邮件通知。"
   },
   "nav": {

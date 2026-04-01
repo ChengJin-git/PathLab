@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
-from sqlalchemy import Column, String, DateTime, Boolean
+from sqlalchemy import Column, String, DateTime, Boolean, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 # Import Base from existing models to share the same metadata
@@ -67,13 +67,21 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
         doc="SHA256 hash of password for secure login. NULL for legacy users.",
     )
 
-    # Single-device login enforcement: regenerated on each login to invalidate old sessions.
-    # JWT tokens include this nonce; if the token's nonce doesn't match the DB, the session is rejected.
+    # Legacy single-nonce field. Kept for schema compat; no longer written. Use session_nonces instead.
     session_nonce: Mapped[Optional[str]] = mapped_column(
-        String(36),  # UUID4 string length
+        String(36),
         nullable=True,
         default=None,
-        doc="Random UUID regenerated on each login. Old tokens with mismatched nonce are rejected.",
+        doc="Legacy single-nonce field. Kept for schema compat; no longer written. Use session_nonces instead.",
+    )
+
+    # Multi-device login enforcement: JSON array of active session nonces.
+    # Length is capped to MAX_CONCURRENT_SESSIONS; oldest nonce is evicted on overflow.
+    session_nonces: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        default=None,
+        doc="JSON array of active session nonces (up to MAX_CONCURRENT_SESSIONS). Oldest nonce evicted on overflow.",
     )
 
     # Agreement acceptance tracking

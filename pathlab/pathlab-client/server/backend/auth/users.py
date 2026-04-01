@@ -104,33 +104,55 @@ async def get_user_manager(user_db: SQLAlchemyUserDatabase[User, uuid.UUID] = De
 bearer_transport = BearerTransport(tokenUrl="auth/secure-login")
 
 
+# Maximum number of concurrent sessions (devices) allowed per user.
+# To change the limit, update this single constant — no other code changes needed.
+MAX_CONCURRENT_SESSIONS = 2
+
+
 class SingleSessionJWTStrategy(JWTStrategy[User, uuid.UUID]):
     """
-    Custom JWT strategy that enforces single-device login.
+    Custom JWT strategy that enforces multi-device login with a configurable session limit.
 
-    On each login (write_token), a new random session_nonce is generated, saved to DB,
-    and embedded in the JWT. On each request (read_token), the JWT's nonce is compared
-    against the DB value. If they don't match, the token is rejected, effectively
-    logging out the old device.
+    On each login (write_token), a new random nonce is generated and appended to the
+    user's active nonces list (JSON array). If the list exceeds MAX_CONCURRENT_SESSIONS,
+    the oldest nonce is evicted, ending that session.
+    On each request (read_token), the JWT's nonce must be present in the active nonces list.
     """
 
     async def write_token(self, user: User) -> str:
-        """Generate JWT with a fresh session_nonce for single-session enforcement."""
+        """Generate JWT with a fresh nonce; evict oldest session if limit is exceeded."""
+        import json as _json
+
         new_nonce = str(uuid.uuid4())
+
+        # Parse current active nonces (gracefully handle NULL or malformed values)
+        try:
+            existing: list[str] = _json.loads(getattr(user, "session_nonces", None) or "[]")
+            if not isinstance(existing, list):
+                existing = []
+        except (ValueError, TypeError):
+            existing = []
+
+        # Append new nonce and evict oldest entries beyond the configured limit
+        existing.append(new_nonce)
+        if len(existing) > MAX_CONCURRENT_SESSIONS:
+            existing = existing[-MAX_CONCURRENT_SESSIONS:]
+
         async with db_session_factory() as session:
             await session.execute(
-                update(User).where(User.id == user.id).values(session_nonce=new_nonce)
+                update(User).where(User.id == user.id).values(session_nonces=_json.dumps(existing))
             )
             await session.commit()
 
         logger.info(
-            f"[Auth] New session nonce for user {user.id} (single-device enforcement)"
+            f"[Auth] Session nonce added for user {user.id} "
+            f"({len(existing)}/{MAX_CONCURRENT_SESSIONS} active sessions)"
         )
 
         data = {
             "sub": str(user.id),
             "aud": self.token_audience,
-            "sn": new_nonce,  # session nonce for single-device check
+            "sn": new_nonce,
         }
         return generate_jwt(
             data, self.encode_key, self.lifetime_seconds, algorithm=self.algorithm
@@ -139,7 +161,7 @@ class SingleSessionJWTStrategy(JWTStrategy[User, uuid.UUID]):
     async def read_token(
         self, token: str | None, user_manager: BaseUserManagerType[User, uuid.UUID]
     ) -> User | None:
-        """Decode JWT and verify session_nonce matches DB (single-session check)."""
+        """Decode JWT and verify the nonce is in the user's active sessions list."""
         if token is None:
             return None
 
@@ -166,11 +188,18 @@ class SingleSessionJWTStrategy(JWTStrategy[User, uuid.UUID]):
         except (exceptions.UserNotExists, exceptions.InvalidID):
             return None
 
-        # Single-session enforcement: nonce must match DB
-        db_nonce = getattr(user, "session_nonce", None)
-        if jwt_nonce != db_nonce:
+        # Multi-session enforcement: nonce must be in the active nonces list
+        import json as _json
+        try:
+            db_nonces: list[str] = _json.loads(getattr(user, "session_nonces", None) or "[]")
+            if not isinstance(db_nonces, list):
+                db_nonces = []
+        except (ValueError, TypeError):
+            db_nonces = []
+
+        if jwt_nonce not in db_nonces:
             logger.info(
-                f"[Auth] Rejected stale token for user {user.id}: session nonce mismatch"
+                f"[Auth] Rejected stale token for user {user.id}: nonce not in active sessions"
             )
             return None
 

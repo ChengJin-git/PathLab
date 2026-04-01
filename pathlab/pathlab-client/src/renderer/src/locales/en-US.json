@@ -72,7 +72,7 @@
     "welcomeBack": "Welcome back",
     "signedInAs": "Signed in as",
     "systemMaintenance": "System is under maintenance. Please try again later.",
-    "sessionExpired": "Your account has been logged in on another device. Current session has ended.",
+    "sessionExpired": "Your account is signed in on more than 2 devices. Current session has ended.",
     "accountPendingApproval": "Your account is pending admin approval. You will receive an email notification once activated."
   },
   "nav": {

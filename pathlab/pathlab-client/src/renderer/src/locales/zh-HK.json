@@ -72,7 +72,7 @@
     "welcomeBack": "歡迎回來",
     "signedInAs": "登入為",
     "systemMaintenance": "系統正在維護中，請稍後再試。",
-    "sessionExpired": "您的帳號已在其他裝置登入，當前會話已結束。",
+    "sessionExpired": "您的帳號同時在線裝置數已超過2台，當前會話已結束。",
     "accountPendingApproval": "您的帳號正在等待管理員審核，激活後將發送郵件通知。"
   },
   "nav": {
