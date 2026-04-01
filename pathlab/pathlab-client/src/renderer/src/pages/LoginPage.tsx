@@ -18,6 +18,7 @@ import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal'
 import { getPublicSettings, getPublicMaintenanceNotice, ApiError } from '../api'
 import { MaintenanceNoticeModal } from '../components/MaintenanceNoticeModal'
 import { RegisterRequestModal } from '../components/RegisterRequestModal'
+import pathlabLogo from '../../../public/images/pathlab-logo.png'
 
 /**
  * Inner login page component.
@@ -153,7 +154,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
           <div className="mb-10 text-center lg:text-left">
             <div className="flex items-center justify-center lg:justify-start mb-6">
               <img
-                src="/images/pathlab-logo.png"
+                src={pathlabLogo}
                 alt="PathLab"
                 className="h-12 w-auto"
               />

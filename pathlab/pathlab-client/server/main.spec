@@ -290,35 +290,44 @@ else:
 # Solution: include each lib/ directory as datas (not binaries) so PyInstaller
 # copies the full directory tree verbatim to the correct dest path.
 # ---------------------------------------------------------------------------
+# Use importlib.util.find_spec to locate Aslide reliably across venv/conda/system
 try:
-    import site as _site
-    _aslide_base = None
-    for _sp in _site.getsitepackages():
-        _candidate = os.path.join(_sp, 'Aslide')
-        if os.path.isdir(_candidate):
-            _aslide_base = _candidate
-            break
-
-    if _aslide_base:
-        for _subdir, _dest in [
-            ('sdpc/lib',   'Aslide/sdpc/lib'),
-            ('kfb/lib',    'Aslide/kfb/lib'),
-            ('tron/lib',   'Aslide/tron/lib'),
-            # Aslide.__init__ preloads OpenCV 3.4 libs from Aslide/opencv/lib.
-            # If missing, it warns "Only 0/3 core OpenCV libraries loaded" and
-            # KFB/TMAP/SDPC support may degrade. Keep full lib dir structure.
-            ('opencv/lib', 'Aslide/opencv/lib'),
-        ]:
-            _src_dir = os.path.join(_aslide_base, *_subdir.split('/'))
-            if os.path.isdir(_src_dir):
-                all_datas.append((_src_dir, _dest))
-                print(f"[spec] Including Aslide libs: {_src_dir} -> {_dest}")
-            else:
-                print(f"[spec] WARNING: Aslide lib dir not found: {_src_dir}")
+    import importlib.util as _importlib_util
+    _aslide_init = _importlib_util.find_spec('Aslide')
+    if _aslide_init and _aslide_init.origin:
+        _aslide_base = os.path.dirname(_aslide_init.origin)
     else:
-        print("[spec] WARNING: Aslide package not found in site-packages; Aslide slide support may fail")
-except Exception as _e:
-    print(f"[spec] WARNING: Failed to locate Aslide libs: {_e}")
+        import Aslide as _Aslide_mod
+        _aslide_base = os.path.dirname(os.path.abspath(_Aslide_mod.__file__))
+except Exception:
+    _aslide_base = None
+
+if _aslide_base and os.path.isdir(_aslide_base):
+    for _subdir, _dest in [
+        ('sdpc/lib',   'Aslide/sdpc/lib'),
+        ('kfb/lib',    'Aslide/kfb/lib'),
+        ('tron/lib',   'Aslide/tron/lib'),
+        ('opencv/lib', 'Aslide/opencv/lib'),
+    ]:
+        _src_dir = os.path.join(_aslide_base, *_subdir.split('/'))
+        if os.path.isdir(_src_dir):
+            _so_files = []
+            try:
+                for _f in os.listdir(_src_dir):
+                    _fp = os.path.join(_src_dir, _f)
+                    if os.path.isfile(_fp) and ('.so' in _f or '.dylib' in _f):
+                        _so_files.append(_fp)
+            except OSError:
+                pass
+            if _so_files:
+                all_datas.append((_src_dir, _dest))
+                print(f"[spec] Including Aslide libs: {_src_dir} -> {_dest} ({len(_so_files)} .so files)")
+            else:
+                print(f"[spec] WARNING: Aslide lib dir exists but no .so files: {_src_dir}")
+        else:
+            print(f"[spec] WARNING: Aslide lib dir not found: {_src_dir}")
+else:
+    print("[spec] WARNING: Aslide package not found via importlib; Aslide slide support may fail")
 
 # Deduplicate datas (collect_all may produce duplicates)
 seen_datas = set()

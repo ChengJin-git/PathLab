@@ -4,6 +4,7 @@ import { LanguageSwitcher } from '../common/LanguageSwitcher'
 import { Button } from '../ui/button'
 import { LANDING_NAV_ITEMS } from '../../constants/landing/landing-nav'
 import { Menu, X } from 'lucide-react'
+import pathlabLogo from '../../../../public/images/pathlab-logo.png'
 
 export function LandingNavbar({ onLogin }: { onLogin: () => void }) {
   const { t } = useTranslation()
@@ -29,7 +30,7 @@ export function LandingNavbar({ onLogin }: { onLogin: () => void }) {
       <div className="pt-safe" />
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <img src="/images/pathlab-logo.png" alt="PathLab" className="h-8 w-auto" />
+          <img src={pathlabLogo} alt="PathLab" className="h-8 w-auto" />
         </div>
         
         <div className="hidden lg:flex items-center gap-8">
