@@ -7,6 +7,7 @@ from backend.common.settings_store import (
     read_config,
     write_config,
     _get_storage_config_file,
+    _get_app_data_dir,
 )
 
 
@@ -117,7 +118,10 @@ class Config:
         if data.get("uploads_dir"):
             return Path(data["uploads_dir"]).expanduser()
 
-        return cls.ROOT_DIR / "uploads"
+        # Fallback: use the XDG / AppData directory so the app works from
+        # read-only mounts (AppImage squashfs, system-wide installs, etc.).
+        # ROOT_DIR points inside the read-only bundle in packaged mode.
+        return _get_app_data_dir() / "uploads"
 
     @classmethod
     def get_uploads_dir_source(cls) -> str:

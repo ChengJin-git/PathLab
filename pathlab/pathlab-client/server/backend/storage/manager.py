@@ -18,11 +18,11 @@ from typing import Dict, List, Optional, Any, Tuple, Callable
 from datetime import datetime, timezone
 import logging
 
-from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks
-from backend.ai.tasks.patch_cache import (
-    delete_all_cached_coords_for_wsi,
-    list_all_cached_coords_for_wsi,
-)
+# NOTE: cleanup_dangling_symlinks / delete_all_cached_coords_for_wsi /
+# list_all_cached_coords_for_wsi are intentionally NOT imported at module level.
+# backend.ai.tasks imports WSIClassificationTrainer which imports torch; this
+# chain would force torch into the Gateway process at startup.  Lazy imports
+# inside the three methods below confine the torch dependency to call-time.
 
 from .stats_mixin import StorageStatsMixin
 from .orphan_mixin import StorageOrphanMixin
@@ -218,6 +218,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         # 2. Delete coordinates files (from all params_hash directories)
         # Structure: uploads/coordinates/{params_hash}/{wsi_id}_coords.h5
+        from backend.ai.tasks.patch_cache import delete_all_cached_coords_for_wsi  # noqa: PLC0415
         coords_result = delete_all_cached_coords_for_wsi(self.uploads_dir, wsi_id)
         deleted_files.extend(coords_result["deleted_files"])
         total_size += coords_result["total_size"]
@@ -657,6 +658,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         # Coordinates (search across all params_hash directories)
         # New structure: uploads/coordinates/{params_hash}/{wsi_id}_coords.h5
+        from backend.ai.tasks.patch_cache import list_all_cached_coords_for_wsi  # noqa: PLC0415
         coords_files = list_all_cached_coords_for_wsi(self.uploads_dir, wsi_id)
         if coords_files:
             # Aggregate info from all coords files
@@ -1017,6 +1019,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 "summary": str
             }
         """
+        from backend.ai.tasks.feature_cache import cleanup_dangling_symlinks  # noqa: PLC0415
         result = cleanup_dangling_symlinks(self.uploads_dir)
 
         result["summary"] = (
