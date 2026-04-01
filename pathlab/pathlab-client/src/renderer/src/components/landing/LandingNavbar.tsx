@@ -4,7 +4,7 @@ import { LanguageSwitcher } from '../common/LanguageSwitcher'
 import { Button } from '../ui/button'
 import { LANDING_NAV_ITEMS } from '../../constants/landing/landing-nav'
 import { Menu, X } from 'lucide-react'
-import pathlabLogo from '../../../../public/images/pathlab-logo.png'
+import pathlabLogo from '../../../public/images/pathlab-logo.png'
 
 export function LandingNavbar({ onLogin }: { onLogin: () => void }) {
   const { t } = useTranslation()

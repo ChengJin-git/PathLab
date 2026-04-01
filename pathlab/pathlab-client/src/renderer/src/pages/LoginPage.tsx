@@ -18,7 +18,7 @@ import { PrivacyPolicyModal } from '../components/PrivacyPolicyModal'
 import { getPublicSettings, getPublicMaintenanceNotice, ApiError } from '../api'
 import { MaintenanceNoticeModal } from '../components/MaintenanceNoticeModal'
 import { RegisterRequestModal } from '../components/RegisterRequestModal'
-import pathlabLogo from '../../../public/images/pathlab-logo.png'
+import pathlabLogo from '../../public/images/pathlab-logo.png'
 
 /**
  * Inner login page component.

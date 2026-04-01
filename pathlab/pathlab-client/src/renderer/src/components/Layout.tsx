@@ -16,7 +16,7 @@ import { uploadAvatar, deleteAvatar, ApiError } from '../api'
 import { API_BASE } from '../config'
 import { useTranslation } from 'react-i18next'
 import { LanguageSwitcher } from './common/LanguageSwitcher'
-import pathlabLogo from '../../../public/images/pathlab-logo.png'
+import pathlabLogo from '../../public/images/pathlab-logo.png'
 
 interface LayoutProps {
   children: React.ReactNode
