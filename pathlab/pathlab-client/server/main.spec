@@ -254,6 +254,30 @@ all_datas += [
     (os.path.join(server_root, 'gateway', 'prompts'),   'gateway/prompts'),
 ]
 
+# openslide-python >= 4.0 ships libopenslide.so.1 inside the openslide_bin
+# wheel package and loads it via importlib.resources (not ctypes.util.find_library).
+# PyInstaller does NOT automatically bundle .so files that are package data, so
+# we must include it explicitly as a datas entry so it lands at
+# _internal/openslide_bin/libopenslide.so.1 where importlib.resources can find it.
+_openslide_bin_so = None
+try:
+    import importlib.resources as _ir
+    import openslide_bin as _osb
+    _lib_name = 'libopenslide.so.1' if sys.platform == 'linux' else (
+        'libopenslide.1.dylib' if sys.platform == 'darwin' else 'libopenslide-1.dll'
+    )
+    with _ir.as_file(_ir.files('openslide_bin').joinpath(_lib_name)) as _p:
+        if _p.exists():
+            _openslide_bin_so = str(_p)
+except Exception:
+    pass
+
+if _openslide_bin_so:
+    all_datas.append((_openslide_bin_so, 'openslide_bin'))
+    print(f"[spec] Including openslide_bin library: {_openslide_bin_so}")
+else:
+    print("[spec] WARNING: openslide_bin library not found; openslide may fail at runtime")
+
 # Deduplicate datas (collect_all may produce duplicates)
 seen_datas = set()
 dedup_datas = []
