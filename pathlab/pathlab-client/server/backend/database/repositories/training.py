@@ -36,7 +36,11 @@ from ..models import (
     utc_now,
 )
 from .base import BaseRepository
-from backend.ai.utils.data_splitter import split_wsi_dataset, split_case_dataset
+# NOTE: split_wsi_dataset / split_case_dataset are intentionally NOT imported at
+# module level. Importing backend.ai.utils triggers __init__.py which pulls in
+# cam_utils → torch at import time. The database layer is loaded by the Gateway
+# subprocess which must never import torch at startup. The import is done lazily
+# inside TrainingTaskRepository.create() below.
 from backend.ai.schemas.base import TaskStatus
 from backend.annotation.coco_utils import (
     merge_coco_datasets,
@@ -242,6 +246,12 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             task_data["preprocessing_config"] = preprocessing_config
 
         # Calculate splits
+        # Lazy import: avoids torch being imported by the Gateway subprocess at startup.
+        # (backend.ai.utils.__init__ pulls in cam_utils → torch)
+        from backend.ai.utils.data_splitter import (  # noqa: PLC0415
+            split_wsi_dataset,
+            split_case_dataset,
+        )
         wsi_splits = {}
         if split_config:
             strategy = split_config.get("strategy", "random")

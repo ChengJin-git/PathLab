@@ -336,7 +336,8 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         # Exclude test frameworks (not needed at runtime)
-        'pytest', 'unittest', 'doctest', 'pdb',
+        # NOTE: 'pdb' must NOT be excluded — torch/distributed/__init__.py imports it.
+        'pytest', 'unittest', 'doctest',
         # Exclude Jupyter / IPython (heavy, not needed)
         'IPython', 'jupyter', 'notebook',
         # Exclude Qt GUI (not needed in headless server)
