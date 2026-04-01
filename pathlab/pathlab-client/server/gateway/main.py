@@ -65,6 +65,13 @@ from .routes import (
 from backend.common.config import Config
 from gateway.chat.context_builder import build_chat_context_for_user
 
+# Ensure required upload directories exist at import time so that the
+# StaticFiles mount below never crashes on a missing "avatars" directory.
+# (Config.ensure_directories() is also called in the lifespan for safety,
+#  but StaticFiles validates the path during app-object construction,
+#  i.e. before the lifespan fires.)
+Config.ensure_directories()
+
 
 async def _startup_prewarm_chat_context_cache() -> None:
     try:

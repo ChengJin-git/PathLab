@@ -202,6 +202,7 @@ app.whenReady().then(() => {
   launchSidecar
     .then((port) => {
       console.log(`[Main] Python sidecar started on port ${port}`)
+      createWindow()
     })
     .catch((error) => {
       console.error('[Main] Failed to start services:', error)
@@ -211,9 +212,9 @@ app.whenReady().then(() => {
           `后台服务启动失败：\n${error instanceof Error ? error.message : String(error ?? 'unknown error')}`
         )
       }
+      // Still open the window in development so the dev can see errors
+      if (!app.isPackaged) createWindow()
     })
-
-  createWindow()
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
