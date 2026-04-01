@@ -18,6 +18,7 @@ from sqlalchemy import (
     JSON,
     Index,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -476,8 +477,14 @@ class ChatConversation(TimestampMixin, Base):
     """
 
     __tablename__ = "chat_conversations"
+    __table_args__ = (
+        # Explicit UniqueConstraint so the constraint appears inline in CREATE TABLE DDL.
+        # Required for the self-referencing FK on parent_conversation_id to be valid
+        # at table creation time (PostgreSQL rejects FK referencing non-UNIQUE col).
+        UniqueConstraint("conversation_id", name="uq_chat_conversations_conversation_id"),
+    )
 
-    conversation_id = Column(String(255), unique=True, nullable=False, index=True)
+    conversation_id = Column(String(255), nullable=False, index=True)
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
     parent_conversation_id = Column(
