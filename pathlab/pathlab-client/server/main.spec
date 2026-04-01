@@ -278,6 +278,44 @@ if _openslide_bin_so:
 else:
     print("[spec] WARNING: openslide_bin library not found; openslide may fail at runtime")
 
+# ---------------------------------------------------------------------------
+# Aslide native libraries: sdpc/lib, kfb/lib, tron/lib
+#
+# collect_all('Aslide') collects these .so files as "binaries", but PyInstaller
+# strips their directory structure and deposits them flat into _internal/ top
+# level. sdpc_bindings.py uses os.path.dirname(os.path.abspath(__file__)) to
+# construct the path to lib/libsqrayslideservice.so, so the files MUST land at
+# _internal/Aslide/sdpc/lib/ (and similarly for kfb and tron).
+#
+# Solution: include each lib/ directory as datas (not binaries) so PyInstaller
+# copies the full directory tree verbatim to the correct dest path.
+# ---------------------------------------------------------------------------
+try:
+    import site as _site
+    _aslide_base = None
+    for _sp in _site.getsitepackages():
+        _candidate = os.path.join(_sp, 'Aslide')
+        if os.path.isdir(_candidate):
+            _aslide_base = _candidate
+            break
+
+    if _aslide_base:
+        for _subdir, _dest in [
+            ('sdpc/lib', 'Aslide/sdpc/lib'),
+            ('kfb/lib',  'Aslide/kfb/lib'),
+            ('tron/lib', 'Aslide/tron/lib'),
+        ]:
+            _src_dir = os.path.join(_aslide_base, *_subdir.split('/'))
+            if os.path.isdir(_src_dir):
+                all_datas.append((_src_dir, _dest))
+                print(f"[spec] Including Aslide libs: {_src_dir} -> {_dest}")
+            else:
+                print(f"[spec] WARNING: Aslide lib dir not found: {_src_dir}")
+    else:
+        print("[spec] WARNING: Aslide package not found in site-packages; Aslide slide support may fail")
+except Exception as _e:
+    print(f"[spec] WARNING: Failed to locate Aslide libs: {_e}")
+
 # Deduplicate datas (collect_all may produce duplicates)
 seen_datas = set()
 dedup_datas = []
