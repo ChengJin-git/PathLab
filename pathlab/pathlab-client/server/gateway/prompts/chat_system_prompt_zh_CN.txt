@@ -582,10 +582,10 @@ AI 回复：
   "close": 4,
   "use_otsu": false,
   "aggregator": "abmil",
-  "learning_rate": 0.0002,
+  "learning_rate": 0.001,
   "epochs": 50,
   "batch_size": 1,
-  "optimizer": "adam",
+  "optimizer": "sgd",
   "auto_balance": true,
   "early_stopping_patience": 20,
   "split_strategy": "k_fold",
@@ -610,7 +610,7 @@ AI 回复：
   "learning_rate": 0.0001,
   "epochs": 30,
   "batch_size": 32,
-  "optimizer": "adam",
+  "optimizer": "adamw",
   "auto_balance": true,
   "early_stopping_patience": 10,
   "split_strategy": "random"
@@ -684,6 +684,13 @@ AI 回复：
 - **WSI 分类 / survival** 在架构层面都必须使用 `aggregator`，禁止使用 patch 的 `classifier` 头（如 `linear`、`mlp`、`attention`）。
 - **survival** 与 `wsi classification` 的主要差别在 objective / loss；推荐时不要把它改写成 patch classifier 家族，同时继续遵守当前系统支持的 survival 提交字段。
 - **Patch 分类**必须使用 `classifier`，禁止使用 WSI 的 MIL 聚合器（如 `abmil`、`clam_mb`、`transmil`）。
+- **优化器选择指南**：
+  - `adamw`：分割任务优先；当配置偏 Transformer / 基础模型（FM）/ 现代视觉 backbone，或更看重正则化与泛化时，通常也应优先于 `adam`。
+  - `sgd`：适合更简单的 CNN 风格基线或只训练头部的基线，尤其在数据更大、更干净，或用户明确关心显存占用、训练更保守时。
+  - `adam`：适合快速首轮实验，或在冻结特征上只训练一个较小 head、且没有明显理由改用 `adamw` / `sgd` 时使用。
+  - 不要因为 `adam` 常见就机械默认；要结合任务类型、backbone 家族、数据规模，以及用户更在意正则化还是简单/高效来选。
+  - 如果切换了 `optimizer`，也必须重新评估 `learning_rate`。不要在换优化器后默认沿用原学习率。
+  - 对 PathLab 这类病理训练，`adam` / `adamw` 往往仍在同一数量级（常见起点约 `1e-4` 到 `3e-4`），而 `sgd` 通常需要明显更大的学习率（常见约 `1e-3` 到 `1e-2`，先从更保守的一端开始）。
 - **分割任务**始终是 patch 级别（data_type="patch"）。使用 `seg_architecture`、`seg_backbone`、`seg_loss_names`、`seg_loss_weights` 代替 encoder/aggregator。
   - **分割有两种模式**：
     1. **标准分割**：选择标准分割架构 + segmentation backbone
@@ -1725,10 +1732,12 @@ AI 回复：
 
 ### 模型训练
 **aggregator**（8 种可用，仅 WSI）：abmil、meanmil、maxmil、dsmil、dtfdmil、clam_sb、clam_mb、transmil
-**learning_rate**：0.0002（默认）
+**learning_rate**：0.0002（通用默认值；要随 optimizer 一起调整，不能把它当成通吃默认）
 **epochs**：50（默认）
 **batch_size**：wsi 为 1，patch 为 64
-**optimizer**：adam（默认）、sgd、adamw
+**optimizer**：adam、sgd、adamw（通用训练表单可能默认从 `adam` 开始，但推荐时必须按任务匹配，不能机械默认 `adam`）
+**优化器经验法则**：分割与 Transformer/FM 风格视觉配置优先 `adamw`；更简单的 CNN 风格或较大规模的头部基线、且用户关心显存/效率时可考虑 `sgd`；`adam` 主要用于快速首轮实验或冻结特征上的小型 head 基线
+**学习率经验法则**：使用 `adam` 或 `adamw` 时，常见起始范围约为 `1e-4` 到 `3e-4`；使用 `sgd` 时，通常应把学习率提高到约 `1e-3` 到 `1e-2`，不要直接沿用 Adam 的学习率。分割任务若用 `adamw`，`1e-4` 仍是合理默认起点。
 **auto_balance**：true（推荐用于不平衡类别）、false（用于平衡类别）
 **early_stopping_patience**：20（默认），小数据集增大，大数据集减小
 

@@ -1366,17 +1366,6 @@ export default function ResultsViewerPage() {
                             {getTaskSplitLabel(selectedTask, t)}
                           </Badge>
                         )}
-                        {selectedTask?.split_config?.strategy !== 'manual' && typeof selectedTask?.split_config?.stratified === 'boolean' && (
-                          <Badge variant="secondary" className={`text-[10px] tracking-wider font-bold px-2 ${
-                            selectedTask.split_config.stratified
-                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-                          }`}>
-                            {selectedTask.split_config.stratified
-                              ? t('taskDetail.configuration.stratifiedEnabled')
-                              : t('taskDetail.configuration.stratifiedDisabled')}
-                          </Badge>
-                        )}
                         <span className="text-xs text-gray-400 font-medium">
                           {formatDateTime(selectedTask.created_at || '', '')}
                         </span>
@@ -1458,19 +1447,6 @@ export default function ResultsViewerPage() {
                                         : 'bg-sky-50 text-sky-700'
                                     }`}>
                                       {getTaskSplitLabel(task, t)}
-                                    </span>
-                                  )}
-                                  {task.split_config?.strategy !== 'manual' && typeof task.split_config?.stratified === 'boolean' && (
-                                    <span className={`text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
-                                      selectedTaskId === task.task_id
-                                        ? 'bg-white/20 text-white'
-                                        : task.split_config.stratified
-                                          ? 'bg-emerald-50 text-emerald-700'
-                                          : 'bg-gray-100 text-gray-600'
-                                    }`}>
-                                      {task.split_config.stratified
-                                        ? t('taskDetail.configuration.stratifiedEnabled')
-                                        : t('taskDetail.configuration.stratifiedDisabled')}
                                     </span>
                                   )}
                                   {task.created_at && (

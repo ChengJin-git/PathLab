@@ -582,10 +582,10 @@ Here's your training configuration:
   "close": 4,
   "use_otsu": false,
   "aggregator": "abmil",
-  "learning_rate": 0.0002,
+  "learning_rate": 0.001,
   "epochs": 50,
   "batch_size": 1,
-  "optimizer": "adam",
+  "optimizer": "sgd",
   "auto_balance": true,
   "early_stopping_patience": 20,
   "split_strategy": "k_fold",
@@ -610,7 +610,7 @@ You can edit any field above, then click "Start Training" when ready.
   "learning_rate": 0.0001,
   "epochs": 30,
   "batch_size": 32,
-  "optimizer": "adam",
+  "optimizer": "adamw",
   "auto_balance": true,
   "early_stopping_patience": 10,
   "split_strategy": "random"
@@ -684,6 +684,13 @@ IMPORTANT for [TASK_CONFIG]:
 - **WSI classification / survival** must use `aggregator` at the architecture level and MUST NOT use patch `classifier` heads such as `linear`, `mlp`, or `attention`.
 - **survival** differs from `wsi classification` mainly in objective / loss. Do NOT rewrite it into a patch-classifier family, while still respecting the system's currently supported survival submission fields.
 - **Patch classification** must use `classifier` and MUST NOT use WSI MIL aggregators such as `abmil`, `clam_mb`, or `transmil`.
+- **Optimizer selection guide**:
+  - `adamw`: preferred for segmentation, and generally preferred over `adam` when the setup is transformer-like / FM-heavy / modern vision-backbone-heavy, or when better regularization and generalization are important.
+  - `sgd`: a good option for simpler CNN-like or head-only baselines, especially on larger/cleaner datasets or when the user cares about lower memory use and a conservative baseline.
+  - `adam`: acceptable for a quick first-pass experiment or small head-only training on frozen features when there is no strong reason to prefer `adamw` or `sgd`.
+  - Do NOT choose `adam` by reflex just because it is common; reason from task type, backbone family, dataset scale, and whether the user wants regularization vs. simplicity/efficiency.
+  - If you change `optimizer`, re-evaluate `learning_rate` too. Do NOT keep the same LR by default when switching optimizers.
+  - For PathLab-style pathology training, `adam` / `adamw` usually stay in the same order of magnitude (often around `1e-4` to `3e-4`), while `sgd` usually needs a noticeably larger LR (often around `1e-3` to `1e-2`; prefer the conservative end first).
 - **Segmentation tasks** are ALWAYS patch-level (data_type="patch"). Use `seg_architecture`, `seg_backbone`, `seg_loss_names`, `seg_loss_weights` instead of encoder/aggregator.
   - **Segmentation has TWO modes**:
     1. **Standard segmentation**: choose a standard segmentation architecture + segmentation backbone.
@@ -1757,10 +1764,12 @@ When user asks to **view** specific metrics or charts (e.g., "show me the ROC cu
 
 ### Model Training
 **aggregator** (8 available, for wsi only): abmil, meanmil, maxmil, dsmil, dtfdmil, clam_sb, clam_mb, transmil
-**learning_rate**: 0.0002 (default)
+**learning_rate**: 0.0002 (generic default; adjust with optimizer rather than treating it as universal)
 **epochs**: 50 (default)
 **batch_size**: 1 for wsi, 64 for patch
-**optimizer**: adam (default), sgd, adamw
+**optimizer**: adam, sgd, adamw (generic UI defaults may start at `adam`, but recommendation must be task-matched rather than blindly defaulting to `adam`)
+**Optimizer rule of thumb**: prefer `adamw` for segmentation and transformer/FM-heavy vision setups; consider `sgd` for simpler CNN-like or larger head-only baselines when memory/efficiency matters; use `adam` mainly for quick first-pass or small head-only baselines on frozen features
+**Learning-rate rule of thumb**: if using `adam` or `adamw`, a typical starting range is around `1e-4` to `3e-4`; if using `sgd`, usually raise LR to around `1e-3` to `1e-2` instead of reusing the Adam LR unchanged. For segmentation with `adamw`, `1e-4` remains a sensible default.
 **auto_balance**: true (recommended for imbalanced classes), false (for balanced classes)
 
 ### Segmentation Model (patch-level only)

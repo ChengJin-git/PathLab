@@ -236,20 +236,6 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                       {task.preprocessing_config.feature_batch_size ?? 'N/A'}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
-                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                      {formatSplitMethod(task.preprocessing_config.split_config, t)}
-                    </span>
-                  </div>
-                  {formatStratification(task.preprocessing_config.split_config, t) && (
-                    <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                      <span className="text-gray-500 font-medium">{t('taskDetail.configuration.stratification')}</span>
-                      <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                        {formatStratification(task.preprocessing_config.split_config, t)}
-                      </span>
-                    </div>
-                  )}
                 </>
               ) : (
                 <>
@@ -313,6 +299,12 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                 </div>
               )}
               <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
+                <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                  {formatSplitMethod(task.preprocessing_config.split_config, t)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[11px] sm:text-sm">
                 <span className="text-gray-500 font-medium">{t('taskDetail.configuration.learningRate')}</span>
                 <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
                   {task.model_config.learning_rate ?? 'N/A'}
@@ -337,24 +329,6 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                     {task.model_config.batch_size ?? 'N/A'}
                   </span>
                 </div>
-              )}
-              {task.data_type === 'wsi' && (
-                <>
-                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
-                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                      {formatSplitMethod(task.preprocessing_config.split_config, t)}
-                    </span>
-                  </div>
-                  {formatStratification(task.preprocessing_config.split_config, t) && (
-                    <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                      <span className="text-gray-500 font-medium">{t('taskDetail.configuration.stratification')}</span>
-                      <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                        {formatStratification(task.preprocessing_config.split_config, t)}
-                      </span>
-                    </div>
-                  )}
-                </>
               )}
             </div>
           </div>
