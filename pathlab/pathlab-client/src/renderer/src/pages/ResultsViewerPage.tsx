@@ -82,6 +82,12 @@ interface TrainingTask {
   classes?: string[] | null
   source_dataset_id?: string | null
   model_config?: Record<string, unknown> | null
+  split_config?: {
+    strategy?: 'random' | 'k_fold' | 'manual'
+    n_splits?: number
+    ratios?: { train: number; val: number; test: number }
+    stratified?: boolean
+  } | null
   model_id: string | null
   is_kfold: boolean  // Whether this task was trained with K-Fold cross-validation
 }
@@ -114,6 +120,22 @@ const getTaskResultsDisplayCount = (task?: TrainingTask | null): number => {
   if (!task) return 0
   const testCount = task.test_display_count ?? 0
   return testCount > 0 ? testCount : task.ai_results_count
+}
+
+const isTaskKFold = (task?: TrainingTask | null): boolean => {
+  if (!task) return false
+  return task.is_kfold || task.split_config?.strategy === 'k_fold'
+}
+
+const getTaskSplitLabel = (
+  task: TrainingTask | null | undefined,
+  t: ReturnType<typeof useTranslation>['t']
+): string | null => {
+  const strategy = task?.split_config?.strategy
+  if (!strategy) return null
+  if (strategy === 'random') return t('taskDetail.configuration.splitRandom')
+  if (strategy === 'k_fold') return `${task?.split_config?.n_splits ?? 'K'}${t('taskDetail.configuration.splitKFold')}`
+  return t('taskDetail.configuration.splitManual')
 }
 
 export default function ResultsViewerPage() {
@@ -1339,6 +1361,22 @@ export default function ResultsViewerPage() {
                             {getTaskModelDisplayLabel(selectedTask)}
                           </Badge>
                         )}
+                        {getTaskSplitLabel(selectedTask, t) && (
+                          <Badge variant="secondary" className="bg-sky-50 text-sky-700 hover:bg-sky-100 text-[10px] tracking-wider font-bold px-2">
+                            {getTaskSplitLabel(selectedTask, t)}
+                          </Badge>
+                        )}
+                        {selectedTask?.split_config?.strategy !== 'manual' && typeof selectedTask?.split_config?.stratified === 'boolean' && (
+                          <Badge variant="secondary" className={`text-[10px] tracking-wider font-bold px-2 ${
+                            selectedTask.split_config.stratified
+                              ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}>
+                            {selectedTask.split_config.stratified
+                              ? t('taskDetail.configuration.stratifiedEnabled')
+                              : t('taskDetail.configuration.stratifiedDisabled')}
+                          </Badge>
+                        )}
                         <span className="text-xs text-gray-400 font-medium">
                           {formatDateTime(selectedTask.created_at || '', '')}
                         </span>
@@ -1411,6 +1449,28 @@ export default function ResultsViewerPage() {
                                         : 'bg-purple-50 text-purple-700'
                                     }`}>
                                       {getTaskModelDisplayLabel(task)}
+                                    </span>
+                                  )}
+                                  {getTaskSplitLabel(task, t) && (
+                                    <span className={`text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                      selectedTaskId === task.task_id
+                                        ? 'bg-white/20 text-white'
+                                        : 'bg-sky-50 text-sky-700'
+                                    }`}>
+                                      {getTaskSplitLabel(task, t)}
+                                    </span>
+                                  )}
+                                  {task.split_config?.strategy !== 'manual' && typeof task.split_config?.stratified === 'boolean' && (
+                                    <span className={`text-[10px] tracking-wider font-bold px-2 py-0.5 rounded-full transition-colors duration-200 ${
+                                      selectedTaskId === task.task_id
+                                        ? 'bg-white/20 text-white'
+                                        : task.split_config.stratified
+                                          ? 'bg-emerald-50 text-emerald-700'
+                                          : 'bg-gray-100 text-gray-600'
+                                    }`}>
+                                      {task.split_config.stratified
+                                        ? t('taskDetail.configuration.stratifiedEnabled')
+                                        : t('taskDetail.configuration.stratifiedDisabled')}
                                     </span>
                                   )}
                                   {task.created_at && (
@@ -1488,7 +1548,7 @@ export default function ResultsViewerPage() {
                           {t(metric.labelKey, { defaultValue: metric.label })}
                         </span>
                         {/* 95% CI button only for non-K-Fold tasks (K-Fold uses mean ± std) */}
-                        {selectedMetrics.includes(metric.id) && !selectedTask?.is_kfold && (
+                        {selectedMetrics.includes(metric.id) && !isTaskKFold(selectedTask) && (
                           <button
                             type="button"
                             onClick={() => toggleBootstrapCI(metric.id)}

@@ -81,6 +81,7 @@ export interface AgentTaskConfig {
   split_strategy?: 'random' | 'k_fold' | 'manual'  // Data split strategy recommended by agent (manual = use predefined splits from CSV)
   k_fold_splits?: number       // Number of folds for k-fold CV (default: 5)
   seed?: number                // Random seed for reproducibility (default: 42)
+  stratified?: boolean         // Whether to preserve label/annotation distribution during split
 
   // Internal state
   submitted_task_id?: string   // Set after successful submission for persistence
@@ -175,19 +176,16 @@ function normalizeAgentTaskConfig(config: AgentTaskConfig): AgentTaskConfig {
     data_type: 'patch',
     seg_backbone: normalizedBackbone,
     seg_architecture: resolveSegmentationArchitecture(config, normalizedBackbone),
+    stratified: config.stratified ?? true,
   }
 }
 
 function normalizeSplitStrategy(
-  taskType: AgentTaskConfig['task_type'],
+  _taskType: AgentTaskConfig['task_type'],
   splitStrategy: AgentTaskConfig['split_strategy'] | undefined,
   hasPreDefinedSplits = false,
 ): 'random' | 'k_fold' | 'manual' {
   if (splitStrategy === 'manual') {
-    return hasPreDefinedSplits ? 'manual' : 'random'
-  }
-
-  if (taskType === 'segmentation' && splitStrategy === 'k_fold') {
     return hasPreDefinedSplits ? 'manual' : 'random'
   }
 
@@ -251,6 +249,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
   )
   const [kFoldSplits, setKFoldSplits] = useState(initialConfig.k_fold_splits || 5)
   const [randomSeed, setRandomSeed] = useState(initialConfig.seed ?? 42)
+  const [stratified, setStratified] = useState(initialConfig.stratified ?? true)
   const [hasPreDefinedSplits, setHasPreDefinedSplits] = useState(false)
   const [predefinedSplitCounts, setPredefinedSplitCounts] = useState<{ train: number, val: number, test: number }>({ train: 0, val: 0, test: 0 })
 
@@ -303,7 +302,6 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     () => resolveSegmentationArchitecture(config, resolvedSegBackbone),
     [config, resolvedSegBackbone]
   )
-  const supportsKFold = config.task_type !== 'segmentation'
   const unifiedBackboneOptions = useMemo(
     () => [
       {
@@ -457,6 +455,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     if (field === 'task_type') {
       if (value === 'segmentation') newConfig.data_type = 'patch'
       if (value === 'survival') newConfig.data_type = 'wsi'
+      if (value === 'segmentation' && newConfig.stratified == null) newConfig.stratified = true
     }
     if (field === 'data_type') {
       if (config.task_type === 'segmentation') newConfig.data_type = 'patch'
@@ -475,6 +474,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     onConfigChange?.(newConfig)
     // Clear validation error for this field
     setValidationErrors(prev => prev.filter(e => e.field !== field))
+  }
+
+  const updateStratified = (value: boolean) => {
+    setStratified(value)
+    const nextConfig = { ...config, stratified: value }
+    setConfig(nextConfig)
+    onConfigChange?.(nextConfig)
   }
 
   const validate = (): boolean => {
@@ -525,9 +531,19 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       if (splitStrategy === 'manual') {
         splitConfig = { strategy: 'manual', seed: randomSeed }
       } else if (splitStrategy === 'k_fold') {
-        splitConfig = { strategy: 'k_fold', n_splits: kFoldSplits, seed: randomSeed }
+        splitConfig = {
+          strategy: 'k_fold',
+          n_splits: kFoldSplits,
+          seed: randomSeed,
+          ...(config.task_type === 'segmentation' ? { stratified } : {}),
+        }
       } else {
-        splitConfig = { strategy: 'random', ratios: { train: 0.7, val: 0.1, test: 0.2 }, seed: randomSeed }
+        splitConfig = {
+          strategy: 'random',
+          ratios: { train: 0.7, val: 0.1, test: 0.2 },
+          seed: randomSeed,
+          ...(config.task_type === 'segmentation' ? { stratified } : {}),
+        }
       }
 
       // Generate task_id on the client so we can navigate immediately
@@ -769,7 +785,7 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                <Layers className="w-4 h-4 text-gray-400" />
                {t('training.dataSplit.title')}
              </label>
-              <div className={`grid gap-2 ${supportsKFold ? 'grid-cols-1 sm:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'}`}>
+              <div className="grid gap-2 grid-cols-1 sm:grid-cols-3">
                {/* Random Split */}
                <button
                  type="button"
@@ -793,44 +809,42 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                </button>
 
                {/* K-Fold */}
-               {supportsKFold && (
-                 <button
-                   type="button"
-                   disabled={isFormDisabled}
-                   onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
-                   className={`p-2.5 rounded-lg border text-left transition-all ${
-                     splitStrategy === 'k_fold'
-                       ? 'bg-primary-50 border-primary-400 ring-1 ring-primary-400'
-                       : 'bg-white border-gray-200 hover:border-primary-300'
-                   } ${isFormDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-                 >
-                   <div className="flex items-center gap-1.5 mb-1">
-                     <div className={`w-3 h-3 shrink-0 rounded-full border flex items-center justify-center ${
-                       splitStrategy === 'k_fold' ? 'border-primary-500' : 'border-gray-300'
-                     }`}>
-                       {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />}
-                     </div>
-                     <span className="text-xs font-medium text-gray-800">{t('training.dataSplit.kFoldCV')}</span>
+               <button
+                 type="button"
+                 disabled={isFormDisabled}
+                 onClick={() => !isFormDisabled && setSplitStrategy('k_fold')}
+                 className={`p-2.5 rounded-lg border text-left transition-all ${
+                   splitStrategy === 'k_fold'
+                     ? 'bg-primary-50 border-primary-400 ring-1 ring-primary-400'
+                     : 'bg-white border-gray-200 hover:border-primary-300'
+                 } ${isFormDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+               >
+                 <div className="flex items-center gap-1.5 mb-1">
+                   <div className={`w-3 h-3 shrink-0 rounded-full border flex items-center justify-center ${
+                     splitStrategy === 'k_fold' ? 'border-primary-500' : 'border-gray-300'
+                   }`}>
+                     {splitStrategy === 'k_fold' && <div className="w-1.5 h-1.5 rounded-full bg-primary-500" />}
                    </div>
-                   {splitStrategy === 'k_fold' ? (
-                     <div className="pl-4 flex items-center gap-1.5">
-                       <input
-                          type="number"
-                          min={2}
-                          max={KFOLD_MAX_SPLITS}
-                          value={kFoldSplits}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => setKFoldSplits(Math.max(2, Math.min(KFOLD_MAX_SPLITS, parseInt(e.target.value) || 5)))}
-                         disabled={isFormDisabled}
-                         className="w-11 px-1 py-0.5 border border-gray-300 rounded text-xs"
-                       />
-                       <span className="text-[10px] text-gray-500">folds</span>
-                     </div>
-                   ) : (
-                     <p className="text-[10px] text-gray-400 pl-4">{t('training.dataSplit.kFoldCVDesc')}</p>
-                   )}
-                 </button>
-               )}
+                   <span className="text-xs font-medium text-gray-800">{t('training.dataSplit.kFoldCV')}</span>
+                 </div>
+                 {splitStrategy === 'k_fold' ? (
+                   <div className="pl-4 flex items-center gap-1.5">
+                     <input
+                        type="number"
+                        min={2}
+                        max={KFOLD_MAX_SPLITS}
+                        value={kFoldSplits}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => setKFoldSplits(Math.max(2, Math.min(KFOLD_MAX_SPLITS, parseInt(e.target.value) || 5)))}
+                       disabled={isFormDisabled}
+                       className="w-11 px-1 py-0.5 border border-gray-300 rounded text-xs"
+                     />
+                     <span className="text-[10px] text-gray-500">folds</span>
+                   </div>
+                 ) : (
+                   <p className="text-[10px] text-gray-400 pl-4">{t('training.dataSplit.kFoldCVDesc')}</p>
+                 )}
+               </button>
 
                {/* Predefined Split or Upload Prompt */}
                {hasPreDefinedSplits ? (
@@ -868,6 +882,22 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                  </div>
                )}
              </div>
+
+            {config.task_type === 'segmentation' && splitStrategy !== 'manual' && (
+              <label className="mt-3 flex items-start gap-2.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={stratified}
+                  onChange={(e) => updateStratified(e.target.checked)}
+                  disabled={isFormDisabled}
+                  className="mt-0.5 w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-2 focus:ring-primary-500"
+                />
+                <div>
+                  <div className="text-xs font-medium text-gray-800">{t('training.dataSplit.stratifiedSplit')}</div>
+                  <p className="text-[10px] text-gray-500 mt-0.5">{t('training.dataSplit.stratifiedSplitDesc')}</p>
+                </div>
+              </label>
+            )}
            </div>
          )}
 

@@ -32,6 +32,10 @@ from backend.database.repositories import (
     DatasetStatsRepository,
 )
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
+from backend.common.split_generation import (
+    generate_split_assignments,
+    load_segmentation_multilabels,
+)
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import (
     require_pathologist_or_admin,
@@ -40,14 +44,9 @@ from backend.auth.dependencies import (
     get_user_id_filter,
     get_wsi_with_access,
 )
-from backend.ai.utils.data_splitter import split_case_dataset, split_wsi_dataset
 from backend.annotation.summary_cache import (
     load_dataset_annotation_summary_cache,
     is_dataset_annotation_summary_cache_valid,
-)
-from backend.annotation.coco_utils import (
-    merge_coco_datasets,
-    extract_coco_wsi_label_sets,
 )
 from ..dependencies import logger, storage_manager
 from ..models import (
@@ -1827,12 +1826,6 @@ async def export_dataset_labels(
         splits = {wsi.wsi_id: wsi.split or "unknown" for wsi in wsis}
         logger.info(f"Exporting dataset {dataset_id} with predefined splits")
     elif generate_split:
-        if strategy == "k_fold" and task_type == SEGMENTATION_TASK_TYPE:
-            raise HTTPException(
-                status_code=400,
-                detail="Segmentation export does not support k-fold splits",
-            )
-
         if strategy == "random":
             total_ratio = train_ratio + val_ratio + test_ratio
             if abs(total_ratio - 1.0) > 0.01:
@@ -1849,22 +1842,25 @@ async def export_dataset_labels(
 
         segmentation_multilabels: Dict[str, Set[str]] = {}
         if task_type == SEGMENTATION_TASK_TYPE:
-            segmentation_multilabels = await _load_segmentation_multilabels(
-                db, dataset_id, wsis
-            )
+            _, segmentation_multilabels = await load_segmentation_multilabels(db, wsis)
 
-        splits, split_fallback_applied = _generate_split_assignments(
+        split_config = {
+            "strategy": strategy,
+            "n_splits": n_splits,
+            "seed": seed,
+            "stratified": stratified,
+            "ratios": {
+                "train": train_ratio,
+                "val": val_ratio,
+                "test": test_ratio,
+            },
+        }
+        splits, split_fallback_applied = await asyncio.to_thread(
+            generate_split_assignments,
             wsis,
-            dataset_id=dataset_id,
             aggregation_level=aggregation_level,
             task_type=task_type,
-            strategy=strategy,
-            n_splits=n_splits,
-            seed=seed,
-            stratified=stratified,
-            train_ratio=train_ratio,
-            val_ratio=val_ratio,
-            test_ratio=test_ratio,
+            split_config=split_config,
             segmentation_multilabels=segmentation_multilabels,
         )
 

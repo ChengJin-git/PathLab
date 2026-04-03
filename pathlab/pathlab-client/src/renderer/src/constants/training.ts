@@ -561,6 +561,7 @@ export interface SplitDefaults {
   strategy: 'random' | 'k_fold' | 'manual'
   kFoldSplits: number
   randomSeed: number
+  stratified: boolean
   splitRatio: number  // Train percentage for random split
 }
 
@@ -571,6 +572,7 @@ export const SPLIT_DEFAULTS: SplitDefaults = {
   strategy: 'random',
   kFoldSplits: 5,
   randomSeed: 42,
+  stratified: true,
   splitRatio: 70,
 }
 

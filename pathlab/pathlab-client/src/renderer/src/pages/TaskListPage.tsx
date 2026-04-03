@@ -41,6 +41,25 @@ interface Task {
   username?: string | null  // Username of task creator (only for admin users)
 }
 
+type TaskSplitConfig = NonNullable<Task['preprocessing_config']>['split_config']
+
+function getTaskSplitConfig(task: Task): TaskSplitConfig | undefined {
+  return task.preprocessing_config?.split_config as TaskSplitConfig | undefined
+}
+
+function formatTaskSplitLabel(task: Task, t: ReturnType<typeof useTranslation>['t']): string | null {
+  const splitConfig = getTaskSplitConfig(task)
+  if (!splitConfig?.strategy) return null
+
+  if (splitConfig.strategy === 'random') {
+    return t('taskDetail.configuration.splitRandom')
+  }
+  if (splitConfig.strategy === 'k_fold') {
+    return `${splitConfig.n_splits ?? 'K'}${t('taskDetail.configuration.splitKFold')}`
+  }
+  return t('taskDetail.configuration.splitManual')
+}
+
 function isTaskCancellable(task: Task): boolean {
   const cancellableStatuses = task.task_type === 'external_validation'
     ? VALIDATION_CANCELLABLE_STATUSES
@@ -660,6 +679,24 @@ export default function TaskListPage() {
                         )}
                       </div>
                     </div>
+                    {formatTaskSplitLabel(task, t) && (
+                      <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100/60">
+                          {formatTaskSplitLabel(task, t)}
+                        </span>
+                        {typeof getTaskSplitConfig(task)?.stratified === 'boolean' && getTaskSplitConfig(task)?.strategy !== 'manual' && (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                            getTaskSplitConfig(task)?.stratified
+                              ? 'bg-emerald-50 text-emerald-700 border-emerald-100/60'
+                              : 'bg-gray-100 text-gray-600 border-gray-200/70'
+                          }`}>
+                            {getTaskSplitConfig(task)?.stratified
+                              ? t('taskDetail.configuration.stratifiedEnabled')
+                              : t('taskDetail.configuration.stratifiedDisabled')}
+                          </span>
+                        )}
+                      </div>
+                    )}
                     {isAdmin && task.username && (
                       <div className="flex items-center gap-1 text-[10px] sm:text-xs text-gray-400">
                         <User className="w-3 h-3 text-gray-300 flex-shrink-0" />

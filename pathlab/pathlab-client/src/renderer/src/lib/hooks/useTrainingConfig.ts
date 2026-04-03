@@ -96,6 +96,8 @@ export interface UseTrainingConfigReturn {
   setKFoldSplits: (k: number) => void
   randomSeed: number
   setRandomSeed: (seed: number) => void
+  stratified: boolean
+  setStratified: (value: boolean) => void
 }
 
 export function useTrainingConfig(): UseTrainingConfigReturn {
@@ -146,6 +148,7 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
   const [splitStrategy, setSplitStrategy] = useDraftState<SplitStrategy>(`${D}splitStrategy`, SPLIT_DEFAULTS.strategy)
   const [kFoldSplits, setKFoldSplits] = useDraftState(`${D}kFoldSplits`, SPLIT_DEFAULTS.kFoldSplits)
   const [randomSeed, setRandomSeed] = useDraftState(`${D}randomSeed`, SPLIT_DEFAULTS.randomSeed)
+  const [stratified, setStratified] = useDraftState(`${D}stratified`, SPLIT_DEFAULTS.stratified)
 
   return {
     // Preprocessing (tileSize and stride removed - auto-determined by PrePATH-style)
@@ -211,6 +214,8 @@ export function useTrainingConfig(): UseTrainingConfigReturn {
     setKFoldSplits,
     randomSeed,
     setRandomSeed,
+    stratified,
+    setStratified,
   }
 }
 

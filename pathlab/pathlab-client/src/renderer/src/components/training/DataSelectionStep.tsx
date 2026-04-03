@@ -85,6 +85,8 @@ export interface DataSelectionStepProps {
   setSplitStrategy: (strategy: SplitStrategy) => void
   kFoldSplits: number
   setKFoldSplits: (k: number) => void
+  stratified: boolean
+  setStratified: (value: boolean) => void
   kFoldValidation: KFoldValidation
   randomSplitValidation: RandomSplitValidation
   hasPreDefinedSplits: boolean
@@ -152,6 +154,8 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
     setSplitStrategy,
     kFoldSplits,
     setKFoldSplits,
+    stratified,
+    setStratified,
     kFoldValidation,
     randomSplitValidation,
     hasPreDefinedSplits,
@@ -242,6 +246,8 @@ export function DataSelectionStep(props: DataSelectionStepProps) {
           setSplitStrategy={setSplitStrategy}
           kFoldSplits={kFoldSplits}
           setKFoldSplits={setKFoldSplits}
+          stratified={stratified}
+          setStratified={setStratified}
           kFoldValidation={kFoldValidation}
           randomSplitValidation={randomSplitValidation}
           hasPreDefinedSplits={hasPreDefinedSplits}

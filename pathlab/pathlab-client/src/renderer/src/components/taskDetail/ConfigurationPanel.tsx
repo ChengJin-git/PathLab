@@ -70,6 +70,19 @@ const formatSplitMethod = (
   return strategy
 }
 
+const formatStratification = (
+  splitConfig: TaskDetail['preprocessing_config']['split_config'],
+  t: ReturnType<typeof useTranslation>['t']
+): string | null => {
+  if (!splitConfig || splitConfig.strategy === 'manual' || typeof splitConfig.stratified !== 'boolean') {
+    return null
+  }
+
+  return splitConfig.stratified
+    ? t('taskDetail.configuration.stratifiedEnabled')
+    : t('taskDetail.configuration.stratifiedDisabled')
+}
+
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
   const { t } = useTranslation()
   const isExternalValidation = task.task_type === 'external_validation'
@@ -229,6 +242,14 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                       {formatSplitMethod(task.preprocessing_config.split_config, t)}
                     </span>
                   </div>
+                  {formatStratification(task.preprocessing_config.split_config, t) && (
+                    <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                      <span className="text-gray-500 font-medium">{t('taskDetail.configuration.stratification')}</span>
+                      <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                        {formatStratification(task.preprocessing_config.split_config, t)}
+                      </span>
+                    </div>
+                  )}
                 </>
               ) : (
                 <>
@@ -318,12 +339,22 @@ export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) 
                 </div>
               )}
               {task.data_type === 'wsi' && (
-                <div className="flex justify-between items-center text-[11px] sm:text-sm">
-                  <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
-                  <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
-                    {formatSplitMethod(task.preprocessing_config.split_config, t)}
-                  </span>
-                </div>
+                <>
+                  <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                    <span className="text-gray-500 font-medium">{t('taskDetail.configuration.splitMethod')}</span>
+                    <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                      {formatSplitMethod(task.preprocessing_config.split_config, t)}
+                    </span>
+                  </div>
+                  {formatStratification(task.preprocessing_config.split_config, t) && (
+                    <div className="flex justify-between items-center text-[11px] sm:text-sm">
+                      <span className="text-gray-500 font-medium">{t('taskDetail.configuration.stratification')}</span>
+                      <span className="font-bold text-gray-900 bg-white px-2 py-0.5 rounded border border-gray-100 shadow-sm">
+                        {formatStratification(task.preprocessing_config.split_config, t)}
+                      </span>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </div>

@@ -1108,15 +1108,19 @@ async def get_analysis_tasks(
 
         # Extract feature_extractor and split_strategy from preprocessing_config
         feature_extractor = None
-        is_segmentation_task = task_type in ("segmentation", "patch_segmentation")
         is_kfold = False
+        split_summary = None
         if isinstance(task.preprocessing_config, dict):
             feature_extractor = task.preprocessing_config.get("feature_extractor")
-            # Check split strategy to determine if K-Fold training
             split_config = task.preprocessing_config.get("split_config", {})
-            is_kfold = (
-                not is_segmentation_task and split_config.get("strategy") == "k_fold"
-            )
+            if isinstance(split_config, dict):
+                split_summary = {
+                    "strategy": split_config.get("strategy"),
+                    "n_splits": split_config.get("n_splits"),
+                    "ratios": split_config.get("ratios"),
+                    "stratified": split_config.get("stratified"),
+                }
+                is_kfold = split_config.get("strategy") == "k_fold"
 
         # Determine display count based on aggregation_level
         aggregation_level = resources.get("aggregation_level", "file")
@@ -1154,6 +1158,7 @@ async def get_analysis_tasks(
                 "wsi_ids": [],
                 "classes": task.classes,
                 "model_config": task.model_config,
+                "split_config": split_summary,
                 "source_dataset_id": source_dataset_ids.get(task_id),
                 "is_kfold": is_kfold,
                 "source": "database",

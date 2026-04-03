@@ -64,6 +64,7 @@ class SplitConfig(BaseModel):
     ratios: Dict[str, float] = {"train": 0.7, "val": 0.1, "test": 0.2}
     manual_splits: Optional[Dict[str, str]] = None  # map wsi_id -> split
     seed: int = 42
+    stratified: bool = True
 
 
 class TrainingTaskRequest(BaseModel):

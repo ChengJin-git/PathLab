@@ -323,6 +323,7 @@ export interface SplitConfig {
   ratios?: { train: number; val: number; test: number }
   manual_splits?: Record<string, string> // map wsi_id -> split
   seed?: number // Random seed for reproducibility (also serves as invisible watermark)
+  stratified?: boolean
 }
 
 export interface TrainingTaskConfig {

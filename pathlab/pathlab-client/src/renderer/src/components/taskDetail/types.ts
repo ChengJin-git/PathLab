@@ -46,6 +46,7 @@ export interface TaskDetail {
       ratios?: { train: number; val: number; test: number }
       manual_splits?: Record<string, string>
       seed?: number
+      stratified?: boolean
     }
   }
   model_config: {

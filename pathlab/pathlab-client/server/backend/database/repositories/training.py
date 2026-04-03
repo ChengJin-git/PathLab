@@ -44,9 +44,9 @@ from .base import BaseRepository
 # subprocess which must never import torch at startup. The import is done lazily
 # inside TrainingTaskRepository.create() below.
 from backend.ai.schemas.base import TaskStatus
-from backend.annotation.coco_utils import (
-    merge_coco_datasets,
-    extract_coco_wsi_label_sets,
+from backend.common.split_generation import (
+    generate_split_assignments,
+    load_segmentation_multilabels,
 )
 
 
@@ -274,9 +274,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
         segmentation_multilabels: Dict[str, Set[str]] = {}
 
         if task_type == "segmentation":
-            classes, segmentation_multilabels = await _load_segmentation_multilabels(
-                db, wsis
-            )
+            classes, segmentation_multilabels = await load_segmentation_multilabels(db, wsis)
             if not classes:
                 raise ValueError(
                     "Segmentation tasks require at least one COCO category in the selected dataset."
@@ -324,13 +322,6 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             preprocessing_config["split_config"] = split_config
             task_data["preprocessing_config"] = preprocessing_config
 
-        # Calculate splits
-        # Lazy import: avoids torch being imported by the Gateway subprocess at startup.
-        # (backend.ai.utils.__init__ pulls in cam_utils → torch)
-        from backend.ai.utils.data_splitter import (  # noqa: PLC0415
-            split_wsi_dataset,
-            split_case_dataset,
-        )
         wsi_splits = {}
         if split_config:
             strategy = split_config.get("strategy", "random")
@@ -341,12 +332,9 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                 wsi_split_map = {wsi.wsi_id: wsi.split for wsi in wsis if wsi.split}
                 wsi_splits = wsi_split_map
             else:
-                # Check if dataset is case-level by looking at the first WSI's dataset via DataGroup
-                # For case-level datasets, we must split by case_id to prevent data leakage
-                is_case_level = False
-                task_type_from_group = None
+                aggregation_level = "file"
+                task_type_from_group = task_type
                 if wsis:
-                    # Get dataset's DataGroup to check aggregation_level and task_type
                     first_dataset_id = wsis[0].dataset_id
                     if first_dataset_id:
                         group_result = await db.execute(
@@ -356,84 +344,16 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                         )
                         group_row = group_result.first()
                         if group_row:
-                            is_case_level = group_row[0] == "case"
+                            aggregation_level = group_row[0]
                             task_type_from_group = group_row[1]
-
-                # Determine task type from DataGroup for split behavior
-                is_survival = task_type_from_group == "survival"
-                is_segmentation = task_type_from_group == "segmentation"
-
-                survival_strat_labels: Dict[str, str] = {}
-                if is_survival:
-                    # Align auto-generated survival splits with dataset label export.
-                    # The data repo export path stratifies survival datasets by
-                    # event_status only, so training task creation must do the same
-                    # to reproduce exported CSV splits exactly.
-                    survival_strat_labels = _build_survival_event_labels(
-                        wsis, case_level=is_case_level
-                    )
-
-                if is_case_level:
-                    # Build case_id_map and case-level labels
-                    case_id_map: Dict[str, str] = {}
-                    case_labels: Dict[str, str] = {}
-                    for wsi in wsis:
-                        case_id = wsi.case_id if wsi.case_id else wsi.wsi_id
-                        case_id_map[wsi.wsi_id] = case_id
-
-                        # Determine label for stratification
-                        label_val = None
-                        if is_survival:
-                            label_val = survival_strat_labels.get(case_id)
-                        else:
-                            label_val = wsi.label
-
-                        # Use the first WSI's label for each case (they should be the same)
-                        if label_val and case_id not in case_labels:
-                            case_labels[case_id] = label_val
-
-                    # Use case-level split to prevent data leakage
-                    # Labels are keyed by case_id for stratification
-                    split_config_copy = {**split_config}
-                    if "labels" in split_config_copy:
-                        del split_config_copy["labels"]  # We'll use case_labels instead
-                    wsi_splits = await asyncio.to_thread(
-                        partial(
-                            split_case_dataset,
-                            wsi_ids,
-                            case_id_map,
-                            labels=case_labels,
-                            multilabels=segmentation_multilabels
-                            if is_segmentation
-                            else None,
-                            **split_config_copy,
-                        )
-                    )
-                else:
-                    # For slide-level datasets, use regular splitter
-                    # Build labels dict for stratified splitting
-                    wsi_labels: Dict[str, str] = {}
-
-                    for wsi in wsis:
-                        label_val = None
-                        if is_survival:
-                            label_val = survival_strat_labels.get(wsi.wsi_id)
-                        else:
-                            label_val = wsi.label
-
-                        if label_val:
-                            wsi_labels[wsi.wsi_id] = label_val
-                    wsi_splits = await asyncio.to_thread(
-                        partial(
-                            split_wsi_dataset,
-                            wsi_ids,
-                            labels=None if is_segmentation else wsi_labels,
-                            multilabels=segmentation_multilabels
-                            if is_segmentation
-                            else None,
-                            **split_config,
-                        )
-                    )
+                wsi_splits, _ = await asyncio.to_thread(
+                    generate_split_assignments,
+                    wsis,
+                    aggregation_level=aggregation_level,
+                    task_type=task_type_from_group,
+                    split_config=split_config,
+                    segmentation_multilabels=segmentation_multilabels,
+                )
 
         # Pre-build bulk insert payloads before opening the write-heavy phase.
         insert_batch_size = 1000

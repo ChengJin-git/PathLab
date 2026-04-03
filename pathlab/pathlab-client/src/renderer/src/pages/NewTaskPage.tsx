@@ -174,12 +174,6 @@ export default function NewTaskPage() {
     }
   }, [dataSelection.hasPreDefinedSplits, trainingConfig.splitStrategy])
 
-  useEffect(() => {
-    if (wizard.taskType === 'segmentation' && trainingConfig.splitStrategy === 'k_fold') {
-      trainingConfig.setSplitStrategy('random')
-    }
-  }, [wizard.taskType, trainingConfig.splitStrategy])
-
   // Auto-adjust default parameters when taskType changes
   useEffect(() => {
     if (wizard.taskType === 'survival') {
@@ -507,12 +501,14 @@ export default function NewTaskPage() {
           strategy: 'k_fold',
           n_splits: trainingConfig.kFoldSplits,
           seed: trainingConfig.randomSeed,
+          ...(wizard.taskType === 'segmentation' ? { stratified: trainingConfig.stratified } : {}),
         }
       } else {
         splitConfig = {
           strategy: 'random',
           ratios: { train: 0.7, val: 0.1, test: 0.2 },
           seed: trainingConfig.randomSeed,
+          ...(wizard.taskType === 'segmentation' ? { stratified: trainingConfig.stratified } : {}),
         }
       }
 
@@ -805,6 +801,8 @@ export default function NewTaskPage() {
               setSplitStrategy={trainingConfig.setSplitStrategy}
               kFoldSplits={trainingConfig.kFoldSplits}
               setKFoldSplits={trainingConfig.setKFoldSplits}
+              stratified={trainingConfig.stratified}
+              setStratified={trainingConfig.setStratified}
               hasPreDefinedSplits={dataSelection.hasPreDefinedSplits}
               predefinedSplitCounts={dataSelection.predefinedSplitCounts}
               kFoldValidation={splitValidation.kFoldValidation}
@@ -909,6 +907,9 @@ export default function NewTaskPage() {
               segFmDecoderType={trainingConfig.segFmDecoderType}
               segLossNames={trainingConfig.segLossNames}
               segLossWeights={trainingConfig.segLossWeights}
+              splitStrategy={trainingConfig.splitStrategy}
+              kFoldSplits={trainingConfig.kFoldSplits}
+              stratified={trainingConfig.stratified}
               validateConfiguration={validateConfiguration}
               trainingStatus={wizard.trainingStatus}
               submitError={wizard.submitError}
