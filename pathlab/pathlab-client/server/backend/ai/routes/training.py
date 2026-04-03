@@ -762,6 +762,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
                 "aggregator": req.aggregator,
                 "epochs": req.epochs,
                 "lr": req.lr,
+                "weight_decay": req.weight_decay,
                 "num_bins": req.num_bins,
             },
         )
@@ -788,6 +789,7 @@ async def train_wsi_survival(req: WSISurvivalTrainRequest) -> TrainResponse:
             num_classes=req.num_bins,
             epochs=req.epochs,
             lr=req.lr,
+            weight_decay=req.weight_decay,
             logger=scoped_logger,
             session_maker=scoped_session.get_session_maker(),
             optimizer=req.optimizer,

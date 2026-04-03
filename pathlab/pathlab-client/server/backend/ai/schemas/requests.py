@@ -149,6 +149,7 @@ class WSISurvivalTrainRequest(BaseModel):
     task_id: str
     epochs: int = 30
     lr: float = 0.0002
+    weight_decay: float = 1e-5
     aggregator: str = "abmil"
     feature_extractor: str = "resnet50"
     num_bins: int = 4

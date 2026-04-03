@@ -20,6 +20,10 @@ from typing import Any, Dict, List, Optional, cast as type_cast
 from sqlalchemy import update as sql_update
 
 from backend.ai.schemas.base import TaskStatus
+from backend.ai.tasks.wsi_survival.losses import (
+    compute_risk_from_survival,
+    compute_survival_from_hazards,
+)
 from backend.common.config import Config
 from backend.database.models import TrainingTask
 from backend.database.repositories import (
@@ -1864,8 +1868,10 @@ async def _run_external_validation(
                                 if attn_f is not None:
                                     all_attentions.append(attn_f.cpu().numpy())
                             hazards = np.mean(all_hazards, axis=0)
-                            surv_probs = np.cumprod(1 - hazards).tolist()
-                            risk_score = float(np.sum(hazards))
+                            surv_probs = compute_survival_from_hazards(hazards).tolist()
+                            risk_score = float(
+                                compute_risk_from_survival(np.asarray(surv_probs))
+                            )
                             attention = (
                                 np.mean(all_attentions, axis=0)
                                 if all_attentions
@@ -1910,8 +1916,10 @@ async def _run_external_validation(
 
                         if is_survival:
                             hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                            surv_probs = np.cumprod(1 - hazards).tolist()
-                            risk_score = float(np.sum(hazards))
+                            surv_probs = compute_survival_from_hazards(hazards).tolist()
+                            risk_score = float(
+                                compute_risk_from_survival(np.asarray(surv_probs))
+                            )
                             attention = (
                                 attention_t.cpu().numpy()
                                 if attention_t is not None
@@ -1951,11 +1959,7 @@ async def _run_external_validation(
                             gt_data = case_survival_data.get(item_id, {})
                         else:
                             gt_data = survival_data.get(item_id, {})
-                        _chunk_risk_scores.append(
-                            float(np.sum(hazards))
-                            if isinstance(hazards, np.ndarray)
-                            else risk_score
-                        )
+                        _chunk_risk_scores.append(float(risk_score))
                         pred_label = None
                         probs_dict = None
                         gt_label = None

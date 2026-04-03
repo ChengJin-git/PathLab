@@ -1109,6 +1109,7 @@ async def run_training_pipeline(
         # Step 3: WSI classification training via AI service (supports multiple aggregators)
         epochs = int(model_config.get("epochs", 50))
         lr = float(model_config.get("learning_rate", 0.0002))
+        weight_decay = float(model_config.get("weight_decay", 1e-5))
         aggregator = model_config.get("aggregator", "abmil")
         optimizer = model_config.get("optimizer", "adam")
         auto_balance = bool(model_config.get("auto_balance", False))
@@ -1125,6 +1126,7 @@ async def run_training_pipeline(
                 "task_id": task_id,
                 "epochs": epochs,
                 "lr": lr,
+                "weight_decay": weight_decay,
                 "aggregator": aggregator,
                 "feature_extractor": feature_extractor,
                 "num_bins": 4,  # Standard for manual NLLLoss

@@ -438,7 +438,11 @@ async def create_training_task(
             pipeline_preprocessing_config = dict(req.preprocessing or {})
             if split_config_dict is not None:
                 pipeline_preprocessing_config["split_config"] = split_config_dict
-            prefetched_wsis = list(wsi_map.values())
+            # Preserve the original WSI ordering used to resolve `wsi_ids`.
+            # Survival/random/k-fold split generation is order-sensitive when
+            # stratified splitting shuffles indices with a fixed seed, so we
+            # must keep the same order as dataset export / selection flows.
+            prefetched_wsis = [wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map]
             try:
                 task = await TrainingTaskRepository.create(
                     db,

@@ -19,6 +19,10 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     WSIRepository,
 )
+from backend.ai.tasks.wsi_survival.losses import (
+    compute_risk_from_survival,
+    compute_survival_from_hazards,
+)
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
@@ -228,8 +232,8 @@ async def _run_inference_wsi_survival(
                     raw_attention = None
 
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                surv = np.cumprod(1 - hazards)
-                risk_score = float(np.sum(hazards))
+                surv = compute_survival_from_hazards(hazards)
+                risk_score = float(compute_risk_from_survival(surv))
                 all_risks.append(risk_score)
 
                 attention_np = (
@@ -280,8 +284,8 @@ async def _run_inference_wsi_survival(
                     raw_attention = None
 
                 hazards = torch.sigmoid(logits).cpu().numpy().flatten()
-                surv = np.cumprod(1 - hazards)
-                risk_score = float(np.sum(hazards))
+                surv = compute_survival_from_hazards(hazards)
+                risk_score = float(compute_risk_from_survival(surv))
                 all_risks.append(risk_score)
 
                 attention_np = (

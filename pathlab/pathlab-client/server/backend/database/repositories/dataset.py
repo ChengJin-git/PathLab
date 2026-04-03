@@ -5,7 +5,7 @@ DatasetRepository - Data Access Layer
 import logging
 from datetime import datetime
 from typing import Any, List, Optional, Dict
-from sqlalchemy import select, update, delete, func, insert
+from sqlalchemy import select, update, delete, func, insert, desc
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -190,7 +190,9 @@ class DatasetRepository(BaseRepository[Dataset]):
     @staticmethod
     async def get_wsi_ids(db: AsyncSession, dataset_id: str) -> List[str]:
         result = await db.execute(
-            select(WSISlide.wsi_id).where(WSISlide.dataset_id == dataset_id)
+            select(WSISlide.wsi_id)
+            .where(WSISlide.dataset_id == dataset_id)
+            .order_by(desc(WSISlide.created_at))
         )
         return [row[0] for row in result.all()]
 

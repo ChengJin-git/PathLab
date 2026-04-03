@@ -3,11 +3,13 @@ TrainingTaskRepository - Data Access Layer
 """
 
 import asyncio
+from collections import Counter
 from functools import partial
 import logging
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Set, Tuple, Any
+import numpy as np
 from sqlalchemy import (
     select,
     update,
@@ -87,6 +89,83 @@ def _extract_segmentation_multilabels_from_payloads(
         {label for label_set in multilabels.values() for label in label_set}
     )
     return classes, multilabels
+
+
+def _compute_survival_bin_edges(
+    times: List[float], statuses: List[int], n_bins: int
+) -> np.ndarray:
+    times_arr = np.asarray(times, dtype=float)
+    statuses_arr = np.asarray(statuses, dtype=int)
+    if len(times_arr) == 0:
+        return np.array([], dtype=float)
+
+    uncensored_times = times_arr[statuses_arr == 1]
+    source_times = uncensored_times if len(uncensored_times) > 0 else times_arr
+    quantiles = np.linspace(0.0, 1.0, n_bins + 1)
+    bin_edges = np.quantile(source_times, quantiles).astype(float)
+
+    eps = 1e-6
+    bin_edges[0] = float(times_arr.min()) - eps
+    bin_edges[-1] = float(times_arr.max()) + eps
+    if np.unique(bin_edges).size < n_bins + 1:
+        bin_edges = np.linspace(
+            float(times_arr.min()) - eps,
+            float(times_arr.max()) + eps,
+            n_bins + 1,
+        )
+
+    return bin_edges
+
+
+def _discretize_survival_times(
+    times: List[float], bin_edges: np.ndarray
+) -> List[int]:
+    if len(bin_edges) < 2:
+        return [0 for _ in times]
+
+    labels = np.searchsorted(bin_edges, np.asarray(times, dtype=float), side="right") - 1
+    labels = np.clip(labels, 0, len(bin_edges) - 2)
+    return labels.astype(int).tolist()
+
+
+def _build_survival_stratification_labels(
+    wsis: List[WSISlide], n_bins: int, case_level: bool
+) -> Dict[str, str]:
+    records: Dict[str, Tuple[float, int]] = {}
+    for wsi in wsis:
+        if wsi.event_time is None or wsi.event_status is None:
+            continue
+        sample_id = (
+            wsi.case_id if case_level and wsi.case_id else wsi.wsi_id
+        ) if case_level else wsi.wsi_id
+        records.setdefault(sample_id, (float(wsi.event_time), int(wsi.event_status)))
+
+    if not records:
+        return {}
+
+    sample_ids = list(records.keys())
+    times = [records[sample_id][0] for sample_id in sample_ids]
+    statuses = [records[sample_id][1] for sample_id in sample_ids]
+    bin_edges = _compute_survival_bin_edges(times, statuses, n_bins)
+    disc_labels = _discretize_survival_times(times, bin_edges)
+    return {
+        sample_id: f"{disc_label}_{1 - status}"
+        for sample_id, disc_label, status in zip(sample_ids, disc_labels, statuses)
+    }
+
+
+def _build_survival_event_labels(
+    wsis: List[WSISlide], case_level: bool
+) -> Dict[str, str]:
+    labels: Dict[str, str] = {}
+    for wsi in wsis:
+        if wsi.event_status is None:
+            continue
+        sample_id = (
+            wsi.case_id if case_level and wsi.case_id else wsi.wsi_id
+        ) if case_level else wsi.wsi_id
+        labels.setdefault(sample_id, str(int(wsi.event_status)))
+    return labels
 
 
 def _build_training_task_wsi_batches(
@@ -284,6 +363,16 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                 is_survival = task_type_from_group == "survival"
                 is_segmentation = task_type_from_group == "segmentation"
 
+                survival_strat_labels: Dict[str, str] = {}
+                if is_survival:
+                    # Align auto-generated survival splits with dataset label export.
+                    # The data repo export path stratifies survival datasets by
+                    # event_status only, so training task creation must do the same
+                    # to reproduce exported CSV splits exactly.
+                    survival_strat_labels = _build_survival_event_labels(
+                        wsis, case_level=is_case_level
+                    )
+
                 if is_case_level:
                     # Build case_id_map and case-level labels
                     case_id_map: Dict[str, str] = {}
@@ -295,8 +384,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                         # Determine label for stratification
                         label_val = None
                         if is_survival:
-                            if wsi.event_status is not None:
-                                label_val = str(wsi.event_status)
+                            label_val = survival_strat_labels.get(case_id)
                         else:
                             label_val = wsi.label
 
@@ -329,8 +417,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                     for wsi in wsis:
                         label_val = None
                         if is_survival:
-                            if wsi.event_status is not None:
-                                label_val = str(wsi.event_status)
+                            label_val = survival_strat_labels.get(wsi.wsi_id)
                         else:
                             label_val = wsi.label
 
@@ -813,11 +900,19 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
 
         Returns:
             Dict mapping wsi_id to case_id. If case_id is None, uses wsi_id as fallback.
+
+        Notes:
+            Result order matters for case-level MIL because downstream code builds
+            ``case_to_wsi`` by iterating this mapping and concatenates slide
+            features in that order. We therefore keep the order stable and aligned
+            with the training-task/export convention: newest slide first within a
+            case (``created_at DESC``), with a deterministic ``wsi_id`` tie-breaker.
         """
         result = await db.execute(
             select(WSISlide.wsi_id, WSISlide.case_id)
             .join(TrainingTaskWSI, WSISlide.wsi_id == TrainingTaskWSI.wsi_id)
             .where(TrainingTaskWSI.task_id == task_id)
+            .order_by(asc(WSISlide.case_id), desc(WSISlide.created_at), asc(WSISlide.wsi_id))
         )
 
         case_id_map: Dict[str, str] = {}
