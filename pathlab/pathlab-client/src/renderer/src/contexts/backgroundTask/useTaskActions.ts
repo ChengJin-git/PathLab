@@ -512,6 +512,8 @@ export function useTaskActions(params: TaskActionsParams) {
         actualTaskId = taskId.replace('training_', '')
       } else if (taskId.startsWith('inference_')) {
         actualTaskId = taskId.replace('inference_', '')
+      } else if (taskId.startsWith('batchinf_')) {
+        actualTaskId = taskId.replace('batchinf_', '')
       } else if (taskId.startsWith('extval_')) {
         actualTaskId = taskId.replace('extval_', '')
       } else if (taskId.startsWith('analysis_')) {

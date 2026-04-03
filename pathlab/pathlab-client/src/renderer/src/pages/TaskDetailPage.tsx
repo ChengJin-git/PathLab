@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
@@ -420,6 +420,11 @@ export default function TaskDetailPage() {
       return
     }
 
+    if (task?.task_type === 'batch_inference') {
+      setRerunError(t('taskDetail.rerunErrorGeneric'))
+      return
+    }
+
     if (!task || !task.wsi_ids || task.wsi_ids.length === 0) {
       setRerunError(t('taskDetail.rerunErrorMissingWsi'))
       return
@@ -562,6 +567,7 @@ export default function TaskDetailPage() {
   const isPatchLevel = displayTask.data_type === 'patch'
   const isExternalValidation = displayTask.task_type === 'external_validation'
   const isBatchInference = displayTask.task_type === 'batch_inference'
+  const batchTaskType = batchSummary?.task_type ?? ''
 
   // Display task progress directly in the standard 0-100 range.
   const displayProgress = displayTask.status === 'completed'
@@ -626,7 +632,7 @@ export default function TaskDetailPage() {
                 {t('taskDetail.batchInference.exportCsv')}
               </Button>
             )}
-            {!waitingForCreation && (task?.status === 'failed' || task?.status === 'cancelled') && (
+            {!waitingForCreation && !isBatchInference && (task?.status === 'failed' || task?.status === 'cancelled') && (
               <Button
                 variant="outline"
                 onClick={handleRerun}
@@ -901,8 +907,21 @@ export default function TaskDetailPage() {
                       <tr className="border-b border-gray-100">
                         <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.slideId')}</th>
                         <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.filename')}</th>
-                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.prediction')}</th>
-                        <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.confidence')}</th>
+                        {batchTaskType.includes('classification') && (
+                          <>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.prediction')}</th>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.confidence')}</th>
+                          </>
+                        )}
+                        {batchTaskType.includes('survival') && (
+                          <>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.riskScore')}</th>
+                            <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.riskGroup')}</th>
+                          </>
+                        )}
+                        {batchTaskType.includes('segmentation') && (
+                          <th className="text-left py-2 px-3 text-xs font-bold text-gray-400 uppercase tracking-wider">{t('taskDetail.batchInference.predictionMask')}</th>
+                        )}
                       </tr>
                     </thead>
                     <tbody>
@@ -910,18 +929,40 @@ export default function TaskDetailPage() {
                         const topProb = result.probs
                           ? Math.max(...Object.values(result.probs))
                           : null
+                        const riskScore = result.metadata?.risk_score != null
+                          ? Number(result.metadata.risk_score).toFixed(3)
+                          : '—'
+                        const riskGroup = result.metadata?.risk_group != null
+                          ? String(result.metadata.risk_group)
+                          : '—'
+                        const maskGenerated = result.metadata?.pred_mask_path || result.metadata?.pred_mask_file
+                          ? t('taskDetail.batchInference.maskGenerated')
+                          : t('taskDetail.batchInference.maskMissing')
                         return (
                           <tr key={result.wsi_id || idx} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                             <td className="py-2 px-3 font-mono text-xs text-gray-600 truncate max-w-[120px]" title={result.wsi_id}>{result.wsi_id}</td>
                             <td className="py-2 px-3 text-gray-700 truncate max-w-[200px]" title={result.original_filename ?? ''}>{result.original_filename ?? '—'}</td>
-                            <td className="py-2 px-3">
-                              {result.pred ? (
-                                <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs font-medium text-purple-700">{result.pred}</span>
-                              ) : '—'}
-                            </td>
-                            <td className="py-2 px-3 text-gray-700 text-xs">
-                              {topProb !== null ? `${(topProb * 100).toFixed(1)}%` : '—'}
-                            </td>
+                            {batchTaskType.includes('classification') && (
+                              <>
+                                <td className="py-2 px-3">
+                                  {result.pred ? (
+                                    <span className="px-2 py-0.5 bg-purple-50 border border-purple-200 rounded text-xs font-medium text-purple-700">{result.pred}</span>
+                                  ) : '—'}
+                                </td>
+                                <td className="py-2 px-3 text-gray-700 text-xs">
+                                  {topProb !== null ? `${(topProb * 100).toFixed(1)}%` : '—'}
+                                </td>
+                              </>
+                            )}
+                            {batchTaskType.includes('survival') && (
+                              <>
+                                <td className="py-2 px-3 text-gray-700 text-xs">{riskScore}</td>
+                                <td className="py-2 px-3 text-gray-700 text-xs">{riskGroup}</td>
+                              </>
+                            )}
+                            {batchTaskType.includes('segmentation') && (
+                              <td className="py-2 px-3 text-gray-700 text-xs">{maskGenerated}</td>
+                            )}
                           </tr>
                         )
                       })}

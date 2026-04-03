@@ -66,8 +66,9 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
             created_at?: string;
             finished_at?: string
           }) => {
-            // Determine if this is an external validation task
+            // Determine if this is an external validation or batch inference task
             const isExternalValidation = task.task_type === 'external_validation'
+            const isBatchInference = task.task_type === 'batch_inference'
 
             // Cap progress to the standard 0-100 range for display.
             let displayProgress = Math.max(0, Math.min(task.progress, 100))
@@ -76,14 +77,20 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
             }
 
             // Use appropriate prefix based on task type
-            const taskPrefix = isExternalValidation ? 'extval' : 'training'
+            const taskPrefix = isExternalValidation ? 'extval' : isBatchInference ? 'batchinf' : 'training'
             const itemName = isExternalValidation
               ? t('backgroundTask.taskTitles.validation', { name: task.task_name })
-              : t('backgroundTask.taskTitles.training', { name: task.task_name })
+              : isBatchInference
+                ? t('backgroundTask.taskTitles.batchInference', { name: task.task_name })
+                : t('backgroundTask.taskTitles.training', { name: task.task_name })
 
             return {
               id: `${taskPrefix}_${task.task_id}`,
-              type: isExternalValidation ? 'external_validation' as TaskType : 'training' as TaskType,
+              type: isExternalValidation
+                ? 'external_validation' as TaskType
+                : isBatchInference
+                  ? 'batch_inference' as TaskType
+                  : 'training' as TaskType,
               title: task.task_name,
               items: [{
                 id: task.task_id,

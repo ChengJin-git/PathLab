@@ -95,6 +95,11 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
         return t(`backgroundTask.serverStatus.validation.${task.serverTaskStatus}`, { defaultValue: VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
       }
       return t('backgroundTask.typeLabels.externalValidation')
+    case 'batch_inference':
+      if (task.serverTaskStatus) {
+        return t(`backgroundTask.serverStatus.batchInference.${task.serverTaskStatus}`, { defaultValue: VALIDATION_STATUS_LABELS[task.serverTaskStatus] || task.serverTaskStatus })
+      }
+      return t('backgroundTask.typeLabels.batchInference')
     case 'analysis': {
       const analysisTypeLabel = task.analysisType === 'external'
         ? t('backgroundTask.typeLabels.externalAnalysis')
@@ -137,6 +142,7 @@ function getNavigableTaskId(task: BackgroundTask): string | null {
   if (!task.isServerTask) return null
   if (task.type === 'training') return task.id.replace(/^training_/, '')
   if (task.type === 'external_validation') return task.id.replace(/^extval_/, '')
+  if (task.type === 'batch_inference') return task.id.replace(/^batchinf_/, '')
   if (task.type === 'analysis') return task.trainingTaskId || null
   return null
 }
@@ -157,6 +163,7 @@ const TaskCard: React.FC<{
     const isServerTask = task.isServerTask === true
     const isTrainingTask = task.type === 'training'
     const isExternalValidationTask = task.type === 'external_validation'
+    const isBatchInferenceTask = task.type === 'batch_inference'
     const isAnalysisTask = task.type === 'analysis'
     const isActiveTask = task.status === 'running' || task.status === 'pending'
 
@@ -393,7 +400,7 @@ const TaskCard: React.FC<{
                 />
               </div>
             )}
-            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask || isExternalValidationTask || isAnalysisTask) && isServerTask) && task.type !== 'extraction' && (
+            {task.items.length > 0 && !(task.items.length === 1 && (task.items[0].name === task.title || isTrainingTask || isExternalValidationTask || isBatchInferenceTask || isAnalysisTask) && isServerTask) && task.type !== 'extraction' && (
               <div className="max-h-40 overflow-y-auto mt-1">
                 {task.items.map(item => <TaskItemRow key={item.id} item={item} />)}
               </div>
@@ -407,9 +414,21 @@ const TaskCard: React.FC<{
 export function BackgroundTaskPanel(): React.ReactElement | null {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { tasks, isProcessing, cancelTask, cancelServerTask, removeTask, clearCompletedTasks, subscribeTrainingSSE, subscribeAnalysisSSE, subscribeStorageSSE } = useBackgroundTask()
-  const [isOpen, setIsOpen] = React.useState(false)
+  const {
+    tasks,
+    isProcessing,
+    isPanelExpanded,
+    togglePanel,
+    cancelTask,
+    cancelServerTask,
+    removeTask,
+    clearCompletedTasks,
+    subscribeTrainingSSE,
+    subscribeAnalysisSSE,
+    subscribeStorageSSE
+  } = useBackgroundTask()
   const panelRef = React.useRef<HTMLDivElement>(null)
+  const isOpen = isPanelExpanded
 
   React.useEffect(() => {
     const unsubTraining = subscribeTrainingSSE()
@@ -424,15 +443,15 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
 
   React.useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (panelRef.current && !panelRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
+      if (isOpen && panelRef.current && !panelRef.current.contains(event.target as Node)) {
+        togglePanel()
       }
     }
     document.addEventListener("mousedown", handleClickOutside)
     return () => {
       document.removeEventListener("mousedown", handleClickOutside)
     }
-  }, [])
+  }, [isOpen, togglePanel])
 
   const activeCount = tasks.filter(t => t.status === 'running' || t.status === 'pending').length
   const runningCount = tasks.filter(t => t.status === 'running').length
@@ -458,7 +477,7 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
     <div className="relative" ref={panelRef}>
       <Tooltip content={t('backgroundTask.title')}>
         <button
-          onClick={() => setIsOpen(!isOpen)}
+          onClick={togglePanel}
           className={cn(
             "p-2 rounded-lg transition-colors relative",
             isOpen ? "bg-gray-100 text-primary-600" : "text-gray-500 hover:text-primary-600 hover:bg-gray-100"
@@ -519,8 +538,8 @@ export function BackgroundTaskPanel(): React.ReactElement | null {
                     onCancelServer={() => cancelServerTask(task)}
                     onRemove={() => removeTask(task)}
                     onNavigate={navigableId ? () => {
-                      setIsOpen(false)
                       navigate(`/task/${navigableId}`)
+                      if (isOpen) togglePanel()
                     } : undefined}
                   />
                 )

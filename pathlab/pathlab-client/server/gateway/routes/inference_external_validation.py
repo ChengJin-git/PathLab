@@ -53,6 +53,14 @@ from .inference_patch_segmentation import (
 logger = logging.getLogger(__name__)
 
 
+def _is_batch_inference_mode(execution_mode: str) -> bool:
+    return execution_mode == "batch_inference"
+
+
+def _artifact_prefix_for_mode(execution_mode: str) -> str:
+    return "binfer" if _is_batch_inference_mode(execution_mode) else "extval"
+
+
 async def _run_external_validation_patch_segmentation(
     task_id: str,
     model_task_id: str,
@@ -62,6 +70,8 @@ async def _run_external_validation_patch_segmentation(
     assigned_device: str,
     logger_manager,
     update_task_progress,
+    execution_mode: str = "external_validation",
+    auto_trigger_analysis: bool = True,
 ):
     """Run external validation for patch segmentation models.
 
@@ -89,6 +99,12 @@ async def _run_external_validation_patch_segmentation(
 
     uploads_dir = Config.get_uploads_dir()
     device = resolve_device(assigned_device)
+    mode_label = (
+        "patch segmentation batch inference"
+        if _is_batch_inference_mode(execution_mode)
+        else "patch segmentation external validation"
+    )
+    artifact_prefix = _artifact_prefix_for_mode(execution_mode)
 
     try:
         # 1. Load model checkpoint and rebuild model
@@ -104,7 +120,7 @@ async def _run_external_validation_patch_segmentation(
             )
 
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Patch segmentation: loading model from {checkpoint_path}")
+            await tl.info(f"{mode_label}: loading model from {checkpoint_path}")
 
         def _load_model():
             checkpoint = torch.load(
@@ -403,28 +419,30 @@ async def _run_external_validation_patch_segmentation(
                                 dtype=np.float32,
                             )
 
-                        cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
+                        cam_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_cam.npy"
                         np.save(cam_file, cam_map)
 
                         # Save result JSON
                         result_data = {
                             "wsi_id": wsi_id,
-                            "task_id": model_task_id,
-                            "validation_source": dataset_id,
-                            "validation_task_id": task_id,
+                            "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
                             "task_type": "patch_segmentation",
                             "aggregation_level": "file",
                             "num_classes": num_classes,
                             "class_names": class_names,
                             "image_size": list(original_size),
                             "pred_mask_file": str(mask_file),
+                            "pred_mask_path": str(mask_file),
                             "cam_file": str(cam_file),
                             "cam_size": list(cam_map.shape),
                             "has_ground_truth": has_gt,
                             "metrics": per_image_metrics,
                         }
+                        if not _is_batch_inference_mode(execution_mode):
+                            result_data["validation_source"] = dataset_id
+                            result_data["validation_task_id"] = task_id
 
-                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                        result_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_result.json"
                         with open(result_file, "w", encoding="utf-8") as f:
                             json.dump(result_data, f, ensure_ascii=False, indent=2)
 
@@ -435,6 +453,7 @@ async def _run_external_validation_patch_segmentation(
                                 "has_ground_truth": has_gt,
                                 "class_names": class_names,
                                 "pred_mask_file": str(mask_file),
+                                "pred_mask_path": str(mask_file),
                                 "result_file": str(result_file),
                             }
                         )
@@ -464,7 +483,7 @@ async def _run_external_validation_patch_segmentation(
                         "pred": "segmentation",
                         "probs": r["metrics"] if r["metrics"] else {},
                         "extra_metadata": {
-                            "validation_type": "external",
+                            "execution_mode": execution_mode,
                             "model_task_id": model_task_id,
                             "dataset_id": dataset_id,
                             "aggregation_level": "file",
@@ -473,6 +492,7 @@ async def _run_external_validation_patch_segmentation(
                             "class_names": r.get("class_names", []),
                             "metrics": r["metrics"],
                             "pred_mask_file": r["pred_mask_file"],
+                            "pred_mask_path": r.get("pred_mask_path") or r["pred_mask_file"],
                             "result_file": r["result_file"],
                         },
                     }
@@ -489,18 +509,18 @@ async def _run_external_validation_patch_segmentation(
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(
-                f"Patch segmentation external validation completed: {results_saved}/{total_items} images processed"
+                f"{mode_label.capitalize()} completed: {results_saved}/{total_items} images processed"
             )
 
-        # Auto-trigger analysis
-        await _auto_trigger_external_validation_analysis(
-            task_id=task_id,
-            model_task_id=model_task_id,
-            model_id=model_id,
-            dataset_id=dataset_id,
-            metrics=["iou", "dice", "accuracy", "precision", "recall"],
-            charts=["per_class_iou", "per_class_dice"],
-        )
+        if auto_trigger_analysis:
+            await _auto_trigger_external_validation_analysis(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                dataset_id=dataset_id,
+                metrics=["iou", "dice", "accuracy", "precision", "recall"],
+                charts=["per_class_iou", "per_class_dice"],
+            )
 
     except Exception as e:
         import traceback
@@ -541,6 +561,8 @@ async def _run_external_validation_patch_classification(
     assigned_device: str,
     logger_manager,
     update_task_progress,
+    execution_mode: str = "external_validation",
+    auto_trigger_analysis: bool = True,
 ):
     """Run external validation for patch classification models.
 
@@ -574,6 +596,12 @@ async def _run_external_validation_patch_classification(
 
     uploads_dir = Config.get_uploads_dir()
     device = resolve_device(assigned_device)
+    mode_label = (
+        "patch classification batch inference"
+        if _is_batch_inference_mode(execution_mode)
+        else "patch classification external validation"
+    )
+    artifact_prefix = _artifact_prefix_for_mode(execution_mode)
 
     try:
         # Load model checkpoint(s)
@@ -595,7 +623,7 @@ async def _run_external_validation_patch_classification(
         async with logger_manager.session() as (tl, _db):
             kfold_msg = f" (k-fold: {num_folds} folds)" if is_kfold else ""
             await tl.info(
-                f"Patch classification: loading model {model_id} with {len(classes)} classes{kfold_msg}"
+                f"{mode_label}: loading model {model_id} with {len(classes)} classes{kfold_msg}"
             )
 
         # Load checkpoint(s) and build model(s) (in thread to avoid blocking event loop)
@@ -790,15 +818,13 @@ async def _run_external_validation_patch_classification(
                         wsi_result_dir.mkdir(parents=True, exist_ok=True)
 
                         # Save CAM
-                        cam_file = wsi_result_dir / f"extval_{task_id}_cam.npy"
+                        cam_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_cam.npy"
                         np.save(cam_file, cam_map)
 
                         # Save result JSON (aligned with WSI branch fields)
                         result_data = {
                             "wsi_id": wsi_id,
-                            "task_id": model_task_id,
-                            "validation_source": dataset_id,
-                            "validation_task_id": task_id,
+                            "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
                             "task_type": "patch_classification",
                             "aggregation_level": "file",
                             "pred": pred_label,
@@ -813,8 +839,11 @@ async def _run_external_validation_patch_classification(
                             "is_kfold": is_kfold,
                             "num_folds": num_folds if is_kfold else None,
                         }
+                        if not _is_batch_inference_mode(execution_mode):
+                            result_data["validation_source"] = dataset_id
+                            result_data["validation_task_id"] = task_id
 
-                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                        result_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_result.json"
                         with open(result_file, "w", encoding="utf-8") as f:
                             json.dump(result_data, f, ensure_ascii=False, indent=2)
 
@@ -852,7 +881,7 @@ async def _run_external_validation_patch_classification(
                     "pred": r["pred"],
                     "probs": r["probs"],
                     "extra_metadata": {
-                        "validation_type": "external",
+                        "execution_mode": execution_mode,
                         "model_task_id": model_task_id,
                         "dataset_id": dataset_id,
                         "aggregation_level": "file",
@@ -875,16 +904,16 @@ async def _run_external_validation_patch_classification(
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(
-                f"Patch classification external validation completed: {results_saved}/{total_items} images processed"
+                f"{mode_label.capitalize()} completed: {results_saved}/{total_items} images processed"
             )
 
-        # Auto-trigger analysis
-        await _auto_trigger_external_validation_analysis(
-            task_id=task_id,
-            model_task_id=model_task_id,
-            model_id=model_id,
-            dataset_id=dataset_id,
-        )
+        if auto_trigger_analysis:
+            await _auto_trigger_external_validation_analysis(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                dataset_id=dataset_id,
+            )
 
     except Exception as e:
         import traceback
@@ -927,6 +956,8 @@ async def _run_external_validation(
     assigned_device: Optional[
         str
     ] = None,  # GPU device assigned by task queue (e.g., "cuda:0")
+    execution_mode: str = "external_validation",
+    auto_trigger_analysis: bool = True,
 ):
     """Background task to run external validation.
 
@@ -973,6 +1004,12 @@ async def _run_external_validation(
 
     # Determine if this is a survival task
     is_survival = model_task_type in ("survival", "wsi_survival")
+    mode_label = (
+        "batch inference"
+        if _is_batch_inference_mode(execution_mode)
+        else "external validation"
+    )
+    artifact_prefix = _artifact_prefix_for_mode(execution_mode)
 
     async def update_task_progress(
         status: str,
@@ -1009,7 +1046,7 @@ async def _run_external_validation(
         if is_permission_revoked(task_id):
             raise PermissionRevokedException(f"Permission revoked for task {task_id}")
         async with logger_manager.session() as (tl, _db):
-            await tl.info(f"Starting external validation for task: {task_id}")
+            await tl.info(f"Starting {mode_label} for task: {task_id}")
             await tl.info(
                 f"Model: {model_id} | Dataset: {dataset_id} | WSIs: {len(wsi_ids)} | Data type: {model_data_type} | Task type: {model_task_type}"
             )
@@ -1019,10 +1056,11 @@ async def _run_external_validation(
         # Clear stale analysis from a previous run so rerun/resume always
         # produces fresh metrics. _auto_trigger_external_validation_analysis
         # guards on dir existence, so we delete it here before new inference.
-        _stale_analysis_dir = uploads_dir / "logs" / "analysis" / task_id
-        if _stale_analysis_dir.exists():
-            shutil.rmtree(_stale_analysis_dir, ignore_errors=True)
-            logger.info(f"Cleared stale analysis dir for task {task_id} (rerun/resume)")
+        if auto_trigger_analysis:
+            _stale_analysis_dir = uploads_dir / "logs" / "analysis" / task_id
+            if _stale_analysis_dir.exists():
+                shutil.rmtree(_stale_analysis_dir, ignore_errors=True)
+                logger.info(f"Cleared stale analysis dir for task {task_id} (rerun/resume)")
 
         # ================================================================
         # Patch-level tasks: branch to dedicated handlers
@@ -1042,6 +1080,8 @@ async def _run_external_validation(
                     assigned_device=assigned_device or "",
                     logger_manager=logger_manager,
                     update_task_progress=update_task_progress,
+                    execution_mode=execution_mode,
+                    auto_trigger_analysis=auto_trigger_analysis,
                 )
                 return
 
@@ -1056,6 +1096,8 @@ async def _run_external_validation(
                 assigned_device=assigned_device or "",
                 logger_manager=logger_manager,
                 update_task_progress=update_task_progress,
+                execution_mode=execution_mode,
+                auto_trigger_analysis=auto_trigger_analysis,
             )
             return
 
@@ -2012,9 +2054,7 @@ async def _run_external_validation(
                             result_data = {
                                 "wsi_id": wsi_id,
                                 "case_id": item_id if is_case_level else None,
-                                "task_id": model_task_id,
-                                "validation_source": dataset_id,
-                                "validation_task_id": task_id,
+                                "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
                                 "task_type": "survival",
                                 "aggregation_level": agg_level,
                                 "risk_score": risk_score,
@@ -2032,13 +2072,14 @@ async def _run_external_validation(
                                 "is_kfold": is_kfold,
                                 "num_folds": num_folds if is_kfold else None,
                             }
+                            if not _is_batch_inference_mode(execution_mode):
+                                result_data["validation_source"] = dataset_id
+                                result_data["validation_task_id"] = task_id
                         else:
                             result_data = {
                                 "wsi_id": wsi_id,
                                 "case_id": item_id if is_case_level else None,
-                                "task_id": model_task_id,
-                                "validation_source": dataset_id,
-                                "validation_task_id": task_id,
+                                "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
                                 "task_type": "classification",
                                 "aggregation_level": agg_level,
                                 "pred": pred_label,
@@ -2054,18 +2095,21 @@ async def _run_external_validation(
                                 "is_kfold": is_kfold,
                                 "num_folds": num_folds if is_kfold else None,
                             }
+                            if not _is_batch_inference_mode(execution_mode):
+                                result_data["validation_source"] = dataset_id
+                                result_data["validation_task_id"] = task_id
 
-                        result_file = wsi_result_dir / f"extval_{task_id}_result.json"
+                        result_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_result.json"
                         attention_file = None
 
                         if slide_raw_attn is not None:
                             np.save(
-                                wsi_result_dir / f"extval_{task_id}_attention_raw.npy",
+                                wsi_result_dir / f"{artifact_prefix}_{task_id}_attention_raw.npy",
                                 slide_raw_attn,
                             )
                         if slide_attn is not None:
                             attention_file = (
-                                wsi_result_dir / f"extval_{task_id}_attention.npy"
+                                wsi_result_dir / f"{artifact_prefix}_{task_id}_attention.npy"
                             )
                             np.save(attention_file, slide_attn)
                             ensure_recommendation_preview_cache(
@@ -2092,7 +2136,7 @@ async def _run_external_validation(
                                 "pred": pred_label,
                                 "probs": probs_dict,
                                 "extra_metadata": {
-                                    "validation_type": "external",
+                                    "execution_mode": execution_mode,
                                     "model_task_id": model_task_id,
                                     "dataset_id": dataset_id,
                                     "aggregation_level": agg_level,
@@ -2105,6 +2149,9 @@ async def _run_external_validation(
                                     "attention_file": str(attention_file)
                                     if attention_file is not None
                                     else None,
+                                    "risk_score": risk_score if is_survival else None,
+                                    "event_time": gt_data.get("event_time") if is_survival else None,
+                                    "event_status": gt_data.get("event_status") if is_survival else None,
                                     "result_file": str(result_file),
                                 },
                             }
@@ -2158,7 +2205,7 @@ async def _run_external_validation(
         if is_survival and all_risk_scores:
             median_risk_score = float(np.median(all_risk_scores))
             logger.info(
-                f"Survival external validation: median risk score = {median_risk_score:.4f}"
+                f"Survival {mode_label}: median risk score = {median_risk_score:.4f}"
             )
 
             def _sync_update_survival_result_files():
@@ -2178,6 +2225,15 @@ async def _run_external_validation(
                         json.dump(result_data, f, ensure_ascii=False, indent=2)
 
             await asyncio.to_thread(_sync_update_survival_result_files)
+            for record in db_records:
+                meta = record.get("extra_metadata") or {}
+                risk_score = meta.get("risk_score")
+                if risk_score is None:
+                    continue
+                meta["median_risk_score"] = median_risk_score
+                meta["risk_group"] = (
+                    "High Risk" if float(risk_score) >= median_risk_score else "Low Risk"
+                )
 
         # Batch-insert results into database so Results page can display them
         if db_records:
@@ -2206,16 +2262,16 @@ async def _run_external_validation(
 
         async with logger_manager.session() as (tl, _db):
             await tl.info(
-                f"External validation completed: {results_saved} results saved{case_level_msg}{kfold_msg}"
+                f"{mode_label.capitalize()} completed: {results_saved} results saved{case_level_msg}{kfold_msg}"
             )
 
-        # Auto-trigger analysis after inference completes
-        await _auto_trigger_external_validation_analysis(
-            task_id=task_id,
-            model_task_id=model_task_id,
-            model_id=model_id,
-            dataset_id=dataset_id,
-        )
+        if auto_trigger_analysis:
+            await _auto_trigger_external_validation_analysis(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                dataset_id=dataset_id,
+            )
 
     except Exception as e:
         import traceback

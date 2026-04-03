@@ -1384,6 +1384,40 @@ async def get_datasets_for_validation(
     return {"items": result, "total": len(result)}
 
 
+async def _is_dataset_unlabeled_for_batch_inference(
+    db: AsyncSession,
+    dataset_id: str,
+    task_type: str,
+) -> bool:
+    normalized_task_type = (task_type or "").lower()
+    if "segmentation" in normalized_task_type:
+        # For segmentation, only imported / dataset-backed finalized GT annotations
+        # count as labels. Viewer-drawn annotations are user edits and should not
+        # block batch inference. A dataset becomes labeled as soon as any such GT
+        # annotation or paired GT mask exists anywhere in the dataset; images with
+        # no annotation can still be valid negative samples inside that labeled set.
+        gt_check = await db.execute(
+            select(func.count())
+            .select_from(SegmentationAnnotation)
+            .where(SegmentationAnnotation.source_dataset_id == dataset_id)
+            .where(SegmentationAnnotation.source != "viewer")
+            .where(SegmentationAnnotation.status == "finalized")
+        )
+        return (gt_check.scalar() or 0) == 0
+
+    if "survival" in normalized_task_type:
+        survival_check = await db.execute(
+            select(func.count(WSISlide.id))
+            .where(WSISlide.dataset_id == dataset_id)
+            .where(WSISlide.event_time.isnot(None))
+            .where(WSISlide.event_status.isnot(None))
+        )
+        return (survival_check.scalar() or 0) == 0
+
+    distinct_label_count = await DatasetRepository.get_distinct_label_count(db, dataset_id)
+    return distinct_label_count == 0
+
+
 @router.get("/datasets-for-inference")
 async def get_datasets_for_inference(
     unlabeled_only: bool = True,
@@ -1397,7 +1431,8 @@ async def get_datasets_for_inference(
     When unlabeled_only=True (default), only datasets with no existing labels are returned:
     - Classification: distinct_label_count == 0
     - Survival: no WSI has both event_time and event_status set
-    - Segmentation: always included (no WSI-level label concept)
+    - Segmentation: no imported/finalized GT annotation or paired GT mask exists;
+      viewer annotations do not count as dataset labels
 
     Excludes batch_inference and external_validation task_type datasets.
     """
@@ -1440,35 +1475,10 @@ async def get_datasets_for_inference(
         if slide_count == 0:
             continue
 
-        if unlabeled_only:
-            dg_task = dg.task_type
-            if "segmentation" in dg_task:
-                gt_check = await db.execute(
-                    select(func.count())
-                    .select_from(SegmentationAnnotation)
-                    .where(SegmentationAnnotation.source_dataset_id == dataset_id)
-                    .where(SegmentationAnnotation.source != "viewer")
-                    .where(SegmentationAnnotation.status == "finalized")
-                )
-                if (gt_check.scalar() or 0) > 0:
-                    continue
-            elif "survival" in dg_task:
-                survival_check = await db.execute(
-                    select(func.count(WSISlide.id))
-                    .where(WSISlide.dataset_id == dataset_id)
-                    .where(WSISlide.event_time.isnot(None))
-                    .where(WSISlide.event_status.isnot(None))
-                )
-                has_survival_labels = (survival_check.scalar() or 0) > 0
-                if has_survival_labels:
-                    continue
-            else:
-                # Classification: include only if distinct_label_count == 0
-                distinct_label_count = await DatasetRepository.get_distinct_label_count(
-                    db, dataset_id
-                )
-                if distinct_label_count > 0:
-                    continue
+        if unlabeled_only and not await _is_dataset_unlabeled_for_batch_inference(
+            db, dataset_id, dg.task_type
+        ):
+            continue
 
         result.append(
             {
@@ -1506,8 +1516,21 @@ async def start_batch_inference(
         )
 
     trained_models = await TrainedModelRepository.get_by_task_id(db, req.model_task_id)
-    trained_model = next((m for m in trained_models if m.is_active), None)
+    trained_model = None
+    if req.model_id:
+        trained_model = next(
+            (m for m in trained_models if m.model_id == req.model_id), None
+        )
+        if not trained_model:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Model not found for task: {req.model_id}",
+            )
+    else:
+        trained_model = next((m for m in trained_models if m.is_active), None)
     if not trained_model:
+        raise HTTPException(status_code=400, detail="Model is not active")
+    if not trained_model.is_active:
         raise HTTPException(status_code=400, detail="Model is not active")
 
     await _require_task_access(
@@ -1556,6 +1579,14 @@ async def start_batch_inference(
         raise HTTPException(
             status_code=400,
             detail=f"Model data level '{model_data_type}' mismatches dataset data level '{dataset_data_type}'",
+        )
+
+    if not await _is_dataset_unlabeled_for_batch_inference(
+        db, req.dataset_id, dataset_task_type
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Batch inference only supports unlabeled datasets. Please use external validation for labeled datasets.",
         )
 
     batch_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
@@ -1750,15 +1781,16 @@ async def get_batch_inference_summary(
             for r in results
             if r.extra_metadata and r.extra_metadata.get("risk_score") is not None
         ]
-        summary["risk_high_count"] = sum(
-            1
+        risk_groups = [
+            str(r.extra_metadata.get("risk_group", "")).strip().lower()
             for r in results
-            if r.extra_metadata and r.extra_metadata.get("risk_group") == "high"
+            if r.extra_metadata
+        ]
+        summary["risk_high_count"] = sum(
+            1 for group in risk_groups if group in ("high", "high risk")
         )
         summary["risk_low_count"] = sum(
-            1
-            for r in results
-            if r.extra_metadata and r.extra_metadata.get("risk_group") == "low"
+            1 for group in risk_groups if group in ("low", "low risk")
         )
         summary["mean_risk_score"] = (
             sum(risk_scores) / len(risk_scores) if risk_scores else None
@@ -1767,7 +1799,8 @@ async def get_batch_inference_summary(
         summary["masks_generated"] = sum(
             1
             for r in results
-            if r.extra_metadata and r.extra_metadata.get("pred_mask_path")
+            if r.extra_metadata
+            and (r.extra_metadata.get("pred_mask_path") or r.extra_metadata.get("pred_mask_file"))
         )
     return summary
 
@@ -1830,7 +1863,7 @@ async def export_batch_inference_csv(
             "probs": str(r.probs) if r.probs else "",
             "risk_score": meta.get("risk_score", ""),
             "risk_group": meta.get("risk_group", ""),
-            "pred_mask_path": meta.get("pred_mask_path", ""),
+            "pred_mask_path": meta.get("pred_mask_path") or meta.get("pred_mask_file", ""),
             "created_at": r.created_at.isoformat() + "Z" if r.created_at else "",
         }
         writer.writerow(row)

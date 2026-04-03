@@ -1208,6 +1208,11 @@
       "filename": "文件名",
       "prediction": "预测类别",
       "confidence": "置信度",
+      "riskScore": "风险评分",
+      "riskGroup": "风险分组",
+      "predictionMask": "预测掩膜",
+      "maskGenerated": "已生成",
+      "maskMissing": "未生成",
       "exportCsv": "导出 CSV",
       "showing": "显示第 {{start}}–{{end}} 条，共 {{total}} 条",
       "previous": "上一页",
@@ -1849,6 +1854,7 @@
       "inProgress": "批量推理进行中...",
       "submitted": "已提交",
       "submittedInfo": "批量推理任务已加入队列！",
+      "analysisSubmittedTrack": "批量推理已提交！请在后台任务面板中跟踪进度。",
       "viewTaskDetail": "查看任务详情 →",
       "noCompletedTasks": "暂无已完成的批量推理任务",
       "noCompletedHint": "提交批量推理任务后，结果将显示在此处。",
@@ -1862,8 +1868,12 @@
       "predictionClass": "类别",
       "confidence": "置信度",
       "riskScore": "风险评分",
+      "riskGroup": "风险分组",
       "eventTime": "预测时间",
       "instanceCount": "实例数",
+      "predictionMask": "预测掩膜",
+      "maskGenerated": "已生成",
+      "maskMissing": "未生成",
       "pagination": {
         "showing": "显示第 {{start}}–{{end}} 条，共 {{total}} 条",
         "previous": "上一页",
@@ -3148,6 +3158,7 @@
       "training": "训练",
       "analyzingResults": "分析结果",
       "externalValidation": "外部验证",
+      "batchInference": "批量推理",
       "externalAnalysis": "外部分析",
       "internalAnalysis": "内部分析",
       "storage": "存储",
@@ -3186,6 +3197,18 @@
         "completed": "已完成",
         "failed": "失败",
         "cancelled": "已取消"
+      },
+      "batchInference": {
+        "creating": "正在创建任务",
+        "queued": "排队中",
+        "pending": "待处理",
+        "patching": "图像切片中",
+        "extracting": "提取特征中",
+        "training": "推理中",
+        "resuming": "恢复中",
+        "completed": "已完成",
+        "failed": "失败",
+        "cancelled": "已取消"
       }
     },
     "taskCategory": {
@@ -3215,7 +3238,8 @@
       "cancelled": "已取消",
       "analyzing": "分析中：{{name}}",
       "training": "训练中：{{name}}",
-      "validation": "验证中：{{name}}"
+      "validation": "验证中：{{name}}",
+      "batchInference": "批量推理：{{name}}"
     },
     "relocatingToPath": "迁移至 {{name}}",
     "errors": {

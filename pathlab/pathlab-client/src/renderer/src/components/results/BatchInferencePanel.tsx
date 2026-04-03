@@ -1,7 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Play, Loader2, Download, ChevronDown, ChevronUp, Activity } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Play, Loader2, Download, ChevronDown, ChevronUp, Activity, CheckCircle } from 'lucide-react'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
@@ -15,7 +16,10 @@ import {
   type BatchInferenceResult,
   type InferenceDataset,
 } from '../../api/batchInference'
-import { getTrainedModels, type TrainedModel } from '../../api'
+import { type TrainedModel } from '../../api'
+import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
+import { useToast } from '../../contexts/ToastContext'
+import { markTrainingSubmissionPending } from '../../lib/trainingSubmissionTracker'
 import { useAsyncAction } from '../../lib/useAsyncAction'
 import { formatDateTime } from '../../lib/utils'
 
@@ -40,7 +44,10 @@ interface BatchInferencePanelProps {
 
 export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const { openPanel } = useBackgroundTask()
+  const { success, error: showError } = useToast()
 
   const [selectedModelId, setSelectedModelId] = useState<string | null>(null)
   const [selectedModelTaskId, setSelectedModelTaskId] = useState<string | null>(null)
@@ -50,15 +57,16 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
   const [resultsPage, setResultsPage] = useState(1)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null)
 
   const selectedModel = trainedModels.find(
     (m) => m.model_id === selectedModelId
   ) ?? null
 
   const { data: inferenceDatasets = [] } = useQuery({
-    queryKey: ['inference-datasets'],
+    queryKey: ['inference-datasets', selectedModel?.task_type ?? null],
     queryFn: async () => {
-      const data = await fetchDatasetsForInference(true)
+      const data = await fetchDatasetsForInference(true, selectedModel?.task_type)
       return data.items
     },
     staleTime: 3 * 60 * 1000,
@@ -74,6 +82,12 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
 
   const selectedTask = biTasks.find((t) => t.task_id === selectedTaskId) ?? null
 
+  useEffect(() => {
+    if (pendingTaskId && biTasks.some((task) => task.task_id === pendingTaskId)) {
+      setPendingTaskId(null)
+    }
+  }, [pendingTaskId, biTasks])
+
   const { data: resultsData } = useQuery({
     queryKey: ['batch-inference-results', selectedTaskId, resultsPage],
     queryFn: () =>
@@ -87,7 +101,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
   })
   const results: BatchInferenceResult[] = resultsData?.items ?? []
   const resultsTotal = resultsData?.total ?? 0
-  const taskType = resultsData?.task_type ?? selectedTask?.task_type ?? ''
+  const taskType = resultsData?.task_type ?? selectedTask?.model_task_type ?? selectedTask?.task_type ?? ''
 
   const [submitting, runSubmit] = useAsyncAction()
   const [exporting, runExport] = useAsyncAction()
@@ -96,14 +110,23 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
     if (!selectedModelId || !selectedModelTaskId || !selectedDatasetId) return
     setSubmitError(null)
     try {
-      await startBatchInference({
+      const result = await startBatchInference({
         model_task_id: selectedModelTaskId,
         model_id: selectedModelId,
         dataset_id: selectedDatasetId,
       })
+      const taskName = `${selectedModel?.task_name ?? selectedModel?.model_id ?? selectedModelTaskId} → ${selectedDataset?.name ?? selectedDatasetId}`
+      markTrainingSubmissionPending(result.task_id, taskName)
+      setPendingTaskId(result.task_id)
+      setSelectedTaskId(result.task_id)
+      setResultsPage(1)
       await queryClient.invalidateQueries({ queryKey: ['batch-inference-tasks'] })
+      openPanel()
+      success(t('resultsPage.batchInference.analysisSubmittedTrack'))
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : t('resultsPage.batchInference.failedToSubmit'))
+      const message = err instanceof Error ? err.message : t('resultsPage.batchInference.failedToSubmit')
+      setSubmitError(message)
+      showError(message)
     }
   })
 
@@ -124,7 +147,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
     !!selectedModelId && !!selectedModelTaskId && !!selectedDatasetId &&
     selectedModel != null && selectedDataset != null &&
     isCompatible(selectedModel, selectedDataset) &&
-    !submitting
+    !submitting && !pendingTaskId
 
   const totalResultPages = Math.max(1, Math.ceil(resultsTotal / PAGE_SIZE))
 
@@ -268,6 +291,11 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                 <Loader2 className="w-4 h-4 animate-spin" />
                 {t('resultsPage.batchInference.submitting')}
               </>
+            ) : pendingTaskId ? (
+              <>
+                <CheckCircle className="w-4 h-4" />
+                {t('resultsPage.batchInference.submitted')}
+              </>
             ) : (
               <>
                 <Play className="w-4 h-4" />
@@ -275,6 +303,26 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
               </>
             )}
           </Button>
+
+          {pendingTaskId && (
+            <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+              <div className="flex items-start gap-2">
+                <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-emerald-800">
+                    {t('resultsPage.batchInference.submittedInfo')}
+                  </p>
+                  <button
+                    type="button"
+                    className="mt-1 text-xs font-medium text-emerald-700 hover:text-emerald-900"
+                    onClick={() => navigate(`/task/${pendingTaskId}`)}
+                  >
+                    {t('resultsPage.batchInference.viewTaskDetail')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </Card>
 
         {/* Task list */}
@@ -314,7 +362,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                     </Badge>
                   </div>
                   <div className="text-xs text-gray-400">
-                    {t(`resultsPage.batchInference.taskType.${task.task_type}`, { defaultValue: task.task_type })} · {task.results_count} {t('resultsPage.resultsCount', { count: task.results_count })}
+                    {t(`resultsPage.batchInference.taskType.${task.model_task_type ?? task.task_type}`, { defaultValue: task.model_task_type ?? task.task_type })} · {task.results_count} {t('resultsPage.resultsCount', { count: task.results_count })}
                   </div>
                   {task.status === 'running' && (
                     <div className="mt-1.5 h-1 bg-gray-200 rounded-full overflow-hidden">
@@ -375,7 +423,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                   {selectedTask?.task_name ?? t('resultsPage.batchInference.results')}
                 </h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  {t(`resultsPage.batchInference.taskType.${selectedTask?.task_type}`, { defaultValue: selectedTask?.task_type })} · {t(`resultsPage.batchInference.dataType.${selectedTask?.data_type}`, { defaultValue: selectedTask?.data_type })} ·{' '}
+                  {t(`resultsPage.batchInference.taskType.${selectedTask?.model_task_type ?? selectedTask?.task_type}`, { defaultValue: selectedTask?.model_task_type ?? selectedTask?.task_type })} · {t(`resultsPage.batchInference.dataType.${selectedTask?.data_type}`, { defaultValue: selectedTask?.data_type })} ·{' '}
                   {resultsTotal} {t('resultsPage.resultsCount', { count: resultsTotal })}
                   {selectedTask?.finished_at && (
                     <> · {formatDateTime(selectedTask.finished_at, '')}</>
@@ -430,7 +478,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                         )}
                         {(taskType.includes('segmentation')) && (
                           <th className="text-left py-2 px-3 text-xs font-medium text-gray-500">
-                            {t('resultsPage.batchInference.instanceCount')}
+                            {t('resultsPage.batchInference.predictionMask')}
                           </th>
                         )}
                       </tr>
@@ -446,10 +494,10 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                           r.metadata?.risk_score != null
                             ? Number(r.metadata.risk_score).toFixed(3)
                             : '—'
-                        const instanceCount =
-                          r.metadata?.instance_count != null
-                            ? String(r.metadata.instance_count)
-                            : '—'
+                        const maskGenerated =
+                          r.metadata?.pred_mask_path || r.metadata?.pred_mask_file
+                            ? t('resultsPage.batchInference.maskGenerated')
+                            : t('resultsPage.batchInference.maskMissing')
                         return (
                           <tr key={r.wsi_id} className="hover:bg-gray-50/50 transition-colors">
                             <td className="py-2 px-3 text-gray-700 text-xs max-w-[180px] truncate">
@@ -467,7 +515,7 @@ export function BatchInferencePanel({ trainedModels }: BatchInferencePanelProps)
                               <td className="py-2 px-3 text-gray-600 text-xs">{riskScore}</td>
                             )}
                             {taskType.includes('segmentation') && (
-                              <td className="py-2 px-3 text-gray-600 text-xs">{instanceCount}</td>
+                              <td className="py-2 px-3 text-gray-600 text-xs">{maskGenerated}</td>
                             )}
                           </tr>
                         )

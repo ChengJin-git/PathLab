@@ -126,6 +126,38 @@ async def test_datasets_for_inference_unlabeled_dataset_included():
     assert result["items"][0]["slide_count"] == 2
 
 
+@pytest.mark.asyncio
+async def test_segmentation_batch_inference_treats_imported_gt_as_labeled():
+    from gateway.routes.results import _is_dataset_unlabeled_for_batch_inference
+
+    db = AsyncMock()
+    query_result = MagicMock()
+    query_result.scalar.return_value = 2
+    db.execute.return_value = query_result
+
+    result = await _is_dataset_unlabeled_for_batch_inference(
+        db, "ds-seg-labeled", "patch_segmentation"
+    )
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_segmentation_batch_inference_allows_viewer_only_annotations():
+    from gateway.routes.results import _is_dataset_unlabeled_for_batch_inference
+
+    db = AsyncMock()
+    query_result = MagicMock()
+    query_result.scalar.return_value = 0
+    db.execute.return_value = query_result
+
+    result = await _is_dataset_unlabeled_for_batch_inference(
+        db, "ds-seg-viewer-only", "patch_segmentation"
+    )
+
+    assert result is True
+
+
 def _mock_model_task(task_type: str, data_type: str = "wsi") -> MagicMock:
     dg = MagicMock()
     dg.task_type = task_type
@@ -296,6 +328,11 @@ async def test_batch_inference_submit_success():
             return_value=True,
         ),
         patch(
+            "gateway.routes.results.DatasetRepository.get_distinct_label_count",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
+        patch(
             "gateway.routes.results.DataGroupRepository.get_or_create",
             new_callable=AsyncMock,
             return_value=mock_batch_dg,
@@ -320,6 +357,70 @@ async def test_batch_inference_submit_success():
     assert "task_id" in result
     assert result["status"] == "pending"
     mock_queue.submit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_inference_submit_labeled_dataset_raises():
+    model_task = _mock_model_task("wsi_classification", "wsi")
+    trained_model = _mock_trained_model()
+
+    dataset_dg = MagicMock()
+    dataset_dg.task_type = "wsi_classification"
+    dataset_dg.data_type = "wsi"
+    dataset_dg.aggregation_level = "file"
+    target_dataset = MagicMock()
+    target_dataset.dataset_id = "ds-labeled"
+    target_dataset.name = "Labeled Dataset"
+    target_dataset.user_id = "user-1"
+    target_dataset.data_group = dataset_dg
+    target_dataset.is_public = False
+    target_dataset.parent_dataset_id = None
+
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=model_task,
+        ),
+        patch(
+            "gateway.routes.results.TrainedModelRepository.get_by_task_id",
+            new_callable=AsyncMock,
+            return_value=[trained_model],
+        ),
+        patch("gateway.routes.results._require_task_access", new_callable=AsyncMock),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=target_dataset,
+        ),
+        patch(
+            "gateway.routes.results._has_external_validation_dataset_access",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "gateway.routes.results.check_dataset_gpu_permission",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "gateway.routes.results.DatasetRepository.get_distinct_label_count",
+            new_callable=AsyncMock,
+            return_value=2,
+        ),
+    ):
+        from fastapi import HTTPException
+        from gateway.models import BatchInferenceRequest
+        from gateway.routes.results import start_batch_inference
+
+        req = BatchInferenceRequest(model_task_id="model-task-1", dataset_id="ds-labeled")
+        with pytest.raises(HTTPException) as exc_info:
+            await start_batch_inference(
+                req=req, user=_make_user("admin"), db=AsyncMock()
+            )
+
+    assert exc_info.value.status_code == 400
+    assert "unlabeled datasets" in exc_info.value.detail.lower()
 
 
 def _mock_batch_task(
@@ -547,7 +648,7 @@ async def test_export_batch_inference_csv_returns_streaming():
 
 @pytest.mark.asyncio
 async def test_run_batch_inference_routes_to_wsi_classification():
-    """task_type=wsi_classification routes to WSI classification handler (mocked)"""
+    """task_type=wsi_classification delegates to shared WSI inference path once."""
     from unittest.mock import patch, AsyncMock, MagicMock
 
     mock_task = MagicMock()
@@ -583,16 +684,13 @@ async def test_run_batch_inference_routes_to_wsi_classification():
             "gateway.routes.inference_batch.clear_revocation",
         ),
         patch(
-            "gateway.routes.inference_batch._run_batch_wsi_classification",
-            new_callable=AsyncMock,
-            return_value=[],
-        ) as mock_handler,
-        patch(
-            "gateway.routes.inference_batch.AIResultRepository.bulk_create",
+            "gateway.routes.inference_batch.AIResultRepository.delete_by_task_id",
             new_callable=AsyncMock,
         ),
-        patch("gateway.routes.inference_batch.set_progress", new_callable=AsyncMock),
-        patch("gateway.routes.inference_batch.clear_progress", new_callable=AsyncMock),
+        patch(
+            "gateway.routes.inference_batch._run_external_validation",
+            new_callable=AsyncMock,
+        ) as mock_handler,
         patch("gateway.routes.inference_batch.safe_session"),
         patch("gateway.routes.inference_batch.sql_update"),
     ):
@@ -612,7 +710,11 @@ async def test_run_batch_inference_routes_to_wsi_classification():
                 assigned_device="cpu",
             )
 
-    assert mock_handler.call_count == 2
+    assert mock_handler.call_count == 1
+    call_kwargs = mock_handler.await_args.kwargs
+    assert call_kwargs["execution_mode"] == "batch_inference"
+    assert call_kwargs["auto_trigger_analysis"] is False
+    assert call_kwargs["wsi_ids"] == wsi_ids
 
 
 @pytest.mark.asyncio
@@ -644,14 +746,16 @@ async def test_run_batch_inference_revocation_raises():
             return_value=["wsi-1"],
         ),
         patch(
+            "gateway.routes.inference_batch.AIResultRepository.delete_by_task_id",
+            new_callable=AsyncMock,
+        ),
+        patch(
             "gateway.routes.inference_batch.is_permission_revoked",
             return_value=True,
         ),
         patch("gateway.routes.inference_batch.clear_revocation"),
         patch("gateway.routes.inference_batch.safe_session") as mock_safe,
         patch("gateway.routes.inference_batch.sql_update"),
-        patch("gateway.routes.inference_batch.set_progress", new_callable=AsyncMock),
-        patch("gateway.routes.inference_batch.clear_progress", new_callable=AsyncMock),
     ):
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())
@@ -686,8 +790,6 @@ async def test_clear_revocation_called_in_finally():
         patch("gateway.routes.inference_batch.clear_revocation") as mock_clear,
         patch("gateway.routes.inference_batch.safe_session") as mock_safe,
         patch("gateway.routes.inference_batch.sql_update"),
-        patch("gateway.routes.inference_batch.set_progress", new_callable=AsyncMock),
-        patch("gateway.routes.inference_batch.clear_progress", new_callable=AsyncMock),
     ):
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=AsyncMock())

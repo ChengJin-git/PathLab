@@ -10,9 +10,12 @@ from __future__ import annotations
 import logging
 from typing import Any, List, Optional
 
-from backend.ai.permission_revocation import clear_revocation, is_permission_revoked
+from backend.ai.permission_revocation import (
+    PermissionRevokedException,
+    clear_revocation,
+    is_permission_revoked,
+)
 from backend.ai.schemas.base import TaskStatus
-from backend.common.progress_store import clear_progress, set_progress
 from backend.database.database import safe_session
 from backend.database.models import TrainingTask, utc_now
 from backend.database.repositories import (
@@ -23,15 +26,15 @@ from backend.database.repositories import (
 )
 from sqlalchemy import update as sql_update
 
+from gateway.pipeline import ScopedLogger
+
+from .inference_external_validation import (
+    _run_external_validation,
+    _run_external_validation_patch_classification,
+    _run_external_validation_patch_segmentation,
+)
+
 logger = logging.getLogger(__name__)
-
-CHUNK_SIZE = 50
-
-
-class PermissionRevokedException(Exception):
-    def __init__(self, task_id: str):
-        self.task_id = task_id
-        super().__init__(f"Permission revoked for task {task_id}")
 
 
 async def _run_batch_inference(
@@ -45,9 +48,9 @@ async def _run_batch_inference(
     """
     Entry point called by the GPU task queue for BATCH_INFERENCE tasks.
 
-    Fetches all WSI ids for the target dataset, processes them in
-    CHUNK_SIZE=50 chunks, checks permission revocation between chunks,
-    and bulk-writes AIResult rows atomically per chunk.
+    Delegates to the existing external-validation inference implementations,
+    but runs them in batch-inference mode so they skip metric analysis and
+    write results under the batch task.
 
     Args:
         task_id: The batch inference TrainingTask id (binfer_*)
@@ -57,15 +60,30 @@ async def _run_batch_inference(
         assigned_device: CUDA device string (injected by queue, e.g. "cuda:0")
     """
 
-    async def _update_status(
-        status: str, progress: int = 0, error: Optional[str] = None
+    async def _update_task_progress(
+        status: str,
+        progress: int,
+        processed_wsi: int = 0,
+        results_count: int = 0,
+        error: Optional[str] = None,
+        total_wsi: int = 0,
     ):
-        values: dict = {"status": status, "progress": progress}
+        values: dict[str, Any] = {"status": status, "progress": progress}
         if error:
             values["error_message"] = error
         if status in (TaskStatus.COMPLETED, TaskStatus.FAILED):
             values["finished_at"] = utc_now()
         async with safe_session() as db:
+            task = await TrainingTaskRepository.get_by_id(db, task_id)
+            model_config = dict(task.model_config or {}) if task else {}
+            model_config.update(
+                {
+                    "total_wsi": total_wsi,
+                    "processed_wsi": processed_wsi,
+                    "results_count": results_count,
+                }
+            )
+            values["model_config"] = model_config
             await db.execute(
                 sql_update(TrainingTask)
                 .where(TrainingTask.task_id == task_id)
@@ -83,12 +101,15 @@ async def _run_batch_inference(
                 raise ValueError(f"Trained model not found: {model_id}")
             dg = model_task.data_group
             task_type = dg.task_type if dg else ""
+            model_data_type = dg.data_type if dg else ""
             dataset_wsi_ids: List[str] = await DatasetRepository.get_wsi_ids(
                 db, dataset_id
             )
+            await AIResultRepository.delete_by_task_id(db, task_id)
+            await db.commit()
 
         if is_permission_revoked(task_id):
-            raise PermissionRevokedException(task_id)
+            raise PermissionRevokedException(f"Permission revoked for task {task_id}")
 
         total = len(dataset_wsi_ids)
         logger.info(
@@ -99,83 +120,69 @@ async def _run_batch_inference(
             assigned_device,
         )
 
-        await _update_status(TaskStatus.TRAINING, 0)
+        await _update_task_progress(TaskStatus.TRAINING, 0, 0, 0, total_wsi=total)
 
-        for chunk_start in range(0, total, CHUNK_SIZE):
-            chunk_ids = dataset_wsi_ids[chunk_start : chunk_start + CHUNK_SIZE]
+        if not dataset_wsi_ids:
+            await _update_task_progress(
+                TaskStatus.COMPLETED, 100, 0, 0, total_wsi=0
+            )
+            return
 
-            if task_type in ("wsi_classification", "classification"):
-                chunk_results = await _run_batch_wsi_classification(
-                    task_id=task_id,
-                    trained_model=trained_model,
-                    wsi_ids=chunk_ids,
-                    assigned_device=assigned_device,
-                    offset=chunk_start,
-                    total=total,
-                )
-            elif task_type == "patch_classification":
-                chunk_results = await _run_batch_patch_classification(
-                    task_id=task_id,
-                    trained_model=trained_model,
-                    wsi_ids=chunk_ids,
-                    assigned_device=assigned_device,
-                    offset=chunk_start,
-                    total=total,
-                )
-            elif task_type in ("wsi_survival", "survival"):
-                chunk_results = await _run_batch_wsi_survival(
-                    task_id=task_id,
-                    trained_model=trained_model,
-                    wsi_ids=chunk_ids,
-                    assigned_device=assigned_device,
-                    offset=chunk_start,
-                    total=total,
-                )
-            elif task_type in ("patch_segmentation", "segmentation"):
-                chunk_results = await _run_batch_patch_segmentation(
-                    task_id=task_id,
-                    trained_model=trained_model,
-                    wsi_ids=chunk_ids,
-                    assigned_device=assigned_device,
-                    offset=chunk_start,
-                    total=total,
-                )
-            else:
-                raise ValueError(
-                    f"Unsupported task_type for batch inference: {task_type}"
-                )
+        if task_type in ("wsi_classification", "classification", "wsi_survival", "survival"):
+            await _run_external_validation(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                model_classes=getattr(trained_model, "classes", None),
+                model_task_type=task_type,
+                model_data_type=model_data_type or "wsi",
+                dataset_id=dataset_id,
+                wsi_ids=dataset_wsi_ids,
+                assigned_device=assigned_device,
+                execution_mode="batch_inference",
+                auto_trigger_analysis=False,
+            )
+        elif task_type == "patch_classification":
+            await _run_batch_patch_classification(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                trained_model=trained_model,
+                dataset_id=dataset_id,
+                wsi_ids=dataset_wsi_ids,
+                assigned_device=assigned_device,
+                total=total,
+                update_task_progress=_update_task_progress,
+            )
+        elif task_type in ("patch_segmentation", "segmentation"):
+            await _run_batch_patch_segmentation(
+                task_id=task_id,
+                model_task_id=model_task_id,
+                model_id=model_id,
+                dataset_id=dataset_id,
+                wsi_ids=dataset_wsi_ids,
+                assigned_device=assigned_device,
+                total=total,
+                update_task_progress=_update_task_progress,
+            )
+        else:
+            raise ValueError(f"Unsupported task_type for batch inference: {task_type}")
 
-            if is_permission_revoked(task_id):
-                if chunk_results:
-                    async with safe_session() as db:
-                        await AIResultRepository.bulk_create(db, chunk_results)
-                        await db.commit()
-                raise PermissionRevokedException(task_id)
-
-            if chunk_results:
-                async with safe_session() as db:
-                    await AIResultRepository.bulk_create(db, chunk_results)
-                    await db.commit()
-
-            done = min(chunk_start + CHUNK_SIZE, total)
-            progress_pct = int(done / total * 90) if total > 0 else 0
-            await set_progress(task_id, progress_pct)
-
-        await clear_progress(task_id)
-        await _update_status(TaskStatus.COMPLETED, 100)
         logger.info("Batch inference task=%s completed (%d slides)", task_id, total)
 
     except PermissionRevokedException:
         logger.warning("Batch inference task=%s: permission revoked", task_id)
         try:
-            await _update_status(TaskStatus.FAILED, 0, "Permission revoked")
+            await _update_task_progress(
+                TaskStatus.FAILED, 0, error="Permission revoked"
+            )
         except Exception:
             pass
         raise
     except Exception as exc:
         logger.error("Batch inference task=%s failed: %s", task_id, exc, exc_info=True)
         try:
-            await _update_status(TaskStatus.FAILED, 0, str(exc))
+            await _update_task_progress(TaskStatus.FAILED, 0, error=str(exc))
         except Exception:
             pass
         raise
@@ -185,79 +192,102 @@ async def _run_batch_inference(
 
 async def _run_batch_wsi_classification(
     task_id: str,
+    model_task_id: str,
+    model_id: str,
     trained_model: Any,
+    dataset_id: str,
     wsi_ids: List[str],
     assigned_device: Optional[str],
-    offset: int = 0,
     total: int = 0,
-) -> List[dict]:
-    """
-    WSI-level classification inference on a chunk of unlabeled slides.
-    Mirrors _run_external_validation (WSI classification path) without metric computation.
-    Returns list of AIResult dicts — caller handles DB write.
-    GPU implementation: Task 5, Step 5.6.
-    """
-    raise NotImplementedError(
-        "_run_batch_wsi_classification: GPU implementation pending (Task 5 step 5.6). "
-        "See inference_external_validation.py _run_external_validation for the pattern."
+) -> None:
+    await _run_external_validation(
+        task_id=task_id,
+        model_task_id=model_task_id,
+        model_id=model_id,
+        model_classes=getattr(trained_model, "classes", None),
+        model_task_type="classification",
+        model_data_type="wsi",
+        dataset_id=dataset_id,
+        wsi_ids=wsi_ids,
+        assigned_device=assigned_device,
+        execution_mode="batch_inference",
+        auto_trigger_analysis=False,
     )
 
 
 async def _run_batch_patch_classification(
     task_id: str,
+    model_task_id: str,
+    model_id: str,
     trained_model: Any,
+    dataset_id: str,
     wsi_ids: List[str],
     assigned_device: Optional[str],
-    offset: int = 0,
     total: int = 0,
-) -> List[dict]:
-    """
-    Patch-level classification inference on a chunk of unlabeled patches.
-    Mirrors _run_external_validation_patch_classification without metric computation.
-    Returns list of AIResult dicts — caller handles DB write.
-    GPU implementation: Task 5, Step 5.6.
-    """
-    raise NotImplementedError(
-        "_run_batch_patch_classification: GPU implementation pending (Task 5 step 5.6). "
-        "See inference_external_validation.py _run_external_validation_patch_classification."
+    update_task_progress=None,
+) -> None:
+    logger_manager = ScopedLogger(task_id)
+    await _run_external_validation_patch_classification(
+        task_id=task_id,
+        model_task_id=model_task_id,
+        model_id=model_id,
+        model_classes=getattr(trained_model, "classes", []) or [],
+        dataset_id=dataset_id,
+        wsi_ids=wsi_ids,
+        assigned_device=assigned_device or "",
+        logger_manager=logger_manager,
+        update_task_progress=update_task_progress,
+        execution_mode="batch_inference",
+        auto_trigger_analysis=False,
     )
 
 
 async def _run_batch_wsi_survival(
     task_id: str,
+    model_task_id: str,
+    model_id: str,
     trained_model: Any,
+    dataset_id: str,
     wsi_ids: List[str],
     assigned_device: Optional[str],
-    offset: int = 0,
     total: int = 0,
-) -> List[dict]:
-    """
-    WSI-level survival risk scoring on a chunk of unlabeled slides.
-    No labels required — computes risk score from pre-extracted features.
-    Output: AIResult with extra_metadata={"risk_score": float, "risk_group": "high"|"low"}.
-    GPU implementation: Task 5, Step 5.6.
-    """
-    raise NotImplementedError(
-        "_run_batch_wsi_survival: GPU implementation pending (Task 5 step 5.6). "
-        "See inference_external_validation.py _run_external_validation for survival path."
+    update_task_progress=None,
+) -> None:
+    await _run_external_validation(
+        task_id=task_id,
+        model_task_id=model_task_id,
+        model_id=model_id,
+        model_classes=getattr(trained_model, "classes", None),
+        model_task_type="survival",
+        model_data_type="wsi",
+        dataset_id=dataset_id,
+        wsi_ids=wsi_ids,
+        assigned_device=assigned_device,
+        execution_mode="batch_inference",
+        auto_trigger_analysis=False,
     )
 
 
 async def _run_batch_patch_segmentation(
     task_id: str,
-    trained_model: Any,
+    model_task_id: str,
+    model_id: str,
+    dataset_id: str,
     wsi_ids: List[str],
     assigned_device: Optional[str],
-    offset: int = 0,
     total: int = 0,
-) -> List[dict]:
-    """
-    Patch-level segmentation inference on a chunk of unlabeled patches.
-    Generates mask files and stores pred_mask_path in metadata.
-    Output: AIResult with extra_metadata={"pred_mask_path": str}.
-    GPU implementation: Task 5, Step 5.6.
-    """
-    raise NotImplementedError(
-        "_run_batch_patch_segmentation: GPU implementation pending (Task 5 step 5.6). "
-        "See inference_external_validation.py _run_external_validation_patch_segmentation."
+    update_task_progress=None,
+) -> None:
+    logger_manager = ScopedLogger(task_id)
+    await _run_external_validation_patch_segmentation(
+        task_id=task_id,
+        model_task_id=model_task_id,
+        model_id=model_id,
+        dataset_id=dataset_id,
+        wsi_ids=wsi_ids,
+        assigned_device=assigned_device or "",
+        logger_manager=logger_manager,
+        update_task_progress=update_task_progress,
+        execution_mode="batch_inference",
+        auto_trigger_analysis=False,
     )

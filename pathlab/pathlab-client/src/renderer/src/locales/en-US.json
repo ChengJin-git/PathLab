@@ -1208,6 +1208,11 @@
       "filename": "Filename",
       "prediction": "Prediction",
       "confidence": "Confidence",
+      "riskScore": "Risk Score",
+      "riskGroup": "Risk Group",
+      "predictionMask": "Prediction Mask",
+      "maskGenerated": "Generated",
+      "maskMissing": "Not generated",
       "exportCsv": "Export CSV",
       "showing": "Showing {{start}}–{{end}} of {{total}}",
       "previous": "Previous",
@@ -1849,6 +1854,7 @@
       "inProgress": "Batch Inference in Progress...",
       "submitted": "Submitted",
       "submittedInfo": "Batch inference task queued!",
+      "analysisSubmittedTrack": "Batch inference submitted! Track progress in the Background Tasks panel.",
       "viewTaskDetail": "View task detail →",
       "noCompletedTasks": "No Completed Batch Inference Tasks",
       "noCompletedHint": "Submit a batch inference job to see results here.",
@@ -1862,8 +1868,12 @@
       "predictionClass": "Class",
       "confidence": "Confidence",
       "riskScore": "Risk Score",
+      "riskGroup": "Risk Group",
       "eventTime": "Predicted Time",
       "instanceCount": "Instances",
+      "predictionMask": "Prediction Mask",
+      "maskGenerated": "Generated",
+      "maskMissing": "Not generated",
       "pagination": {
         "showing": "Showing {{start}}–{{end}} of {{total}}",
         "previous": "Previous",
@@ -3209,6 +3219,7 @@
       "training": "Training",
       "analyzingResults": "Analyzing Results",
       "externalValidation": "External Validation",
+      "batchInference": "Batch Inference",
       "externalAnalysis": "External Analysis",
       "internalAnalysis": "Internal Analysis",
       "storage": "Storage",
@@ -3247,6 +3258,18 @@
         "completed": "Completed",
         "failed": "Failed",
         "cancelled": "Cancelled"
+      },
+      "batchInference": {
+        "creating": "Creating Task",
+        "queued": "Queued",
+        "pending": "Pending",
+        "patching": "Patching Images",
+        "extracting": "Extracting Features",
+        "training": "Running Inference",
+        "resuming": "Resuming",
+        "completed": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled"
       }
     },
     "taskCategory": {
@@ -3276,7 +3299,8 @@
       "cancelled": "Cancelled",
       "analyzing": "Analyzing: {{name}}",
       "training": "Training: {{name}}",
-      "validation": "Validation: {{name}}"
+      "validation": "Validation: {{name}}",
+      "batchInference": "Batch inference: {{name}}"
     },
     "relocatingToPath": "Relocating to {{name}}",
     "errors": {

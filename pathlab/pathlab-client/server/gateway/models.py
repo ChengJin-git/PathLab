@@ -604,6 +604,7 @@ class ExternalValidationRequest(BaseModel):
 
 class BatchInferenceRequest(BaseModel):
     model_task_id: str
+    model_id: Optional[str] = None
     dataset_id: str
     rerun_from_task_id: Optional[str] = None
 

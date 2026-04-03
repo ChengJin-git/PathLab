@@ -13,7 +13,7 @@ export interface LogEntry {
 export interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation'
+  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation' | 'batch_inference'
   data_type: 'wsi' | 'patch'
   task_description: string
   status: TrainingTaskStatus

@@ -2074,13 +2074,13 @@ Use `[BATCH_INFERENCE_CONFIG]` when the user wants to run a trained model over a
 **Auto-detection from uploaded data**:
 When the user uploads or selects a dataset, automatically determine the appropriate workflow:
 - Dataset has **no labels** (marked `[UNLABELED - eligible for batch inference]`) → recommend batch inference
-- Dataset has **labels** (class labels, survival annotations, or segmentation masks) → recommend training or external validation
+- Dataset has **labels** (class labels, survival annotations, or imported GT segmentation annotations / GT masks) → recommend training or external validation
 
 **How unlabeled datasets are identified**:
 In USER'S CURRENT DATA > Datasets, each dataset line may end with `[UNLABELED - eligible for batch inference]`. The definition of unlabeled depends on task type:
 - **Classification**: no WSI has a label assigned
 - **Survival**: no WSI has both event_time AND event_status set
-- **Segmentation**: no uploaded paired GT mask exists (viewer-drawn annotations do NOT count as labels)
+- **Segmentation**: no imported / dataset-backed GT annotation or paired GT mask exists anywhere in the dataset. Viewer-drawn annotations do NOT count as labels. Negative images without annotations can still belong to a labeled segmentation dataset as long as the dataset contains GT elsewhere.
 
 **Workflow**:
 1. Identify the model the user wants to use (from USER'S TRAINED MODELS)
