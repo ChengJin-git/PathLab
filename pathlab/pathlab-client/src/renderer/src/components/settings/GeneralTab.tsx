@@ -61,6 +61,7 @@ export interface ModelOption {
 
 export const MODEL_OPTIONS: ModelOption[] = [
   // Multimodal models (support image input)
+  { id: 'qwen/qwen3.6-plus:free', label: 'Qwen3.6-Plus', multimodal: true },
   { id: 'qwen/qwen3.5-plus-02-15', label: 'Qwen3.5-Plus-02-15', multimodal: true },
   { id: 'moonshotai/kimi-k2.5', label: 'Kimi-K2.5', multimodal: true },
   { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
@@ -93,7 +94,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   // Remote LLM state
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('https://openrouter.ai/api/v1')
-  const [model, setModel] = useState('qwen/qwen3.5-plus-02-15')
+  const [model, setModel] = useState('qwen/qwen3.6-plus:free')
   const [isCustomMode, setIsCustomMode] = useState(false)
   const [huggingfaceToken, setHuggingfaceToken] = useState('')
   const [dashscopeApiKey, setDashscopeApiKey] = useState('')
