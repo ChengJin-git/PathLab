@@ -7,6 +7,7 @@ Following industry best practices from Cytomine and DSA platforms.
 from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import (
+    ARRAY,
     Column,
     Integer,
     BigInteger,
@@ -1391,3 +1392,73 @@ class AutoResearchEvent(Base):
     __table_args__ = (
         Index("idx_ar_events_session_seq", "session_id", "sequence"),
     )
+
+
+# =============================================================================
+# Know-How Experience Store (Phase 2.2)
+# =============================================================================
+
+class KnowhowEntry(Base):
+    """
+    Structured domain knowledge entry for experiment planning.
+
+    Three sources:
+    - curated:    expert-curated best practices (bootstrapped at startup)
+    - experiment: auto-ingested from completed auto-research experiments
+    - literature: auto-extracted from literature review findings
+    """
+    __tablename__ = "knowhow_entries"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # What task
+    task_type = Column(String(50), index=True)           # classification / survival / segmentation
+    organ = Column(String(100), index=True)              # colorectal / breast / lung / ...
+    keywords = Column(ARRAY(String), default=[])         # ['MSI', 'microsatellite'] for overlap query
+
+    # What method
+    feature_extractor = Column(String(100))
+    aggregator = Column(String(100))
+    hyperparams = Column(JSON, default={})
+
+    # What result
+    metric_name = Column(String(50))                     # auc / c_index
+    metric_value = Column(Float)
+    all_metrics = Column(JSON, default={})
+
+    # Where it came from
+    source_type = Column(String(20), index=True)         # curated / experiment / literature
+    source_ref = Column(String(500))                     # session_id or paper URL
+    evidence = Column(Text)                              # recommendation rationale or paper summary
+
+    # Optional dataset info
+    dataset_id = Column(String(255), nullable=True)
+    dataset_name = Column(String(255), nullable=True)
+
+    # Ranking
+    confidence = Column(Float, default=0.5)              # curated=1.0, experiment=metric, literature=0.6
+    created_at = Column(DateTime, default=utc_now, nullable=False)
+
+    __table_args__ = (
+        Index("idx_knowhow_task_organ", "task_type", "organ"),
+        Index("idx_knowhow_source", "source_type"),
+    )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "task_type": self.task_type,
+            "organ": self.organ,
+            "keywords": self.keywords or [],
+            "feature_extractor": self.feature_extractor,
+            "aggregator": self.aggregator,
+            "hyperparams": self.hyperparams or {},
+            "metric_name": self.metric_name,
+            "metric_value": self.metric_value,
+            "all_metrics": self.all_metrics or {},
+            "source_type": self.source_type,
+            "source_ref": self.source_ref,
+            "evidence": self.evidence,
+            "confidence": self.confidence,
+            "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
+        }

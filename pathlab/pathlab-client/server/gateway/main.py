@@ -130,6 +130,17 @@ async def lifespan(app: FastAPI):
         await db.commit()
     logger.info("✓ Schema migration applied (deactivated_by_maintenance)")
 
+    # Bootstrap knowhow entries (curated + PathBench benchmarks)
+    try:
+        from backend.auto_research.knowhow import bootstrap_curated, bootstrap_pathbench
+        async with async_session() as db:
+            n_curated = await bootstrap_curated(db)
+            n_pathbench = await bootstrap_pathbench(db)
+            await db.commit()
+        logger.info(f"✓ Knowhow bootstrapped ({n_curated} curated + {n_pathbench} PathBench)")
+    except Exception as e:
+        logger.warning(f"Knowhow bootstrap failed (non-fatal): {e}")
+
     # Initialize Redis connection pool
     from backend.common.redis_client import init_redis, close_redis
 

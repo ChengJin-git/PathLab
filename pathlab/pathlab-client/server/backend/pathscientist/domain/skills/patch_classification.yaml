@@ -1,0 +1,65 @@
+name: patch_classification
+description: >
+  Patch-level classification with frozen feature extractor + trainable classifier head.
+  Processes individual image patches (not whole slides).
+  Matches PathLab's PatchClassificationTrainer.
+
+template: patch_classification_template.py
+
+task_types: [patch_classification]
+
+modifiable_zones:
+  - model       # Classifier head (Linear, MLP, Attention)
+  - loss        # Loss function
+  - hyperparams # lr, epochs, batch_size, optimizer
+
+environment:
+  extra_packages: []
+
+dataset:
+  format: feature_tensors
+  structure:
+    features: "{patch_id}.pt"          # (D,) vector per patch
+    splits: "splits.json"
+  splits_schema:
+    required_keys: [train, val, test, labels]
+    labels_type: "int"
+    split_strategy: "stratified"
+    default_ratios: {train: 0.7, val: 0.15, test: 0.15}
+  csv_format:
+    required_columns: [filename]
+    optional_columns: [label, split, case_id]
+    example: |
+      filename,split,label
+      patch_001.png,train,Tumor
+      patch_002.png,val,Normal
+  mock_generator:
+    n_samples: 200
+    n_classes: 2
+    default_feature_dim: 1024
+
+inputs:
+  features_dir: /data/features
+  splits_file: /data/splits.json
+
+outputs:
+  metrics: /results/metrics.json
+  model: /results/best_model.pth
+
+evaluation:
+  primary_metric: accuracy
+  secondary_metrics: [f1, precision, recall, auc]
+
+constraints:
+  - "Classifier class must have forward(self, x) method"
+  - "x shape: (batch_size, D) — batch of feature vectors"
+  - "Return: logits of shape (batch_size, num_classes)"
+  - "Feature extractor is FROZEN — only classifier head is trained"
+  - "Use standard DataLoader batching (batch_size > 1)"
+  - "Do NOT modify FIXED zones"
+
+reference_code:
+  trainer: server/backend/ai/tasks/patch_classification/trainer.py
+  classifiers: server/backend/ai/classifiers/
+
+knowhow_tags: [classification, patch, linear_probe, attention_classifier]

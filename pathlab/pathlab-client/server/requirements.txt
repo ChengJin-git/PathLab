@@ -90,6 +90,9 @@ pymupdf4llm
 # Email Notifications
 resend>=2.0.0
 
+# Docker SDK (Code Agent sandbox execution)
+docker>=7.0.0
+
 # Logging
 loguru>=0.7.3
 coloredlogs>=15.0.1
