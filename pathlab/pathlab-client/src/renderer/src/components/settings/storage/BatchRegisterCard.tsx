@@ -51,8 +51,8 @@ interface BatchRegisterCardProps {
   refreshExternalDatasets: () => void | Promise<void>
   handleExternalDatasetToggle: (datasetId: string | null) => void
   handleExternalDatasetSelectAll: () => void
-  handleUnbindDataset: (datasetId: string, datasetName: string) => void
-  handleUnbindSelectedDatasets: () => void
+  handleUnbindDataset: (datasetId: string, datasetName: string) => void | Promise<void>
+  handleUnbindSelectedDatasets: () => void | Promise<void>
   navigate: (path: string) => void
 }
 

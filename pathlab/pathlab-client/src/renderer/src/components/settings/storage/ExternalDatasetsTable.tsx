@@ -12,11 +12,11 @@ interface ExternalDatasetsTableProps {
   loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
-  refreshExternalDatasets: () => Promise<void>
+  refreshExternalDatasets: () => void | Promise<void>
   handleExternalDatasetToggle: (datasetId: string | null) => void
   handleExternalDatasetSelectAll: () => void
-  handleUnbindDataset: (datasetId: string, datasetName: string) => Promise<void>
-  handleUnbindSelectedDatasets: () => Promise<void>
+  handleUnbindDataset: (datasetId: string, datasetName: string) => void | Promise<void>
+  handleUnbindSelectedDatasets: () => void | Promise<void>
   navigate: (path: string) => void
 }
 
@@ -157,7 +157,7 @@ export const ExternalDatasetsTable: React.FC<ExternalDatasetsTableProps> = ({
             </table>
           </div>
           <div className="px-4 py-3 bg-gray-50 border-t text-xs text-gray-500">
-            {t('settings.storage.unbindFooter')} <button onClick={() => navigate('/wsi-list')} className="font-medium text-primary-600 hover:underline inline-flex items-center gap-0.5">{t('settings.storage.dataRepository')} <ChevronRight className="w-3 h-3" /></button>
+            {t('settings.storage.unbindFooter')} <button type="button" onClick={() => navigate('/wsi-list')} className="font-medium text-primary-600 hover:underline inline-flex items-center gap-0.5">{t('settings.storage.dataRepository')} <ChevronRight className="w-3 h-3" /></button>
           </div>
         </>
       )}
