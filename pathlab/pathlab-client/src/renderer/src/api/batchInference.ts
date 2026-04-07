@@ -81,7 +81,7 @@ export interface StartBatchInferenceRequest {
 
 export async function fetchDatasetsForInference(
   unlabledOnly = true,
-  taskType?: string
+  taskType?: string | null
 ): Promise<{ items: InferenceDataset[]; total: number }> {
   const params = buildSearchParams({
     unlabeled_only: unlabledOnly,
