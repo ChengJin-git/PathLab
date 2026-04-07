@@ -33,13 +33,13 @@ async def test_resume_wsi_extracting_task_skips_patching():
     mock_repo.update_status = AsyncMock()
 
     with (
-        patch("gateway.main.TrainingTaskRepository", mock_repo),
-        patch("gateway.main.get_task_queue", return_value=mock_queue),
-        patch("gateway.main.wait_for_services_ready", return_value=True),
+        patch("gateway.startup.TrainingTaskRepository", mock_repo),
+        patch("gateway.startup.get_task_queue", return_value=mock_queue),
+        patch("gateway.startup.wait_for_services_ready", return_value=True),
         patch(
-            "gateway.main.run_patching_then_submit", new_callable=AsyncMock
+            "gateway.startup.run_patching_then_submit", new_callable=AsyncMock
         ) as mock_patching,
-        patch("gateway.main.get_db") as mock_get_db,
+        patch("gateway.startup.get_db") as mock_get_db,
     ):
         db_mock = AsyncMock()
         db_mock.commit = AsyncMock()
@@ -49,7 +49,7 @@ async def test_resume_wsi_extracting_task_skips_patching():
 
         mock_get_db.return_value = _db_gen()
 
-        from gateway.main import resume_interrupted_tasks
+        from gateway.startup import resume_interrupted_tasks
 
         await resume_interrupted_tasks()
 
@@ -74,14 +74,14 @@ async def test_resume_wsi_patching_task_reruns_patching():
     mock_repo.update_status = AsyncMock()
 
     with (
-        patch("gateway.main.TrainingTaskRepository", mock_repo),
-        patch("gateway.main.get_task_queue", return_value=mock_queue),
-        patch("gateway.main.wait_for_services_ready", return_value=True),
+        patch("gateway.startup.TrainingTaskRepository", mock_repo),
+        patch("gateway.startup.get_task_queue", return_value=mock_queue),
+        patch("gateway.startup.wait_for_services_ready", return_value=True),
         patch(
-            "gateway.main.run_patching_then_submit", new_callable=AsyncMock
+            "gateway.startup.run_patching_then_submit", new_callable=AsyncMock
         ) as mock_patching,
-        patch("gateway.main.get_db") as mock_get_db,
-        patch("gateway.main.asyncio") as mock_asyncio,
+        patch("gateway.startup.get_db") as mock_get_db,
+        patch("gateway.startup.asyncio") as mock_asyncio,
     ):
         db_mock = AsyncMock()
         db_mock.commit = AsyncMock()
@@ -93,7 +93,7 @@ async def test_resume_wsi_patching_task_reruns_patching():
         mock_patching_task = MagicMock()
         mock_asyncio.create_task.return_value = mock_patching_task
 
-        from gateway.main import resume_interrupted_tasks
+        from gateway.startup import resume_interrupted_tasks
 
         await resume_interrupted_tasks()
 
@@ -115,13 +115,13 @@ async def test_resume_patch_task_submits_to_queue():
     mock_repo.update_status = AsyncMock()
 
     with (
-        patch("gateway.main.TrainingTaskRepository", mock_repo),
-        patch("gateway.main.get_task_queue", return_value=mock_queue),
-        patch("gateway.main.wait_for_services_ready", return_value=True),
+        patch("gateway.startup.TrainingTaskRepository", mock_repo),
+        patch("gateway.startup.get_task_queue", return_value=mock_queue),
+        patch("gateway.startup.wait_for_services_ready", return_value=True),
         patch(
-            "gateway.main.run_patching_then_submit", new_callable=AsyncMock
+            "gateway.startup.run_patching_then_submit", new_callable=AsyncMock
         ) as mock_patching,
-        patch("gateway.main.get_db") as mock_get_db,
+        patch("gateway.startup.get_db") as mock_get_db,
     ):
         db_mock = AsyncMock()
         db_mock.commit = AsyncMock()
@@ -131,7 +131,7 @@ async def test_resume_patch_task_submits_to_queue():
 
         mock_get_db.return_value = _db_gen()
 
-        from gateway.main import resume_interrupted_tasks
+        from gateway.startup import resume_interrupted_tasks
 
         await resume_interrupted_tasks()
 
@@ -163,11 +163,11 @@ async def test_resume_batch_inference_task():
     mock_run_batch = AsyncMock()
 
     with (
-        patch("gateway.main.TrainingTaskRepository", mock_repo),
-        patch("gateway.main.get_task_queue", return_value=mock_queue),
-        patch("gateway.main.wait_for_services_ready", return_value=True),
+        patch("gateway.startup.TrainingTaskRepository", mock_repo),
+        patch("gateway.startup.get_task_queue", return_value=mock_queue),
+        patch("gateway.startup.wait_for_services_ready", return_value=True),
         patch("gateway.routes.inference_batch._run_batch_inference", mock_run_batch),
-        patch("gateway.main.get_db") as mock_get_db,
+        patch("gateway.startup.get_db") as mock_get_db,
     ):
         db_mock = AsyncMock()
         db_mock.commit = AsyncMock()
@@ -177,7 +177,7 @@ async def test_resume_batch_inference_task():
 
         mock_get_db.return_value = _db_gen()
 
-        from gateway.main import resume_interrupted_tasks
+        from gateway.startup import resume_interrupted_tasks
 
         await resume_interrupted_tasks()
 
@@ -206,10 +206,10 @@ async def test_resume_batch_inference_skips_wsi_ids_fetch():
     mock_repo.get_wsi_ids = AsyncMock(return_value=["should_not_be_called"])
 
     with (
-        patch("gateway.main.TrainingTaskRepository", mock_repo),
-        patch("gateway.main.get_task_queue", return_value=mock_queue),
-        patch("gateway.main.wait_for_services_ready", return_value=True),
-        patch("gateway.main.get_db") as mock_get_db,
+        patch("gateway.startup.TrainingTaskRepository", mock_repo),
+        patch("gateway.startup.get_task_queue", return_value=mock_queue),
+        patch("gateway.startup.wait_for_services_ready", return_value=True),
+        patch("gateway.startup.get_db") as mock_get_db,
     ):
         db_mock = AsyncMock()
         db_mock.commit = AsyncMock()
@@ -219,7 +219,7 @@ async def test_resume_batch_inference_skips_wsi_ids_fetch():
 
         mock_get_db.return_value = _db_gen()
 
-        from gateway.main import resume_interrupted_tasks
+        from gateway.startup import resume_interrupted_tasks
 
         await resume_interrupted_tasks()
 
