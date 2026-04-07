@@ -2,9 +2,10 @@ import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "../../lib/utils"
+import { motion } from "framer-motion"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:pointer-events-none disabled:opacity-50 active:scale-95",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -18,7 +19,6 @@ const buttonVariants = cva(
           "bg-gray-100 text-gray-900 shadow-sm hover:bg-gray-100/80",
         ghost: "hover:bg-gray-100 hover:text-gray-900",
         link: "text-gray-900 underline-offset-4 hover:underline",
-        // adding a specific 'primary' variant that maps to the theme primary color if needed, similar to the old default
         primary: "bg-primary-600 text-white shadow hover:bg-primary-600/90"
       },
       size: {
@@ -41,14 +41,33 @@ export interface ButtonProps
   asChild?: boolean
 }
 
+const MotionSlot = motion.create(Slot)
+
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : "button"
+    const springTransition = { type: "spring", stiffness: 400, damping: 25 }
+
+    if (asChild) {
+      return (
+        <MotionSlot
+          className={cn(buttonVariants({ variant, size, className }))}
+          ref={ref as any}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.95 }}
+          transition={springTransition}
+          {...(props as any)}
+        />
+      )
+    }
+
     return (
-      <Comp
+      <motion.button
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
-        {...props}
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.95 }}
+        transition={springTransition}
+        {...(props as any)}
       />
     )
   }

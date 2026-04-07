@@ -23,7 +23,7 @@ export function LandingNavbar({ onLogin }: { onLogin: () => void }) {
     <nav
       className={`fixed top-0 inset-x-0 z-50 transition-all duration-300 ${
         scrolled || menuOpen
-          ? 'bg-white/80 backdrop-blur-md border-b shadow-sm py-3 border-[color:var(--landing-border)]'
+          ? 'bg-white/60 backdrop-blur-2xl border-b shadow-[0_8px_30px_rgb(0,0,0,0.04)] py-3 border-[color:var(--landing-border)]'
           : 'bg-transparent py-5'
       }`}
     >
@@ -67,7 +67,7 @@ export function LandingNavbar({ onLogin }: { onLogin: () => void }) {
 
       {/* Mobile Menu */}
       <div 
-        className={`lg:hidden overflow-hidden transition-all duration-300 ease-in-out bg-white/95 backdrop-blur-md border-b border-[color:var(--landing-border)] ${
+        className={`lg:hidden overflow-hidden transition-all duration-300 ease-in-out bg-white/70 backdrop-blur-3xl border-b border-[color:var(--landing-border)] ${
           menuOpen ? 'max-h-screen opacity-100' : 'max-h-0 opacity-0'
         }`}
       >

@@ -26,7 +26,7 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
             <span>{t('landing.hero.badge', 'Powered by Agentic AI')}</span>
           </div>
 
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.15] tracking-tight mb-6 text-[color:var(--landing-text-primary)]">
+          <h1 className="text-5xl sm:text-6xl lg:text-[5rem] font-bold leading-[1.1] tracking-tighter mb-8 text-[color:var(--landing-text-primary)]">
             {t('landing.hero.title1', 'Master pathology')}
             <br />
             {!isZh && (
@@ -37,7 +37,7 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
             </span>
           </h1>
 
-          <p className="text-[color:var(--landing-text-secondary)] text-lg leading-relaxed max-w-xl mx-auto lg:mx-0 mb-10">
+          <p className="text-[color:var(--landing-text-secondary)] text-lg sm:text-xl font-medium leading-relaxed max-w-xl mx-auto lg:mx-0 mb-10">
             {t('landing.hero.subtitle', 'A true clinical-grade AI workspace. From data import and zero-shot configuration to log tracking and viewer evidence—all guided seamlessly by natural language.')}
           </p>
 

@@ -159,7 +159,7 @@ export function StickyWorkflowStory() {
                   : 'opacity-0 translate-y-6 pointer-events-none'
                 }`}
             >
-              <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
+              <div className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
                 <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10 relative overflow-hidden">
                   <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-blue-400 to-cyan-400 left-0" />
                   <p className="text-lg sm:text-xl font-mono text-slate-700 whitespace-pre-wrap">
@@ -180,7 +180,7 @@ export function StickyWorkflowStory() {
                   : 'opacity-0 translate-y-6 pointer-events-none'
                 }`}
             >
-              <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
+              <div className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
                 <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10">
                   <div className="flex items-center justify-between mb-6 border-b border-[color:var(--landing-border)] pb-4">
                     <span className="font-semibold text-[color:var(--landing-text-primary)] text-lg">{t('landing.story.step2.mockTitle', 'System Configuration')}</span>
@@ -206,7 +206,7 @@ export function StickyWorkflowStory() {
                   : 'opacity-0 translate-y-6 pointer-events-none'
                 }`}
             >
-              <div className="w-full rounded-[28px] bg-[#F7FBFD] border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-sm ring-4 ring-[color:var(--landing-primary)]/5">
+              <div className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
                 <div className="w-full aspect-[4/3] sm:aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] p-4 flex flex-col md:flex-row gap-4">
                   <div className="w-full md:w-1/2 flex-1 md:flex-auto bg-slate-100 rounded-xl relative overflow-hidden border border-[color:var(--landing-border)] min-h-[140px] md:min-h-0">
                     <img src="/images/mock-wsi-2.png" alt="WSI" className="absolute inset-0 w-full h-full object-cover opacity-90" />

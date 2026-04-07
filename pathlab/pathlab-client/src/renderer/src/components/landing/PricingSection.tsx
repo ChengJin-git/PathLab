@@ -2,13 +2,20 @@ import { useTranslation } from 'react-i18next'
 import { Check, Heart, ExternalLink, ArrowRight } from 'lucide-react'
 import { PRICING_TIERS } from '../../constants/landing/landing-pricing'
 import { Button } from '../ui/button'
+import { motion } from 'framer-motion'
 
 export function PricingSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
   const { t } = useTranslation()
 
   return (
     <section id="pricing" className="relative py-12 sm:py-20 lg:py-32 bg-[color:var(--landing-page-bg)]">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 z-10 relative">
+      <motion.div 
+        initial={{ opacity: 0, y: 40 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.2 }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-5xl mx-auto px-4 sm:px-6 z-10 relative"
+      >
         <div className="text-center mb-8 sm:mb-12 lg:mb-16">
           <p className="text-[color:var(--landing-primary)] font-bold text-sm uppercase tracking-wider mb-3">
             {t('landing.nav.pricing', 'Pricing')}
@@ -20,7 +27,7 @@ export function PricingSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 lg:gap-8">
           {/* Individual */}
-          <div className="bg-white border border-[color:var(--landing-border)] rounded-[28px] p-8 h-full flex flex-col hover:border-blue-300 hover:shadow-xl transition-all duration-300">
+          <div className="bg-white/60 backdrop-blur-2xl border border-[color:var(--landing-border)] rounded-[28px] p-8 h-full flex flex-col hover:border-blue-300 hover:shadow-2xl hover:-translate-y-1 transition-all duration-300">
             <p className="text-[color:var(--landing-primary)] font-bold text-sm uppercase tracking-wider mb-2">
               {t(PRICING_TIERS.individual.titleKey, 'Individual')}
             </p>
@@ -61,7 +68,7 @@ export function PricingSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
           </div>
 
           {/* Enterprise */}
-          <div className="relative bg-gradient-to-b from-[#F4F9FC] to-white border border-blue-200 rounded-[28px] p-8 h-full flex flex-col hover:shadow-xl transition-all duration-300 overflow-hidden">
+          <div className="relative bg-gradient-to-b from-[#F4F9FC]/80 to-white/60 backdrop-blur-2xl border border-blue-200 rounded-[28px] p-8 h-full flex flex-col hover:shadow-2xl hover:-translate-y-1 transition-all duration-300 overflow-hidden">
             <div className="absolute top-0 right-0 w-64 h-64 bg-blue-400/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3"></div>
             
             <div className="relative z-10 flex flex-col h-full">
@@ -93,7 +100,7 @@ export function PricingSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
             </div>
           </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   )
 }

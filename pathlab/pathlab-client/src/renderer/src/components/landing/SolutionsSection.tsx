@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { SOLUTIONS_TABS } from '../../constants/landing/landing-solutions'
 import { SolutionTabKey } from '../../types/landing'
 import { CheckCircle2 } from 'lucide-react'
+import { motion } from 'framer-motion'
 
 export function SolutionsSection() {
   const { t } = useTranslation()
@@ -11,8 +12,14 @@ export function SolutionsSection() {
   const activeContent = SOLUTIONS_TABS.find(tab => tab.key === activeTab)
 
   return (
-    <section id="solutions" className="py-12 sm:py-16 lg:py-24 bg-white">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6">
+    <section id="solutions" className="py-12 sm:py-16 lg:py-24 bg-white overflow-hidden">
+      <motion.div 
+        initial={{ opacity: 0, y: 40 }}
+        whileInView={{ opacity: 1, y: 0 }}
+        viewport={{ once: true, amount: 0.2 }}
+        transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+        className="max-w-6xl mx-auto px-4 sm:px-6"
+      >
         <div className="text-center mb-8 sm:mb-12 lg:mb-16">
           <h2 className="text-3xl sm:text-4xl font-bold text-[color:var(--landing-text-primary)] mb-4">
             {t('landing.solutions.title', 'Built for every role in pathology')}
@@ -64,7 +71,7 @@ export function SolutionsSection() {
             )}
           </div>
         </div>
-      </div>
+      </motion.div>
     </section>
   )
 }
