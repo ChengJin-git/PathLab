@@ -6,7 +6,7 @@
  */
 
 import type { TrainedModel } from '../../api/training'
-import type { ValidationDataset } from '../../api/results'
+import type { ValidationDataset } from '../../api/analysis'
 
 /**
  * Feature extractor name → embedding dimension mapping.
@@ -226,4 +226,3 @@ export function isDatasetCompatible(
 ): boolean {
   return getDatasetCompatibilityError(model, modelTask, dataset) === null
 }
-
