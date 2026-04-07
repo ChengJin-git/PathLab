@@ -7,9 +7,25 @@ from pathlib import Path
 CHAT_KNOWLEDGE_DIR = Path(__file__).resolve().parent
 FEATURE_EXTRACTOR_META_PATH = CHAT_KNOWLEDGE_DIR / "feature_extractors_meta.json"
 TRAINING_PAPERS_DIR = CHAT_KNOWLEDGE_DIR / "papers"
-TRAINING_RAG_DIR = CHAT_KNOWLEDGE_DIR / "training_rag"
-TRAINING_RAG_CACHE_DIR = TRAINING_RAG_DIR / "cache"
-TRAINING_RAG_VECTORSTORE_DIR = TRAINING_RAG_DIR / "vector_store"
+
+
+def get_training_rag_runtime_dir() -> Path:
+    path = CHAT_KNOWLEDGE_DIR / "training_rag"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_training_rag_cache_dir() -> Path:
+    path = get_training_rag_runtime_dir() / "cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def get_training_rag_vectorstore_dir() -> Path:
+    path = get_training_rag_runtime_dir() / "vector_store"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
 
 BUNDLED_TRAINING_PDF_SOURCES: dict[str, dict[str, str]] = {
     "pathbench": {

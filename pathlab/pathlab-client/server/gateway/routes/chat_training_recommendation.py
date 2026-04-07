@@ -12,8 +12,8 @@ from typing import Any, Dict, List
 from ..dependencies import logger
 from ..knowledge.chat import (
     BUNDLED_TRAINING_PDF_SOURCES,
-    TRAINING_RAG_CACHE_DIR,
-    TRAINING_RAG_VECTORSTORE_DIR,
+    get_training_rag_cache_dir,
+    get_training_rag_vectorstore_dir,
     get_bundled_training_pdf_source_by_url,
 )
 from .chat_pdf import (
@@ -1288,7 +1288,9 @@ def get_bundled_training_knowledge_status() -> Dict[str, bool]:
         structured_ready = _get_bundled_structured_content(url) is not None
         vector_ready = bool(
             url_hash in _LOCAL_INDEX_READY
-            or is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR)
+            or is_pdf_indexed(
+                url_hash, vectorstore_dir=get_training_rag_vectorstore_dir()
+            )
         )
         status[str(source["id"])] = bool(
             marker_ready and structured_ready and vector_ready
@@ -1364,7 +1366,9 @@ async def _ensure_local_source_ready(url: str, *, force_upgrade: bool = False) -
         ready = bool(
             _get_bundled_markdown(url)
             and _get_bundled_structured_content(url)
-            and is_pdf_indexed(url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR)
+            and is_pdf_indexed(
+                url_hash, vectorstore_dir=get_training_rag_vectorstore_dir()
+            )
         )
         if ready and not force_upgrade:
             _LOCAL_INDEX_READY.add(url_hash)
@@ -1417,7 +1421,7 @@ async def _ensure_vector_index(
     if not force and url_hash in _LOCAL_INDEX_READY:
         return
     if not force and is_pdf_indexed(
-        url_hash, vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR
+        url_hash, vectorstore_dir=get_training_rag_vectorstore_dir()
     ):
         _LOCAL_INDEX_READY.add(url_hash)
         return
@@ -1427,7 +1431,7 @@ async def _ensure_vector_index(
         markdown,
         paper_title,
         structured_content,
-        vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR,
+        vectorstore_dir=get_training_rag_vectorstore_dir(),
     )
     _LOCAL_INDEX_READY.add(url_hash)
 
@@ -1542,7 +1546,7 @@ def _build_bundled_evidence_lines(
             query,
             url_hashes=[url_hash],
             top_k=6,
-            vectorstore_dir=TRAINING_RAG_VECTORSTORE_DIR,
+            vectorstore_dir=get_training_rag_vectorstore_dir(),
         )
         if not results:
             continue
@@ -1646,8 +1650,7 @@ def _save_bundled_marker_cache(
 
 
 def _get_bundled_cache_dir() -> Path:
-    TRAINING_RAG_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    return TRAINING_RAG_CACHE_DIR
+    return get_training_rag_cache_dir()
 
 
 def _clean_excerpt(text: str, max_chars: int = 380) -> str:
