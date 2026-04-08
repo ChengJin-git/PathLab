@@ -9,23 +9,30 @@ Directory scanning and external file management are in storage_scan.py.
 import asyncio
 import shutil
 import os
+import importlib
 from pathlib import Path
+from typing import Callable, cast
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
-from backend.database.repositories import (
-    WSIRepository,
-    TrainingTaskRepository,
-    TrainedModelRepository,
-    OrphanedRecordsRepository,
-)
-from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_admin
-from .access_control import assert_owner
+from .access_control import User, assert_owner
 from ..dependencies import logger, storage_manager, migration_manager
 from ..models import OrphanedCleanupRequest, StorageConfigRequest, MigrationRequest
-from backend.common.config import Config
+
+_backend_database = importlib.import_module("backend.database")
+_backend_repositories = importlib.import_module("backend.database.repositories")
+_backend_auth = importlib.import_module("backend.auth")
+_backend_auth_dependencies = importlib.import_module("backend.auth.dependencies")
+_backend_common_config = importlib.import_module("backend.common.config")
+
+get_db = cast(Callable[..., AsyncSession], _backend_database.get_db)
+WSIRepository = _backend_repositories.WSIRepository
+TrainingTaskRepository = _backend_repositories.TrainingTaskRepository
+TrainedModelRepository = _backend_repositories.TrainedModelRepository
+OrphanedRecordsRepository = _backend_repositories.OrphanedRecordsRepository
+current_active_user = cast(Callable[..., object], _backend_auth.current_active_user)
+require_admin = cast(Callable[..., object], _backend_auth_dependencies.require_admin)
+Config = _backend_common_config.Config
 
 router = APIRouter(prefix="/storage", tags=["Storage Management"])
 
@@ -359,14 +366,16 @@ async def get_wsi_storage_info(
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
         assert_owner(
-            wsi.user_id,
+            str(wsi.user_id),
             user,
             "You don't have permission to view this WSI's storage info",
         )
 
         # Run file operations in thread pool to avoid blocking event loop
         info = await asyncio.to_thread(
-            storage_manager.get_wsi_storage_info, wsi_id, wsi.wsi_path
+            storage_manager.get_wsi_storage_info,
+            wsi_id,
+            cast(str | None, wsi.wsi_path),
         )
 
         # Add human-readable sizes
@@ -404,7 +413,7 @@ async def get_training_task_storage_info(
             )
 
         assert_owner(
-            task.user_id,
+            str(task.user_id),
             user,
             "You don't have permission to view this task's storage info",
         )
@@ -412,7 +421,9 @@ async def get_training_task_storage_info(
         # Get trained models
         trained_models = await TrainedModelRepository.get_by_task_id(db, task_id)
         model_paths = (
-            [model.model_path for model in trained_models] if trained_models else []
+            [str(model.model_path) for model in trained_models]
+            if trained_models
+            else []
         )
 
         # Run file operations in thread pool to avoid blocking event loop
@@ -459,15 +470,17 @@ async def detect_orphaned_files(
     try:
         # Get all WSI IDs from database
         wsi_list = await WSIRepository.get_all(db)
-        existing_wsi_ids = [wsi.wsi_id for wsi in wsi_list]
+        existing_wsi_ids = [str(wsi.wsi_id) for wsi in wsi_list]
 
         # Get all training task IDs from database
         training_tasks = await TrainingTaskRepository.get_all(db)
-        existing_task_ids = [task.task_id for task in training_tasks]
+        existing_task_ids: list[str] = [
+            str(getattr(task, "task_id")) for task in training_tasks
+        ]
 
         # Get all trained model IDs from database
         trained_models = await TrainedModelRepository.get_all(db)
-        existing_model_ids = [model.model_id for model in trained_models]
+        existing_model_ids = [str(model.model_id) for model in trained_models]
 
         # Find orphaned files - run in thread pool to avoid blocking event loop
         orphaned = await asyncio.to_thread(
@@ -517,13 +530,15 @@ async def cleanup_orphaned_files(
     try:
         # First detect orphaned files
         wsi_list = await WSIRepository.get_all(db)
-        existing_wsi_ids = [wsi.wsi_id for wsi in wsi_list]
+        existing_wsi_ids = [str(wsi.wsi_id) for wsi in wsi_list]
 
         training_tasks = await TrainingTaskRepository.get_all(db)
-        existing_task_ids = [task.task_id for task in training_tasks]
+        existing_task_ids: list[str] = [
+            str(getattr(task, "task_id")) for task in training_tasks
+        ]
 
         trained_models = await TrainedModelRepository.get_all(db)
-        existing_model_ids = [model.model_id for model in trained_models]
+        existing_model_ids = [str(model.model_id) for model in trained_models]
 
         # Run file operations in thread pool to avoid blocking event loop
         orphaned = await asyncio.to_thread(
@@ -535,7 +550,9 @@ async def cleanup_orphaned_files(
 
         # Clean up - also run in thread pool
         result = await asyncio.to_thread(
-            storage_manager.cleanup_orphaned_files, orphaned, request.categories
+            storage_manager.cleanup_orphaned_files,
+            orphaned,
+            request.categories or [],
         )
 
         logger.info(result["summary"])

@@ -6,13 +6,11 @@ These settings are shared across all users.
 """
 
 import httpx
+import importlib
 from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
 
-from backend.common.config import Config
-from backend.auth import current_active_user, User
-from backend.auth.dependencies import require_admin
-from gateway.models import (
+from .access_control import User
+from ..models import (
     PublicSettingsResponse,
     GlobalSettingsResponse,
     GlobalSettingsUpdateRequest,
@@ -21,6 +19,12 @@ from gateway.models import (
     AsrCheckRequest,
     AsrCheckResponse,
 )
+
+_backend_common_config = importlib.import_module("backend.common.config")
+_backend_auth_dependencies = importlib.import_module("backend.auth.dependencies")
+
+Config = _backend_common_config.Config
+require_admin = _backend_auth_dependencies.require_admin
 
 router = APIRouter(prefix="/settings", tags=["Global Settings"])
 

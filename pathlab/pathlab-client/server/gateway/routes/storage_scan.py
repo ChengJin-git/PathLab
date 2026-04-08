@@ -18,16 +18,29 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import delete as sql_delete
-from backend.database import get_db
-from backend.database.repositories import (
-    WSIRepository,
-    DatasetRepository,
-    StorageTaskRepository,
-    DatasetStatsRepository,
-)
-from backend.database.models import TrainingTaskWSI, AIResult, AITask
-from backend.auth import User
-from backend.auth.dependencies import require_admin
+import importlib
+
+_backend_database = importlib.import_module("backend.database")
+_backend_repositories = importlib.import_module("backend.database.repositories")
+_backend_models = importlib.import_module("backend.database.models")
+_backend_auth_dependencies = importlib.import_module("backend.auth.dependencies")
+_backend_common_config = importlib.import_module("backend.common.config")
+_backend_common_file_types = importlib.import_module("backend.common.file_types")
+
+get_db = _backend_database.get_db
+WSIRepository = _backend_repositories.WSIRepository
+DatasetRepository = _backend_repositories.DatasetRepository
+StorageTaskRepository = _backend_repositories.StorageTaskRepository
+DatasetStatsRepository = _backend_repositories.DatasetStatsRepository
+TrainingTaskWSI = _backend_models.TrainingTaskWSI
+AIResult = _backend_models.AIResult
+AITask = _backend_models.AITask
+require_admin = _backend_auth_dependencies.require_admin
+Config = _backend_common_config.Config
+PATCH_EXTENSIONS = _backend_common_file_types.PATCH_EXTENSIONS
+WSI_EXTENSIONS = _backend_common_file_types.WSI_EXTENSIONS
+
+from .access_control import User
 from ..dependencies import logger
 from ..models import (
     ScanDirectoryRequest,
@@ -41,8 +54,7 @@ from ..utils import (
     is_tiff_family,
     resolve_segmentation_annotation_match,
 )
-from backend.common.config import Config
-from backend.common.file_types import PATCH_EXTENSIONS, WSI_EXTENSIONS
+
 
 router = APIRouter()
 
@@ -92,7 +104,7 @@ def _scan_directory_for_wsi(
         total_size = file_size
         ext = item.suffix.lower()
 
-        file_info = {
+        file_info: dict[str, Any] = {
             "path": str(item),
             "filename": item.name,
             "size": file_size,
@@ -327,7 +339,7 @@ def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
     """
     import threading
 
-    result = [None]  # Use list to allow mutation from thread
+    result: list[bool | None] = [None]  # Use list to allow mutation from thread
 
     def _check():
         result[0] = os.path.exists(path)
@@ -342,11 +354,13 @@ def _check_path_exists_with_timeout(path: str, timeout: float = 5.0) -> bool:
             f"File accessibility check timed out after {timeout}s for: {path}"
         )
 
-    return result[0]
+    return bool(result[0])
 
 
 def _check_wsi_file_availability(
-    wsi_path: str, associated_files: dict[str, Any] = None, timeout: float = 5.0
+    wsi_path: str,
+    associated_files: dict[str, Any] | None = None,
+    timeout: float = 5.0,
 ) -> tuple[bool, str]:
     """
     Check if a WSI file and its associated data are available.
@@ -487,7 +501,7 @@ def _check_external_files_sync(
                 file_info["reason"] = message
                 unavailable.append(file_info)
 
-    result = {
+    result: dict[str, Any] = {
         "total_external": len(available) + len(unavailable),
         "available_count": len(available),
         "unavailable_count": len(unavailable),
@@ -536,11 +550,12 @@ async def get_external_datasets_summary(
         # Filter external files and group by dataset (pure string comparison, no file I/O)
         dataset_stats: dict[str, dict[str, Any]] = {}
         for wsi in wsi_list:
-            if not wsi.wsi_path.startswith(uploads_dir):
-                ds_id = wsi.dataset_id or "uncategorized"
+            wsi_path_str = str(wsi.wsi_path)
+            if not wsi_path_str.startswith(uploads_dir):
+                ds_id = str(wsi.dataset_id) if wsi.dataset_id else "uncategorized"
                 if ds_id not in dataset_stats:
                     dataset_stats[ds_id] = {
-                        "dataset_id": wsi.dataset_id,
+                        "dataset_id": str(wsi.dataset_id) if wsi.dataset_id else None,
                         "dataset_name": wsi.dataset.name
                         if wsi.dataset
                         else "Uncategorized",
@@ -584,7 +599,9 @@ async def start_unbind_dataset_task(
 
         # Filter to only external files (use wsi_id, not database id)
         external_wsi_ids = [
-            wsi.wsi_id for wsi in wsi_list if not wsi.wsi_path.startswith(uploads_dir)
+            str(wsi.wsi_id)
+            for wsi in wsi_list
+            if not str(wsi.wsi_path).startswith(uploads_dir)
         ]
 
         if not external_wsi_ids:
@@ -760,7 +777,8 @@ async def delete_unavailable_files(
                 dataset_id = wsi.dataset_id
                 success = await WSIRepository.delete(db, wsi_id)
                 if success:
-                    await DatasetStatsRepository.recompute(db, dataset_id)
+                    if dataset_id:
+                        await DatasetStatsRepository.recompute(db, str(dataset_id))
                     await db.commit()
                     results.append(
                         {
