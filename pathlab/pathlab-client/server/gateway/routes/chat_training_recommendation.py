@@ -16,12 +16,12 @@ from ..knowledge.chat import (
     get_training_rag_vectorstore_dir,
     get_bundled_training_pdf_source_by_url,
 )
-from .chat_pdf import (
+from .chat_pdf import _parse_pdf_with_marker_best_effort
+from .chat_pdf_marker_shared import (
     MARKER_CACHE_SUFFIX,
     PDF_PARSE_METHOD_MARKER,
     STRUCTURED_CACHE_SUFFIX,
     get_url_hash,
-    _parse_pdf_with_marker_best_effort,
     override_marker_gpu_queue,
 )
 from .chat_pdf_vectorstore import (

@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import time
+from importlib import import_module
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from typing import Any
@@ -11,7 +12,10 @@ from fastapi import Request
 
 from ..dependencies import logger
 from .chat_model_selector import extract_text_from_content
-from .chat_pdf import detect_source_type, ACADEMIC_SOURCE_TYPES
+
+_chat_pdf_shared = import_module("gateway.routes.chat_pdf_shared")
+detect_source_type = _chat_pdf_shared.detect_source_type
+ACADEMIC_SOURCE_TYPES = _chat_pdf_shared.ACADEMIC_SOURCE_TYPES
 
 
 _llm_http_client: httpx.AsyncClient | None = None
@@ -229,6 +233,8 @@ async def _execute_exa_search(
 
         results = []
         for item in data.get("results", []):
+            if not isinstance(item, dict):
+                continue
             results.append(
                 {
                     "title": item.get("title", ""),
