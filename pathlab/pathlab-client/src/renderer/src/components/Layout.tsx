@@ -13,10 +13,10 @@ import { MaintenanceNoticeModal } from './MaintenanceNoticeModal'
 import { ChangePasswordModal } from './ChangePasswordModal'
 import { SetEmailModal } from './SetEmailModal'
 import { uploadAvatar, deleteAvatar, ApiError } from '../api'
-import { API_BASE } from '../config'
 import { useTranslation } from 'react-i18next'
 import { LanguageSwitcher } from './common/LanguageSwitcher'
 import pathlabLogo from '../../public/images/pathlab-logo.png'
+import { resolveAvatarUrl } from '../lib/avatarUrl'
 
 interface LayoutProps {
   children: React.ReactNode
@@ -34,6 +34,7 @@ export default function Layout({ children }: LayoutProps) {
   const [isSetEmailOpen, setIsSetEmailOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const avatarSrc = resolveAvatarUrl(user?.avatar_url)
 
   // Close menu when clicking outside
   React.useEffect(() => {
@@ -131,6 +132,7 @@ export default function Layout({ children }: LayoutProps) {
               {/* Mobile hamburger for AI Chat sidebar */}
               {isAIChatPage && (
                 <button
+                  type="button"
                   onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-sidebar'))}
                   className="p-2 mr-1 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors lg:hidden"
                   aria-label={t('aiChat.openChatHistory')}
@@ -159,6 +161,7 @@ export default function Layout({ children }: LayoutProps) {
               {isAdmin && (
                 <Tooltip content={t('common.settings')}>
                   <button
+                    type="button"
                     onClick={() => navigate('/settings')}
                     className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
                   >
@@ -183,12 +186,13 @@ export default function Layout({ children }: LayoutProps) {
 
                 <Tooltip content={t('layout.profileMenu')}>
                   <button
+                    type="button"
                     onClick={handleAvatarClick}
                     className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center ring-2 ring-white shadow-sm hover:ring-primary-100 transition-all cursor-pointer group"
                   >
                     {user?.avatar_url ? (
                       <img
-                        src={user.avatar_url.startsWith('http') ? user.avatar_url : `${API_BASE}${user.avatar_url}`}
+                        src={avatarSrc ?? undefined}
                         alt="Avatar"
                         className="w-full h-full object-cover group-hover:opacity-90"
                       />
@@ -228,6 +232,7 @@ export default function Layout({ children }: LayoutProps) {
 
                     <div className="p-0.5">
                       <button
+                        type="button"
                         onClick={handleUploadClick}
                         className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
                       >
@@ -237,6 +242,7 @@ export default function Layout({ children }: LayoutProps) {
 
                       {user?.avatar_url && (
                         <button
+                          type="button"
                           onClick={handleDeleteAvatar}
                           className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors group"
                         >
