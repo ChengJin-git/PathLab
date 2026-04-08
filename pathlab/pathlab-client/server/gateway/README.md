@@ -17,7 +17,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
   - 恢复中断的训练任务
   - 清理过期完成任务
   - 清理过期 PDF 缓存
-  - 异步预热训练推荐所需的 embedding 模型与 bundled knowledge 源
+  - 异步预热训练推荐所需的 embedding 模型与内置知识源
   - 异步预热所有非管理员用户的聊天上下文缓存（`_startup_prewarm_chat_context_cache`）
   - 注册所有顶层 router
   - 在存在前端构建产物时挂载静态资源
@@ -57,7 +57,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **47 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 当前包含 **49 个路由模块文件**（不含 `__init__.py`）。
 
 除了上面 17 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
@@ -65,14 +65,14 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - 推理基础：`inference_base.py`（推理路径共享的基础逻辑）
 - 分析相关：`classification_analysis.py`、`segmentation_analysis.py`、`survival_analysis.py`、`external_validation_analysis.py`
 - 分析辅助：`analysis_utils.py`、`analysis_metrics.py`、`analysis_state.py`
-- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_pdf_document.py`、`chat_pdf_sources.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`、`chat_intent_policy.py`、`chat_conversation.py`、`chat_llm_client.py`、`chat_model_selector.py`
+- 聊天辅助：`chat_pdf.py`、`chat_pdf_vectorstore.py`、`chat_pdf_document.py`、`chat_pdf_sources.py`、`chat_pdf_shared.py`、`chat_pdf_marker_shared.py`、`chat_feedback.py`、`chat_patch_inference.py`、`chat_training_recommendation.py`、`chat_intent_policy.py`、`chat_conversation.py`、`chat_llm_client.py`、`chat_model_selector.py`
 - 访问控制：`access_control.py`
 - 训练辅助：`training_options.py`（为 `training_options_router` 提供 `/training/options` 接口）
 - 运行时辅助：`transformers_runtime.py`
 - 存储辅助：`storage_scan.py`、`storage_tasks.py`
 - WSI 权限辅助：`wsi_grants.py`
 
-这些文件通常通过导入被组合到顶层 router，而不是单独挂载；当前也没有额外单列的 `deep-research` router 入口。
+这些文件通常通过导入被组合到顶层 router，而不是单独挂载；当前聊天 / PDF / 训练推荐相关能力都在 Gateway 路由层内部聚合。
 
 ## 认证现状
 
@@ -119,7 +119,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## Gateway 顶层模块
 
-`server/gateway/` 目录除 `routes/` 子目录外，当前还包含以下顶层 Python 模块：
+`server/gateway/` 目录除 `routes/` 子目录外，当前还包含以下顶层 Python 模块 / 子目录：
 
 | 模块 | 说明 |
 |------|------|
@@ -132,6 +132,11 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 | `email_notifications.py` | 模板化邮件发送（用户激活通知、申请受理通知、管理员新用户提醒）|
 | `scan_sessions.py` | 目录扫描会话状态管理（TTL 缓存，供 `storage_scan` 路由复用）|
 | `bootstrap_builtin_training_knowledge.py` | 内置训练推荐知识源预热逻辑 |
+| `app_setup.py` | 顶层 router 注册与静态资源挂载 |
+| `startup.py` | Gateway 生命周期启动 / 关闭编排 |
+| `chat/` | 上下文缓存、权限与训练推荐辅助逻辑 |
+| `knowledge/` | 内置知识源与 training RAG 运行时目录 |
+| `prompts/` | Gateway 侧 LLM prompt 模板 |
 
 ## 与内部服务的关系
 

@@ -350,9 +350,9 @@ Default admin account: created on first run when no users exist (`backend/databa
 
 | Event | Recipient | Trigger |
 |---|---|---|
-| `application_received` | applicant's `registration_email` | immediately after `POST /auth/request-access` succeeds |
-| `new_user_registration_notice` | admin `admin_notify_email` setting | same as above (admin alert) |
-| `activation_email` | applicant's `registration_email` | when admin activates a previously inactive user via `AdminUserUpdate(is_active=True)` |
+| `new_user_registration_notice` | applicant's `registration_email` | immediately after `POST /auth/request-access` succeeds |
+| `admin_new_user_registration_notice` | admin `admin_notify_email` setting | same as above (admin alert) |
+| `account_activated` | applicant's `registration_email` | when admin activates a previously inactive user via `AdminUserUpdate(is_active=True)` |
 
 Email delivery is fire-and-forget (`asyncio.create_task`). If `registration_email` is absent or `admin_notify_email` is not configured, the corresponding notification is silently skipped. Email templates are configurable via the `email_templates` global setting.
 
@@ -363,7 +363,7 @@ Server-Sent Events and browser-loaded image/tile/heatmap URLs cannot set `Author
 - SSE streams: training logs, results logs, storage task progress (`get_user_from_token_param`)
 - Image/tile/heatmap URLs: `get_user_from_header_or_param` (prefers `Authorization: Bearer`, falls back to `?token=`)
 
-Both helpers call the same `_get_user_from_jwt` internally, which enforces session nonce: `backend/auth/dependencies.py:315`.
+Both helpers call the same `_get_user_from_jwt` internally, which enforces the active `session_nonces` set (legacy `session_nonce` is only kept for schema compatibility): `backend/auth/dependencies.py:315`.
 
 Security implication: tokens in URLs appear in server access logs and browser history. These endpoints are intentionally short-lived resource fetches; the JWT lifetime is the same as all other endpoints.
 
@@ -371,7 +371,7 @@ Security implication: tokens in URLs appear in server access logs and browser hi
 
 `GET /asr/realtime` (WebSocket) accepts `?token=` because WebSocket handshakes cannot carry `Authorization` headers in browser environments.
 
-Auth path: `gateway/routes/asr.py:249` calls `_get_user_from_jwt(token, db)` from `backend/auth/dependencies.py`, which enforces full JWT validation including session nonce. A token invalidated by a new login on another device is rejected at this endpoint identically to all REST endpoints.
+Auth path: `gateway/routes/asr.py:249` calls `_get_user_from_jwt(token, db)` from `backend/auth/dependencies.py`, which enforces full JWT validation against the current `session_nonces` list. A token invalidated by a new login on another device is rejected at this endpoint identically to all REST endpoints.
 
 ### 13.4 JWT Configuration
 
