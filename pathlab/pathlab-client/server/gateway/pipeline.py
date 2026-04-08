@@ -14,24 +14,23 @@ import httpx
 import os
 import time
 import traceback
+from importlib import import_module
 from pathlib import Path
-from typing import Any, List, Dict, Set, Tuple
+from typing import Any, List, Dict, Set, Tuple, cast
 from contextlib import asynccontextmanager
 
-from backend.ai.schemas.base import TaskStatus
-from backend.annotation.coco_utils import (
-    extract_coco_wsi_label_sets,
-    materialize_coco_to_disk,
-    merge_coco_datasets,
-)
-from backend.database import safe_session
-from backend.database.repositories import (
-    TrainingTaskRepository,
-    SegmentationAnnotationRepository,
-    WSIRepository,
-)
-from backend.database.utils.training_logger import TrainingLogger
-from backend.common.config import Config
+TaskStatus = import_module("backend.ai.schemas.base").TaskStatus
+_coco_utils = import_module("backend.annotation.coco_utils")
+extract_coco_wsi_label_sets = _coco_utils.extract_coco_wsi_label_sets
+materialize_coco_to_disk = _coco_utils.materialize_coco_to_disk
+merge_coco_datasets = _coco_utils.merge_coco_datasets
+safe_session = import_module("backend.database").safe_session
+_repositories = import_module("backend.database.repositories")
+TrainingTaskRepository = _repositories.TrainingTaskRepository
+SegmentationAnnotationRepository = _repositories.SegmentationAnnotationRepository
+WSIRepository = _repositories.WSIRepository
+TrainingLogger = import_module("backend.database.utils.training_logger").TrainingLogger
+Config = import_module("backend.common.config").Config
 from .dependencies import logger, AI_SERVICE_URL
 from .utils import cancel_ai_service_training, ensure_coords_ready
 
@@ -40,6 +39,14 @@ _GPU_VRAM_REPROBE_TIMEOUT_SECS = float(
     os.getenv("GPU_VRAM_REPROBE_TIMEOUT_SECS", "1800")
 )
 _GPU_VRAM_REPROBE_POLL_SECS = 10.0
+
+
+def _get_gpu_utils_module():
+    return import_module("backend.common.gpu_utils")
+
+
+def _get_results_route_module():
+    return import_module("gateway.routes.results")
 
 
 async def _ensure_gpu_vram_for_step(
@@ -52,7 +59,7 @@ async def _ensure_gpu_vram_for_step(
         return
 
     try:
-        from backend.common.gpu_utils import check_gpu_vram_available
+        check_gpu_vram_available = _get_gpu_utils_module().check_gpu_vram_available
     except ImportError:
         return
 
@@ -189,10 +196,10 @@ async def _load_segmentation_coco_payloads(db, dataset_id: str) -> List[dict[str
         None,
     )
     payloads = (
-        [dict(dataset_level_record.annotations)]
-        if dataset_level_record
+        [cast(dict[str, Any], dataset_level_record.annotations)]
+        if dataset_level_record and isinstance(dataset_level_record.annotations, dict)
         else [
-            dict(record.annotations)
+            cast(dict[str, Any], record.annotations)
             for record in records
             if isinstance(record.annotations, dict)
         ]
@@ -226,8 +233,11 @@ def _build_split_coco_payload(
         image_copy["file_name"] = wsi_to_relative_path.get(
             wsi_id, image_copy.get("file_name")
         )
+        image_id = image_copy.get("id")
+        if not isinstance(image_id, int):
+            continue
         images.append(image_copy)
-        allowed_image_ids.add(image_copy.get("id"))
+        allowed_image_ids.add(image_id)
 
     annotations = [
         dict(annotation)
@@ -269,7 +279,9 @@ async def _load_segmentation_training_dataset_inputs(
             "Segmentation training requires all selected images to belong to the same dataset"
         )
 
-    dataset_id = next(iter(dataset_ids))
+    dataset_id = next(iter(dataset_ids), None)
+    if dataset_id is None:
+        raise ValueError("Segmentation training dataset id could not be resolved")
     coco_payloads = await _load_segmentation_coco_payloads(db, dataset_id)
     if not coco_payloads:
         raise ValueError(
@@ -334,7 +346,7 @@ def _prepare_segmentation_training_dataset(
 
     split_dir = Config.get_uploads_dir() / "training" / task_id / "segmentation_splits"
     split_dir.mkdir(parents=True, exist_ok=True)
-    dataset_config: Dict[str, Dict[str, str]] = {"classes": len(classes), "channels": 3}
+    dataset_config: Dict[str, Any] = {"classes": len(classes), "channels": 3}
 
     for split_name in _PATCH_SEGMENTATION_EXPECTED_SPLITS:
         split_payload = _build_split_coco_payload(
@@ -360,7 +372,7 @@ async def _call_ai_service(
     endpoint: str,
     payload: dict[str, Any],
     operation_name: str,
-    timeout: int = None,
+    timeout: int | None = None,
 ) -> dict[str, Any]:
     """
     Unified AI service HTTP call with standardized error handling.
@@ -427,9 +439,7 @@ class ScopedLogger:
 
     def __init__(self, task_id: str):
         self.task_id = task_id
-        from backend.database import async_session_maker
-
-        self.session_maker = async_session_maker
+        self.session_maker = import_module("backend.database").async_session_maker
 
     @asynccontextmanager
     async def session(self):
@@ -467,10 +477,9 @@ async def _generate_patch_segmentation_visualizations(
     task_id: str,
     assigned_device: str | None = None,
 ) -> None:
-    from gateway.routes.results import (
-        _check_task_resources,
-        _run_inference_patch_segmentation,
-    )
+    results_routes = _get_results_route_module()
+    _check_task_resources = results_routes._check_task_resources
+    _run_inference_patch_segmentation = results_routes._run_inference_patch_segmentation
 
     async def _update_visualization_progress(progress_ratio: float) -> None:
         bounded_ratio = max(0.0, min(progress_ratio, 1.0))
@@ -593,7 +602,8 @@ async def run_patching_stage(
 
         async with logger_manager.session() as (_, db):
             task_record = await TrainingTaskRepository.get_by_id(db, task_id)
-            if task_record is None or task_record.status == TaskStatus.CANCELLED:
+            task_status = task_record.status if task_record is not None else None
+            if task_record is None or task_status == TaskStatus.CANCELLED:
                 logger.info(
                     f"[{task_id}] Task cancelled during patch extraction at WSI {idx}/{total_wsi}, stopping"
                 )
@@ -707,7 +717,9 @@ async def run_patching_stage(
         await log.info(f"Patch extraction completed for all {total_wsi} WSI slides")
 
 
-async def run_patching_then_submit(task_id: str, pipeline_kwargs: dict) -> None:
+async def run_patching_then_submit(
+    task_id: str, pipeline_kwargs: dict[str, Any]
+) -> None:
     """
     Coordinator for WSI tasks: run CPU-only patching outside the GPU gate, then
     submit the GPU pipeline (feature extraction + training) to the task queue.
@@ -815,10 +827,11 @@ async def run_training_pipeline(
     wsi_ids: List[str],
     preprocessing_config: Dict[str, Any],
     model_config: Dict[str, Any],
-    huggingface_token: str = None,
+    huggingface_token: str | None = None,
     training_task_type: str = "classification",  # "classification", "survival", or "segmentation"
-    assigned_device: str = None,  # GPU device assigned by task queue (e.g., "cuda:0")
-    user_id: str = None,  # User who submitted the task (for permission checks)
+    assigned_device: str
+    | None = None,  # GPU device assigned by task queue (e.g., "cuda:0")
+    user_id: str | None = None,  # User who submitted the task (for permission checks)
     user_is_admin: bool = False,  # Whether the submitting user is admin
     patching_complete: bool = False,  # True when patching was run pre-queue (WSI tasks only)
 ):
@@ -925,8 +938,10 @@ async def run_training_pipeline(
                     # Update status to training; preserve progress if resuming from checkpoint
                     _seg_task = await TrainingTaskRepository.get_by_id(db, task_id)
                     _seg_start_progress = (
-                        _seg_task.progress
-                        if _seg_task and _seg_task.status == TaskStatus.RESUMING
+                        int(_seg_task.progress)
+                        if _seg_task is not None
+                        and _seg_task.status == TaskStatus.RESUMING
+                        and _seg_task.progress is not None
                         else 50
                     )
                     await TrainingTaskRepository.update_status(
@@ -941,7 +956,7 @@ async def run_training_pipeline(
                     if architecture.endswith("_decoder")
                     else None
                 )
-                _seg_payload: dict = {
+                _seg_payload: dict[str, Any] = {
                     "task_id": task_id,
                     "architecture": architecture,
                     "backbone": backbone,
@@ -1017,8 +1032,10 @@ async def run_training_pipeline(
                 # Update status to training; preserve progress if resuming from checkpoint
                 _patch_task = await TrainingTaskRepository.get_by_id(db, task_id)
                 _patch_start_progress = (
-                    _patch_task.progress
-                    if _patch_task and _patch_task.status == TaskStatus.RESUMING
+                    int(_patch_task.progress)
+                    if _patch_task is not None
+                    and _patch_task.status == TaskStatus.RESUMING
+                    and _patch_task.progress is not None
                     else 50
                 )
                 await TrainingTaskRepository.update_status(
@@ -1218,7 +1235,7 @@ async def run_training_pipeline(
                 },
             )
             task = await TrainingTaskRepository.get_by_id(db, task_id)
-            if task and task.status != TaskStatus.CANCELLED:
+            if task is not None and task.status != TaskStatus.CANCELLED:
                 await TrainingTaskRepository.update_status(
                     db,
                     task_id,
