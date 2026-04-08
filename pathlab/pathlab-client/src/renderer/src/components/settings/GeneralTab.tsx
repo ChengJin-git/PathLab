@@ -67,7 +67,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
   { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
   // Text-only models
-  { id: 'z-ai/glm-5', label: 'GLM-5', multimodal: false },
+  { id: 'z-ai/glm-5.1', label: 'GLM-5.1', multimodal: false },
   { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
   { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
   { id: 'minimax/minimax-m2.7', label: 'Minimax-M2.7', multimodal: false },
