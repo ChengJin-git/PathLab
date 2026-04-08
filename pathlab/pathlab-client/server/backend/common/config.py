@@ -1,14 +1,14 @@
 from typing import Any
 
 import os
+from importlib import import_module
 from pathlib import Path
 
-from backend.common.settings_store import (
-    read_config,
-    write_config,
-    _get_storage_config_file,
-    _get_app_data_dir,
-)
+_settings_store = import_module("backend.common.settings_store")
+read_config = _settings_store.read_config
+write_config = _settings_store.write_config
+_get_storage_config_file = _settings_store._get_storage_config_file
+_get_app_data_dir = _settings_store._get_app_data_dir
 
 
 class Config:
@@ -50,7 +50,7 @@ class Config:
     # Task timeout settings (in seconds)
     # Default: 3 days (259200 seconds), configurable via settings
     DEFAULT_TASK_TIMEOUT = 86400 * 3  # 3 days
-    _task_timeout: int = None  # Runtime cached value
+    _task_timeout: int | None = None  # Runtime cached value
 
     # ========== Centralized Constants ==========
     # Authentication
@@ -172,7 +172,7 @@ class Config:
         write_config({"max_concurrent": max_concurrent}, cls.STORAGE_CONFIG_FILE)
         return max_concurrent
 
-    _global_settings_cache: dict[str, Any] = None
+    _global_settings_cache: dict[str, Any] | None = None
     _global_settings_dirty: bool = True
 
     @classmethod
