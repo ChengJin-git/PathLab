@@ -17,6 +17,7 @@
 - `vite.config.ts`：独立 Web 构建配置
 - `../electron.vite.config.ts`：Electron `main` / `preload` / `renderer` 联合构建配置
 - `../main/index.ts`：桌面模式主进程入口
+- `../main/services-manager.ts`：桌面模式嵌入式 PostgreSQL / Redis 生命周期管理
 - `../main/sidecar-manager.ts`：桌面模式 sidecar 启停与端口发现
 - `../preload/index.ts`：渲染层可见的 IPC 桥接
 - `src/main.tsx`：前端运行时入口
@@ -50,7 +51,7 @@ src/renderer/
 - 根据 Electron / 浏览器环境选择 `HashRouter` 或 `BrowserRouter`
 - 启动时调用 `initializeApiConfig()`，从 preload / Electron IPC 读取后端端口
 - 在端口更新时调用 `updateApiBase()` 刷新 `API_BASE` / `PREPROCESSING_BASE` / `AI_BASE`
-- 组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
+- 组合 `QueryClientProvider`、`TooltipProvider`、`ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
 - 在浏览器模式注册 Service Worker
 
 ## 当前路由与页面

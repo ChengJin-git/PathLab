@@ -49,7 +49,7 @@ src/
 - `main.tsx` 会先调用 `initializeApiConfig()`，优先从 preload / Electron IPC 获取全部后端端口
 - `config.ts` 优先走 `getServicePorts()` / `onServicePorts()`，同时兼容只暴露 `gateway-port` 的旧桥接
 - 收到端口更新时会调用 `updateApiBase()`，刷新 `API_BASE` / `PREPROCESSING_BASE` / `AI_BASE`
-- 运行时组合 `ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
+- 运行时组合 `QueryClientProvider`、`TooltipProvider`、`ToastProvider`、`AuthProvider`、`BackgroundTaskProvider`
 - 浏览器模式会注册 Service Worker；Electron 模式不会注册
 
 ## API 客户端现状
@@ -95,6 +95,7 @@ src/
 - `charts/`（分析图表组件）
 - `chat/`
 - `common/`（语言切换、音频可视化等公共 UI 组件）
+- `landing/`
 - `legal/`（隐私政策、免责声明等法律文本内联链接）
 - `list/`
 - `results/`

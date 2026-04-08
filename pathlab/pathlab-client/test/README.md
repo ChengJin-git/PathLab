@@ -57,8 +57,9 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数 / Hook 测试（12 个文件）
+    ├── lib/              # 纯工具函数 / Hook 测试（13 个文件）
     │   ├── adminUserCreation.test.ts
+    │   ├── avatarUrl.test.ts
     │   ├── cache.test.ts
     │   ├── utils.test.ts
     │   ├── chatMessageParser.test.ts
@@ -150,6 +151,19 @@ PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件�
 ### 测试方式
 
 纯函数，无需 mock。并发去重测试：先创建 unresolved Promise，同时发起两次 `cache.get()`，然后 resolve Promise，验证 fetcher 只被调用一次。
+
+---
+
+## unit/lib/avatarUrl.test.ts
+
+**对应源文件**：`src/renderer/src/lib/avatarUrl.ts`
+**测试数量**：3 个
+
+覆盖头像 URL 解析辅助函数：
+
+- 空值返回 `null`
+- 已经是绝对 URL 的头像地址保持不变
+- 以 `/avatars/...` 开头的根路径会按 `API_BASE` 自动补齐为完整后端地址
 
 ---
 
