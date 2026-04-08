@@ -7,23 +7,27 @@ Extracted from main.py to reduce file size. Handles:
 - Available heatmaps listing
 - Patch-level CAM visualization
 """
+
 import json
 import logging
 import math
 import re
 import struct
+from importlib import import_module
 from pathlib import Path
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Mapping, cast
 
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.database import get_db
-from backend.database.repositories import WSIRepository
-from backend.common.config import Config
-from backend.common.file_types import is_patch_file
-from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+get_db = import_module("backend.database").get_db
+WSIRepository = import_module("backend.database.repositories").WSIRepository
+Config = import_module("backend.common.config").Config
+is_patch_file = import_module("backend.common.file_types").is_patch_file
+find_any_cached_coords_for_wsi = import_module(
+    "backend.ai.tasks.patch_cache"
+).find_any_cached_coords_for_wsi
 from .coords_utils import safe_load_h5_coords, safe_load_h5_coords_attrs
 from .heatmap_utils import (
     load_result_meta,
@@ -38,6 +42,7 @@ from .heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
     ensure_segmentation_recommendation_preview_cache,
 )
+from .slide_access import get_slide
 
 logger = logging.getLogger(__name__)
 
@@ -59,15 +64,61 @@ def _get_render_settings(
     blur_scale: Optional[float],
     contrast_boost: Optional[float],
     saturation_boost: Optional[float],
-) -> Dict[str, object]:
+) -> Dict[str, Any]:
     is_recommendation = preset == RECOMMENDATION_PRESET
     return {
-        "opacity": _clamp(opacity if opacity is not None else (0.68 if is_recommendation else 0.5), 0.05, 0.95),
-        "blur_scale": _clamp(blur_scale if blur_scale is not None else (0.6 if is_recommendation else 1.0), 0.1, 3.0),
-        "contrast_boost": _clamp(contrast_boost if contrast_boost is not None else (1.18 if is_recommendation else 1.0), 0.5, 3.0),
-        "saturation_boost": _clamp(saturation_boost if saturation_boost is not None else (1.25 if is_recommendation else 1.0), 0.5, 3.0),
-        "cache_headers": {"Cache-Control": "private, max-age=600"} if is_recommendation else {},
+        "opacity": _clamp(
+            opacity if opacity is not None else (0.68 if is_recommendation else 0.5),
+            0.05,
+            0.95,
+        ),
+        "blur_scale": _clamp(
+            blur_scale
+            if blur_scale is not None
+            else (0.6 if is_recommendation else 1.0),
+            0.1,
+            3.0,
+        ),
+        "contrast_boost": _clamp(
+            contrast_boost
+            if contrast_boost is not None
+            else (1.18 if is_recommendation else 1.0),
+            0.5,
+            3.0,
+        ),
+        "saturation_boost": _clamp(
+            saturation_boost
+            if saturation_boost is not None
+            else (1.25 if is_recommendation else 1.0),
+            0.5,
+            3.0,
+        ),
+        "cache_headers": {"Cache-Control": "private, max-age=600"}
+        if is_recommendation
+        else {},
     }
+
+
+def _cache_headers(render_settings: Mapping[str, Any]) -> Mapping[str, str]:
+    return cast(Mapping[str, str], render_settings["cache_headers"])
+
+
+def _coerce_str(value: Any) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_float(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def _enhance_overlay_image(image, contrast_boost: float, saturation_boost: float):
@@ -76,14 +127,14 @@ def _enhance_overlay_image(image, contrast_boost: float, saturation_boost: float
     if contrast_boost == 1.0 and saturation_boost == 1.0:
         return image
 
-    if image.mode == 'RGBA':
-        alpha_channel = image.getchannel('A')
-        rgb_image = image.convert('RGB')
+    if image.mode == "RGBA":
+        alpha_channel = image.getchannel("A")
+        rgb_image = image.convert("RGB")
         if saturation_boost != 1.0:
             rgb_image = ImageEnhance.Color(rgb_image).enhance(saturation_boost)
         if contrast_boost != 1.0:
             rgb_image = ImageEnhance.Contrast(rgb_image).enhance(contrast_boost)
-        enhanced = rgb_image.convert('RGBA')
+        enhanced = rgb_image.convert("RGBA")
         enhanced.putalpha(alpha_channel)
         return enhanced
 
@@ -127,26 +178,26 @@ def _get_npy_shape_fast(filepath: Path) -> Optional[tuple[Any, ...]]:
     This is much faster than np.load() for large arrays.
     """
     try:
-        with open(filepath, 'rb') as f:
+        with open(filepath, "rb") as f:
             # Read magic string and version
             magic = f.read(6)
-            if magic[:6] != b'\x93NUMPY':
+            if magic[:6] != b"\x93NUMPY":
                 return None
 
             # Re-read properly
             f.seek(0)
             f.read(6)  # Skip magic
-            version_major = struct.unpack('B', f.read(1))[0]
+            version_major = struct.unpack("B", f.read(1))[0]
             f.read(1)  # Skip version_minor
 
             # Read header length
             if version_major == 1:
-                header_len = struct.unpack('<H', f.read(2))[0]
+                header_len = struct.unpack("<H", f.read(2))[0]
             else:  # version 2 or 3
-                header_len = struct.unpack('<I', f.read(4))[0]
+                header_len = struct.unpack("<I", f.read(4))[0]
 
             # Read and parse header
-            header = f.read(header_len).decode('latin1')
+            header = f.read(header_len).decode("latin1")
             # Parse the dict-like string to extract shape using regex
             # Format: {'descr': '<f4', 'fortran_order': False, 'shape': (10, 20), }
             shape_match = re.search(r"'shape':\s*\((\d+),\s*(\d+)\)", header)
@@ -161,10 +212,14 @@ def _get_npy_shape_fast(filepath: Path) -> Optional[tuple[Any, ...]]:
 async def get_heatmap_data(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
-    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
+    fold_key: Optional[str] = Query(
+        None, description="Fold key for k-fold results (e.g., 'fold_0')"
+    ),
     patch_size: int = Query(512, description="Patch size used during inference"),
-    class_idx: Optional[int] = Query(None, description="Class index for multi-class attention (e.g., CLAM_MB)"),
-    db: AsyncSession = Depends(get_db)
+    class_idx: Optional[int] = Query(
+        None, description="Class index for multi-class attention (e.g., CLAM_MB)"
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get attention heatmap data for visualization overlay.
@@ -176,9 +231,10 @@ async def get_heatmap_data(
         JSON with coordinates, attention weights, and metadata for rendering heatmap
     """
     import numpy as np
-    from .main import get_slide
 
-    logger.info(f"Getting heatmap data for {wsi_id}, task_id={task_id}, fold_key={fold_key}")
+    logger.info(
+        f"Getting heatmap data for {wsi_id}, task_id={task_id}, fold_key={fold_key}"
+    )
 
     # Helper function to return empty heatmap response
     def empty_heatmap_response(message: str = "No heatmap data available"):
@@ -198,7 +254,7 @@ async def get_heatmap_data(
             "heatmap": [],
             "top_patches": [],
             "bottom_patches": [],
-            "message": message
+            "message": message,
         }
 
     try:
@@ -217,14 +273,23 @@ async def get_heatmap_data(
             return empty_heatmap_response("No attention data available")
 
         # Select the right attention file based on task_id and fold_key
-        attention_file = select_attention_file(attention_files, task_id, fold_key, UPLOADS_DIR)
+        attention_file = select_attention_file(
+            attention_files, task_id, fold_key, UPLOADS_DIR
+        )
         if attention_file is None:
-            logger.info(f"No attention data found for task {task_id}, fold_key={fold_key}")
-            return empty_heatmap_response(f"No attention data for task {task_id}" + (f" fold {fold_key}" if fold_key else ""))
+            logger.info(
+                f"No attention data found for task {task_id}, fold_key={fold_key}"
+            )
+            return empty_heatmap_response(
+                f"No attention data for task {task_id}"
+                + (f" fold {fold_key}" if fold_key else "")
+            )
 
         # Load attention weights
         attention = np.load(str(attention_file), allow_pickle=True)
-        logger.info(f"Loaded attention: shape={attention.shape}, min={attention.min()}, max={attention.max()}")
+        logger.info(
+            f"Loaded attention: shape={attention.shape}, min={attention.min()}, max={attention.max()}"
+        )
 
         # Load corresponding result.json for metadata
         result_meta = load_result_meta(attention_file, "_attention.npy")
@@ -234,15 +299,17 @@ async def get_heatmap_data(
         if coords_file is None:
             raise HTTPException(
                 status_code=404,
-                detail=f"Coordinates not found for {wsi_id}. Run compute_patches first."
+                detail=f"Coordinates not found for {wsi_id}. Run compute_patches first.",
             )
 
         # Use safe loading to handle corrupted files
-        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
+        coords, _, load_error = safe_load_h5_coords(
+            coords_file, delete_if_corrupted=False
+        )
         if coords is None:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to load coordinates for {wsi_id}: {load_error}. Please rerun compute_patches."
+                detail=f"Failed to load coordinates for {wsi_id}: {load_error}. Please rerun compute_patches.",
             )
 
         logger.info(f"Loaded coordinates: shape={coords.shape}")
@@ -251,12 +318,16 @@ async def get_heatmap_data(
         attention_type = result_meta.get("attention_type", "single")
         classes = result_meta.get("classes", [])
         num_attention_classes = attention.shape[0] if attention.ndim == 2 else None
-        attention, selected_class_idx = handle_multi_class_attention(attention, result_meta, class_idx)
+        attention, selected_class_idx = handle_multi_class_attention(
+            attention, result_meta, class_idx
+        )
 
         # Verify shapes match
         num_patches = len(coords)
         if len(attention) != num_patches:
-            logger.warning(f"Shape mismatch: attention={len(attention)}, coords={num_patches}")
+            logger.warning(
+                f"Shape mismatch: attention={len(attention)}, coords={num_patches}"
+            )
             # Truncate to smaller size
             min_len = min(len(attention), num_patches)
             attention = attention[:min_len]
@@ -268,18 +339,22 @@ async def get_heatmap_data(
         # Build heatmap data with index for sorting
         heatmap_data = []
         for i, (coord, weight) in enumerate(zip(coords, attention_normalized)):
-            heatmap_data.append({
-                "index": i,
-                "x": int(coord[0]),
-                "y": int(coord[1]),
-                "weight": float(weight),
-                "raw_weight": float(attention[i])
-            })
+            heatmap_data.append(
+                {
+                    "index": i,
+                    "x": int(coord[0]),
+                    "y": int(coord[1]),
+                    "weight": float(weight),
+                    "raw_weight": float(attention[i]),
+                }
+            )
 
         # Sort by weight to get top and bottom patches
         sorted_by_weight = sorted(heatmap_data, key=lambda p: p["weight"], reverse=True)
         top_patches = sorted_by_weight[:10]  # Top 10 highest attention
-        bottom_patches = sorted_by_weight[-10:][::-1]  # Bottom 10 lowest attention (reversed for ascending order)
+        bottom_patches = sorted_by_weight[-10:][
+            ::-1
+        ]  # Bottom 10 lowest attention (reversed for ascending order)
 
         # Get slide dimensions
         slide = await get_slide(wsi_id, db)
@@ -299,7 +374,9 @@ async def get_heatmap_data(
             "wsi_id": wsi_id,
             "task_id": result_meta.get("task_id"),
             "task_type": task_type,
-            "fold_key": result_meta.get("fold_key"),  # K-fold: which fold this attention comes from
+            "fold_key": result_meta.get(
+                "fold_key"
+            ),  # K-fold: which fold this attention comes from
             "task_name": result_meta.get("task_name"),
             "patch_size": patch_size,
             "slide_width": width,
@@ -328,24 +405,41 @@ async def get_heatmap_data(
     except Exception as e:
         logger.error(f"Failed to get heatmap data: {e}")
         import traceback
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get heatmap data: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get heatmap data: {str(e)}"
+        )
 
 
 @router.get("/wsi/{wsi_id}/heatmap_thumbnail")
 async def get_heatmap_thumbnail(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
-    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
+    fold_key: Optional[str] = Query(
+        None, description="Fold key for k-fold results (e.g., 'fold_0')"
+    ),
     patch_size: int = Query(512, description="Patch size used during inference"),
     size: int = Query(256, description="Max thumbnail size (width or height)"),
-    class_idx: Optional[int] = Query(None, description="Class index for multi-class attention"),
-    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
-    opacity: Optional[float] = Query(None, description="Optional overlay opacity for preview rendering"),
-    blur_scale: Optional[float] = Query(None, description="Optional blur scale multiplier for preview rendering"),
-    contrast_boost: Optional[float] = Query(None, description="Optional contrast boost for preview rendering"),
-    saturation_boost: Optional[float] = Query(None, description="Optional saturation boost for preview rendering"),
-    db: AsyncSession = Depends(get_db)
+    class_idx: Optional[int] = Query(
+        None, description="Class index for multi-class attention"
+    ),
+    preset: Optional[str] = Query(
+        None, description="Optional rendering preset for lightweight previews"
+    ),
+    opacity: Optional[float] = Query(
+        None, description="Optional overlay opacity for preview rendering"
+    ),
+    blur_scale: Optional[float] = Query(
+        None, description="Optional blur scale multiplier for preview rendering"
+    ),
+    contrast_boost: Optional[float] = Query(
+        None, description="Optional contrast boost for preview rendering"
+    ),
+    saturation_boost: Optional[float] = Query(
+        None, description="Optional saturation boost for preview rendering"
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get a rendered heatmap thumbnail image for a WSI.
@@ -361,18 +455,24 @@ async def get_heatmap_thumbnail(
     import numpy as np
     from PIL import Image
     import io
-    from .main import get_slide
-    from backend.common.slide_utils import load_slide as _load_slide
 
-    render_settings = _get_render_settings(preset, opacity, blur_scale, contrast_boost, saturation_boost)
+    _load_slide = import_module("backend.common.slide_utils").load_slide
 
-    logger.info(f"Getting heatmap thumbnail for {wsi_id}, task_id={task_id}, size={size}")
+    render_settings = _get_render_settings(
+        preset, opacity, blur_scale, contrast_boost, saturation_boost
+    )
+
+    logger.info(
+        f"Getting heatmap thumbnail for {wsi_id}, task_id={task_id}, size={size}"
+    )
 
     try:
         # Find result directory
         result_dir = AI_RESULTS_DIR / wsi_id
         if not result_dir.exists():
-            raise HTTPException(status_code=404, detail="No inference results available")
+            raise HTTPException(
+                status_code=404, detail="No inference results available"
+            )
 
         # Find attention file
         attention_files = list(result_dir.glob("*_attention.npy"))
@@ -380,9 +480,13 @@ async def get_heatmap_thumbnail(
             raise HTTPException(status_code=404, detail="No attention data available")
 
         # Select the right attention file
-        attention_file = select_attention_file(attention_files, task_id, fold_key, UPLOADS_DIR)
+        attention_file = select_attention_file(
+            attention_files, task_id, fold_key, UPLOADS_DIR
+        )
         if attention_file is None:
-            raise HTTPException(status_code=404, detail=f"No attention data for task {task_id}")
+            raise HTTPException(
+                status_code=404, detail=f"No attention data for task {task_id}"
+            )
 
         wsi = None
 
@@ -408,7 +512,7 @@ async def get_heatmap_thumbnail(
                     return FileResponse(
                         response_preview_path,
                         media_type="image/png",
-                        headers=render_settings["cache_headers"],
+                        headers=_cache_headers(render_settings),
                     )
 
         # Load attention weights
@@ -423,11 +527,13 @@ async def get_heatmap_thumbnail(
             raise HTTPException(status_code=404, detail="Coordinates not found")
 
         # Use safe loading to handle corrupted files
-        coords, _, load_error = safe_load_h5_coords(coords_file, delete_if_corrupted=False)
+        coords, _, load_error = safe_load_h5_coords(
+            coords_file, delete_if_corrupted=False
+        )
         if coords is None:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to load coordinates: {load_error}. Please rerun compute_patches."
+                detail=f"Failed to load coordinates: {load_error}. Please rerun compute_patches.",
             )
 
         # Handle multi-class attention
@@ -462,19 +568,22 @@ async def get_heatmap_thumbnail(
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
-        file_path = Path(wsi.wsi_path)
-        file_size = wsi.file_size or file_path.stat().st_size
+        wsi_path = _coerce_str(wsi.wsi_path)
+        if wsi_path is None:
+            raise HTTPException(status_code=500, detail="WSI path missing")
+        file_path = Path(wsi_path)
+        file_size = _coerce_int(wsi.file_size) or file_path.stat().st_size
 
         if is_patch_file(str(file_path), file_size):
             # Patch file
             with Image.open(file_path) as img:
                 try:
-                    img.draft('RGB', (thumb_width, thumb_height))
+                    img.draft("RGB", (thumb_width, thumb_height))
                 except Exception:
                     pass
 
                 img.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
-                thumbnail = img.convert('RGB')
+                thumbnail = img.convert("RGB")
         else:
             # WSI file
             aslide = _load_slide(str(file_path))
@@ -482,8 +591,10 @@ async def get_heatmap_thumbnail(
                 lowest_level = len(aslide.level_dimensions) - 1
                 level_dims = aslide.level_dimensions[lowest_level]
                 region = aslide.read_region((0, 0), lowest_level, level_dims)
-                thumbnail = region.convert('RGB')
-                thumbnail.thumbnail((thumb_width, thumb_height), Image.Resampling.LANCZOS)
+                thumbnail = region.convert("RGB")
+                thumbnail.thumbnail(
+                    (thumb_width, thumb_height), Image.Resampling.LANCZOS
+                )
             finally:
                 try:
                     aslide.close()
@@ -519,7 +630,9 @@ async def get_heatmap_thumbnail(
         patch_h = max(1e-6, patch_size * scale_y)
 
         # Create transparent RGBA overlay so empty areas do not darken the whole slide.
-        heatmap_rgba = np.zeros((actual_thumb_height, actual_thumb_width, 4), dtype=np.uint8)
+        heatmap_rgba = np.zeros(
+            (actual_thumb_height, actual_thumb_width, 4), dtype=np.uint8
+        )
 
         # Draw patches on heatmap as opaque color blocks; opacity is applied after blur.
         # Use floor/ceil bounds instead of int(start) + int(width) to avoid seams and
@@ -527,8 +640,12 @@ async def get_heatmap_thumbnail(
         for coord, weight in zip(coords, attention_normalized):
             x = max(0, int(math.floor(coord[0] * scale_x)))
             y = max(0, int(math.floor(coord[1] * scale_y)))
-            x_end = min(actual_thumb_width, int(math.ceil((coord[0] + patch_size) * scale_x)))
-            y_end = min(actual_thumb_height, int(math.ceil((coord[1] + patch_size) * scale_y)))
+            x_end = min(
+                actual_thumb_width, int(math.ceil((coord[0] + patch_size) * scale_x))
+            )
+            y_end = min(
+                actual_thumb_height, int(math.ceil((coord[1] + patch_size) * scale_y))
+            )
 
             if x_end <= x:
                 x_end = min(actual_thumb_width, x + 1)
@@ -545,7 +662,8 @@ async def get_heatmap_thumbnail(
         # Apply Gaussian blur to the transparent overlay, then boost visibility for
         # recommendation-card previews when requested.
         from PIL import ImageFilter
-        heatmap_image = Image.fromarray(heatmap_rgba, mode='RGBA')
+
+        heatmap_image = Image.fromarray(heatmap_rgba, mode="RGBA")
         blur_radius = _get_thumbnail_blur_radius(
             patch_w,
             patch_h,
@@ -563,24 +681,24 @@ async def get_heatmap_thumbnail(
             render_settings["saturation_boost"],
         )
 
-        alpha_channel = heatmap_blurred.getchannel('A').point(
+        alpha_channel = heatmap_blurred.getchannel("A").point(
             lambda value: int(value * render_settings["opacity"])
         )
         heatmap_overlay = heatmap_blurred.copy()
         heatmap_overlay.putalpha(alpha_channel)
 
-        blended = Image.alpha_composite(thumbnail.convert('RGBA'), heatmap_overlay)
-        blended_rgb = blended.convert('RGB')
+        blended = Image.alpha_composite(thumbnail.convert("RGBA"), heatmap_overlay)
+        blended_rgb = blended.convert("RGB")
 
         # Convert to bytes
         buf = io.BytesIO()
-        blended_rgb.save(buf, format='PNG')
+        blended_rgb.save(buf, format="PNG")
         buf.seek(0)
 
         return Response(
             content=buf.getvalue(),
             media_type="image/png",
-            headers=render_settings["cache_headers"],
+            headers=_cache_headers(render_settings),
         )
 
     except HTTPException:
@@ -588,15 +706,15 @@ async def get_heatmap_thumbnail(
     except Exception as e:
         logger.error(f"Failed to get heatmap thumbnail: {e}")
         import traceback
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get heatmap thumbnail: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get heatmap thumbnail: {str(e)}"
+        )
 
 
 @router.get("/wsi/{wsi_id}/available_heatmaps")
-async def get_available_heatmaps(
-    wsi_id: str,
-    db: AsyncSession = Depends(get_db)
-):
+async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)):
     """
     Get list of available heatmaps (attention data) for a WSI.
 
@@ -604,7 +722,10 @@ async def get_available_heatmaps(
         List of available tasks with attention data
     """
     import re
-    from backend.database.repositories import TrainingTaskRepository
+
+    TrainingTaskRepository = import_module(
+        "backend.database.repositories"
+    ).TrainingTaskRepository
 
     logger.info(f"Getting available heatmaps for {wsi_id}")
 
@@ -635,10 +756,10 @@ async def get_available_heatmaps(
 
             fold_key = None
             if "_fold_" in base_name:
-                fold_match = re.search(r'(fold_\d+)$', base_name)
+                fold_match = re.search(r"(fold_\d+)$", base_name)
                 if fold_match:
                     fold_key = fold_match.group(1)
-                    base_name = base_name[:fold_match.start()].rstrip("_")
+                    base_name = base_name[: fold_match.start()].rstrip("_")
 
             parts = base_name.split("_", 1)
             task_type = parts[0] if parts else "unknown"
@@ -656,9 +777,15 @@ async def get_available_heatmaps(
             if effective_task_id and (not classes or not feature_extractor):
                 task_ids_needing_db.add(effective_task_id)
 
-            attention_data_list.append((
-                attention_file, task_type, effective_task_id, effective_fold_key, result_meta
-            ))
+            attention_data_list.append(
+                (
+                    attention_file,
+                    task_type,
+                    effective_task_id,
+                    effective_fold_key,
+                    result_meta,
+                )
+            )
 
         # Process patch-level CAM files (parse only, no DB calls yet)
         for cam_file in cam_files:
@@ -667,10 +794,10 @@ async def get_available_heatmaps(
 
             fold_key = None
             if "_fold_" in base_name:
-                fold_match = re.search(r'(fold_\d+)$', base_name)
+                fold_match = re.search(r"(fold_\d+)$", base_name)
                 if fold_match:
                     fold_key = fold_match.group(1)
-                    base_name = base_name[:fold_match.start()].rstrip("_")
+                    base_name = base_name[: fold_match.start()].rstrip("_")
 
             parts = base_name.split("_", 1)
             task_type = parts[0] if parts else "unknown"
@@ -686,7 +813,15 @@ async def get_available_heatmaps(
             if effective_task_id and (not classes or not feature_extractor):
                 task_ids_needing_db.add(effective_task_id)
 
-            cam_data_list.append((cam_file, task_type, effective_task_id, effective_fold_key, result_meta))
+            cam_data_list.append(
+                (
+                    cam_file,
+                    task_type,
+                    effective_task_id,
+                    effective_fold_key,
+                    result_meta,
+                )
+            )
 
         # Process patch-level segmentation mask files (parse only, no DB calls yet)
         for mask_file in seg_mask_files:
@@ -695,10 +830,10 @@ async def get_available_heatmaps(
 
             fold_key = None
             if "_fold_" in base_name:
-                fold_match = re.search(r'(fold_\d+)$', base_name)
+                fold_match = re.search(r"(fold_\d+)$", base_name)
                 if fold_match:
                     fold_key = fold_match.group(1)
-                    base_name = base_name[:fold_match.start()].rstrip("_")
+                    base_name = base_name[: fold_match.start()].rstrip("_")
 
             parts = base_name.split("_", 1)
             task_type = parts[0] if parts else "unknown"
@@ -712,34 +847,56 @@ async def get_available_heatmaps(
             if effective_task_id:
                 task_ids_needing_db.add(effective_task_id)
 
-            seg_mask_data_list.append((mask_file, task_type, effective_task_id, effective_fold_key, result_meta))
+            seg_mask_data_list.append(
+                (
+                    mask_file,
+                    task_type,
+                    effective_task_id,
+                    effective_fold_key,
+                    result_meta,
+                )
+            )
 
         # Phase 2: Batch fetch all needed training tasks from DB (single query)
-        training_tasks_map: Dict[str, any] = {}
+        training_tasks_map: Dict[str, Any] = {}
         if task_ids_needing_db:
             try:
-                training_tasks_map = await TrainingTaskRepository.get_by_ids(db, list(task_ids_needing_db))
+                training_tasks_map = await TrainingTaskRepository.get_by_ids(
+                    db, list(task_ids_needing_db)
+                )
             except Exception as e:
                 logger.warning(f"Failed to batch fetch training tasks: {e}")
 
         coords_patch_size = None
         coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
         if coords_file is not None:
-            coords_attrs, load_error = safe_load_h5_coords_attrs(coords_file, delete_if_corrupted=False)
+            coords_attrs, load_error = safe_load_h5_coords_attrs(
+                coords_file, delete_if_corrupted=False
+            )
             if coords_attrs is None:
-                logger.warning(f"Failed to load coords attrs for {wsi_id}: {load_error}")
+                logger.warning(
+                    f"Failed to load coords attrs for {wsi_id}: {load_error}"
+                )
             else:
                 raw_patch_size = coords_attrs.get("patch_size")
                 if raw_patch_size is not None:
                     try:
                         coords_patch_size = int(raw_patch_size)
                     except (TypeError, ValueError):
-                        logger.warning(f"Invalid coords patch_size for {wsi_id}: {raw_patch_size}")
+                        logger.warning(
+                            f"Invalid coords patch_size for {wsi_id}: {raw_patch_size}"
+                        )
 
         # Phase 3: Build heatmap entries with all data
         heatmaps = []
 
-        for attention_file, task_type, effective_task_id, effective_fold_key, result_meta in attention_data_list:
+        for (
+            attention_file,
+            task_type,
+            effective_task_id,
+            effective_fold_key,
+            result_meta,
+        ) in attention_data_list:
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
             task_name = result_meta.get("task_name")
@@ -751,7 +908,9 @@ async def get_available_heatmaps(
                 if not classes and training_task.classes:
                     classes = training_task.classes
                 if not feature_extractor and training_task.preprocessing_config:
-                    feature_extractor = training_task.preprocessing_config.get("feature_extractor")
+                    feature_extractor = training_task.preprocessing_config.get(
+                        "feature_extractor"
+                    )
                 if not task_name and training_task.task_name:
                     task_name = training_task.task_name
                 if not aggregator and training_task.model_config:
@@ -772,28 +931,36 @@ async def get_available_heatmaps(
             is_survival = "risk_score" in result_meta
             actual_task_type = "survival" if is_survival else task_type
 
-            heatmaps.append({
-                "task_id": effective_task_id,
-                "fold_key": effective_fold_key,
-                "task_type": actual_task_type,
-                "task_name": task_name or actual_task_type,
-                "prediction": result_meta.get("pred"),
-                "probs": result_meta.get("probs"),
-                "classes": classes,
-                "feature_extractor": feature_extractor,
-                "aggregator": aggregator,
-                "created_at": attention_file.stat().st_mtime,
-                "attention_file": str(attention_file.name),
-                "data_type": "wsi",
-                "patch_size": coords_patch_size,
-                "attention_type": attention_type,
-                "num_attention_classes": num_attention_classes,
-                # Survival prediction fields
-                "risk_score": result_meta.get("risk_score"),
-                "risk_group": result_meta.get("risk_group"),
-            })
+            heatmaps.append(
+                {
+                    "task_id": effective_task_id,
+                    "fold_key": effective_fold_key,
+                    "task_type": actual_task_type,
+                    "task_name": task_name or actual_task_type,
+                    "prediction": result_meta.get("pred"),
+                    "probs": result_meta.get("probs"),
+                    "classes": classes,
+                    "feature_extractor": feature_extractor,
+                    "aggregator": aggregator,
+                    "created_at": attention_file.stat().st_mtime,
+                    "attention_file": str(attention_file.name),
+                    "data_type": "wsi",
+                    "patch_size": coords_patch_size,
+                    "attention_type": attention_type,
+                    "num_attention_classes": num_attention_classes,
+                    # Survival prediction fields
+                    "risk_score": result_meta.get("risk_score"),
+                    "risk_group": result_meta.get("risk_group"),
+                }
+            )
 
-        for cam_file, task_type, effective_task_id, effective_fold_key, result_meta in cam_data_list:
+        for (
+            cam_file,
+            task_type,
+            effective_task_id,
+            effective_fold_key,
+            result_meta,
+        ) in cam_data_list:
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
             task_name = result_meta.get("task_name")
@@ -803,27 +970,37 @@ async def get_available_heatmaps(
                 if not classes and training_task.classes:
                     classes = training_task.classes
                 if not feature_extractor and training_task.preprocessing_config:
-                    feature_extractor = training_task.preprocessing_config.get("feature_extractor")
+                    feature_extractor = training_task.preprocessing_config.get(
+                        "feature_extractor"
+                    )
                 if not task_name and training_task.task_name:
                     task_name = training_task.task_name
 
-            heatmaps.append({
-                "task_id": effective_task_id,
-                "task_type": task_type,
-                "task_name": task_name or task_type,
-                "fold_key": effective_fold_key,
-                "prediction": result_meta.get("pred"),
-                "probs": result_meta.get("probs"),
-                "classes": classes,
-                "feature_extractor": feature_extractor,
-                "created_at": cam_file.stat().st_mtime,
-                "attention_file": str(cam_file.name),
-                "data_type": "patch",
-                "cam_size": result_meta.get("cam_size"),
-            })
+            heatmaps.append(
+                {
+                    "task_id": effective_task_id,
+                    "task_type": task_type,
+                    "task_name": task_name or task_type,
+                    "fold_key": effective_fold_key,
+                    "prediction": result_meta.get("pred"),
+                    "probs": result_meta.get("probs"),
+                    "classes": classes,
+                    "feature_extractor": feature_extractor,
+                    "created_at": cam_file.stat().st_mtime,
+                    "attention_file": str(cam_file.name),
+                    "data_type": "patch",
+                    "cam_size": result_meta.get("cam_size"),
+                }
+            )
 
         # Build heatmap entries for segmentation masks
-        for mask_file, task_type, effective_task_id, effective_fold_key, result_meta in seg_mask_data_list:
+        for (
+            mask_file,
+            task_type,
+            effective_task_id,
+            effective_fold_key,
+            result_meta,
+        ) in seg_mask_data_list:
             task_name = result_meta.get("task_name")
 
             if effective_task_id and effective_task_id in training_tasks_map:
@@ -834,31 +1011,39 @@ async def get_available_heatmaps(
             num_classes = result_meta.get("num_classes", 1)
             class_names = result_meta.get("class_names", [])
 
-            heatmaps.append({
-                "task_id": effective_task_id,
-                "task_type": "segmentation",
-                "task_name": task_name or "segmentation",
-                "fold_key": effective_fold_key,
-                "prediction": "segmentation",
-                "probs": result_meta.get("metrics"),
-                "classes": class_names or None,
-                "feature_extractor": None,
-                "created_at": mask_file.stat().st_mtime,
-                "attention_file": str(mask_file.name),
-                "data_type": "patch_segmentation",
-                "num_classes": num_classes,
-                "image_size": result_meta.get("image_size"),
-            })
+            heatmaps.append(
+                {
+                    "task_id": effective_task_id,
+                    "task_type": "segmentation",
+                    "task_name": task_name or "segmentation",
+                    "fold_key": effective_fold_key,
+                    "prediction": "segmentation",
+                    "probs": result_meta.get("metrics"),
+                    "classes": class_names or None,
+                    "feature_extractor": None,
+                    "created_at": mask_file.stat().st_mtime,
+                    "attention_file": str(mask_file.name),
+                    "data_type": "patch_segmentation",
+                    "num_classes": num_classes,
+                    "image_size": result_meta.get("image_size"),
+                }
+            )
 
         # Get best_fold info and validation performance for each model from metrics.json
-        model_metrics: Dict[str, Dict[str, Any]] = {}
+        model_metrics: Dict[tuple[str, str | None], Dict[str, Any]] = {}
         task_best_folds: Dict[str, str] = {}
 
         possible_prefixes = [
             "patch_cls",  # Patch classification
             "patch_seg",  # Patch segmentation
-            "abmil", "meanmil", "maxmil", "dsmil", "dtfdmil",  # WSI aggregators
-            "clam_sb", "clam_mb", "transmil",
+            "abmil",
+            "meanmil",
+            "maxmil",
+            "dsmil",
+            "dtfdmil",  # WSI aggregators
+            "clam_sb",
+            "clam_mb",
+            "transmil",
         ]
 
         # Collect all unique task_ids
@@ -870,21 +1055,29 @@ async def get_available_heatmaps(
                 metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
                 if metrics_file.exists():
                     try:
-                        with open(metrics_file, 'r') as f:
+                        with open(metrics_file, "r") as f:
                             metrics_data = json.load(f)
                             best_fold = metrics_data.get("best_fold")
 
                             # Get validation accuracy
                             val_accuracy = None
-                            if metrics_data.get("is_kfold") and metrics_data.get("aggregated"):
-                                val_accuracy = metrics_data["aggregated"].get("accuracy", {}).get("mean")
+                            if metrics_data.get("is_kfold") and metrics_data.get(
+                                "aggregated"
+                            ):
+                                val_accuracy = (
+                                    metrics_data["aggregated"]
+                                    .get("accuracy", {})
+                                    .get("mean")
+                                )
                             elif metrics_data.get("accuracy") is not None:
                                 val_accuracy = metrics_data.get("accuracy")
                             elif metrics_data.get("val_accuracy") is not None:
                                 val_accuracy = metrics_data.get("val_accuracy")
 
                             # Determine aggregator from model_prefix (None for patch_cls)
-                            aggregator = model_prefix if model_prefix != "patch_cls" else None
+                            aggregator = (
+                                model_prefix if model_prefix != "patch_cls" else None
+                            )
 
                             # Get K-Fold info
                             is_kfold = metrics_data.get("is_kfold", False)
@@ -900,7 +1093,9 @@ async def get_available_heatmaps(
                             if best_fold and tid not in task_best_folds:
                                 task_best_folds[tid] = best_fold
                     except Exception as e:
-                        logger.warning(f"Failed to read metrics.json for {model_id}: {e}")
+                        logger.warning(
+                            f"Failed to read metrics.json for {model_id}: {e}"
+                        )
 
         # Mark is_best_fold and val_accuracy for each heatmap
         for heatmap in heatmaps:
@@ -921,7 +1116,7 @@ async def get_available_heatmaps(
 
             # Set is_best_fold
             if h_fold_key and h_task_id in task_best_folds:
-                heatmap["is_best_fold"] = (h_fold_key == task_best_folds[h_task_id])
+                heatmap["is_best_fold"] = h_fold_key == task_best_folds[h_task_id]
             else:
                 heatmap["is_best_fold"] = None  # Not a k-fold task or no fold info
 
@@ -939,23 +1134,43 @@ async def get_available_heatmaps(
     except Exception as e:
         logger.error(f"Failed to get available heatmaps: {e}")
         import traceback
+
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get available heatmaps: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get available heatmaps: {str(e)}"
+        )
 
 
 @router.get("/wsi/{wsi_id}/patch_cam")
 async def get_patch_cam(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID for the result"),
-    fold_key: Optional[str] = Query(None, description="Fold key for k-fold results (e.g., 'fold_0')"),
-    format: str = Query("image", description="Output format: 'image' for colored PNG, 'json' for raw data"),
-    size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
-    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
-    opacity: Optional[float] = Query(None, description="Optional overlay opacity for preview rendering"),
-    blur_scale: Optional[float] = Query(None, description="Optional blur scale multiplier for preview rendering"),
-    contrast_boost: Optional[float] = Query(None, description="Optional contrast boost for preview rendering"),
-    saturation_boost: Optional[float] = Query(None, description="Optional saturation boost for preview rendering"),
-    db: AsyncSession = Depends(get_db)
+    fold_key: Optional[str] = Query(
+        None, description="Fold key for k-fold results (e.g., 'fold_0')"
+    ),
+    format: str = Query(
+        "image",
+        description="Output format: 'image' for colored PNG, 'json' for raw data",
+    ),
+    size: Optional[int] = Query(
+        None, description="Optional max thumbnail size for previews"
+    ),
+    preset: Optional[str] = Query(
+        None, description="Optional rendering preset for lightweight previews"
+    ),
+    opacity: Optional[float] = Query(
+        None, description="Optional overlay opacity for preview rendering"
+    ),
+    blur_scale: Optional[float] = Query(
+        None, description="Optional blur scale multiplier for preview rendering"
+    ),
+    contrast_boost: Optional[float] = Query(
+        None, description="Optional contrast boost for preview rendering"
+    ),
+    saturation_boost: Optional[float] = Query(
+        None, description="Optional saturation boost for preview rendering"
+    ),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get patch-level CAM (Class Activation Map) data for visualization overlay.
@@ -975,12 +1190,17 @@ async def get_patch_cam(
     """
     import numpy as np
     import matplotlib
-    matplotlib.use('Agg')
+
+    matplotlib.use("Agg")
     from matplotlib import cm
 
-    render_settings = _get_render_settings(preset, opacity, blur_scale, contrast_boost, saturation_boost)
+    render_settings = _get_render_settings(
+        preset, opacity, blur_scale, contrast_boost, saturation_boost
+    )
 
-    logger.info(f"Getting patch CAM for {wsi_id}, task_id={task_id}, fold_key={fold_key}, format={format}, size={size}")
+    logger.info(
+        f"Getting patch CAM for {wsi_id}, task_id={task_id}, fold_key={fold_key}, format={format}, size={size}"
+    )
 
     # Helper function to return empty CAM response
     def empty_cam_response(message: str = "No CAM data available"):
@@ -993,15 +1213,16 @@ async def get_patch_cam(
                 "cam_size": [0, 0],
                 "prediction": None,
                 "probs": None,
-                "message": message
+                "message": message,
             }
         else:
             # Return a 1x1 transparent PNG for image format
             import io
             from PIL import Image
-            img = Image.new('RGBA', (1, 1), (0, 0, 0, 0))
+
+            img = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
             buf = io.BytesIO()
-            img.save(buf, format='PNG')
+            img.save(buf, format="PNG")
             buf.seek(0)
             return Response(
                 content=buf.getvalue(),
@@ -1035,9 +1256,13 @@ async def get_patch_cam(
                 fold_matching = [f for f in matching if fold_key in f.name]
                 if fold_matching:
                     matching = fold_matching
-                    logger.info(f"Using specified fold {fold_key} for patch CAM task {task_id}")
+                    logger.info(
+                        f"Using specified fold {fold_key} for patch CAM task {task_id}"
+                    )
                 else:
-                    logger.warning(f"Fold {fold_key} not found for task {task_id}, using fallback")
+                    logger.warning(
+                        f"Fold {fold_key} not found for task {task_id}, using fallback"
+                    )
             else:
                 # No fold_key specified - prefer non-fold files, or use best_fold
                 non_fold = [f for f in matching if "fold_" not in f.name]
@@ -1050,16 +1275,22 @@ async def get_patch_cam(
                         best_matching = [f for f in matching if best_fold in f.name]
                         if best_matching:
                             matching = best_matching
-                            logger.info(f"Using best fold {best_fold} for patch CAM task {task_id}")
+                            logger.info(
+                                f"Using best fold {best_fold} for patch CAM task {task_id}"
+                            )
 
             cam_file = matching[0]
         else:
-            cam_file = sorted(cam_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+            cam_file = sorted(cam_files, key=lambda f: f.stat().st_mtime, reverse=True)[
+                0
+            ]
 
         if format != "json" and preset == RECOMMENDATION_PRESET:
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if not wsi:
-                raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+                raise HTTPException(
+                    status_code=404, detail=f"Patch not found: {wsi_id}"
+                )
 
             preview_path = ensure_patch_cam_recommendation_preview_cache(
                 wsi_id,
@@ -1082,7 +1313,9 @@ async def get_patch_cam(
 
         # Load CAM data
         cam = np.load(str(cam_file), allow_pickle=True)
-        logger.info(f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}")
+        logger.info(
+            f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}"
+        )
 
         # Load corresponding result.json for metadata
         result_meta = load_result_meta(cam_file, "_cam.npy")
@@ -1097,7 +1330,7 @@ async def get_patch_cam(
                 "cam_size": list(cam.shape),
                 "cam_min": float(cam.min()),
                 "cam_max": float(cam.max()),
-                "cam_data": cam.tolist()  # 2D array
+                "cam_data": cam.tolist(),  # 2D array
             }
         else:
             # Return colored heatmap overlaid on original patch image
@@ -1107,11 +1340,13 @@ async def get_patch_cam(
             # First, get the original patch image
             wsi = await WSIRepository.get_by_id(db, wsi_id)
             if not wsi:
-                raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
+                raise HTTPException(
+                    status_code=404, detail=f"Patch not found: {wsi_id}"
+                )
 
             file_path = Path(wsi.wsi_path)
             with Image.open(file_path) as img:
-                original_image = img.convert('RGB')
+                original_image = img.convert("RGB")
 
             source_width, source_height = original_image.size
             target_width, target_height = source_width, source_height
@@ -1121,7 +1356,9 @@ async def get_patch_cam(
                 if scale < 1.0:
                     target_width = max(1, int(round(source_width * scale)))
                     target_height = max(1, int(round(source_height * scale)))
-                    original_image = original_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+                    original_image = original_image.resize(
+                        (target_width, target_height), Image.Resampling.LANCZOS
+                    )
 
             # Normalize CAM to 0-1 if not already
             if cam.max() > cam.min():
@@ -1130,7 +1367,7 @@ async def get_patch_cam(
                 cam_normalized = np.zeros_like(cam)
 
             # Apply colormap (jet is commonly used for heatmaps)
-            colormap = cm.get_cmap('jet')
+            colormap = cm.get_cmap("jet")
             colored_cam = colormap(cam_normalized)  # Returns RGBA (H, W, 4)
 
             # Convert to uint8
@@ -1140,11 +1377,15 @@ async def get_patch_cam(
             colored_cam_uint8[:, :, 3] = int(round(255 * render_settings["opacity"]))
 
             # Create PIL image and resize to match original
-            cam_image = Image.fromarray(colored_cam_uint8, mode='RGBA')
-            cam_image = cam_image.resize((target_width, target_height), Image.Resampling.BILINEAR)
+            cam_image = Image.fromarray(colored_cam_uint8, mode="RGBA")
+            cam_image = cam_image.resize(
+                (target_width, target_height), Image.Resampling.BILINEAR
+            )
 
             # Apply Gaussian blur for smoother appearance
-            blur_radius = max(1, (target_width / 50) * render_settings["blur_scale"])  # Adaptive blur based on image size
+            blur_radius = max(
+                1, (target_width / 50) * render_settings["blur_scale"]
+            )  # Adaptive blur based on image size
             cam_image = cam_image.filter(ImageFilter.GaussianBlur(radius=blur_radius))
             cam_image = _enhance_overlay_image(
                 cam_image,
@@ -1153,13 +1394,13 @@ async def get_patch_cam(
             )
 
             # Composite CAM over original image
-            original_rgba = original_image.convert('RGBA')
+            original_rgba = original_image.convert("RGBA")
             blended = Image.alpha_composite(original_rgba, cam_image)
-            blended_rgb = blended.convert('RGB')
+            blended_rgb = blended.convert("RGB")
 
             # Convert to bytes
             buf = io.BytesIO()
-            blended_rgb.save(buf, format='PNG')
+            blended_rgb.save(buf, format="PNG")
             buf.seek(0)
 
             return Response(
@@ -1173,9 +1414,11 @@ async def get_patch_cam(
     except Exception as e:
         logger.error(f"Failed to get patch CAM: {e}")
         import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Failed to get patch CAM: {str(e)}")
 
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, detail=f"Failed to get patch CAM: {str(e)}"
+        )
 
 
 # ============================================================================
@@ -1184,16 +1427,16 @@ async def get_patch_cam(
 
 # Distinct colors for segmentation classes (RGBA, alpha=160 for overlay)
 _SEG_COLORS = [
-    (255, 0, 0, 160),     # Red
-    (0, 255, 0, 160),     # Green
-    (0, 0, 255, 160),     # Blue
-    (255, 255, 0, 160),   # Yellow
-    (255, 0, 255, 160),   # Magenta
-    (0, 255, 255, 160),   # Cyan
-    (255, 128, 0, 160),   # Orange
-    (128, 0, 255, 160),   # Purple
-    (0, 128, 255, 160),   # Sky Blue
-    (255, 0, 128, 160),   # Pink
+    (255, 0, 0, 160),  # Red
+    (0, 255, 0, 160),  # Green
+    (0, 0, 255, 160),  # Blue
+    (255, 255, 0, 160),  # Yellow
+    (255, 0, 255, 160),  # Magenta
+    (0, 255, 255, 160),  # Cyan
+    (255, 128, 0, 160),  # Orange
+    (128, 0, 255, 160),  # Purple
+    (0, 128, 255, 160),  # Sky Blue
+    (255, 0, 128, 160),  # Pink
 ]
 
 
@@ -1202,8 +1445,12 @@ async def get_seg_mask(
     wsi_id: str,
     task_id: Optional[str] = Query(None, description="Specific task ID"),
     fold_key: Optional[str] = Query(None, description="Fold key for k-fold results"),
-    preset: Optional[str] = Query(None, description="Optional rendering preset for lightweight previews"),
-    size: Optional[int] = Query(None, description="Optional max thumbnail size for previews"),
+    preset: Optional[str] = Query(
+        None, description="Optional rendering preset for lightweight previews"
+    ),
+    size: Optional[int] = Query(
+        None, description="Optional max thumbnail size for previews"
+    ),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -1231,7 +1478,9 @@ async def get_seg_mask(
         if task_id:
             matching = [f for f in mask_files if task_id in f.name]
             if not matching:
-                raise HTTPException(status_code=404, detail=f"No mask for task {task_id}")
+                raise HTTPException(
+                    status_code=404, detail=f"No mask for task {task_id}"
+                )
 
             if fold_key:
                 fold_matching = [f for f in matching if fold_key in f.name]
@@ -1250,7 +1499,9 @@ async def get_seg_mask(
 
             mask_file = matching[0]
         else:
-            mask_file = sorted(mask_files, key=lambda f: f.stat().st_mtime, reverse=True)[0]
+            mask_file = sorted(
+                mask_files, key=lambda f: f.stat().st_mtime, reverse=True
+            )[0]
 
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
@@ -1286,7 +1537,7 @@ async def get_seg_mask(
 
         file_path = Path(wsi.wsi_path)
         with Image.open(file_path) as img:
-            original_image = img.convert('RGB')
+            original_image = img.convert("RGB")
 
         source_w, source_h = original_image.size
         target_w, target_h = source_w, source_h
@@ -1296,7 +1547,9 @@ async def get_seg_mask(
             if scale < 1.0:
                 target_w = max(1, int(round(source_w * scale)))
                 target_h = max(1, int(round(source_h * scale)))
-                original_image = original_image.resize((target_w, target_h), Image.Resampling.LANCZOS)
+                original_image = original_image.resize(
+                    (target_w, target_h), Image.Resampling.LANCZOS
+                )
 
         # Build RGBA overlay
         overlay = np.zeros((target_h, target_w, 4), dtype=np.uint8)
@@ -1306,29 +1559,33 @@ async def get_seg_mask(
             for c in range(num_classes):
                 color = _SEG_COLORS[c % len(_SEG_COLORS)]
                 # Resize class mask to original size
-                class_mask = Image.fromarray((mask[c] * 255).astype(np.uint8), mode='L')
-                class_mask = class_mask.resize((target_w, target_h), Image.Resampling.NEAREST)
+                class_mask = Image.fromarray((mask[c] * 255).astype(np.uint8), mode="L")
+                class_mask = class_mask.resize(
+                    (target_w, target_h), Image.Resampling.NEAREST
+                )
                 class_arr = np.array(class_mask) > 127  # binary
                 for ch in range(4):
                     overlay[:, :, ch][class_arr] = color[ch]
         elif mask.ndim == 2:
             # Single-class mask
             color = _SEG_COLORS[0]
-            class_mask = Image.fromarray((mask * 255).astype(np.uint8), mode='L')
-            class_mask = class_mask.resize((target_w, target_h), Image.Resampling.NEAREST)
+            class_mask = Image.fromarray((mask * 255).astype(np.uint8), mode="L")
+            class_mask = class_mask.resize(
+                (target_w, target_h), Image.Resampling.NEAREST
+            )
             class_arr = np.array(class_mask) > 127
             for ch in range(4):
                 overlay[:, :, ch][class_arr] = color[ch]
 
-        overlay_img = Image.fromarray(overlay, mode='RGBA')
+        overlay_img = Image.fromarray(overlay, mode="RGBA")
 
         # Composite
-        original_rgba = original_image.convert('RGBA')
+        original_rgba = original_image.convert("RGBA")
         blended = Image.alpha_composite(original_rgba, overlay_img)
-        blended_rgb = blended.convert('RGB')
+        blended_rgb = blended.convert("RGB")
 
         buf = io.BytesIO()
-        blended_rgb.save(buf, format='PNG')
+        blended_rgb.save(buf, format="PNG")
         buf.seek(0)
 
         return Response(
@@ -1342,5 +1599,6 @@ async def get_seg_mask(
     except Exception as e:
         logger.error(f"Failed to get seg mask: {e}")
         import traceback
+
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Failed to get seg mask: {str(e)}")

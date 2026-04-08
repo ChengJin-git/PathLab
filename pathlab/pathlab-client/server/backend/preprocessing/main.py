@@ -5,11 +5,12 @@ import io
 import os
 import gc
 import ctypes
+from importlib import import_module
 
 import logging
 from pathlib import Path
 from collections import OrderedDict
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 
@@ -40,6 +41,7 @@ from .tiling import (
     TissueSegmenter,
     visualize_segmentation,
 )
+from .slide_access import clear_caches, evict_slide, get_deepzoom_generator, get_slide
 
 # Database imports
 import sys
@@ -47,10 +49,10 @@ import sys
 ROOT_DIR = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT_DIR))
 
-from backend.database import get_db
-from backend.database.repositories import WSIRepository
-from backend.common.config import Config
-from backend.common.file_types import is_patch_file
+get_db = import_module("backend.database").get_db
+WSIRepository = import_module("backend.database.repositories").WSIRepository
+Config = import_module("backend.common.config").Config
+is_patch_file = import_module("backend.common.file_types").is_patch_file
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
 from contextlib import asynccontextmanager
@@ -61,15 +63,7 @@ async def lifespan(_app):
     # Startup: nothing extra needed
     yield
     # Shutdown: close all cached slides to release file handles and memory
-    logger.info(f"Shutting down: closing {len(slide_cache)} cached slides")
-    for _wsi_id, slide in list(slide_cache.items()):
-        try:
-            slide.close()
-        except Exception:
-            pass
-    slide_cache.clear()
-    dzg_cache.clear()
-    logger.info("All cached slides closed")
+    clear_caches()
 
 
 app = FastAPI(title="PathLab Preprocessing Service", lifespan=lifespan)
@@ -97,28 +91,11 @@ MASKS_DIR = UPLOADS_DIR / "masks"
 COORDS_DIR.mkdir(exist_ok=True, parents=True)
 MASKS_DIR.mkdir(exist_ok=True, parents=True)
 
-# Cache configuration - use centralized Config values
-slide_cache = OrderedDict()
-dzg_cache = OrderedDict()
-
-# Lazy import ASlide
-_ADeepZoomGenerator = None
-
-
-def _get_deepzoom_generator():
-    """Lazy import ADeepZoomGenerator"""
-    global _ADeepZoomGenerator
-    if _ADeepZoomGenerator is None:
-        from Aslide.deepzoom import ADeepZoomGenerator
-
-        _ADeepZoomGenerator = ADeepZoomGenerator
-    return _ADeepZoomGenerator
-
 
 def _load_slide(file_path: str):
     """Load WSI file using Aslide (delegates to shared slide_utils)"""
     try:
-        from backend.common.slide_utils import load_slide
+        load_slide = import_module("backend.common.slide_utils").load_slide
 
         slide = load_slide(file_path)
         logger.info(f"Opened WSI with Aslide: {file_path}")
@@ -139,7 +116,7 @@ def _mask_visualization_worker(
     generates the mask visualization, and saves it to disk.
     """
     try:
-        from backend.common.slide_utils import load_slide
+        load_slide = import_module("backend.common.slide_utils").load_slide
 
         slide = load_slide(wsi_file_path)
         mask_img = visualize_segmentation(
@@ -200,94 +177,11 @@ def _run_mask_visualization_subprocess(
         return -1
 
     exit_code = p.exitcode
+    if exit_code is None:
+        return -1
     if exit_code != 0:
         logger.warning(f"Mask visualization subprocess exited with code {exit_code}")
     return exit_code
-
-
-async def get_wsi_path_from_db(wsi_id: str, db: AsyncSession) -> Optional[Path]:
-    """Get WSI file path from database"""
-    try:
-        wsi = await WSIRepository.get_by_id(db, wsi_id)
-        if wsi and wsi.wsi_path:
-            file_path = Path(wsi.wsi_path)
-            if file_path.exists():
-                return file_path
-            else:
-                logger.warning(f"WSI path in database does not exist: {wsi.wsi_path}")
-    except Exception as e:
-        logger.error(f"Failed to get WSI from database: {e}")
-    return None
-
-
-async def get_slide(wsi_id: str, db: AsyncSession):
-    """Get slide object with LRU cache"""
-    if wsi_id in slide_cache:
-        slide = slide_cache.pop(wsi_id)
-        slide_cache[wsi_id] = slide
-        return slide
-
-    try:
-        # Get file path from database
-        file_path = await get_wsi_path_from_db(wsi_id, db)
-        if not file_path:
-            raise HTTPException(
-                status_code=404, detail=f"WSI not found in database: {wsi_id}"
-            )
-
-        slide = _load_slide(str(file_path))
-        slide_cache[wsi_id] = slide
-
-        # Enforce LRU cache size
-        if len(slide_cache) > Config.SLIDE_CACHE_SIZE:
-            try:
-                evicted_key, evicted_slide = slide_cache.popitem(last=False)
-                try:
-                    evicted_slide.close()
-                except Exception:
-                    pass
-                logger.debug(f"Evicted old slide from cache: {evicted_key}")
-            except Exception:
-                pass
-        return slide
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to open slide: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to open slide: {str(e)}")
-
-
-async def get_deepzoom_generator(
-    wsi_id: str, db: AsyncSession, tile_size: int = 254, overlap: int = 1
-):
-    """Get DeepZoom generator with LRU cache"""
-    cache_key = f"{wsi_id}_{tile_size}_{overlap}"
-    if cache_key in dzg_cache:
-        dzg = dzg_cache.pop(cache_key)
-        dzg_cache[cache_key] = dzg
-        return dzg
-
-    try:
-        slide = await get_slide(wsi_id, db)
-        ADeepZoomGenerator = _get_deepzoom_generator()
-        dzg = ADeepZoomGenerator(slide, tile_size=tile_size, overlap=overlap)
-        dzg_cache[cache_key] = dzg
-
-        # Enforce LRU cache size
-        if len(dzg_cache) > Config.DZG_CACHE_SIZE:
-            try:
-                evicted_key, _ = dzg_cache.popitem(last=False)
-                logger.debug(f"Evicted old DZG from cache: {evicted_key}")
-            except Exception:
-                pass
-        return dzg
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to create DeepZoom generator: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to create DeepZoom generator: {str(e)}"
-        )
 
 
 @app.get("/health")
@@ -309,12 +203,17 @@ async def get_wsi_info(wsi_id: str, db: AsyncSession = Depends(get_db)):
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
-        file_path = wsi.wsi_path
-        file_size = wsi.file_size or 0
+        file_path = cast(str | None, getattr(wsi, "wsi_path", None))
+        file_size = int(cast(int | None, getattr(wsi, "file_size", None)) or 0)
 
         # If file_size not in DB, try to get it from file system
         if file_size == 0 and file_path and Path(file_path).exists():
             file_size = Path(file_path).stat().st_size
+
+        if not file_path:
+            raise HTTPException(
+                status_code=404, detail=f"WSI file path missing: {wsi_id}"
+            )
 
         is_patch = is_patch_file(file_path, file_size)
 
@@ -344,13 +243,20 @@ async def get_patch_image(wsi_id: str, db: AsyncSession = Depends(get_db)):
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
-        file_path = Path(wsi.wsi_path)
-        if not file_path.exists():
+        wsi_path = cast(str | None, getattr(wsi, "wsi_path", None))
+        if not wsi_path:
             raise HTTPException(
-                status_code=404, detail=f"File not found: {wsi.wsi_path}"
+                status_code=404, detail=f"WSI file path missing: {wsi_id}"
             )
 
-        file_size = wsi.file_size or file_path.stat().st_size
+        file_path = Path(wsi_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {wsi_path}")
+
+        file_size = int(
+            cast(int | None, getattr(wsi, "file_size", None))
+            or file_path.stat().st_size
+        )
 
         # Only allow patch files
         if not is_patch_file(str(file_path), file_size):
@@ -412,13 +318,20 @@ async def get_thumbnail(
         if not wsi:
             raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
 
-        file_path = Path(wsi.wsi_path)
-        if not file_path.exists():
+        wsi_path = cast(str | None, getattr(wsi, "wsi_path", None))
+        if not wsi_path:
             raise HTTPException(
-                status_code=404, detail=f"File not found: {wsi.wsi_path}"
+                status_code=404, detail=f"WSI file path missing: {wsi_id}"
             )
 
-        file_size = wsi.file_size or file_path.stat().st_size
+        file_path = Path(wsi_path)
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail=f"File not found: {wsi_path}")
+
+        file_size = int(
+            cast(int | None, getattr(wsi, "file_size", None))
+            or file_path.stat().st_size
+        )
 
         # Check if it's a patch file or WSI
         if is_patch_file(str(file_path), file_size):
@@ -453,6 +366,8 @@ async def get_thumbnail(
                 # ASlide's Slide object should have get_thumbnail or similar
                 if hasattr(slide, "get_thumbnail"):
                     thumbnail = slide.get_thumbnail((size, size))
+                    if thumbnail is None:
+                        raise RuntimeError("ASlide returned empty thumbnail")
                 else:
                     # Fallback: read from the highest level (lowest resolution)
                     levels = (
@@ -726,7 +641,10 @@ async def compute_patches(
             f"Segmenting tissue with params: {seg_params}, filter: {filter_params}, seg_level: {seg_level}"
         )
         segmenter = TissueSegmenter(
-            **seg_params, seg_level=seg_level, filter_params=filter_params
+            **seg_params,
+            seg_level=seg_level,
+            filter_params=filter_params,
+            use_otsu=bool(seg_params.get("use_otsu", False)),
         )
         tissue_contours, hole_contours = await asyncio.to_thread(
             segmenter.segment_tissue, slide
@@ -805,12 +723,7 @@ async def compute_patches(
         # During batch processing (e.g., training pipeline), slides are processed
         # sequentially and won't be reused immediately. Keeping them in cache
         # accumulates memory from the underlying C libraries (e.g., SdpcSlide SDK).
-        if wsi_id in slide_cache:
-            try:
-                evicted = slide_cache.pop(wsi_id)
-                evicted.close()
-            except Exception:
-                pass
+        evict_slide(wsi_id)
         del slide
         _force_release_memory()  # GC + malloc_trim: return C-heap to OS after slide processing
 
@@ -942,7 +855,7 @@ app.include_router(heatmap_router)
 
 
 @app.get("/wsi/{wsi_id}/patch_image")
-async def get_patch_image(
+async def get_patch_image_at_coords(
     wsi_id: str,
     x: int = Query(..., description="X coordinate of patch"),
     y: int = Query(..., description="Y coordinate of patch"),
@@ -1080,14 +993,16 @@ async def _extract_regions_background(
     3. Update progress via Redis
     """
     import uuid
-    from backend.database import async_session_maker
-    from backend.database.repositories import (
-        DataGroupRepository,
-        DatasetRepository,
-        WSIRepository,
-        DatasetStatsRepository,
-    )
-    from backend.common.progress_store import set_progress, clear_progress
+
+    async_session_maker = import_module("backend.database").async_session_maker
+    repositories = import_module("backend.database.repositories")
+    DataGroupRepository = repositories.DataGroupRepository
+    DatasetRepository = repositories.DatasetRepository
+    WSIRepository = repositories.WSIRepository
+    DatasetStatsRepository = repositories.DatasetStatsRepository
+    progress_store = import_module("backend.common.progress_store")
+    set_progress = progress_store.set_progress
+    clear_progress = progress_store.clear_progress
 
     total_regions = sum(len(r) for r in regions.values())
     completed = 0
@@ -1120,16 +1035,22 @@ async def _extract_regions_background(
                     task_type=task_type,
                 )
 
+                group_id = cast(str, getattr(data_group, "group_id"))
+                dataset_create_kwargs: dict[str, Any] = {
+                    "name": dataset_name,
+                    "group_id": group_id,
+                    "user_id": user_id,
+                    "is_public": is_public,
+                }
+                if source_organ:
+                    dataset_create_kwargs["source_organ"] = source_organ
+                if parent_dataset_id:
+                    dataset_create_kwargs["parent_dataset_id"] = parent_dataset_id
+
                 dataset = await DatasetRepository.get_or_create(
-                    db,
-                    name=dataset_name,
-                    group_id=data_group.group_id,
-                    user_id=user_id,
-                    source_organ=source_organ or None,
-                    parent_dataset_id=parent_dataset_id or None,
-                    is_public=is_public,
+                    db, **dataset_create_kwargs
                 )
-                dataset_id = dataset.dataset_id
+                dataset_id = cast(str, getattr(dataset, "dataset_id"))
                 await db.commit()
 
                 # 2. Extract regions — segmentation vs classification have different flows
@@ -1156,13 +1077,30 @@ async def _extract_regions_background(
                             completed += len(region_list)
                             continue
 
-                        source_path = Path(source_wsi.wsi_path)
+                        source_wsi_path = cast(
+                            str | None, getattr(source_wsi, "wsi_path", None)
+                        )
+                        if not source_wsi_path:
+                            logger.warning(
+                                f"Source WSI path missing during extraction: {source_wsi_id}"
+                            )
+                            completed += len(region_list)
+                            continue
+
+                        source_path = Path(source_wsi_path)
+                        source_file_size = int(
+                            cast(int | None, getattr(source_wsi, "file_size", None))
+                            or 0
+                        )
                         source_is_patch = is_patch_file(
-                            str(source_path), source_wsi.file_size or 0
+                            str(source_path), source_file_size
+                        )
+                        original_filename = cast(
+                            str | None, getattr(source_wsi, "original_filename", None)
                         )
                         source_name_stem = (
-                            Path(source_wsi.original_filename).stem
-                            if source_wsi.original_filename
+                            Path(original_filename).stem
+                            if original_filename
                             else source_wsi_id
                         )
                         label_counters: dict[str, int] = {}
@@ -1233,7 +1171,8 @@ async def _extract_single_region(
     Saves the cropped image as JPEG and creates a WSI database record.
     """
     import uuid
-    from backend.database.repositories import WSIRepository
+
+    WSIRepository = import_module("backend.database.repositories").WSIRepository
 
     new_wsi_id = str(uuid.uuid4())
 
@@ -1379,8 +1318,11 @@ async def _extract_segmentation_dataset(
     import uuid
     import json
     import shutil
-    from backend.database.repositories import WSIRepository, DatasetStatsRepository
-    from backend.common.progress_store import set_progress
+
+    repositories = import_module("backend.database.repositories")
+    WSIRepository = repositories.WSIRepository
+    DatasetStatsRepository = repositories.DatasetStatsRepository
+    set_progress = import_module("backend.common.progress_store").set_progress
 
     output_dir = UPLOADS_DIR / "wsi_files"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1396,6 +1338,10 @@ async def _extract_segmentation_dataset(
     completed = 0
 
     for source_wsi_id, region_list in regions.items():
+        new_wsi_id: str | None = None
+        output_path: Path | None = None
+        file_size: int | None = None
+
         # Load source WSI info
         source_wsi = await WSIRepository.get_by_id(db, source_wsi_id)
         if not source_wsi:
@@ -1403,8 +1349,19 @@ async def _extract_segmentation_dataset(
             completed += len(region_list)
             continue
 
-        source_path = Path(source_wsi.wsi_path)
-        source_is_patch = is_patch_file(str(source_path), source_wsi.file_size or 0)
+        source_wsi_path = cast(str | None, getattr(source_wsi, "wsi_path", None))
+        if not source_wsi_path:
+            logger.warning(
+                f"Skipping source with missing path for segmentation: {source_wsi_id}"
+            )
+            completed += len(region_list)
+            continue
+
+        source_path = Path(source_wsi_path)
+        source_file_size = int(
+            cast(int | None, getattr(source_wsi, "file_size", None)) or 0
+        )
+        source_is_patch = is_patch_file(str(source_path), source_file_size)
 
         if not source_is_patch:
             # WSI segmentation dataset creation is not supported (frontend blocks this)
@@ -1415,9 +1372,9 @@ async def _extract_segmentation_dataset(
         if reuse_existing:
             # Reuse mode: no file copy, no new DB record.
             # Use the existing file path for COCO JSON file_name reference.
-            file_name = Path(source_wsi.wsi_path).name
-            img_width = source_wsi.width
-            img_height = source_wsi.height
+            file_name = Path(source_wsi_path).name
+            img_width = cast(int | None, getattr(source_wsi, "width", None))
+            img_height = cast(int | None, getattr(source_wsi, "height", None))
             if not img_width or not img_height:
                 with Image.open(source_path) as img:
                     img_width, img_height = img.size
@@ -1425,17 +1382,19 @@ async def _extract_segmentation_dataset(
             # New dataset mode: copy source patch image once (keep original format)
             new_wsi_id = str(uuid.uuid4())
             ext = source_path.suffix or ".jpg"
-            output_path = output_dir / f"{new_wsi_id}{ext}"
-            await asyncio.to_thread(shutil.copy2, str(source_path), str(output_path))
+            copied_output_path: Path = output_dir / f"{new_wsi_id}{ext}"
+            await asyncio.to_thread(
+                shutil.copy2, str(source_path), str(copied_output_path)
+            )
 
-            file_size = output_path.stat().st_size
+            file_size = copied_output_path.stat().st_size
             file_name = f"{new_wsi_id}{ext}"
 
             # Get source image dimensions
-            img_width = source_wsi.width
-            img_height = source_wsi.height
+            img_width = cast(int | None, getattr(source_wsi, "width", None))
+            img_height = cast(int | None, getattr(source_wsi, "height", None))
             if not img_width or not img_height:
-                with Image.open(output_path) as img:
+                with Image.open(copied_output_path) as img:
                     img_width, img_height = img.size
 
         # Add COCO image entry
@@ -1491,9 +1450,15 @@ async def _extract_segmentation_dataset(
 
         if not reuse_existing:
             # Create WSI record for the copied patch (one per source, not per annotation)
+            if new_wsi_id is None or output_path is None or file_size is None:
+                raise RuntimeError("Segmentation copy output metadata is missing")
+
             wsi_data = {
                 "wsi_id": new_wsi_id,
-                "original_filename": source_wsi.original_filename or source_path.name,
+                "original_filename": cast(
+                    str | None, getattr(source_wsi, "original_filename", None)
+                )
+                or source_path.name,
                 "dataset_id": dataset_id,
                 "label": None,  # Segmentation labels are in COCO JSON, not per-slide
                 "wsi_path": str(output_path),
@@ -1521,10 +1486,12 @@ async def _extract_segmentation_dataset(
 
     # Also save to DB as source of truth
     try:
-        from backend.annotation.summary_cache import (
-            rebuild_dataset_annotation_summary_cache,
-        )
-        from backend.database.repositories import SegmentationAnnotationRepository
+        rebuild_dataset_annotation_summary_cache = import_module(
+            "backend.annotation.summary_cache"
+        ).rebuild_dataset_annotation_summary_cache
+        SegmentationAnnotationRepository = import_module(
+            "backend.database.repositories"
+        ).SegmentationAnnotationRepository
 
         await SegmentationAnnotationRepository.upsert(
             db,
