@@ -11,10 +11,12 @@ Usage:
         slide_has_wsi_characteristics,
     )
 """
+
+from importlib import import_module
 import logging
 from typing import Any
 
-from backend.common.config import Config
+Config = import_module("backend.common.config").Config
 
 logger = logging.getLogger(__name__)
 
@@ -22,49 +24,49 @@ logger = logging.getLogger(__name__)
 def slide_has_wsi_characteristics(slide: Any) -> bool:
     """Return whether an opened ASlide/OpenSlide-compatible object looks like a WSI."""
     try:
-        level_count = getattr(slide, 'level_count', None)
+        level_count = getattr(slide, "level_count", None)
         if isinstance(level_count, int) and level_count > 1:
             return True
     except Exception:
         pass
 
     try:
-        level_dimensions = getattr(slide, 'level_dimensions', None)
+        level_dimensions = getattr(slide, "level_dimensions", None)
         if level_dimensions is not None and len(level_dimensions) > 1:
             return True
     except Exception:
         pass
 
     try:
-        level_downsamples = getattr(slide, 'level_downsamples', None)
+        level_downsamples = getattr(slide, "level_downsamples", None)
         if level_downsamples and any(float(ds) > 1.0 for ds in level_downsamples[1:]):
             return True
     except Exception:
         pass
 
     try:
-        props = getattr(slide, 'properties', None)
+        props = getattr(slide, "properties", None)
     except Exception:
         props = None
 
-    if hasattr(props, 'get'):
+    if props is not None and hasattr(props, "get"):
         try:
-            vendor = str(props.get('openslide.vendor') or '').strip()
-            if vendor and vendor.lower() != 'unknown':
+            vendor = str(props.get("openslide.vendor") or "").strip()
+            if vendor and vendor.lower() != "unknown":
                 return True
         except Exception:
             pass
 
-        for key in ('openslide.objective-power', 'openslide.mpp-x', 'openslide.mpp-y'):
+        for key in ("openslide.objective-power", "openslide.mpp-x", "openslide.mpp-y"):
             try:
-                value = str(props.get(key) or '').strip()
+                value = str(props.get(key) or "").strip()
                 if value:
                     return True
             except Exception:
                 pass
 
     try:
-        mpp = getattr(slide, 'mpp', None)
+        mpp = getattr(slide, "mpp", None)
         if isinstance(mpp, (int, float)) and mpp > 0:
             return True
         if isinstance(mpp, tuple) and any(float(v) > 0 for v in mpp[:2]):
@@ -73,7 +75,7 @@ def slide_has_wsi_characteristics(slide: Any) -> bool:
         pass
 
     try:
-        associated_images = getattr(slide, 'associated_images', None)
+        associated_images = getattr(slide, "associated_images", None)
         if associated_images and len(associated_images) > 0:
             return True
     except Exception:
@@ -94,15 +96,15 @@ def configure_color_correction(slide, apply: bool = True, style: str = "Real") -
         style: Color correction style (default "Real")
     """
     try:
-        if not hasattr(slide, 'format'):
+        if not hasattr(slide, "format"):
             return
 
         # Case-insensitive check against configured formats
-        slide_format_lower = slide.format.lower() if slide.format else ''
+        slide_format_lower = slide.format.lower() if slide.format else ""
         if (
             slide_format_lower in Config.COLOR_CORRECTION_FORMATS
-            and hasattr(slide, '_osr')
-            and hasattr(slide._osr, 'apply_color_correction')
+            and hasattr(slide, "_osr")
+            and hasattr(slide._osr, "apply_color_correction")
         ):
             slide._osr.apply_color_correction(apply, style)
             logger.info(f"Applied color correction for {slide.format} slide")
@@ -124,7 +126,7 @@ def load_slide(file_path: str):
         Exception: If the slide cannot be opened
     """
     from Aslide.aslide import Slide
+
     slide = Slide(str(file_path))
     configure_color_correction(slide)
     return slide
-

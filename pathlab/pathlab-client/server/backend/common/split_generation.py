@@ -1,15 +1,15 @@
 """Shared split-generation helpers for export and training task creation."""
 
 import asyncio
+from importlib import import_module
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, cast
 
 from sklearn.exceptions import NotFittedError
 
-from backend.annotation.coco_utils import (
-    extract_coco_wsi_label_sets,
-    merge_coco_datasets,
-)
+_coco_utils = import_module("backend.annotation.coco_utils")
+extract_coco_wsi_label_sets = _coco_utils.extract_coco_wsi_label_sets
+merge_coco_datasets = _coco_utils.merge_coco_datasets
 
 
 def _normalize_annotation_file_key(file_name: Optional[str]) -> Optional[str]:
@@ -26,13 +26,20 @@ def _build_segmentation_wsi_lookups(
     stem_candidates: Dict[str, Set[str]] = {}
 
     for wsi in wsis:
-        candidates = [getattr(wsi, "original_filename", None), getattr(wsi, "wsi_path", None)]
+        candidates = [
+            getattr(wsi, "original_filename", None),
+            getattr(wsi, "wsi_path", None),
+        ]
         for candidate in candidates:
             key = _normalize_annotation_file_key(candidate)
             if not key:
                 continue
-            exact_lookup.setdefault(key, getattr(wsi, "wsi_id"))
-            stem_candidates.setdefault(Path(key).stem, set()).add(getattr(wsi, "wsi_id"))
+            wsi_id = getattr(wsi, "wsi_id", None)
+            if wsi_id is None:
+                continue
+            resolved_wsi_id = str(wsi_id)
+            exact_lookup.setdefault(key, resolved_wsi_id)
+            stem_candidates.setdefault(Path(key).stem, set()).add(resolved_wsi_id)
 
     stem_lookup = {
         stem: next(iter(wsi_ids))
@@ -49,7 +56,9 @@ def _extract_segmentation_multilabels_from_payloads(
     merged_coco = merge_coco_datasets(payloads)
     exact_lookup, stem_lookup = _build_segmentation_wsi_lookups(wsis)
     multilabels = extract_coco_wsi_label_sets(merged_coco, exact_lookup, stem_lookup)
-    classes = sorted({label for label_set in multilabels.values() for label in label_set})
+    classes = sorted(
+        {label for label_set in multilabels.values() for label in label_set}
+    )
     return classes, multilabels
 
 
@@ -57,15 +66,21 @@ async def load_segmentation_multilabels(
     db: Any,
     wsis: List[Any],
 ) -> Tuple[List[str], Dict[str, Set[str]]]:
-    dataset_ids = {getattr(wsi, "dataset_id", None) for wsi in wsis if getattr(wsi, "dataset_id", None)}
+    dataset_ids = {
+        getattr(wsi, "dataset_id", None)
+        for wsi in wsis
+        if getattr(wsi, "dataset_id", None)
+    }
     if len(dataset_ids) != 1:
         return [], {}
 
-    from backend.database.repositories.annotation import (  # noqa: PLC0415
-        SegmentationAnnotationRepository,
-    )
+    SegmentationAnnotationRepository = import_module(
+        "backend.database.repositories.annotation"
+    ).SegmentationAnnotationRepository
 
     dataset_id = next(iter(dataset_ids))
+    if dataset_id is None:
+        return [], {}
     records = await SegmentationAnnotationRepository.get_all_by_dataset(
         db,
         dataset_id,
@@ -75,13 +90,21 @@ async def load_segmentation_multilabels(
         return [], {}
 
     dataset_level_record = next(
-        (record for record in records if record.annotation_id == f"label_{dataset_id}"),
+        (
+            record
+            for record in records
+            if str(getattr(record, "annotation_id", "")) == f"label_{dataset_id}"
+        ),
         None,
     )
     payloads = (
-        [dataset_level_record.annotations]
+        [cast(dict[str, Any], dataset_level_record.annotations)]
         if dataset_level_record
-        else [record.annotations for record in records if isinstance(record.annotations, dict)]
+        else [
+            cast(dict[str, Any], record.annotations)
+            for record in records
+            if isinstance(record.annotations, dict)
+        ]
     )
     if not payloads:
         return [], {}
@@ -100,7 +123,9 @@ def build_survival_event_labels(wsis: List[Any], case_level: bool) -> Dict[str, 
         event_status = getattr(wsi, "event_status", None)
         if event_time is None or event_status is None:
             continue
-        sample_id = getattr(wsi, "case_id", None) if case_level and getattr(wsi, "case_id", None) else getattr(wsi, "wsi_id")
+        raw_case_id = getattr(wsi, "case_id", None)
+        raw_wsi_id = getattr(wsi, "wsi_id", None)
+        sample_id = str(raw_case_id) if case_level and raw_case_id else str(raw_wsi_id)
         labels.setdefault(sample_id, str(int(event_status)))
     return labels
 
@@ -130,10 +155,9 @@ def generate_split_assignments(
     segmentation_multilabels: Optional[Dict[str, Sequence[str] | Set[str]]] = None,
 ) -> Tuple[Dict[str, str], bool]:
     """Generate split assignments using the exact same logic for export and training."""
-    from backend.ai.utils.data_splitter import (  # noqa: PLC0415
-        split_case_dataset,
-        split_wsi_dataset,
-    )
+    data_splitter = import_module("backend.ai.utils.data_splitter")
+    split_case_dataset = data_splitter.split_case_dataset
+    split_wsi_dataset = data_splitter.split_wsi_dataset
 
     if not wsis:
         return {}, False
@@ -166,7 +190,11 @@ def generate_split_assignments(
         if is_survival and stratified
         else {}
     )
-    wsi_ids = [getattr(wsi, "wsi_id") for wsi in wsis]
+    wsi_ids = [
+        str(wsi_id)
+        for wsi in wsis
+        if (wsi_id := getattr(wsi, "wsi_id", None)) is not None
+    ]
 
     if is_case_level:
         case_id_map: Dict[str, str] = {}
@@ -178,7 +206,11 @@ def generate_split_assignments(
 
             label_val = None
             if stratified and not is_segmentation:
-                label_val = survival_labels.get(case_id) if is_survival else getattr(wsi, "label", None)
+                label_val = (
+                    survival_labels.get(case_id)
+                    if is_survival
+                    else getattr(wsi, "label", None)
+                )
             if label_val and case_id not in case_labels:
                 case_labels[case_id] = label_val
 
@@ -211,7 +243,11 @@ def generate_split_assignments(
     if stratified and not is_segmentation:
         for wsi in wsis:
             wsi_id = getattr(wsi, "wsi_id")
-            label_val = survival_labels.get(wsi_id) if is_survival else getattr(wsi, "label", None)
+            label_val = (
+                survival_labels.get(wsi_id)
+                if is_survival
+                else getattr(wsi, "label", None)
+            )
             if label_val:
                 wsi_labels[wsi_id] = label_val
 
