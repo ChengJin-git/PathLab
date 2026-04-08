@@ -142,130 +142,119 @@ async def init_db():
     import backend.auth.models  # noqa: F401
 
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-        logger.info("All tables created/verified successfully")
-        await conn.execute(
-            text(
-                "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
-                "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
+        await conn.execute(text("SELECT pg_advisory_lock(2026040801)"))
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("All tables created/verified successfully")
+            await conn.execute(
+                text(
+                    "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS "
+                    "parent_dataset_id VARCHAR(255) REFERENCES datasets(dataset_id) ON DELETE SET NULL"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE segmentation_annotations "
-                "ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+            await conn.execute(
+                text(
+                    "ALTER TABLE segmentation_annotations "
+                    "ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 0"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE segmentation_annotations "
-                "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
+            await conn.execute(
+                text(
+                    "ALTER TABLE segmentation_annotations "
+                    "ADD COLUMN IF NOT EXISTS last_edited_by VARCHAR(255)"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE segmentation_annotations "
-                "ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) NOT NULL DEFAULT 'personal'"
+            await conn.execute(
+                text(
+                    "ALTER TABLE segmentation_annotations "
+                    "ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) NOT NULL DEFAULT 'personal'"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE wsi_slides ADD COLUMN IF NOT EXISTS data_type VARCHAR(20)"
+            logger.info(
+                "Skipping wsi_slides.data_type startup DDL; migration handled separately"
             )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_wsi_user_type"
-                " ON wsi_slides (user_id, data_type)"
+            await conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS dataset_stats ("
+                    "    dataset_id   VARCHAR(255) PRIMARY KEY"
+                    "        REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
+                    "    file_count        INTEGER   NOT NULL DEFAULT 0,"
+                    "    total_size        BIGINT    NOT NULL DEFAULT 0,"
+                    "    split_train_count INTEGER   NOT NULL DEFAULT 0,"
+                    "    split_val_count   INTEGER   NOT NULL DEFAULT 0,"
+                    "    split_test_count  INTEGER   NOT NULL DEFAULT 0,"
+                    "    updated_at        TIMESTAMP NOT NULL DEFAULT NOW()"
+                    ")"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "CREATE INDEX IF NOT EXISTS idx_wsi_dataset_type"
-                " ON wsi_slides (dataset_id, data_type)"
+            await conn.execute(
+                text(
+                    "INSERT INTO dataset_stats"
+                    " (dataset_id, file_count, total_size,"
+                    "  split_train_count, split_val_count, split_test_count, updated_at)"
+                    " SELECT w.dataset_id, COUNT(*), COALESCE(SUM(w.file_size), 0),"
+                    "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'train' THEN"
+                    "     CASE WHEN dg.aggregation_level = 'case'"
+                    "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                    "   COUNT(DISTINCT CASE WHEN LOWER(w.split) IN ('val','validation') THEN"
+                    "     CASE WHEN dg.aggregation_level = 'case'"
+                    "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                    "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'test' THEN"
+                    "     CASE WHEN dg.aggregation_level = 'case'"
+                    "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
+                    "   NOW()"
+                    " FROM wsi_slides w"
+                    " JOIN datasets d ON w.dataset_id = d.dataset_id"
+                    " JOIN data_groups dg ON d.group_id = dg.group_id"
+                    " GROUP BY w.dataset_id"
+                    " ON CONFLICT (dataset_id) DO NOTHING"
+                )
             )
-        )
-        logger.info("wsi_slides.data_type column and indexes ensured")
-        await conn.execute(
-            text(
-                "CREATE TABLE IF NOT EXISTS dataset_stats ("
-                "    dataset_id   VARCHAR(255) PRIMARY KEY"
-                "        REFERENCES datasets(dataset_id) ON DELETE CASCADE,"
-                "    file_count        INTEGER   NOT NULL DEFAULT 0,"
-                "    total_size        BIGINT    NOT NULL DEFAULT 0,"
-                "    split_train_count INTEGER   NOT NULL DEFAULT 0,"
-                "    split_val_count   INTEGER   NOT NULL DEFAULT 0,"
-                "    split_test_count  INTEGER   NOT NULL DEFAULT 0,"
-                "    updated_at        TIMESTAMP NOT NULL DEFAULT NOW()"
-                ")"
-            )
-        )
-        await conn.execute(
-            text(
-                "INSERT INTO dataset_stats"
-                " (dataset_id, file_count, total_size,"
-                "  split_train_count, split_val_count, split_test_count, updated_at)"
-                " SELECT w.dataset_id, COUNT(*), COALESCE(SUM(w.file_size), 0),"
-                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'train' THEN"
-                "     CASE WHEN dg.aggregation_level = 'case'"
-                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
-                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) IN ('val','validation') THEN"
-                "     CASE WHEN dg.aggregation_level = 'case'"
-                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
-                "   COUNT(DISTINCT CASE WHEN LOWER(w.split) = 'test' THEN"
-                "     CASE WHEN dg.aggregation_level = 'case'"
-                "       THEN COALESCE(w.case_id, w.wsi_id) ELSE w.wsi_id END END),"
-                "   NOW()"
-                " FROM wsi_slides w"
-                " JOIN datasets d ON w.dataset_id = d.dataset_id"
-                " JOIN data_groups dg ON d.group_id = dg.group_id"
-                " GROUP BY w.dataset_id"
-                " ON CONFLICT (dataset_id) DO NOTHING"
-            )
-        )
-        logger.info("dataset_stats table ensured and pre-populated")
+            logger.info("dataset_stats table ensured and pre-populated")
 
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "registration_email VARCHAR(320) DEFAULT NULL"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "registration_email VARCHAR(320) DEFAULT NULL"
+                )
             )
-        )
-        logger.info("users.registration_email column ensured")
+            logger.info("users.registration_email column ensured")
 
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "first_activated_at TIMESTAMP DEFAULT NULL"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "first_activated_at TIMESTAMP DEFAULT NULL"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "UPDATE users SET first_activated_at = NOW() "
-                "WHERE first_activated_at IS NULL"
+            await conn.execute(
+                text(
+                    "UPDATE users SET first_activated_at = NOW() "
+                    "WHERE first_activated_at IS NULL"
+                )
             )
-        )
-        logger.info("users.first_activated_at column ensured and backfilled")
+            logger.info("users.first_activated_at column ensured and backfilled")
 
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "notify_on_success BOOLEAN NOT NULL DEFAULT TRUE"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "notify_on_success BOOLEAN NOT NULL DEFAULT TRUE"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "notify_on_failed BOOLEAN NOT NULL DEFAULT FALSE"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "notify_on_failed BOOLEAN NOT NULL DEFAULT FALSE"
+                )
             )
-        )
-        await conn.execute(
-            text(
-                "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
-                "notify_on_cancelled BOOLEAN NOT NULL DEFAULT FALSE"
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "notify_on_cancelled BOOLEAN NOT NULL DEFAULT FALSE"
+                )
             )
-        )
-        logger.info("users.notify_on_* columns ensured")
+            logger.info("users.notify_on_* columns ensured")
+        finally:
+            await conn.execute(text("SELECT pg_advisory_unlock(2026040801)"))
 
         await conn.execute(
             text(
@@ -358,7 +347,9 @@ async def init_db():
                 "ON chat_messages (variant_group_id)"
             )
         )
-        logger.info("chat conversation branch column and chat_messages variant columns ensured")
+        logger.info(
+            "chat conversation branch column and chat_messages variant columns ensured"
+        )
 
         await conn.execute(
             text(
@@ -373,7 +364,9 @@ async def init_db():
                 "WHERE session_nonce IS NOT NULL AND session_nonces IS NULL"
             )
         )
-        logger.info("users.session_nonces column ensured and backfilled from session_nonce")
+        logger.info(
+            "users.session_nonces column ensured and backfilled from session_nonce"
+        )
 
     await _create_default_admin()
 

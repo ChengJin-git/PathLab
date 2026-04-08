@@ -198,10 +198,10 @@ HTTPS 版本额外包含证书与 SSL 配置；HTTP-only 版本仅保留静态�
 - `GATEWAY_PORT=6100`
 - `PREPROCESSING_PORT=6101`
 - `AI_PORT=6102`
-- `PATHLAB_UPLOADS_DIR`
 - `DATABASE_URL`
 
-因此 systemd 模板与 shell 部署脚本的端口策略保持一致。
+默认模板不再覆盖 `PATHLAB_UPLOADS_DIR`，因此服务会沿用 `storage.json` 中保存的上传目录。
+如果部署机需要固定外置存储路径，请在 systemd 覆盖文件或 `server/.env` 中显式设置 `PATHLAB_UPLOADS_DIR`。
 
 ### 当前部署前提
 
