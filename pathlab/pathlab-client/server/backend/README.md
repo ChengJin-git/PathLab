@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`server/backend/` 存放 Gateway 共享的核心后端模块、两个内部 FastAPI 服务（Preprocessing / AI）的具体实现，以及一个当前未纳入默认 sidecar 启动链的 `deep-research/` 代码树。
+`server/backend/` 存放 Gateway 共享的核心后端模块，以及两个内部 FastAPI 服务（Preprocessing / AI）的具体实现。
 
 ## 当前模块划分
 
@@ -12,7 +12,7 @@ backend/
 ├── auth/             # 用户模型、JWT/FastAPI-Users 配置
 ├── common/           # 配置、Redis、端口与通用工具
 ├── database/         # SQLAlchemy 模型、Session、Repository
-├── deep-research/    # 内部 research/chat 代码树（非默认启动服务）
+├── annotation/       # 协作标注 pubsub、presence、COCO/summary 辅助
 ├── preprocessing/    # WSI 信息 / 图像 / DZI / Tile / Heatmap 服务
 └── storage/          # 存储统计、迁移、孤立文件处理
 ```
@@ -46,9 +46,15 @@ backend/
 - 推理与分析相关内部能力
 - 模型、特征提取器、聚合器 / 分类器注册与训练流水线复用逻辑
 
-## `deep-research/` 目录现状
+## Annotation 辅助模块现状
 
-`backend/deep-research/` 当前在仓库中保留了 `src/` 与 `tests/` 代码树，但默认 `server/main.py` 不会把它作为第四个服务拉起，因此这里不再为它单列 README 入口。
+`backend/annotation/` 当前提供：
+
+- `coco_utils.py`：COCO 标注导出辅助
+- `summary_cache.py`：数据集标注摘要缓存
+- `pubsub.py` / `presence_pubsub.py`：协作标注事件与在线状态广播
+
+它本身不是独立服务，而是由 Gateway 标注路由与 Preprocessing 的 ROI / COCO 相关流程复用。
 
 ## Shared Infrastructure
 
@@ -70,6 +76,7 @@ backend/
 - 统一配置：`common/config.py`
 - Redis 客户端 / 连接管理位于 `common/` 下
 - 端口与服务发现工具：`common/port_utils.py` 等
+- GPU / slide / split 等通用辅助位于 `common/gpu_utils.py`、`slide_utils.py`、`split_generation.py`
 - 持久化全局设置当前覆盖 `openrouter`、`huggingface`、`dashscope`、`exa`、`local_vllm`、`local_asr`、`turnstile`、`admin_notify_email`、`email_templates` 等键
 
 ### 存储
@@ -84,7 +91,7 @@ backend/
 - 旧文档中的 `annotation_drafts` 已不再对应当前表名；当前模型为 `segmentation_annotations`
 - 旧文档中的单体 API / 单体服务表述已经过时，当前实现明确拆成 Gateway / Preprocessing / AI 三层
 - `backend/common/config.py` 会确保 `avatars`、`coordinates`、`masks`、`features`、`ai_results`、`training`、`models`、`logs`、`wsi_files`、`metadata`、`progress` 等目录存在
-- `deep-research/` 当前是保留在代码树中的内部目录，而不是默认启动链中的独立服务
+- `backend/annotation/` 当前已成为标注协作与 COCO/summary 辅助逻辑的独立共享模块
 
 ## 相关文档
 

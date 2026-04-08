@@ -86,7 +86,7 @@
 
 ## Repository 现状
 
-`repositories/` 当前包含 18 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
+`repositories/` 当前包含 17 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
 
 - `DataGroupRepository`
 - `DatasetRepository`
@@ -106,6 +106,8 @@
 - `OrphanedRecordsRepository`
 - `SegmentationAnnotationRepository`（同时导出 `VersionConflictError`）
 - `AnnotationAuditLogRepository`
+
+此外，`repositories/base.py` 还提供共享的 `BaseRepository`、以及供旧代码兼容导入的 `DatasetRepository` / `WSIRepository` 别名；`repositories/utils.py` 提供 `paginate_query` 与 `apply_user_filter` 辅助函数。
 
 这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注及协作审计等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。
 

@@ -31,7 +31,7 @@ server/
 ├── requirements-test.txt   # 测试依赖（pytest、pytest-asyncio、httpx）
 ├── pytest.ini              # asyncio_mode = auto
 ├── main.spec               # PyInstaller 配置
-├── tests/                  # 后端单元测试（20 个测试文件）
+├── tests/                  # 后端单元测试（29 个测试文件）
 │   ├── conftest.py         # fixtures：auth mock、app factory、load_dotenv
 │   ├── helpers.py          # 测试工具函数
 │   ├── test_config.py      # Config 类测试（28）
@@ -60,7 +60,7 @@ server/
 │   ├── auth/               # 认证模型与 FastAPI-Users 配置
 │   ├── common/             # 配置、Redis、端口发现、通用工具
 │   ├── database/           # SQLAlchemy 模型与仓储层
-│   ├── deep-research/      # 内部 research/chat 代码树，当前不由 main.py 独立启动
+│   ├── annotation/         # 协作标注 pubsub、presence、COCO/summary 辅助
 │   ├── preprocessing/      # WSI 图像服务与辅助缓存逻辑
 │   └── storage/            # 存储统计、迁移、清理
 ├── build/                  # 打包产物目录
@@ -93,7 +93,7 @@ server/
 - Gateway 会在自身生命周期中初始化数据库、Redis、任务队列和若干启动期清理逻辑
 - AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
 - `main.spec` 用于将 sidecar 打包为独立可执行文件
-- 代码树中虽然存在 `backend/deep-research/`，但当前 sidecar 默认只启动 Gateway / Preprocessing / AI 三个服务
+- `main.py` 会尊重预先设置的 `CUDA_VISIBLE_DEVICES`，否则在启动时自动探测坏卡并收缩可见 GPU 集合
 
 ## 单元测试
 
@@ -116,7 +116,7 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 pip install -r server/requirements-test.txt
 ```
 
-当前后端测试文件（20 个测试文件，含 5 个权限专项、4 个 AI 模型测试）：
+当前后端测试文件（29 个测试文件，含 5 个权限专项、4 个 AI 模型测试，以及 Gateway / 预处理 / 运行时专项回归）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
@@ -125,21 +125,30 @@ pip install -r server/requirements-test.txt
 | `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
 | `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
 | `tests/test_ai_extractors_pretrained.py` | ~216 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
+| `tests/test_auth_dependencies.py` | — | URL token / Authorization header 鉴权依赖与 scoped session |
+| `tests/test_batch_inference.py` | — | 批量推理任务类型、请求模型校验与完整推理流程回归 |
 | `tests/test_fm_segmentation_decoders.py` | — | 分割模型 decoder 结构与输出维度验证 |
 | `tests/test_feature_cache_nowait.py` | — | 特征缓存非阻塞写入逻辑 |
+| `tests/test_gateway_app_setup.py` | — | 顶层 router 注册与静态资源挂载 |
+| `tests/test_gateway_cleanup.py` | — | 旧任务 / 过期权限清理提交逻辑 |
+| `tests/test_gateway_runtime_orchestration.py` | — | Gateway 启停序列、预热任务与 HTTP client 装配 |
+| `tests/test_gateway_startup.py` | — | AI / Preprocessing 健康探测等待逻辑 |
 | `tests/test_gpu_control.py` | — | GPU 坏卡探测与 CUDA_VISIBLE_DEVICES 控制 |
+| `tests/test_gpu_utils.py` | — | NVML 回退路径下的 GPU 数量与显存信息 |
 | `tests/test_patching_stage.py` | — | 推理流水线 patching 阶段逻辑 |
+| `tests/test_preprocessing_slide_access.py` | — | slide cache 命中与驱逐 |
 | `tests/test_task_queue_patching.py` | — | 任务队列 patching 操作 |
 | `tests/test_resume_tasks.py` | — | 中断任务恢复与重启逻辑 |
 | `tests/test_training_routing.py` | — | 训练任务路由与调度策略 |
+| `tests/test_training_recommendation_paths.py` | — | 内置训练推荐运行时目录布局 |
 | `tests/test_chat_continuation_helpers.py` | — | AI 对话续接辅助函数 |
 | `tests/test_chat_conversation_title_extraction.py` | — | 会话标题自动提取逻辑 |
+| `tests/test_coords_utils.py` | — | H5 坐标属性加载异常兜底 |
 | `tests/test_permission_logic.py` | — | 权限判断核心逻辑（数据集 / WSI 访问层次规则）|
 | `tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归（GPU grant、shared annotation、个人草稿）|
 | `tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证（in-process revoke、GPU 路径、分析提交 403）|
 | `tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试（CSV 上传路由 guest 可用性等）|
 | `tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
-| `tests/test_batch_inference.py` | — | 批量推理任务类型、请求模型校验与完整推理流程回归 |
 
 **测试设计要点**
 

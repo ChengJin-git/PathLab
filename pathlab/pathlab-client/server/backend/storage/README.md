@@ -35,6 +35,7 @@
 - `uploads/ai_results/`
 - `uploads/training/`
 - `uploads/models/`
+- `uploads/extractor_checkpoints/`
 - `uploads/logs/`
 - `uploads/wsi_files/`
 - `uploads/metadata/`
@@ -79,7 +80,7 @@
 
 并将它们与数据库中已有的 WSI、任务、模型记录对照，以发现多余文件或失配记录。
 
-因此要注意：`metadata`、`progress`、`avatars`、`annotations`、`pdf_cache` 虽然是当前运行时会使用的目录，但并不是都被纳入同一套统计 / 孤立扫描逻辑。
+因此要注意：`metadata`、`progress`、`avatars`、`annotations`、`pdf_cache`、`extractor_checkpoints` 虽然是当前运行时会使用的目录，但并不是都被纳入同一套统计 / 孤立扫描逻辑。
 
 ## Gateway 暴露方式
 
