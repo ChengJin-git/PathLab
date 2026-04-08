@@ -84,7 +84,7 @@ PostgreSQL 由 `embedded-postgres` npm 包在运行时自动管理，无需预�
 打包后的 Electron 应用启动时：
 
 1. 自动启动嵌入式 PostgreSQL（首次运行自动 `initdb`，约 3–5 秒）
-2. 自动启动嵌入式 Redis（随机端口，AOF 持久化）
+2. 自动启动嵌入式 Redis（随机端口；Linux/macOS 使用 Redis + AOF，Windows 使用 Garnet）
 3. 自动启动 Python sidecar，注入 `DATABASE_URL` 和 `REDIS_URL`
 4. 应用退出时自动停止上述服务
 
@@ -154,7 +154,7 @@ CUDA_VISIBLE_DEVICES=0,1,3
 5. 用 Vite 构建前端到 `src/renderer/dist`
 6. 导出 `PATHLAB_DEBUG=1` 与固定端口环境变量
 7. 以 `nohup` 方式启动 `server/main.py`
-8. 通过 `http://127.0.0.1:6100/health` 做 Gateway 健康检查
+8. 同时通过 `http://127.0.0.1:6100/health`、`6101/health`、`6102/health` 做三服务健康检查
 9. 将日志写入 `logs/backend.log`，并记录 `logs/backend.pid`
 
 该脚本是“直接执行型”的，不需要额外传 `start` 子命令。
