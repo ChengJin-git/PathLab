@@ -14,7 +14,7 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 - `server/main.py` 当前会拉起 3 个内部服务：`Gateway`、`Preprocessing`、`AI`
 - 前端单元测试位于 `pathlab/pathlab-client/test/`，当前使用 Vitest（`test` / `test:run` / `test:coverage`）
 - 固定端口部署、Nginx 与 systemd 模板位于 `pathlab/pathlab-client/deploy/`
-- `server/backend/deep-research/` 当前仍在代码树中，但不属于默认 sidecar 启动的独立服务
+- `server/backend/` 当前按 `ai / annotation / auth / common / database / preprocessing / storage` 分层组织共享后端代码
 
 ## 运行形态
 
@@ -46,7 +46,7 @@ pathlab/
     ├── server/
     │   ├── main.py          # Python sidecar 统一入口
     │   ├── gateway/         # 对外 API 网关
-    │   └── backend/         # AI / preprocessing / database / storage / auth
+    │   └── backend/         # AI / annotation / auth / common / database / preprocessing / storage
     ├── test/                # 前端单元测试（Vitest）
     ├── vitest.config.ts     # Vitest 配置
     └── deploy/              # 固定端口启动、热更新、Nginx、systemd 模板
@@ -65,5 +65,3 @@ pathlab/
 - [Frontend Source](pathlab/pathlab-client/src/renderer/src/README.md)
 - [Frontend Tests](pathlab/pathlab-client/test/README.md)
 - [Deployment](pathlab/pathlab-client/deploy/README.md)
-
-说明：仓库当前没有单独维护的 `deep-research` README；该目录未纳入 `server/main.py` 默认启动链，因此只在总览文档中顺带说明。

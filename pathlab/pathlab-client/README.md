@@ -25,7 +25,7 @@ pathlab-client/
 ├── deploy/                 # 启动、热更新、Nginx、systemd 模板
 ├── logs/                   # 固定端口脚本输出日志
 ├── server/                 # Python sidecar
-│   ├── tests/              # 后端单元测试（pytest，19 个测试文件）
+│   ├── tests/              # 后端单元测试（pytest，29 个测试文件）
 │   │   ├── conftest.py     # fixtures（auth mock、app factory）
 │   │   ├── helpers.py      # 测试工具函数
 │   │   ├── test_config.py
@@ -56,7 +56,7 @@ pathlab-client/
 ├── test/                   # 前端单元测试（Vitest）
 │   ├── setup.ts            # 全局 mock 初始化
 │   ├── unit/api/           # API 客户端层测试（20 个文件）
-│   ├── unit/lib/           # 工具函数 / Hook 测试（12 个文件）
+│   ├── unit/lib/           # 工具函数 / Hook 测试（13 个文件）
 │   ├── unit/contexts/      # React Context 测试（1 个文件）
 │   └── unit/components/    # 组件测试（4 个文件）
 ├── scripts/                # 构建辅助脚本
@@ -88,15 +88,17 @@ pathlab-client/
 
 ### Electron 宿主
 
-- `src/main/index.ts` 负责窗口生命周期、深链回调、权限请求与 sidecar 启停
+- `src/main/index.ts` 负责窗口生命周期、深链回调、权限请求，以及嵌入式 PostgreSQL / Redis 与 Python sidecar 的协同启停
 - `src/preload/index.ts` 暴露认证回调、后端端口发现、文件 / 目录选择 IPC
-- `src/main/sidecar-manager.ts` 将 `Gateway / Preprocessing / AI` 端口变化推送给渲染层
+- `src/main/services-manager.ts` 负责嵌入式 PostgreSQL / Redis 的端口选择、数据目录和启动探测
+- `src/main/sidecar-manager.ts` 将 `Gateway / Preprocessing / AI` 端口变化推送给渲染层，并在 Gateway `/health` 就绪后再向渲染层放行
 
 ### 前端
 
 - React 18 + TypeScript + Vite + Tailwind CSS
 - BrowserRouter / HashRouter 双运行时
 - 模块化 API 客户端位于 `src/renderer/src/api/`
+- React Query、TooltipProvider 与多层 Context 在 `src/renderer/src/main.tsx` 中统一装配
 - 浏览器模式支持 PWA；Electron 模式不注册 Service Worker
 
 ### 后端
@@ -108,10 +110,10 @@ pathlab-client/
 
 ## 当前已确认的实现事实
 
-- Gateway 当前直接注册 17 个顶层 router；`server/gateway/routes/` 目录里实际共有 34 个路由模块文件，其中一部分作为分析 / 聊天 / 存储 / 训练辅助模块被复用
+- Gateway 当前直接注册 17 个顶层 router；`server/gateway/routes/` 目录里实际共有 49 个路由模块文件，其中一部分作为分析 / 聊天 / 存储 / 训练辅助模块被复用
 - 数据库当前可见 ORM 表为 21 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
-- 仓库中虽有 `server/backend/deep-research/` 目录，但当前 README 不再把它当作独立运行模块或单独文档入口
+- `server/backend/` 当前已收敛为 `ai / annotation / auth / common / database / preprocessing / storage` 七组共享模块
 
 ## 测试
 
@@ -125,7 +127,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前共 **37 个测试文件**：
+当前共 **38 个测试文件**：
 
 | 分类 | 文件 | 覆盖内容 |
 |------|------|---------|
@@ -150,6 +152,7 @@ npm run test:coverage # 生成覆盖率报告
 | 业务 API | `unit/api/storage.test.ts` | 存储配置、统计、孤立项、迁移、扫描、批量任务 |
 | 业务 API | `unit/api/trainingOptions.test.ts` | 训练选项读取（提取器、聚合器、分割架构等）|
 | 工具函数 | `unit/lib/cache.test.ts` | TTL 缓存、键值缓存、持久化缓存、并发去重 |
+| 工具函数 | `unit/lib/avatarUrl.test.ts` | 头像 URL 绝对路径保留、根路径拼接与空值处理 |
 | 工具函数 | `unit/lib/utils.test.ts` | cn()、formatBytes()、formatFileSize() |
 | 工具函数 | `unit/lib/chatMessageParser.test.ts` | AI 消息净化、PDF 上下文检测 |
 | 工具函数 | `unit/lib/datasetPagination.test.ts` | clampDatasetPage() 翻页边界逻辑 |
@@ -184,7 +187,7 @@ python -m pytest server/tests/ -v -k "not pretrained"
 python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 ```
 
-当前共 **20 个测试文件**（含 5 个权限专项、4 个 AI 模型测试）：
+当前共 **29 个测试文件**（含 5 个权限专项、4 个 AI 模型测试，以及 8 个 Gateway / 预处理 / 运行时辅助测试）：
 
 | 文件 | 测试数 | 覆盖内容 |
 |------|--------|---------|
@@ -202,12 +205,21 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 | `server/tests/test_training_routing.py` | — | 训练任务路由与调度 |
 | `server/tests/test_chat_continuation_helpers.py` | — | AI 对话续接辅助函数 |
 | `server/tests/test_chat_conversation_title_extraction.py` | — | 会话标题提取逻辑 |
+| `server/tests/test_auth_dependencies.py` | — | token 参数 / header 鉴权依赖与 scoped session 使用 |
+| `server/tests/test_coords_utils.py` | — | H5 坐标属性加载异常兜底 |
 | `server/tests/test_permission_logic.py` | — | 权限判断核心逻辑 |
 | `server/tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归 |
 | `server/tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证 |
 | `server/tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试 |
 | `server/tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
 | `server/tests/test_batch_inference.py` | — | 批量推理任务类型、请求模型校验与完整推理流程回归 |
+| `server/tests/test_gateway_app_setup.py` | — | router 注册与静态资源挂载 |
+| `server/tests/test_gateway_cleanup.py` | — | 旧任务 / 过期权限清理提交逻辑 |
+| `server/tests/test_gateway_runtime_orchestration.py` | — | Gateway 启停序列、预热任务与 HTTP client 装配 |
+| `server/tests/test_gateway_startup.py` | — | 内部服务健康探测等待逻辑 |
+| `server/tests/test_gpu_utils.py` | — | NVML 回退路径下的 GPU 数量与显存信息 |
+| `server/tests/test_preprocessing_slide_access.py` | — | slide cache 命中与驱逐 |
+| `server/tests/test_training_recommendation_paths.py` | — | 训练推荐知识运行时目录布局 |
 
 详细说明见 [server/README.md](server/README.md)。
 
