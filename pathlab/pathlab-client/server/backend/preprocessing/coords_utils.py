@@ -83,8 +83,16 @@ def safe_load_h5_coords(
                     _delete_corrupted_h5(h5_path)
                 return None, None, error_msg
 
-            coords_array = f["coords"][:]
-            attrs = dict(f["coords"].attrs)
+            coords_dataset = f["coords"]
+            if not isinstance(coords_dataset, h5py.Dataset):
+                error_msg = f"Invalid 'coords' dataset in {h5_path}"
+                logger.warning(error_msg)
+                if delete_if_corrupted:
+                    _delete_corrupted_h5(h5_path)
+                return None, None, error_msg
+
+            coords_array = np.asarray(coords_dataset[:])
+            attrs = dict(coords_dataset.attrs)
             return coords_array, attrs, None
 
     except OSError as e:
@@ -126,7 +134,15 @@ def safe_load_h5_coords_attrs(
                     _delete_corrupted_h5(h5_path)
                 return None, error_msg
 
-            return dict(f["coords"].attrs), None
+            coords_dataset = f["coords"]
+            if not isinstance(coords_dataset, h5py.Dataset):
+                error_msg = f"Invalid 'coords' dataset in {h5_path}"
+                logger.warning(error_msg)
+                if delete_if_corrupted:
+                    _delete_corrupted_h5(h5_path)
+                return None, error_msg
+
+            return dict(coords_dataset.attrs), None
 
     except OSError as e:
         error_msg = str(e)
@@ -142,7 +158,7 @@ def safe_load_h5_coords_attrs(
         # Other unexpected errors
         error_msg = str(e)
         logger.error(f"Failed to load H5 file {h5_path}: {error_msg}")
-        return None, None, error_msg
+        return None, error_msg
 
 
 def _check_coords_params_match(
@@ -314,7 +330,7 @@ def check_coords_cache_valid(
         coords_file, delete_if_corrupted=True
     )
 
-    if coords_array is None:
+    if coords_array is None or attrs is None:
         logger.warning(f"Failed to load cached coordinates: {load_error}")
         return None
 
@@ -437,7 +453,7 @@ def get_or_compute_coordinates(
             coords_file, delete_if_corrupted=True
         )
 
-        if coords_array is not None:
+        if coords_array is not None and attrs is not None:
             # With params_hash directory, we trust the hash matches
             # But still validate to catch edge cases
             if _check_coords_params_match(
