@@ -12,52 +12,60 @@ import os
 import re
 import time
 import uuid
+from importlib import import_module
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import httpx
-from typing import Any
+from typing import Any, cast
 from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import select as sa_select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.database import get_db, async_session
-from backend.database.repositories import (
-    ChatRepository,
-    WSIRepository,
-    TrainedModelRepository,
-    DatasetGrantRepository,
-    DatasetRepository,
-    TrainingTaskRepository,
-    AITaskRepository,
-)
-from backend.database.models import (
-    TrainingTask,
-    WSISlide,
-    TrainingTaskWSI,
-    AIResult,
-)
-from backend.auth import current_active_user, User
-from backend.auth.dependencies import (
-    get_user_id_filter,
-    get_user_from_header_or_param,
-)
+_database_module = import_module("backend.database")
+get_db = _database_module.get_db
+async_session = _database_module.async_session
+_repositories = import_module("backend.database.repositories")
+ChatRepository = _repositories.ChatRepository
+WSIRepository = _repositories.WSIRepository
+TrainedModelRepository = _repositories.TrainedModelRepository
+DatasetGrantRepository = _repositories.DatasetGrantRepository
+DatasetRepository = _repositories.DatasetRepository
+TrainingTaskRepository = _repositories.TrainingTaskRepository
+AITaskRepository = _repositories.AITaskRepository
+_models_module = import_module("backend.database.models")
+TrainingTask = _models_module.TrainingTask
+WSISlide = _models_module.WSISlide
+TrainingTaskWSI = _models_module.TrainingTaskWSI
+AIResult = _models_module.AIResult
+_auth_module = import_module("backend.auth")
+current_active_user = _auth_module.current_active_user
+User = _auth_module.User
+_auth_deps = import_module("backend.auth.dependencies")
+get_user_id_filter = _auth_deps.get_user_id_filter
+get_user_from_header_or_param = _auth_deps.get_user_from_header_or_param
 from .access_control import assert_owner
-from gateway.chat.permissions import require_conversation_access
-from gateway.chat.context_cache import (
-    get_cached_context_kwargs_admin,
-    get_cached_context_kwargs,
-    get_training_snapshot,
-    set_cached_context_kwargs_admin,
-    set_cached_context_kwargs,
-)
-from backend.common.config import Config
-from backend.common.gpu_utils import get_gpu_summary_for_prompt
-from backend.ai.segmentors.specs import is_fm_segmentation_backbone
+
+require_conversation_access = import_module(
+    "gateway.chat.permissions"
+).require_conversation_access
+_context_cache = import_module("gateway.chat.context_cache")
+get_cached_context_kwargs_admin = _context_cache.get_cached_context_kwargs_admin
+get_cached_context_kwargs = _context_cache.get_cached_context_kwargs
+get_training_snapshot = _context_cache.get_training_snapshot
+set_cached_context_kwargs_admin = _context_cache.set_cached_context_kwargs_admin
+set_cached_context_kwargs = _context_cache.set_cached_context_kwargs
+Config = import_module("backend.common.config").Config
+get_gpu_summary_for_prompt = import_module(
+    "backend.common.gpu_utils"
+).get_gpu_summary_for_prompt
+is_fm_segmentation_backbone = import_module(
+    "backend.ai.segmentors.specs"
+).is_fm_segmentation_backbone
 from ..dependencies import logger, make_sse_response
 from ..prompts import get_chat_system_prompt, format_user_data_context, detect_language
 from ..models import (
@@ -81,14 +89,8 @@ from .chat_pdf import (
     search_pdf_pages,
     get_cached_markdown,
     get_cached_pdf_meta,
-    split_md_into_pages,
     get_url_hash,
     get_pdf_cache_dir,
-    tokenize_for_search,
-    detect_source_type,
-    is_academic_content,
-    format_reference_card,
-    ACADEMIC_SOURCE_TYPES,
     find_cached_articles_by_title,
     _describe_pdf_image_status,
     _format_pdf_block_label,
@@ -97,6 +99,14 @@ from .chat_pdf import (
     _build_merged_pdf_context,
     router as chat_pdf_router,
 )
+
+_chat_pdf_shared = import_module("gateway.routes.chat_pdf_shared")
+split_md_into_pages = _chat_pdf_shared.split_md_into_pages
+tokenize_for_search = _chat_pdf_shared.tokenize_for_search
+detect_source_type = _chat_pdf_shared.detect_source_type
+is_academic_content = _chat_pdf_shared.is_academic_content
+format_reference_card = _chat_pdf_shared.format_reference_card
+ACADEMIC_SOURCE_TYPES = _chat_pdf_shared.ACADEMIC_SOURCE_TYPES
 from .chat_training_recommendation import (
     build_training_recommendation_evidence_context,
     detect_training_recommendation_profile,
@@ -2519,8 +2529,8 @@ async def start_chat_patch_inference(
         message_id=req.message_id,
         user_id=str(user.id),
         inference_type=req.inference_type,
-        model_id=trained_model.model_id,
-        model_name=trained_model.model_name,
+        model_id=str(trained_model.model_id),
+        model_name=str(trained_model.model_name),
         image_data_url=req.image_data_url,
         source=req.source,
     )
@@ -2658,9 +2668,9 @@ async def chat_with_ai(
         )
         if temp_permissions:
             elevated_dataset_ids = [
-                perm.dataset_id
+                str(perm.dataset_id)
                 for perm in temp_permissions
-                if perm.can_read and perm.is_valid()
+                if bool(perm.can_read) and perm.is_valid()
             ]
 
     latest_user_text = ""
@@ -2743,22 +2753,23 @@ async def chat_with_ai(
     can_use_gpu_base = user.can_use_gpu()
 
     if temp_permissions:
-        _tp_dataset_ids = [perm.dataset_id for perm in temp_permissions]
+        _tp_dataset_ids = [str(perm.dataset_id) for perm in temp_permissions]
         _tp_datasets = await DatasetRepository.get_by_ids(db, _tp_dataset_ids)
         _tp_dataset_map = {d.dataset_id: d for d in _tp_datasets}
         _tp_details = []
         for perm in temp_permissions:
             _tp_ds = _tp_dataset_map.get(perm.dataset_id)
             _tp_ds_name = _tp_ds.name if _tp_ds else "Unknown Dataset"
+            _perm_expires_at = getattr(perm, "expires_at", None)
             _tp_expires = (
-                f", expires: {perm.expires_at.strftime('%Y-%m-%d %H:%M UTC')}"
-                if perm.expires_at
+                f", expires: {_perm_expires_at.strftime('%Y-%m-%d %H:%M UTC')}"
+                if _perm_expires_at is not None
                 else ", no expiration"
             )
             _tp_grants = []
-            if perm.can_use_gpu:
+            if bool(perm.can_use_gpu):
                 _tp_grants.append("gpu")
-            if perm.can_collaborate:
+            if bool(perm.can_collaborate):
                 _tp_grants.append("annotate")
             _tp_grant_label = ", ".join(_tp_grants) if _tp_grants else "none"
             _tp_details.append(
@@ -2953,15 +2964,17 @@ async def chat_with_ai(
                         _fb_ds_db, _fb_task_ids
                     )
                 )
-                _fb_unique_ds_ids = list(
-                    {v for v in _fb_source_dataset_ids.values() if v}
-                )
+                _fb_unique_ds_ids = [
+                    str(v) for v in _fb_source_dataset_ids.values() if v is not None
+                ]
                 if _fb_unique_ds_ids:
                     _fb_ds_list = await DatasetRepository.get_by_ids(
                         _fb_ds_db, _fb_unique_ds_ids
                     )
                     _fb_dataset_names = {
-                        d.dataset_id: d.name for d in _fb_ds_list if d.dataset_id
+                        str(d.dataset_id): str(d.name)
+                        for d in _fb_ds_list
+                        if d.dataset_id is not None
                     }
 
         _fb_model_summaries = []
@@ -2991,9 +3004,8 @@ async def chat_with_ai(
 
         if _fb_model_summaries:
             try:
-                from gateway.routes.chat_pdf_vectorstore import (
-                    _embed_texts as _ctx_embed_texts,
-                )
+                module_name = ".".join(("gateway", "routes", "chat_pdf_vectorstore"))
+                _ctx_embed_texts = import_module(module_name)._embed_texts
 
                 _fb_lines_for_embed = [s["line"] for s in _fb_model_summaries]
                 _fb_vecs = await asyncio.to_thread(
@@ -3148,7 +3160,7 @@ async def chat_with_ai(
             content = last_user_message.get("content", "")
             text_content = extract_text_from_content(content)
             images = _extract_images_from_content(content)
-            message_data = {
+            message_data: dict[str, Any] = {
                 "conversation_id": req.conversation_id,
                 "role": "user",
                 "content": text_content,
@@ -3312,6 +3324,7 @@ async def chat_with_ai(
                                     "role": "assistant",
                                     "content": save_content,
                                 }
+                                message_data = cast(dict[str, Any], message_data)
                                 if req.regenerate_message_id:
                                     group_id = (
                                         await ChatRepository.prepare_variant_group(

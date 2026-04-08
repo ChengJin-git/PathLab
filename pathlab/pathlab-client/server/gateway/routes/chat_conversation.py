@@ -2,12 +2,23 @@ import os
 import re
 import uuid
 import httpx
+from importlib import import_module
+from typing import Protocol
 from fastapi import APIRouter, HTTPException, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.common import get_logger
+get_logger = import_module("backend.common").get_logger
 
 logger = get_logger("ChatConversation")
+
+
+class _ConversationMessage(Protocol):
+    id: int
+    variant_group_id: str | None
+    is_active_variant: bool
+
+    def to_dict(self) -> dict[str, object]: ...
+
 
 # Regex patterns for special UI-only blocks that should be stripped before
 # sending user message content to the title-generation AI prompt.
@@ -119,11 +130,15 @@ def _get_title_source_message(conversation) -> str | None:
     return None
 
 
-from backend.common.config import Config
-from backend.database import get_db
-from backend.database.repositories import ChatRepository
-from backend.auth import current_active_user, User
-from gateway.chat.permissions import require_conversation_access
+Config = import_module("backend.common.config").Config
+get_db = import_module("backend.database").get_db
+ChatRepository = import_module("backend.database.repositories").ChatRepository
+_auth_module = import_module("backend.auth")
+current_active_user = _auth_module.current_active_user
+User = _auth_module.User
+require_conversation_access = import_module(
+    "gateway.chat.permissions"
+).require_conversation_access
 from ..prompts import detect_language
 from ..models import (
     CreateConversationRequest,
@@ -207,7 +222,7 @@ async def get_conversation(
     conversation = await require_conversation_access(db, conversation_id, user)
     sorted_messages = sorted(conversation.messages, key=lambda m: m.id)
 
-    variant_groups: dict[str, list] = {}
+    variant_groups: dict[str, list[_ConversationMessage]] = {}
     for msg in sorted_messages:
         if msg.variant_group_id:
             variant_groups.setdefault(msg.variant_group_id, []).append(msg)
@@ -273,7 +288,7 @@ async def generate_conversation_title(
     conversation = await require_conversation_access(db, conversation_id, user)
 
     first_message = _get_title_source_message(conversation)
-    if not first_message or not first_message.strip():
+    if first_message is None or not first_message.strip():
         raise HTTPException(
             status_code=400,
             detail=(

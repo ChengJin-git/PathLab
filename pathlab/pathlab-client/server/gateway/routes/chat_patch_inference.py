@@ -10,20 +10,24 @@ import shutil
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from importlib import import_module
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PIL import Image
 
-from backend.common.config import Config
-from backend.database import safe_session
-from backend.database.repositories import TrainedModelRepository, TrainingTaskRepository
-from backend.ai.utils.patch_resize import (
-    DEFAULT_NON_FM_PATCH_RESIZE,
-    build_patch_classification_transform,
-    resolve_patch_resize_size,
+Config = import_module("backend.common.config").Config
+safe_session = import_module("backend.database").safe_session
+_repositories = import_module("backend.database.repositories")
+TrainedModelRepository = _repositories.TrainedModelRepository
+TrainingTaskRepository = _repositories.TrainingTaskRepository
+_patch_resize = import_module("backend.ai.utils.patch_resize")
+DEFAULT_NON_FM_PATCH_RESIZE = _patch_resize.DEFAULT_NON_FM_PATCH_RESIZE
+build_patch_classification_transform = (
+    _patch_resize.build_patch_classification_transform
 )
+resolve_patch_resize_size = _patch_resize.resolve_patch_resize_size
 
 from ..task_queue import TaskType, get_task_queue
 
@@ -283,7 +287,8 @@ async def _run_patch_classification(
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    from backend.ai.extractors import get_extractor
+
+    get_extractor = import_module("backend.ai.extractors").get_extractor
 
     device = assigned_device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -295,7 +300,15 @@ async def _run_patch_classification(
     model_dir = Config.get_uploads_dir() / "models" / task.model_id
     config_path = model_dir / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
-    classes = trained_model.classes or config.get("classes", [])
+    trained_classes = (
+        trained_model.classes if isinstance(trained_model.classes, list) else []
+    )
+    config_classes = config.get("classes", [])
+    classes = (
+        list(trained_classes)
+        if trained_classes
+        else list(config_classes if isinstance(config_classes, list) else [])
+    )
     if not classes:
         raise ValueError("Could not determine model classes")
 
@@ -303,7 +316,7 @@ async def _run_patch_classification(
     num_folds = int(config.get("num_folds", 5)) if is_kfold else 1
 
     def _load_models():
-        extractor_name = (
+        extractor_name = str(
             config.get("extractor") or trained_model.feature_extractor or "resnet50"
         )
         linear_probes = []
@@ -340,9 +353,9 @@ async def _run_patch_classification(
     await _update_task(task.task_id, progress=35)
 
     def _infer_single_image() -> Dict[str, Any]:
-        image = Image.open(task.image_path).convert("RGB")
+        patch_image = Image.open(task.image_path).convert("RGB")
         image_tensor = (
-            build_patch_classification_transform(extractor, resize_size)(image)
+            build_patch_classification_transform(extractor, resize_size)(patch_image)
             .unsqueeze(0)
             .to(device)
         )
@@ -376,7 +389,8 @@ async def _run_patch_segmentation(
 ) -> Dict[str, Any]:
     import torch
     from torchvision.transforms import v2
-    from backend.ai.segmentors import Segmentor
+
+    Segmentor = import_module("backend.ai.segmentors").Segmentor
 
     device = assigned_device or ("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -385,36 +399,47 @@ async def _run_patch_segmentation(
         if not trained_model:
             raise ValueError(f"Trained model not found: {task.model_id}")
         training_task = await TrainingTaskRepository.get_by_id(
-            db, trained_model.task_id
+            db, str(trained_model.task_id)
         )
 
-    checkpoint_path = trained_model.model_path
+    checkpoint_path = str(trained_model.model_path)
 
     def _load_model():
-        from backend.ai.segmentors.specs import is_fm_segmentation_backbone
+        is_fm_segmentation_backbone = import_module(
+            "backend.ai.segmentors.specs"
+        ).is_fm_segmentation_backbone
 
         checkpoint = torch.load(
             checkpoint_path, map_location=device, weights_only=False
         )
         checkpoint_config = checkpoint.get("config", {})
-        task_model_cfg = (training_task.model_config or {}) if training_task else {}
+        if not isinstance(checkpoint_config, dict):
+            checkpoint_config = {}
+        task_model_cfg = (
+            training_task.model_config
+            if training_task and isinstance(training_task.model_config, dict)
+            else {}
+        )
         dataset_cfg = checkpoint_config.get("dataset", {})
+        if not isinstance(dataset_cfg, dict):
+            dataset_cfg = {}
 
         architecture = (
             checkpoint_config.get("architecture")
             or task_model_cfg.get("architecture")
             or "unet"
         )
-        backbone = (
+        backbone = str(
             checkpoint_config.get("backbone")
             or task_model_cfg.get("backbone")
             or trained_model.feature_extractor
             or "resnet50"
         )
         in_channels = int(dataset_cfg.get("channels", 3))
-        num_classes = int(
-            dataset_cfg.get("classes") or len(trained_model.classes or []) or 1
+        trained_model_classes = (
+            trained_model.classes if isinstance(trained_model.classes, list) else []
         )
+        num_classes = int(dataset_cfg.get("classes") or len(trained_model_classes) or 1)
 
         segmentor = Segmentor(
             architecture=architecture,
@@ -422,12 +447,12 @@ async def _run_patch_segmentation(
             in_channels=in_channels,
             classes=num_classes,
         )
-        model = segmentor.build_model()
+        built_model = segmentor.build_model()
         if checkpoint.get("is_fm", False):
-            model.load_decoder_state_dict(checkpoint["model_state_dict"])
+            built_model.load_decoder_state_dict(checkpoint["model_state_dict"])
         else:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        model = model.to(device)
+            built_model.load_state_dict(checkpoint["model_state_dict"])
+        model = built_model.to(device)
         model.eval()
         norm_mean, norm_std = segmentor.get_normalization_params()
         resize_size = resolve_patch_resize_size(backbone, is_segmentation_backbone=True)
@@ -471,10 +496,11 @@ async def _run_patch_segmentation(
             round(float(binary_mask[idx].float().mean().item()), 4)
             for idx in range(binary_mask.shape[0])
         ]
-        positive_classes = [
-            {"label": class_names[idx], "coverage_ratio": coverage_ratios[idx]}
+        has_positive_mask = any(float(ratio) > 0.0 for ratio in coverage_ratios)
+        positive_classes: list[dict[str, object]] = [
+            {"label": class_names[idx], "coverage_ratio": float(coverage_ratios[idx])}
             for idx in range(min(len(class_names), len(coverage_ratios)))
-            if coverage_ratios[idx] > 0
+            if float(coverage_ratios[idx]) > 0.0
         ]
 
         # Build overlay image: original image resized to mask resolution, with
@@ -491,7 +517,7 @@ async def _run_patch_segmentation(
             (255, 80, 200),
         ]
         mask_h, mask_w = int(binary_mask.shape[-2]), int(binary_mask.shape[-1])
-        base_img = image.resize((mask_w, mask_h), Image.LANCZOS)
+        base_img = image.resize((mask_w, mask_h), Image.Resampling.LANCZOS)
         base_arr = np.array(base_img, dtype=np.float32)
         overlay = base_arr.copy()
 
@@ -515,12 +541,13 @@ async def _run_patch_segmentation(
             "class_names": class_names,
             "positive_classes": positive_classes,
             "coverage_by_class": [
-                {"label": class_names[idx], "coverage_ratio": coverage_ratios[idx]}
+                {
+                    "label": class_names[idx],
+                    "coverage_ratio": float(coverage_ratios[idx]),
+                }
                 for idx in range(min(len(class_names), len(coverage_ratios)))
             ],
-            "has_positive_mask": any(
-                item["coverage_ratio"] > 0 for item in positive_classes
-            ),
+            "has_positive_mask": has_positive_mask,
             "mask_shape": [mask_h, mask_w],
             "overlay_image_data_url": overlay_b64,
         }
