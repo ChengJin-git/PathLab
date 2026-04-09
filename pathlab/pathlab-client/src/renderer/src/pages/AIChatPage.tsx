@@ -108,6 +108,7 @@ import {
 	preserveContentOnClearMarker,
 	sanitizeConfigBlocksForAI,
 } from "../lib/chatMessageParser";
+import { mergeLoadedMessagesWithPendingAssistant } from "../lib/chatPendingMessageState";
 import { xlsxToCSV } from "../lib/csvImporter";
 import { useVoiceSession } from "../lib/useVoiceSession";
 import { formatFileSize } from "../lib/utils";
@@ -748,13 +749,19 @@ export default function AIChatPage() {
 							sortedApiMessages[sortedApiMessages.length - 1]?.role ===
 							"assistant";
 
-						if (hasAssistantReply) {
-							sessionStorage.removeItem(pendingKey);
-							if (currentConversationIdRef.current === conversationId) {
-								setMessages(mapConversationMessages(sortedApiMessages));
-							}
-							return;
+					if (hasAssistantReply) {
+						sessionStorage.removeItem(pendingKey);
+						if (currentConversationIdRef.current === conversationId) {
+							setMessages((prev) =>
+								mergeLoadedMessagesWithPendingAssistant(
+									mapConversationMessages(sortedApiMessages),
+									prev,
+									generationPhaseRef.current !== "idle",
+								),
+							);
 						}
+						return;
+					}
 					} catch (error) {
 						console.warn(
 							"Failed to refresh pending cancelled response:",
@@ -1182,7 +1189,13 @@ export default function AIChatPage() {
 				untitledBranchConversationIdsRef.current.delete(conv.conversation_id);
 			}
 
-			setMessages(messagesToShow);
+			setMessages((prev) =>
+				mergeLoadedMessagesWithPendingAssistant(
+					messagesToShow,
+					prev,
+					generationPhaseRef.current !== "idle",
+				),
+			);
 			setCurrentConversationMeta(conv);
 		setCurrentConversationId(conversationId);
 		setShowHistory(false);
@@ -2241,6 +2254,7 @@ export default function AIChatPage() {
 		// Create a new conversation if this is the first user message
 		let conversationId = currentConversationId;
 		let isNewConversation = false;
+		let pendingNavigationConversationId: string | null = null;
 		if (!conversationId && messages.length === 0) {
 			try {
 				const newConv = await createConversation(t("aiChat.newConversation"));
@@ -2252,10 +2266,7 @@ export default function AIChatPage() {
 				updateConversationsAndCache((prevConversations) =>
 					upsertConversation(prevConversations, newConv),
 				);
-				// Skip the next conversation load triggered by URL change (to avoid overwriting in-progress messages)
-				skipConversationLoadRef.current = true;
-				// Update URL with new conversation ID for page refresh support
-				navigate(`/dashboard/${conversationId}`, { replace: true });
+				pendingNavigationConversationId = conversationId;
 			} catch (error) {
 				console.error("Failed to create conversation:", error);
 			}
@@ -2288,6 +2299,13 @@ export default function AIChatPage() {
 		await executeChatGeneration(chatMessages, conversationId || undefined, {
 			onError: () => stopVoiceSession(),
 			onFinally: () => {
+				if (pendingNavigationConversationId) {
+					skipConversationLoadRef.current = true;
+					navigate(`/dashboard/${pendingNavigationConversationId}`, {
+						replace: true,
+					});
+				}
+
 				// Check for SUBMIT_TASK and CANCEL_TASK_NOW blocks in ALL cases (voice or text input)
 				setTimeout(() => {
 					const latestMessages = messagesRef.current;
@@ -3732,8 +3750,51 @@ export default function AIChatPage() {
 																</div>
 															);
 														})()
-													) : message.content === "" ? (
-														isGenerating && index === messages.length - 1 ? (
+												) : message.content === "" ? (
+													isGenerating && index === messages.length - 1 ? (
+														// When search artifacts exist (PDF downloading/parsing, web search),
+														// render AssistantMessage so status cards are visible even before text arrives.
+														message.artifacts?.search ? (
+															(() => {
+																const referenceImages = (() => {
+																	for (let i = index - 1; i >= 0; i -= 1) {
+																		const candidate = messages[i];
+																		if (candidate.role === "user" && candidate.images?.length) {
+																			return candidate.images;
+																		}
+																	}
+																	return [] as string[];
+																})();
+																return (
+																	<AssistantMessage
+																		content={message.content}
+																		messageId={message.id}
+																		onOptionSelect={handleOptionSelect}
+																		onTaskSubmitSuccess={handleTaskSubmitSuccess}
+																		onInternalAnalysisSubmitSuccess={handleInternalAnalysisSubmitSuccess}
+																		onTaskSubmitError={handleTaskSubmitError}
+																		onTaskHistoryDataLoaded={handleTaskHistoryDataLoaded}
+																		onQuickAnalysisDataLoaded={handleQuickAnalysisDataLoaded}
+																		onHelpfulnessFeedback={handleHelpfulnessFeedback}
+																		savedHelpfulnessFeedback={helpfulnessFeedbacks.get(parseInt(message.id, 10)) || null}
+																		isStreaming={isGenerating && index === messages.length - 1}
+																		isLoading={isGenerating}
+																		csvContent={csvContentMap.get(message.id)?.content}
+																		csvFileName={csvContentMap.get(message.id)?.fileName}
+																		onToast={handleToast}
+																		onRegistrationSuccess={handleRegistrationSuccess}
+																		onMetadataUploadSuccess={handleMetadataUploadSuccess}
+																		submitTaskTrigger={index === lastTaskConfigIndex ? submitTaskTrigger : undefined}
+																		cancelTaskTrigger={index === lastCancelTaskIndex ? cancelTaskTrigger : undefined}
+																		onNewChat={handleNewChat}
+																		conversationId={currentConversationId || undefined}
+																		referenceImages={referenceImages}
+																		onMessageContentReplace={replaceMessageContent}
+																		searchArtifacts={message.artifacts ?? null}
+																	/>
+																);
+															})()
+														) : (
 															// ChatGPT-like Thinking Indicator with staggered bouncing dots
 															<div
 																className="flex items-center gap-2.5 py-2"
@@ -3769,12 +3830,13 @@ export default function AIChatPage() {
 																	{t("aiChat.thinking")}
 																</span>
 															</div>
-														) : (
-															<div className="py-2 text-sm text-gray-400">
-																{t("aiChat.aiErrorFallback")}
-															</div>
 														)
 													) : (
+														<div className="py-2 text-sm text-gray-400">
+															{t("aiChat.aiErrorFallback")}
+														</div>
+													)
+												) : (
 														(() => {
 															const referenceImages = (() => {
 																for (let i = index - 1; i >= 0; i -= 1) {
