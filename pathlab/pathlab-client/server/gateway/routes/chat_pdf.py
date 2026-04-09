@@ -1906,7 +1906,7 @@ def _parse_pdf_with_pymupdf(
 
     Returns markdown-formatted text with page markers, or None if:
     - pymupdf4llm / PyMuPDF is not installed
-    - Extraction quality is poor (too few characters, too much garbage)
+    - Extraction quality is clearly unusable (too few characters, too much garbage)
 
     Args:
         pdf_bytes: Raw PDF bytes.
@@ -2004,18 +2004,6 @@ def _parse_pdf_with_pymupdf(
                 f"PyMuPDF: too much garbage ({garbage_ratio:.1%}), need structured-parser fallback"
             )
             return None
-
-        # Per-page density check: catch scanned PDFs with sparse headers/footers
-        # that pass the total char threshold but have very little content per page.
-        num_pages = len(page_sections)
-        if num_pages > 0:
-            avg_chars_per_page = total_chars / num_pages
-            if avg_chars_per_page < 50 and num_pages >= 3:
-                logger.info(
-                    f"PyMuPDF: low per-page density ({avg_chars_per_page:.0f} chars/page "
-                    f"across {num_pages} pages), likely scanned PDF — need structured-parser fallback"
-                )
-                return None
 
         md_content = "\n\n".join(page_sections)
 
