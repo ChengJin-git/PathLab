@@ -870,6 +870,31 @@ const AssistantMessage = React.memo(function AssistantMessage({
         </div>
       )}
 
+      {/* Thinking indicator — shown inside AssistantMessage when streaming but no text content yet
+          and no search/PDF status cards are visible. This covers the gap between when the message
+          bubble is rendered and when actual PDF status events or text chunks arrive. */}
+      {isStreaming && !displayContent.trim() && !showSearchZone && !incompleteTag && !hasFunctionalCard && (
+        <div className="flex items-center gap-2.5 py-2" aria-busy="true">
+          <div className="flex items-center gap-1" aria-hidden="true">
+            <div
+              className="w-2 h-2 bg-primary-400 rounded-full animate-bounce"
+              style={{ animationDelay: '0ms', animationDuration: '1.2s' }}
+            />
+            <div
+              className="w-2 h-2 bg-primary-400 rounded-full animate-bounce"
+              style={{ animationDelay: '200ms', animationDuration: '1.2s' }}
+            />
+            <div
+              className="w-2 h-2 bg-primary-400 rounded-full animate-bounce"
+              style={{ animationDelay: '400ms', animationDuration: '1.2s' }}
+            />
+          </div>
+          <span className="text-sm font-medium text-gray-400">
+            {t('aiChat.thinking')}
+          </span>
+        </div>
+      )}
+
       {/* Markdown content — no skeleton; stream starts directly */}
       {displayContent.trim() && (
         <div className="prose prose-slate max-w-none prose-sm
@@ -907,7 +932,7 @@ const AssistantMessage = React.memo(function AssistantMessage({
             <OptionButtons
               options={options}
               onSelect={onOptionSelect}
-              disabled={isLoading}
+              disabled={isStreaming || isLoading}
             />
           </motion.div>
         ) : incompleteTag === 'OPTIONS' && (
@@ -1290,4 +1315,3 @@ const AssistantMessage = React.memo(function AssistantMessage({
 })
 
 export default AssistantMessage
-
