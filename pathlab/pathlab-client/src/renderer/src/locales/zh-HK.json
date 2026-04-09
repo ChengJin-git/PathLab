@@ -1024,6 +1024,8 @@
     "loadingFileInfo": "正在載入檔案資訊...",
     "backToChat": "返回對話",
     "backToDataset": "返回 {{name}}",
+    "previousSlide": "上一张",
+    "nextSlide": "下一张",
     "noPreviousSlide": "沒有上一張切片",
     "noNextSlide": "沒有下一張切片",
     "zoomIn": "放大",
