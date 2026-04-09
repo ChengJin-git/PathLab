@@ -30,6 +30,7 @@ import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
 import { ShareAnnotationDialog } from '../components/wsiViewer/ShareAnnotationDialog'
 import { ViewerOverlayControls } from '../components/wsiViewer/ViewerOverlayControls'
+import { buildSlideNavigationTooltip, shouldPersistAnnotationsBeforeSlideNavigation } from '../lib/wsiViewerNavigation'
 import {
   AnnotationRegion,
   AnnotationsMap,
@@ -1609,7 +1610,7 @@ export default function WSIViewerPage() {
 
       if (e.code === 'KeyQ' && prev) {
         e.preventDefault()
-        if (inAnnotation && unsaved && persist) {
+        if (shouldPersistAnnotationsBeforeSlideNavigation(inAnnotation, unsaved) && persist) {
           await persist({ showToast: false })
         }
         navigate(`/wsi/${prev.wsi_id}`, {
@@ -1617,7 +1618,7 @@ export default function WSIViewerPage() {
         })
       } else if (e.code === 'KeyE' && next) {
         e.preventDefault()
-        if (inAnnotation && unsaved && persist) {
+        if (shouldPersistAnnotationsBeforeSlideNavigation(inAnnotation, unsaved) && persist) {
           await persist({ showToast: false })
         }
         navigate(`/wsi/${next.wsi_id}`, {
@@ -1631,7 +1632,7 @@ export default function WSIViewerPage() {
   }, [navigate, fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition])
 
   const guardedNavigate = useCallback((navigateFn: () => void) => {
-    if (hasUnsavedChanges && annotationMode) {
+    if (shouldPersistAnnotationsBeforeSlideNavigation(annotationMode, hasUnsavedChanges)) {
       setPendingNavigation(() => navigateFn)
     } else {
       navigateFn()
@@ -1830,7 +1831,17 @@ export default function WSIViewerPage() {
 
           <div className="flex items-center gap-1 sm:gap-2">
             <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
-              <Tooltip content={prevWSI ? `${t('common.previous')} (Q)` : t('wsiViewer.noPreviousSlide')}>
+              <Tooltip content={buildSlideNavigationTooltip({
+                direction: 'previous',
+                hasTarget: !!prevWSI,
+                shortcut: 'Q',
+                labels: {
+                  previousSlide: t('wsiViewer.previousSlide'),
+                  nextSlide: t('wsiViewer.nextSlide'),
+                  noPreviousSlide: t('wsiViewer.noPreviousSlide'),
+                  noNextSlide: t('wsiViewer.noNextSlide'),
+                },
+              })}>
               <button
                 type="button"
                 onClick={() => prevWSI && guardedNavigate(() => navigate(`/wsi/${prevWSI.wsi_id}`, {
@@ -1851,7 +1862,17 @@ export default function WSIViewerPage() {
               </button>
               </Tooltip>
               <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
-              <Tooltip content={nextWSI ? `${t('common.next')} (E)` : t('wsiViewer.noNextSlide')}>
+              <Tooltip content={buildSlideNavigationTooltip({
+                direction: 'next',
+                hasTarget: !!nextWSI,
+                shortcut: 'E',
+                labels: {
+                  previousSlide: t('wsiViewer.previousSlide'),
+                  nextSlide: t('wsiViewer.nextSlide'),
+                  noPreviousSlide: t('wsiViewer.noPreviousSlide'),
+                  noNextSlide: t('wsiViewer.noNextSlide'),
+                },
+              })}>
               <button
                 type="button"
                 onClick={() => nextWSI && guardedNavigate(() => navigate(`/wsi/${nextWSI.wsi_id}`, {
