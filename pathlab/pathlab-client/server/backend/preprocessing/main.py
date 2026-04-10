@@ -83,11 +83,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Get uploads directory
-UPLOADS_DIR = Config.get_uploads_dir()
 Config.ensure_directories()
-COORDS_DIR = UPLOADS_DIR / "coordinates"
-MASKS_DIR = UPLOADS_DIR / "masks"
+
+
+def _uploads_dir() -> Path:
+    return Config.get_uploads_dir()
+
+
+COORDS_DIR = _uploads_dir() / "coordinates"
+MASKS_DIR = _uploads_dir() / "masks"
 COORDS_DIR.mkdir(exist_ok=True, parents=True)
 MASKS_DIR.mkdir(exist_ok=True, parents=True)
 
@@ -1177,7 +1181,7 @@ async def _extract_single_region(
     new_wsi_id = str(uuid.uuid4())
 
     # Ensure output directory exists
-    output_dir = UPLOADS_DIR / "wsi_files"
+    output_dir = _uploads_dir() / "wsi_files"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{new_wsi_id}.jpg"
 
@@ -1324,9 +1328,9 @@ async def _extract_segmentation_dataset(
     DatasetStatsRepository = repositories.DatasetStatsRepository
     set_progress = import_module("backend.common.progress_store").set_progress
 
-    output_dir = UPLOADS_DIR / "wsi_files"
+    output_dir = _uploads_dir() / "wsi_files"
     output_dir.mkdir(parents=True, exist_ok=True)
-    annotations_dir = UPLOADS_DIR / "annotations"
+    annotations_dir = _uploads_dir() / "annotations"
     annotations_dir.mkdir(parents=True, exist_ok=True)
 
     # COCO JSON structure

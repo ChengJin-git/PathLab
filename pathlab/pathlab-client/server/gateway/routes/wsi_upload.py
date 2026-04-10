@@ -30,7 +30,8 @@ from backend.auth.dependencies import (
     require_pathologist_or_admin,
     check_dataset_write_permission,
 )
-from ..dependencies import logger, storage_manager, UPLOADS_DIR
+from ..dependencies import logger, storage_manager
+from backend.common.config import Config
 from ..models import UploadByPathRequest
 from ..utils import (
     align_dataset_data_type_for_file,
@@ -454,7 +455,7 @@ async def upload_wsi_file(
                 )
 
             # Save file to uploads directory using UUID-based filename
-            wsi_files_dir = Path(UPLOADS_DIR) / "wsi_files"
+            wsi_files_dir = Config.get_uploads_dir() / "wsi_files"
             wsi_files_dir.mkdir(exist_ok=True, parents=True)
 
             wsi_path = wsi_files_dir / f"{wsi_id}{file_extension}"
