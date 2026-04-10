@@ -48,8 +48,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-UPLOADS_DIR = Config.get_uploads_dir()
-AI_RESULTS_DIR = UPLOADS_DIR / "ai_results"
+
+def _uploads_dir() -> Path:
+    return Config.get_uploads_dir()
+
 
 RECOMMENDATION_PRESET = "recommendation"
 
@@ -259,7 +261,7 @@ async def get_heatmap_data(
 
     try:
         # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
+        result_dir = _uploads_dir() / "ai_results" / wsi_id
         if not result_dir.exists():
             # Return empty data instead of 404 when no inference results
             logger.info(f"No AI results directory for {wsi_id}")
@@ -274,7 +276,7 @@ async def get_heatmap_data(
 
         # Select the right attention file based on task_id and fold_key
         attention_file = select_attention_file(
-            attention_files, task_id, fold_key, UPLOADS_DIR
+            attention_files, task_id, fold_key, _uploads_dir()
         )
         if attention_file is None:
             logger.info(
@@ -295,7 +297,7 @@ async def get_heatmap_data(
         result_meta = load_result_meta(attention_file, "_attention.npy")
 
         # Load coordinates from coords.h5 (search across all params_hash directories)
-        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        coords_file = find_any_cached_coords_for_wsi(_uploads_dir(), wsi_id)
         if coords_file is None:
             raise HTTPException(
                 status_code=404,
@@ -468,7 +470,7 @@ async def get_heatmap_thumbnail(
 
     try:
         # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
+        result_dir = _uploads_dir() / "ai_results" / wsi_id
         if not result_dir.exists():
             raise HTTPException(
                 status_code=404, detail="No inference results available"
@@ -481,7 +483,7 @@ async def get_heatmap_thumbnail(
 
         # Select the right attention file
         attention_file = select_attention_file(
-            attention_files, task_id, fold_key, UPLOADS_DIR
+            attention_files, task_id, fold_key, _uploads_dir()
         )
         if attention_file is None:
             raise HTTPException(
@@ -497,7 +499,7 @@ async def get_heatmap_thumbnail(
             cached_preview_path = ensure_recommendation_preview_cache(
                 wsi_id,
                 attention_file,
-                UPLOADS_DIR,
+                _uploads_dir(),
                 patch_size=patch_size,
                 class_idx=class_idx,
                 wsi_path=wsi.wsi_path,
@@ -522,7 +524,7 @@ async def get_heatmap_thumbnail(
         result_meta = load_result_meta(attention_file, "_attention.npy")
 
         # Load coordinates (search across all params_hash directories)
-        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        coords_file = find_any_cached_coords_for_wsi(_uploads_dir(), wsi_id)
         if coords_file is None:
             raise HTTPException(status_code=404, detail="Coordinates not found")
 
@@ -731,7 +733,7 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
 
     try:
         # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
+        result_dir = _uploads_dir() / "ai_results" / wsi_id
         if not result_dir.exists():
             return {"wsi_id": wsi_id, "heatmaps": []}
 
@@ -868,7 +870,7 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
                 logger.warning(f"Failed to batch fetch training tasks: {e}")
 
         coords_patch_size = None
-        coords_file = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+        coords_file = find_any_cached_coords_for_wsi(_uploads_dir(), wsi_id)
         if coords_file is not None:
             coords_attrs, load_error = safe_load_h5_coords_attrs(
                 coords_file, delete_if_corrupted=False
@@ -1052,7 +1054,7 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
         for tid in task_ids:
             for model_prefix in possible_prefixes:
                 model_id = f"{model_prefix}_{tid}"
-                metrics_file = UPLOADS_DIR / "models" / model_id / "metrics.json"
+                metrics_file = _uploads_dir() / "models" / model_id / "metrics.json"
                 if metrics_file.exists():
                     try:
                         with open(metrics_file, "r") as f:
@@ -1232,7 +1234,7 @@ async def get_patch_cam(
 
     try:
         # Find result directory
-        result_dir = AI_RESULTS_DIR / wsi_id
+        result_dir = _uploads_dir() / "ai_results" / wsi_id
         if not result_dir.exists():
             logger.info(f"No AI results directory for {wsi_id}")
             return empty_cam_response("No inference results available")
@@ -1270,7 +1272,7 @@ async def get_patch_cam(
                     matching = non_fold
                 elif matching:
                     # All files are k-fold - try to find best fold from metrics.json
-                    best_fold = find_best_fold(task_id, UPLOADS_DIR)
+                    best_fold = find_best_fold(task_id, _uploads_dir())
                     if best_fold:
                         best_matching = [f for f in matching if best_fold in f.name]
                         if best_matching:
@@ -1295,7 +1297,7 @@ async def get_patch_cam(
             preview_path = ensure_patch_cam_recommendation_preview_cache(
                 wsi_id,
                 cam_file,
-                UPLOADS_DIR,
+                _uploads_dir(),
                 wsi_path=wsi.wsi_path,
                 file_size=getattr(wsi, "file_size", None),
             )
@@ -1466,7 +1468,7 @@ async def get_seg_mask(
 
     try:
         render_settings = _get_render_settings(preset, None, None, None, None)
-        result_dir = AI_RESULTS_DIR / wsi_id
+        result_dir = _uploads_dir() / "ai_results" / wsi_id
         if not result_dir.exists():
             raise HTTPException(status_code=404, detail="No results for this WSI")
 
@@ -1491,7 +1493,7 @@ async def get_seg_mask(
                 if non_fold:
                     matching = non_fold
                 elif matching:
-                    best_fold = find_best_fold(task_id, UPLOADS_DIR)
+                    best_fold = find_best_fold(task_id, _uploads_dir())
                     if best_fold:
                         best_matching = [f for f in matching if best_fold in f.name]
                         if best_matching:
@@ -1511,7 +1513,7 @@ async def get_seg_mask(
             preview_path = ensure_segmentation_recommendation_preview_cache(
                 wsi_id,
                 mask_file,
-                UPLOADS_DIR,
+                _uploads_dir(),
                 seg_colors=_SEG_COLORS,
                 wsi_path=wsi.wsi_path,
                 file_size=getattr(wsi, "file_size", None),

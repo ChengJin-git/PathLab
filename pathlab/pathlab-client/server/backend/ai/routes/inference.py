@@ -56,8 +56,10 @@ from backend.preprocessing.heatmap_preview_cache import (
 
 logger = logging.getLogger("inference_routes")
 
-# Paths
-UPLOADS_DIR = Config.get_uploads_dir()
+
+def _uploads_dir():
+    return Config.get_uploads_dir()
+
 
 router = APIRouter(tags=["inference"])
 
@@ -176,7 +178,8 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
 
             # --- Step 2: Feature Extraction (with global cache) ---
             # Check coordinates first (search across all params_hash directories)
-            coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+            uploads_dir = _uploads_dir()
+            coords_h5 = find_any_cached_coords_for_wsi(uploads_dir, wsi_id)
             if coords_h5 is None:
                 raise FileNotFoundError(
                     f"Coordinates not found for {wsi_id}. Please run preprocessing first."
@@ -193,7 +196,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
 
             # Check global feature cache
             cached_path = find_cached_features(
-                UPLOADS_DIR, extractor_name, wsi_id, params_hash
+                uploads_dir, extractor_name, wsi_id, params_hash
             )
 
             features = None
@@ -230,7 +233,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
                 wsi = await WSIRepository.get_by_id(db, wsi_id)
 
                 # Use WSIClassificationTrainer's logic (reusing code)
-                trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
+                trainer = WSIClassificationTrainer(task_id, uploads_dir, device)
                 extractor = await asyncio.to_thread(
                     lambda: (
                         get_extractor(extractor_name, pretrained=True).to(device).eval()
@@ -247,7 +250,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
 
                 # Save to global cache (blocking disk I/O → thread)
                 cache_feat_path = get_cache_save_path(
-                    UPLOADS_DIR, extractor_name, params_hash, wsi_id
+                    uploads_dir, extractor_name, params_hash, wsi_id
                 )
                 feats_cpu = feats.cpu()
                 await asyncio.to_thread(save_features, cache_feat_path, feats_cpu)
@@ -302,7 +305,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
                 import numpy as np
 
                 # Save attention weights to file
-                ai_results_dir = UPLOADS_DIR / "ai_results" / wsi_id
+                ai_results_dir = uploads_dir / "ai_results" / wsi_id
                 ai_results_dir.mkdir(parents=True, exist_ok=True)
                 attention_file = ai_results_dir / f"{task_id}_attention.npy"
                 attention_np = attention.cpu().numpy()
@@ -310,7 +313,7 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
                 ensure_recommendation_preview_cache(
                     wsi_id,
                     attention_file,
-                    UPLOADS_DIR,
+                    uploads_dir,
                     wsi_path=wsi.wsi_path,
                     file_size=wsi.file_size,
                 )
@@ -384,7 +387,8 @@ async def run_inference_pipeline_sync(
 
     # --- Step 2: Feature Extraction (with global cache) ---
     # Check coordinates first (search across all params_hash directories)
-    coords_h5 = find_any_cached_coords_for_wsi(UPLOADS_DIR, wsi_id)
+    uploads_dir = _uploads_dir()
+    coords_h5 = find_any_cached_coords_for_wsi(uploads_dir, wsi_id)
     if coords_h5 is None:
         raise FileNotFoundError(
             f"Coordinates not found for {wsi_id}. Please run preprocessing first."
@@ -395,7 +399,7 @@ async def run_inference_pipeline_sync(
         logger.warning(f"Could not read params from {coords_h5}, using default hash")
         params_hash = "default0"
 
-    cached_path = find_cached_features(UPLOADS_DIR, extractor_name, wsi_id, params_hash)
+    cached_path = find_cached_features(uploads_dir, extractor_name, wsi_id, params_hash)
 
     features = None
     if cached_path:
@@ -427,7 +431,7 @@ async def run_inference_pipeline_sync(
         )
 
         wsi = await WSIRepository.get_by_id(db, wsi_id)
-        trainer = WSIClassificationTrainer(task_id, UPLOADS_DIR, device)
+        trainer = WSIClassificationTrainer(task_id, uploads_dir, device)
         extractor = await asyncio.to_thread(
             lambda: get_extractor(extractor_name, pretrained=True).to(device).eval()
         )
@@ -441,7 +445,7 @@ async def run_inference_pipeline_sync(
         )
 
         cache_feat_path = get_cache_save_path(
-            UPLOADS_DIR, extractor_name, params_hash, wsi_id
+            uploads_dir, extractor_name, params_hash, wsi_id
         )
         feats_cpu = feats.cpu()
         await asyncio.to_thread(save_features, cache_feat_path, feats_cpu)
@@ -486,7 +490,7 @@ async def run_inference_pipeline_sync(
     # --- Step 5: Save Attention for Heatmap ---
     attention_path = None
     if attention is not None:
-        ai_results_dir = UPLOADS_DIR / "ai_results" / wsi_id
+        ai_results_dir = uploads_dir / "ai_results" / wsi_id
         ai_results_dir.mkdir(parents=True, exist_ok=True)
         attention_file = ai_results_dir / f"{task_id}_attention.npy"
         attention_np = attention.cpu().numpy()
@@ -494,7 +498,7 @@ async def run_inference_pipeline_sync(
         ensure_recommendation_preview_cache(
             wsi_id,
             attention_file,
-            UPLOADS_DIR,
+            uploads_dir,
             wsi_path=wsi.wsi_path,
             file_size=wsi.file_size,
         )
