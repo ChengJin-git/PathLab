@@ -1,6 +1,7 @@
 from typing import Any
 
 import os
+import sys
 from importlib import import_module
 from pathlib import Path
 
@@ -141,6 +142,12 @@ class Config:
         resolved = Path(uploads_dir).expanduser().resolve()
         write_config({"uploads_dir": str(resolved)}, cls.STORAGE_CONFIG_FILE)
         os.environ["PATHLAB_UPLOADS_DIR"] = str(resolved)
+        dependencies_module = sys.modules.get("gateway.dependencies")
+        if dependencies_module is not None:
+            setattr(dependencies_module, "UPLOADS_DIR", resolved)
+            manager = getattr(dependencies_module, "storage_manager", None)
+            if manager is not None:
+                manager.set_uploads_dir(str(resolved))
         return resolved
 
     @classmethod

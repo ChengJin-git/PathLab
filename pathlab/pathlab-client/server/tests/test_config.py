@@ -214,3 +214,12 @@ class TestConfigFileMerge:
         data = json.loads(config_file.read_text())
         assert data["openrouter_api_key"] == "key-1"
         assert data["task_timeout"] == 1800
+
+
+class TestUploadsDirConfig:
+    def test_set_uploads_dir_persists_and_normalizes_path(
+        self, isolated_config, tmp_path
+    ):
+        target = isolated_config.set_uploads_dir(str(tmp_path / "storage"))
+        assert target == (tmp_path / "storage").resolve()
+        assert isolated_config.get_uploads_dir() == target
