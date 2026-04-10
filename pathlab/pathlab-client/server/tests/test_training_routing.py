@@ -1,4 +1,5 @@
 import asyncio
+import importlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,26 +25,28 @@ async def test_wsi_task_launches_pre_queue_patching():
     mock_queue.register_patching_task = MagicMock()
     mock_queue.submit = AsyncMock()
     mock_training_logger = _make_training_logger_mock()
+    real_create_task = asyncio.create_task
 
     with (
         patch("gateway.routes.training.get_task_queue", return_value=mock_queue),
         patch(
-            "gateway.routes.training.run_patching_then_submit", new_callable=AsyncMock
+            "gateway.routes.training.run_patching_then_submit",
+            new_callable=AsyncMock,
         ) as mock_patching,
         patch("gateway.routes.training._check_file_accessibility", return_value=[]),
         patch("gateway.routes.training.TrainingTaskRepository") as mock_repo,
         patch(
-            "gateway.routes.training.TrainingLogger", return_value=mock_training_logger
+            "gateway.routes.training.TrainingLogger",
+            return_value=mock_training_logger,
         ),
-        patch("gateway.routes.training.asyncio") as mock_asyncio,
+        patch("gateway.routes.training.asyncio.create_task") as mock_create_task,
     ):
         mock_repo.update_status = AsyncMock()
-        mock_patching_task = MagicMock()
-        mock_asyncio.create_task.return_value = mock_patching_task
+        mock_create_task.side_effect = real_create_task
 
-        from gateway.routes.training import _validate_files_and_enqueue
+        training_module = importlib.import_module("gateway.routes.training")
 
-        await _validate_files_and_enqueue(
+        await training_module._validate_files_and_enqueue(
             task_id="task_wsi",
             paths_to_check=[],
             uploads_dir="/uploads",
@@ -71,13 +74,15 @@ async def test_patch_task_submits_directly_to_queue():
     with (
         patch("gateway.routes.training.get_task_queue", return_value=mock_queue),
         patch(
-            "gateway.routes.training.run_patching_then_submit", new_callable=AsyncMock
+            "gateway.routes.training.run_patching_then_submit",
+            new_callable=AsyncMock,
         ) as mock_patching,
         patch("gateway.routes.training._check_file_accessibility", return_value=[]),
         patch("gateway.routes.training.TrainingTaskRepository") as mock_repo,
         patch("gateway.routes.training.safe_session") as mock_safe,
         patch(
-            "gateway.routes.training.TrainingLogger", return_value=mock_training_logger
+            "gateway.routes.training.TrainingLogger",
+            return_value=mock_training_logger,
         ),
     ):
         mock_repo.update_status = AsyncMock()
@@ -86,9 +91,9 @@ async def test_patch_task_submits_directly_to_queue():
         ctx.__aexit__ = AsyncMock(return_value=False)
         mock_safe.return_value = ctx
 
-        from gateway.routes.training import _validate_files_and_enqueue
+        training_module = importlib.import_module("gateway.routes.training")
 
-        await _validate_files_and_enqueue(
+        await training_module._validate_files_and_enqueue(
             task_id="task_patch",
             paths_to_check=[],
             uploads_dir="/uploads",
