@@ -141,10 +141,13 @@ async def get_migration_status(
             Config.set_uploads_dir(status["destination"])
             Config.ensure_directories()
             storage_manager.set_uploads_dir(status["destination"])
+            runtime_refreshed = True
 
             # 3. Cleanup Source (if requested)
+            cleanup_performed = False
             if status["delete_source"]:
                 migration_manager.cleanup_source()
+                cleanup_performed = True
 
             # 4. Reset manager
             migration_manager.reset()
@@ -153,6 +156,10 @@ async def get_migration_status(
                 "status": "success",
                 "message": "Migration completed and applied successfully",
                 "new_path": status["destination"],
+                "finalization_applied": True,
+                "runtime_refreshed": runtime_refreshed,
+                "source_cleanup_performed": cleanup_performed,
+                "cleanup_performed": cleanup_performed,
             }
 
         except Exception as e:
@@ -161,6 +168,10 @@ async def get_migration_status(
                 "status": "error",
                 "error": f"Migration files copied but finalization failed: {str(e)}",
                 "progress": 100,
+                "finalization_applied": False,
+                "runtime_refreshed": False,
+                "source_cleanup_performed": False,
+                "cleanup_performed": False,
             }
 
     return status
@@ -339,6 +350,7 @@ async def update_storage_config(
             "uploads_dir": str(uploads_dir),
             "message": "Storage location updated. Restart services to apply across all modules.",
             "restart_required": True,
+            "runtime_refreshed": True,
         }
     except Exception as e:
         logger.error(f"Failed to update storage config: {e}")
