@@ -235,7 +235,7 @@ export default function SettingsPage() {
                 <div className="border-t border-gray-100 pt-5 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-8">
                   <div className="flex flex-col items-start">
                     <a
-                      href="https://smartlab.cse.ust.hk/"
+                      href="https://smartx.ust.hk/"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex max-w-full items-center transition-opacity hover:opacity-100 opacity-90"
@@ -246,16 +246,16 @@ export default function SettingsPage() {
                     <p className="mt-4 text-sm leading-6 text-gray-700">{t('settings.aboutText3')}</p>
 
                     <a
-                      href="https://smartlab.cse.ust.hk/"
+                      href="https://smartx.ust.hk/"
                       target="_blank"
                       rel="noopener noreferrer"
                       className="mt-4 inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-700 hover:underline"
                     >
-                      <span className="break-all">smartlab.cse.ust.hk</span>
+                      <span className="break-all">smartx.ust.hk</span>
                     </a>
 
                     <p className="mt-4 text-xs leading-5 text-gray-500">
-                      {t('common.copyright')} <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer" className="font-medium text-gray-700 hover:underline">SmartLab</a> · {t('introduction.allRightsReserved')}
+                      {t('common.copyright')} <a href="https://smartx.ust.hk/" target="_blank" rel="noopener noreferrer" className="font-medium text-gray-700 hover:underline">SmartXLab</a> · {t('introduction.allRightsReserved')}
                     </p>
                   </div>
                 </div>

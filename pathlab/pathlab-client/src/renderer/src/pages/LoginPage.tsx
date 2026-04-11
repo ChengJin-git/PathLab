@@ -274,7 +274,7 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
             </div>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 <a href="https://smartlab.cse.ust.hk/" target="_blank" rel="noopener noreferrer">SmartLab</a>{turnstileSiteKey ? ` · ${t('common.protectedByTurnstile')}` : ''}
+              © 2026 <a href="https://smartx.ust.hk/" target="_blank" rel="noopener noreferrer">SmartXLab</a>{turnstileSiteKey ? ` · ${t('common.protectedByTurnstile')}` : ''}
             </p>
           </form>
         </div>

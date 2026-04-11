@@ -120,31 +120,31 @@ async def list_available_extractors(user: User = Depends(current_active_user)):
                 {
                     "id": "mSTAR",
                     "name": "mSTAR",
-                    "description": "ViT-L/16, 1024-dim (Smartlab)",
+                    "description": "ViT-L/16, 1024-dim (SmartXlab)",
                     "supports_spatial": True,
                 },
                 {
                     "id": "GPFM",
                     "name": "GPFM",
-                    "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)",
+                    "description": "DINOv2 ViT-L/14, 1024-dim (SmartXlab)",
                     "supports_spatial": True,
                 },
                 {
                     "id": "SmartCCS",
                     "name": "Smart-CCS",
-                    "description": "DINOv2 ViT-L/14, 1024-dim (Smartlab)",
+                    "description": "DINOv2 ViT-L/14, 1024-dim (SmartXlab)",
                     "supports_spatial": True,
                 },
                 {
                     "id": "SmartCyto",
                     "name": "SmartCyto",
-                    "description": "DINOv3 ViT-B/16, 768-dim (Smartlab)",
+                    "description": "DINOv3 ViT-B/16, 768-dim (SmartXlab)",
                     "supports_spatial": True,
                 },
                 {
                     "id": "CytoFM",
                     "name": "CytoFM",
-                    "description": "DINOv2 ViT-L/14, 1024-dim, pure vision self-supervised (Smartlab)",
+                    "description": "DINOv2 ViT-L/14, 1024-dim, pure vision self-supervised (SmartXlab)",
                     "supports_spatial": True,
                 },
             ]

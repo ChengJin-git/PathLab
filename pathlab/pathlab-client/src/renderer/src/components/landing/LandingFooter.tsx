@@ -41,7 +41,7 @@ export function LandingFooter() {
         </div>
         <div className="pt-8 border-t border-[color:var(--landing-border)] flex flex-col sm:flex-row items-center justify-between gap-4">
           <p className="text-sm text-[color:var(--landing-text-secondary)]">
-            © 2026 SmartLab · {t('introduction.allRightsReserved', 'All Rights Reserved')}
+            © 2026 SmartXLab · {t('introduction.allRightsReserved', 'All Rights Reserved')}
           </p>
         </div>
       </div>

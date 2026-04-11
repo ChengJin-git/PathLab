@@ -185,7 +185,7 @@
     "aboutText1Part1": "PathLab",
     "aboutText1Part2": " is an AI-powered pathology analysis platform for pathology image analysis.",
     "aboutText2": "The platform integrates state-of-the-art deep learning models with an intuitive AI assistant to help researchers set up and run pathology analysis tasks.",
-    "aboutText3": "Developed by SmartLab.",
+    "aboutText3": "Developed by SmartXLab.",
     "language": "Language",
     "languageDesc": "Select your preferred language",
     "remoteServices": "Remote Services",
@@ -3316,7 +3316,7 @@
   "disclaimer": {
     "title": "Terms of Service & Medical Disclaimer",
     "fullTitle": "PathLab Terms of Service, User Agreement, and Medical Disclaimer",
-    "operator": "Operator: SmartLab",
+    "operator": "Operator: SmartXLab",
     "contact": "Contact",
     "scopeLabel": "Scope",
     "scopeText": "These Terms govern PathLab's local Workbench application, AI verification tools, and related services (collectively, the \"Services\").",
@@ -3350,7 +3350,7 @@
       "s3": {
         "title": "3. Definitions",
         "items": [
-          "3.1 Platform / We means SmartLab and its operator.",
+          "3.1 Platform / We means SmartXLab and its operator.",
           "3.2 User / You means any individual or entity that registers, signs in, accesses, or uses the Services.",
           "3.3 Workbench (Client) means the local desktop application (for example, Electron with a Python sidecar), or web application (for example, vite with react) used for slide viewing, local inference, visualization, and reporting.",
           "3.4 Auth Server means the authentication service (e.g., Casdoor, JWT) used to verify user identity.",
@@ -3527,7 +3527,7 @@
   "privacyPolicy": {
     "title": "Privacy Notice",
     "fullTitle": "PathLab Privacy Notice and Privacy Policy",
-    "operator": "Operator: SmartLab",
+    "operator": "Operator: SmartXLab",
     "contact": "Contact",
     "introLabel": "How to read this notice",
     "introText": "This notice explains, at a high level, how we handle personal data in connection with PathLab. In Hong Kong, relevant handling of personal data may be subject to <lawCap486>the Personal Data (Privacy) Ordinance (Cap. 486)</lawCap486>. It should be read together with the Terms of Service, medical notices, and any feature-specific prompts or notices shown in the product.",
@@ -3538,7 +3538,7 @@
       "s1": {
         "title": "1. Scope and roles",
         "items": [
-          "1.1 This Privacy Notice and Privacy Policy describes how SmartLab may collect, use, store, disclose, or otherwise process personal data in connection with account access to and use of the Services.",
+          "1.1 This Privacy Notice and Privacy Policy describes how SmartXLab may collect, use, store, disclose, or otherwise process personal data in connection with account access to and use of the Services.",
           "1.2 It covers data relating to account registration and login, agreement acceptance, maintenance notices, datasets, annotations, permissions, tasks, results, AI features, and support or feedback interactions.",
           "1.3 If you use the Services on behalf of an institution, that institution may separately determine the purposes and means of handling source datasets and patient or research data that it uploads or manages through the Services."
         ]
