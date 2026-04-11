@@ -1828,7 +1828,7 @@
       "selectModelPlaceholder": "選擇模型...",
       "selectDataset": "目標資料集",
       "selectDatasetPlaceholder": "選擇無標注資料集...",
-       "noUnlabeledDatasets": "未找到無標注資料集",
+      "noUnlabeledDatasets": "未找到無標注資料集",
       "noUnlabeledDatasetsHint": "僅無標籤資料集可參與批量推理。上傳未分配標籤的切片即可建立。",
       "showAllDatasets": "顯示全部資料集",
       "filterUnlabeled": "僅顯示無標注",
@@ -3930,7 +3930,7 @@
       "desc": "停止在孤立的工具間切換。在同一個工作台內查看管線輸出，疊加熱圖和模型評分到原始全切片影像上。",
       "f1": {
         "title": "零延遲渲染",
-        "desc": "透過深度優化的 WebGL 切片查看器，毫秒級縮放數十億像素影像。"
+        "desc": "透過深度優化的 Aslide 切片查看器，毫秒級縮放數十億像素影像。"
       },
       "f2": {
         "title": "同步映射結果",

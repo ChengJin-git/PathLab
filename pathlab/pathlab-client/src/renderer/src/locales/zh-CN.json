@@ -1198,7 +1198,7 @@
       "earlyStoppingPatience": "早停耐心值",
       "yes": "是",
       "no": "否"
-      },
+    },
     "batchInference": {
       "summary": "推理摘要",
       "totalSlides": "总切片数",
@@ -1829,7 +1829,7 @@
       "selectModelPlaceholder": "选择模型...",
       "selectDataset": "目标数据集",
       "selectDatasetPlaceholder": "选择无标注数据集...",
-       "noUnlabeledDatasets": "未找到无标注数据集",
+      "noUnlabeledDatasets": "未找到无标注数据集",
       "noUnlabeledDatasetsHint": "仅无标签数据集可参与批量推理。上传未分配标签的切片即可创建。",
       "showAllDatasets": "显示全部数据集",
       "filterUnlabeled": "仅显示无标注",
@@ -3923,7 +3923,7 @@
     },
     "evidence": {
       "title": "深度的视觉证据层，就在同一工作台",
-      "desc": "停止在孤立工具间切换。在同一界面查看AI结果与切片原图的精准热图叠加。",
+      "desc": "停止在孤立工具间切换。在同一界面查看 AI 结果与切片原图的精准热图叠加。",
       "f1": {
         "title": "零延迟平滑渲染",
         "desc": "通过深度优化的 Aslide 查看器，毫秒级缩放和探索图像。"
