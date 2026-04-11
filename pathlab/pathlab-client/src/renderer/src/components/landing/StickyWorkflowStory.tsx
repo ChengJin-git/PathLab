@@ -1,19 +1,28 @@
 import { useState, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CheckCircle2, MessageSquare, ListTodo, ActivitySquare } from 'lucide-react'
+import { motion, AnimatePresence, useInView } from 'framer-motion'
 
-const STEP_DURATION = 3500
+const STEP_DURATION = 4000
 
 export function StickyWorkflowStory() {
   const { t } = useTranslation()
+  const sectionRef = useRef<HTMLElement>(null)
+  const isInView = useInView(sectionRef, { amount: 0.3, once: false })
+
   const [activeStep, setActiveStep] = useState(0)
   const [progress, setProgress] = useState(0)
   const [paused, setPaused] = useState(false)
+
   const startRef = useRef(performance.now())
   const rafRef = useRef<number>(0)
 
+  // Auto-play timer — only runs when section is in view and not paused
   useEffect(() => {
-    if (paused) return
+    if (!isInView || paused) {
+      cancelAnimationFrame(rafRef.current)
+      return
+    }
 
     startRef.current = performance.now()
 
@@ -31,7 +40,7 @@ export function StickyWorkflowStory() {
 
     rafRef.current = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafRef.current)
-  }, [paused])
+  }, [isInView, paused, activeStep])
 
   const jumpTo = (idx: number) => {
     setActiveStep(idx)
@@ -66,12 +75,98 @@ export function StickyWorkflowStory() {
     },
   ]
 
+  const mockPanels = [
+    // Step 1
+    <div key="mock-1" className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
+      <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10 relative overflow-hidden">
+        <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-blue-400 to-cyan-400 left-0" />
+        <p className="text-lg sm:text-xl font-mono text-slate-700 whitespace-pre-wrap">
+          {t('landing.story.step1.mock', '"Train a lymphocyte segmentation model on TCGA-BRCA dataset..."')}
+          <span className="animate-pulse text-blue-500">|</span>
+        </p>
+        <div className="mt-8 flex gap-3">
+          <span className="px-4 py-1.5 bg-blue-50 text-blue-600 rounded-full text-sm font-semibold border border-blue-100">{t('landing.story.step1.tag1', 'Segmentation')}</span>
+          <span className="px-4 py-1.5 bg-blue-50 text-blue-600 rounded-full text-sm font-semibold border border-blue-100">{t('landing.story.step1.tag2', 'Training')}</span>
+        </div>
+      </div>
+    </div>,
+
+    // Step 2
+    <div key="mock-2" className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
+      <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10">
+        <div className="flex items-center justify-between mb-6 border-b border-[color:var(--landing-border)] pb-4">
+          <span className="font-semibold text-[color:var(--landing-text-primary)] text-lg">{t('landing.story.step2.mockTitle', 'System Configuration')}</span>
+          <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+        </div>
+        <div className="space-y-4">
+          <div className="flex justify-between items-center bg-[#F1F7FB] p-4 rounded-xl border border-[color:var(--landing-border)]">
+            <span className="text-sm font-medium text-[color:var(--landing-text-secondary)]">{t('landing.story.step2.mockPipeline', 'Pipeline')}</span>
+            <span className="font-semibold text-[color:var(--landing-text-primary)]">{t('landing.story.step2.mockPipelineValue', 'Cell Segmentation')}</span>
+          </div>
+          <div className="flex justify-between items-center bg-[#F1F7FB] p-4 rounded-xl border border-[color:var(--landing-border)]">
+            <span className="text-sm font-medium text-[color:var(--landing-text-secondary)]">{t('landing.story.step2.mockModel', 'Model')}</span>
+            <span className="font-semibold text-[color:var(--landing-primary)]">SkinNet v1.2</span>
+          </div>
+        </div>
+      </div>
+    </div>,
+
+    // Step 3
+    <div key="mock-3" className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
+      <div className="w-full aspect-[4/3] sm:aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] p-4 flex flex-col md:flex-row gap-4">
+        <div className="w-full md:w-1/2 flex-1 md:flex-auto bg-slate-100 rounded-xl relative overflow-hidden border border-[color:var(--landing-border)] min-h-[140px] md:min-h-0">
+          <img src="/images/mock-wsi-2.png" alt="WSI" className="absolute inset-0 w-full h-full object-cover opacity-90" />
+          <img src="/images/mock-heatmap-2.png" alt="Heatmap" className="absolute inset-0 w-full h-full object-cover mix-blend-screen opacity-80" />
+          <div className="absolute bottom-3 left-3 px-3 py-1 bg-white/90 backdrop-blur rounded shadow text-xs font-bold text-slate-700">
+            {t('landing.evidence.f1.title', 'Viewer')}
+          </div>
+        </div>
+        <div className="w-full md:w-1/2 flex flex-col gap-2 sm:gap-3">
+          <div className="bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-3 sm:p-4">
+            <div className="flex justify-between items-center mb-2">
+              <span className="text-xs font-semibold text-[color:var(--landing-text-secondary)]">{t('landing.story.step3.mockStatus', 'Task Status')}</span>
+              <span className="text-xs font-bold text-emerald-600">100%</span>
+            </div>
+            <div className="h-1.5 w-full bg-slate-200 rounded-full">
+              <div className="h-full bg-emerald-500 rounded-full w-full" />
+            </div>
+            <p className="text-xs text-[color:var(--landing-text-secondary)] mt-2">{t('landing.story.step3.mockCompleted', 'Completed')} · {t('landing.story.step3.mockDuration', '20m 34s')}</p>
+          </div>
+          <div className="flex-1 bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-3 sm:p-4 flex flex-col justify-center">
+            <p className="text-xs font-semibold text-slate-500 mb-2 sm:mb-3">{t('landing.story.step3.mockPredTitle', 'Pred. Confidence')}</p>
+            <div className="flex flex-col gap-2 sm:gap-2.5">
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass1', 'Tumor')}</span>
+                <div className="flex-1 bg-slate-200 h-1.5 rounded-full"><div className="bg-[color:var(--landing-primary)] h-full rounded-full w-[87%]" /></div>
+                <span className="text-xs font-bold text-slate-600 w-7 text-right">87%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass2', 'Stroma')}</span>
+                <div className="flex-1 bg-slate-200 h-1.5 rounded-full"><div className="bg-blue-300 h-full rounded-full w-[8%]" /></div>
+                <span className="text-xs font-bold text-slate-600 w-7 text-right">8%</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass3', 'Necrosis')}</span>
+                <div className="flex-1 bg-slate-200 h-1.5 rounded-full"><div className="bg-blue-200 h-full rounded-full w-[5%]" /></div>
+                <span className="text-xs font-bold text-slate-600 w-7 text-right">5%</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>,
+  ]
+
   return (
-    <section className="relative bg-[#FDFDFD] py-12 sm:py-16 lg:py-24">
+    <section
+      ref={sectionRef}
+      className="relative bg-[#FDFDFD] py-12 sm:py-16 lg:py-24"
+    >
       <div
         role="none"
         className="max-w-7xl mx-auto px-4 sm:px-6"
         onMouseEnter={() => setPaused(true)}
+        onMouseLeave={() => setPaused(false)}
         onTouchStart={() => setPaused(true)}
       >
         <div className="mb-8 sm:mb-12 lg:mb-16">
@@ -82,50 +177,55 @@ export function StickyWorkflowStory() {
 
         <div className="flex flex-col lg:flex-row gap-8 lg:gap-20 items-center">
 
+          {/* Left: Step list */}
           <div className="w-full lg:w-1/3 flex flex-col gap-6 lg:gap-8">
             {steps.map((step, idx) => {
               const Icon = step.icon
               const isActive = activeStep === idx
               return (
-                <button
+                <motion.button
                   key={step.key}
                   type="button"
                   onClick={() => jumpTo(idx)}
-                  className={`text-left transition-all duration-500 ${isActive
-                      ? 'opacity-100 scale-100'
-                      : 'opacity-40 lg:scale-95 lg:origin-left hover:opacity-70 active:opacity-70'
-                    }`}
+                  animate={{
+                    opacity: isActive ? 1 : 0.4,
+                    scale: isActive ? 1 : 0.96,
+                  }}
+                  transition={{ duration: 0.4, ease: 'easeInOut' }}
+                  style={{ originX: 0 }}
+                  className="text-left"
                 >
                   <div className="flex items-center gap-4 mb-3">
                     <div
                       className={`p-2.5 rounded-xl transition-colors duration-300 ${isActive
-                          ? 'bg-[color:var(--landing-primary)] text-white shadow-lg shadow-blue-500/30'
-                          : 'bg-slate-100 text-slate-500'
-                        }`}
+                        ? 'bg-[color:var(--landing-primary)] text-white shadow-lg shadow-blue-500/30'
+                        : 'bg-slate-100 text-slate-500'
+                      }`}
                     >
                       <Icon className="w-5 h-5" />
                     </div>
                     <h3
                       className={`font-bold text-lg sm:text-xl transition-colors duration-300 ${isActive
-                          ? 'text-[color:var(--landing-text-primary)]'
-                          : 'text-slate-500'
-                        }`}
+                        ? 'text-[color:var(--landing-text-primary)]'
+                        : 'text-slate-500'
+                      }`}
                     >
                       {t(step.titleKey, step.defaultTitle)}
                     </h3>
                   </div>
                   <p
                     className={`pl-[3.25rem] text-sm sm:text-base leading-relaxed transition-colors duration-300 ${isActive
-                        ? 'text-[color:var(--landing-text-secondary)]'
-                        : 'text-slate-400'
-                      }`}
+                      ? 'text-[color:var(--landing-text-secondary)]'
+                      : 'text-slate-400'
+                    }`}
                   >
                     {t(step.descKey, step.defaultDesc)}
                   </p>
-                </button>
+                </motion.button>
               )
             })}
 
+            {/* Progress dots */}
             <div className="flex items-center gap-2 pl-[3.25rem] mt-2">
               {steps.map((step, idx) => (
                 <button
@@ -152,112 +252,22 @@ export function StickyWorkflowStory() {
             </div>
           </div>
 
-          <div className="w-full lg:w-2/3 min-h-[340px] h-[60vw] max-h-[500px] lg:h-[70vh] lg:max-h-none relative">
-            <div
-              className={`absolute inset-0 flex items-center transition-all duration-700 ${activeStep === 0
-                  ? 'opacity-100 translate-y-0 pointer-events-auto'
-                  : 'opacity-0 translate-y-6 pointer-events-none'
-                }`}
-            >
-              <div className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
-                <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10 relative overflow-hidden">
-                  <div className="absolute top-0 w-full h-1 bg-gradient-to-r from-blue-400 to-cyan-400 left-0" />
-                  <p className="text-lg sm:text-xl font-mono text-slate-700 whitespace-pre-wrap">
-                    {t('landing.story.step1.mock', '"Train a lymphocyte segmentation model on TCGA-BRCA dataset..."')}
-                    <span className="animate-pulse text-blue-500">|</span>
-                  </p>
-                  <div className="mt-8 flex gap-3">
-                    <span className="px-4 py-1.5 bg-blue-50 text-blue-600 rounded-full text-sm font-semibold border border-blue-100">{t('landing.story.step1.tag1', 'Segmentation')}</span>
-                    <span className="px-4 py-1.5 bg-blue-50 text-blue-600 rounded-full text-sm font-semibold border border-blue-100">{t('landing.story.step1.tag2', 'Training')}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              className={`absolute inset-0 flex items-center transition-all duration-700 ${activeStep === 1
-                  ? 'opacity-100 translate-y-0 pointer-events-auto'
-                  : 'opacity-0 translate-y-6 pointer-events-none'
-                }`}
-            >
-              <div className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
-                <div className="w-full aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] flex flex-col justify-center px-6 sm:px-10">
-                  <div className="flex items-center justify-between mb-6 border-b border-[color:var(--landing-border)] pb-4">
-                    <span className="font-semibold text-[color:var(--landing-text-primary)] text-lg">{t('landing.story.step2.mockTitle', 'System Configuration')}</span>
-                    <CheckCircle2 className="w-6 h-6 text-emerald-500" />
-                  </div>
-                  <div className="space-y-4">
-                    <div className="flex justify-between items-center bg-[#F1F7FB] p-4 rounded-xl border border-[color:var(--landing-border)]">
-                      <span className="text-sm font-medium text-[color:var(--landing-text-secondary)]">{t('landing.story.step2.mockPipeline', 'Pipeline')}</span>
-                      <span className="font-semibold text-[color:var(--landing-text-primary)]">{t('landing.story.step2.mockPipelineValue', 'Cell Segmentation')}</span>
-                    </div>
-                    <div className="flex justify-between items-center bg-[#F1F7FB] p-4 rounded-xl border border-[color:var(--landing-border)]">
-                      <span className="text-sm font-medium text-[color:var(--landing-text-secondary)]">{t('landing.story.step2.mockModel', 'Model')}</span>
-                      <span className="font-semibold text-[color:var(--landing-primary)]">SkinNet v1.2</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div
-              className={`absolute inset-0 flex items-center transition-all duration-700 ${activeStep === 2
-                  ? 'opacity-100 translate-y-0 pointer-events-auto'
-                  : 'opacity-0 translate-y-6 pointer-events-none'
-                }`}
-            >
-              <div className="w-full rounded-[28px] bg-[#F7FBFD]/60 backdrop-blur-3xl border border-[color:var(--landing-border)] p-6 sm:p-10 shadow-[0_8px_30px_rgb(0,0,0,0.06)] ring-1 ring-white/50">
-                <div className="w-full aspect-[4/3] sm:aspect-square md:aspect-video bg-white rounded-2xl shadow-sm border border-[color:var(--landing-border)] p-4 flex flex-col md:flex-row gap-4">
-                  <div className="w-full md:w-1/2 flex-1 md:flex-auto bg-slate-100 rounded-xl relative overflow-hidden border border-[color:var(--landing-border)] min-h-[140px] md:min-h-0">
-                    <img src="/images/mock-wsi-2.png" alt="WSI" className="absolute inset-0 w-full h-full object-cover opacity-90" />
-                    <img src="/images/mock-heatmap-2.png" alt="Heatmap" className="absolute inset-0 w-full h-full object-cover mix-blend-screen opacity-80" />
-                    <div className="absolute bottom-3 left-3 px-3 py-1 bg-white/90 backdrop-blur rounded shadow text-xs font-bold text-slate-700">
-                      {t('landing.evidence.f1.title', 'Viewer')}
-                    </div>
-                  </div>
-                  <div className="w-full md:w-1/2 flex flex-col gap-2 sm:gap-3">
-                    <div className="bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-3 sm:p-4">
-                      <div className="flex justify-between items-center mb-2">
-                        <span className="text-xs font-semibold text-[color:var(--landing-text-secondary)]">{t('landing.story.step3.mockStatus', 'Task Status')}</span>
-                        <span className="text-xs font-bold text-emerald-600">100%</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-slate-200 rounded-full">
-                        <div className="h-full bg-emerald-500 rounded-full w-full" />
-                      </div>
-                      <p className="text-xs text-[color:var(--landing-text-secondary)] mt-2">{t('landing.story.step3.mockCompleted', 'Completed')} · {t('landing.story.step3.mockDuration', '20m 34s')}</p>
-                    </div>
-                    <div className="flex-1 bg-[#F1F7FB] border border-[color:var(--landing-border)] rounded-xl p-3 sm:p-4 flex flex-col justify-center">
-                      <p className="text-xs font-semibold text-slate-500 mb-2 sm:mb-3">{t('landing.story.step3.mockPredTitle', 'Pred. Confidence')}</p>
-                      <div className="flex flex-col gap-2 sm:gap-2.5">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass1', 'Tumor')}</span>
-                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
-                            <div className="bg-[color:var(--landing-primary)] h-full rounded-full w-[87%]" />
-                          </div>
-                          <span className="text-xs font-bold text-slate-600 w-7 text-right">87%</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass2', 'Stroma')}</span>
-                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
-                            <div className="bg-blue-300 h-full rounded-full w-[8%]" />
-                          </div>
-                          <span className="text-xs font-bold text-slate-600 w-7 text-right">8%</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 w-20 shrink-0 leading-tight">{t('landing.story.step3.mockClass3', 'Necrosis')}</span>
-                          <div className="flex-1 bg-slate-200 h-1.5 rounded-full">
-                            <div className="bg-blue-200 h-full rounded-full w-[5%]" />
-                          </div>
-                          <span className="text-xs font-bold text-slate-600 w-7 text-right">5%</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
+          {/* Right: Animated panels — fixed height, NO position:absolute overflow */}
+          <div className="w-full lg:w-2/3 min-h-[340px] h-[60vw] max-h-[500px] lg:h-[70vh] lg:max-h-none relative overflow-hidden">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={activeStep}
+                initial={{ opacity: 0, y: 28 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
+                className="absolute inset-0 flex items-center"
+              >
+                {mockPanels[activeStep]}
+              </motion.div>
+            </AnimatePresence>
           </div>
+
         </div>
       </div>
     </section>

@@ -3,6 +3,7 @@ import { Zap } from 'lucide-react'
 import { Button } from '../ui/button'
 import { HeroPromptDemo } from './HeroPromptDemo'
 import { HERO_DEMO_SCENARIO_EN, HERO_DEMO_SCENARIO_ZH, HERO_DEMO_SCENARIO_ZH_HK } from '../../constants/landing/landing-demo-content'
+import { motion, useScroll, useTransform } from 'framer-motion'
 
 export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
   const { t, i18n } = useTranslation()
@@ -12,11 +13,16 @@ export function HeroSection({ onPrimaryCta }: { onPrimaryCta: () => void }) {
   if (i18n.language === 'zh-HK') scenario = HERO_DEMO_SCENARIO_ZH_HK
   else if (isZh) scenario = HERO_DEMO_SCENARIO_ZH
 
+  const { scrollY } = useScroll()
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+  const bg1Y = useTransform(scrollY, [0, 1000], isDesktop ? [0, 300] : [0, 0])
+  const bg2Y = useTransform(scrollY, [0, 1000], isDesktop ? [0, -150] : [0, 0])
+
   return (
     <section className="relative overflow-hidden pt-20 lg:pt-32 pb-12 lg:pb-24">
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute right-[-10%] top-0 w-[500px] h-[500px] bg-[#2f6bff]/5 rounded-full blur-[100px] opacity-70 translate-x-1/3 -translate-y-1/3" />
-        <div className="absolute left-[-10%] bottom-[-10%] w-[400px] h-[400px] bg-[#14b8a6]/5 rounded-full blur-[100px] opacity-60 -translate-x-1/3 translate-y-1/3" />
+        <motion.div style={{ y: bg1Y }} className="absolute right-[-10%] top-0 w-[500px] h-[500px] bg-[#2f6bff]/5 rounded-full blur-[100px] opacity-70 translate-x-1/3 -translate-y-1/3" />
+        <motion.div style={{ y: bg2Y }} className="absolute left-[-10%] bottom-[-10%] w-[400px] h-[400px] bg-[#14b8a6]/5 rounded-full blur-[100px] opacity-60 -translate-x-1/3 translate-y-1/3" />
       </div>
 
       <div className="mx-auto w-full max-w-7xl items-center grid gap-12 lg:gap-8 px-4 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] relative z-10 min-w-0">

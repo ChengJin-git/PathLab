@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useInView, motion } from 'framer-motion'
+import { useInView, motion, useScroll, useTransform } from 'framer-motion'
 import { CAPABILITY_CARDS_EN, CAPABILITY_CARDS_ZH, CAPABILITY_CARDS_ZH_HK } from '../../constants/landing/landing-demo-content'
 import { Search, Bot, Database, BarChart, Settings, MousePointer2, GitBranch, Cpu } from 'lucide-react'
 
@@ -16,6 +16,18 @@ export function CapabilityShowcase() {
   if (i18n.language === 'zh-HK') cards = CAPABILITY_CARDS_ZH_HK
   else if (isZh) cards = CAPABILITY_CARDS_ZH
 
+  const { scrollYProgress } = useScroll({
+    target: sectionRef,
+    offset: ["start end", "end start"]
+  })
+
+  // Desktop Parallax
+  const isDesktop = typeof window !== 'undefined' && window.innerWidth >= 1024;
+  const mainY = useTransform(scrollYProgress, [0, 1], isDesktop ? [40, -40] : [0, 0])
+  const sub1Y = useTransform(scrollYProgress, [0, 1], isDesktop ? [80, -80] : [0, 0])
+  const sub2Y = useTransform(scrollYProgress, [0, 1], isDesktop ? [120, -120] : [0, 0])
+  const sub3Y = useTransform(scrollYProgress, [0, 1], isDesktop ? [160, -160] : [0, 0])
+
   return (
     <section id="capabilities" ref={sectionRef} className="py-12 sm:py-16 lg:py-24 bg-[#F7FBFD] border-y border-[color:var(--landing-border)]">
       <div className="max-w-7xl mx-auto px-4 sm:px-6">
@@ -25,9 +37,9 @@ export function CapabilityShowcase() {
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 pb-16">
           {/* Main Card */}
-          <div className="lg:col-span-8 bg-white rounded-[28px] border border-[color:var(--landing-border)] p-8 sm:p-12 group hover:shadow-xl hover:border-blue-200 transition-all duration-300 relative overflow-hidden flex flex-col shadow-sm">
+          <motion.div style={{ y: mainY }} className="lg:col-span-8 bg-white rounded-[28px] border border-[color:var(--landing-border)] p-8 sm:p-12 group hover:shadow-xl hover:border-blue-200 transition-all duration-300 relative overflow-hidden flex flex-col shadow-sm">
             <div className="absolute top-0 right-0 w-64 h-64 bg-blue-50/50 rounded-full blur-3xl -translate-y-1/2 translate-x-1/3 group-hover:bg-blue-100/60 transition-colors"></div>
 
             <div className="relative z-10 flex-1">
@@ -87,13 +99,13 @@ export function CapabilityShowcase() {
                 </div>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* 3 Sub Cards */}
           <div className="lg:col-span-4 flex flex-col gap-6">
-            <SubCard card={cards[0]} icon={Settings} type="progress" isVisible={isInView} />
-            <SubCard card={cards[1]} icon={BarChart} type="bar" isVisible={isInView} />
-            <SubCard card={cards[2]} icon={Database} type="tags" isVisible={isInView} />
+            <SubCard card={cards[0]} icon={Settings} type="progress" isVisible={isInView} y={sub1Y} />
+            <SubCard card={cards[1]} icon={BarChart} type="bar" isVisible={isInView} y={sub2Y} />
+            <SubCard card={cards[2]} icon={Database} type="tags" isVisible={isInView} y={sub3Y} />
           </div>
         </div>
       </div>
@@ -101,9 +113,9 @@ export function CapabilityShowcase() {
   )
 }
 
-function SubCard({ card, icon: Icon, type, isVisible }: { card: any, icon: any, type: string, isVisible: boolean }) {
+function SubCard({ card, icon: Icon, type, isVisible, y }: { card: any, icon: any, type: string, isVisible: boolean, y: any }) {
   return (
-    <div className="flex-1 bg-white rounded-3xl border border-[color:var(--landing-border)] p-6 group hover:shadow-lg hover:border-blue-200 transition-all relative overflow-hidden shadow-sm flex flex-col justify-center">
+    <motion.div style={{ y }} className="flex-1 bg-white rounded-3xl border border-[color:var(--landing-border)] p-6 group hover:shadow-lg hover:border-blue-200 transition-all relative overflow-hidden shadow-sm flex flex-col justify-center">
       <div className={`absolute right-[-10px] top-[-10px] transition-all duration-500 origin-top-right ${isVisible ? 'opacity-[0.03] scale-100' : 'opacity-0 group-hover:opacity-[0.03] scale-75 group-hover:scale-100'}`}>
         <Icon className="w-40 h-40 text-[color:var(--landing-primary)]" />
       </div>
@@ -183,6 +195,6 @@ function SubCard({ card, icon: Icon, type, isVisible }: { card: any, icon: any, 
           ))}
         </div>
       )}
-    </div>
+    </motion.div>
   )
 }
