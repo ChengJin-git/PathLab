@@ -137,14 +137,18 @@ function LoginPageInner({ backendUnavailable = false, turnstileSiteKey }: { back
   ]
 
   return (
-    <div className="h-screen flex flex-col lg:flex-row bg-slate-50 overflow-hidden relative">
+    <div
+      data-testid="login-page-shell"
+      className="relative h-screen overflow-hidden bg-gradient-to-br from-[#eef3fb] via-white to-[#f6f3ff] flex flex-col lg:flex-row"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(47,107,255,0.12),transparent_24%),radial-gradient(circle_at_bottom_right,rgba(118,75,162,0.12),transparent_26%)]" />
 
       <div className="absolute top-3 right-3 z-50 hidden sm:block">
         <LanguageSwitcher />
       </div>
 
       {/* Left: Login Section */}
-      <div className="flex-1 flex flex-col justify-center px-6 py-12 lg:px-12 relative bg-white lg:max-w-[480px] xl:max-w-[560px] border-r border-slate-100 z-10 shadow-xl overflow-hidden">
+      <div className="z-10 relative flex-1 overflow-hidden border-r border-white/60 bg-white/88 shadow-[0_28px_80px_rgba(15,23,42,0.10)] backdrop-blur-xl flex flex-col justify-center px-6 py-12 lg:max-w-[480px] lg:px-12 xl:max-w-[560px]">
         {/* Background Decoration */}
         <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-blue-600 to-cyan-500" />
         <div className="absolute -top-24 -left-24 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl opacity-50" />
