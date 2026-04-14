@@ -72,6 +72,7 @@ export function ViewerOverlayControls({
       <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
         {toggles.map((toggle) => (
           <button
+            type="button"
             key={toggle.key}
             onClick={toggle.onClick}
             className={`flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${toggle.active
@@ -125,7 +126,7 @@ export function ViewerOverlayControls({
           <div className="flex flex-wrap gap-1.5">
             {segmentationClasses.map((label, index) => (
               <div
-                key={`${label}-${index}`}
+                key={`${label}-${SEGMENTATION_MASK_COLORS[index % SEGMENTATION_MASK_COLORS.length]}`}
                 className="flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-2 py-1 text-[11px] text-gray-700"
               >
                 <span

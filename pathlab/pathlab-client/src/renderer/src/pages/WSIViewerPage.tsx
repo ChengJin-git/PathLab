@@ -1798,6 +1798,7 @@ export default function WSIViewerPage() {
       <div className="flex-1 flex flex-col bg-gray-50 relative min-h-[50vh] lg:min-h-0">
         <div className="flex items-center px-2 sm:px-4 py-2 sm:py-3 bg-white border-b border-gray-200 gap-2 sm:gap-4 shadow-sm z-10">
           <button
+            type="button"
             onClick={() => guardedNavigate(() => {
               if (fromAIChat) {
                 if (conversationId) {
@@ -1813,24 +1814,24 @@ export default function WSIViewerPage() {
                 navigate('/wsi-list')
               }
             })}
-            className="flex items-center gap-1 sm:gap-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100/80 text-xs sm:text-sm font-medium px-2 sm:px-3 py-1.5 sm:py-2 rounded-lg transition-all"
+            className="flex items-center gap-1 sm:gap-2 rounded-full border border-transparent px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-all hover:border-white/10 hover:bg-white/6 hover:text-white sm:px-3 sm:py-2 sm:text-sm"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">
               {fromAIChat ? t('wsiViewer.backToChat') : fromDataset && datasetName ? t('wsiViewer.backToDataset', { name: datasetName }) : t('common.back')}
             </span>
           </button>
-          <div className="w-px h-6 bg-gray-100"></div>
+          <div className="h-6 w-px bg-white/10"></div>
 
           <div className="flex items-center gap-2 flex-1 min-w-0">
-            <h3 className="flex items-center gap-2 text-gray-900 text-sm sm:text-base font-semibold truncate" title={`UUID: ${wsi_id}`}>
-              <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-600" />
+            <h3 className="flex items-center gap-2 truncate text-sm font-semibold tracking-[-0.02em] text-white sm:text-base" title={`UUID: ${wsi_id}`}>
+              <Microscope className="h-3.5 w-3.5 text-secondary-300 sm:h-4 sm:w-4" />
               <span className="truncate">{meta?.original_filename || wsi_id}</span>
             </h3>
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            <div className="flex items-center gap-1 bg-gray-50 p-1 rounded-lg border border-gray-100">
+            <div className="flex items-center gap-1 rounded-[1rem] border border-white/10 bg-white/6 p-1 shadow-[0_18px_40px_rgba(15,23,42,0.38)] backdrop-blur-xl">
               <Tooltip content={buildSlideNavigationTooltip({
                 direction: 'previous',
                 hasTarget: !!prevWSI,
@@ -1855,13 +1856,13 @@ export default function WSIViewerPage() {
                   }
                 }))}
                 disabled={!prevWSI}
-                className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
+                className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
                 {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">Q</kbd>}
               </button>
               </Tooltip>
-              <div className="w-px h-5 bg-gray-200 mx-0.5"></div>
+              <div className="mx-0.5 h-5 w-px bg-white/10"></div>
               <Tooltip content={buildSlideNavigationTooltip({
                 direction: 'next',
                 hasTarget: !!nextWSI,
@@ -1886,7 +1887,7 @@ export default function WSIViewerPage() {
                   }
                 }))}
                 disabled={!nextWSI}
-                className="relative flex items-center justify-center p-1.5 sm:p-2 rounded-md hover:bg-white hover:shadow-sm text-gray-500 hover:text-indigo-600 disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:shadow-none disabled:cursor-not-allowed transition-all outline-none"
+                className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
                 {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">E</kbd>}
@@ -1896,7 +1897,7 @@ export default function WSIViewerPage() {
 
             {canAnnotate && (
               <>
-                <div className="w-px h-5 bg-gray-200" />
+                <div className="h-5 w-px bg-white/10" />
                 <AnnotationToolbar
                   annotationMode={annotationMode}
                   onToggleMode={() => {
@@ -1929,12 +1930,13 @@ export default function WSIViewerPage() {
                 {annotationMode && (
                   <Tooltip content={t('annotation.saveAnnotations')}>
                   <button
+                    type="button"
                     onClick={handleManualSave}
                     disabled={savingAnnotations || !hasUnsavedChanges}
-                    className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                    className={`flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-xs font-medium transition-all sm:px-3 sm:py-2 sm:text-sm ${
                       hasUnsavedChanges
-                        ? 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm'
-                        : 'bg-gray-100 text-gray-400 cursor-default'
+                        ? 'border border-primary-400/80 bg-primary-500 text-white shadow-[0_18px_32px_rgba(59,130,246,0.35)] hover:bg-primary-400'
+                        : 'border border-white/10 bg-white/6 text-slate-400 cursor-default'
                     }`}
                   >
                     {savingAnnotations ? (
@@ -1952,16 +1954,18 @@ export default function WSIViewerPage() {
             )}
 
             <button
+              type="button"
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className={`lg:hidden p-2 rounded-lg ${isSidebarOpen ? 'bg-indigo-100 text-indigo-700' : 'bg-white text-gray-500 border border-gray-200 shadow-sm'}`}
+              className={`lg:hidden rounded-full border p-2 ${isSidebarOpen ? 'border-primary-400/60 bg-primary-500/15 text-primary-100' : 'border-white/10 bg-white/6 text-slate-300 shadow-[0_16px_32px_rgba(15,23,42,0.28)]'}`}
             >
               <Layers className="w-4 h-4" />
             </button>
           </div>
         </div>
         <div
-          className="flex-1 relative bg-gray-100 overflow-hidden"
-          role="presentation"
+          className="relative flex-1 overflow-hidden bg-[#050814]"
+          role="application"
+          tabIndex={-1}
           onMouseMove={(e) => {
             if (editingMode !== 'shared' || !osdViewer?.viewport || !wsi_id) return
             const canvas = osdViewer.canvas?.element || osdViewer.canvas
@@ -1980,7 +1984,9 @@ export default function WSIViewerPage() {
             // Note: wheel event is handled via useEffect with { passive: false } to allow preventDefault
             <div
               ref={patchContainerRef}
-              className="w-full h-full flex items-center justify-center overflow-hidden bg-gray-100"
+              className="flex h-full w-full items-center justify-center overflow-hidden bg-[#050814]"
+              role="application"
+              tabIndex={-1}
               onMouseDown={handlePatchMouseDown}
               onMouseMove={handlePatchMouseMove}
               onMouseUp={handlePatchMouseUp}
@@ -1989,15 +1995,13 @@ export default function WSIViewerPage() {
             >
               <div
                 className="absolute top-4 left-4 z-30 flex flex-col items-start gap-2"
-                onMouseDown={(e) => e.stopPropagation()}
-                onMouseUp={(e) => e.stopPropagation()}
               >
-                <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl p-1 flex items-center">
+                <div role="presentation" className="flex items-center rounded-[1rem] border border-white/10 bg-slate-950/78 p-1 shadow-[0_20px_44px_rgba(2,6,23,0.55)] backdrop-blur-2xl">
                   <Tooltip content={`${t('wsiViewerComponents.viewer.zoomIn')} (=)`}>
                   <button
                     type="button"
                     onClick={handlePatchZoomIn}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <Plus className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">=</kbd>}
@@ -2007,18 +2011,18 @@ export default function WSIViewerPage() {
                   <button
                     type="button"
                     onClick={handlePatchZoomOut}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <Minus className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">-</kbd>}
                   </button>
                   </Tooltip>
-                  <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                  <div className="mx-0.5 h-5 w-px bg-white/10" />
                   <Tooltip content={`${t('wsiViewerComponents.viewer.resetView')} (R)`}>
                   <button
                     type="button"
                     onClick={handlePatchReset}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <RotateCcw className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">R</kbd>}
@@ -2028,15 +2032,16 @@ export default function WSIViewerPage() {
                   <button
                     type="button"
                     onClick={handlePatchFullscreen}
-                    className="relative flex items-center justify-center w-9 h-9 text-gray-700 hover:text-indigo-600 hover:bg-gray-50 rounded-lg transition-all active:scale-95 outline-none"
+                    className="relative flex h-9 w-9 items-center justify-center rounded-[0.85rem] text-slate-300 outline-none transition-all active:scale-95 hover:bg-white/8 hover:text-white"
                   >
                     <Maximize2 className="w-4 h-4" />
                     {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">F</kbd>}
                   </button>
                   </Tooltip>
-                  <div className="w-px h-5 bg-gray-200 mx-0.5" />
+                  <div className="mx-0.5 h-5 w-px bg-white/10" />
                   <div
-                    className="hidden sm:flex items-center gap-1.5 px-2 py-1 text-gray-400 cursor-help transition-colors hover:text-gray-600"
+                    role="note"
+                    className="hidden cursor-help items-center gap-1.5 px-2 py-1 text-slate-400 transition-colors hover:text-slate-200 sm:flex"
                     title={t('wsiViewerComponents.viewer.holdShiftHint')}
                   >
                     <Keyboard className="w-4 h-4" />
@@ -2045,14 +2050,14 @@ export default function WSIViewerPage() {
                 </div>
 
                 {showShortcuts && (
-                  <div className="bg-white/95 backdrop-blur-xl border border-gray-200/80 shadow-[0_4px_20px_rgb(0,0,0,0.08)] rounded-xl px-2.5 py-1.5 flex items-center gap-2 select-none pointer-events-none animate-in fade-in zoom-in-95 duration-200">
-                    <Move className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
+                  <div className="pointer-events-none flex select-none items-center gap-2 rounded-xl border border-white/10 bg-slate-950/78 px-2.5 py-1.5 shadow-[0_20px_44px_rgba(2,6,23,0.55)] backdrop-blur-2xl animate-in fade-in zoom-in-95 duration-200">
+                    <Move className="h-3.5 w-3.5 flex-shrink-0 text-slate-400" />
                     <div className="flex items-center gap-1">
                       {['W', 'A', 'S', 'D'].map(k => (
-                        <kbd key={k} className="flex items-center justify-center min-w-[20px] h-[20px] bg-white border border-gray-200 border-b-[2px] shadow-sm rounded text-[11px] font-mono font-bold text-gray-600">{k}</kbd>
+                        <kbd key={k} className="flex min-w-[20px] items-center justify-center rounded border border-white/10 bg-white/8 text-[11px] font-mono font-bold text-slate-200 shadow-sm h-[20px]">{k}</kbd>
                       ))}
                     </div>
-                    <span className="text-[11px] font-medium text-gray-500">{t('wsiViewerComponents.viewer.panHint')}</span>
+                    <span className="text-[11px] font-medium text-slate-400">{t('wsiViewerComponents.viewer.panHint')}</span>
                   </div>
                 )}
               </div>
@@ -2145,6 +2150,7 @@ export default function WSIViewerPage() {
         <div className="flex lg:hidden items-center justify-between mb-2">
           <h2 className="text-lg font-bold text-gray-900">{t('wsiViewer.analysisData')}</h2>
           <button
+            type="button"
             onClick={() => setIsSidebarOpen(false)}
             className="p-2 rounded-lg bg-white border border-gray-200 text-gray-400"
           >
@@ -2338,12 +2344,14 @@ export default function WSIViewerPage() {
             </p>
             <div className="flex items-center justify-end gap-3 px-6 py-4 bg-gray-50 border-t border-gray-100">
               <button
+                type="button"
                 onClick={() => setPendingNavigation(null)}
                 className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
               >
                 {t('common.cancel')}
               </button>
               <button
+                type="button"
                 onClick={() => {
                   const nav = pendingNavigation
                   setPendingNavigation(null)
@@ -2355,6 +2363,7 @@ export default function WSIViewerPage() {
                 {t('annotation.discardAndLeave')}
               </button>
               <button
+                type="button"
                 onClick={async () => {
                   const saved = await handleManualSave()
                   if (!saved) return
