@@ -9,6 +9,7 @@ import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
 import { Card } from '../components/ui/card'
 import { Button } from '../components/ui/button'
+import { EmptyStatePanel, SegmentedControl } from '../components/ui/workspace-primitives'
 import { API_BASE } from '../config'
 
 import { getTrainedModels, TrainedModel, buildAuthRequestInit, startExternalValidation as apiStartExternalValidation, fetchDatasetsForValidation, ValidationDataset } from '../api'
@@ -779,49 +780,26 @@ export default function ResultsViewerPage() {
       </PageHeader>
 
       {/* Mode Tabs */}
-      <div className="flex flex-wrap gap-2 mb-6">
-        <button
-          onClick={() => setPageMode('internal-analysis')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-            pageMode === 'internal-analysis'
-              ? 'bg-indigo-600 text-white shadow-md'
-              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          {t('resultsPage.internalAnalysis')}
-        </button>
-        <button
-          onClick={() => setPageMode('external-validation')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-            pageMode === 'external-validation'
-              ? 'bg-orange-600 text-white shadow-md'
-              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-          }`}
-        >
-          <FlaskConical className="w-4 h-4" />
-          {t('resultsPage.externalValidation')}
-        </button>
-        <button
-          type="button"
-          onClick={() => setPageMode('batch-inference')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all ${
-            pageMode === 'batch-inference'
-              ? 'bg-purple-600 text-white shadow-md'
-              : 'bg-white text-gray-600 hover:bg-gray-50 border border-gray-200'
-          }`}
-        >
-          <Activity className="w-4 h-4" />
-          {t('resultsPage.batchInference.tabTitle')}
-        </button>
+      <div className="mb-6 overflow-x-auto no-scrollbar">
+        <SegmentedControl
+          value={pageMode}
+          onChange={(value) => setPageMode(value as PageMode)}
+          options={[
+            { value: 'internal-analysis', label: t('resultsPage.internalAnalysis') },
+            { value: 'external-validation', label: t('resultsPage.externalValidation') },
+            { value: 'batch-inference', label: t('resultsPage.batchInference.tabTitle') },
+          ]}
+          className="w-max min-w-full sm:min-w-0"
+        />
       </div>
 
       {tasks.length === 0 ? (
-        <Card className="p-12 text-center">
-          <BarChart3 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('resultsPage.noCompletedTasks')}</h3>
-          <p className="text-gray-500">{t('resultsPage.completeTaskHint')}</p>
-        </Card>
+        <EmptyStatePanel
+          title={t('resultsPage.noCompletedTasks')}
+          description={t('resultsPage.completeTaskHint')}
+          tone="neutral"
+          icon={<BarChart3 className="h-8 w-8" />}
+        />
       ) : pageMode === 'external-validation' ? (
         /* External Validation Mode — 4-col layout matching Internal Analysis */
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">
