@@ -118,29 +118,29 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   return (
-    <div className={`bg-gray-50 flex flex-col ${isAIChatPage || location.pathname === '/task-setup'
+    <div className={`flex flex-col text-[color:var(--surface-text)] ${isAIChatPage || location.pathname === '/task-setup'
       ? 'h-screen overflow-hidden'
       : isRegisterPage
         ? 'h-screen' // Allow main to handle scroll
         : 'min-h-screen'}`}>
       {/* Top Header */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-gray-200/50 sticky top-0 z-50 shadow-sm flex-shrink-0 pt-safe">
-        <div className="w-full mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
+      <header data-shell-header="true" className="sticky top-0 z-50 flex-shrink-0 border-b border-[color:var(--surface-border)] bg-[color:var(--surface-work)]/94 backdrop-blur-xl pt-safe">
+        <div className="w-full px-4 sm:px-5 lg:px-6">
+          <div className="flex h-[4.25rem] items-center justify-between gap-4">
             {/* Logo Area */}
-            <div className="flex items-center">
+            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
               {/* Mobile hamburger for AI Chat sidebar */}
               {isAIChatPage && (
                 <button
                   type="button"
                   onClick={() => window.dispatchEvent(new CustomEvent('toggle-ai-sidebar'))}
-                  className="p-2 mr-1 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors lg:hidden"
+                  className="rounded-full border border-transparent p-2 text-slate-500 transition-colors hover:border-[color:var(--surface-border)] hover:bg-white/80 hover:text-slate-950 lg:hidden"
                   aria-label={t('aiChat.openChatHistory')}
                 >
                   <Menu className="w-5 h-5" />
                 </button>
               )}
-              <Link to="/dashboard" className="flex-shrink-0 flex items-center hover:opacity-80 transition-opacity">
+              <Link to="/dashboard" className="flex flex-shrink-0 items-center transition-opacity hover:opacity-90">
                 {/* Mobile: Show only the icon (crop the text) using overflow-hidden */}
                 <div className="w-12 sm:w-auto overflow-hidden flex items-center justify-start">
                   <img
@@ -153,7 +153,7 @@ export default function Layout({ children }: LayoutProps) {
             </div>
 
             {/* Right Side Actions */}
-            <div className="flex items-center space-x-1.5 sm:space-x-4">
+            <div className="flex items-center gap-1.5 sm:gap-3">
               {/* Background Tasks Notification Center */}
               <BackgroundTaskPanel />
 
@@ -163,7 +163,7 @@ export default function Layout({ children }: LayoutProps) {
                   <button
                     type="button"
                     onClick={() => navigate('/settings')}
-                    className="p-1.5 sm:p-2 text-gray-500 hover:text-primary-600 hover:bg-gray-100 rounded-lg transition-colors"
+                    className="rounded-full border border-transparent p-2 text-slate-500 transition-colors hover:border-primary-100 hover:bg-primary-50 hover:text-primary-700"
                   >
                     <Settings className="w-5 h-5" />
                   </button>
@@ -173,31 +173,31 @@ export default function Layout({ children }: LayoutProps) {
               {/* Language Switcher */}
               <LanguageSwitcher variant="icon" />
 
-              <div className="hidden sm:block h-6 w-px bg-gray-200 mx-1 sm:mx-2"></div>
+              <div className="mx-1 hidden h-7 w-px bg-[color:var(--surface-border-strong)] sm:block sm:mx-2"></div>
 
               {/* User Profile */}
-              <div className="flex items-center space-x-2 sm:space-x-3 relative" ref={menuRef}>
+              <div className="relative flex items-center gap-2 sm:gap-3" ref={menuRef}>
                 <div className="flex flex-col items-end hidden md:flex">
-                  <span className="text-sm font-medium text-gray-900 leading-none">
+                  <span className="text-sm font-medium text-slate-900 leading-none">
                     {user?.nickname || user?.email?.split('@')[0] || 'User'}
                   </span>
-                  <span className="text-[10px] text-gray-400 mt-1 uppercase tracking-wider font-semibold">{user?.role}</span>
+                  <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{user?.role}</span>
                 </div>
 
                 <Tooltip content={t('layout.profileMenu')}>
                   <button
                     type="button"
                     onClick={handleAvatarClick}
-                    className="w-9 h-9 rounded-full overflow-hidden flex items-center justify-center ring-2 ring-white shadow-sm hover:ring-primary-100 transition-all cursor-pointer group"
+                    className="group flex h-10 w-10 cursor-pointer items-center justify-center overflow-hidden rounded-full border border-white/70 bg-white shadow-[var(--shadow-soft)] transition-all hover:-translate-y-0.5 hover:border-primary-100"
                   >
                     {user?.avatar_url ? (
                       <img
                         src={avatarSrc ?? undefined}
                         alt="Avatar"
-                        className="w-full h-full object-cover group-hover:opacity-90"
+                        className="h-full w-full object-cover group-hover:opacity-90"
                       />
                     ) : (
-                      <div className="w-full h-full bg-primary-100 flex items-center justify-center text-sm font-bold text-primary-700 group-hover:bg-primary-200 transition-colors">
+                      <div className="flex h-full w-full items-center justify-center bg-primary-50 text-sm font-bold text-primary-700 transition-colors group-hover:bg-primary-100">
                         {(user?.nickname || user?.email?.split('@')[0] || 'U').charAt(0).toUpperCase()}
                       </div>
                     )}
@@ -215,28 +215,28 @@ export default function Layout({ children }: LayoutProps) {
 
                 {/* Dropdown Menu */}
                 {isMenuOpen && (
-                  <div className="absolute right-0 top-12 w-auto min-w-[140px] max-w-[200px] bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-[60] overflow-hidden">
-                    <div className="px-3 py-2 border-b border-gray-50 bg-gray-50/30">
-                      <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1 opacity-70">{t('auth.signedInAs')}</p>
+                  <div className="absolute right-0 top-14 z-[60] w-auto min-w-[200px] max-w-[240px] overflow-hidden rounded-[1.4rem] border border-[color:var(--surface-border-strong)] bg-[color:var(--surface-elevated)] py-1.5 shadow-[var(--shadow-elevated)] backdrop-blur-xl">
+                    <div className="border-b border-[color:var(--surface-border)] bg-[color:var(--surface-muted)]/70 px-4 py-3">
+                      <p className="mb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 opacity-80">{t('auth.signedInAs')}</p>
                       <div className="flex flex-col gap-0.5">
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-gray-900 truncate">
+                          <span className="truncate text-sm font-bold text-slate-900">
                             {user?.nickname || 'User'}
                           </span>
                         </div>
-                        <span className="text-[11px] text-gray-500 truncate opacity-80 leading-none mt-0.5">
+                        <span className="mt-0.5 truncate text-[11px] leading-none text-slate-500 opacity-80">
                           {user?.email || ''}
                         </span>
                       </div>
                     </div>
 
-                    <div className="p-0.5">
+                    <div className="p-1.5">
                       <button
                         type="button"
                         onClick={handleUploadClick}
-                        className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
+                        className="group flex w-full items-center rounded-xl px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-primary-50 hover:text-primary-700"
                       >
-                        <Camera className="w-3.5 h-3.5 mr-2 text-gray-400 group-hover:text-primary-500" />
+                        <Camera className="mr-2 h-3.5 w-3.5 text-slate-400 group-hover:text-primary-500" />
                         <span>{t('layout.uploadAvatar')}</span>
                       </button>
 
@@ -244,9 +244,9 @@ export default function Layout({ children }: LayoutProps) {
                         <button
                           type="button"
                           onClick={handleDeleteAvatar}
-                          className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg transition-colors group"
+                          className="group flex w-full items-center rounded-xl px-3 py-2 text-xs font-medium text-red-600 transition-colors hover:bg-red-50"
                         >
-                          <Trash2 className="w-3.5 h-3.5 mr-2 text-red-400 group-hover:text-red-500" />
+                          <Trash2 className="mr-2 h-3.5 w-3.5 text-red-400 group-hover:text-red-500" />
                           <span>{t('layout.deleteAvatar')}</span>
                         </button>
                       )}
@@ -254,18 +254,18 @@ export default function Layout({ children }: LayoutProps) {
                       <button
                         type="button"
                         onClick={() => { setIsChangePasswordOpen(true); setIsMenuOpen(false) }}
-                        className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
+                        className="group flex w-full items-center rounded-xl px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-primary-50 hover:text-primary-700"
                       >
-                        <KeyRound className="w-3.5 h-3.5 mr-2 text-gray-400 group-hover:text-primary-500" />
+                        <KeyRound className="mr-2 h-3.5 w-3.5 text-slate-400 group-hover:text-primary-500" />
                         <span>{t('layout.changePassword')}</span>
                       </button>
 
                       <button
                         type="button"
                         onClick={() => { setIsSetEmailOpen(true); setIsMenuOpen(false) }}
-                        className="w-full flex items-center px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-primary-50 hover:text-primary-700 rounded-lg transition-colors group"
+                        className="group flex w-full items-center rounded-xl px-3 py-2 text-xs font-medium text-slate-700 transition-colors hover:bg-primary-50 hover:text-primary-700"
                       >
-                        <Mail className="w-3.5 h-3.5 mr-2 text-gray-400 group-hover:text-primary-500" />
+                        <Mail className="mr-2 h-3.5 w-3.5 text-slate-400 group-hover:text-primary-500" />
                         <span>{t('layout.setEmail')}</span>
                       </button>
                     </div>
@@ -279,7 +279,7 @@ export default function Layout({ children }: LayoutProps) {
                   variant="ghost"
                   size="icon"
                   onClick={handleLogout}
-                  className="text-gray-500 hover:text-red-600 hover:bg-red-50"
+                  className="text-slate-500 hover:text-red-600 hover:bg-red-50"
                 >
                   <LogOut className="w-5 h-5" />
                 </Button>
@@ -291,14 +291,21 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Main Content */}
       <main
+        data-shell-main="true"
         className={`flex-1 ${isAIChatPage || location.pathname === '/task-setup'
           ? 'h-full overflow-hidden'
           : isRegisterPage
-            ? 'w-full mx-auto p-3 sm:p-6 lg:p-8 h-full overflow-y-auto'
-            : `w-full mx-auto p-3 sm:p-6 lg:p-8`
+            ? 'h-full w-full overflow-y-auto'
+            : `mx-auto w-full max-w-[var(--shell-max-width)] px-3 pb-6 pt-4 sm:px-5 sm:pb-8 lg:px-6 lg:pb-10`
           }`}
       >
-        {children}
+        {isRegisterPage ? (
+          <div className="mx-auto w-full max-w-[var(--shell-max-width)] px-3 pb-6 pt-4 sm:px-5 sm:pb-8 lg:px-6 lg:pb-10">
+            {children}
+          </div>
+        ) : (
+          children
+        )}
       </main>
       <InstallPWA />
 
