@@ -2,30 +2,29 @@ import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "../../lib/utils"
-import { motion } from "framer-motion"
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center whitespace-nowrap rounded-full text-sm font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-gray-950 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center whitespace-nowrap rounded-full border text-sm font-medium transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-out focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary-500/20 focus-visible:ring-offset-2 focus-visible:ring-offset-white disabled:pointer-events-none disabled:opacity-50 motion-reduce:transform-none motion-reduce:transition-none",
   {
     variants: {
       variant: {
         default:
-          "bg-gray-900 text-gray-50 shadow hover:bg-gray-900/90",
+          "border-transparent bg-slate-900 text-white shadow-[var(--shadow-soft)] hover:bg-slate-950",
         destructive:
-          "bg-red-500 text-gray-50 shadow-sm hover:bg-red-500/90",
+          "border-transparent bg-red-600 text-white shadow-[var(--shadow-soft)] hover:bg-red-700",
         outline:
-          "border border-gray-200 bg-white shadow-sm hover:bg-gray-100/80 hover:text-gray-900",
+          "border-[color:var(--surface-border-strong)] bg-[color:var(--surface-elevated)] text-slate-700 shadow-[var(--shadow-soft)] hover:border-primary-200 hover:bg-white hover:text-slate-950",
         secondary:
-          "bg-gray-100 text-gray-900 shadow-sm hover:bg-gray-100/80",
-        ghost: "hover:bg-gray-100 hover:text-gray-900",
-        link: "text-gray-900 underline-offset-4 hover:underline",
-        primary: "bg-primary-600 text-white shadow hover:bg-primary-600/90"
+          "border-transparent bg-[color:var(--surface-muted)] text-slate-700 shadow-[var(--shadow-soft)] hover:bg-[color:var(--surface-base)] hover:text-slate-950",
+        ghost: "border-transparent text-slate-600 hover:bg-white/70 hover:text-slate-950",
+        link: "border-transparent px-0 text-primary-700 shadow-none underline-offset-4 hover:text-primary-800 hover:underline",
+        primary: "border border-primary-500/80 bg-primary-600 text-white shadow-[var(--shadow-soft)] hover:-translate-y-0.5 hover:bg-primary-700 hover:shadow-[var(--shadow-elevated)]"
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-full px-3 text-xs",
-        lg: "h-10 rounded-full px-8",
-        icon: "h-9 w-9",
+        default: "h-10 px-4 py-2",
+        sm: "h-9 rounded-full px-3 text-xs",
+        lg: "h-11 rounded-full px-6 text-[15px]",
+        icon: "h-10 w-10 rounded-full",
       },
     },
     defaultVariants: {
@@ -41,33 +40,26 @@ export interface ButtonProps
   asChild?: boolean
 }
 
-const MotionSlot = motion.create(Slot)
-
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const springTransition = { type: "spring", stiffness: 400, damping: 25 }
-
     if (asChild) {
       return (
-        <MotionSlot
+        <Slot
           className={cn(buttonVariants({ variant, size, className }))}
-          ref={ref as any}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.95 }}
-          transition={springTransition}
-          {...(props as any)}
+          data-button-variant={variant ?? "default"}
+          data-button-size={size ?? "default"}
+          {...props}
         />
       )
     }
 
     return (
-      <motion.button
+      <button
         className={cn(buttonVariants({ variant, size, className }))}
         ref={ref}
-        whileHover={{ scale: 1.02 }}
-        whileTap={{ scale: 0.95 }}
-        transition={springTransition}
-        {...(props as any)}
+        data-button-variant={variant ?? "default"}
+        data-button-size={size ?? "default"}
+        {...props}
       />
     )
   }
