@@ -6,6 +6,7 @@ interface ModalShellProps {
   onClose?: () => void
   maxWidth?: 'sm' | 'md' | 'lg' | 'xl' | '6xl'
   className?: string
+  title?: string
   children: React.ReactNode
 }
 
@@ -22,6 +23,7 @@ export function ModalShell({
   onClose,
   maxWidth = 'md',
   className,
+  title,
   children,
 }: ModalShellProps) {
   useEffect(() => {
@@ -47,6 +49,8 @@ export function ModalShell({
       />
       <div
         role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={cn(
           'relative bg-white rounded-xl sm:rounded-2xl shadow-2xl w-full overflow-hidden scale-100 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto text-left',
           MAX_WIDTH[maxWidth] ?? 'max-w-md',

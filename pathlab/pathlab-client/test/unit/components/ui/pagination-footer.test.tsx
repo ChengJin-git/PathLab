@@ -76,7 +76,7 @@ describe('PaginationFooter', () => {
     const selectTrigger = screen.getAllByRole('button')[0]
     await user.click(selectTrigger)
 
-    const option6 = await screen.findByRole('button', { name: '6' })
+    const option6 = await screen.findByRole('option', { name: '6' })
     await user.click(option6)
 
     expect(onPageSizeChange).toHaveBeenCalledWith(6)
