@@ -580,10 +580,11 @@ export default function TaskDetailPage() {
       <div className="mb-4 sm:mb-6">
         <Button
           variant="ghost"
+          type="button"
           onClick={() => navigate(fromAIChat ? '/dashboard' : '/task-list')}
           className="mb-1 sm:mb-2 pl-0 hover:bg-transparent hover:text-gray-900 text-gray-500 text-xs sm:text-base"
         >
-          <svg className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg aria-hidden="true" className="w-4 h-4 sm:w-5 sm:h-5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
           </svg>
           {fromAIChat ? t('taskDetail.backToChat') : t('taskDetail.tasks')}
@@ -686,7 +687,7 @@ export default function TaskDetailPage() {
               <AlertCircle className="w-4 h-4" />
               {rerunError}
             </span>
-            <button onClick={() => setRerunError(null)} className="ml-2 text-red-400 hover:text-red-600">
+            <button type="button" onClick={() => setRerunError(null)} className="ml-2 text-red-400 hover:text-red-600">
               <XCircle className="w-4 h-4" />
             </button>
           </div>
@@ -694,13 +695,14 @@ export default function TaskDetailPage() {
       </div>
 
       {/* Task Info Grid */}
-      <Card className="p-4 sm:p-6 overflow-hidden border-gray-100 shadow-sm">
+      <Card surface="elevated" className="overflow-hidden border-[color:var(--surface-border)] p-4 shadow-[var(--shadow-elevated)] sm:p-6">
         <div className={`grid grid-cols-2 ${isAdmin && displayTask.username ? 'md:grid-cols-5' : 'md:grid-cols-4'} gap-4 sm:gap-6`}>
           <div className="min-w-0">
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.taskId')}</div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.taskId')}</div>
             <div className="flex items-center gap-1.5 overflow-hidden">
-              <div className="font-mono text-[11px] sm:text-sm font-bold text-gray-700 truncate">{displayTask.task_id}</div>
+              <div className="truncate font-mono text-[11px] font-bold text-slate-700 sm:text-sm">{displayTask.task_id}</div>
               <button
+                type="button"
                 onClick={() => {
                   if (navigator.clipboard && navigator.clipboard.writeText) {
                       navigator.clipboard.writeText(displayTask.task_id)
@@ -718,40 +720,42 @@ export default function TaskDetailPage() {
                   setCopySuccess(true)
                   setTimeout(() => setCopySuccess(false), 2000)
                 }}
-                className="p-1 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-md transition-all shrink-0"
+                  className="shrink-0 rounded-md p-1 text-slate-400 transition-all hover:bg-[color:var(--surface-muted)] hover:text-slate-900"
               >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg aria-hidden="true" className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                 </svg>
               </button>
             </div>
-            {copySuccess && (
-              <div className="text-[9px] text-green-600 font-bold mt-1">{t('taskDetail.copied')}</div>
-            )}
+              {copySuccess && (
+                <div className="mt-1 whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold leading-none text-emerald-700 shadow-sm">
+                  {t('taskDetail.copied')}
+                </div>
+              )}
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">
               {t('taskDetail.data')}
             </div>
             <div className="flex items-end gap-1.5">
-                  <span className="text-lg sm:text-2xl font-bold text-gray-900 leading-none">{displayTask.wsi_count}</span>
-                  <span className="text-[10px] sm:text-xs text-gray-500 font-medium mb-0.5">{displayTask.data_type === 'patch' ? t('taskDetail.patches') : t('taskDetail.slides')}</span>
+                  <span className="text-lg font-semibold leading-none tracking-[-0.04em] text-slate-950 sm:text-2xl">{displayTask.wsi_count}</span>
+                  <span className="mb-0.5 text-[10px] font-medium text-slate-500 sm:text-xs">{displayTask.data_type === 'patch' ? t('taskDetail.patches') : t('taskDetail.slides')}</span>
             </div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.created')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.created_at)}</div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.created')}</div>
+            <div className="truncate text-xs font-bold text-slate-700 sm:text-sm">{formatDateTime(displayTask.created_at)}</div>
           </div>
           <div>
-            <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.updated')}</div>
-            <div className="text-xs sm:text-sm font-bold text-gray-700 truncate">{formatDateTime(displayTask.updated_at)}</div>
+            <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.updated')}</div>
+            <div className="truncate text-xs font-bold text-slate-700 sm:text-sm">{formatDateTime(displayTask.updated_at)}</div>
           </div>
           {isAdmin && displayTask.username && (
             <div>
-              <div className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5">{t('taskDetail.creator')}</div>
+              <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.16em] text-slate-400 sm:text-xs">{t('taskDetail.creator')}</div>
               <div className="flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-gray-400" />
-                <div className="text-xs sm:text-sm font-bold text-gray-700 truncate" title={displayTask.username}>{displayTask.username}</div>
+                <User className="h-3.5 w-3.5 text-slate-400" />
+                <div className="truncate text-xs font-bold text-slate-700 sm:text-sm" title={displayTask.username}>{displayTask.username}</div>
               </div>
             </div>
           )}

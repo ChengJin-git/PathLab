@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Search, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
 import { isSegFmEncoder } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
@@ -15,6 +15,7 @@ import { Button } from '../components/ui/button'
 import { Checkbox } from '../components/ui/checkbox'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
+import { EmptyStatePanel, SearchField, SegmentedControl, WorkspaceStatCard } from '../components/ui/workspace-primitives'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { formatFileSize } from '../lib/utils'
@@ -439,81 +440,58 @@ export default function TaskListPage() {
       </PageHeader>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 sm:gap-6 mb-4 sm:mb-8">
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.totalTasks')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-gray-900">{uiStats.total}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.running')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-purple-600">{uiStats.running}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.completed')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-green-600">{uiStats.completed}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.failed')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-red-600">{uiStats.failed}</div>
-        </Card>
-        <Card className="p-3 sm:p-6 overflow-visible shadow-sm border-gray-100 col-span-2 md:col-span-1">
-          <div className="text-[10px] sm:text-xs md:text-sm font-medium text-gray-500 mb-0.5 sm:mb-2 text-center md:text-left uppercase tracking-tight sm:tracking-normal">{t('taskList.stats.cancelled')}</div>
-          <div className="text-xl sm:text-3xl font-semibold text-gray-500 text-center md:text-left">{uiStats.cancelled}</div>
-        </Card>
+      <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-5 sm:gap-6 sm:mb-8">
+        <WorkspaceStatCard label={t('taskList.stats.totalTasks')} value={uiStats.total} accent="neutral" />
+        <WorkspaceStatCard label={t('taskList.stats.running')} value={uiStats.running} accent="pathology" />
+        <WorkspaceStatCard label={t('taskList.stats.completed')} value={uiStats.completed} accent="success" />
+        <WorkspaceStatCard label={t('taskList.stats.failed')} value={uiStats.failed} accent="danger" />
+        <WorkspaceStatCard label={t('taskList.stats.cancelled')} value={uiStats.cancelled} accent="system" className="col-span-2 md:col-span-1" />
       </div>
 
       {/* Search Bar */}
       <div className="mb-4 sm:mb-6">
-        <div className="relative w-full max-w-2xl mx-auto">
-          <Search className="absolute left-3 sm:left-4 top-1/2 transform -translate-y-1/2 w-4 h-4 sm:w-5 sm:h-5 text-gray-400" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => {
-              setSearchQuery(e.target.value)
-              setCurrentPage(1)
-            }}
-            placeholder={t('taskList.searchPlaceholder')}
-            className="w-full pl-9 sm:pl-12 pr-4 py-2 sm:py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 text-sm sm:text-base transition-all"
-          />
-          {searchQuery && (
-              <Tooltip content={t('taskList.clearSearch')}>
-                <button
-                  onClick={() => {
-                    setSearchQuery('')
-                    setCurrentPage(1)
-                  }}
-                  className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 text-gray-400 hover:text-gray-600"
-                >
-                  <XCircle className="w-4 h-4 sm:w-5 sm:h-5" />
-                </button>
-              </Tooltip>
-          )}
-        </div>
+        <SearchField
+          value={searchQuery}
+          onChange={(value) => {
+            setSearchQuery(value)
+            setCurrentPage(1)
+          }}
+          placeholder={t('taskList.searchPlaceholder')}
+          clearButton={searchQuery ? (
+            <Tooltip content={t('taskList.clearSearch')}>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('')
+                  setCurrentPage(1)
+                }}
+                className="rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+              >
+                <XCircle className="w-4 h-4 sm:w-5 sm:h-5" />
+              </button>
+            </Tooltip>
+          ) : undefined}
+        />
       </div>
 
       {/* Filters and Sort */}
-      <div className="mb-4 sm:mb-6 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 sm:gap-4 sticky top-0 z-40 bg-gray-50/95 backdrop-blur py-2">
-        <div className="flex items-center space-x-1 sm:space-x-2 bg-white/50 p-1 rounded-xl border border-gray-100 shadow-sm overflow-x-auto no-scrollbar">
-          {(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map(f => (
-            <button
-              key={f}
-              onClick={() => {
-                setFilter(f)
-                setCurrentPage(1)
-              }}
-              className={`px-3 sm:px-4 py-1 sm:py-1.5 text-[11px] sm:text-sm font-semibold rounded-lg transition-all whitespace-nowrap ${filter === f
-                ? 'bg-gray-900 text-white shadow-md'
-                : 'text-gray-500 hover:bg-gray-50 hover:text-gray-900'
-                }`}
-            >
-              {t(`taskList.filters.${f}`)}
-            </button>
-          ))}
+      <div className="sticky top-0 z-40 mb-4 flex flex-col gap-3 rounded-[1.5rem] border border-[color:var(--surface-border)] bg-[color:var(--surface-work)]/95 p-3 shadow-[var(--shadow-soft)] backdrop-blur md:flex-row md:items-center md:justify-between sm:mb-6 sm:gap-4 sm:p-4">
+        <div className="overflow-x-auto no-scrollbar">
+          <SegmentedControl
+            value={filter}
+            onChange={(value) => {
+              setFilter(value as typeof filter)
+              setCurrentPage(1)
+            }}
+            options={(['all', 'running', 'completed', 'failed', 'cancelled'] as const).map((item) => ({
+              value: item,
+              label: t(`taskList.filters.${item}`),
+            }))}
+          />
         </div>
 
-        <div className="flex items-center justify-between sm:justify-end gap-3 sm:gap-6 bg-white sm:bg-transparent px-3 py-2 sm:p-0 rounded-xl border border-gray-100 sm:border-transparent">
-          <div className="flex items-center gap-2 group cursor-pointer" onClick={() => toggleSelectAll(!allFilteredSelected)}>
+        <div className="flex items-center justify-between gap-3 rounded-[1.1rem] border border-[color:var(--surface-border)] bg-white/70 px-3 py-2 sm:gap-6 sm:border-transparent sm:bg-transparent sm:p-0 sm:justify-end">
+          <div className="flex items-center gap-2 group">
             <Checkbox
               checked={allFilteredSelected}
               onCheckedChange={toggleSelectAll}
@@ -585,26 +563,24 @@ export default function TaskListPage() {
 
       {/* Task List */}
       {loading && displayTasks.length === 0 && uiTotalCount === 0 ? (
-        <Card className="p-12 text-center">
+        <Card surface="elevated" className="p-12 text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary-600 mx-auto mb-4"></div>
-          <p className="text-gray-600">{t('taskList.loadingTasks')}</p>
+          <p className="text-slate-500">{t('taskList.loadingTasks')}</p>
         </Card>
       ) : displayTasks.length === 0 ? (
-        <Card className="p-12 text-center">
-          <ClipboardList className="w-16 h-16 mx-auto mb-4 text-gray-400" />
-          <h3 className="text-lg font-semibold text-gray-900 mb-2">{t('taskList.noTasksFound')}</h3>
-          <p className="text-gray-600 mb-6">
-            {filter === 'all'
-              ? t('taskList.createFirstTask')
-              : t('taskList.noFilteredTasks', { filter: t(`taskList.filters.${filter}`) })}
-          </p>
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="px-6 py-2.5 bg-primary-600 text-white font-medium rounded-lg hover:bg-primary-700 transition-colors"
-          >
-            {t('taskList.createNewTask')}
-          </button>
-        </Card>
+        <EmptyStatePanel
+          title={t('taskList.noTasksFound')}
+          description={filter === 'all'
+            ? t('taskList.createFirstTask')
+            : t('taskList.noFilteredTasks', { filter: t(`taskList.filters.${filter}`) })}
+          tone="neutral"
+          icon={<ClipboardList className="h-8 w-8" />}
+          action={
+            <Button onClick={() => navigate('/dashboard')} variant="primary">
+              {t('taskList.createNewTask')}
+            </Button>
+          }
+        />
       ) : (
         <div className="space-y-3 pb-8">
           {displayTasks.map(task => {
@@ -619,7 +595,7 @@ export default function TaskListPage() {
             >
               <div className="flex flex-col xl:flex-row xl:items-center gap-4 sm:gap-6">
                 <div className="flex items-start gap-3 sm:gap-4 xl:w-1/4">
-                  <div className="flex-shrink-0 pt-1" onClick={(e) => e.stopPropagation()}>
+                  <div className="flex-shrink-0 pt-1">
                     <Checkbox
                       checked={selectedTasks.includes(task.task_id)}
                       onCheckedChange={(checked) => toggleSelectTask(task.task_id, checked as boolean)}
@@ -642,6 +618,7 @@ export default function TaskListPage() {
                       <div className="relative">
                         <Tooltip content={t('taskList.copyId')}>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation()
                               navigator.clipboard.writeText(task.task_id).catch(() => {})
@@ -801,6 +778,7 @@ export default function TaskListPage() {
                     {!isSyntheticTask && user && (isAdmin || task.user_id === user.id) && (
                       <Tooltip content={t('taskList.editTaskNameTitle')}>
                         <button
+                          type="button"
                           onClick={(e) => handleEditTask(task, e)}
                           className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-full transition-colors"
                         >
@@ -813,6 +791,7 @@ export default function TaskListPage() {
                     {(isSyntheticTask && task.status === 'creating') && (
                       <Tooltip content={t('taskList.cancelTask')}>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation()
                             markTrainingSubmissionCancelled(task.task_id)
@@ -828,6 +807,7 @@ export default function TaskListPage() {
                     {!isSyntheticTask && isTaskCancellable(task) && (
                       <Tooltip content={t('taskList.cancelTask')}>
                         <button
+                          type="button"
                           onClick={(e) => handleCancelTask(task.task_id, e)}
                           disabled={cancellingTaskId === task.task_id}
                           className="p-2 text-gray-400 hover:text-orange-600 hover:bg-orange-50 rounded-full transition-colors disabled:opacity-50"
@@ -844,6 +824,7 @@ export default function TaskListPage() {
                     {!isSyntheticTask && (
                       <Tooltip content={t('taskList.deleteTask')}>
                         <button
+                          type="button"
                           onClick={(e) => handleDeleteTask(task.task_id, e)}
                           className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors group/delete"
                         >
@@ -855,6 +836,7 @@ export default function TaskListPage() {
                     {isSyntheticTask && (
                       <Tooltip content={t('taskList.deleteTask')}>
                         <button
+                          type="button"
                           onClick={(e) => {
                             e.stopPropagation()
                             clearTrainingSubmissionRecord(task.task_id)
@@ -873,7 +855,7 @@ export default function TaskListPage() {
             )
           })}
 
-          <Card className="border-gray-100 bg-white/80 shadow-sm">
+            <Card surface="elevated" className="border-[color:var(--surface-border)] bg-white/90">
             <div className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
               <div className="text-xs sm:text-sm text-gray-500 font-medium text-center sm:text-left flex items-center gap-2">
                 <span>{t('taskList.pagination.summary', {
@@ -894,9 +876,9 @@ export default function TaskListPage() {
                     </span>
                     <Input
                       value={pageInput}
-                      onChange={(e) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
+                      onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPageInput(e.target.value.replace(/[^0-9]/g, ''))}
                       onBlur={() => commitPageInput(pageInput)}
-                      onKeyDown={(e) => {
+                      onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                         if (e.key === 'Enter') { e.preventDefault(); commitPageInput(pageInput) }
                         if (e.key === 'Escape') setPageInput(String(currentPage))
                       }}
@@ -1015,9 +997,9 @@ export default function TaskListPage() {
 
             {/* Delete Mode Selection */}
             <div className="mb-4">
-              <label className="block text-[11px] sm:text-sm font-bold text-gray-700 mb-2">
+              <div className="block text-[11px] sm:text-sm font-bold text-gray-700 mb-2">
                 {t('taskList.deleteModal.deletionMode')}
-              </label>
+              </div>
               <div className="space-y-2">
                 <label className={`flex items-start gap-3 p-2 sm:p-3 border-2 rounded-xl cursor-pointer hover:bg-gray-50 transition-all ${deleteMode === 'standard' ? 'border-blue-500 bg-blue-50/20' : 'border-gray-100'}`}>
                   <input
@@ -1060,6 +1042,7 @@ export default function TaskListPage() {
             {/* Actions */}
             <div className="flex gap-3 mt-6">
               <button
+                type="button"
                 onClick={() => {
                   setShowDeleteModal(false)
                   setTaskToDelete(null)
@@ -1074,6 +1057,7 @@ export default function TaskListPage() {
                 {t('common.cancel')}
               </button>
               <button
+                type="button"
                 onClick={confirmDelete}
                 disabled={isDeleting}
                 className="flex-1 px-4 py-2 sm:py-2.5 bg-red-600 text-white text-xs sm:text-sm font-bold rounded-lg hover:bg-red-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
@@ -1111,10 +1095,11 @@ export default function TaskListPage() {
 
             {/* Input */}
             <div className="mb-4 sm:mb-6">
-              <label className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
+              <label htmlFor="edit-task-name" className="block text-xs sm:text-sm font-medium text-gray-700 mb-2">
                 {t('taskList.editModal.taskName')}
               </label>
               <input
+                id="edit-task-name"
                 type="text"
                 value={editedTaskName}
                 onChange={(e) => setEditedTaskName(e.target.value)}
@@ -1125,7 +1110,6 @@ export default function TaskListPage() {
                 }}
                 className="w-full px-3 sm:px-4 py-2 sm:py-2.5 text-sm sm:text-base border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
                 placeholder={t('taskList.editModal.placeholder')}
-                autoFocus
                 disabled={isEditingSaving}
               />
             </div>
@@ -1140,6 +1124,7 @@ export default function TaskListPage() {
             {/* Actions */}
             <div className="flex gap-2 sm:gap-3">
               <button
+                type="button"
                 onClick={() => {
                   setShowEditModal(false)
                   setTaskToEdit(null)
@@ -1151,6 +1136,7 @@ export default function TaskListPage() {
                 {t('common.cancel')}
               </button>
               <button
+                type="button"
                 onClick={handleSaveTaskName}
                 disabled={isEditingSaving || !editedTaskName.trim()}
                 className="flex-1 px-4 py-2 sm:py-2.5 bg-indigo-600 text-white text-xs sm:text-sm font-bold rounded-lg hover:bg-indigo-700 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"

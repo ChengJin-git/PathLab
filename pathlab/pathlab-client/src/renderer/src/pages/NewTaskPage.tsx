@@ -709,15 +709,15 @@ export default function NewTaskPage() {
 
   // ========== JSX Rendering ==========
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-2 sm:p-6 custom-scrollbar">
-        <div className="max-w-7xl mx-auto space-y-4 sm:space-y-6">
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="custom-scrollbar flex-1 overflow-y-auto p-2 sm:p-6">
+        <div className="mx-auto max-w-7xl space-y-4 sm:space-y-6">
           {/* Header */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="rounded-[1.75rem] border border-[color:var(--surface-border)] bg-[color:var(--surface-work)]/80 p-4 shadow-[var(--shadow-soft)] backdrop-blur-sm sm:p-5">
             <PageHeader
               title={t('newTask.title')}
               description={t('newTask.description')}
-              className="flex-1"
+              className="mb-0 flex-1 border-b-0 pb-0"
             >
               <Button
                 variant="outline"

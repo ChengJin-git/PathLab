@@ -44,8 +44,8 @@ export function StepProgressBar({ currentStep, dataLevel, onStepClick }: StepPro
       ]
 
   return (
-    <Card className="p-3 sm:p-6 overflow-x-auto scrollbar-none">
-      <div className="flex items-center justify-between min-w-[500px] px-1">
+    <Card surface="elevated" className="overflow-x-auto border-[color:var(--surface-border)] bg-[color:var(--surface-elevated)] p-4 shadow-[var(--shadow-elevated)] scrollbar-none sm:p-6">
+      <div className="flex min-w-[500px] items-center justify-between px-1">
         {steps.map((step, index) => {
           const isClickable = !!onStepClick && currentStep >= step.number
           return (
@@ -57,7 +57,7 @@ export function StepProgressBar({ currentStep, dataLevel, onStepClick }: StepPro
                   onClick={() => onStepClick(step.number)}
                 >
                   <div
-                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 bg-primary-600 text-white ring-2 ring-primary-100 group-hover:ring-4 group-hover:ring-primary-200`}
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold shadow-[var(--shadow-soft)] transition-all duration-300 sm:h-9 sm:w-9 sm:text-sm ${currentStep > step.number ? 'border-primary-600 bg-primary-600 text-white ring-4 ring-primary-500/15' : 'border-primary-200 bg-primary-50 text-primary-700'} group-hover:ring-4 group-hover:ring-primary-500/20`}
                   >
                     {currentStep > step.number ? (
                       <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -65,17 +65,17 @@ export function StepProgressBar({ currentStep, dataLevel, onStepClick }: StepPro
                       step.displayNumber || step.number
                     )}
                   </div>
-                  <span className="font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap text-gray-900 group-hover:text-primary-700">
+                  <span className="whitespace-nowrap text-[11px] font-semibold tracking-[-0.02em] text-slate-900 transition-colors duration-300 group-hover:text-primary-700 sm:text-sm">
                     {step.label}
                   </span>
                 </button>
               ) : (
                 <div className="flex items-center space-x-2 sm:space-x-3">
                   <div
-                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex shrink-0 items-center justify-center font-bold text-[10px] sm:text-sm shadow-sm transition-all duration-300 ${
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-[10px] font-bold shadow-[var(--shadow-soft)] transition-all duration-300 sm:h-9 sm:w-9 sm:text-sm ${
                       currentStep >= step.number
-                        ? 'bg-primary-600 text-white ring-2 ring-primary-100'
-                        : 'bg-gray-100 text-gray-400'
+                        ? 'border-primary-600 bg-primary-600 text-white ring-4 ring-primary-500/15'
+                        : 'border-[color:var(--surface-border-strong)] bg-[color:var(--surface-muted)] text-slate-400'
                     }`}
                   >
                     {currentStep > step.number ? (
@@ -85,8 +85,8 @@ export function StepProgressBar({ currentStep, dataLevel, onStepClick }: StepPro
                     )}
                   </div>
                   <span
-                    className={`font-semibold text-[11px] sm:text-sm transition-colors duration-300 whitespace-nowrap ${
-                      currentStep >= step.number ? 'text-gray-900' : 'text-gray-400'
+                    className={`whitespace-nowrap text-[11px] font-semibold tracking-[-0.02em] transition-colors duration-300 sm:text-sm ${
+                      currentStep >= step.number ? 'text-slate-900' : 'text-slate-400'
                     }`}
                   >
                     {step.label}
@@ -96,8 +96,8 @@ export function StepProgressBar({ currentStep, dataLevel, onStepClick }: StepPro
 
               {index < steps.length - 1 && (
                 <div
-                  className={`flex-1 h-0.5 mx-2 sm:mx-4 rounded-full transition-colors duration-500 ${
-                    currentStep > step.number ? 'bg-primary-600' : 'bg-gray-200'
+                  className={`mx-2 h-0.5 flex-1 rounded-full transition-colors duration-500 sm:mx-4 ${
+                    currentStep > step.number ? 'bg-primary-500' : 'bg-[color:var(--surface-border-strong)]'
                   }`}
                 />
               )}
