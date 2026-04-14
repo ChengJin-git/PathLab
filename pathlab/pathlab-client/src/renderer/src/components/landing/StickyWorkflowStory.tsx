@@ -40,7 +40,7 @@ export function StickyWorkflowStory() {
 
     rafRef.current = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(rafRef.current)
-  }, [isInView, paused, activeStep])
+  }, [isInView, paused])
 
   const jumpTo = (idx: number) => {
     setActiveStep(idx)
@@ -160,17 +160,18 @@ export function StickyWorkflowStory() {
   return (
     <section
       ref={sectionRef}
-      className="relative bg-[#FDFDFD] py-12 sm:py-16 lg:py-24"
+      className="relative overflow-hidden bg-[#FDFDFD] py-12 sm:py-16 lg:py-24"
     >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(47,107,255,0.06),transparent_24%),radial-gradient(circle_at_bottom_left,rgba(118,75,162,0.06),transparent_26%)]" />
       <div
         role="none"
-        className="max-w-7xl mx-auto px-4 sm:px-6"
+        className="relative mx-auto max-w-7xl px-4 sm:px-6"
         onMouseEnter={() => setPaused(true)}
         onMouseLeave={() => setPaused(false)}
         onTouchStart={() => setPaused(true)}
       >
         <div className="mb-8 sm:mb-12 lg:mb-16">
-          <h2 className="text-3xl sm:text-4xl font-bold text-[color:var(--landing-text-primary)] leading-tight">
+          <h2 className="text-3xl font-semibold leading-tight tracking-[-0.04em] text-[color:var(--landing-text-primary)] sm:text-4xl lg:text-5xl">
             {t('landing.story.header', '只需三步，從靈感到可驗證的診斷證據')}
           </h2>
         </div>
@@ -193,19 +194,19 @@ export function StickyWorkflowStory() {
                   }}
                   transition={{ duration: 0.4, ease: 'easeInOut' }}
                   style={{ originX: 0 }}
-                  className="text-left"
+                  className="rounded-[1.4rem] border border-transparent px-2 py-2 text-left transition-colors hover:border-white/60 hover:bg-white/55"
                 >
                   <div className="flex items-center gap-4 mb-3">
                     <div
-                      className={`p-2.5 rounded-xl transition-colors duration-300 ${isActive
-                        ? 'bg-[color:var(--landing-primary)] text-white shadow-lg shadow-blue-500/30'
-                        : 'bg-slate-100 text-slate-500'
+                      className={`rounded-2xl border p-2.5 transition-colors duration-300 ${isActive
+                        ? 'border-[color:var(--landing-primary)] bg-[color:var(--landing-primary)] text-white shadow-[0_18px_40px_rgba(47,107,255,0.28)]'
+                        : 'border-white/70 bg-white/80 text-slate-500 shadow-[0_14px_30px_rgba(15,23,42,0.05)]'
                       }`}
                     >
                       <Icon className="w-5 h-5" />
                     </div>
                     <h3
-                      className={`font-bold text-lg sm:text-xl transition-colors duration-300 ${isActive
+                      className={`text-lg font-semibold tracking-[-0.03em] transition-colors duration-300 sm:text-xl ${isActive
                         ? 'text-[color:var(--landing-text-primary)]'
                         : 'text-slate-500'
                       }`}
@@ -214,7 +215,7 @@ export function StickyWorkflowStory() {
                     </h3>
                   </div>
                   <p
-                    className={`pl-[3.25rem] text-sm sm:text-base leading-relaxed transition-colors duration-300 ${isActive
+                    className={`pl-[3.25rem] text-sm leading-relaxed transition-colors duration-300 sm:text-base ${isActive
                       ? 'text-[color:var(--landing-text-secondary)]'
                       : 'text-slate-400'
                     }`}
@@ -253,7 +254,7 @@ export function StickyWorkflowStory() {
           </div>
 
           {/* Right: Animated panels — fixed height, NO position:absolute overflow */}
-          <div className="w-full lg:w-2/3 min-h-[340px] h-[60vw] max-h-[500px] lg:h-[70vh] lg:max-h-none relative overflow-hidden">
+          <div className="relative h-[60vw] max-h-[500px] min-h-[340px] w-full overflow-hidden rounded-[2rem] border border-white/70 bg-white/55 shadow-[0_32px_90px_rgba(15,23,42,0.12)] backdrop-blur-2xl lg:h-[70vh] lg:max-h-none lg:w-2/3">
             <AnimatePresence mode="wait" initial={false}>
               <motion.div
                 key={activeStep}
@@ -261,7 +262,7 @@ export function StickyWorkflowStory() {
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -20 }}
                 transition={{ duration: 0.5, ease: [0.25, 0.46, 0.45, 0.94] }}
-                className="absolute inset-0 flex items-center"
+                className="absolute inset-0 flex items-center p-2 sm:p-3"
               >
                 {mockPanels[activeStep]}
               </motion.div>
