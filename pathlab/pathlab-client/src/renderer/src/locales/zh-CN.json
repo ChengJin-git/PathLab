@@ -880,7 +880,10 @@
     "profileMenu": "个人菜单",
     "switchLanguage": "切换语言",
     "changePassword": "修改密码",
-    "setEmail": "设置邮箱"
+    "setEmail": "设置邮箱",
+    "shellEyebrow": "病理研究工作台",
+    "shellAssistantTitle": "研究助手",
+    "shellWorkspaceTitle": "精密工作台"
   },
   "setEmail": {
     "title": "设置邮箱",
@@ -3257,7 +3260,7 @@
   "disclaimer": {
     "title": "服务条款与医疗免责声明",
     "fullTitle": "PathLab 服务条款、用户协议与医疗免责声明",
-    "operator": "运营方：SmartLab",
+    "operator": "运营方：SmartXLab",
     "contact": "联系方式",
     "scopeLabel": "适用范围",
     "scopeText": "本条款适用于 PathLab 的本地工作台应用程序、AI 验证工具及相关服务（统称服务）。",
@@ -3468,7 +3471,7 @@
   "privacyPolicy": {
     "title": "隐私声明",
     "fullTitle": "PathLab 隐私声明与隐私政策",
-    "operator": "运营方：SmartLab",
+    "operator": "运营方：SmartXLab",
     "contact": "联系方式",
     "introLabel": "阅读说明",
     "introText": "本声明概述 PathLab 如何处理与本服务相关的个人资料。在香港地区，相关个人资料处理可能受 <lawCap486>《个人资料（私隐）条例》（第486章）</lawCap486> 规管。请与服务条款、医疗提示以及产品内针对具体功能展示的提示或告知一并阅读。",

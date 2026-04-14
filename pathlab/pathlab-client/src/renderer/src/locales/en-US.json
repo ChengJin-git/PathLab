@@ -880,7 +880,10 @@
     "profileMenu": "Profile Menu",
     "switchLanguage": "Switch Language",
     "changePassword": "Change Password",
-    "setEmail": "Set Email"
+    "setEmail": "Set Email",
+    "shellEyebrow": "Pathology Workspace",
+    "shellAssistantTitle": "Research Assistant",
+    "shellWorkspaceTitle": "Precision Workbench"
   },
   "setEmail": {
     "title": "Set Email",

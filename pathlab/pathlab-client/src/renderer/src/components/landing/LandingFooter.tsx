@@ -14,7 +14,7 @@ export function LandingFooter() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mb-12">
           <div className="col-span-1 md:col-span-2">
-            <img src="/images/smartlab-logo.svg" alt="SmartLab" className="h-10 w-auto mb-4 opacity-80" />
+            <img src="/images/smartxlab-logo.png" alt="SmartXLab" className="mb-5 h-14 sm:h-16 w-auto opacity-85" />
             <p className="text-[color:var(--landing-text-secondary)] text-sm max-w-sm leading-relaxed">
               {t('landing.footer.description', 'Transforming pathology workflows with clinical-grade AI.')}
             </p>

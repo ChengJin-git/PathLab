@@ -114,11 +114,12 @@ export default function SettingsPage() {
             {tabs.map((tab) => {
               const Icon = tab.icon
               const isActive = activeTab === tab.id
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`
                     group inline-flex items-center justify-center px-3 py-3 sm:px-6 sm:py-4 border-b-2 font-medium text-sm whitespace-nowrap flex-1 transition-colors
                     ${isActive
                       ? 'border-primary-500 text-primary-600 bg-primary-50/10'
@@ -169,6 +170,7 @@ export default function SettingsPage() {
               </h2>
               <Tooltip content={t('settings.refreshStatus')}>
               <button
+                type="button"
                 onClick={checkServiceHealth}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
               >
@@ -240,7 +242,7 @@ export default function SettingsPage() {
                       rel="noopener noreferrer"
                       className="inline-flex max-w-full items-center transition-opacity hover:opacity-100 opacity-90"
                     >
-                      <img src="/images/smartlab-logo.svg" alt="SmartLab" className="h-10 sm:h-11 w-auto" />
+                      <img src="/images/smartxlab-logo.png" alt="SmartXLab" className="h-14 sm:h-16 w-auto" />
                     </a>
 
                     <p className="mt-4 text-sm leading-6 text-gray-700">{t('settings.aboutText3')}</p>
