@@ -35,6 +35,26 @@ class CommitInfo:
     timestamp: str
 
 
+class CommitFailed(RuntimeError):
+    """Raised when a git subprocess invoked by the workspace exits non-zero.
+
+    ``commit()``, ``revert()`` and ``set_baseline()`` previously returned
+    silently even when ``git add``/``git commit``/``git rev-parse`` failed,
+    which produced tracker entries claiming successful commits on a workspace
+    that had none (see ``session_142a4acaed08`` — "6 committed" with zero
+    actual commits). This exception makes any such failure loud so tool
+    executors can finalize the iteration as ``committed=False`` and surface
+    the stderr to the agent.
+    """
+
+    def __init__(self, stage: str, exit_code: int, stderr: str):
+        trimmed = (stderr or "").strip()[:200]
+        super().__init__(f"git {stage} failed (exit={exit_code}): {trimmed}")
+        self.stage = stage
+        self.exit_code = exit_code
+        self.stderr = stderr
+
+
 class Workspace:
     """Git-backed workspace with Karpathy-style ratchet.
 
@@ -123,29 +143,86 @@ class Workspace:
     # --- Ratchet operations ---
 
     def set_baseline(self, files: dict[str, str]) -> None:
-        """Commit initial files as baseline."""
+        """Commit initial files as baseline. Raises CommitFailed on git error."""
         for rel_path, content in files.items():
             self.write_file(rel_path, content)
-        self._git("add -A")
-        self._git("commit -m 'baseline: initial template' --allow-empty")
+
+        add = self._git("add -A")
+        if add.exit_code != 0:
+            raise CommitFailed("add", add.exit_code, add.stderr)
+
+        commit = self._commit_with_message_file(
+            "baseline: initial template",
+            extra_flags="--allow-empty",
+        )
+        if commit.exit_code != 0:
+            raise CommitFailed("commit", commit.exit_code, commit.stderr)
 
     def commit(self, message: str, metrics: dict | None = None) -> str:
-        """Commit all changes. Returns commit hash."""
-        self._git("add -A")
+        """Commit all changes. Returns commit hash. Raises CommitFailed on any git error.
+
+        The commit message is passed via ``-F <tmpfile>`` rather than ``-m
+        '<msg>'`` so arbitrary characters (apostrophes, newlines, JSON braces)
+        in the message cannot break shell quoting — see ``session_142a4acaed08``
+        where a Chinese objective + metrics JSON silently failed ``git commit``
+        under the old single-quoted form.
+        """
+        add = self._git("add -A")
+        if add.exit_code != 0:
+            raise CommitFailed("add", add.exit_code, add.stderr)
+
         commit_msg = message
         if metrics:
             commit_msg += f" | metrics={json.dumps(metrics, default=str)}"
-        self._git(f"commit -m '{commit_msg}' --allow-empty")
-        result = self._git("rev-parse HEAD")
-        commit_hash = result.stdout.strip()
-        logger.info(f"[workspace] Committed: {commit_hash[:8]} — {message}")
+
+        commit = self._commit_with_message_file(commit_msg, extra_flags="--allow-empty")
+        if commit.exit_code != 0:
+            raise CommitFailed("commit", commit.exit_code, commit.stderr)
+
+        rev = self._git("rev-parse HEAD")
+        if rev.exit_code != 0:
+            raise CommitFailed("rev-parse", rev.exit_code, rev.stderr)
+
+        commit_hash = rev.stdout.strip()
+        logger.info(f"[workspace] Committed: {commit_hash[:8]} \u2014 {message}")
         return commit_hash
 
     def revert(self) -> None:
-        """Discard all uncommitted changes."""
-        self._git("checkout -- .")
-        self._git("clean -fd")
+        """Discard all uncommitted changes. Raises CommitFailed on any git error."""
+        checkout = self._git("checkout -- .")
+        if checkout.exit_code != 0:
+            raise CommitFailed(
+                "revert_checkout", checkout.exit_code, checkout.stderr,
+            )
+
+        clean = self._git("clean -fd")
+        if clean.exit_code != 0:
+            raise CommitFailed("revert_clean", clean.exit_code, clean.stderr)
+
         logger.info("[workspace] Reverted to last commit")
+
+    # --- Internal: commit helper ------------------------------------------
+
+    _COMMIT_MSG_FILENAME = "COMMIT_EDITMSG_PATHSCIENTIST"
+
+    def _commit_with_message_file(
+        self,
+        message: str,
+        extra_flags: str = "",
+    ) -> CommandResult:
+        """Run ``git commit -F <tmpfile>`` with the given message.
+
+        Using ``-F`` avoids shell quoting entirely: LocalWorkspace executes the
+        command through a shell, so embedded apostrophes or newlines in
+        ``message`` would otherwise break ``commit -m '...'``. The tmpfile
+        lives under ``.git/`` so it doesn't pollute tracked/untracked state.
+        """
+        git_dir = self.root / ".git"
+        git_dir.mkdir(parents=True, exist_ok=True)
+        msg_file = git_dir / self._COMMIT_MSG_FILENAME
+        msg_file.write_text(message, encoding="utf-8")
+        flags = f" {extra_flags}" if extra_flags else ""
+        return self._git(f"commit{flags} -F {msg_file}")
 
     # --- History ---
 
