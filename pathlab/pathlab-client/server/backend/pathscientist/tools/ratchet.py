@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Self
+from uuid import uuid4
 
 from pydantic import Field
 
@@ -97,13 +98,24 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
         # for tracker, evidence, and orchestrator to all use consistently
         pre_increment_iteration = deps.iteration_state.iteration_index if deps.iteration_state else (deps.tracker.iteration if deps.tracker else 0)
 
+        # Canonical run_id for this finalization — ensure_run_id() auto-generates
+        # one if the agent reached this path without running run_experiment,
+        # so tracker history, iteration state, and evidence all share a single
+        # traceable identifier.
+        if deps.iteration_state:
+            run_id = deps.iteration_state.ensure_run_id()
+        else:
+            run_id = uuid4().hex[:8]
+
         # Update tracker
-        run_id = deps.iteration_state.last_run_id if deps.iteration_state else ""
         if deps.tracker:
             deps.tracker.record(resolved_metrics, committed=committed, iteration=pre_increment_iteration, run_id=run_id)
 
-        # Update iteration state (increments iteration_index)
+        # Update iteration state (increments iteration_index).
+        # Append to finalized_run_ids BEFORE record_iteration so the canonical
+        # list stays consistent with the tracker entry we just wrote.
         if deps.iteration_state:
+            deps.iteration_state.finalized_run_ids.append(run_id)
             deps.iteration_state.record_iteration(metrics=resolved_metrics, committed=committed)
 
         # Persist to agent_state if conversation is available
@@ -136,6 +148,11 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
                 # Use ratchet metrics if provided (revert passes actual run metrics)
                 if resolved_metrics:
                     exp["metrics"] = resolved_metrics
+                # Ensure evidence uses the same canonical run_id as tracker /
+                # finalized_run_ids. last_experiment may have a blank run_id if
+                # the agent committed without running run_experiment.
+                if not exp.get("run_id"):
+                    exp["run_id"] = run_id
                 collector.record_experiment_output(**{
                     k: exp.get(k, v) for k, v in {
                         "run_id": "",

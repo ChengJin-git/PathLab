@@ -9,6 +9,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ class IterationState:
 
     # Run tracking
     last_run_id: str = ""
+    finalized_run_ids: list[str] = field(default_factory=list)  # append-only
     history: list[dict] = field(default_factory=list)
 
     def __post_init__(self):
@@ -104,13 +106,31 @@ class IterationState:
                 "Call run_experiment with quick_check=true first."
             )
 
+    def ensure_run_id(self) -> str:
+        """Return ``last_run_id``, generating a uuid4 hex-8 if it is blank.
+
+        Provides a lineage guarantee for finalization paths that may have been
+        reached without first calling ``RunExperimentTool`` (which normally
+        populates ``last_run_id``). Callers that need a traceable run id
+        should prefer this over reading ``last_run_id`` directly.
+        """
+        if not self.last_run_id:
+            self.last_run_id = uuid4().hex[:8]
+        return self.last_run_id
+
     def record_iteration(self, metrics: dict, committed: bool) -> None:
-        """Record a completed iteration."""
+        """Record a completed iteration.
+
+        Note: ``finalized_run_ids`` is populated by the caller
+        (``tools.ratchet._finalize_iteration``) *before* invoking this method,
+        so we do not append here — doing so would double-count the same run.
+        """
         self.history.append({
             "iteration": self.iteration_index,
             "file_hash": self.current_file_hash,
             "metrics": metrics,
             "committed": committed,
+            "run_id": self.last_run_id,
         })
         self.iteration_index += 1
         self.remaining_budget -= 1
