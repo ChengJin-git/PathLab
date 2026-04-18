@@ -1,6 +1,7 @@
 """Ratchet tools — git commit improvements / revert failures."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Self
 from uuid import uuid4
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
 
     from ..runtime.workspace import Workspace
+
+logger = logging.getLogger(__name__)
 
 
 def _collect_recent_terminal_logs(conversation, limit: int = 6) -> list[str]:
@@ -131,11 +134,17 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
                 iteration_state=dump_iteration_state(deps.iteration_state),
             )
 
-        # Collect evidence if last_experiment is available
+        # Collect evidence if last_experiment is available. Every failure
+        # mode — no last_experiment, no workspace, underlying store exception
+        # — lands as a structured entry on ``deps.evidence_skipped_runs`` so
+        # the IntegrityGuard can flag committed runs whose evidence is missing
+        # with an actionable reason instead of silently warning to the log.
+        from ..evidence.collector import EvidenceCollector, EvidenceFinalizeResult
+        from ..evidence.store import EvidenceStore
+
+        result: EvidenceFinalizeResult | None = None
         if deps.last_experiment and deps.workspace:
             try:
-                from ..evidence.collector import EvidenceCollector
-                from ..evidence.store import EvidenceStore
                 evidence_dir = deps.workspace.root / ".evidence"
                 store = EvidenceStore(evidence_dir)
                 collector = EvidenceCollector(
@@ -174,11 +183,30 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
                     collector._experiment["_pre_revert_diff"] = exp["_pre_revert_diff"]
                 if "_pre_revert_untracked" in exp:
                     collector._experiment["_pre_revert_untracked"] = exp["_pre_revert_untracked"]
-                collector.finalize(committed=committed, iteration=pre_increment_iteration)
-                deps.last_experiment = None  # clear after collection
+                result = collector.finalize(
+                    committed=committed, iteration=pre_increment_iteration
+                )
             except Exception as e:
-                import logging
-                logging.getLogger(__name__).warning(f"Evidence collection failed: {e}")
+                result = EvidenceFinalizeResult(
+                    skipped=True,
+                    skipped_reason=f"exception:{type(e).__name__}:{e}",
+                )
+                logger.exception("Evidence collection raised")
+        elif not deps.last_experiment:
+            result = EvidenceFinalizeResult(
+                skipped=True, skipped_reason="no_last_experiment"
+            )
+        elif not deps.workspace:
+            result = EvidenceFinalizeResult(
+                skipped=True, skipped_reason="no_workspace"
+            )
+
+        if result and result.skipped:
+            deps.evidence_skipped_runs.append(
+                {"run_id": run_id, "reason": result.skipped_reason}
+            )
+
+        deps.last_experiment = None  # clear whether collected or skipped
     except (KeyError, AttributeError):
         pass
 
