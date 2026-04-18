@@ -105,17 +105,20 @@ def create_agent(
 
     # If skill is pre-specified, load it directly (backward compat)
     skill_constraints = ""
+    skill_extractor_guidance = ""
     if config.skill_name:
         try:
             from .domain.skills import registry
             skill = registry.get(config.skill_name)
             skill_constraints = skill.get_constraints_prompt()
+            skill_extractor_guidance = skill.get_extractor_guidance_prompt()
             template = skill.get_template_content()
             workspace.set_baseline({"train.py": template})
         except Exception:
             pass
 
     prompt_kwargs["skill_constraints"] = skill_constraints
+    prompt_kwargs["skill_extractor_guidance"] = skill_extractor_guidance
 
     # Build environment context (GPU, packages, data paths)
     env_context = build_environment_context(

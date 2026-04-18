@@ -6,6 +6,7 @@ Loaded from YAML files in the skills/ directory.
 """
 from __future__ import annotations
 
+import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -56,6 +57,14 @@ class Skill:
     # Reference code paths (for Code Agent to read real implementations)
     reference_code: dict[str, str] = field(default_factory=dict)
 
+    # Feature extractor selection guidance (surfaced to the LLM via the
+    # system prompt so it doesn't silently default to ImageNet backbones).
+    recommended_feature_extractors: dict = field(default_factory=dict)
+    extractors_available: dict = field(default_factory=dict)  # tiered
+    default_extractor: str = ""
+    extractor_selection_guidance: str = ""
+    upstream_skill: str = ""
+
     def get_template_path(self) -> Path:
         """Absolute path to the template file."""
         templates_dir = Path(__file__).parent.parent / "templates"
@@ -74,6 +83,70 @@ class Skill:
             return ""
         lines = "\n".join(f"  - {c}" for c in self.constraints)
         return f"\nCode constraints (MUST follow):\n{lines}\n"
+
+    def get_extractor_guidance_prompt(self) -> str:
+        """Markdown block for the agent system prompt. Empty if no data.
+
+        Surfaces the YAML's ``recommended_feature_extractors`` (tiered
+        preferred / acceptable / ablation-only lists), ``default_extractor``,
+        ``extractor_selection_guidance``, and ``upstream_skill`` fields so
+        the LLM actually sees them. Without this block the agent is blind
+        to the pathology-FM preferences encoded in feature_extraction.yaml
+        and patch_classification.yaml — which is why session_142a4acaed08
+        picked 7 ImageNet/CLIP backbones and zero pathology foundation
+        models.
+        """
+        if not (
+            self.recommended_feature_extractors
+            or self.extractors_available
+            or self.default_extractor
+        ):
+            return ""
+        lines = ["\nFeature extractor guidance:"]
+        if self.default_extractor:
+            lines.append(f"  - Default extractor: **{self.default_extractor}**")
+        rfe = self.recommended_feature_extractors or {}
+        if rfe.get("preferred"):
+            lines.append(
+                f"  - Preferred (pathology FMs): {', '.join(rfe['preferred'])}"
+            )
+        if rfe.get("acceptable"):
+            lines.append(f"  - Also acceptable: {', '.join(rfe['acceptable'])}")
+        if rfe.get("ablation_baseline"):
+            lines.append(
+                "  - Ablation only (do NOT pick as primary): "
+                f"{', '.join(rfe['ablation_baseline'])}"
+            )
+        # Fall back to the tiered catalog when the skill YAML doesn't carry
+        # recommended_feature_extractors directly (e.g. feature_extraction.yaml
+        # ships extractors_available instead). Covers the ImageNet-as-ablation
+        # constraint for both skill shapes.
+        if not rfe.get("ablation_baseline"):
+            baseline = (self.extractors_available or {}).get("imagenet_baseline")
+            if baseline:
+                baseline_names = [
+                    entry.get("name", "") if isinstance(entry, dict) else str(entry)
+                    for entry in baseline
+                ]
+                baseline_names = [n for n in baseline_names if n]
+                if baseline_names:
+                    lines.append(
+                        "  - Ablation only (do NOT pick as primary): "
+                        f"{', '.join(baseline_names)}"
+                    )
+        if self.extractor_selection_guidance:
+            lines.append(
+                "  - Selection rule:\n"
+                + textwrap.indent(
+                    self.extractor_selection_guidance.rstrip(), "      "
+                )
+            )
+        if self.upstream_skill:
+            lines.append(
+                f"  - Features come from the `{self.upstream_skill}` skill "
+                "pipeline — run it first if needed."
+            )
+        return "\n".join(lines) + "\n"
 
     def get_install_commands(self) -> list[str]:
         """Generate pip install commands for extra packages."""
@@ -187,4 +260,9 @@ class Skill:
             knowhow_tags=data.get("knowhow_tags", []),
             task_types=data.get("task_types", [data.get("task_type", "classification")]),
             reference_code=data.get("reference_code", {}),
+            recommended_feature_extractors=data.get("recommended_feature_extractors", {}) or {},
+            extractors_available=data.get("extractors_available", {}) or {},
+            default_extractor=data.get("default_extractor", "") or "",
+            extractor_selection_guidance=data.get("extractor_selection_guidance", "") or "",
+            upstream_skill=data.get("upstream_skill", "") or "",
         )
