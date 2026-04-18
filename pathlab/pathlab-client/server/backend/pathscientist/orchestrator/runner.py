@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
 
@@ -20,6 +21,7 @@ from ..orchestrator.types import (
     ResearchSessionState,
     RunRecord,
 )
+from ..runtime.integrity import check_session_integrity
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,84 @@ def _persist_grounding_citations(state: ResearchSessionState, tracker) -> None:
             section=passage.get("section", ""),
             quote_snippet=passage.get("text", "")[:100],
         )
+
+
+def _run_integrity_check(state: ResearchSessionState, deps) -> None:
+    """Run IntegrityGuard against the current session and persist on state.
+
+    Gathers tracker, iteration, run, workspace, and evidence inputs from
+    ``SessionDeps`` + ``state``, calls ``check_session_integrity``, dumps the
+    resulting ``IntegrityReport`` onto ``state.integrity_report``, logs each
+    fatal issue as a warning, and forces ``state.paper_ready=False`` when any
+    fatal issue is present. Never raises — invariant checks must not take
+    down the runner; they report what went wrong for the user.
+
+    Called just before ``_run_synthesis_stage`` in both
+    ``run_research_session`` and ``continue_research_session`` so the
+    synthesis output can include an ``## Integrity Issues`` section and so
+    fatal session-level breakage forces ``paper_ready`` to ``False`` before
+    verification/critique override it.
+    """
+    try:
+        workspace = getattr(deps, "workspace", None)
+        tracker = getattr(deps, "tracker", None)
+        iteration_state = getattr(deps, "iteration_state", None)
+        config = getattr(deps, "config", None)
+
+        workspace_root = Path(getattr(workspace, "root", ".")) if workspace else Path(".")
+        evidence_root = workspace_root / ".evidence"
+
+        tracker_history = list(getattr(tracker, "history", []) or [])
+        iteration_history = list(getattr(iteration_state, "history", []) or [])
+        research_run_history = [asdict(r) for r in state.run_history]
+
+        evidence_skipped_runs = list(getattr(deps, "evidence_skipped_runs", []) or [])
+        primary_metric = (
+            getattr(config, "primary_metric", "") or state.objective.success_metric or "auc"
+        )
+
+        report = check_session_integrity(
+            workspace_root=workspace_root,
+            evidence_root=evidence_root,
+            tracker_history=tracker_history,
+            iteration_history=iteration_history,
+            research_run_history=research_run_history,
+            max_iterations=state.max_iterations,
+            iteration_index=state.iteration_index,
+            stop_reason=state.stop_reason,
+            evidence_skipped_runs=evidence_skipped_runs,
+            primary_metric=primary_metric,
+        )
+    except Exception as exc:
+        logger.warning(f"IntegrityGuard failed to run: {exc}")
+        state.integrity_report = {
+            "passed": False,
+            "fatal_count": 0,
+            "warning_count": 0,
+            "issues": [],
+            "error": str(exc),
+        }
+        return
+
+    state.integrity_report = report.to_dict()
+
+    for issue in report.issues:
+        if issue.severity == "fatal":
+            logger.warning(
+                "[integrity] FATAL %s: %s", issue.code, issue.message
+            )
+        else:
+            logger.info(
+                "[integrity] %s %s: %s", issue.severity, issue.code, issue.message
+            )
+
+    if report.fatal_count > 0:
+        if state.paper_ready:
+            logger.warning(
+                "IntegrityGuard reported %d fatal issue(s); forcing paper_ready=False.",
+                report.fatal_count,
+            )
+        state.paper_ready = False
 
 
 def run_research_session(
@@ -324,6 +404,11 @@ def run_research_session(
                 state.max_iterations,
             )
             state.stop_reason = "budget_exhausted"
+        # IntegrityGuard: run BEFORE synthesis so report_builder sees the
+        # report and can append an "Integrity Issues" section.
+        deps = get_session(session.session_id)
+        _run_integrity_check(state, deps)
+        persist_research_session_state(conversation, state)
         state = _run_synthesis_stage(
             state, workspace, session, config,
             evidence_store=evidence_store,
@@ -452,6 +537,15 @@ def continue_research_session(
                 state.max_iterations,
             )
             state.stop_reason = "budget_exhausted"
+        # IntegrityGuard: run BEFORE synthesis so report_builder sees the
+        # report and can append an "Integrity Issues" section.
+        try:
+            deps = get_session(session.session_id)
+        except KeyError:
+            deps = None
+        if deps is not None:
+            _run_integrity_check(state, deps)
+            persist_research_session_state(conversation, state)
         state = _run_synthesis_stage(
             state, workspace, session, config,
             evidence_store=evidence_store,
@@ -487,7 +581,8 @@ def _run_synthesis_stage(
     )
 
     # Build structured report
-    report = build_report(context)
+    integrity_report = dict(state.integrity_report or {})
+    report = build_report(context, integrity_report=integrity_report)
 
     # Render markdown
     markdown = render_report_markdown(report)
@@ -549,6 +644,17 @@ def _run_synthesis_stage(
             logger.info(f"Critique: {'PASSED' if critique.passed else f'{critique.issue_count} issues'}")
         except Exception as e:
             logger.warning(f"Paper verification/critique failed: {e}")
+
+    # Integrity gate: a fatal integrity issue means the session was broken
+    # (no git commits, blank run_ids, missing evidence, etc.). Paper is not
+    # ready regardless of what verification/critique said.
+    fatal_integrity = int(integrity_report.get("fatal_count", 0) or 0) > 0
+    if fatal_integrity:
+        if paper_ready:
+            logger.warning(
+                "IntegrityGuard reported fatal issues; forcing paper_ready=False."
+            )
+        paper_ready = False
 
     # Save manifest
     report_store.save_manifest(state.session_id, {
