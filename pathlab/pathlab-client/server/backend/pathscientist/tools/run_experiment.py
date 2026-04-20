@@ -105,7 +105,10 @@ class RunExperimentExecutor(ToolExecutor):
         # earlier iteration left a sticky value behind. Assignment happens
         # unconditionally up front so a mid-experiment raise still leaves
         # ``last_run_id`` pointing at this run's id.
-        run_id = uuid4().hex[:8]
+        #
+        # Canonical shape ``run_[0-9a-f]{8}`` (Fix 5) keeps bare 8-hex
+        # conversation UUID / commit shards out of the run_id namespace.
+        run_id = f"run_{uuid4().hex[:8]}"
 
         # Enforce iteration policy
         iteration_state = self._get_iteration_state()

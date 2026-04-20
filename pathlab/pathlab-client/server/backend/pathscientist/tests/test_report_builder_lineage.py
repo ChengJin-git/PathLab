@@ -30,21 +30,26 @@ from pathscientist.synthesis.report_builder import build_report
 
 
 def _make_state_with_duplicate_run_ids() -> ResearchSessionState:
-    """Build a session where all 3 iterations share run_id='abc' but differ
-    in iteration index and metric value — mirroring the sticky-run_id bug."""
+    """Build a session where all 3 iterations share run_id='run_abc' but differ
+    in iteration index and metric value — mirroring the sticky-run_id bug.
+
+    After Fix 5 the canonical run_id shape is ``run_<hex8>``; this fixture
+    uses ``run_abc`` to stay under the prefix convention while still
+    deliberately colliding across iterations.
+    """
     state = ResearchSessionState.create(
         session_id="sess_dup",
         conversation_id=uuid4(),
         objective=ResearchObjective(question="Improve AUC on BRACS"),
     )
     state.record_run(
-        RunRecord(run_id="abc", iteration=0, metric_value=0.70, committed=True, notes="first")
+        RunRecord(run_id="run_abc", iteration=0, metric_value=0.70, committed=True, notes="first")
     )
     state.record_run(
-        RunRecord(run_id="abc", iteration=1, metric_value=0.80, committed=True, notes="second")
+        RunRecord(run_id="run_abc", iteration=1, metric_value=0.80, committed=True, notes="second")
     )
     state.record_run(
-        RunRecord(run_id="abc", iteration=2, metric_value=0.90, committed=False, notes="third")
+        RunRecord(run_id="run_abc", iteration=2, metric_value=0.90, committed=False, notes="third")
     )
     return state
 
@@ -84,10 +89,10 @@ def test_comparison_table_preserves_duplicate_run_ids_with_store(tmp_path):
     # collapsing run_history too.
     store = EvidenceStore(tmp_path / ".evidence")
     store.save(EvidenceRecord(
-        run_id="abc",
+        run_id="run_abc",
         session_id="sess_dup",
         iteration=2,
-        run_dir="output/runs/abc",
+        run_dir="output/runs/run_abc",
         git_commit="deadbeef",
         git_diff="",
         code_snapshot="",
@@ -153,9 +158,13 @@ def test_real_world_ratio_17_to_17_not_17_to_1():
         0.8021, 0.8123, 0.8163, 0.8217, 0.8265, 0.8336, 0.8426,
         0.8495, 0.8538, 0.8523,
     ]
+    # Sticky run_id from the original session — canonicalized to the
+    # post-Fix-5 ``run_<hex8>`` shape to reflect what future sessions
+    # would emit. The test still exercises the 17→17 preservation
+    # invariant under the duplicate-id condition.
     for i, m in enumerate(metric_series):
         state.record_run(RunRecord(
-            run_id="2c696802",
+            run_id="run_2c696802",
             iteration=i,
             metric_value=m,
             committed=(i in committed_iters),

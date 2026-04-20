@@ -105,10 +105,15 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
         # one if the agent reached this path without running run_experiment,
         # so tracker history, iteration state, and evidence all share a single
         # traceable identifier.
+        #
+        # Both branches return the canonical ``run_[0-9a-f]{8}`` shape
+        # (Fix 5). The bare-uuid fallback only fires when iteration_state
+        # itself is absent — extremely rare — but still produces a prefixed
+        # id so downstream verifier checks stay consistent.
         if deps.iteration_state:
             run_id = deps.iteration_state.ensure_run_id()
         else:
-            run_id = uuid4().hex[:8]
+            run_id = f"run_{uuid4().hex[:8]}"
 
         # Update tracker
         if deps.tracker:

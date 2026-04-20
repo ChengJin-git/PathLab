@@ -263,19 +263,19 @@ def test_tracker_metric_missing_tolerates_test_prefix(tmp_path):
     _init_git_repo(workspace_root)
     _make_git_commit(workspace_root)
 
-    _write_evidence_record(evidence_root, "abc12345", committed=True)
+    _write_evidence_record(evidence_root, "run_abc12345", committed=True)
 
     tracker_history = [
         {
             "iteration": 0,
-            "run_id": "abc12345",
+            "run_id": "run_abc12345",
             "metrics": {"test_auc": 0.85, "val_auc": 0.92},
             "committed": True,
             "best_auc": 0.85,
         }
     ]
     research_run_history = [
-        _run_record(run_id="abc12345", iteration=0, committed=True, metric_value=0.85),
+        _run_record(run_id="run_abc12345", iteration=0, committed=True, metric_value=0.85),
     ]
 
     report = check_session_integrity(

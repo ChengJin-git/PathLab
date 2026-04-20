@@ -107,15 +107,20 @@ class IterationState:
             )
 
     def ensure_run_id(self) -> str:
-        """Return ``last_run_id``, generating a uuid4 hex-8 if it is blank.
+        """Return ``last_run_id``, generating a canonical ``run_<hex8>`` if blank.
 
         Provides a lineage guarantee for finalization paths that may have been
         reached without first calling ``RunExperimentTool`` (which normally
         populates ``last_run_id``). Callers that need a traceable run id
         should prefer this over reading ``last_run_id`` directly.
+
+        The ``run_`` prefix is mandatory (Fix 5): the paper verifier's
+        ``\\brun_[0-9a-f]{8}\\b`` regex only considers prefixed tokens as
+        run_ids, so bare 8-hex shards from conversation UUIDs or commit
+        hashes never collide with the run_id namespace.
         """
         if not self.last_run_id:
-            self.last_run_id = uuid4().hex[:8]
+            self.last_run_id = f"run_{uuid4().hex[:8]}"
         return self.last_run_id
 
     def record_iteration(self, metrics: dict, committed: bool) -> None:
