@@ -120,6 +120,12 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
         if deps.iteration_state:
             deps.iteration_state.finalized_run_ids.append(run_id)
             deps.iteration_state.record_iteration(metrics=resolved_metrics, committed=committed)
+            # Reset last_run_id so the next iteration's ensure_run_id() mints
+            # a fresh uuid instead of reusing this one. Prevents the sticky
+            # run_id bug (session_b14b074d2268) where finalized_run_ids
+            # collapsed 17 distinct iterations onto a single id because
+            # ensure_run_id() is idempotent when last_run_id is already set.
+            deps.iteration_state.last_run_id = ""
 
         # Persist to agent_state if conversation is available
         if deps.conversation:

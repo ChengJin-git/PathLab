@@ -4,8 +4,10 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Sequence
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
+from uuid import uuid4
 
 from pydantic import Field
 
@@ -56,14 +58,59 @@ class RunExperimentExecutor(ToolExecutor):
         except (KeyError, AttributeError):
             return None
 
+    def _resolve_path(self, path_str: str) -> Path:
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = self._workspace.root / path
+        return path.resolve(strict=False)
+
+    def _snapshot_directory(self, directory: str) -> dict[str, tuple[int, int]]:
+        abs_dir = self._resolve_path(directory)
+        if not abs_dir.is_dir():
+            return {}
+
+        snapshot = {}
+        for file_path in abs_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            try:
+                stat = file_path.stat()
+            except OSError:
+                continue
+            snapshot[str(file_path.resolve(strict=False))] = (stat.st_mtime_ns, stat.st_size)
+        return snapshot
+
+    def _changed_files_since_snapshot(
+        self,
+        directory: str,
+        before: dict[str, tuple[int, int]],
+    ) -> list[str]:
+        after = self._snapshot_directory(directory)
+        changed = []
+        for path, meta in after.items():
+            if before.get(path) != meta:
+                changed.append(path)
+        return sorted(changed)
+
     def __call__(
         self,
         action: RunExperimentAction,
         conversation: "LocalConversation | None" = None,
     ) -> RunExperimentObservation:
+        # Mint a fresh run_id at tool entry and write it to iteration_state
+        # BEFORE running the experiment. This makes RunExperimentTool the
+        # authoritative producer of ``last_run_id`` — we never rely on
+        # ``ensure_run_id()`` idempotent semantics from the caller side, so
+        # each call to run_experiment gets a distinct lineage id even if an
+        # earlier iteration left a sticky value behind. Assignment happens
+        # unconditionally up front so a mid-experiment raise still leaves
+        # ``last_run_id`` pointing at this run's id.
+        run_id = uuid4().hex[:8]
+
         # Enforce iteration policy
         iteration_state = self._get_iteration_state()
         if iteration_state:
+            iteration_state.last_run_id = run_id
             import hashlib
             script_path = self._workspace.root / action.script_path
             if script_path.exists():
@@ -94,9 +141,8 @@ class RunExperimentExecutor(ToolExecutor):
             else action.timeout
         )
 
-        # Per-run output directory for metrics isolation
-        from uuid import uuid4
-        run_id = uuid4().hex[:8]
+        # Per-run output directory for metrics isolation. ``run_id`` was
+        # already minted at tool entry and written to ``iteration_state``.
         output_dir = self._config.resolve_output(self._workspace.root)
         run_dir = output_dir / "runs" / run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -117,6 +163,13 @@ class RunExperimentExecutor(ToolExecutor):
         else:
             env_vars["DATA_OUTPUT_DIR"] = str(run_dir)
 
+        started_at = datetime.now(timezone.utc).isoformat()
+        run_dir_abs = self._resolve_path(str(run_dir))
+        data_output_dir_abs = self._resolve_path(env_vars["DATA_OUTPUT_DIR"])
+        data_output_snapshot = {}
+        if data_output_dir_abs != run_dir_abs:
+            data_output_snapshot = self._snapshot_directory(env_vars["DATA_OUTPUT_DIR"])
+
         start = time.time()
         result = self._workspace.run_script(
             script_path=action.script_path,
@@ -124,6 +177,12 @@ class RunExperimentExecutor(ToolExecutor):
             timeout=float(timeout),
         )
         duration = time.time() - start
+        data_output_artifacts = []
+        if data_output_dir_abs != run_dir_abs:
+            data_output_artifacts = self._changed_files_since_snapshot(
+                env_vars["DATA_OUTPUT_DIR"],
+                data_output_snapshot,
+            )
 
         # Only read metrics from THIS run's output dir, and only on success
         metrics = {}
@@ -148,6 +207,34 @@ class RunExperimentExecutor(ToolExecutor):
             # Update iteration policy — mark quick check as passed
             if action.quick_check and iteration_state and file_hash:
                 iteration_state.mark_quick_check_passed(file_hash)
+
+        # Store last experiment output in SessionDeps for evidence collection.
+        # ``last_run_id`` was already written at tool entry, so we don't
+        # re-assign it here — a single canonical write keeps the invariant
+        # "last_run_id tracks the most recent run_experiment call" clear.
+        if self._session_id:
+            try:
+                from ..runtime.session_registry import get_session
+                deps = get_session(self._session_id)
+                try:
+                    rel_run_dir = str(run_dir.relative_to(self._workspace.root))
+                except ValueError:
+                    rel_run_dir = str(run_dir)
+                deps.last_experiment = {
+                    "run_id": run_id,
+                    "run_dir": rel_run_dir,
+                    "exit_code": result.exit_code,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "metrics": metrics,
+                    "duration": duration,
+                    "started_at": started_at,
+                    "model_path": model_path,
+                    "data_output_dir": env_vars.get("DATA_OUTPUT_DIR", ""),
+                    "data_output_artifacts": data_output_artifacts,
+                }
+            except (KeyError, AttributeError):
+                pass
 
         # Build output text for LLM
         logs = result.stdout + result.stderr
