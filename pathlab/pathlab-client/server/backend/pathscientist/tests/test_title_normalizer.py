@@ -62,3 +62,27 @@ def test_ascii_objective_unchanged():
     raw = "Improve AUC on BRACS via attention pooling"
     out = normalize_title(raw)
     assert out == raw, f"ascii objective was modified: {out!r}"
+
+
+def test_chinese_fragment_falls_back():
+    """A Chinese fragment with only short ASCII runs must fall back.
+
+    Motivated by session_b14b074d2268 (2026-04-20) whose paper H1 was
+    ``# 数据 patch-level 的分类模型`` (20 codepoints). That is better than
+    the pre-Task-7 raw path-containing title, but still not a real paper
+    title — it is Chinese filler with one hyphenated English term whose
+    longest ASCII run is only 5 chars ("patch"/"level").
+
+    The normalizer should recognize this as "no meaningful ASCII content"
+    and fall back to the ``Research Report: {metric} on {dataset}``
+    template instead.
+    """
+    raw = (
+        "看下这里的数据 "
+        "/project/compath/storage/ywangrm/PathLab_data_collection/Data/CRC-MSI "
+        "用这个这个路径训里那一个patch-level 的分类模型"
+    )
+    title = normalize_title(raw, success_metric="auc", dataset_hint="CRC-MSI")
+    assert title == "Research Report: AUC on CRC-MSI", (
+        f"expected fallback title for Chinese fragment, got: {title!r}"
+    )
