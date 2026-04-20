@@ -250,6 +250,50 @@ def test_tracker_metric_missing_on_committed_entry(tmp_path):
     assert issue.severity == "fatal"
 
 
+def test_tracker_metric_missing_tolerates_test_prefix(tmp_path):
+    """Committed tracker entry with test_/val_ prefixed metrics must not be flagged.
+
+    Regression for session_b14b074d2268 (2026-04-20): tracker entries recorded
+    metrics={"test_auc": 0.85, "val_auc": 0.92} and the strict .get("auc") check
+    produced 11 false-positive fatal issues. The fix delegates to
+    resolve_primary_metric which handles the test_/val_/best_val_/best_ prefixes.
+    """
+    workspace_root = tmp_path / "workspace"
+    evidence_root = workspace_root / ".evidence"
+    _init_git_repo(workspace_root)
+    _make_git_commit(workspace_root)
+
+    _write_evidence_record(evidence_root, "abc12345", committed=True)
+
+    tracker_history = [
+        {
+            "iteration": 0,
+            "run_id": "abc12345",
+            "metrics": {"test_auc": 0.85, "val_auc": 0.92},
+            "committed": True,
+            "best_auc": 0.85,
+        }
+    ]
+    research_run_history = [
+        _run_record(run_id="abc12345", iteration=0, committed=True, metric_value=0.85),
+    ]
+
+    report = check_session_integrity(
+        workspace_root=workspace_root,
+        evidence_root=evidence_root,
+        tracker_history=tracker_history,
+        iteration_history=[],
+        research_run_history=research_run_history,
+        max_iterations=5,
+        iteration_index=1,
+        stop_reason="budget_exhausted",
+        primary_metric="auc",
+    )
+
+    codes = _codes(report)
+    assert "tracker_metric_missing" not in codes, f"False positive: {codes}"
+
+
 def test_evidence_run_missing_for_committed_run(tmp_path):
     inputs = _base_happy_inputs(tmp_path)
     # Remove the evidence record for run_b so a committed run has no record.json.

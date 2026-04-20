@@ -230,16 +230,31 @@ def _check_tracker_run_id_blank(tracker_history: list[dict]) -> list[IntegrityIs
 def _metric_value(entry_metrics: Any, primary_metric: str) -> Any:
     """Return the primary metric value from a metrics dict, or ``None``.
 
-    Mirrors the shape produced by ``MetricsTracker.record`` — a flat dict
-    keyed by the metric name. Anything non-numeric (None, missing key, or a
-    non-dict ``metrics`` entry) reports as ``None``.
+    Delegates to ``orchestrator.metrics_utils.resolve_primary_metric`` so
+    prefixed keys such as ``test_auc`` / ``val_auc`` / ``best_val_auc`` are
+    resolved to the primary metric (``auc``). The resolver returns ``0.0``
+    when nothing matches, which this helper treats as missing for the
+    purposes of the integrity check.
+
+    This breaks the "no imports from orchestrator/" self-containment goal
+    for ``runtime/integrity.py``, but the duplication would be worse. The
+    import is scoped to this one helper.
     """
     if not isinstance(entry_metrics, dict):
         return None
-    value = entry_metrics.get(primary_metric)
-    if isinstance(value, (int, float)):
-        return float(value)
-    return None
+    # Narrow, function-scoped import: avoid dragging orchestrator internals
+    # into the integrity module's import-time surface.
+    from ..orchestrator.metrics_utils import resolve_primary_metric
+
+    value = resolve_primary_metric(entry_metrics, primary_metric)
+    if not isinstance(value, (int, float)):
+        return None
+    # resolve_primary_metric returns 0.0 when nothing is found; treat as
+    # missing. A real 0.0 metric is indistinguishable here, but a truly
+    # zero AUC/accuracy/F1 is not a plausible committed experiment run.
+    if value == 0.0:
+        return None
+    return float(value)
 
 
 def _check_tracker_metric_missing(
