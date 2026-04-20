@@ -126,6 +126,101 @@ def test_explicit_stop_reason_preserved():
     assert updated.stop_reason == "user_cancelled"
 
 
+def test_over_budget_skips_next_execution(tmp_path, monkeypatch):
+    """A single ``conversation.run()`` can finalize many iterations in one
+    turn; before the fix the resulting ``iteration_index`` shot far past
+    ``max_iterations`` because the runner faithfully incremented for every
+    new tracker history entry with no per-turn cap. Reproduces
+    session_b14b074d2268 which had max_iterations=5 but iteration_index=17
+    because the agent ratcheted 17 times inside a single agent turn and the
+    runner only re-checked the budget at ``REVIEW`` — far too late.
+
+    After the fix:
+    - ``iteration_index`` is capped at ``max_iterations`` per run
+    - ``stop_reason='budget_exhausted'`` is set the moment the runner drops
+      an over-budget ratchet entry
+    - the next ``while state.stage == STAGE_EXECUTION:`` iteration does NOT
+      start another execution turn (director routes REVIEW → SYNTHESIS)
+    """
+    sys.path.insert(0, str(Path(__file__).parent))
+    from persistence_helpers import build_test_conversation, make_test_config
+
+    from pathscientist.orchestrator import runner as runner_module
+    from pathscientist.orchestrator.runner import continue_research_session
+    from pathscientist.orchestrator.types import STAGE_EXECUTION
+    from pathscientist.runtime.session_registry import get_session
+
+    conversation, session = build_test_conversation(tmp_path)
+    config = make_test_config(tmp_path)
+
+    state = ResearchSessionState.create(
+        session_id=session.session_id,
+        conversation_id=session.conversation_id,
+        objective=ResearchObjective(question="Budget overrun check"),
+    )
+    state.stage = STAGE_EXECUTION
+    state.max_iterations = 5
+    state.iteration_index = 0
+
+    deps = get_session(session.session_id)
+
+    # Fake agent turn: one ``conversation.run()`` appends MANY new tracker
+    # entries, mimicking a buggy / greedy agent that calls ratchet_commit
+    # 17 times in a single turn. Count how many turns the runner launches.
+    AGENT_RATCHETS_PER_TURN = 17
+    turn_counter = {"turns": 0}
+
+    def fake_send_message(msg):
+        return None
+
+    def fake_run():
+        turn_counter["turns"] += 1
+        for i in range(AGENT_RATCHETS_PER_TURN):
+            deps.tracker.history.append({
+                "run_id": f"run_{turn_counter['turns']:03d}_{i:03d}",
+                "metrics": {"auc": 0.5 + 0.001 * len(deps.tracker.history)},
+                "committed": True,
+            })
+
+    monkeypatch.setattr(conversation, "send_message", fake_send_message)
+    monkeypatch.setattr(conversation, "run", fake_run)
+
+    # Short-circuit synthesis so the test focuses on the execution loop.
+    def fake_synthesis(state_arg, *args, **kwargs):
+        return state_arg
+
+    monkeypatch.setattr(runner_module, "_run_synthesis_stage", fake_synthesis)
+    monkeypatch.setattr(runner_module, "_run_integrity_check", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        "pathscientist.orchestrator.runner.build_session_summary",
+        lambda *args, **kwargs: "",
+    )
+
+    final_state, _, _ = continue_research_session(
+        config,
+        state,
+        session,
+        conversation,
+        auto_approve=True,
+    )
+
+    # Runner must have pumped EXACTLY one execution turn — the single turn
+    # that overshot budget. No second execution turn is allowed because the
+    # first already set stop_reason='budget_exhausted' and the director
+    # routes REVIEW → SYNTHESIS. Before the fix, iteration_index would have
+    # reached AGENT_RATCHETS_PER_TURN (17) with no cap.
+    assert turn_counter["turns"] == 1, (
+        f"expected exactly 1 execution turn, got {turn_counter['turns']} "
+        f"(budget halt is not enforced)"
+    )
+    assert final_state.iteration_index == state.max_iterations, (
+        f"iteration_index must be capped at max_iterations "
+        f"({state.max_iterations}), got {final_state.iteration_index}"
+    )
+    assert final_state.stop_reason == "budget_exhausted"
+    assert final_state.stage != STAGE_EXECUTION
+
+
 if __name__ == "__main__":
     import pytest
 

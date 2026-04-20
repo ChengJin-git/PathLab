@@ -352,10 +352,21 @@ def run_research_session(
 
         if history_len_after > history_len_before:
             # Record ALL newly finalized iterations (usually 1, but handle >1)
+            # but CAP at max_iterations so a single agent turn that fires many
+            # ratchet_commit calls cannot push iteration_index past budget.
+            # Before this cap, session_b14b074d2268 reached iteration_index=17
+            # with max_iterations=5 because the agent ratcheted 17 times in one
+            # ``conversation.run()`` and the runner faithfully incremented on
+            # each entry. The director only sees this at review-entry — far
+            # too late to stop the overrun from being recorded.
             from .metrics_utils import resolve_primary_metric
             new_entries = deps.tracker.history[history_len_before:]
 
+            processed = 0
             for entry in new_entries:
+                if state.iteration_index >= state.max_iterations:
+                    break
+
                 raw_metrics = entry.get("metrics", {}) if isinstance(entry, dict) else {}
                 metric_value = resolve_primary_metric(raw_metrics, state.objective.success_metric)
                 committed = entry.get("committed", False) if isinstance(entry, dict) else False
@@ -373,7 +384,19 @@ def run_research_session(
                     committed=committed,
                 ))
                 state.iteration_index += 1
+                processed += 1
             state.stall_count = 0  # Reset stall counter on successful finalization
+
+            dropped = len(new_entries) - processed
+            if dropped > 0 and not state.stop_reason:
+                logger.warning(
+                    "Agent finalized beyond budget (max_iterations=%d) in a "
+                    "single turn; dropped %d extra ratchet entries and "
+                    "halting with stop_reason='budget_exhausted'.",
+                    state.max_iterations,
+                    dropped,
+                )
+                state.stop_reason = "budget_exhausted"
         else:
             # Agent did not finalize — stuck, error, or no ratchet call
             # Do NOT consume iteration budget for non-finalized turns
@@ -500,9 +523,15 @@ def continue_research_session(
         history_len_after = len(deps.tracker.history) if deps.tracker else 0
 
         if history_len_after > history_len_before:
+            # Cap iteration processing at max_iterations so a single agent turn
+            # that fires many ratchet_commit calls cannot push iteration_index
+            # past budget (see the matching comment in run_research_session).
             from .metrics_utils import resolve_primary_metric
             new_entries = deps.tracker.history[history_len_before:]
+            processed = 0
             for entry in new_entries:
+                if state.iteration_index >= state.max_iterations:
+                    break
                 raw_metrics = entry.get("metrics", {}) if isinstance(entry, dict) else {}
                 metric_value = resolve_primary_metric(raw_metrics, state.objective.success_metric)
                 committed = entry.get("committed", False) if isinstance(entry, dict) else False
@@ -517,7 +546,19 @@ def continue_research_session(
                     committed=committed,
                 ))
                 state.iteration_index += 1
+                processed += 1
             state.stall_count = 0
+
+            dropped = len(new_entries) - processed
+            if dropped > 0 and not state.stop_reason:
+                logger.warning(
+                    "Agent finalized beyond budget (max_iterations=%d) in a "
+                    "single turn; dropped %d extra ratchet entries and "
+                    "halting with stop_reason='budget_exhausted'.",
+                    state.max_iterations,
+                    dropped,
+                )
+                state.stop_reason = "budget_exhausted"
         else:
             state.stall_count += 1
 
