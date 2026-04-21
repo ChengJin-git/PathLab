@@ -45,7 +45,7 @@ import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationM
 import { organSources } from '../constants/wsi'
 import {
   type LocalItem, type FileMetadata, type UploadMode, type DataLevel, type DataType,
-  type ElectronApi, type MrxsDataFolder, type CollectionResult,
+  type ElectronApi, type MrxsDataFolder, type CollectionResult, type CollectionProgressSnapshot,
   defaultMetadata, generateCaseId,
   collectItemsFromDataTransfer, buildFileKey,
   BulkEditModal, DatasetConfigStep, SuccessStep
@@ -207,6 +207,7 @@ export default function RegisterPage() {
   const [ignoredCount, setIgnoredCount] = useState(0)
   const [skippedDuplicateCount, setSkippedDuplicateCount] = useState(0) // Count of skipped duplicate files
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [collectionProgress, setCollectionProgress] = useState<CollectionProgressSnapshot | null>(null)
 
   // Sub-selection for bulk actions
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
@@ -268,8 +269,50 @@ export default function RegisterPage() {
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
   const segmentationJsonOnlyAppend = uploadMode === 'segmentation' && !!datasetId && localItems.length === 0 && segmentationJsonFiles.size > 0
   const readyToUploadCount = segmentationJsonOnlyAppend ? segmentationJsonFiles.size : localItems.length
+  const isCollecting = collectionProgress !== null && !collectionProgress.completed
 
   // --- Interaction Logic ---
+
+  const handleCollectedDrop = async (dataTransfer: DataTransfer, unsupportedMessageKey: 'uploadPage.skippedUnsupportedFiles' | 'uploadPage.skippedUnsupportedFilesShort') => {
+    setCollectionProgress({
+      phase: 'preparing',
+      totalTopLevelEntries: 0,
+      processedItems: 0,
+      discoveredFiles: 0,
+      discoveredDirectories: 0,
+      completed: false,
+    })
+
+    try {
+      const result = await collectItemsFromDataTransfer(dataTransfer, {
+        onProgress: setCollectionProgress,
+      })
+
+      if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
+        if (unsupportedMessageKey === 'uploadPage.skippedUnsupportedFiles') {
+          toastError(t(unsupportedMessageKey, {
+            count: result.unsupportedFileNames.length,
+            files: result.unsupportedFileNames.slice(0, 3).join(', '),
+            more: result.unsupportedFileNames.length > 3 ? '...' : '',
+            extensions: ALL_EXTENSIONS.join(', '),
+          }))
+        } else {
+          toastError(t(unsupportedMessageKey, {
+            count: result.unsupportedFileNames.length,
+            files: result.unsupportedFileNames.slice(0, 3).join(', '),
+            more: result.unsupportedFileNames.length > 3 ? '...' : '',
+          }))
+        }
+      }
+
+      await processCollectionResult(result)
+    } catch (error) {
+      console.error('File collection error:', error)
+      setSubmitError(t('chatComponents.datasetRegistration.fileProcessingError'))
+    } finally {
+      setCollectionProgress(null)
+    }
+  }
 
   const processCollectionResult = async (result: CollectionResult) => {
     const { items, orphanFolders, orphanDtFiles, jsonFiles } = result
@@ -764,6 +807,7 @@ export default function RegisterPage() {
     setSkippedDuplicateCount(0)
     setSelectedItems(new Set())
     setSubmitError(null)
+    setCollectionProgress(null)
     setMatchedMasks(new Set())
     setPendingJsonStems(new Set())
     setSegmentationJsonFiles(new Map())
@@ -1043,6 +1087,39 @@ export default function RegisterPage() {
             </div>
           </div>
 
+          {isCollecting && collectionProgress && (
+            <div className="flex-none mb-2 px-2 sm:px-0">
+              <div className="rounded-2xl border border-blue-200 bg-blue-50/80 px-4 py-4 shadow-sm">
+                <div className="flex items-start gap-3">
+                  <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-full bg-blue-100 text-blue-600">
+                    <UploadCloud className="h-5 w-5" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <p className="font-medium text-slate-900">{t('uploadPage.collectionProgressTitle')}</p>
+                        <p className="mt-1 text-sm text-slate-600">{t('uploadPage.collectionProgressDescription')}</p>
+                      </div>
+                      <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wide text-blue-700 shadow-sm">
+                        {t(`uploadPage.collectionPhase.${collectionProgress.phase}`)}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-3">
+                      <span>{t('uploadPage.collectionTopLevelEntries', { count: collectionProgress.totalTopLevelEntries })}</span>
+                      <span>{t('uploadPage.collectionFilesDiscovered', { count: collectionProgress.discoveredFiles })}</span>
+                      <span>{t('uploadPage.collectionFoldersDiscovered', { count: collectionProgress.discoveredDirectories })}</span>
+                    </div>
+                    {collectionProgress.currentDirectoryName && (
+                      <p className="mt-2 text-xs text-slate-500">
+                        {t('uploadPage.collectionCurrentDirectory', { name: collectionProgress.currentDirectoryName })}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
 
           {localItems.length === 0 && !isExistingDataset ? (
             <div className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8 bg-slate-50/50 rounded-2xl sm:rounded-3xl m-2 sm:m-4 border border-slate-100">
@@ -1073,11 +1150,7 @@ export default function RegisterPage() {
                 onDrop={async e => {
                   e.preventDefault()
                   setIsDragging(false)
-                  const result = await collectItemsFromDataTransfer(e.dataTransfer)
-                  if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                    toastError(t('uploadPage.skippedUnsupportedFiles', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '', extensions: ALL_EXTENSIONS.join(', ') }))
-                  }
-                  await processCollectionResult(result)
+                  await handleCollectedDrop(e.dataTransfer, 'uploadPage.skippedUnsupportedFiles')
                 }}
                 onClick={supportsNativePicker ? handleLocalPathSelect : undefined}
               >
@@ -1249,11 +1322,7 @@ export default function RegisterPage() {
                     onDrop={async e => {
                       e.preventDefault()
                       setIsDragging(false)
-                      const result = await collectItemsFromDataTransfer(e.dataTransfer)
-                      if (result.unsupportedFileNames && result.unsupportedFileNames.length > 0) {
-                        toastError(t('uploadPage.skippedUnsupportedFilesShort', { count: result.unsupportedFileNames.length, files: result.unsupportedFileNames.slice(0, 3).join(', '), more: result.unsupportedFileNames.length > 3 ? '...' : '' }))
-                      }
-                      await processCollectionResult(result)
+                      await handleCollectedDrop(e.dataTransfer, 'uploadPage.skippedUnsupportedFilesShort')
                     }}
                   >
                   {isDragging && (
@@ -1618,7 +1687,7 @@ export default function RegisterPage() {
                     </Button>
                     <Button
                       onClick={handleUpload}
-                      disabled={readyToUploadCount === 0 && !splitFile}
+                      disabled={isCollecting || (readyToUploadCount === 0 && !splitFile)}
                       className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white flex-1 sm:min-w-[160px] rounded-xl h-10 shadow-sm`}
                     >
                       {isExistingDataset ? (
