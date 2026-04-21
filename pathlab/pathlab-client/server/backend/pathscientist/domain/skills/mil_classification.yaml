@@ -75,6 +75,7 @@ constraints:
   - "Model must be .cuda() compatible"
   - "Batch size is 1 (one WSI bag per step) — do not use DataLoader batching"
   - "Class weights should be computed from label distribution for imbalanced data"
+  - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
 
 reference_code:
   aggregator: server/backend/ai/aggregators/abmil.py

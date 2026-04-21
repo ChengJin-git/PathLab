@@ -122,6 +122,15 @@ Follow this error recovery process:
 - Do not delete or overwrite input data files — they may be read-only.
 - Do not install packages with pip unless absolutely necessary — check available packages first.
 
+## Workflow policy
+
+- To record an iteration, ALWAYS run the experiment through the
+  `run_experiment` tool, then call `ratchet_commit` (on improvement)
+  or `ratchet_revert` (on failure). Never call ratchet_commit /
+  ratchet_revert directly after `python script.py` via terminal —
+  the evidence store will have nothing to capture and the iteration
+  will be flagged as missing evidence.
+
 {% if skill_constraints %}
 ## Skill Constraints
 

@@ -140,3 +140,83 @@ def test_system_prompt_includes_guidance():
     )
 
     assert "X-Guidance" in rendered
+
+
+def test_system_prompt_includes_run_experiment_workflow_policy():
+    """The system prompt must carry an explicit workflow-policy block telling
+    the agent to execute iterations through ``run_experiment`` before
+    ``ratchet_commit`` / ``ratchet_revert``. Pairs with the tool-level gate
+    added in 57231463 / f5208311 — instruction-level guidance catches the
+    bypass before the tool-level refusal fires (evidence store would have
+    nothing to capture if the agent ran ``python script.py`` via terminal
+    and then called ratchet_commit directly).
+    """
+    import jinja2
+
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(_PROMPT_FILE.parent)),
+        keep_trailing_newline=True,
+    )
+    template = env.get_template(_PROMPT_FILE.name)
+    rendered = template.render(
+        primary_metric="auc",
+        max_iterations=5,
+        research_question="",
+        skill_constraints="",
+        skill_extractor_guidance="",
+        environment_context="",
+    )
+
+    # Look for a workflow-policy section (heading) — distinct from the
+    # incidental appearance of these tool names in the tools table. The
+    # policy must call out the exact anti-pattern ("python ... ratchet_commit").
+    assert "Workflow policy" in rendered, (
+        "System prompt must contain a 'Workflow policy' section so the "
+        "run_experiment-before-commit rule lives somewhere the agent can "
+        "find it as a rule (not just a tool description)."
+    )
+
+    # The policy block must name both tools AND the ratchet_revert counterpart
+    # so the agent knows the rule covers the failure branch too.
+    assert "run_experiment" in rendered
+    assert "ratchet_commit" in rendered
+    assert "ratchet_revert" in rendered
+
+    # Find the Workflow policy block and check all three tools live inside it
+    # — guards against someone removing the policy while leaving the heading.
+    policy_idx = rendered.index("Workflow policy")
+    # Take the next ~600 chars as the block content (the policy is short).
+    block = rendered[policy_idx : policy_idx + 600]
+    assert "run_experiment" in block, (
+        "run_experiment must appear inside the Workflow policy block, not "
+        "only in the tools table. Got block:\n" + block
+    )
+    assert "ratchet_commit" in block, (
+        "ratchet_commit must appear inside the Workflow policy block."
+    )
+
+
+@pytest.mark.parametrize(
+    "skill_yaml",
+    ["patch_classification.yaml", "mil_classification.yaml", "feature_extraction.yaml"],
+)
+def test_skill_has_run_experiment_constraint(skill_yaml):
+    """Each of the three training-capable skills must carry a constraint
+    line reminding the agent to execute training through ``run_experiment``
+    (so evidence is captured) rather than calling ``python`` directly via
+    terminal and then ratchet_commit-ing a run that left no evidence.
+    """
+    skill = Skill.from_yaml(_SKILLS_DIR / skill_yaml)
+
+    out = skill.get_constraints_prompt()
+
+    assert "run_experiment" in out, (
+        f"{skill_yaml} constraints must mention run_experiment so the agent "
+        f"sees the workflow rule from the skill-specific constraints block "
+        f"in addition to the global system-prompt policy. Got:\n{out}"
+    )
+    assert "ratchet_commit" in out, (
+        f"{skill_yaml} constraints must mention ratchet_commit so the skill "
+        f"block names the same two tools as the system-prompt policy. "
+        f"Got:\n{out}"
+    )

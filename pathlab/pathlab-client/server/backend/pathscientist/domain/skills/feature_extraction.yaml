@@ -87,10 +87,12 @@ constraints:
   - "Must save extraction_meta.json and metrics.json in output_dir"
   - "Must use torch.no_grad() during extraction (frozen encoder, no training)"
   - "Must handle GPU memory: process patches in batches"
+  - "Default to a pathology foundation model (UNI2/CONCH/Virchow2/H-Optimus-1/GPFM) — do NOT pick ImageNet ResNet50/ViT-L/16 as the primary extractor; they are ablation-only"
   - "Use PathLab's TissueSegmenter for tissue detection (not simple thresholding)"
   - "Use WSITiler for coordinate generation (supports MPP-aware auto-sizing)"
   - "Coordinates saved as HDF5 with preprocessing params in attrs"
   - "Script must have extract() function or if __name__ == '__main__' entry point"
+  - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
 
 reference_code:
   tissue_segmenter: common/preprocessing/tiling.py
@@ -103,25 +105,46 @@ reference_code:
   pathlab_trainer: server/backend/ai/tasks/wsi_classification/trainer.py
 
 extractors_available:
-  - {name: ResNet50, dim: 2048, size: 224, origin: ImageNet}
-  - {name: UNI, dim: 1024, size: 224, origin: "Mahmood Lab"}
-  - {name: UNI2, dim: 1536, size: 224, origin: "Mahmood Lab"}
-  - {name: CONCH, dim: 512, size: 224, origin: "Mahmood Lab"}
-  - {name: "CONCH 1.5", dim: 512, size: 224, origin: "Mahmood Lab"}
-  - {name: Virchow, dim: 1280, size: 224, origin: "Paige AI"}
-  - {name: Virchow2, dim: 1280, size: 224, origin: "Paige AI"}
-  - {name: PLIP, dim: 512, size: 224, origin: "James Zou Group"}
-  - {name: Phikon, dim: 1024, size: 224, origin: "Owkin"}
-  - {name: Phikon2, dim: 1024, size: 224, origin: "Owkin"}
-  - {name: mSTAR, dim: 1024, size: 224, origin: "HKUST Smart Lab"}
-  - {name: GPFM, dim: 1024, size: 224, origin: "HKUST Smart Lab"}
-  - {name: "H-Optimus-0", dim: 1536, size: 224, origin: "Bioptimus"}
-  - {name: "H-Optimus-1", dim: 1536, size: 224, origin: "Bioptimus"}
-  - {name: SmartCCS, dim: 1024, size: 224, origin: "HKUST Smart Lab"}
-  - {name: SmartCyto, dim: 768, size: 224, origin: "HKUST Smart Lab"}
-  - {name: CytoFM, dim: 768, size: 224, origin: "HKUST Smart Lab"}
-  - {name: PathoCLIP, dim: 512, size: 224, origin: "Hong Bu Lab"}
-  - {name: OpenMidnight, dim: 1536, size: 224, origin: "SophontAI"}
-  - {name: ViT-L/16, dim: 1024, size: 224, origin: ImageNet}
+  pathology_foundation:           # General histology foundation models — preferred default
+    - {name: UNI,           dim: 1024, size: 224, origin: "Mahmood Lab"}
+    - {name: UNI2,          dim: 1536, size: 224, origin: "Mahmood Lab"}
+    - {name: CONCH,         dim: 512,  size: 224, origin: "Mahmood Lab"}
+    - {name: "CONCH 1.5",   dim: 512,  size: 224, origin: "Mahmood Lab"}
+    - {name: Virchow,       dim: 1280, size: 224, origin: "Paige AI"}
+    - {name: Virchow2,      dim: 1280, size: 224, origin: "Paige AI"}
+    - {name: Phikon,        dim: 1024, size: 224, origin: "Owkin"}
+    - {name: Phikon2,       dim: 1024, size: 224, origin: "Owkin"}
+    - {name: mSTAR,         dim: 1024, size: 224, origin: "HKUST Smart Lab"}
+    - {name: GPFM,          dim: 1024, size: 224, origin: "HKUST Smart Lab"}
+    - {name: "H-Optimus-0", dim: 1536, size: 224, origin: "Bioptimus"}
+    - {name: "H-Optimus-1", dim: 1536, size: 224, origin: "Bioptimus"}
+    - {name: OpenMidnight,  dim: 1536, size: 224, origin: "SophontAI"}
+  vision_language:                # Vision-language pretrained — for zero-shot or text-aware tasks
+    - {name: PLIP,          dim: 512,  size: 224, origin: "James Zou Group"}
+    - {name: PathoCLIP,     dim: 512,  size: 224, origin: "Hong Bu Lab"}
+  pathology_specialized:          # Domain-specific FMs — pick only when task matches domain
+    - {name: SmartCCS,      dim: 1024, size: 224, origin: "HKUST Smart Lab", domain: "cervical cancer screening"}
+    - {name: SmartCyto,     dim: 768,  size: 224, origin: "HKUST Smart Lab", domain: "cytology"}
+    - {name: CytoFM,        dim: 768,  size: 224, origin: "HKUST Smart Lab", domain: "cytology"}
+  imagenet_baseline:              # ImageNet-pretrained — only for ablation / comparison
+    - {name: ResNet50,      dim: 2048, size: 224, origin: "ImageNet"}
+    - {name: "ViT-L/16",    dim: 1024, size: 224, origin: "ImageNet"}
 
-knowhow_tags: [feature_extraction, WSI, tiling, preprocessing, encoder, backbone, CLAM, tissue_segmentation]
+default_extractor: UNI2
+
+extractor_selection_guidance: >
+  By default, pick a pathology_foundation extractor (UNI2 / CONCH / Virchow2 /
+  H-Optimus-1 / GPFM are strong general-purpose choices). Pathology FMs
+  consistently outperform ImageNet backbones on histology tasks.
+
+  Use vision_language extractors (PLIP, PathoCLIP) only when the task needs
+  text alignment (zero-shot classification, retrieval, captioning).
+
+  Use pathology_specialized only when the task explicitly matches their domain:
+    - cervical cancer screening → SmartCCS
+    - cytology smears → SmartCyto / CytoFM
+
+  Use imagenet_baseline (ResNet50, ViT-L/16) ONLY as ablation baselines for
+  comparison. Never select an ImageNet backbone as the primary extractor.
+
+knowhow_tags: [feature_extraction, WSI, tiling, preprocessing, encoder, backbone, foundation_model, UNI, CONCH, Virchow, Phikon, H-Optimus, GPFM, mSTAR, CLAM, tissue_segmentation]
