@@ -342,5 +342,239 @@ def test_revert_observation_is_actionable(tmp_path):
         cleanup()
 
 
+# ---------- Fix A (2026-04-21 post-fix review, Finding 1): stale last_experiment ----------
+#
+# The recent tool-gate only checks that *some* ``deps.last_experiment`` exists.
+# It does not verify that this experiment record matches the current
+# ``iteration_state.last_run_id``. Concrete local reproduction from the review:
+#
+#   deps.last_experiment["run_id"] = "run_old1111"
+#   deps.iteration_state.last_run_id = "run_new2222"
+#   edited train.py
+#   called RatchetCommitExecutor(...)
+#
+# Observed: tracker recorded run_new2222, evidence landed under
+# .evidence/runs/run_old1111/ — tracker vs. evidence lineage split.
+#
+# The fix: refuse ratchet when ``last_experiment["run_id"]`` and
+# ``iteration_state.last_run_id`` are both populated but differ. ``external=True``
+# bypasses the mismatch gate (external runs don't carry a matching iteration
+# state run_id, they went through their own flow).
+
+
+def test_commit_refused_when_last_experiment_run_id_is_stale(tmp_path):
+    """Reproduces the review's Finding 1 scenario: last_experiment["run_id"]
+    differs from iteration_state.last_run_id — commit must refuse so evidence
+    and tracker don't split lineage."""
+    last_experiment = {
+        "run_id": "run_old1111",
+        "run_dir": "output/runs/run_old1111",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.80},
+        "duration": 1.0,
+        "started_at": "2026-04-18T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        # Simulate that a newer run_experiment has bumped the canonical run_id
+        # without refreshing last_experiment.
+        deps.iteration_state.last_run_id = "run_new2222"
+
+        ws = deps.workspace
+        history_before = ws.get_history()
+        tracker_len_before = len(deps.tracker.history)
+
+        # Stage an uncommitted change so the only reason a commit would
+        # fail (or succeed!) is the stale-run_id gate.
+        ws.write_file("train.py", "print('changed')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(RatchetCommitAction(message="x"))
+
+        assert obs.commit_hash == "", (
+            f"stale-run_id gate must refuse commit; got commit_hash={obs.commit_hash!r}"
+        )
+        assert obs.content, "observation must carry explanatory content"
+        text = obs.content[0].text
+        assert text.startswith(
+            "\u274c ratchet_commit refused: last_experiment is stale"
+        ), (
+            f"observation must start with the canonical stale-gate message; got: {text!r}"
+        )
+        assert "run_old1111" in text, (
+            f"observation must mention the stale last_experiment run_id; got: {text!r}"
+        )
+        assert "run_new2222" in text, (
+            f"observation must mention the current iteration_state run_id; got: {text!r}"
+        )
+
+        # Workspace history unchanged — no commit was created.
+        history_after = ws.get_history()
+        assert history_after == history_before, (
+            f"gate must not create a commit; "
+            f"before={history_before!r} after={history_after!r}"
+        )
+        # Tracker history unchanged — no record appended.
+        assert len(deps.tracker.history) == tracker_len_before, (
+            f"gate must not record a tracker entry; "
+            f"before={tracker_len_before} after={len(deps.tracker.history)}"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_allowed_when_last_experiment_matches_iteration_state(tmp_path):
+    """Happy path — last_experiment["run_id"] matches
+    iteration_state.last_run_id — commit proceeds normally."""
+    last_experiment = {
+        "run_id": "run_abcdef01",
+        "run_dir": "output/runs/run_abcdef01",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.87},
+        "duration": 1.0,
+        "started_at": "2026-04-18T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        # run_ids match — typical state after RunExperimentTool completes.
+        deps.iteration_state.last_run_id = "run_abcdef01"
+
+        ws = deps.workspace
+        tracker_len_before = len(deps.tracker.history)
+
+        ws.write_file("train.py", "print('improved')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(
+            RatchetCommitAction(message="x", metrics={"auc": 0.87})
+        )
+
+        assert obs.commit_hash, (
+            f"matched run_ids must unlock the commit; "
+            f"got commit_hash={obs.commit_hash!r}, content={obs.content!r}"
+        )
+        # Tracker history grew by exactly one entry.
+        assert len(deps.tracker.history) == tracker_len_before + 1, (
+            f"commit must append exactly one tracker entry; "
+            f"before={tracker_len_before} after={len(deps.tracker.history)}"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_bypassed_on_stale_when_external_set(tmp_path):
+    """With ``external=True`` the mismatch gate is bypassed — documented
+    escape hatch for commits that didn't go through run_experiment."""
+    last_experiment = {
+        "run_id": "run_old1111",
+        "run_dir": "output/runs/run_old1111",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.80},
+        "duration": 1.0,
+        "started_at": "2026-04-18T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_new2222"
+
+        ws = deps.workspace
+        ws.write_file("train.py", "print('external')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(RatchetCommitAction(message="x", external=True))
+
+        assert obs.commit_hash, (
+            f"external=True must bypass the stale-run_id gate; "
+            f"got commit_hash={obs.commit_hash!r}, content={obs.content!r}"
+        )
+    finally:
+        cleanup()
+
+
+def test_revert_refused_when_last_experiment_run_id_is_stale(tmp_path):
+    """Symmetric: revert must also refuse the stale-run_id shape so a failed
+    experiment's evidence doesn't land under the wrong run_id."""
+    last_experiment = {
+        "run_id": "run_old1111",
+        "run_dir": "output/runs/run_old1111",
+        "exit_code": 1,
+        "stdout": "",
+        "stderr": "RuntimeError: boom",
+        "metrics": {},
+        "duration": 0.5,
+        "started_at": "2026-04-18T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_new2222"
+
+        ws = deps.workspace
+        # Stage uncommitted change that WOULD be reverted if the gate didn't fire.
+        ws.write_file("train.py", "print('broken')\n")
+        head_before = ws.get_current_commit()
+        train_contents_before = (ws.root / "train.py").read_text(encoding="utf-8")
+        tracker_len_before = len(deps.tracker.history)
+
+        executor = RatchetRevertExecutor(ws, session_id=session_id)
+        obs = executor(RatchetRevertAction(reason="x"))
+
+        assert obs.reverted_to == "", (
+            f"stale-run_id gate must refuse revert; got reverted_to={obs.reverted_to!r}"
+        )
+        assert obs.content, "observation must carry explanatory content"
+        text = obs.content[0].text
+        assert text.startswith(
+            "\u274c ratchet_revert refused: last_experiment is stale"
+        ), (
+            f"observation must start with the canonical stale-gate message; got: {text!r}"
+        )
+        assert "run_old1111" in text, (
+            f"observation must mention the stale last_experiment run_id; got: {text!r}"
+        )
+        assert "run_new2222" in text, (
+            f"observation must mention the current iteration_state run_id; got: {text!r}"
+        )
+
+        # Workspace state unchanged — the revert did NOT fire.
+        head_after = ws.get_current_commit()
+        assert head_after == head_before, (
+            f"gate must not change HEAD; before={head_before!r} after={head_after!r}"
+        )
+        train_contents_after = (ws.root / "train.py").read_text(encoding="utf-8")
+        assert train_contents_after == train_contents_before, (
+            "gate must not revert the uncommitted change; "
+            f"before={train_contents_before!r} after={train_contents_after!r}"
+        )
+        # Tracker history unchanged.
+        assert len(deps.tracker.history) == tracker_len_before, (
+            f"gate must not record a tracker entry; "
+            f"before={tracker_len_before} after={len(deps.tracker.history)}"
+        )
+    finally:
+        cleanup()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

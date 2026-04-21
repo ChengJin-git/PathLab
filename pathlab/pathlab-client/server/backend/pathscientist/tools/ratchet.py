@@ -304,6 +304,38 @@ class RatchetCommitExecutor(ToolExecutor):
                             "external=true (but prefer running through run_experiment)."
                         ))],
                     )
+
+                # Stale last_experiment gate (Fix A, 2026-04-21 post-fix review):
+                # refuse if last_experiment["run_id"] is present but differs from
+                # iteration_state.last_run_id. Without this check the evidence
+                # collector would snapshot the older run against the newer
+                # tracker run_id, splitting lineage. The canonical repro in the
+                # review: last_experiment.run_id = "run_old1111",
+                # iteration_state.last_run_id = "run_new2222" — tracker records
+                # the new id, evidence lands under the old id.
+                # When either side is blank we skip the match check (legacy
+                # entries pre-dating Fix 1 may have no run_id; blank
+                # iteration_state.last_run_id just means run_experiment hasn't
+                # set it yet for this iteration).
+                exp_run_id = deps.last_experiment.get("run_id", "")
+                current_run_id = (
+                    deps.iteration_state.last_run_id if deps.iteration_state else ""
+                )
+                if exp_run_id and current_run_id and exp_run_id != current_run_id:
+                    return RatchetCommitObservation(
+                        commit_hash="",
+                        files=self._workspace.list_files(),
+                        content=[TextContent(text=(
+                            f"\u274c ratchet_commit refused: last_experiment is stale.\n"
+                            f"  last_experiment.run_id = {exp_run_id!r}\n"
+                            f"  iteration_state.last_run_id = {current_run_id!r}\n"
+                            f"  The evidence collector would snapshot the older run against\n"
+                            f"  the newer tracker run_id, splitting lineage. Run the current\n"
+                            f"  experiment through run_experiment before committing.\n"
+                            f"  (Or re-call with external=true if you really mean to\n"
+                            f"  commit the mismatch.)"
+                        ))],
+                    )
             except KeyError:
                 pass  # session registry lost — fall through to regular commit
 
@@ -425,6 +457,30 @@ class RatchetRevertExecutor(ToolExecutor):
                             "record. If the experiment was run externally and you really want "
                             "to revert anyway, re-call ratchet_revert with external=true (but "
                             "prefer running through run_experiment)."
+                        ))],
+                    )
+
+                # Stale last_experiment gate (Fix A, 2026-04-21 post-fix review):
+                # symmetric to the commit gate above. Without this check, a
+                # revert would snapshot the older run's code/diff/stderr
+                # against the newer tracker run_id, splitting lineage the same
+                # way a stale commit does.
+                exp_run_id = deps.last_experiment.get("run_id", "")
+                current_run_id = (
+                    deps.iteration_state.last_run_id if deps.iteration_state else ""
+                )
+                if exp_run_id and current_run_id and exp_run_id != current_run_id:
+                    return RatchetRevertObservation(
+                        reverted_to="",
+                        content=[TextContent(text=(
+                            f"\u274c ratchet_revert refused: last_experiment is stale.\n"
+                            f"  last_experiment.run_id = {exp_run_id!r}\n"
+                            f"  iteration_state.last_run_id = {current_run_id!r}\n"
+                            f"  The evidence collector would snapshot the older run against\n"
+                            f"  the newer tracker run_id, splitting lineage. Run the current\n"
+                            f"  experiment through run_experiment before reverting.\n"
+                            f"  (Or re-call with external=true if you really mean to\n"
+                            f"  revert the mismatch.)"
                         ))],
                     )
             except KeyError:
