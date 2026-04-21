@@ -27,6 +27,11 @@ export default defineConfig({
   renderer: {
     root: 'src/renderer',
     base: './',
+    resolve: {
+      alias: {
+        '@renderer': resolve(__dirname, 'src/renderer/src')
+      }
+    },
     server: {
       host: '0.0.0.0'
     },

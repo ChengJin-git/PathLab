@@ -8,6 +8,11 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig({
   root: '.',
   base: '/',
+  resolve: {
+    alias: {
+      '@renderer': resolve(__dirname, 'src')
+    }
+  },
   plugins: [
     react(),
     VitePWA({
@@ -58,4 +63,3 @@ export default defineConfig({
     port: 5173
   }
 })
-
