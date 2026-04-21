@@ -297,11 +297,9 @@ class RatchetCommitExecutor(ToolExecutor):
                         files=self._workspace.list_files(),
                         content=[TextContent(text=(
                             "\u274c ratchet_commit requires a preceding run_experiment.\n"
-                            "  Run the experiment through the run_experiment tool first so "
-                            "metrics, artifacts, and code state can be captured in the "
-                            "evidence store. If the experiment was run externally and you "
-                            "really want to commit anyway, re-call ratchet_commit with "
-                            "external=true (but prefer running through run_experiment)."
+                            "  Run the experiment through the run_experiment tool so "
+                            "metrics, artifacts, stdout, stderr, and code state are "
+                            "captured in the evidence store. Then retry ratchet_commit."
                         ))],
                     )
 
@@ -331,9 +329,7 @@ class RatchetCommitExecutor(ToolExecutor):
                             f"  iteration_state.last_run_id = {current_run_id!r}\n"
                             f"  The evidence collector would snapshot the older run against\n"
                             f"  the newer tracker run_id, splitting lineage. Run the current\n"
-                            f"  experiment through run_experiment before committing.\n"
-                            f"  (Or re-call with external=true if you really mean to\n"
-                            f"  commit the mismatch.)"
+                            f"  experiment through run_experiment before committing."
                         ))],
                     )
             except KeyError:
@@ -452,11 +448,9 @@ class RatchetRevertExecutor(ToolExecutor):
                         reverted_to="",
                         content=[TextContent(text=(
                             "\u274c ratchet_revert requires a preceding run_experiment.\n"
-                            "  Running the failed experiment through run_experiment first lets "
-                            "evidence capture stderr, error_type, and error_hint for the revert "
-                            "record. If the experiment was run externally and you really want "
-                            "to revert anyway, re-call ratchet_revert with external=true (but "
-                            "prefer running through run_experiment)."
+                            "  Running the failed experiment through run_experiment lets "
+                            "evidence capture stderr, error_type, and error_hint for the "
+                            "revert record. Then retry ratchet_revert."
                         ))],
                     )
 
@@ -478,9 +472,7 @@ class RatchetRevertExecutor(ToolExecutor):
                             f"  iteration_state.last_run_id = {current_run_id!r}\n"
                             f"  The evidence collector would snapshot the older run against\n"
                             f"  the newer tracker run_id, splitting lineage. Run the current\n"
-                            f"  experiment through run_experiment before reverting.\n"
-                            f"  (Or re-call with external=true if you really mean to\n"
-                            f"  revert the mismatch.)"
+                            f"  experiment through run_experiment before reverting."
                         ))],
                     )
             except KeyError:

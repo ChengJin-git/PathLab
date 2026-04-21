@@ -182,9 +182,11 @@ def test_commit_allowed_when_last_experiment_present(tmp_path):
 
 
 def test_commit_observation_is_actionable(tmp_path):
-    """The refusal message must name both the required tool (``run_experiment``)
-    and the documented escape hatch (``external=true``) so the agent can
-    self-recover without reading the plan."""
+    """The refusal message must point the agent at ``run_experiment`` and
+    must NOT advertise the ``external=true`` escape hatch in agent-facing
+    text: we don't want the LLM to reach for the bypass as its first
+    recovery move. The escape hatch stays documented on the action schema
+    only (for human / tool-author reference)."""
     session_id, deps, cleanup = _register_session(tmp_path, last_experiment=None)
     try:
         ws = deps.workspace
@@ -198,8 +200,10 @@ def test_commit_observation_is_actionable(tmp_path):
         assert "run_experiment" in text, (
             f"observation must point at run_experiment; got: {text!r}"
         )
-        assert "external=true" in text, (
-            f"observation must document the external=true escape hatch; got: {text!r}"
+        assert "external=true" not in text, (
+            f"refusal text must NOT advertise external=true escape hatch "
+            f"(keeps the bypass off the agent's primary recovery path); "
+            f"got: {text!r}"
         )
     finally:
         cleanup()
@@ -319,9 +323,10 @@ def test_revert_allowed_when_last_experiment_present(tmp_path):
 
 
 def test_revert_observation_is_actionable(tmp_path):
-    """The refusal message must name both the required tool (``run_experiment``)
-    and the documented escape hatch (``external=true``) so the agent can
-    self-recover without reading the plan."""
+    """The refusal message must point the agent at ``run_experiment`` and
+    must NOT advertise the ``external=true`` escape hatch. Symmetric to
+    the commit-side test: we don't want the LLM reaching for the bypass
+    as its first recovery move."""
     session_id, deps, cleanup = _register_session(tmp_path, last_experiment=None)
     try:
         ws = deps.workspace
@@ -335,8 +340,10 @@ def test_revert_observation_is_actionable(tmp_path):
         assert "run_experiment" in text, (
             f"observation must point at run_experiment; got: {text!r}"
         )
-        assert "external=true" in text, (
-            f"observation must document the external=true escape hatch; got: {text!r}"
+        assert "external=true" not in text, (
+            f"refusal text must NOT advertise external=true escape hatch "
+            f"(keeps the bypass off the agent's primary recovery path); "
+            f"got: {text!r}"
         )
     finally:
         cleanup()

@@ -1,7 +1,6 @@
 """PathScientist agent assembly — creates an OpenHands SDK Agent with custom tools."""
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from pydantic import SecretStr
@@ -16,7 +15,12 @@ from openhands.sdk.tool import Tool, register_tool
 from openhands.tools.terminal import TerminalTool
 from openhands.tools.file_editor import FileEditorTool
 
-from .config import PathScientistConfig
+from .config import (
+    PathScientistConfig,
+    resolve_llm_api_key,
+    resolve_llm_base_url,
+    resolve_required_llm_model,
+)
 from .context import build_environment_context
 from .knowledge import build_domain_skills
 from .runtime.session import PathScientistSession
@@ -33,6 +37,38 @@ from .tools.workspace_info import GetWorkspaceInfoTool
 # Register tool classes ONCE (idempotent — SDK warns on duplicate but doesn't crash).
 # Each tool resolves session-specific deps via session_id param at create() time.
 _tools_registered = False
+
+
+def preload_all_extractor_guidance() -> str:
+    """Return a combined extractor-guidance block covering every registered skill.
+
+    Used by research mode (no ``config.skill_name`` pre-specified) so the agent
+    sees pathology-FM preferences for every skill grounding might pick, before
+    grounding runs. Returns an empty string if no skill exposes extractor
+    guidance, or if the registry fails to load.
+    """
+    try:
+        from .domain.skills import registry as _skill_registry
+    except Exception:
+        return ""
+    try:
+        parts: list[str] = []
+        for skill in _skill_registry.list_skills():
+            guidance = skill.get_extractor_guidance_prompt()
+            if guidance.strip():
+                parts.append(f"### {skill.name}\n{guidance.strip()}")
+        if not parts:
+            return ""
+        return (
+            "The orchestrator will pick one of these skills at grounding time. "
+            "Regardless of which skill is selected, default to pathology "
+            "foundation models (UNI/UNI2/CONCH/Virchow2/H-Optimus-1/GPFM/"
+            "Phikon2/mSTAR) for histopathology tasks; ImageNet backbones "
+            "(ResNet50, ViT-L/16) are ablation-only.\n\n"
+            + "\n\n".join(parts)
+        )
+    except Exception:
+        return ""
 
 
 def _ensure_tools_registered():
@@ -53,42 +89,50 @@ def _ensure_tools_registered():
 def create_agent(
     config: PathScientistConfig,
     research_question: str = "",
+    session: PathScientistSession | None = None,
 ) -> tuple[Agent, Workspace, MetricsTracker, "PathScientistSession"]:
     """Create a PathScientist agent with all custom tools wired up.
 
-    Returns (agent, workspace, metrics_tracker) so the caller can
-    access workspace and metrics after the agent finishes.
+    If ``session`` is provided, reuse it (for resume). Otherwise create a new one.
+    Returns (agent, workspace, metrics_tracker, session).
     """
-    # Create session with unique workspace
-    session = config.create_session(research_question)
+    # Use provided session or create new
+    if session is None:
+        session = config.create_session(research_question)
     session_id = session.session_id
     workspace_path = session.workspace_dir
 
-    # Create sandbox if configured
-    sandbox = None
-    sandbox_mode = config.sandbox_mode
-    if sandbox_mode in ("apptainer", "auto"):
-        from .runtime.sandbox import ApptainerSandbox
-        if sandbox_mode == "apptainer" or ApptainerSandbox.check_available():
-            sandbox = ApptainerSandbox(
-                image=config.sandbox_image,
-                gpu_ids=config.gpu_ids,
-                memory_limit=config.sandbox_memory_limit,
-                cpus=config.sandbox_cpus,
-            )
+    # Only create runtime components if not already registered
+    try:
+        deps = get_session(session_id)
+        workspace = deps.workspace
+        tracker = deps.tracker
+    except KeyError:
+        # Create sandbox if configured
+        sandbox = None
+        sandbox_mode = config.sandbox_mode
+        if sandbox_mode in ("apptainer", "auto"):
+            from .runtime.sandbox import ApptainerSandbox
+            if sandbox_mode == "apptainer" or ApptainerSandbox.check_available():
+                sandbox = ApptainerSandbox(
+                    image=config.sandbox_image,
+                    gpu_ids=config.gpu_ids,
+                    memory_limit=config.sandbox_memory_limit,
+                    cpus=config.sandbox_cpus,
+                )
 
-    # Create runtime components
-    workspace = Workspace(workspace_path, sandbox=sandbox)
-    tracker = MetricsTracker(primary_metric=config.primary_metric)
+        # Create runtime components
+        workspace = Workspace(workspace_path, sandbox=sandbox)
+        tracker = MetricsTracker(primary_metric=config.primary_metric)
 
-    from .runtime.iteration_state import IterationState
-    iteration_state = IterationState(max_iterations=config.max_iterations)
+        from .runtime.iteration_state import IterationState
+        iteration_state = IterationState(max_iterations=config.max_iterations)
 
-    # Register session deps so tools can resolve via session_id
-    register_session(session_id, SessionDeps(
-        workspace=workspace, tracker=tracker, config=config,
-        iteration_state=iteration_state,
-    ))
+        # Register session deps so tools can resolve via session_id
+        register_session(session_id, SessionDeps(
+            workspace=workspace, tracker=tracker, config=config,
+            iteration_state=iteration_state,
+        ))
 
     # Register tool classes once (not per-session lambdas)
     _ensure_tools_registered()
@@ -103,7 +147,17 @@ def create_agent(
         "research_question": research_question,
     }
 
-    # If skill is pre-specified, load it directly (backward compat)
+    # Skill content injection.
+    # Two paths:
+    #   1. CLI / code mode: config.skill_name is pre-specified. Inject that
+    #      skill's constraints + guidance; set its template as the baseline.
+    #   2. Research mode: orchestrator's grounding stage picks the skill
+    #      AFTER agent creation. To guarantee the agent sees pathology-FM
+    #      preferences regardless of which skill grounding ultimately selects,
+    #      preload extractor guidance from EVERY skill that provides it.
+    #      The extra ~1-3 KB is negligible against the ~100K prompt budget
+    #      and avoids a mid-stream prompt rebuild that OpenHands does not
+    #      support cleanly.
     skill_constraints = ""
     skill_extractor_guidance = ""
     if config.skill_name:
@@ -116,6 +170,8 @@ def create_agent(
             workspace.set_baseline({"train.py": template})
         except Exception:
             pass
+    else:
+        skill_extractor_guidance = preload_all_extractor_guidance()
 
     prompt_kwargs["skill_constraints"] = skill_constraints
     prompt_kwargs["skill_extractor_guidance"] = skill_extractor_guidance
@@ -136,23 +192,23 @@ def create_agent(
 
     # Build LLM config
     llm_kwargs = {}
-    if config.llm_model:
-        llm_kwargs["model"] = config.llm_model
-    else:
-        llm_kwargs["model"] = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
+    llm_kwargs["model"] = resolve_required_llm_model(
+        config.llm_model,
+        component="the PathScientist agent",
+    )
 
-    if config.llm_api_key:
-        llm_kwargs["api_key"] = SecretStr(config.llm_api_key)
-    elif os.environ.get("LLM_API_KEY"):
-        llm_kwargs["api_key"] = SecretStr(os.environ["LLM_API_KEY"])
+    api_key = resolve_llm_api_key(config.llm_api_key)
+    if api_key:
+        llm_kwargs["api_key"] = SecretStr(api_key)
 
-    if config.llm_base_url:
-        llm_kwargs["base_url"] = config.llm_base_url
-    elif os.environ.get("LLM_BASE_URL"):
-        llm_kwargs["base_url"] = os.environ["LLM_BASE_URL"]
+    base_url = resolve_llm_base_url(config.llm_base_url)
+    if base_url:
+        llm_kwargs["base_url"] = base_url
 
     llm_kwargs["temperature"] = config.llm_temperature
     llm_kwargs["usage_id"] = "agent"
+    llm_kwargs["log_completions"] = True
+    llm_kwargs["log_completions_folder"] = str(session.workspace_dir / "logs" / "completions")
     llm = LLM(**llm_kwargs)
 
     # Build condenser
@@ -170,7 +226,7 @@ def create_agent(
             Tool(name=TerminalTool.name),
             Tool(name=FileEditorTool.name),
             Tool(name="RunExperimentTool", params=session_params),
-            Tool(name="ValidateScriptTool"),
+            Tool(name="ValidateScriptTool", params=session_params),
             Tool(name="RatchetCommitTool", params=session_params),
             Tool(name="RatchetRevertTool", params=session_params),
             Tool(name="GetMetricsTool", params=session_params),
@@ -193,8 +249,13 @@ def create_conversation(
     agent: Agent,
     workspace: Workspace,
     session: PathScientistSession,
+    visualizer=None,
 ):
-    """Create a LocalConversation with OpenHands persistence enabled."""
+    """Create a LocalConversation with OpenHands persistence enabled.
+
+    Pass visualizer=DefaultConversationVisualizer for real-time CLI output,
+    or None for silent mode (batch/test).
+    """
     from openhands.sdk.conversation import LocalConversation
     from .persistence.state_bridge import update_agent_state
 
@@ -204,7 +265,7 @@ def create_conversation(
         persistence_dir=str(session.persistence_root),
         conversation_id=session.conversation_id,
         stuck_detection=True,
-        visualizer=None,
+        visualizer=visualizer,
         delete_on_close=False,
         tags={
             "project": "pathscientist",
@@ -220,6 +281,7 @@ def create_conversation(
         conversation,
         workspace_dir=str(session.workspace_dir),
         output_dir=str(session.output_dir),
+        persistence_root=str(session.persistence_root),
         research_question=session.research_question,
         primary_metric=deps.config.primary_metric if deps.config else "",
     )

@@ -275,3 +275,74 @@ def test_skill_has_run_experiment_constraint(skill_yaml):
         f"block names the same two tools as the system-prompt policy. "
         f"Got:\n{out}"
     )
+
+
+def test_preload_all_extractor_guidance_covers_pathology_fms():
+    """Research mode (no ``config.skill_name`` set) can't know which skill the
+    orchestrator's grounding stage will pick, so ``agent.preload_all_extractor_guidance``
+    must concatenate extractor guidance from every registered skill — the
+    LLM needs to see ``UNI2`` / ``CONCH`` / ablation markers *before* it
+    writes ``train.py``, not after.
+
+    Motivated by session_f5a4c0d2a560 (2026-04-21) which selected
+    ``ViT-Large-CLIP`` / ``ViT-L-14 datacomp_xl`` — zero pathology FMs —
+    because ``skill_extractor_guidance`` landed in the prompt as ``""``
+    (config.skill_name was empty and no fallback preloaded anything).
+    """
+    from pathscientist.agent import preload_all_extractor_guidance
+
+    out = preload_all_extractor_guidance()
+
+    assert out, "preload must produce a non-empty guidance block for research mode"
+    # The preamble must state the default policy explicitly so the agent does
+    # not have to parse individual skill tiers to get the message.
+    assert "pathology foundation models" in out.lower()
+    # All three canonical pathology FMs from the feature_extraction /
+    # patch_classification skill YAMLs must surface.
+    for fm in ("UNI2", "CONCH", "Virchow2"):
+        assert fm in out, f"{fm} must appear in the preloaded guidance; got:\n{out}"
+    # ImageNet baselines must appear on an ablation-only line so the LLM
+    # cannot read the block as a list of equally-valid options.
+    ablation_lines = [
+        line for line in out.splitlines() if "ablation" in line.lower()
+    ]
+    assert ablation_lines, "Preloaded guidance must carry ablation markers"
+    assert any("ResNet50" in line for line in ablation_lines), (
+        "ResNet50 must appear on an 'ablation only' line in preloaded output"
+    )
+
+
+def test_system_prompt_renders_extractor_guidance_when_constraints_empty():
+    """Review follow-up (2026-04-21): the previous ``{% if skill_constraints %}``
+    gate in ``system_prompt.j2`` swallowed ``skill_extractor_guidance`` whenever
+    ``skill_constraints`` was empty, which is exactly the case in research
+    mode when the orchestrator picks the skill at runtime (agent is created
+    with ``config.skill_name=""`` → ``skill_constraints=""``). The gate must
+    render the extractor guidance independently so the preloaded
+    pathology-FM preferences actually reach the LLM.
+    """
+    import jinja2
+
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(_PROMPT_FILE.parent)),
+        keep_trailing_newline=True,
+    )
+    template = env.get_template(_PROMPT_FILE.name)
+    rendered = template.render(
+        primary_metric="auc",
+        max_iterations=5,
+        research_question="",
+        skill_constraints="",                       # empty — research mode
+        skill_extractor_guidance="FIND-THIS-TOKEN", # must still surface
+        environment_context="",
+    )
+
+    assert "FIND-THIS-TOKEN" in rendered, (
+        "Extractor guidance must render even when skill_constraints is empty. "
+        "The pre-fix j2 template had '{% if skill_constraints %}' wrapping both, "
+        "so research-mode sessions lost the pathology-FM preferences entirely. "
+        "Got rendered output (first 800 chars):\n" + rendered[:800]
+    )
+    # There must be a dedicated heading for the guidance block so the LLM
+    # can key on it, not just raw text dropped at an arbitrary point.
+    assert "Feature Extractor Guidance" in rendered
