@@ -349,6 +349,10 @@ class RatchetCommitTool(ToolDefinition[RatchetCommitAction, RatchetCommitObserva
 class RatchetRevertAction(Action):
     reason: str = Field(default="", description="Why the changes are being reverted.")
     metrics: dict = Field(default_factory=dict, description="Metrics from the failed run (preserved for evidence).")
+    external: bool = Field(
+        default=False,
+        description="See RatchetCommitAction.external.",
+    )
 
 
 class RatchetRevertObservation(Observation):
@@ -366,6 +370,36 @@ class RatchetRevertExecutor(ToolExecutor):
         conversation: "LocalConversation | None" = None,
     ) -> RatchetRevertObservation:
         from ..runtime.workspace import CommitFailed
+
+        # Gate: refuse reverts that were not preceded by run_experiment,
+        # unless the caller explicitly opted into external mode.
+        #
+        # Motivating shape: agent runs ``python train.py`` via ``terminal``,
+        # sees it crash, and calls ``ratchet_revert`` directly — the evidence
+        # collector has no stderr/error_type/error_hint to capture for the
+        # failed run. Mirrors the commit gate (session_b14b074d2268, 2026-04-20).
+        #
+        # The gate fires BEFORE the pre-revert code/diff/untracked capture
+        # below, because that capture makes no sense if we're going to refuse
+        # the call outright.
+        if not action.external and self._session_id:
+            try:
+                from ..runtime.session_registry import get_session
+                deps = get_session(self._session_id)
+                if deps.last_experiment is None:
+                    return RatchetRevertObservation(
+                        reverted_to="",
+                        content=[TextContent(text=(
+                            "\u274c ratchet_revert requires a preceding run_experiment.\n"
+                            "  Running the failed experiment through run_experiment first lets "
+                            "evidence capture stderr, error_type, and error_hint for the revert "
+                            "record. If the experiment was run externally and you really want "
+                            "to revert anyway, re-call ratchet_revert with external=true (but "
+                            "prefer running through run_experiment)."
+                        ))],
+                    )
+            except KeyError:
+                pass  # session registry lost — fall through to regular revert
 
         # Capture failed code state BEFORE reverting workspace
         # so evidence records the attempted code, not the restored baseline
