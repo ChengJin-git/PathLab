@@ -16,6 +16,7 @@ interface BatchRegisterCardProps {
   setBatchScanPath: (path: string) => void
   batchScanResult: ScanDirectoryResponse | null
   batchScanning: boolean
+  batchScanStage: 'idle' | 'initial' | 'refresh' | 'segmentationRefresh'
   batchScanError: string | null
   batchSelectedCount: number
   batchDatasetMode: 'existing' | 'new'
@@ -61,6 +62,7 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   setBatchScanPath,
   batchScanResult,
   batchScanning,
+  batchScanStage,
   batchScanError,
   batchSelectedCount,
   batchDatasetMode,
@@ -147,6 +149,19 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
         </Button>
       </div>
 
+      {batchScanning && batchScanStage === 'initial' && (
+        <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+          <p className="text-sm font-medium text-blue-900">{t('settings.storage.scanInProgressTitle')}</p>
+          <p className="mt-1 text-xs text-blue-700">{t('settings.storage.scanInProgressDescription')}</p>
+        </div>
+      )}
+
+      {batchScanning && batchScanStage !== 'initial' && batchScanResult && (
+        <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="text-sm font-medium text-slate-900">{t('settings.storage.refreshingScanResults')}</p>
+        </div>
+      )}
+
       {batchScanError && (
         <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
           <AlertCircle className="w-4 h-4" />
@@ -157,6 +172,7 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
       {batchScanResult && (
         <BatchScanResults
           batchScanResult={batchScanResult}
+          batchScanStage={batchScanStage}
           batchSelectedCount={batchSelectedCount}
           batchDatasetMode={batchDatasetMode}
           setBatchDatasetMode={setBatchDatasetMode}

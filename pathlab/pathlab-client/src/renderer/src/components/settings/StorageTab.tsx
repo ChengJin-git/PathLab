@@ -99,6 +99,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [batchScanPath, setBatchScanPath] = useState('')
   const [batchScanResult, setBatchScanResult] = useState<ScanDirectoryResponse | null>(null)
   const [batchScanning, runBatchScanning] = useAsyncAction<void>({ onError: (err) => setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir')) })
+  const [batchScanStage, setBatchScanStage] = useState<'idle' | 'initial' | 'refresh' | 'segmentationRefresh'>('idle')
   const [batchScanError, setBatchScanError] = useState<string | null>(null)
   const [batchSelectedFiles, setBatchSelectedFiles] = useState<Set<string>>(new Set())
   const [batchExcludedFiles, setBatchExcludedFiles] = useState<Set<string>>(new Set())
@@ -193,6 +194,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       setBatchScanPath(selected)
       setBatchScanResult(null)
       setBatchScanError(null)
+      setBatchScanStage('idle')
       setBatchSelectedFiles(new Set())
       setBatchExcludedFiles(new Set())
       setBatchSelectAllValid(false)
@@ -204,6 +206,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     if (!batchScanPath.trim()) return
     setBatchScanError(null)
     setBatchScanResult(null)
+    setBatchScanStage('initial')
     setBatchSelectedFiles(new Set())
     setBatchExcludedFiles(new Set())
     setBatchSelectAllValid(false)
@@ -216,7 +219,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       })
       setBatchScanResult(result)
       setBatchSelectAllValid(true)
+      setBatchScanStage('idle')
     }).catch((err: unknown) => {
+      setBatchScanStage('idle')
       console.error('Failed to scan directory:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
     })
@@ -225,6 +230,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const handleBatchScanPageChange = (page: number) => {
     if (!batchScanResult) return
     setBatchScanError(null)
+    setBatchScanStage('refresh')
     void runBatchScanning(async () => {
       const result = await scanDirectory(batchScanResult.directory, {
         scanId: batchScanResult.scan_id,
@@ -233,7 +239,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })
       setBatchScanResult(result)
+      setBatchScanStage('idle')
     }).catch((err: unknown) => {
+      setBatchScanStage('idle')
       console.error('Failed to load scan page:', err)
       setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
     })
@@ -247,6 +255,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     let cancelled = false
 
     setBatchScanError(null)
+    setBatchScanStage('segmentationRefresh')
     void runBatchScanning(async () => {
       const result = await scanDirectory(batchScanResult.directory, {
         taskType: 'segmentation',
@@ -255,9 +264,11 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       })
       if (!cancelled) {
         setBatchScanResult(result)
+        setBatchScanStage('idle')
       }
     }).catch((err: unknown) => {
       if (!cancelled) {
+        setBatchScanStage('idle')
         console.error('Failed to reload segmentation scan:', err)
         setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToScanDir'))
       }
@@ -730,6 +741,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         setBatchScanPath={setBatchScanPath}
         batchScanResult={batchScanResult}
         batchScanning={batchScanning}
+        batchScanStage={batchScanStage}
         batchScanError={batchScanError}
           batchSelectedCount={batchSelectedCount}
         batchDatasetMode={batchDatasetMode}
