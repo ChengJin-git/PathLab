@@ -154,7 +154,7 @@ Ratchet revert captures code snapshot and git diff **before** workspace.revert()
   missing-evidence issue from fatal to warning.
 - Commits: 57231463 (commit gate), f5208311 (revert gate), 40aaf4b3
   (external-opt-in distinction), 01f59430 (system-prompt + skill
-  constraint), <T5 commit hash> (integration coverage + this note).
+  constraint), d59327f8 (integration coverage + this note).
 
 ## Test Conventions
 
