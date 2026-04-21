@@ -295,7 +295,15 @@ def _check_evidence_run_missing(
     research_run_history: list[dict],
     evidence_skipped_runs: list[dict] | None,
 ) -> list[IntegrityIssue]:
-    """Fatal: a committed run has no ``<evidence_root>/runs/<id>/record.json``."""
+    """A committed run has no ``<evidence_root>/runs/<id>/record.json``.
+
+    Severity is ``fatal`` in the general case (a real invariant violation)
+    but ``warning`` when the skip reason is ``"external_experiment_opt_in"`` —
+    the documented escape hatch for experiments run outside
+    ``RunExperimentTool``. A deliberate external run without an evidence
+    record is a known trade-off: still surfaced in the report so readers
+    notice it, but not a reason to block ``paper_ready``.
+    """
     skipped_by_id: dict[str, str] = {}
     for skip in evidence_skipped_runs or []:
         if not isinstance(skip, dict):
@@ -328,18 +336,31 @@ def _check_evidence_run_missing(
             if run_id
             else "",
         }
-        if run_id and run_id in skipped_by_id:
-            context["skip_reason"] = skipped_by_id[run_id]
-        message = (
-            f"Committed run {run_id_display!r} has no evidence record at "
-            f"{context['expected_path'] or '<evidence_root>/runs/.../record.json'}."
-        )
-        if "skip_reason" in context:
-            message += f" Evidence collector reported: {context['skip_reason']}."
+        skip_reason = skipped_by_id.get(run_id, "") if run_id else ""
+        if skip_reason:
+            context["skip_reason"] = skip_reason
+        is_external_opt_in = skip_reason == "external_experiment_opt_in"
+        if is_external_opt_in:
+            message = (
+                f"Committed run {run_id_display!r} was marked external "
+                "(opt-in); no evidence record at "
+                f"{context['expected_path'] or '<evidence_root>/runs/.../record.json'}. "
+                "Deliberate out-of-band experiment — prefer running through "
+                "run_experiment when possible."
+            )
+            severity = "warning"
+        else:
+            message = (
+                f"Committed run {run_id_display!r} has no evidence record at "
+                f"{context['expected_path'] or '<evidence_root>/runs/.../record.json'}."
+            )
+            if skip_reason:
+                message += f" Evidence collector reported: {skip_reason}."
+            severity = "fatal"
         issues.append(
             IntegrityIssue(
                 code="evidence_run_missing",
-                severity="fatal",
+                severity=severity,
                 message=message,
                 context=context,
             )

@@ -112,6 +112,57 @@ def test_missing_last_experiment_records_skip_reason():
         remove_session(session_id)
 
 
+def test_external_flag_records_opt_in_reason():
+    """When ``deps.last_experiment`` is None and the caller opted in via
+    ``action_external=True``, the skip reason must be
+    ``"external_experiment_opt_in"`` rather than ``"no_last_experiment"``.
+    This distinguishes a deliberate out-of-band experiment (warning) from a
+    silent policy bypass (fatal) in the IntegrityGuard."""
+    session_id = "test_external_opt_in_session"
+    deps = _make_session(session_id, workspace=_FakeWorkspace(Path("/tmp")))
+    try:
+        assert deps.last_experiment is None
+        assert deps.evidence_skipped_runs == []
+
+        _finalize_iteration(
+            session_id,
+            metrics={"auc": 0.8},
+            committed=True,
+            action_external=True,
+        )
+
+        assert len(deps.evidence_skipped_runs) == 1
+        entry = deps.evidence_skipped_runs[-1]
+        assert entry["reason"] == "external_experiment_opt_in", (
+            f"external=True must tag the skip as external_experiment_opt_in; "
+            f"got {entry['reason']!r}"
+        )
+        assert entry["run_id"]  # canonical run_id still attached
+        assert entry["run_id"] == deps.iteration_state.finalized_run_ids[-1]
+    finally:
+        remove_session(session_id)
+
+
+def test_external_flag_default_false_keeps_no_last_experiment_reason():
+    """Regression guard: without action_external (or action_external=False),
+    the existing ``no_last_experiment`` reason must still be written — the
+    new kwarg is additive, not a behavior-change for the default path."""
+    session_id = "test_external_default_false_session"
+    deps = _make_session(session_id, workspace=_FakeWorkspace(Path("/tmp")))
+    try:
+        _finalize_iteration(
+            session_id,
+            metrics={"auc": 0.6},
+            committed=True,
+            action_external=False,
+        )
+
+        assert len(deps.evidence_skipped_runs) == 1
+        assert deps.evidence_skipped_runs[-1]["reason"] == "no_last_experiment"
+    finally:
+        remove_session(session_id)
+
+
 def test_missing_workspace_records_skip_reason():
     """When deps.workspace is None but last_experiment exists, finalization must
     record ``no_workspace`` on ``deps.evidence_skipped_runs``."""

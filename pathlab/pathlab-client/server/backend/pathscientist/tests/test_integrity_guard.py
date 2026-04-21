@@ -327,6 +327,85 @@ def test_evidence_run_missing_includes_skip_reason_when_provided(tmp_path):
     assert issue.context.get("skip_reason") == "snapshot_failed"
 
 
+def test_external_opt_in_is_warning_not_fatal(tmp_path):
+    """When a committed run's evidence is missing because the agent opted into
+    external mode (``reason == "external_experiment_opt_in"``), the check must
+    emit ``severity="warning"`` not ``"fatal"``.
+
+    Rationale: ``external=True`` is the documented escape hatch for experiments
+    run outside ``RunExperimentTool``. A deliberate external run without an
+    evidence record is a known trade-off — still surfaced in the report so
+    downstream readers notice it, but not a reason to block ``paper_ready``.
+    """
+    inputs = _base_happy_inputs(tmp_path)
+    # Remove the evidence record for run_b so a committed run has no record.json.
+    missing_run = inputs["research_run_history"][1]["run_id"]
+    (inputs["evidence_root"] / "runs" / missing_run / "record.json").unlink()
+
+    report = check_session_integrity(
+        **inputs,
+        evidence_skipped_runs=[
+            {"run_id": missing_run, "reason": "external_experiment_opt_in"}
+        ],
+    )
+
+    codes = _codes(report)
+    assert "evidence_run_missing" in codes
+    issue = next(i for i in report.issues if i.code == "evidence_run_missing")
+    assert issue.severity == "warning", (
+        f"external_experiment_opt_in must downgrade to warning; "
+        f"got severity={issue.severity!r}"
+    )
+    assert issue.context.get("skip_reason") == "external_experiment_opt_in"
+
+    # This specific issue must count toward warnings, not fatals.
+    fatal_evidence_issues = [
+        i
+        for i in report.issues
+        if i.code == "evidence_run_missing" and i.severity == "fatal"
+    ]
+    warning_evidence_issues = [
+        i
+        for i in report.issues
+        if i.code == "evidence_run_missing" and i.severity == "warning"
+    ]
+    assert fatal_evidence_issues == [], (
+        f"no evidence_run_missing issue should be fatal here; got {fatal_evidence_issues!r}"
+    )
+    assert len(warning_evidence_issues) == 1
+    # Aggregate counters must agree.
+    assert report.warning_count >= 1
+    # The external-opt-in issue is the only fatal-or-warning evidence issue;
+    # a session that is otherwise healthy must still pass (no fatals).
+    assert report.passed is True, (
+        f"external-opt-in alone must not fail integrity; "
+        f"fatal_count={report.fatal_count}, issues={[i.code for i in report.issues]}"
+    )
+
+
+def test_fatal_evidence_missing_still_fatal_for_no_last_experiment_reason(tmp_path):
+    """Regression guard: the pre-T3 fatal behavior must be preserved for
+    ``no_last_experiment`` (and any other non-external-opt-in reason)."""
+    inputs = _base_happy_inputs(tmp_path)
+    missing_run = inputs["research_run_history"][1]["run_id"]
+    (inputs["evidence_root"] / "runs" / missing_run / "record.json").unlink()
+
+    report = check_session_integrity(
+        **inputs,
+        evidence_skipped_runs=[
+            {"run_id": missing_run, "reason": "no_last_experiment"}
+        ],
+    )
+
+    codes = _codes(report)
+    assert "evidence_run_missing" in codes
+    issue = next(i for i in report.issues if i.code == "evidence_run_missing")
+    assert issue.severity == "fatal", (
+        f"no_last_experiment must stay fatal; got severity={issue.severity!r}"
+    )
+    assert report.passed is False
+
+
 def test_iteration_over_budget_flagged_without_stop_reason(tmp_path):
     inputs = _base_happy_inputs(tmp_path)
     inputs["iteration_index"] = inputs["max_iterations"] + 1  # over budget

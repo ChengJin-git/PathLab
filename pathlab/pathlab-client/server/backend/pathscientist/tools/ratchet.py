@@ -84,11 +84,23 @@ def _resolve_finalization_metrics(session_id: str, metrics: dict) -> dict:
     )
 
 
-def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None:
+def _finalize_iteration(
+    session_id: str,
+    metrics: dict,
+    committed: bool,
+    action_external: bool = False,
+) -> None:
     """Update tracker and iteration state after a commit or revert.
 
     This is the single canonical finalization path — both ratchet_commit
     and ratchet_revert call it so orchestrator sees consistent state.
+
+    ``action_external`` is forwarded from ``RatchetCommitAction.external`` /
+    ``RatchetRevertAction.external``. When True and ``deps.last_experiment``
+    is None, the evidence skip reason is tagged as
+    ``"external_experiment_opt_in"`` (warning-severity in the IntegrityGuard)
+    rather than ``"no_last_experiment"`` (fatal) — distinguishing a deliberate
+    out-of-band experiment from a silent policy bypass.
     """
     if not session_id:
         return
@@ -204,8 +216,17 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
                 )
                 logger.exception("Evidence collection raised")
         elif not deps.last_experiment:
+            # Distinguish deliberate external-opt-in from silent policy bypass
+            # so the IntegrityGuard can downgrade the former to a warning.
+            # action_external is threaded from RatchetCommit/RevertAction.external;
+            # when True, the missing evidence is a known trade-off, not a defect.
+            skip_reason = (
+                "external_experiment_opt_in"
+                if action_external
+                else "no_last_experiment"
+            )
             result = EvidenceFinalizeResult(
-                skipped=True, skipped_reason="no_last_experiment"
+                skipped=True, skipped_reason=skip_reason
             )
         elif not deps.workspace:
             result = EvidenceFinalizeResult(
@@ -290,7 +311,10 @@ class RatchetCommitExecutor(ToolExecutor):
             commit_hash = self._workspace.commit(action.message, action.metrics)
         except CommitFailed as exc:
             _finalize_iteration(
-                self._session_id, action.metrics, committed=False,
+                self._session_id,
+                action.metrics,
+                committed=False,
+                action_external=action.external,
             )
             trimmed_stderr = (exc.stderr or "").strip()[:200]
             return RatchetCommitObservation(
@@ -308,7 +332,12 @@ class RatchetCommitExecutor(ToolExecutor):
 
         files = self._workspace.list_files()
 
-        _finalize_iteration(self._session_id, action.metrics, committed=True)
+        _finalize_iteration(
+            self._session_id,
+            action.metrics,
+            committed=True,
+            action_external=action.external,
+        )
 
         return RatchetCommitObservation(
             commit_hash=commit_hash,
@@ -442,7 +471,10 @@ class RatchetRevertExecutor(ToolExecutor):
             self._workspace.revert()
         except CommitFailed as exc:
             _finalize_iteration(
-                self._session_id, metrics=action.metrics, committed=False,
+                self._session_id,
+                metrics=action.metrics,
+                committed=False,
+                action_external=action.external,
             )
             trimmed_stderr = (exc.stderr or "").strip()[:200]
             return RatchetRevertObservation(
@@ -459,7 +491,12 @@ class RatchetRevertExecutor(ToolExecutor):
 
         current = self._workspace.get_current_commit()
 
-        _finalize_iteration(self._session_id, metrics=action.metrics, committed=False)
+        _finalize_iteration(
+            self._session_id,
+            metrics=action.metrics,
+            committed=False,
+            action_external=action.external,
+        )
 
         return RatchetRevertObservation(
             reverted_to=current,
