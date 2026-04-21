@@ -160,6 +160,21 @@ def test_ratchet_commit_tool_reports_failure(tmp_path, monkeypatch):
     session_id, deps, cleanup = _register_session(tmp_path)
     try:
         ws = deps.workspace
+        # Populate last_experiment so the T1 ratchet-commit gate allows the
+        # call through to the monkeypatched commit() that raises CommitFailed.
+        # The gate (tools/ratchet.py) refuses when last_experiment is None.
+        deps.last_experiment = {
+            "run_id": "exp_fake",
+            "run_dir": "",
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "metrics": {"auc": 0.5},
+            "duration": 1.0,
+            "started_at": "",
+            "data_output_dir": "",
+            "data_output_artifacts": None,
+        }
 
         def fake_commit(message: str, metrics: dict | None = None) -> str:
             raise CommitFailed(
@@ -196,6 +211,21 @@ def test_finalize_iteration_sees_committed_false_on_failure(tmp_path, monkeypatc
     session_id, deps, cleanup = _register_session(tmp_path)
     try:
         ws = deps.workspace
+        # Populate last_experiment so the T1 ratchet-commit gate allows the
+        # call through to the monkeypatched commit() that raises CommitFailed.
+        # The gate (tools/ratchet.py) refuses when last_experiment is None.
+        deps.last_experiment = {
+            "run_id": "exp_fake",
+            "run_dir": "",
+            "exit_code": 0,
+            "stdout": "",
+            "stderr": "",
+            "metrics": {"auc": 0.42},
+            "duration": 1.0,
+            "started_at": "",
+            "data_output_dir": "",
+            "data_output_artifacts": None,
+        }
 
         def fake_commit(message: str, metrics: dict | None = None) -> str:
             raise CommitFailed(

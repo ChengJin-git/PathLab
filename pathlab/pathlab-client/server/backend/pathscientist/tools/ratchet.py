@@ -227,6 +227,16 @@ def _finalize_iteration(session_id: str, metrics: dict, committed: bool) -> None
 class RatchetCommitAction(Action):
     message: str = Field(description="Commit message describing the improvement.")
     metrics: dict = Field(default_factory=dict, description="Metrics to record with the commit.")
+    external: bool = Field(
+        default=False,
+        description=(
+            "Set to true ONLY when the experiment was run outside the "
+            "RunExperimentTool (e.g. a long-running job launched on a "
+            "different machine). The evidence record will be marked "
+            "'external_experiment_opt_in' and the integrity guard will "
+            "downgrade the missing-evidence fatal to a warning."
+        ),
+    )
 
 
 class RatchetCommitObservation(Observation):
@@ -245,6 +255,36 @@ class RatchetCommitExecutor(ToolExecutor):
         conversation: "LocalConversation | None" = None,
     ) -> RatchetCommitObservation:
         from ..runtime.workspace import CommitFailed
+
+        # Gate: refuse commits that were not preceded by run_experiment,
+        # unless the caller explicitly opted into external mode.
+        #
+        # Motivating defect: session_b14b074d2268 (2026-04-20) had 11
+        # committed runs whose evidence records all carried
+        # reason="no_last_experiment" because the agent had called
+        # `terminal` + `python train.py` + `ratchet_commit` directly,
+        # skipping RunExperimentTool and leaving `deps.last_experiment`
+        # unset. The gate refuses that shape at the tool boundary so the
+        # evidence store can't be silently bypassed.
+        if not action.external and self._session_id:
+            try:
+                from ..runtime.session_registry import get_session
+                deps = get_session(self._session_id)
+                if deps.last_experiment is None:
+                    return RatchetCommitObservation(
+                        commit_hash="",
+                        files=self._workspace.list_files(),
+                        content=[TextContent(text=(
+                            "\u274c ratchet_commit requires a preceding run_experiment.\n"
+                            "  Run the experiment through the run_experiment tool first so "
+                            "metrics, artifacts, and code state can be captured in the "
+                            "evidence store. If the experiment was run externally and you "
+                            "really want to commit anyway, re-call ratchet_commit with "
+                            "external=true (but prefer running through run_experiment)."
+                        ))],
+                    )
+            except KeyError:
+                pass  # session registry lost — fall through to regular commit
 
         try:
             commit_hash = self._workspace.commit(action.message, action.metrics)
