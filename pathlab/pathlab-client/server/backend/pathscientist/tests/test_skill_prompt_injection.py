@@ -196,6 +196,61 @@ def test_system_prompt_includes_run_experiment_workflow_policy():
     )
 
 
+def test_system_prompt_warns_against_agent_using_external_true():
+    """Review Fix C (2026-04-21 post-fix code review, Finding 3, Option 3).
+
+    ``RatchetCommitAction.external=True`` / ``RatchetRevertAction.external=True``
+    is a documented escape hatch for humans committing out-of-band experiment
+    runs; the reviewer pointed out that the agent can also pick it for itself,
+    which would let the agent skirt the evidence gate on its own volition.
+
+    The fix ships two defenses: the synthesis-layer gate
+    (``_run_synthesis_stage`` forces ``paper_ready=False`` when
+    ``external_experiment_opt_in`` appears in the skip log) and this
+    prompt-level guidance. This test locks in the prompt-level piece so a
+    future edit to ``system_prompt.j2`` cannot silently drop the
+    "don't self-select external=true" instruction.
+    """
+    import jinja2
+
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(_PROMPT_FILE.parent)),
+        keep_trailing_newline=True,
+    )
+    template = env.get_template(_PROMPT_FILE.name)
+    rendered = template.render(
+        primary_metric="auc",
+        max_iterations=5,
+        research_question="",
+        skill_constraints="",
+        skill_extractor_guidance="",
+        environment_context="",
+    )
+
+    # The guidance must live inside the Workflow policy block, not stashed
+    # somewhere the LLM won't find it.
+    assert "Workflow policy" in rendered
+    policy_idx = rendered.index("Workflow policy")
+    block = rendered[policy_idx : policy_idx + 1500]
+
+    # Two invariants: (1) the prohibition itself must be present, and (2)
+    # it must explicitly carve out the user-asked escape hatch so a human
+    # can still legitimately request external=true.
+    assert "external=true" in block, (
+        "Workflow policy must mention 'external=true' so the agent sees the "
+        "rule. Got block:\n" + block
+    )
+    assert "Do NOT" in block or "do not" in block.lower(), (
+        "Workflow policy must explicitly tell the agent NOT to use "
+        "external=true on its own. Got block:\n" + block
+    )
+    assert "user" in block.lower(), (
+        "Workflow policy must carve out the user-requested case (so humans "
+        "can still commit out-of-band runs intentionally). Got block:\n"
+        + block
+    )
+
+
 @pytest.mark.parametrize(
     "skill_yaml",
     ["patch_classification.yaml", "mil_classification.yaml", "feature_extraction.yaml"],

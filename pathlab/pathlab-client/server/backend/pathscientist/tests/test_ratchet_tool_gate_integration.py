@@ -423,5 +423,227 @@ def test_external_opt_in_commits_with_warning_severity(tmp_path):
         cleanup()
 
 
+# ---------- 4. external opt-in: paper_ready is forced False in synthesis ----------
+
+
+def test_external_opt_in_forces_paper_ready_false(tmp_path):
+    """Review Fix C (2026-04-21 post-fix code review, Finding 3).
+
+    IntegrityGuard keeps ``external_experiment_opt_in`` as a warning
+    (``test_external_opt_in_is_warning_not_fatal`` locks that in, and the
+    reviewer explicitly asked us NOT to re-escalate it to fatal). But the
+    review identified a second risk: even with a passing integrity report,
+    a paper built on a run without an evidence record can still ship as
+    ``paper_ready=True`` — a "supported bypass via ``external=True``".
+
+    The synthesis-layer gate in ``_run_synthesis_stage`` must force
+    ``state.paper_ready = False`` when ``deps.evidence_skipped_runs``
+    contains any entry with ``reason == "external_experiment_opt_in"``,
+    regardless of what verification/critique decided.
+    """
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from pathscientist.orchestrator.runner import _run_synthesis_stage
+    from pathscientist.orchestrator.types import (
+        ResearchObjective,
+        ResearchSessionState,
+        RunRecord,
+    )
+
+    # Seed a minimal session state with one committed run. The grounding +
+    # runs are only needed so synthesis produces any artifacts at all; the
+    # contract we care about is the paper_ready gate.
+    state = ResearchSessionState.create(
+        session_id="sess_external_paper_gate",
+        conversation_id=uuid4(),
+        objective=ResearchObjective(
+            question="Improve AUC on BRACS",
+            success_metric="auc",
+        ),
+    )
+    state.grounding = {
+        "selected_skill": "mil_classification",
+        "route": "skill",
+        "reason": "stub",
+        "baselines": [],
+        "papers": [],
+    }
+    state.record_run(
+        RunRecord(
+            run_id="run_ext_01",
+            iteration=0,
+            metric_value=0.82,
+            committed=True,
+            notes="external run",
+        )
+    )
+
+    workspace = SimpleNamespace(root=tmp_path / "workspace")
+    workspace.root.mkdir(parents=True, exist_ok=True)
+
+    config = PathScientistConfig(
+        workspace_dir=str(workspace.root),
+        output_dir=str(tmp_path / "output"),
+        gpu_ids=[],
+        sandbox_mode="local",
+        max_iterations=3,
+        primary_metric="auc",
+        conversation_persistence_dir=str(tmp_path),
+        llm_model="",  # deterministic fallback for paper writer
+        llm_api_key="",
+        llm_base_url="",
+    )
+
+    # deps carries the external-opt-in skip entry that the synthesis gate
+    # should observe. This is exactly what the RatchetCommitExecutor logs
+    # when ``external=True`` is used (see
+    # ``test_external_opt_in_commits_with_warning_severity`` above for the
+    # matching shape).
+    deps = SimpleNamespace(
+        evidence_skipped_runs=[
+            {"run_id": "run_ext_01", "reason": "external_experiment_opt_in"}
+        ],
+    )
+
+    # Precondition: force paper_ready=True beforehand to prove the gate
+    # actively downgrades rather than just happening to leave it False.
+    state.paper_ready = True
+
+    _run_synthesis_stage(
+        state,
+        workspace=workspace,
+        session=None,
+        config=config,
+        deps=deps,
+    )
+
+    assert state.paper_ready is False, (
+        "external_experiment_opt_in in deps.evidence_skipped_runs must "
+        "force paper_ready=False after synthesis, regardless of whether "
+        "verification/critique would have passed. This closes the "
+        "'supported bypass via external=True' gap flagged by the "
+        "2026-04-21 post-fix code review (Finding 3)."
+    )
+
+
+def test_external_opt_in_leaves_paper_ready_alone_when_absent(tmp_path):
+    """Control case for test_external_opt_in_forces_paper_ready_false.
+
+    Without any ``external_experiment_opt_in`` skip entry, the synthesis
+    gate must NOT touch ``paper_ready`` — the final value is whatever
+    verification + critique + fatal-integrity decided.
+    """
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from pathscientist.orchestrator.runner import _run_synthesis_stage
+    from pathscientist.orchestrator.types import (
+        ResearchObjective,
+        ResearchSessionState,
+        RunRecord,
+    )
+
+    state = ResearchSessionState.create(
+        session_id="sess_no_external_paper_gate",
+        conversation_id=uuid4(),
+        objective=ResearchObjective(
+            question="Improve AUC on BRACS",
+            success_metric="auc",
+        ),
+    )
+    state.grounding = {
+        "selected_skill": "mil_classification",
+        "route": "skill",
+        "reason": "stub",
+        "baselines": [],
+        "papers": [],
+    }
+    state.record_run(
+        RunRecord(
+            run_id="run_normal_01",
+            iteration=0,
+            metric_value=0.82,
+            committed=True,
+        )
+    )
+
+    workspace = SimpleNamespace(root=tmp_path / "workspace")
+    workspace.root.mkdir(parents=True, exist_ok=True)
+
+    config = PathScientistConfig(
+        workspace_dir=str(workspace.root),
+        output_dir=str(tmp_path / "output"),
+        gpu_ids=[],
+        sandbox_mode="local",
+        max_iterations=3,
+        primary_metric="auc",
+        conversation_persistence_dir=str(tmp_path),
+        llm_model="",
+        llm_api_key="",
+        llm_base_url="",
+    )
+
+    # Unrelated skip reason — must NOT trigger the gate.
+    deps = SimpleNamespace(
+        evidence_skipped_runs=[
+            {"run_id": "run_other", "reason": "snapshot_failed"}
+        ],
+    )
+
+    _run_synthesis_stage(
+        state,
+        workspace=workspace,
+        session=None,
+        config=config,
+        deps=deps,
+    )
+
+    # state.paper_ready is now whatever verification/critique decided. The
+    # gate must not have forced it — we only assert that if it was True
+    # before reaching the gate, it stays True through the gate. Since the
+    # deterministic verifier may or may not pass for this stub state we
+    # assert the weaker invariant: no external-opt-in means no forced
+    # downgrade. Specifically, a run that produced paper_ready=True via
+    # verification would not be downgraded by our new gate.
+    #
+    # We re-drive the gate path directly to isolate this: force paper_ready
+    # True, then feed a deps with no external-opt-in entry through the
+    # post-synthesis re-check. The easiest way is to rely on the fact that
+    # _run_synthesis_stage calls the gate inline; check that if we pass
+    # deps with a NON-matching reason, paper_ready is not forced False
+    # by the gate itself. Verification may still have set it False, so we
+    # check by comparing to the deps=None case.
+    state_with_no_deps = ResearchSessionState.create(
+        session_id="sess_no_external_paper_gate_control",
+        conversation_id=uuid4(),
+        objective=state.objective,
+    )
+    state_with_no_deps.grounding = dict(state.grounding)
+    state_with_no_deps.record_run(
+        RunRecord(
+            run_id="run_normal_01",
+            iteration=0,
+            metric_value=0.82,
+            committed=True,
+        )
+    )
+    _run_synthesis_stage(
+        state_with_no_deps,
+        workspace=SimpleNamespace(root=tmp_path / "workspace_control"),
+        session=None,
+        config=config,
+        deps=None,
+    )
+    # Setting deps with an unrelated skip reason must produce the same
+    # paper_ready as omitting deps entirely — the gate only fires on the
+    # external_experiment_opt_in reason.
+    assert state.paper_ready == state_with_no_deps.paper_ready, (
+        "Gate must ignore skip reasons other than "
+        "external_experiment_opt_in; got "
+        f"{state.paper_ready=} vs {state_with_no_deps.paper_ready=}"
+    )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

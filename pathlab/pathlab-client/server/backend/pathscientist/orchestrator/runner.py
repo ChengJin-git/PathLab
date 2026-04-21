@@ -436,6 +436,7 @@ def run_research_session(
             state, workspace, session, config,
             evidence_store=evidence_store,
             citation_tracker=citation_tracker,
+            deps=deps,
         )
         state.final_summary = build_session_summary(
             state, evidence_store=evidence_store, citation_tracker=citation_tracker,
@@ -591,6 +592,7 @@ def continue_research_session(
             state, workspace, session, config,
             evidence_store=evidence_store,
             citation_tracker=citation_tracker,
+            deps=deps,
         )
         state.final_summary = build_session_summary(
             state, evidence_store=evidence_store, citation_tracker=citation_tracker,
@@ -608,8 +610,18 @@ def _run_synthesis_stage(
     config: PathScientistConfig,
     evidence_store=None,
     citation_tracker=None,
+    deps=None,
 ) -> ResearchSessionState:
-    """Run the synthesis stage: build report + markdown + optional paper draft."""
+    """Run the synthesis stage: build report + markdown + optional paper draft.
+
+    ``deps`` is the session's :class:`SessionDeps` (optional for backward
+    compatibility with older call sites / tests). When provided, Review Fix C
+    (2026-04-21 post-fix code review, Finding 3) consults
+    ``deps.evidence_skipped_runs`` and forces ``state.paper_ready=False`` if
+    any entry has ``reason == "external_experiment_opt_in"``. IntegrityGuard
+    keeps that case as a warning (not fatal) — we're gating the product
+    output, not escalating severity.
+    """
     from ..synthesis.context import build_synthesis_context
     from ..synthesis.report_builder import build_report, render_report_markdown
     from ..synthesis.store import ReportStore
@@ -695,6 +707,25 @@ def _run_synthesis_stage(
             logger.warning(
                 "IntegrityGuard reported fatal issues; forcing paper_ready=False."
             )
+        paper_ready = False
+
+    # Review Fix C: external_experiment_opt_in still lets agent bypass evidence.
+    # IntegrityGuard keeps it as warning (expected), but paper must not be marked
+    # ready — the paper has at least one committed run without evidence backing.
+    # See docs/review/2026-04-21-pathscientist-post-fix-code-review-results.md
+    # (Finding 3, Option 2). Severity stays warning; only product output is gated.
+    # Evaluated before manifest save so manifest, state, and report.json stay
+    # consistent.
+    external_opt_in_used = any(
+        (skip or {}).get("reason") == "external_experiment_opt_in"
+        for skip in (getattr(deps, "evidence_skipped_runs", None) or [])
+    )
+    if external_opt_in_used and paper_ready:
+        logger.warning(
+            "Session used RatchetAction.external=True for at least one run; "
+            "forcing paper_ready=False so unsupported commits do not ship as "
+            "ready-to-read papers. IntegrityGuard severity remains warning."
+        )
         paper_ready = False
 
     # Save manifest

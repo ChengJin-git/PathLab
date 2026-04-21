@@ -130,6 +130,10 @@ Follow this error recovery process:
   ratchet_revert directly after `python script.py` via terminal —
   the evidence store will have nothing to capture and the iteration
   will be flagged as missing evidence.
+- Do NOT use `external=true` on ratchet actions unless the user has
+  explicitly asked you to commit an out-of-band experiment run.
+  Using it yourself will mark the session's paper as not-ready and
+  record a warning on the integrity report.
 
 {% if skill_constraints %}
 ## Skill Constraints
