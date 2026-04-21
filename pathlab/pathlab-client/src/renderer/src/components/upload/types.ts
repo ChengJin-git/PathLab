@@ -57,6 +57,23 @@ export interface CollectionResult {
   jsonFiles: File[]  // JSON files collected for segmentation mask matching
 }
 
+export type CollectionProgressPhase = 'preparing' | 'collecting' | 'matching' | 'complete'
+
+export interface CollectionProgressSnapshot {
+  phase: CollectionProgressPhase
+  totalTopLevelEntries: number
+  processedItems: number
+  discoveredFiles: number
+  discoveredDirectories: number
+  currentDirectoryName?: string
+  completed: boolean
+}
+
+export interface CollectItemsOptions {
+  onProgress?: (snapshot: CollectionProgressSnapshot) => void
+  yieldAfterEntries?: number
+}
+
 
 export const generateCaseId = () => {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
@@ -66,4 +83,3 @@ export const generateCaseId = () => {
   }
   return result
 }
-

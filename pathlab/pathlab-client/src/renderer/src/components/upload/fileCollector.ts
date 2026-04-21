@@ -1,7 +1,54 @@
 import { isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../../constants/fileTypes'
-import type { LocalItem, MrxsDataFolder, CollectionResult } from './types'
+import type {
+  LocalItem,
+  MrxsDataFolder,
+  CollectionResult,
+  CollectItemsOptions,
+  CollectionProgressPhase,
+  CollectionProgressSnapshot,
+} from './types'
 
 export const buildFileKey = (file: File) => `${file.name}-${file.size}-${file.lastModified}`
+
+type CollectorProgressState = Omit<CollectionProgressSnapshot, 'phase'>
+
+type CollectorContext = {
+  state: CollectorProgressState
+  onProgress?: (snapshot: CollectionProgressSnapshot) => void
+  yieldAfterEntries: number
+  pendingYieldEntries: number
+}
+
+const DEFAULT_YIELD_AFTER_ENTRIES = 50
+
+const yieldToBrowser = async (): Promise<void> => {
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, 0)
+  })
+}
+
+const emitProgress = (
+  context: CollectorContext,
+  phase: CollectionProgressPhase,
+  overrides: Partial<CollectorProgressState> = {}
+) => {
+  context.onProgress?.({
+    phase,
+    ...context.state,
+    ...overrides,
+  })
+}
+
+const maybeYield = async (context: CollectorContext, phase: CollectionProgressPhase) => {
+  context.pendingYieldEntries += 1
+  if (context.pendingYieldEntries < context.yieldAfterEntries) {
+    return
+  }
+
+  context.pendingYieldEntries = 0
+  emitProgress(context, phase)
+  await yieldToBrowser()
+}
 
 const readAllEntries = async (directoryEntry: any): Promise<any[]> => {
   const reader = directoryEntry.createReader()
@@ -15,7 +62,7 @@ const readAllEntries = async (directoryEntry: any): Promise<any[]> => {
 }
 
 // Recursively collect all files from a directory (for MRXS data folders)
-const collectAllFilesFromDirectory = async (directoryEntry: any): Promise<File[]> => {
+const collectAllFilesFromDirectory = async (directoryEntry: any, context: CollectorContext): Promise<File[]> => {
   const entries = await readAllEntries(directoryEntry)
   const files: File[] = []
   for (const entry of entries) {
@@ -23,18 +70,44 @@ const collectAllFilesFromDirectory = async (directoryEntry: any): Promise<File[]
       const file = await new Promise<File | null>(resolve => {
         entry.file((f: File) => resolve(f), () => resolve(null))
       })
-      if (file) files.push(file)
+      if (file) {
+        files.push(file)
+        context.state.discoveredFiles += 1
+        emitProgress(context, 'collecting', { currentDirectoryName: directoryEntry.name })
+      }
     } else if (entry.isDirectory) {
-      const subFiles = await collectAllFilesFromDirectory(entry)
+      context.state.discoveredDirectories += 1
+      emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
+      const subFiles = await collectAllFilesFromDirectory(entry, context)
       files.push(...subFiles)
     }
+
+    await maybeYield(context, 'collecting')
   }
   return files
 }
 
-export const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): Promise<CollectionResult> => {
+export const collectItemsFromDataTransfer = async (
+  dataTransfer: DataTransfer,
+  options: CollectItemsOptions = {}
+): Promise<CollectionResult> => {
   const dataItems = Array.from(dataTransfer.items || [])
   const hasEntries = dataItems.some(item => (item as any).webkitGetAsEntry)
+  const context: CollectorContext = {
+    state: {
+      totalTopLevelEntries: 0,
+      processedItems: 0,
+      discoveredFiles: 0,
+      discoveredDirectories: 0,
+      currentDirectoryName: undefined,
+      completed: false,
+    },
+    onProgress: options.onProgress,
+    yieldAfterEntries: Math.max(1, options.yieldAfterEntries ?? DEFAULT_YIELD_AFTER_ENTRIES),
+    pendingYieldEntries: 0,
+  }
+
+  emitProgress(context, 'preparing')
 
   // First-level files (WSI candidates) and sub-folders (MRXS data only)
   const firstLevelFiles: File[] = []
@@ -44,14 +117,22 @@ export const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): 
 
   if (hasEntries) {
     const topEntries = dataItems.map(item => (item as any).webkitGetAsEntry?.()).filter(Boolean)
+    context.state.totalTopLevelEntries = topEntries.length
+    emitProgress(context, 'collecting')
 
     for (const entry of topEntries) {
       if (entry.isFile) {
         const file = await new Promise<File | null>(resolve => {
           entry.file((f: File) => resolve(f), () => resolve(null))
         })
-        if (file) firstLevelFiles.push(file)
+        if (file) {
+          firstLevelFiles.push(file)
+          context.state.discoveredFiles += 1
+          emitProgress(context, 'collecting', { currentDirectoryName: undefined })
+        }
       } else if (entry.isDirectory) {
+        context.state.discoveredDirectories += 1
+        emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
         const folderEntries = await readAllEntries(entry)
         const hasWsiFiles = folderEntries.some(e => e.isFile && isSupportedName(e.name))
 
@@ -61,27 +142,43 @@ export const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): 
               const file = await new Promise<File | null>(resolve => {
                 subEntry.file((f: File) => resolve(f), () => resolve(null))
               })
-              if (file) firstLevelFiles.push(file)
+              if (file) {
+                firstLevelFiles.push(file)
+                context.state.discoveredFiles += 1
+                emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
+              }
             } else if (subEntry.isDirectory) {
-              const subFolderFiles = await collectAllFilesFromDirectory(subEntry)
+              context.state.discoveredDirectories += 1
+              emitProgress(context, 'collecting', { currentDirectoryName: subEntry.name })
+              const subFolderFiles = await collectAllFilesFromDirectory(subEntry, context)
               mrxsDataFolders.push({
                 folderName: subEntry.name,
                 folderFiles: subFolderFiles
               })
             }
+
+            await maybeYield(context, 'collecting')
           }
         } else {
-          const folderFiles = await collectAllFilesFromDirectory(entry)
+          const folderFiles = await collectAllFilesFromDirectory(entry, context)
           directlyDraggedFolders.push({
             folderName: entry.name,
             folderFiles
           })
         }
+
+        context.state.processedItems += 1
+        emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
       }
+
+      await maybeYield(context, 'collecting')
     }
   } else {
     const files = Array.from(dataTransfer.files || [])
+    context.state.totalTopLevelEntries = files.length
     firstLevelFiles.push(...files)
+    context.state.discoveredFiles = files.length
+    emitProgress(context, 'collecting', { currentDirectoryName: undefined })
   }
 
   const files = firstLevelFiles
@@ -97,6 +194,8 @@ export const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): 
   const unsupportedFileNames: string[] = []
 
   const isElectron = files.length > 0 && files.some(f => getFilePath(f))
+
+  emitProgress(context, 'matching', { currentDirectoryName: undefined })
 
   // MRXS
   for (const mrxsFile of mrxsFiles) {
@@ -182,6 +281,9 @@ export const collectItemsFromDataTransfer = async (dataTransfer: DataTransfer): 
     orphanDtFiles.get(baseName)!.push(dtFile)
   }
 
+  context.state.completed = true
+  context.state.currentDirectoryName = undefined
+  emitProgress(context, 'complete')
+
   return { items: result, orphanFolders, orphanDtFiles, unsupportedFileNames, jsonFiles }
 }
-
