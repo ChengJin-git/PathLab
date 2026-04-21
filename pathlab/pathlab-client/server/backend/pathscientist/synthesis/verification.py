@@ -13,7 +13,6 @@ from .types import DraftVerificationIssue, PaperDraftVerificationResult, Researc
 # shard ``d0df5148`` of conversation UUID
 # ``d0df5148-5a12-4cda-9cc8-a899ff810a17`` was flagged as a missing run_id.
 _CANONICAL_RUN_ID_RE = re.compile(r"\brun_[0-9a-f]{8}\b", re.IGNORECASE)
-_LEGACY_RUN_ID_RE = re.compile(r"\brun_[a-zA-Z0-9]+\b")
 _BRACKETED_ID_RE = re.compile(r"\[([^\[\]\s]+)\]")
 
 
@@ -64,32 +63,31 @@ def verify_paper_draft(
     unsupported_paper_ids: list[str] = []
     unsupported_metric_mentions: list[str] = []
     # After Fix 5, run_ids are minted as ``run_[0-9a-f]{8}`` everywhere
-    # (runtime.iteration_state, tools.run_experiment, tools.ratchet).
-    # The canonical pattern subsumes the legacy ``run_[a-zA-Z0-9]+`` shape,
-    # so we use a single pattern that requires the ``run_`` prefix.
-    # Bare 8-hex tokens are never treated as run_ids — this is what keeps
-    # conversation UUID shards and commit shards from being false-flagged.
-    run_patterns = [_CANONICAL_RUN_ID_RE, _LEGACY_RUN_ID_RE]
+    # (runtime.iteration_state, tools.run_experiment, tools.ratchet). A
+    # single canonical pattern that requires the ``run_`` prefix is enough:
+    # bare 8-hex tokens are never treated as run_ids (keeps UUID shards
+    # and commit shards safe), and the legacy ``run_[a-zA-Z0-9]+`` shape
+    # was removed because it false-flagged prose tokens like
+    # ``run_experiment`` / ``run_history`` as unsupported run_ids.
 
     for section_name, section_text in sections:
         # Check run IDs
         seen_run_ids: set[str] = set()
-        for pattern in run_patterns:
-            for match in pattern.finditer(section_text):
-                run_id = match.group()
-                if run_id in seen_run_ids:
-                    continue
-                seen_run_ids.add(run_id)
-                if run_id not in allowed_run_ids:
-                    issues.append(DraftVerificationIssue(
-                        section_name=section_name,
-                        issue_type="unsupported_run_id",
-                        severity="error",
-                        sentence=_extract_context(section_text, match.start()),
-                        detail=f"Run ID '{run_id}' not found in report evidence.",
-                    ))
-                    if run_id not in unsupported_run_ids:
-                        unsupported_run_ids.append(run_id)
+        for match in _CANONICAL_RUN_ID_RE.finditer(section_text):
+            run_id = match.group()
+            if run_id in seen_run_ids:
+                continue
+            seen_run_ids.add(run_id)
+            if run_id not in allowed_run_ids:
+                issues.append(DraftVerificationIssue(
+                    section_name=section_name,
+                    issue_type="unsupported_run_id",
+                    severity="error",
+                    sentence=_extract_context(section_text, match.start()),
+                    detail=f"Run ID '{run_id}' not found in report evidence.",
+                ))
+                if run_id not in unsupported_run_ids:
+                    unsupported_run_ids.append(run_id)
 
         # Check paper ID references in [paper_id] notation.
         for match in _BRACKETED_ID_RE.finditer(section_text):

@@ -51,10 +51,13 @@ def test_clean_draft_passes_verification():
 
 def test_unsupported_run_id_flagged():
     report = _make_report()
-    draft = "## Results\n\nOur model run_999 achieved auc 0.8844."
+    # Use canonical run_id shape (run_[0-9a-f]{8}) to exercise the verifier's
+    # regex. Legacy shapes like ``run_999`` are no longer regex-matched after
+    # the legacy pattern was removed (prose-false-positive fix).
+    draft = "## Results\n\nOur model run_99999999 achieved auc 0.8844."
     result = verify_paper_draft(report, draft)
     assert result.passed is False
-    assert "run_999" in result.unsupported_run_ids
+    assert "run_99999999" in result.unsupported_run_ids
 
 
 def test_unsupported_paper_id_flagged():
@@ -75,7 +78,8 @@ def test_unsupported_metric_flagged():
 
 def test_multiple_issues_all_reported():
     report = _make_report()
-    draft = "## Results\n\nrun_999 achieved 0.9500. Also see [fake_2025]."
+    # Canonical run_id shape — legacy ``run_999`` no longer matches the regex.
+    draft = "## Results\n\nrun_99999999 achieved 0.9500. Also see [fake_2025]."
     result = verify_paper_draft(report, draft)
     assert result.issue_count >= 3
     assert len(result.unsupported_run_ids) >= 1
@@ -217,6 +221,57 @@ def test_canonical_run_id_prefix_is_required_for_flagging():
         f"Bare 8-hex token flagged: {result.unsupported_run_ids}"
     )
     assert "11223344" not in result.unsupported_run_ids
+
+
+def _minimal_report_with_allowed_run_id(run_id: str) -> ResearchReport:
+    """Build a minimal report whose only allowed run_id is ``run_id``.
+
+    Used by tests that need the canonical-only run_id set to isolate what
+    the verifier actually flags in prose.
+    """
+    return ResearchReport(
+        session_id="sess1",
+        conversation_id="conv1",
+        objective="Improve AUC on BRACS",
+        success_metric="auc",
+        best_run_id=run_id,
+        best_metric_value=0.8844,
+        claims=[
+            ClaimRecord(
+                claim_id="claim_best",
+                section="results",
+                claim_type="result",
+                statement=f"Best run {run_id} achieved AUC 0.8844.",
+                evidence_run_ids=[run_id],
+            ),
+        ],
+        sections=[
+            ReportSection(name="results", title="Results", content="AUC 0.8844."),
+        ],
+        comparison_table=[
+            {"run_id": run_id, "primary_metric_value": 0.8844, "committed": True},
+        ],
+        failure_table=[],
+        references=[],
+    )
+
+
+def test_run_experiment_in_prose_is_not_false_flagged():
+    """Tool names in Methods / Reproducibility prose must not be treated as run_ids."""
+    report = _minimal_report_with_allowed_run_id("run_abc12345")
+    draft = (
+        "# Paper\n\n"
+        "## Methods\n\n"
+        "We used the run_experiment tool before ratchet_commit. "
+        "The run_history was preserved across iterations.\n"
+    )
+    result = verify_paper_draft(report, draft)
+    assert result.passed, (
+        f"Prose tokens like 'run_experiment' / 'run_history' must not be flagged. "
+        f"Got unsupported_run_ids={result.unsupported_run_ids}"
+    )
+    assert "run_experiment" not in result.unsupported_run_ids
+    assert "run_history" not in result.unsupported_run_ids
 
 
 def test_hex_run_id_pattern_disabled_when_bare_allowed_ids_present():
