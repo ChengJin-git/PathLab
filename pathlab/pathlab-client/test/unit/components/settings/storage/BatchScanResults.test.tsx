@@ -33,6 +33,7 @@ const baseProps = {
     page_size: 100,
     total_pages: 1,
   },
+  batchScanStage: 'idle' as const,
   batchSelectedCount: 1,
   batchDatasetMode: 'new' as const,
   setBatchDatasetMode: vi.fn(),
@@ -63,5 +64,19 @@ describe('BatchScanResults', () => {
 
     expect(screen.queryByText('datasetPermission.openCollaboration')).not.toBeInTheDocument()
     expect(screen.queryByText('datasetPermission.closedCollaboration')).not.toBeInTheDocument()
+  })
+
+  it('shows a segmentation rescan message while annotation matching is being refreshed', () => {
+    render(
+      <TooltipProvider>
+        <BatchScanResults
+          {...baseProps}
+          batchTaskType="segmentation"
+          batchScanStage="segmentationRefresh"
+        />
+      </TooltipProvider>,
+    )
+
+    expect(screen.getByText('settings.storage.refreshingSegmentationAnnotations')).toBeInTheDocument()
   })
 })

@@ -15,6 +15,7 @@ import { DatasetSelection } from './DatasetSelection'
 
 interface BatchScanResultsProps {
   batchScanResult: ScanDirectoryResponse
+  batchScanStage: 'idle' | 'initial' | 'refresh' | 'segmentationRefresh'
   batchSelectedCount: number
   batchDatasetMode: 'existing' | 'new'
   setBatchDatasetMode: (mode: 'existing' | 'new') => void
@@ -41,6 +42,7 @@ interface BatchScanResultsProps {
 
 export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
   batchScanResult,
+  batchScanStage,
   batchSelectedCount,
   batchDatasetMode,
   setBatchDatasetMode,
@@ -68,6 +70,12 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
 
   return (
     <div className="space-y-4">
+      {batchScanStage === 'segmentationRefresh' && (
+        <div className="rounded-lg border border-violet-200 bg-violet-50 px-4 py-3">
+          <p className="text-sm font-medium text-violet-900">{t('settings.storage.refreshingSegmentationAnnotations')}</p>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div className="text-sm text-gray-600">
           {t('settings.storage.foundFiles', {
