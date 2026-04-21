@@ -104,6 +104,73 @@ def detect_data_paths(data_mounts: dict[str, str] | None = None) -> str:
     return "\n".join(lines)
 
 
+def detect_hf_model_cache() -> str:
+    """List pathology-relevant models already present in HF_HOME cache.
+
+    Surfaces the fact that UNI / CONCH / Virchow / etc. are pre-downloaded
+    and can be loaded offline — without this, the agent reads the
+    'no network access' rule and concludes pathology FMs are unusable,
+    falling back to ImageNet baselines.
+    """
+    home = os.path.expanduser("~")
+    hf_home = os.environ.get("HF_HOME", f"{home}/.cache/huggingface")
+    hub_dir = Path(hf_home) / "hub"
+
+    if not hub_dir.is_dir():
+        return (
+            f"HuggingFace cache: {hub_dir} (not present)\n"
+            "  No pre-cached models detected. Loading UNI/CONCH/Virchow "
+            "from the internet would require network access and will "
+            "likely fail in the sandbox."
+        )
+
+    # Curated list of pathology FM repo prefixes we know about, in
+    # preference order (from the patch_classification / feature_extraction
+    # skill YAMLs). Anything not in this list is noise we don't need to
+    # surface (e.g. random text LLMs in the same cache).
+    pathology_repo_markers = [
+        ("MahmoodLab/UNI2-h", "UNI2"),
+        ("MahmoodLab/uni", "UNI"),
+        ("MahmoodLab/conch", "CONCH"),
+        ("paige-ai/Virchow2", "Virchow2"),
+        ("paige-ai/Virchow", "Virchow"),
+        ("bioptimus/H-optimus-1", "H-Optimus-1"),
+        ("bioptimus/H-optimus-0", "H-Optimus-0"),
+        ("owkin/phikon-v2", "Phikon2"),
+        ("owkin/phikon", "Phikon"),
+        ("histai/hibou-L", "Hibou-L"),
+    ]
+
+    cached: list[str] = []
+    try:
+        dir_names = {d.name for d in hub_dir.iterdir() if d.is_dir()}
+    except PermissionError:
+        dir_names = set()
+
+    for repo, nick in pathology_repo_markers:
+        marker = "models--" + repo.replace("/", "--")
+        if any(d.lower() == marker.lower() for d in dir_names):
+            cached.append(f"  - {nick} ({repo})")
+
+    if not cached:
+        return (
+            f"HuggingFace cache: {hub_dir}\n"
+            "  No pathology foundation models detected in the local cache.\n"
+            "  The sandbox blocks network; avoid extractors that would "
+            "need a fresh download. ImageNet backbones bundled with timm "
+            "(resnet50, vit_large_patch16_224, etc.) stay usable."
+        )
+
+    return (
+        f"Pre-cached HuggingFace models (loadable OFFLINE, no network needed):\n"
+        + "\n".join(cached)
+        + f"\n  Cache location: {hub_dir} (HF_HOME={hf_home})\n"
+        "  Load via common/extractors/registry.get_extractor(name), timm.create_model(..., pretrained=True), "
+        "or transformers.AutoModel.from_pretrained(...). The cache is bind-mounted into "
+        "the sandbox; these loads work without network access."
+    )
+
+
 def detect_common_libs() -> str:
     """Describe what the common/ template library provides."""
     return (
@@ -135,6 +202,9 @@ def build_environment_context(
 
     # Data
     sections.append(detect_data_paths(data_mounts))
+
+    # Pre-cached HuggingFace models (pathology FMs)
+    sections.append(detect_hf_model_cache())
 
     # Common libs
     if include_common_libs:

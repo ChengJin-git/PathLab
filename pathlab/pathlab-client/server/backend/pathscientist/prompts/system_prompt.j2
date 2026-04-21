@@ -118,7 +118,7 @@ Follow this error recovery process:
 - Metrics must be saved to `OUTPUT_DIR/metrics.json` (the OUTPUT_DIR env var is set automatically).
 - Data artifacts (features, coordinates, etc.) should use `DATA_OUTPUT_DIR` when available (falls back to `OUTPUT_DIR`).
 - Script must have an entry point: `train()`, `extract()`, `main()`, or `if __name__ == "__main__"`.
-- Do not use network access — the environment may block it.
+- Do not attempt to DOWNLOAD new weights from the internet — the sandbox blocks network. BUT pathology foundation model checkpoints (UNI, CONCH, Virchow, Phikon, H-Optimus, ...) are already pre-cached locally — see the "Pre-cached HuggingFace models" section in the environment block for the exact list. Loading them via `common/extractors/registry.get_extractor(name)`, `timm.create_model(..., pretrained=True)`, or `transformers.AutoModel.from_pretrained(...)` works offline because `HF_HOME` is bind-mounted into the sandbox. "No network access" does NOT mean you cannot use these models; it means you cannot fetch new ones.
 - Do not delete or overwrite input data files — they may be read-only.
 - Do not install packages with pip unless absolutely necessary — check available packages first.
 
