@@ -215,10 +215,29 @@ class RunExperimentExecutor(ToolExecutor):
             if action.quick_check and iteration_state and file_hash:
                 iteration_state.mark_quick_check_passed(file_hash)
 
+        # Classify the error type so the ratchet gates (Finding 2/3 of the
+        # 2026-04-22 session review) can refuse commits on failed runs even
+        # when ``exit_code == 0`` but stderr carries a non-empty error
+        # signature. Mirrors ``EvidenceCollector.finalize``'s classification
+        # so downstream consumers see the same string the evidence record
+        # will eventually carry.
+        error_type_str = ""
+        if result.exit_code != 0:
+            try:
+                from ..error_classifier import classify_error
+                error_type_str = classify_error(result.stderr or "").value
+            except Exception:
+                error_type_str = "Unknown"
+
         # Store last experiment output in SessionDeps for evidence collection.
         # ``last_run_id`` was already written at tool entry, so we don't
         # re-assign it here — a single canonical write keeps the invariant
         # "last_run_id tracks the most recent run_experiment call" clear.
+        #
+        # ``quick_check`` and ``error_type`` are surfaced here so the ratchet
+        # tool gates can refuse commits on sanity-check / failed runs without
+        # re-classifying stderr themselves (Findings 1–3 of the 2026-04-22
+        # session review).
         if self._session_id:
             try:
                 from ..runtime.session_registry import get_session
@@ -239,6 +258,8 @@ class RunExperimentExecutor(ToolExecutor):
                     "model_path": model_path,
                     "data_output_dir": env_vars.get("DATA_OUTPUT_DIR", ""),
                     "data_output_artifacts": data_output_artifacts,
+                    "quick_check": bool(action.quick_check),
+                    "error_type": error_type_str,
                 }
             except (KeyError, AttributeError):
                 pass

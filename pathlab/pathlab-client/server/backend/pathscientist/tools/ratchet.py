@@ -277,6 +277,64 @@ class RatchetCommitExecutor(ToolExecutor):
     ) -> RatchetCommitObservation:
         from ..runtime.workspace import CommitFailed
 
+        # Resolve deps once so all gates read from the same snapshot.
+        deps = None
+        if self._session_id:
+            try:
+                from ..runtime.session_registry import get_session
+                deps = get_session(self._session_id)
+            except KeyError:
+                deps = None  # session registry lost — fall through
+
+        # Gate A (2026-04-22 session 8e48c15d38cb review, Finding 2):
+        # refuse commits on quick_check runs. quick_check runs use a
+        # reduced epoch budget (2 epochs) and are intended for sanity-
+        # checking, not for scientific results. The reviewed session
+        # committed a 2-epoch "0.8643" as best-ever when the corresponding
+        # 50-epoch full run only reached 0.8436.
+        if (
+            not action.external
+            and deps is not None
+            and deps.last_experiment
+            and deps.last_experiment.get("quick_check")
+        ):
+            return RatchetCommitObservation(
+                commit_hash="",
+                files=self._workspace.list_files(),
+                content=[TextContent(text=(
+                    "❌ ratchet_commit refused: last_experiment was a quick_check run.\n"
+                    "  quick_check runs use a reduced epoch budget and are intended for\n"
+                    "  sanity-checking, not for committing scientific results. Re-run\n"
+                    "  the same configuration through run_experiment with quick_check=false\n"
+                    "  to capture real metrics, then retry ratchet_commit."
+                ))],
+            )
+
+        # Gate B (2026-04-22 session 8e48c15d38cb review, Finding 3):
+        # refuse commits on runs that did not complete cleanly. A non-zero
+        # exit_code or non-empty error_type means the agent should be calling
+        # ratchet_revert, not ratchet_commit. The reviewed session committed
+        # run_f32a1b74 despite exit_code=-1 / error_type="Unknown".
+        if (
+            not action.external
+            and deps is not None
+            and deps.last_experiment
+        ):
+            exit_code = deps.last_experiment.get("exit_code", 0)
+            error_type = deps.last_experiment.get("error_type", "") or ""
+            if exit_code != 0 or error_type:
+                return RatchetCommitObservation(
+                    commit_hash="",
+                    files=self._workspace.list_files(),
+                    content=[TextContent(text=(
+                        f"❌ ratchet_commit refused: last_experiment did not complete cleanly.\n"
+                        f"  exit_code = {exit_code}  error_type = {error_type!r}\n"
+                        f"  Runs that failed or produced errors should be reverted with\n"
+                        f"  ratchet_revert, not committed. Use ratchet_revert to restore\n"
+                        f"  the previous workspace state."
+                    ))],
+                )
+
         # Gate: refuse commits that were not preceded by run_experiment,
         # unless the caller explicitly opted into external mode.
         #
@@ -287,60 +345,103 @@ class RatchetCommitExecutor(ToolExecutor):
         # skipping RunExperimentTool and leaving `deps.last_experiment`
         # unset. The gate refuses that shape at the tool boundary so the
         # evidence store can't be silently bypassed.
-        if not action.external and self._session_id:
-            try:
-                from ..runtime.session_registry import get_session
-                deps = get_session(self._session_id)
-                if deps.last_experiment is None:
-                    return RatchetCommitObservation(
-                        commit_hash="",
-                        files=self._workspace.list_files(),
-                        content=[TextContent(text=(
-                            "\u274c ratchet_commit requires a preceding run_experiment.\n"
-                            "  Run the experiment through the run_experiment tool so "
-                            "metrics, artifacts, stdout, stderr, and code state are "
-                            "captured in the evidence store. Then retry ratchet_commit."
-                        ))],
-                    )
-
-                # Stale last_experiment gate (Fix A, 2026-04-21 post-fix review):
-                # refuse if last_experiment["run_id"] is present but differs from
-                # iteration_state.last_run_id. Without this check the evidence
-                # collector would snapshot the older run against the newer
-                # tracker run_id, splitting lineage. The canonical repro in the
-                # review: last_experiment.run_id = "run_old1111",
-                # iteration_state.last_run_id = "run_new2222" — tracker records
-                # the new id, evidence lands under the old id.
-                # When either side is blank we skip the match check (legacy
-                # entries pre-dating Fix 1 may have no run_id; blank
-                # iteration_state.last_run_id just means run_experiment hasn't
-                # set it yet for this iteration).
-                exp_run_id = deps.last_experiment.get("run_id", "")
-                current_run_id = (
-                    deps.iteration_state.last_run_id if deps.iteration_state else ""
+        if not action.external and deps is not None:
+            if deps.last_experiment is None:
+                return RatchetCommitObservation(
+                    commit_hash="",
+                    files=self._workspace.list_files(),
+                    content=[TextContent(text=(
+                        "❌ ratchet_commit requires a preceding run_experiment.\n"
+                        "  Run the experiment through the run_experiment tool so "
+                        "metrics, artifacts, stdout, stderr, and code state are "
+                        "captured in the evidence store. Then retry ratchet_commit."
+                    ))],
                 )
-                if exp_run_id and current_run_id and exp_run_id != current_run_id:
-                    return RatchetCommitObservation(
-                        commit_hash="",
-                        files=self._workspace.list_files(),
-                        content=[TextContent(text=(
-                            f"\u274c ratchet_commit refused: last_experiment is stale.\n"
-                            f"  last_experiment.run_id = {exp_run_id!r}\n"
-                            f"  iteration_state.last_run_id = {current_run_id!r}\n"
-                            f"  The evidence collector would snapshot the older run against\n"
-                            f"  the newer tracker run_id, splitting lineage. Run the current\n"
-                            f"  experiment through run_experiment before committing."
-                        ))],
+
+            # Stale last_experiment gate (Fix A, 2026-04-21 post-fix review):
+            # refuse if last_experiment["run_id"] is present but differs from
+            # iteration_state.last_run_id. Without this check the evidence
+            # collector would snapshot the older run against the newer
+            # tracker run_id, splitting lineage. The canonical repro in the
+            # review: last_experiment.run_id = "run_old1111",
+            # iteration_state.last_run_id = "run_new2222" — tracker records
+            # the new id, evidence lands under the old id.
+            # When either side is blank we skip the match check (legacy
+            # entries pre-dating Fix 1 may have no run_id; blank
+            # iteration_state.last_run_id just means run_experiment hasn't
+            # set it yet for this iteration).
+            exp_run_id = deps.last_experiment.get("run_id", "")
+            current_run_id = (
+                deps.iteration_state.last_run_id if deps.iteration_state else ""
+            )
+            if exp_run_id and current_run_id and exp_run_id != current_run_id:
+                return RatchetCommitObservation(
+                    commit_hash="",
+                    files=self._workspace.list_files(),
+                    content=[TextContent(text=(
+                        f"❌ ratchet_commit refused: last_experiment is stale.\n"
+                        f"  last_experiment.run_id = {exp_run_id!r}\n"
+                        f"  iteration_state.last_run_id = {current_run_id!r}\n"
+                        f"  The evidence collector would snapshot the older run against\n"
+                        f"  the newer tracker run_id, splitting lineage. Run the current\n"
+                        f"  experiment through run_experiment before committing."
+                    ))],
+                )
+
+        # Gate C (2026-04-22 session 8e48c15d38cb review, Findings 1 & 6):
+        # resolve authoritative metrics from the on-disk artifact
+        # (deps.last_experiment["metrics"]) instead of the LLM-supplied
+        # action.metrics. The LLM may remember stale quick_check numbers
+        # or copy-paste incorrect values across commits — action.metrics
+        # cannot be trusted as the source of truth for tracker state.
+        #
+        # If the artifact has metrics we use them; otherwise we fall back
+        # to action.metrics (same behavior as before this fix). The commit
+        # message itself can still carry action.metrics as free-form LLM
+        # annotation — only the tracker / iteration-state path is hardened.
+        artifact_metrics: dict = {}
+        if (
+            deps is not None
+            and deps.last_experiment
+            and isinstance(deps.last_experiment.get("metrics"), dict)
+        ):
+            artifact_metrics = dict(deps.last_experiment["metrics"])
+        commit_metrics_source = artifact_metrics or dict(action.metrics or {})
+
+        # Detect > 0.5pp disagreement on the primary metric so the agent
+        # sees the discrepancy in the observation text. Uses the same
+        # primary_metric resolver the tracker uses, so comparisons are
+        # apples-to-apples with what _finalize_iteration will record.
+        disagreement_warning = ""
+        if artifact_metrics and action.metrics:
+            try:
+                from ..orchestrator.metrics_utils import resolve_primary_metric
+                primary_metric = (
+                    deps.config.primary_metric if deps and deps.config else "auc"
+                )
+                action_value = resolve_primary_metric(action.metrics, primary_metric)
+                artifact_value = resolve_primary_metric(artifact_metrics, primary_metric)
+                if (
+                    action_value > 0
+                    and artifact_value > 0
+                    and abs(action_value - artifact_value) > 0.005
+                ):
+                    disagreement_warning = (
+                        f"\n⚠ action.metrics.{primary_metric} ({action_value:.4f}) "
+                        f"differs from artifact.metrics.{primary_metric} "
+                        f"({artifact_value:.4f}).\n"
+                        f"   Using artifact value for tracker. If action.metrics "
+                        f"represented a\n   different run, re-run run_experiment first."
                     )
-            except KeyError:
-                pass  # session registry lost — fall through to regular commit
+            except Exception:
+                pass
 
         try:
             commit_hash = self._workspace.commit(action.message, action.metrics)
         except CommitFailed as exc:
             _finalize_iteration(
                 self._session_id,
-                action.metrics,
+                commit_metrics_source,
                 committed=False,
                 action_external=action.external,
             )
@@ -351,7 +452,7 @@ class RatchetCommitExecutor(ToolExecutor):
                 content=[
                     TextContent(
                         text=(
-                            f"\u274c Commit failed at stage '{exc.stage}' "
+                            f"❌ Commit failed at stage '{exc.stage}' "
                             f"(exit={exc.exit_code}): {trimmed_stderr}"
                         )
                     )
@@ -362,15 +463,19 @@ class RatchetCommitExecutor(ToolExecutor):
 
         _finalize_iteration(
             self._session_id,
-            action.metrics,
+            commit_metrics_source,
             committed=True,
             action_external=action.external,
         )
 
+        message_text = f"Committed: {commit_hash[:8]} — {action.message}"
+        if disagreement_warning:
+            message_text += disagreement_warning
+
         return RatchetCommitObservation(
             commit_hash=commit_hash,
             files=files,
-            content=[TextContent(text=f"Committed: {commit_hash[:8]} \u2014 {action.message}")],
+            content=[TextContent(text=message_text)],
         )
 
 
@@ -428,6 +533,15 @@ class RatchetRevertExecutor(ToolExecutor):
     ) -> RatchetRevertObservation:
         from ..runtime.workspace import CommitFailed
 
+        # Resolve deps once so all gates read from the same snapshot.
+        deps = None
+        if self._session_id:
+            try:
+                from ..runtime.session_registry import get_session
+                deps = get_session(self._session_id)
+            except KeyError:
+                deps = None  # session registry lost — fall through
+
         # Gate: refuse reverts that were not preceded by run_experiment,
         # unless the caller explicitly opted into external mode.
         #
@@ -439,79 +553,90 @@ class RatchetRevertExecutor(ToolExecutor):
         # The gate fires BEFORE the pre-revert code/diff/untracked capture
         # below, because that capture makes no sense if we're going to refuse
         # the call outright.
-        if not action.external and self._session_id:
-            try:
-                from ..runtime.session_registry import get_session
-                deps = get_session(self._session_id)
-                if deps.last_experiment is None:
-                    return RatchetRevertObservation(
-                        reverted_to="",
-                        content=[TextContent(text=(
-                            "\u274c ratchet_revert requires a preceding run_experiment.\n"
-                            "  Running the failed experiment through run_experiment lets "
-                            "evidence capture stderr, error_type, and error_hint for the "
-                            "revert record. Then retry ratchet_revert."
-                        ))],
-                    )
-
-                # Stale last_experiment gate (Fix A, 2026-04-21 post-fix review):
-                # symmetric to the commit gate above. Without this check, a
-                # revert would snapshot the older run's code/diff/stderr
-                # against the newer tracker run_id, splitting lineage the same
-                # way a stale commit does.
-                exp_run_id = deps.last_experiment.get("run_id", "")
-                current_run_id = (
-                    deps.iteration_state.last_run_id if deps.iteration_state else ""
+        #
+        # Note: revert does NOT have a quick_check / failed-run gate. Reverting
+        # a quick_check or a failed run is the correct action — we're
+        # discarding the change. Only commits need those gates.
+        if not action.external and deps is not None:
+            if deps.last_experiment is None:
+                return RatchetRevertObservation(
+                    reverted_to="",
+                    content=[TextContent(text=(
+                        "❌ ratchet_revert requires a preceding run_experiment.\n"
+                        "  Running the failed experiment through run_experiment lets "
+                        "evidence capture stderr, error_type, and error_hint for the "
+                        "revert record. Then retry ratchet_revert."
+                    ))],
                 )
-                if exp_run_id and current_run_id and exp_run_id != current_run_id:
-                    return RatchetRevertObservation(
-                        reverted_to="",
-                        content=[TextContent(text=(
-                            f"\u274c ratchet_revert refused: last_experiment is stale.\n"
-                            f"  last_experiment.run_id = {exp_run_id!r}\n"
-                            f"  iteration_state.last_run_id = {current_run_id!r}\n"
-                            f"  The evidence collector would snapshot the older run against\n"
-                            f"  the newer tracker run_id, splitting lineage. Run the current\n"
-                            f"  experiment through run_experiment before reverting."
-                        ))],
-                    )
-            except KeyError:
-                pass  # session registry lost — fall through to regular revert
+
+            # Stale last_experiment gate (Fix A, 2026-04-21 post-fix review):
+            # symmetric to the commit gate above. Without this check, a
+            # revert would snapshot the older run's code/diff/stderr
+            # against the newer tracker run_id, splitting lineage the same
+            # way a stale commit does.
+            exp_run_id = deps.last_experiment.get("run_id", "")
+            current_run_id = (
+                deps.iteration_state.last_run_id if deps.iteration_state else ""
+            )
+            if exp_run_id and current_run_id and exp_run_id != current_run_id:
+                return RatchetRevertObservation(
+                    reverted_to="",
+                    content=[TextContent(text=(
+                        f"❌ ratchet_revert refused: last_experiment is stale.\n"
+                        f"  last_experiment.run_id = {exp_run_id!r}\n"
+                        f"  iteration_state.last_run_id = {current_run_id!r}\n"
+                        f"  The evidence collector would snapshot the older run against\n"
+                        f"  the newer tracker run_id, splitting lineage. Run the current\n"
+                        f"  experiment through run_experiment before reverting."
+                    ))],
+                )
+
+        # Prefer artifact metrics for finalization, mirroring the commit-side
+        # Gate C (2026-04-22 session 8e48c15d38cb review, Findings 1 & 6).
+        # Revert usually carries action.metrics={} (failed runs have nothing
+        # useful to report), but if action.metrics is populated AND the
+        # artifact has metrics too, the artifact value wins — same contract
+        # as commit so tracker state is consistent across both paths.
+        artifact_metrics: dict = {}
+        if (
+            deps is not None
+            and deps.last_experiment
+            and isinstance(deps.last_experiment.get("metrics"), dict)
+        ):
+            artifact_metrics = dict(deps.last_experiment["metrics"])
+        revert_metrics_source = artifact_metrics or dict(action.metrics or {})
 
         # Capture failed code state BEFORE reverting workspace
         # so evidence records the attempted code, not the restored baseline
-        if self._session_id:
+        if deps is not None and deps.last_experiment is not None and self._workspace is not None:
             try:
-                from ..runtime.session_registry import get_session
-                deps = get_session(self._session_id)
-                if deps.last_experiment is not None:
-                    train_path = self._workspace.root / "train.py"
-                    if train_path.exists():
-                        deps.last_experiment["_pre_revert_code"] = train_path.read_text(encoding="utf-8")
-                    import subprocess
-                    diff_result = subprocess.run(
-                        ["git", "diff", "HEAD", "--"],
-                        cwd=self._workspace.root, capture_output=True, text=True, timeout=5,
-                    )
-                    if diff_result.returncode == 0:
-                        deps.last_experiment["_pre_revert_diff"] = diff_result.stdout
+                train_path = self._workspace.root / "train.py"
+                if train_path.exists():
+                    deps.last_experiment["_pre_revert_code"] = train_path.read_text(encoding="utf-8")
+                import subprocess
+                diff_result = subprocess.run(
+                    ["git", "diff", "HEAD", "--"],
+                    cwd=self._workspace.root, capture_output=True, text=True, timeout=5,
+                )
+                if diff_result.returncode == 0:
+                    deps.last_experiment["_pre_revert_diff"] = diff_result.stdout
 
-                    # Capture untracked files (git diff HEAD -- excludes these)
-                    untracked_result = subprocess.run(
-                        ["git", "ls-files", "--others", "--exclude-standard"],
-                        cwd=self._workspace.root, capture_output=True, text=True, timeout=5,
-                    )
-                    if untracked_result.returncode == 0 and untracked_result.stdout.strip():
-                        untracked = {}
-                        for fname in untracked_result.stdout.strip().split("\n"):
-                            fpath = self._workspace.root / fname
-                            if fpath.is_file() and fpath.stat().st_size < 50_000:
-                                try:
-                                    untracked[fname] = fpath.read_text(encoding="utf-8")
-                                except Exception:
-                                    pass
-                        if untracked:
-                            deps.last_experiment["_pre_revert_untracked"] = untracked
+                # Capture untracked files (git diff HEAD -- excludes these)
+                untracked_result = subprocess.run(
+                    ["git", "ls-files", "--others", "--exclude-standard"],
+                    cwd=self._workspace.root, capture_output=True, text=True, timeout=5,
+                )
+                if untracked_result.returncode == 0 and untracked_result.stdout.strip():
+                    untracked = {}
+                    for fname in untracked_result.stdout.strip().split("\n"):
+                        fpath = self._workspace.root / fname
+                        if fpath.is_file() and fpath.stat().st_size < 50_000:
+                            try:
+                                untracked[fname] = fpath.read_text(encoding="utf-8")
+                            except Exception:
+                                pass
+                    if untracked:
+                        deps.last_experiment["_pre_revert_untracked"] = untracked
             except Exception:
                 pass
 
@@ -520,7 +645,7 @@ class RatchetRevertExecutor(ToolExecutor):
         except CommitFailed as exc:
             _finalize_iteration(
                 self._session_id,
-                metrics=action.metrics,
+                metrics=revert_metrics_source,
                 committed=False,
                 action_external=action.external,
             )
@@ -530,7 +655,7 @@ class RatchetRevertExecutor(ToolExecutor):
                 content=[
                     TextContent(
                         text=(
-                            f"\u274c Revert failed at stage '{exc.stage}' "
+                            f"❌ Revert failed at stage '{exc.stage}' "
                             f"(exit={exc.exit_code}): {trimmed_stderr}"
                         )
                     )
@@ -541,7 +666,7 @@ class RatchetRevertExecutor(ToolExecutor):
 
         _finalize_iteration(
             self._session_id,
-            metrics=action.metrics,
+            metrics=revert_metrics_source,
             committed=False,
             action_external=action.external,
         )

@@ -583,5 +583,388 @@ def test_revert_refused_when_last_experiment_run_id_is_stale(tmp_path):
         cleanup()
 
 
+# ---------- Findings 1, 2, 3, 6 (2026-04-22 session review): artifact metrics ----------
+#
+# Root cause: ratchet_commit trusts the LLM-supplied action.metrics dict as
+# authoritative, instead of reading from the actual experiment artifact captured
+# by RunExperimentTool. Consequences in session 8e48c15d38cb:
+#   - tracker/report says auc=0.8643, real artifact says auc=0.8414
+#   - "best result" 0.8643 was a 2-epoch quick_check, not a full run
+#   - run_f32a1b74 had exit_code=-1 / error_type="Unknown" but was committed
+#   - 3 runs with byte-identical code produced 3 different real AUCs — stale
+#     quick_check numbers being copy-pasted into action.metrics
+#
+# Fix: three new gates on RatchetCommitExecutor:
+#   A. refuse when deps.last_experiment.quick_check is True
+#   B. refuse when exit_code != 0 OR error_type is non-empty
+#   C. source tracker / _finalize_iteration metrics from
+#      deps.last_experiment["metrics"] (artifact) instead of action.metrics.
+#      Warn if the two disagree by > 0.5pp on the primary metric.
+# external=True bypasses A and B (same contract as existing gates).
+
+
+def test_commit_refused_when_last_experiment_was_quick_check(tmp_path):
+    """Gate A: quick_check runs are 2-epoch sanity checks and must not be
+    committed as scientific results. The gate fires BEFORE the
+    last_experiment-None / stale-run_id gates."""
+    last_experiment = {
+        "run_id": "run_quick001",
+        "run_dir": "output/runs/run_quick001",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.85},
+        "duration": 1.0,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": True,   # <-- the signal the gate reads
+        "error_type": "",
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_quick001"
+        ws = deps.workspace
+        history_before = ws.get_history()
+        tracker_len_before = len(deps.tracker.history)
+
+        ws.write_file("train.py", "print('changed')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(RatchetCommitAction(message="x", metrics={"auc": 0.85}))
+
+        assert obs.commit_hash == "", (
+            f"quick_check gate must refuse commit; got commit_hash={obs.commit_hash!r}"
+        )
+        text = obs.content[0].text
+        assert text.startswith(
+            "❌ ratchet_commit refused: last_experiment was a quick_check run"
+        ), (
+            f"observation must start with the canonical quick_check-gate message; got: {text!r}"
+        )
+        assert "quick_check=false" in text, (
+            f"observation must tell the agent how to recover (quick_check=false); got: {text!r}"
+        )
+        # Workspace history unchanged.
+        assert ws.get_history() == history_before, (
+            "gate must not create a commit"
+        )
+        # Tracker unchanged.
+        assert len(deps.tracker.history) == tracker_len_before, (
+            "gate must not record a tracker entry"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_refused_when_last_experiment_failed(tmp_path):
+    """Gate B: runs with non-zero exit_code or non-empty error_type did not
+    complete cleanly — they must be reverted, not committed. The gate fires
+    BEFORE the last_experiment-None / stale-run_id gates."""
+    # Scenario 1: non-zero exit_code (even with empty error_type).
+    last_experiment = {
+        "run_id": "run_fail001",
+        "run_dir": "output/runs/run_fail001",
+        "exit_code": -1,
+        "stdout": "",
+        "stderr": "RuntimeError: boom",
+        "metrics": {},
+        "duration": 0.5,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": False,
+        "error_type": "Unknown",
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_fail001"
+        ws = deps.workspace
+        history_before = ws.get_history()
+        tracker_len_before = len(deps.tracker.history)
+
+        ws.write_file("train.py", "print('changed')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(RatchetCommitAction(message="x"))
+
+        assert obs.commit_hash == "", (
+            f"failed-run gate must refuse commit; got commit_hash={obs.commit_hash!r}"
+        )
+        text = obs.content[0].text
+        assert text.startswith(
+            "❌ ratchet_commit refused: last_experiment did not complete cleanly"
+        ), (
+            f"observation must start with the canonical failed-run-gate message; got: {text!r}"
+        )
+        assert "-1" in text, (
+            f"observation must include exit_code; got: {text!r}"
+        )
+        assert "Unknown" in text, (
+            f"observation must include error_type; got: {text!r}"
+        )
+        assert "ratchet_revert" in text, (
+            f"observation must point the agent at ratchet_revert; got: {text!r}"
+        )
+        assert ws.get_history() == history_before, (
+            "gate must not create a commit"
+        )
+        assert len(deps.tracker.history) == tracker_len_before, (
+            "gate must not record a tracker entry"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_refused_when_exit_code_zero_but_error_type_set(tmp_path):
+    """Gate B variant: exit_code == 0 but error_type non-empty (shouldn't
+    happen in practice, but we treat it as a failure for defense-in-depth)."""
+    last_experiment = {
+        "run_id": "run_fail002",
+        "run_dir": "output/runs/run_fail002",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.5},
+        "duration": 0.5,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": False,
+        "error_type": "ShapeMismatch",  # non-empty → treat as failure
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_fail002"
+        ws = deps.workspace
+        ws.write_file("train.py", "print('changed')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(RatchetCommitAction(message="x"))
+
+        assert obs.commit_hash == "", (
+            f"non-empty error_type must refuse commit; got commit_hash={obs.commit_hash!r}"
+        )
+        text = obs.content[0].text
+        assert "ShapeMismatch" in text, (
+            f"observation must include error_type; got: {text!r}"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_uses_artifact_metrics_not_action_metrics(tmp_path):
+    """Gate C: the tracker must record deps.last_experiment["metrics"]
+    (artifact values) instead of action.metrics (LLM-supplied). Reproduces
+    the review's Finding 1 scenario: action.metrics.auc=0.8643 but
+    artifact.metrics.auc=0.8414 → tracker must show 0.8414."""
+    last_experiment = {
+        "run_id": "run_truth01",
+        "run_dir": "output/runs/run_truth01",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.8414, "f1": 0.80},   # <-- truth
+        "duration": 1.0,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": False,
+        "error_type": "",
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_truth01"
+        ws = deps.workspace
+        ws.write_file("train.py", "print('improved')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        # LLM-supplied metrics lie — this is the whole point of the gate.
+        obs = executor(
+            RatchetCommitAction(message="x", metrics={"auc": 0.8643})
+        )
+
+        assert obs.commit_hash, (
+            f"well-formed last_experiment must unlock the commit; "
+            f"got commit_hash={obs.commit_hash!r}, content={obs.content!r}"
+        )
+
+        # Tracker must carry the artifact value, not the action-supplied lie.
+        assert deps.tracker.history, "tracker must have at least one entry"
+        last_entry = deps.tracker.history[-1]
+        recorded_metrics = last_entry.get("metrics", {})
+        assert recorded_metrics.get("auc") == 0.8414, (
+            f"tracker must record artifact auc=0.8414, not action.metrics auc=0.8643; "
+            f"got {recorded_metrics!r}"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_warns_on_metric_disagreement(tmp_path):
+    """Gate C warning: when action.metrics disagrees with artifact.metrics
+    by > 0.5pp on the primary metric, the observation must carry a warning
+    line so the agent sees the discrepancy."""
+    last_experiment = {
+        "run_id": "run_warn001",
+        "run_dir": "output/runs/run_warn001",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.8414},
+        "duration": 1.0,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": False,
+        "error_type": "",
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_warn001"
+        ws = deps.workspace
+        ws.write_file("train.py", "print('improved')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(
+            # Discrepancy: 0.8643 vs 0.8414 = 2.29pp > 0.5pp threshold.
+            RatchetCommitAction(message="x", metrics={"auc": 0.8643})
+        )
+
+        assert obs.commit_hash, "commit should still succeed (warning, not refusal)"
+        text = obs.content[0].text
+        assert "⚠" in text or "warning" in text.lower() or "differs" in text.lower(), (
+            f"observation must carry a warning about the metric disagreement; got: {text!r}"
+        )
+        assert "0.8643" in text and "0.8414" in text, (
+            f"observation must include both values; got: {text!r}"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_no_warning_when_metrics_agree(tmp_path):
+    """No warning when action.metrics and artifact.metrics agree within 0.5pp."""
+    last_experiment = {
+        "run_id": "run_agree01",
+        "run_dir": "output/runs/run_agree01",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.8643},
+        "duration": 1.0,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": False,
+        "error_type": "",
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_agree01"
+        ws = deps.workspace
+        ws.write_file("train.py", "print('improved')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(
+            # Well within 0.5pp — values match.
+            RatchetCommitAction(message="x", metrics={"auc": 0.8643})
+        )
+
+        assert obs.commit_hash, "commit should succeed"
+        text = obs.content[0].text
+        assert "differs" not in text.lower(), (
+            f"observation must NOT carry a disagreement warning; got: {text!r}"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_external_flag_bypasses_quick_check_gate(tmp_path):
+    """external=True must bypass Gate A: quick_check refusal."""
+    last_experiment = {
+        "run_id": "run_quick002",
+        "run_dir": "output/runs/run_quick002",
+        "exit_code": 0,
+        "stdout": "",
+        "stderr": "",
+        "metrics": {"auc": 0.85},
+        "duration": 1.0,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": True,
+        "error_type": "",
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_quick002"
+        ws = deps.workspace
+        ws.write_file("train.py", "print('external quick check')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(
+            RatchetCommitAction(message="x", metrics={"auc": 0.85}, external=True)
+        )
+
+        assert obs.commit_hash, (
+            f"external=True must bypass the quick_check gate; "
+            f"got commit_hash={obs.commit_hash!r}, content={obs.content!r}"
+        )
+    finally:
+        cleanup()
+
+
+def test_commit_external_flag_bypasses_failed_run_gate(tmp_path):
+    """external=True must bypass Gate B: failed-run refusal."""
+    last_experiment = {
+        "run_id": "run_fail003",
+        "run_dir": "output/runs/run_fail003",
+        "exit_code": -1,
+        "stdout": "",
+        "stderr": "RuntimeError: boom",
+        "metrics": {},
+        "duration": 0.5,
+        "started_at": "2026-04-22T00:00:00Z",
+        "data_output_dir": "",
+        "data_output_artifacts": None,
+        "quick_check": False,
+        "error_type": "Unknown",
+    }
+    session_id, deps, cleanup = _register_session(
+        tmp_path, last_experiment=last_experiment
+    )
+    try:
+        deps.iteration_state.last_run_id = "run_fail003"
+        ws = deps.workspace
+        ws.write_file("train.py", "print('external, human knows what they are doing')\n")
+
+        executor = RatchetCommitExecutor(ws, session_id=session_id)
+        obs = executor(
+            RatchetCommitAction(message="x", external=True)
+        )
+
+        assert obs.commit_hash, (
+            f"external=True must bypass the failed-run gate; "
+            f"got commit_hash={obs.commit_hash!r}, content={obs.content!r}"
+        )
+    finally:
+        cleanup()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
