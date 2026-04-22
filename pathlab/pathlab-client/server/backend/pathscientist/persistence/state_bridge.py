@@ -47,6 +47,7 @@ def dump_iteration_state(iteration_state: IterationState) -> dict[str, Any]:
         "remaining_budget": iteration_state.remaining_budget,
         "current_file_hash": iteration_state.current_file_hash,
         "last_validated_hash": iteration_state.last_validated_hash,
+        "last_validated_path": iteration_state.last_validated_path,
         "last_quick_check_hash": iteration_state.last_quick_check_hash,
         "last_run_id": iteration_state.last_run_id,
         "history": iteration_state.history,

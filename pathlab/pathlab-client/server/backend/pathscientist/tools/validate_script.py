@@ -1,4 +1,22 @@
-"""ValidateScript tool — code safety + syntax validation + iteration policy."""
+"""ValidateScript tool — code safety + syntax validation + iteration policy.
+
+Review Finding 1 (2026-04-22) fix: ``validate_script`` previously hashed the
+``script_content`` string supplied by the LLM and handed that hash to
+``iteration_state.last_validated_hash``. ``run_experiment`` then computed a
+fresh hash of the on-disk ``train.py`` and compared against that value.
+Because the agent's ``script_content`` parameter was free to drift from disk
+(stale in-context copy, whitespace differences, re-generated from memory),
+the two hashes diverged even when nobody had edited the file between
+validate and run — producing the observed "Valid: True"/"Policy violation"
+pairs in event-00163/00165 and event-00290/00292 of session_3f1795098784.
+
+The fix: validate (and hash) the on-disk file that ``run_experiment`` will
+actually execute. ``script_content`` is still accepted so the agent can
+show its intent, but if it disagrees with disk we refuse validation and
+tell the agent which side is stale. The refusal text from
+``run_experiment`` is made actionable by ``tools.run_experiment`` so the
+agent can see exactly why the handoff failed.
+"""
 from __future__ import annotations
 
 import hashlib
@@ -16,7 +34,22 @@ if TYPE_CHECKING:
 
 class ValidateScriptAction(Action):
     script_content: str = Field(
-        description="Python script content to validate.",
+        default="",
+        description=(
+            "Python script content to validate. Optional — if omitted, the "
+            "on-disk file at ``script_path`` is read and validated. "
+            "If provided, it must match the on-disk file byte-for-byte; "
+            "otherwise validation refuses with a disk/content mismatch error."
+        ),
+    )
+    script_path: str = Field(
+        default="train.py",
+        description=(
+            "Path (relative to the workspace root) of the script to validate. "
+            "This is the SAME path that ``run_experiment`` will execute; "
+            "the hash recorded by validate_script is computed from the file "
+            "at this path so the handoff to ``run_experiment`` cannot drift."
+        ),
     )
     require_metrics_output: bool = Field(
         default=True,
@@ -28,66 +61,156 @@ class ValidateScriptObservation(Observation):
     valid: bool = Field(description="Whether the script passed all checks.")
     risk_level: str = Field(default="LOW", description="Safety risk level: LOW/MEDIUM/HIGH.")
     errors: list[str] = Field(default_factory=list, description="List of validation errors.")
+    validated_hash: str = Field(
+        default="",
+        description=(
+            "The 12-hex MD5 prefix of the on-disk script that was validated. "
+            "Empty string if validation failed or the file could not be read."
+        ),
+    )
+    validated_path: str = Field(
+        default="",
+        description="Workspace-relative path of the script that was validated.",
+    )
 
 
 class ValidateScriptExecutor(ToolExecutor):
     def __init__(self, session_id: str = ""):
         self._session_id = session_id
 
+    def _get_workspace(self):
+        """Return the workspace for this session, or ``None`` if unavailable."""
+        if not self._session_id:
+            return None
+        try:
+            from ..runtime.session_registry import get_session
+            return get_session(self._session_id).workspace
+        except (KeyError, AttributeError):
+            return None
+
+    def _get_iteration_state(self):
+        """Return the iteration state for this session, or ``None`` if unavailable."""
+        if not self._session_id:
+            return None
+        try:
+            from ..runtime.session_registry import get_session
+            return get_session(self._session_id).iteration_state
+        except (KeyError, AttributeError):
+            return None
+
     def __call__(
         self,
         action: ValidateScriptAction,
         conversation: "LocalConversation | None" = None,
     ) -> ValidateScriptObservation:
+        from openhands.sdk.llm import TextContent
+
         errors: list[str] = []
-        script = action.script_content
+        script_path = action.script_path or "train.py"
 
-        # 1. Syntax check
-        try:
-            compile(script, "<validate>", "exec")
-        except SyntaxError as e:
-            errors.append(f"Syntax error at line {e.lineno}: {e.msg}")
+        # 1. Resolve the on-disk script. The hash we record must match the
+        #    file ``run_experiment`` will hash — so we read the file from
+        #    ``workspace.root / script_path`` and validate that.
+        workspace = self._get_workspace()
+        disk_content: str | None = None
+        validated_hash = ""
+        if workspace is not None:
+            disk_path = workspace.root / script_path
+            try:
+                disk_content = disk_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                errors.append(
+                    f"Script not found on disk at '{script_path}'. "
+                    "Write the file via file_editor first (run_experiment "
+                    "executes the file on disk, not inline content)."
+                )
+            except OSError as exc:
+                errors.append(f"Could not read script '{script_path}': {exc}")
 
-        # 2. Entry point check
-        has_entry = (
-            "def train()" in script
-            or "def extract()" in script
-            or 'if __name__ == "__main__"' in script
-            or "def main()" in script
-        )
-        if not has_entry:
+        # 2. Source of truth: disk content when available. If the agent ALSO
+        #    provided ``script_content``, verify it matches disk — a mismatch
+        #    means the agent's view is stale (or edits weren't persisted).
+        #    Catching this at validate-time is what stops the
+        #    "Valid: True → Policy violation" handoff bug.
+        supplied = action.script_content or ""
+        script_for_checks: str
+        if disk_content is not None:
+            script_for_checks = disk_content
+            if supplied and supplied != disk_content:
+                supplied_hash = hashlib.md5(supplied.encode()).hexdigest()[:12]
+                disk_hash = hashlib.md5(disk_content.encode()).hexdigest()[:12]
+                errors.append(
+                    "script_content does not match the file on disk "
+                    f"('{script_path}'). "
+                    f"supplied_hash = {supplied_hash}, "
+                    f"disk_hash = {disk_hash}. "
+                    "run_experiment will execute the on-disk file, so "
+                    "either write your updated content to disk via "
+                    "file_editor before validating, or omit script_content "
+                    "and validate the file as-is."
+                )
+        elif supplied:
+            # No workspace (e.g. legacy callers / unit tests): fall back to
+            # the supplied content. We still record a hash so unit tests that
+            # exercise the IterationState handoff remain meaningful, but the
+            # mismatch shape above is preferred in production.
+            script_for_checks = supplied
+        else:
             errors.append(
-                "Missing entry point: need train(), extract(), main(), "
-                "or if __name__ == '__main__' block."
+                "No script to validate: provide script_content or ensure "
+                f"'{script_path}' exists on disk."
             )
+            script_for_checks = ""
 
-        # 3. Metrics output check
-        if action.require_metrics_output:
-            if "metrics.json" not in script:
-                errors.append("Script must save results to metrics.json.")
+        # 3. Syntax / entry-point / metrics / safety checks on the source-of-truth.
+        if script_for_checks:
+            try:
+                compile(script_for_checks, "<validate>", "exec")
+            except SyntaxError as e:
+                errors.append(f"Syntax error at line {e.lineno}: {e.msg}")
 
-        # 4. Safety check
-        from ..runtime.script_safety import ScriptRisk, assess_script_risk
-        risk_level, risk_reasons = assess_script_risk(script)
-        if risk_level == ScriptRisk.HIGH:
-            for reason in risk_reasons:
-                errors.append(f"Safety: {reason}")
+            has_entry = (
+                "def train()" in script_for_checks
+                or "def extract()" in script_for_checks
+                or 'if __name__ == "__main__"' in script_for_checks
+                or "def main()" in script_for_checks
+            )
+            if not has_entry:
+                errors.append(
+                    "Missing entry point: need train(), extract(), main(), "
+                    "or if __name__ == '__main__' block."
+                )
+
+            if action.require_metrics_output:
+                if "metrics.json" not in script_for_checks:
+                    errors.append("Script must save results to metrics.json.")
+
+            from ..runtime.script_safety import ScriptRisk, assess_script_risk
+            risk_level, risk_reasons = assess_script_risk(script_for_checks)
+            if risk_level == ScriptRisk.HIGH:
+                for reason in risk_reasons:
+                    errors.append(f"Safety: {reason}")
+        else:
+            from ..runtime.script_safety import ScriptRisk
+            risk_level = ScriptRisk.LOW
 
         valid = len(errors) == 0
 
-        # 5. Update iteration policy — mark this content hash as validated
-        if valid and self._session_id:
-            try:
-                from ..runtime.session_registry import get_session
-                deps = get_session(self._session_id)
-                if deps.iteration_state:
-                    file_hash = hashlib.md5(script.encode()).hexdigest()[:12]
-                    deps.iteration_state.mark_validated(file_hash)
-            except (KeyError, AttributeError):
-                pass
+        # 4. On success, record the hash of the file ``run_experiment`` will
+        #    hash — never the LLM-supplied string. This is the crux of the
+        #    Finding 1 fix.
+        if valid and script_for_checks:
+            validated_hash = hashlib.md5(script_for_checks.encode()).hexdigest()[:12]
+            iteration_state = self._get_iteration_state()
+            if iteration_state is not None:
+                iteration_state.mark_validated(validated_hash)
+                # Remember the path too so run_experiment can surface it in
+                # a precise refusal message when the paths diverge.
+                iteration_state.last_validated_path = script_path
 
-        from openhands.sdk.llm import TextContent
         text = f"Valid: {valid}\nRisk: {risk_level.name}\n"
+        if validated_hash:
+            text += f"Validated: {script_path} (hash {validated_hash})\n"
         if errors:
             text += "Errors:\n" + "\n".join(f"  - {e}" for e in errors)
         else:
@@ -97,6 +220,8 @@ class ValidateScriptExecutor(ToolExecutor):
             valid=valid,
             risk_level=risk_level.name,
             errors=errors,
+            validated_hash=validated_hash,
+            validated_path=script_path if validated_hash else "",
             content=[TextContent(text=text)],
             is_error=not valid,
         )
@@ -111,8 +236,13 @@ class ValidateScriptTool(ToolDefinition[ValidateScriptAction, ValidateScriptObse
             cls(
                 description=(
                     "Validate a Python training script before execution. "
-                    "Checks syntax, entry points, metrics output, and safety risks. "
-                    "Always validate before running an experiment."
+                    "Checks syntax, entry points, metrics output, and safety "
+                    "risks AGAINST THE FILE ON DISK at ``script_path`` "
+                    "(default: train.py). The recorded hash is the disk "
+                    "file's hash, so ``run_experiment`` sees the same hash "
+                    "and the validate→run handoff cannot drift. Supply "
+                    "script_content only for a cross-check against disk; if "
+                    "it disagrees, validation refuses with both hashes shown."
                 ),
                 action_type=ValidateScriptAction,
                 observation_type=ValidateScriptObservation,

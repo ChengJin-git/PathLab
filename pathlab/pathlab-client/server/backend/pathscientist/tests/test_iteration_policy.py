@@ -16,7 +16,9 @@ from pathscientist.runtime.iteration_state import IterationState, PolicyViolatio
 def test_full_run_blocked_without_validation():
     state = IterationState(max_iterations=5)
     file_hash = "abc123"
-    with pytest.raises(PolicyViolation, match="not been validated"):
+    # No prior validate_script call — refusal names the "no validation record"
+    # invariant so the agent can distinguish this from a stale-hash mismatch.
+    with pytest.raises(PolicyViolation, match="no validation record"):
         state.check_can_full_run(file_hash)
 
 
@@ -40,7 +42,8 @@ def test_full_run_allowed_after_validate_and_quick_check():
 def test_quick_check_blocked_without_validation():
     state = IterationState(max_iterations=5)
     file_hash = "abc123"
-    with pytest.raises(PolicyViolation, match="not been validated"):
+    # See test_full_run_blocked_without_validation — same message contract.
+    with pytest.raises(PolicyViolation, match="no validation record"):
         state.check_can_quick_check(file_hash)
 
 
@@ -60,8 +63,9 @@ def test_file_change_invalidates_previous_validation():
     state.mark_validated(hash_v1)
     state.mark_quick_check_passed(hash_v1)
 
-    # File changed → new hash doesn't match old validation
-    with pytest.raises(PolicyViolation, match="not been validated"):
+    # File changed → new hash doesn't match recorded validation. This is
+    # the "hash mismatch" branch (vs the "no validation record" branch).
+    with pytest.raises(PolicyViolation, match="hash mismatch"):
         state.check_can_full_run(hash_v2)
 
 
@@ -74,8 +78,10 @@ def test_iteration_record_resets_hashes():
     # Record iteration → resets validation state
     state.record_iteration(metrics={"auc": 0.8}, committed=True)
 
-    # Same hash no longer valid — need to re-validate
-    with pytest.raises(PolicyViolation, match="not been validated"):
+    # Same hash no longer valid — need to re-validate. After the reset,
+    # last_validated_hash is blank so this hits the "no validation record"
+    # branch, not the hash-mismatch branch.
+    with pytest.raises(PolicyViolation, match="no validation record"):
         state.check_can_quick_check(file_hash)
 
 

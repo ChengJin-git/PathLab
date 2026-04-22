@@ -56,6 +56,7 @@ def _rebuild_iteration_state(agent_state: dict, config: PathScientistConfig) -> 
     state.remaining_budget = iter_data.get("remaining_budget", state.max_iterations)
     state.current_file_hash = iter_data.get("current_file_hash", "")
     state.last_validated_hash = iter_data.get("last_validated_hash", "")
+    state.last_validated_path = iter_data.get("last_validated_path", "")
     state.last_quick_check_hash = iter_data.get("last_quick_check_hash", "")
     state.last_run_id = iter_data.get("last_run_id", "")
     state.history = iter_data.get("history", [])

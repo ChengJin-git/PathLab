@@ -124,13 +124,17 @@ class RunExperimentExecutor(ToolExecutor):
             try:
                 from ..runtime.iteration_state import PolicyViolation
                 if action.quick_check:
-                    iteration_state.check_can_quick_check(file_hash)
+                    iteration_state.check_can_quick_check(
+                        file_hash, script_path=action.script_path,
+                    )
                 else:
-                    iteration_state.check_can_full_run(file_hash)
+                    iteration_state.check_can_full_run(
+                        file_hash, script_path=action.script_path,
+                    )
             except PolicyViolation as e:
                 return RunExperimentObservation(
                     exit_code=-1, metrics={}, duration=0.0,
-                    content=[TextContent(text=f"Policy violation: {e}")],
+                    content=[TextContent(text=f"\u274c {e}")],
                     is_error=True,
                 )
 

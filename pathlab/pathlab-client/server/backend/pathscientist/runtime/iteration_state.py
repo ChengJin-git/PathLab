@@ -36,6 +36,7 @@ class IterationState:
     # File hash tracking
     current_file_hash: str = ""
     last_validated_hash: str = ""
+    last_validated_path: str = ""  # workspace-relative path of the last validated file
     last_quick_check_hash: str = ""
 
     # Run tracking
@@ -69,10 +70,44 @@ class IterationState:
         self.last_quick_check_hash = file_hash
         logger.debug(f"[policy] Quick check passed: {file_hash}")
 
-    def check_can_quick_check(self, file_hash: str) -> None:
+    def _format_validation_mismatch(self, phase: str, file_hash: str, script_path: str) -> str:
+        """Build an actionable refusal message for the validate→run handoff.
+
+        Review Finding 1 (2026-04-22): the previous generic text
+        ``"current script has not been validated"`` gave the agent no way to
+        tell whether validate_script had never been called, or had been
+        called on a different file content. That ambiguity was part of what
+        drove commit_003's ``run_train.py`` wrapper workaround in
+        session_3f1795098784.
+        """
+        # Case 1: validate_script never recorded a hash — straightforward.
+        if not self.last_validated_hash:
+            return (
+                f"{phase} refused: no validation record on file. "
+                "Call validate_script with the current "
+                f"{script_path or 'script'} content first."
+            )
+        # Case 2: a hash is recorded but it doesn't match the current disk
+        # file — the script changed (or was overwritten) after validation.
+        validated_path = self.last_validated_path or script_path or "script"
+        return (
+            f"{phase} refused: script hash mismatch.\n"
+            f"  last_validated_hash = {self.last_validated_hash} "
+            f"(from validate_script on {validated_path})\n"
+            f"  current_hash        = {file_hash or '<file missing>'} "
+            f"({script_path or 'current script'} as it is now)\n"
+            "The script changed after validation. "
+            "Re-run validate_script first."
+        )
+
+    def check_can_quick_check(self, file_hash: str, script_path: str = "") -> None:
         """Raise PolicyViolation if quick check is not allowed.
 
         Requires: file has been validated.
+
+        ``file_hash`` is the hash of the on-disk file that ``run_experiment``
+        is about to execute. ``script_path`` is carried through into the
+        refusal text so the agent sees exactly which file mismatched.
         """
         if self.remaining_budget <= 0:
             raise PolicyViolation(
@@ -81,14 +116,18 @@ class IterationState:
             )
         if file_hash != self.last_validated_hash:
             raise PolicyViolation(
-                "Cannot run quick check: current script has not been validated. "
-                "Call validate_script first, then try again."
+                self._format_validation_mismatch(
+                    "Cannot run quick check", file_hash, script_path,
+                )
             )
 
-    def check_can_full_run(self, file_hash: str) -> None:
+    def check_can_full_run(self, file_hash: str, script_path: str = "") -> None:
         """Raise PolicyViolation if full run is not allowed.
 
         Requires: file has been validated AND passed quick check.
+
+        See ``check_can_quick_check`` for the ``file_hash`` / ``script_path``
+        contract.
         """
         if self.remaining_budget <= 0:
             raise PolicyViolation(
@@ -97,13 +136,16 @@ class IterationState:
             )
         if file_hash != self.last_validated_hash:
             raise PolicyViolation(
-                "Cannot run full experiment: current script has not been validated. "
-                "Call validate_script first."
+                self._format_validation_mismatch(
+                    "Cannot run full experiment", file_hash, script_path,
+                )
             )
         if file_hash != self.last_quick_check_hash:
             raise PolicyViolation(
                 "Cannot run full experiment: current script has not passed quick check. "
-                "Call run_experiment with quick_check=true first."
+                "Call run_experiment with quick_check=true first. "
+                f"(validated hash {self.last_validated_hash} matches; "
+                f"quick_check hash {self.last_quick_check_hash or '<none>'} does not)"
             )
 
     def ensure_run_id(self) -> str:
@@ -141,6 +183,7 @@ class IterationState:
         self.remaining_budget -= 1
         # Reset hashes — next iteration needs fresh validate + quick check
         self.last_validated_hash = ""
+        self.last_validated_path = ""
         self.last_quick_check_hash = ""
         logger.info(
             f"[policy] Iteration {self.iteration_index - 1} done "
