@@ -104,76 +104,96 @@ def detect_data_paths(data_mounts: dict[str, str] | None = None) -> str:
     return "\n".join(lines)
 
 
-def detect_hf_model_cache() -> str:
-    """List pathology-relevant models already present in HF_HOME cache.
+def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
+    """List pathology foundation models with a usable local checkpoint.
 
-    Surfaces the fact that UNI / CONCH / Virchow / etc. are pre-downloaded
-    and can be loaded offline — without this, the agent reads the
-    'no network access' rule and concludes pathology FMs are unusable,
-    falling back to ImageNet baselines.
+    Truth source is ``common/extractors/checkpoints/<Name>/``, NOT
+    HF_HOME. That directory holds the symlinks (or real files) that
+    ``checkpoint_manager.get_ckpt_path`` actually returns — which is what
+    ``get_extractor(key)`` loads under the hood. HF_HOME is sometimes a
+    superset (Hub download cache for other tools) but is not the path the
+    registry uses.
+
+    Pass ``ckpts_root`` to point at a different checkpoints directory
+    (used by tests to fake the inventory). When ``None`` (default) the
+    function scans the real
+    ``domain/templates/common/extractors/checkpoints/`` sibling tree.
+
+    Motivated by session_9df3fa411bbf (2026-04-22), where the agent wrote
+    ``AutoModel.from_pretrained("MahmoodLab/UNI2-h")`` and got
+    ``Unrecognized model ...`` because UNI2 needs a timm+custom-kwargs
+    load, not the generic HuggingFace AutoModel dispatch. The fix is to
+    list each extractor with its exact ``get_extractor(key)`` call, based
+    on whether a real checkpoint is actually on disk where the registry
+    expects it.
     """
-    home = os.path.expanduser("~")
-    hf_home = os.environ.get("HF_HOME", f"{home}/.cache/huggingface")
-    hub_dir = Path(hf_home) / "hub"
-
-    if not hub_dir.is_dir():
-        return (
-            f"HuggingFace cache: {hub_dir} (not present)\n"
-            "  No pre-cached models detected. Loading UNI/CONCH/Virchow "
-            "from the internet would require network access and will "
-            "likely fail in the sandbox."
-        )
-
-    # Curated list of (hf_repo, display_name, registry_key).
-    # registry_key is the exact string to pass to
-    # common.extractors.registry.get_extractor(...). Mismatches between
-    # display name and registry key bit us in session_9df3fa411bbf
-    # (2026-04-22), where the agent wrote
-    # AutoModel.from_pretrained("MahmoodLab/UNI2-h") and got
-    # "Unrecognized model in MahmoodLab/UNI2-h" from transformers because
-    # UNI2's config has no standard `model_type` — it loads via timm
-    # with custom kwargs + a local state_dict. Only the registry path
-    # works for every entry; do NOT suggest AutoModel or bare
-    # timm.create_model(..., pretrained=True) for these.
-    pathology_repo_markers = [
-        ("MahmoodLab/UNI2-h",     "UNI2",        "uni2"),
-        ("MahmoodLab/uni",        "UNI",         "uni"),
-        ("MahmoodLab/conch",      "CONCH",       "conch"),
-        ("paige-ai/Virchow2",     "Virchow2",    "virchow2"),
-        ("paige-ai/Virchow",      "Virchow",     "virchow"),
-        ("bioptimus/H-optimus-1", "H-Optimus-1", "H-Optimus-1"),
-        ("bioptimus/H-optimus-0", "H-Optimus-0", "H-Optimus-0"),
-        ("owkin/phikon-v2",       "Phikon2",     "phikon2"),
-        ("owkin/phikon",          "Phikon",      "phikon"),
+    # (dir_name, display_name, registry_key) for every pathology extractor
+    # the project knows about. dir_name matches checkpoint_manager's
+    # __supported_extractors CamelCase keys; registry_key is the
+    # lowercase/mixed-case key used in _EXTRACTOR_LAZY_REGISTRY.
+    extractors = [
+        ("UNI2",         "UNI2",         "uni2"),
+        ("UNI",          "UNI",          "uni"),
+        ("CONCH",        "CONCH",        "conch"),
+        ("CONCH15",      "CONCH 1.5",    "conch15"),
+        ("Virchow2",     "Virchow2",     "virchow2"),
+        ("Virchow",      "Virchow",      "virchow"),
+        ("H-Optimus-1",  "H-Optimus-1",  "H-Optimus-1"),
+        ("H-Optimus-0",  "H-Optimus-0",  "H-Optimus-0"),
+        ("Phikon2",      "Phikon2",      "phikon2"),
+        ("Phikon",       "Phikon",       "phikon"),
+        ("mSTAR",        "mSTAR",        "mSTAR"),
+        ("GPFM",         "GPFM",         "GPFM"),
+        ("PathoCLIP",    "PathoCLIP",    "patho_clip"),
+        ("OpenMidnight", "OpenMidnight", "openmidnight"),
+        ("PLIP",         "PLIP",         "plip"),
     ]
 
-    cached: list[tuple[str, str]] = []
-    try:
-        dir_names = {d.name for d in hub_dir.iterdir() if d.is_dir()}
-    except PermissionError:
-        dir_names = set()
+    if ckpts_root is None:
+        ckpts_root = Path(__file__).parent / "domain" / "templates" / "common" / "extractors" / "checkpoints"
+    usable: list[tuple[str, str, str]] = []     # (display, key, size)
+    missing: list[tuple[str, str]] = []         # (display, key) — dir present but no ckpt
 
-    for repo, display, key in pathology_repo_markers:
-        marker = "models--" + repo.replace("/", "--")
-        if any(d.lower() == marker.lower() for d in dir_names):
-            cached.append((display, key))
+    if ckpts_root.is_dir():
+        for dir_name, display, key in extractors:
+            d = ckpts_root / dir_name
+            if not d.is_dir():
+                continue
+            ckpt = _find_extractor_checkpoint(d)
+            if ckpt is None:
+                missing.append((display, key))
+                continue
+            try:
+                size = ckpt.stat().st_size  # follows symlink by default
+            except OSError:
+                missing.append((display, key))
+                continue
+            if size < 1_000_000:     # <1MB ⇒ almost certainly a stub / LFS pointer
+                missing.append((display, key))
+                continue
+            usable.append((display, key, _format_size(size)))
 
-    if not cached:
+    if not usable:
         return (
-            f"HuggingFace cache: {hub_dir}\n"
-            "  No pathology foundation models detected in the local cache.\n"
-            "  The sandbox blocks network; avoid extractors that would "
-            "need a fresh download. ImageNet backbones bundled with timm "
-            "(resnet50, vit_large_patch16_224, etc.) stay usable."
+            f"Extractor checkpoints: {ckpts_root} (none usable)\n"
+            "  No pathology foundation model checkpoints are installed. "
+            "Adding a working ckpt symlink under checkpoints/<Name>/ would "
+            "unlock get_extractor(key); without one, only timm ImageNet "
+            "backbones (resnet50, vit_large_patch16_224, ...) remain."
         )
 
     lines = [
-        "Pre-cached pathology foundation models (loadable OFFLINE — no network needed):",
+        "Pre-installed pathology foundation models (loadable OFFLINE via registry):",
     ]
-    for display, key in cached:
-        lines.append(f'  - {display:<12}  get_extractor("{key}")')
-
-    lines.append(f"  Cache: {hub_dir}  (HF_HOME={hf_home})")
+    width = max(len(d) for d, _, _ in usable)
+    for display, key, size in usable:
+        lines.append(f'  - {display:<{width}}  get_extractor("{key}")   [{size}]')
+    lines.append(f"  Checkpoints: {ckpts_root}")
+    if missing:
+        lines.append(
+            "  Not currently installed (calling get_extractor on these will fail): "
+            + ", ".join(f'{d}/"{k}"' for d, k in missing)
+        )
     lines.append("")
     lines.append(
         "Load ONLY via common/extractors/registry.get_extractor(key). Do NOT use"
@@ -185,27 +205,65 @@ def detect_hf_model_cache() -> str:
         "  for these — UNI2/CONCH/Virchow use custom configs + local state_dict"
     )
     lines.append(
-        "  loads that the generic HuggingFace loaders cannot dispatch."
+        "  loads that the generic HuggingFace loaders cannot dispatch (you will"
+    )
+    lines.append(
+        "  get `ValueError: Unrecognized model in <repo>` and fall back to an"
+    )
+    lines.append(
+        "  ImageNet backbone you should not have chosen)."
     )
     lines.append("")
     lines.append("Canonical usage:")
-    lines.append("  import os")
     lines.append("  from common.extractors.registry import get_extractor")
-    lines.append('  extractor = get_extractor("uni2", hf_token=os.getenv("HF_TOKEN", ""))')
+    lines.append('  extractor = get_extractor("uni2")')
     lines.append("  extractor.eval().cuda()")
     lines.append("  feats = extractor(patch_tensor)   # (B, D) D=extractor.output_dim")
     lines.append("  # preprocessing transforms: extractor.get_transforms()")
-    lines.append("")
-    lines.append(
-        "HF_TOKEN: Mahmood Lab gated repos (UNI, UNI2, CONCH) require a token;"
-    )
-    lines.append(
-        '  if not set, UNI2 init will error. If HF_TOKEN is unavailable in the'
-    )
-    lines.append(
-        "  sandbox, prefer Virchow2 / Phikon2 / H-Optimus-1 — they do not gate."
-    )
     return "\n".join(lines)
+
+
+def _find_extractor_checkpoint(ckpt_dir: Path) -> Path | None:
+    """Return first file/symlink in ckpt_dir that looks like a checkpoint.
+
+    Accepts common extensions (.bin, .pth, .pt, .safetensors) and any file
+    >= 1MB that resolves to an existing target. Ignores hidden dirs
+    (e.g. .cache/) and the tell-tale stub sizes of Git LFS pointer files.
+    """
+    preferred_exts = {".bin", ".pth", ".pt", ".safetensors"}
+    try:
+        entries = sorted(ckpt_dir.iterdir(), key=lambda p: p.name)
+    except OSError:
+        return None
+    candidates: list[Path] = []
+    for entry in entries:
+        if entry.name.startswith("."):
+            continue
+        if not entry.is_file() and not entry.is_symlink():
+            continue
+        if entry.suffix.lower() in preferred_exts:
+            candidates.append(entry)
+    # If nothing matches a known extension, fall back to any file so we at
+    # least notice truly malformed installs.
+    if not candidates:
+        candidates = [e for e in entries if (e.is_file() or e.is_symlink()) and not e.name.startswith(".")]
+    for cand in candidates:
+        try:
+            if cand.is_symlink() and not cand.resolve().exists():
+                continue    # dangling symlink
+            size = cand.stat().st_size    # follows symlink
+            if size >= 1_000_000:
+                return cand
+        except OSError:
+            continue
+    return None
+
+
+def _format_size(num_bytes: int) -> str:
+    for unit, factor in [("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)]:
+        if num_bytes >= factor:
+            return f"{num_bytes / factor:.1f} {unit}"
+    return f"{num_bytes} B"
 
 
 def detect_common_libs() -> str:
