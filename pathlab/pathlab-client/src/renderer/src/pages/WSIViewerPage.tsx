@@ -1831,7 +1831,7 @@ export default function WSIViewerPage() {
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            <div className="flex items-center gap-1 rounded-[1rem] border border-white/10 bg-white/6 p-1 shadow-[0_18px_40px_rgba(15,23,42,0.38)] backdrop-blur-xl">
+            <div className="flex items-center gap-1 rounded-[1rem] border border-white/10 p-1">
               <Tooltip content={buildSlideNavigationTooltip({
                 direction: 'previous',
                 hasTarget: !!prevWSI,
@@ -1859,7 +1859,7 @@ export default function WSIViewerPage() {
                 className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
-                {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">Q</kbd>}
+                {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">Q</kbd>}
               </button>
               </Tooltip>
               <div className="mx-0.5 h-5 w-px bg-white/10"></div>
@@ -1890,7 +1890,7 @@ export default function WSIViewerPage() {
                 className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
-                {showShortcuts && <kbd className="absolute -bottom-1.5 -right-1.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">E</kbd>}
+                {showShortcuts && <kbd className="absolute bottom-0.5 right-0.5 px-1 py-[1px] bg-white border border-gray-200 shadow-sm rounded text-[9px] font-mono font-semibold text-gray-500 z-10 pointer-events-none">E</kbd>}
               </button>
               </Tooltip>
             </div>
