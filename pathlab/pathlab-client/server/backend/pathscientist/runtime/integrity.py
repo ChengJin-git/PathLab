@@ -12,6 +12,7 @@ Session Integrity Hardening plan.
 """
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,6 +130,9 @@ def check_session_integrity(
         _check_history_length_mismatch(tracker_history, research_run_history)
     )
     issues.extend(_check_runs_all_identical_metric(research_run_history))
+    issues.extend(
+        _check_metrics_json_drift(workspace_root, tracker_history, primary_metric)
+    )
 
     fatal_count = sum(1 for i in issues if i.severity == "fatal")
     warning_count = sum(1 for i in issues if i.severity == "warning")
@@ -458,3 +462,109 @@ def _check_runs_all_identical_metric(
         else:
             streak_start = i
     return []
+
+
+def _check_metrics_json_drift(
+    workspace_root: Path,
+    tracker_history: list[dict],
+    primary_metric: str,
+    drift_threshold: float = 0.005,  # 0.5 percentage points of absolute improvement
+) -> list[IntegrityIssue]:
+    """Fatal: workspace ``output/metrics.json`` shows a better primary-metric
+    value than anything recorded in ``tracker_history``.
+
+    Indicates direct-execution runs (``python train.py`` from a terminal
+    inside the workspace) that bypassed ``RunExperimentTool``, producing a
+    tracker/report/workspace split where the official tracker entry
+    materially under-reports the best result the agent actually observed.
+
+    Returns empty list when:
+
+    - ``output/metrics.json`` doesn't exist (normal for sessions without runs)
+    - ``primary_metric`` can't be resolved from the metrics file
+    - ``tracker_history`` is empty (nothing to compare against)
+    - the disk value is NOT meaningfully better than the tracker's best
+
+    Uses :func:`orchestrator.metrics_utils.resolve_primary_metric` for the
+    same ``test_``/``val_``/``best_val_``/``best_`` prefix tolerance applied
+    by :func:`_check_tracker_metric_missing`.
+
+    Catches the ``session_3f1795098784`` failure mode where the agent ran
+    ``python train.py`` via terminal repeatedly, wrote ``test_auc=0.843`` /
+    ``0.857`` / ``0.859`` to ``output/metrics.json``, but only the first
+    ``0.8217`` run ever went through ``run_experiment`` + ratchet_commit —
+    so ``tracker.best_value`` stayed at ``0.8217`` and the final report
+    claimed the session was stuck at a metric that had been exceeded many
+    times.
+    """
+    metrics_path = Path(workspace_root) / "output" / "metrics.json"
+    if not metrics_path.exists():
+        return []
+    try:
+        raw = metrics_path.read_text(encoding="utf-8")
+        disk_metrics = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(disk_metrics, dict):
+        return []
+
+    # Narrow, function-scoped import to keep the orchestrator out of
+    # integrity.py's import-time surface.
+    from ..orchestrator.metrics_utils import resolve_primary_metric
+
+    disk_value = resolve_primary_metric(disk_metrics, primary_metric)
+    # resolve_primary_metric returns 0.0 when nothing matches. We treat that
+    # as "could not resolve" — there's nothing to compare against.
+    if not isinstance(disk_value, (int, float)) or disk_value == 0.0:
+        return []
+    disk_value = float(disk_value)
+
+    # Find the best primary-metric value across committed tracker entries.
+    best_tracker_value: float | None = None
+    best_run_id: str = ""
+    best_iteration: Any = None
+    for entry in tracker_history or []:
+        if not isinstance(entry, dict) or not entry.get("committed"):
+            continue
+        value = resolve_primary_metric(entry.get("metrics") or {}, primary_metric)
+        if not isinstance(value, (int, float)) or value == 0.0:
+            continue
+        value = float(value)
+        if best_tracker_value is None or value > best_tracker_value:
+            best_tracker_value = value
+            best_run_id = str(entry.get("run_id", "") or "")
+            best_iteration = entry.get("iteration")
+
+    if best_tracker_value is None:
+        # Nothing committed yet — leave the rest of the integrity report to
+        # surface the missing-tracker situation.
+        return []
+
+    drift = disk_value - best_tracker_value
+    if drift <= drift_threshold:
+        return []
+
+    return [
+        IntegrityIssue(
+            code="metrics_drift_unrecorded",
+            severity="fatal",
+            message=(
+                f"Workspace output/metrics.json shows {primary_metric}="
+                f"{disk_value:.4f} but tracker.best_value is "
+                f"{best_tracker_value:.4f} from run_id "
+                f"{best_run_id!r}. At least one experiment produced better "
+                "results than the official tracker state. Likely cause: "
+                "direct terminal execution bypassed run_experiment."
+            ),
+            context={
+                "metrics_path": str(metrics_path),
+                "primary_metric": primary_metric,
+                "disk_value": disk_value,
+                "tracker_best_value": best_tracker_value,
+                "tracker_best_run_id": best_run_id,
+                "tracker_best_iteration": best_iteration,
+                "drift": drift,
+                "drift_threshold": drift_threshold,
+            },
+        )
+    ]

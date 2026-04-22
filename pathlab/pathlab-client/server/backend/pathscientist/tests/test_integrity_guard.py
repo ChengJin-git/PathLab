@@ -490,5 +490,125 @@ def test_runs_all_identical_metric_warning(tmp_path):
     assert issue.severity == "warning"
 
 
+# ---------- metrics_drift_unrecorded (Finding 2 of 2026-04-22 review) ----------
+
+
+def _write_disk_metrics(workspace_root: Path, payload: dict) -> Path:
+    """Write ``output/metrics.json`` under the given workspace and return its path."""
+    output_dir = workspace_root / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    metrics_path = output_dir / "metrics.json"
+    metrics_path.write_text(json.dumps(payload), encoding="utf-8")
+    return metrics_path
+
+
+def test_metrics_drift_unrecorded_flagged_as_fatal(tmp_path):
+    """Disk metrics.json materially better than tracker.best_value → fatal.
+
+    Mirrors the session_3f1795098784 failure mode: the agent ran
+    `python train.py` from a terminal, wrote test_auc=0.85 to
+    output/metrics.json, but only the earlier 0.80 run ever passed through
+    run_experiment + ratchet_commit, so tracker.best_value stayed at 0.80
+    while the workspace held a much better result.
+    """
+    inputs = _base_happy_inputs(tmp_path)
+    # Tracker history's best is 0.75 (from happy fixtures). Drop one to make
+    # the math obvious: best=0.80 in tracker, 0.85 on disk.
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.80, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.80),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    _write_disk_metrics(inputs["workspace_root"], {"test_auc": 0.85})
+
+    report = check_session_integrity(**inputs)
+
+    codes = _codes(report)
+    assert "metrics_drift_unrecorded" in codes, f"expected drift fatal; got {codes}"
+    issue = next(i for i in report.issues if i.code == "metrics_drift_unrecorded")
+    assert issue.severity == "fatal"
+    assert report.passed is False
+    assert report.fatal_count >= 1
+    # Context should pinpoint both sides of the split.
+    assert issue.context["disk_value"] == pytest.approx(0.85)
+    assert issue.context["tracker_best_value"] == pytest.approx(0.80)
+    assert issue.context["tracker_best_run_id"] == "run_a"
+
+
+def test_metrics_drift_not_flagged_when_disk_matches_tracker(tmp_path):
+    """Disk and tracker both at 0.82 → no drift issue."""
+    inputs = _base_happy_inputs(tmp_path)
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.82, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.82),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    _write_disk_metrics(inputs["workspace_root"], {"auc": 0.82})
+
+    report = check_session_integrity(**inputs)
+
+    assert "metrics_drift_unrecorded" not in _codes(report)
+
+
+def test_metrics_drift_not_flagged_when_disk_worse_than_tracker(tmp_path):
+    """Disk 0.75, tracker best 0.82 → no issue (tracker recorded the good one)."""
+    inputs = _base_happy_inputs(tmp_path)
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.82, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.82),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    _write_disk_metrics(inputs["workspace_root"], {"auc": 0.75})
+
+    report = check_session_integrity(**inputs)
+
+    assert "metrics_drift_unrecorded" not in _codes(report)
+
+
+def test_metrics_drift_tolerates_test_prefix(tmp_path):
+    """metrics.json uses test_auc; primary_metric is 'auc' — drift still flagged.
+
+    resolve_primary_metric must surface test_auc when only the bare 'auc'
+    name is configured. Otherwise this whole defense is silent the moment a
+    workspace writes test_auc instead of auc.
+    """
+    inputs = _base_happy_inputs(tmp_path)
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.80, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.80),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    _write_disk_metrics(
+        inputs["workspace_root"], {"test_auc": 0.85, "val_auc": 0.92}
+    )
+
+    report = check_session_integrity(**inputs)
+
+    codes = _codes(report)
+    assert "metrics_drift_unrecorded" in codes, f"expected drift fatal; got {codes}"
+    issue = next(i for i in report.issues if i.code == "metrics_drift_unrecorded")
+    assert issue.severity == "fatal"
+    assert issue.context["disk_value"] == pytest.approx(0.85)
+
+
+def test_metrics_drift_silent_when_metrics_json_missing(tmp_path):
+    """No output/metrics.json → no issue (normal for sessions without runs)."""
+    inputs = _base_happy_inputs(tmp_path)
+    metrics_path = inputs["workspace_root"] / "output" / "metrics.json"
+    assert not metrics_path.exists()  # sanity: fixture doesn't create it
+
+    report = check_session_integrity(**inputs)
+
+    assert "metrics_drift_unrecorded" not in _codes(report)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
