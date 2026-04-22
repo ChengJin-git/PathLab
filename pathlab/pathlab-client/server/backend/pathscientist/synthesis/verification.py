@@ -13,7 +13,71 @@ from .types import DraftVerificationIssue, PaperDraftVerificationResult, Researc
 # shard ``d0df5148`` of conversation UUID
 # ``d0df5148-5a12-4cda-9cc8-a899ff810a17`` was flagged as a missing run_id.
 _CANONICAL_RUN_ID_RE = re.compile(r"\brun_[0-9a-f]{8}\b", re.IGNORECASE)
-_BRACKETED_ID_RE = re.compile(r"\[([^\[\]\s]+)\]")
+# Paper ID citation regex. The inner capture matches any bracketed token
+# that could be a paper_id (alphanumeric plus common paper_id punctuation
+# such as ``.``, ``/``, ``-``, ``_``, and ``:`` — DOI / OpenAlex / slug
+# forms). The verifier then filters candidates:
+#
+# - Alphabetic candidates that look like real paper_id shapes (contain at
+#   least one non-digit character) are always checked against
+#   ``allowed_paper_ids`` and flagged if missing. This catches LLM
+#   hallucinations like ``[smith2023]`` when the references list is empty
+#   or doesn't list ``smith2023``.
+# - Numeric-only candidates (``[1]``, ``[2]``, ...) are treated as
+#   evidence lineage claims ONLY when the draft itself contains a
+#   ``## References`` / ``## Bibliography`` / ``## Citations`` heading.
+#   When no such heading is present, bare ``[N]`` is LLM boilerplate
+#   (decorative), not a citation to a known paper, and MUST NOT trip
+#   ``unsupported_paper_id``. When the heading IS present, each ``[N]``
+#   must either appear in the references section text or resolve to an
+#   entry in ``ResearchReport.references`` / claim.citation_paper_ids.
+#
+# This fixes Finding 5 of
+# docs/review/2026-04-22-pathscientist-latest-run-review.md where
+# session_3f1795098784's paper draft contained ``... analyses [1].`` with
+# an empty references list and tripped ``unsupported_paper_id``.
+_BRACKETED_ID_RE = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9._/:\-]*)\]")
+# Heading variants that mark a references / bibliography section in the
+# draft. Matched case-insensitively against a line that starts with ``##``.
+# Presence of any such heading is what gates the numeric ``[N]`` check.
+_REFERENCES_HEADING_RE = re.compile(
+    r"(?im)^\s*#{2,}\s+(references|bibliography|citations)\s*$"
+)
+
+
+def _paper_has_references_section(draft: str) -> bool:
+    """Return True if the draft contains a ``## References`` / ``## Bibliography``
+    / ``## Citations`` heading.
+
+    When False, bare ``[N]`` bracket citations in the draft are treated as
+    decorative LLM boilerplate (Finding 5): the paper claims no evidence
+    lineage against a reference list, so the verifier must not demand
+    ``[N]`` resolve to anything.
+    """
+    return bool(_REFERENCES_HEADING_RE.search(draft))
+
+
+def _extract_references_section(draft: str) -> str:
+    """Return the text of the references / bibliography / citations section,
+    or the empty string if no such heading exists.
+
+    Used to decide whether a numeric ``[N]`` citation is backed by the
+    draft's own references list (in addition to the report-level
+    ``allowed_paper_ids`` set).
+    """
+    match = _REFERENCES_HEADING_RE.search(draft)
+    if not match:
+        return ""
+    # Slice from the end of the heading line to the next ``##`` heading (or
+    # end of draft). We step through lines to avoid regex gotchas with
+    # heading levels.
+    after = draft[match.end():]
+    out_lines: list[str] = []
+    for line in after.split("\n"):
+        if line.startswith("## "):
+            break
+        out_lines.append(line)
+    return "\n".join(out_lines)
 
 
 def verify_paper_draft(
@@ -55,6 +119,26 @@ def verify_paper_draft(
         if val:
             allowed_metrics.add(f"{val:.4f}")
 
+    # Detect whether the draft itself contains a ``## References`` /
+    # ``## Bibliography`` / ``## Citations`` heading. Only when one is
+    # present do numeric ``[N]`` markers count as evidence lineage claims
+    # (Finding 5, 2026-04-22). When absent, ``[N]`` is LLM boilerplate in
+    # prose (e.g. ``... analyses [1].``) and must not trip
+    # ``unsupported_paper_id``.
+    draft_has_references = _paper_has_references_section(draft)
+    references_section_text = (
+        _extract_references_section(draft) if draft_has_references else ""
+    )
+    # Numeric ids that appear in the draft's own references section — those
+    # are backed by the draft even if ``ResearchReport.references`` is
+    # empty (e.g. the LLM pasted its own bibliography).
+    numeric_ids_in_draft_references: set[str] = set()
+    if references_section_text:
+        for ref_match in _BRACKETED_ID_RE.finditer(references_section_text):
+            candidate = ref_match.group(1)
+            if candidate.isdigit():
+                numeric_ids_in_draft_references.add(candidate)
+
     # Split draft into sections for issue attribution
     sections = _split_into_sections(draft)
 
@@ -90,8 +174,55 @@ def verify_paper_draft(
                     unsupported_run_ids.append(run_id)
 
         # Check paper ID references in [paper_id] notation.
+        #
+        # Two candidate shapes arise from the regex:
+        #
+        # 1. Non-numeric candidates (e.g. ``[smith2023]``, ``[10.1038/...]``)
+        #    — canonical paper_id shape in this project is alphabetic. We
+        #    flag these against ``allowed_paper_ids`` unconditionally so
+        #    hallucinated paper_ids still fail verification.
+        # 2. Numeric-only candidates (``[1]``, ``[2]``, ...) — only treated
+        #    as evidence lineage claims when the draft itself has a
+        #    ``## References`` / ``## Bibliography`` / ``## Citations``
+        #    heading (``draft_has_references``). When no such heading
+        #    exists, numeric markers are LLM prose decoration (Finding 5)
+        #    and are skipped entirely. When the heading IS present, each
+        #    ``[N]`` must resolve to either the draft's own references
+        #    text or ``ResearchReport.references`` / claim paper_ids.
+        # Skip matches inside the draft's own references section — a
+        # ``[1]`` entry in the bibliography is definitional, not a claim.
+        ref_section_scope = section_name in {"references", "bibliography", "citations"}
         for match in _BRACKETED_ID_RE.finditer(section_text):
             paper_id = match.group(1)
+            if ref_section_scope:
+                # Entries inside the references section itself define the
+                # backing set; they're not citations to be checked.
+                continue
+            if paper_id.isdigit():
+                # Gate numeric brackets on the draft having a References
+                # section at all (Option A of Finding 5). Without one,
+                # ``[N]`` is decorative.
+                if not draft_has_references:
+                    continue
+                # With a References section, ``[N]`` is backed if it
+                # appears there OR in the report-level allowed set.
+                if (
+                    paper_id in numeric_ids_in_draft_references
+                    or paper_id in allowed_paper_ids
+                ):
+                    continue
+                issues.append(DraftVerificationIssue(
+                    section_name=section_name,
+                    issue_type="unsupported_paper_id",
+                    severity="error",
+                    sentence=_extract_context(section_text, match.start()),
+                    detail=f"Paper ID '{paper_id}' not found in report references.",
+                ))
+                if paper_id not in unsupported_paper_ids:
+                    unsupported_paper_ids.append(paper_id)
+                continue
+            # Non-numeric candidate: unconditionally checked against the
+            # report-level allowed set.
             if paper_id not in allowed_paper_ids:
                 issues.append(DraftVerificationIssue(
                     section_name=section_name,

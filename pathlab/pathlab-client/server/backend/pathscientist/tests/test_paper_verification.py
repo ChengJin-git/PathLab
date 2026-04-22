@@ -305,6 +305,300 @@ def test_hex_run_id_pattern_disabled_when_bare_allowed_ids_present():
     assert "b14b074d" not in result.unsupported_run_ids
 
 
+def test_numeric_boilerplate_citation_not_flagged():
+    """Regression for session_3f1795098784 / Finding 5 (2026-04-22).
+
+    The paper draft contained LLM-boilerplate prose like
+    ``... analyses [1].`` in a section whose references field was empty.
+    The verifier's old regex matched any ``[N]`` and flagged ``1`` as an
+    unsupported paper_id, which tripped the paper-verifier unnecessarily.
+    Numeric citation markers are never canonical paper_ids in this project
+    (canonical form is alphabetic, e.g. ``smith2023`` / DOI / OpenAlex id)
+    so they must be silently ignored regardless of the references state.
+    """
+    report = _make_report()
+    report.references = []  # no references at all, matching session_3f1795098784
+    draft = (
+        "## Integrity Issues\n\n"
+        "Best practices in reproducible research emphasize the importance of "
+        "maintaining complete documentation even for preliminary or "
+        "exploratory analyses [1]. It should be noted that..."
+    )
+    result = verify_paper_draft(report, draft)
+
+    # ``[1]`` is LLM boilerplate — must not flag.
+    assert "1" not in result.unsupported_paper_ids, (
+        f"Numeric boilerplate [1] flagged as unsupported paper_id: "
+        f"{result.unsupported_paper_ids}"
+    )
+    # There are no other run_ids / metrics / papers in the draft, so the
+    # verifier should pass overall.
+    assert result.passed is True, (
+        f"Draft with only numeric boilerplate should pass; got issues={result.issues}"
+    )
+
+
+def test_numeric_boilerplate_citation_with_populated_references_still_not_flagged():
+    """Numeric markers are ignored even when references IS populated.
+
+    The caller might have a rich references list but the LLM still emits
+    stray ``[1]`` / ``[2]`` boilerplate in prose. Those numeric markers are
+    never valid paper_ids in this project — they must not show up in
+    ``unsupported_paper_ids`` even when ``allowed_paper_ids`` is non-empty.
+    """
+    report = _make_report()
+    # references from _make_report already contains transmil_2021; add more
+    # so allowed_paper_ids is clearly non-empty.
+    report.references = [
+        {"paper_id": "smith2023", "context": "Smith et al. 2023"},
+        {"paper_id": "transmil_2021", "context": "TransMIL baseline"},
+    ]
+    draft = (
+        "## Results\n\n"
+        "Our method improved accuracy [1]. Prior work [2] had lower scores."
+    )
+    result = verify_paper_draft(report, draft)
+
+    # Numeric tokens must not be flagged, even though references is populated.
+    assert "1" not in result.unsupported_paper_ids
+    assert "2" not in result.unsupported_paper_ids
+    assert not any(
+        issue.issue_type == "unsupported_paper_id" for issue in result.issues
+    ), f"Numeric marker incorrectly flagged: {result.issues}"
+
+
+def test_explicit_paper_id_citation_still_flagged_when_missing():
+    """Non-numeric paper_ids that are NOT in references ARE still flagged.
+
+    Tightening the regex for numeric boilerplate must not weaken detection
+    of real paper_id hallucinations. If the LLM invents ``[smith2023]`` and
+    the references list does not contain it, the verifier must still fail.
+    """
+    report = _make_report()
+    report.references = []
+    draft = "## Results\n\nOur approach outperformed prior work [smith2023]."
+    result = verify_paper_draft(report, draft)
+
+    assert result.passed is False
+    assert "smith2023" in result.unsupported_paper_ids
+
+
+def test_explicit_paper_id_citation_accepted_when_present():
+    """Paper_ids that match an entry in references are NOT flagged."""
+    report = _make_report()
+    report.references = [
+        {"paper_id": "smith2023", "context": "Smith et al. 2023 baseline"},
+    ]
+    # Clear prior claims so allowed_paper_ids draws purely from references.
+    for claim in report.claims:
+        claim.citation_paper_ids = []
+    draft = "## Results\n\nOur approach builds on prior work [smith2023]."
+    result = verify_paper_draft(report, draft)
+
+    assert result.passed is True, (
+        f"Draft citing a known paper_id should pass; got issues={result.issues}"
+    )
+    assert "smith2023" not in result.unsupported_paper_ids
+
+
+def test_bracket_n_not_in_references_is_not_unsupported():
+    """``[N]`` boilerplate with empty references must not flag.
+
+    Regression for the exact session_3f1795098784 shape: the paper draft
+    contains "... analyses [1]." prose, report.references is empty, so
+    numeric brackets have nothing to point at. They must be silently
+    ignored, and the paper must pass verification overall.
+    """
+    report = _make_report()
+    report.references = []
+    # Clear claims' citation_paper_ids too so allowed_paper_ids is empty.
+    for claim in report.claims:
+        claim.citation_paper_ids = []
+    draft = (
+        "## Integrity Issues\n\n"
+        "Best practices in reproducible research emphasize the importance "
+        "of maintaining complete documentation even for preliminary or "
+        "exploratory analyses [1]. It should be noted that this warning..."
+    )
+    result = verify_paper_draft(report, draft)
+    assert result.unsupported_paper_ids == [], (
+        f"Numeric [1] boilerplate flagged when references is empty: "
+        f"{result.unsupported_paper_ids}"
+    )
+    assert result.passed is True, (
+        f"Draft should pass when only orphan [N] present; got {result.issues}"
+    )
+
+
+def test_bracket_n_in_allowed_ids_still_tracked():
+    """If a report numbers its references (paper_id='1'), [1] IS valid.
+
+    The positive-match path: when the allowed_paper_ids set literally
+    contains the numeric id, the bracket reference is treated as legitimate
+    and is NOT flagged unsupported. This is the rare case where a report
+    genuinely uses numeric paper_ids.
+    """
+    report = _make_report()
+    report.references = [
+        {"paper_id": "1", "context": "Numbered reference 1"},
+    ]
+    for claim in report.claims:
+        claim.citation_paper_ids = []
+    draft = "## Results\n\nPrior work established the baseline [1]."
+    result = verify_paper_draft(report, draft)
+
+    assert "1" not in result.unsupported_paper_ids, (
+        f"Numeric paper_id '1' in references should not be flagged: "
+        f"{result.unsupported_paper_ids}"
+    )
+    # No other issues expected.
+    assert not any(
+        issue.issue_type == "unsupported_paper_id" for issue in result.issues
+    ), f"Unexpected paper_id issues: {result.issues}"
+
+
+def test_canonical_paper_id_still_works():
+    """Canonical alphabetic paper_id detection is unchanged.
+
+    A ``[smith2023]`` citation is still regex-matched, checked against
+    allowed_paper_ids, and flagged unsupported if missing. Narrowing the
+    numeric path must not weaken the canonical path.
+    """
+    report = _make_report()
+    report.references = [
+        {"paper_id": "smith2023", "context": "Smith et al. 2023"},
+    ]
+    for claim in report.claims:
+        claim.citation_paper_ids = []
+
+    # Allowed paper_id appears cleanly.
+    draft_ok = "## Results\n\nPrior work [smith2023] informed our approach."
+    result_ok = verify_paper_draft(report, draft_ok)
+    assert result_ok.passed is True
+    assert "smith2023" not in result_ok.unsupported_paper_ids
+
+    # Hallucinated paper_id is still flagged.
+    draft_bad = "## Results\n\nWe outperform [jones2024] baselines."
+    result_bad = verify_paper_draft(report, draft_bad)
+    assert result_bad.passed is False
+    assert "jones2024" in result_bad.unsupported_paper_ids
+
+
+# ---------------------------------------------------------------------------
+# Option A (Finding 5, 2026-04-22): bare [N] only checked when the draft
+# itself declares a ``## References`` / ``## Bibliography`` / ``## Citations``
+# section. Without one, ``[N]`` is LLM prose decoration and is skipped.
+# ---------------------------------------------------------------------------
+
+
+def test_bare_bracket_citation_without_references_not_flagged():
+    """``[1]`` in the draft with no ``## References`` heading is prose.
+
+    Session_3f1795098784's paper_draft.md is the canonical case: the LLM
+    wrote ``... analyses [1].`` in Integrity Issues but the draft has no
+    References / Bibliography / Citations heading. Under Option A the
+    verifier must not iterate numeric brackets at all and must return
+    ``passed=True`` with empty ``unsupported_paper_ids``.
+    """
+    report = _make_report()
+    report.references = []
+    for claim in report.claims:
+        claim.citation_paper_ids = []
+    draft = (
+        "## Methods\n\n"
+        "We trained a patch classifier. Best practices in reproducible "
+        "research emphasize complete documentation [1]."
+    )
+    result = verify_paper_draft(report, draft)
+
+    assert result.passed is True, (
+        f"Draft with no References section should pass; got issues={result.issues}"
+    )
+    assert result.unsupported_paper_ids == [], (
+        f"Numeric [1] flagged despite no References section: "
+        f"{result.unsupported_paper_ids}"
+    )
+
+
+def test_bare_bracket_citation_with_references_still_checked():
+    """``[N]`` is checked when the draft has a ``## References`` section.
+
+    Two companion assertions:
+      1. ``[1]`` in Methods AND listed in ``## References`` → passes.
+      2. ``[2]`` in Methods prose but only ``[1]`` in ``## References`` →
+         ``[2]`` is flagged as unsupported.
+
+    This preserves the invariant that once the paper actually declares a
+    bibliography, every numeric marker must resolve into it (or into
+    ``ResearchReport.references``). Option A only relaxes the check when
+    there is no bibliography at all.
+    """
+    report = _make_report()
+    report.references = []
+    for claim in report.claims:
+        claim.citation_paper_ids = []
+
+    # (1) ``[1]`` is backed by the draft's own References section.
+    draft_ok = (
+        "## Methods\n\n"
+        "We followed the approach of [1] for patch-level training.\n\n"
+        "## References\n\n"
+        "[1] Some et al 2024. Deep learning for histopathology."
+    )
+    result_ok = verify_paper_draft(report, draft_ok)
+    assert result_ok.passed is True, (
+        f"Draft with [1] backed by References should pass; got {result_ok.issues}"
+    )
+    assert "1" not in result_ok.unsupported_paper_ids
+
+    # (2) ``[2]`` has no backing — flagged.
+    draft_bad = (
+        "## Methods\n\n"
+        "We followed the approach of [1]. Prior work [2] reported higher AUC.\n\n"
+        "## References\n\n"
+        "[1] Some et al 2024. Deep learning for histopathology."
+    )
+    result_bad = verify_paper_draft(report, draft_bad)
+    assert result_bad.passed is False, (
+        "Draft with unbacked [2] and a References section should fail."
+    )
+    assert "2" in result_bad.unsupported_paper_ids
+    # ``[1]`` is still fine even though [2] is bad.
+    assert "1" not in result_bad.unsupported_paper_ids
+
+
+def test_bare_bracket_backed_by_research_report_references_when_draft_has_heading():
+    """With a ``## References`` heading, ``[N]`` is also backed by
+    ``ResearchReport.references`` — not only the draft text.
+
+    If the report carries ``paper_id='1'`` and the draft has a References
+    heading but the heading's section text does not list ``[1]`` verbatim,
+    the verifier should still accept it because the report-level allowed
+    set backs it. This covers the case where the References section is a
+    heading placeholder the report_builder populated indirectly.
+    """
+    report = _make_report()
+    report.references = [
+        {"paper_id": "1", "context": "Numbered reference 1"},
+    ]
+    for claim in report.claims:
+        claim.citation_paper_ids = []
+
+    draft = (
+        "## Methods\n\n"
+        "We cited prior work [1].\n\n"
+        "## References\n\n"
+        "See ResearchReport.references for the canonical listing."
+    )
+    result = verify_paper_draft(report, draft)
+
+    assert result.passed is True, (
+        f"[1] backed by ResearchReport.references with draft heading should pass; "
+        f"got {result.issues}"
+    )
+    assert "1" not in result.unsupported_paper_ids
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])
