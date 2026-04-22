@@ -120,13 +120,88 @@ def test_build_environment_context_includes_hf_cache_section(tmp_path, monkeypat
     out = build_environment_context()
 
     # New HF cache block must appear alongside the existing GPU / packages
-    # / common libs blocks.
-    assert "Pre-cached HuggingFace models" in out
+    # / common libs blocks. Heading wording may evolve ("Pre-cached
+    # pathology foundation models" vs "Pre-cached HuggingFace models");
+    # both are acceptable as long as the block is present and names the
+    # pathology FMs.
+    assert "Pre-cached" in out and "pathology" in out.lower()
     assert "UNI2" in out
     assert "CONCH" in out
 
     # The explicit no-network-needed statement must survive composition.
     assert "no network" in out.lower() or "offline" in out.lower()
+
+
+def test_detect_hf_model_cache_names_registry_keys(tmp_path, monkeypatch):
+    """Regression for session_9df3fa411bbf (2026-04-22): the prompt must
+    give the agent the EXACT argument to `get_extractor(...)` so it does
+    not invent a loading path. UNI2's registry key is "uni2" (lowercase),
+    not the display name "UNI2" or the HF repo "MahmoodLab/UNI2-h".
+    """
+    _make_fake_cache(
+        tmp_path,
+        [
+            "MahmoodLab/UNI2-h",
+            "MahmoodLab/conch",
+            "paige-ai/Virchow2",
+            "bioptimus/H-optimus-1",
+        ],
+    )
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+
+    out = detect_hf_model_cache()
+
+    # The exact get_extractor(<key>) strings must appear. These are what
+    # the agent copy-pastes into train.py.
+    assert 'get_extractor("uni2")' in out
+    assert 'get_extractor("conch")' in out
+    assert 'get_extractor("virchow2")' in out
+    # H-Optimus-1 keeps mixed case to match the registry entry exactly.
+    assert 'get_extractor("H-Optimus-1")' in out
+
+
+def test_detect_hf_model_cache_warns_against_automodel(tmp_path, monkeypatch):
+    """Regression for session_9df3fa411bbf (2026-04-22): the agent wrote
+    AutoModel.from_pretrained("MahmoodLab/UNI2-h") and got
+    `ValueError: Unrecognized model in MahmoodLab/UNI2-h`, then fell
+    back to ViT-CLIP. The environment block must now explicitly tell the
+    agent NOT to use AutoModel or bare timm.create_model(..., pretrained=True)
+    for these repos — the registry is the only working path.
+    """
+    _make_fake_cache(tmp_path, ["MahmoodLab/UNI2-h", "MahmoodLab/conch"])
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+
+    out = detect_hf_model_cache()
+
+    assert "AutoModel" in out, (
+        "Block must NAME the AutoModel anti-pattern so the agent recognizes it"
+    )
+    # Must negate it — simple presence is not enough; the text must
+    # steer away from it.
+    assert "Do NOT" in out or "do not" in out.lower() or "not use" in out.lower()
+    # Canonical usage code must be present so the agent has a drop-in template.
+    assert "from common.extractors.registry import get_extractor" in out
+
+
+def test_detect_hf_model_cache_mentions_hf_token_for_gated_repos(tmp_path, monkeypatch):
+    """Mahmood Lab repos (UNI, UNI2, CONCH) are gated. Without HF_TOKEN,
+    UNI2's init errors out. Surface this so the agent can either read
+    the token from env OR pick a non-gated alternative (Virchow2,
+    Phikon2, H-Optimus-1) without discovering the requirement at runtime
+    via a stack trace.
+    """
+    _make_fake_cache(
+        tmp_path,
+        ["MahmoodLab/UNI2-h", "paige-ai/Virchow2", "bioptimus/H-optimus-1"],
+    )
+    monkeypatch.setenv("HF_HOME", str(tmp_path))
+
+    out = detect_hf_model_cache()
+
+    assert "HF_TOKEN" in out
+    # Must name at least one non-gated alternative so the fallback path
+    # is explicit, not left for the agent to infer.
+    assert any(name in out for name in ("Virchow2", "Phikon2", "H-Optimus-1"))
 
 
 def test_detect_hf_model_cache_surfaces_cache_path(tmp_path, monkeypatch):

@@ -124,33 +124,39 @@ def detect_hf_model_cache() -> str:
             "likely fail in the sandbox."
         )
 
-    # Curated list of pathology FM repo prefixes we know about, in
-    # preference order (from the patch_classification / feature_extraction
-    # skill YAMLs). Anything not in this list is noise we don't need to
-    # surface (e.g. random text LLMs in the same cache).
+    # Curated list of (hf_repo, display_name, registry_key).
+    # registry_key is the exact string to pass to
+    # common.extractors.registry.get_extractor(...). Mismatches between
+    # display name and registry key bit us in session_9df3fa411bbf
+    # (2026-04-22), where the agent wrote
+    # AutoModel.from_pretrained("MahmoodLab/UNI2-h") and got
+    # "Unrecognized model in MahmoodLab/UNI2-h" from transformers because
+    # UNI2's config has no standard `model_type` — it loads via timm
+    # with custom kwargs + a local state_dict. Only the registry path
+    # works for every entry; do NOT suggest AutoModel or bare
+    # timm.create_model(..., pretrained=True) for these.
     pathology_repo_markers = [
-        ("MahmoodLab/UNI2-h", "UNI2"),
-        ("MahmoodLab/uni", "UNI"),
-        ("MahmoodLab/conch", "CONCH"),
-        ("paige-ai/Virchow2", "Virchow2"),
-        ("paige-ai/Virchow", "Virchow"),
-        ("bioptimus/H-optimus-1", "H-Optimus-1"),
-        ("bioptimus/H-optimus-0", "H-Optimus-0"),
-        ("owkin/phikon-v2", "Phikon2"),
-        ("owkin/phikon", "Phikon"),
-        ("histai/hibou-L", "Hibou-L"),
+        ("MahmoodLab/UNI2-h",     "UNI2",        "uni2"),
+        ("MahmoodLab/uni",        "UNI",         "uni"),
+        ("MahmoodLab/conch",      "CONCH",       "conch"),
+        ("paige-ai/Virchow2",     "Virchow2",    "virchow2"),
+        ("paige-ai/Virchow",      "Virchow",     "virchow"),
+        ("bioptimus/H-optimus-1", "H-Optimus-1", "H-Optimus-1"),
+        ("bioptimus/H-optimus-0", "H-Optimus-0", "H-Optimus-0"),
+        ("owkin/phikon-v2",       "Phikon2",     "phikon2"),
+        ("owkin/phikon",          "Phikon",      "phikon"),
     ]
 
-    cached: list[str] = []
+    cached: list[tuple[str, str]] = []
     try:
         dir_names = {d.name for d in hub_dir.iterdir() if d.is_dir()}
     except PermissionError:
         dir_names = set()
 
-    for repo, nick in pathology_repo_markers:
+    for repo, display, key in pathology_repo_markers:
         marker = "models--" + repo.replace("/", "--")
         if any(d.lower() == marker.lower() for d in dir_names):
-            cached.append(f"  - {nick} ({repo})")
+            cached.append((display, key))
 
     if not cached:
         return (
@@ -161,14 +167,45 @@ def detect_hf_model_cache() -> str:
             "(resnet50, vit_large_patch16_224, etc.) stay usable."
         )
 
-    return (
-        f"Pre-cached HuggingFace models (loadable OFFLINE, no network needed):\n"
-        + "\n".join(cached)
-        + f"\n  Cache location: {hub_dir} (HF_HOME={hf_home})\n"
-        "  Load via common/extractors/registry.get_extractor(name), timm.create_model(..., pretrained=True), "
-        "or transformers.AutoModel.from_pretrained(...). The cache is bind-mounted into "
-        "the sandbox; these loads work without network access."
+    lines = [
+        "Pre-cached pathology foundation models (loadable OFFLINE — no network needed):",
+    ]
+    for display, key in cached:
+        lines.append(f'  - {display:<12}  get_extractor("{key}")')
+
+    lines.append(f"  Cache: {hub_dir}  (HF_HOME={hf_home})")
+    lines.append("")
+    lines.append(
+        "Load ONLY via common/extractors/registry.get_extractor(key). Do NOT use"
     )
+    lines.append(
+        "  AutoModel.from_pretrained / bare timm.create_model(..., pretrained=True)"
+    )
+    lines.append(
+        "  for these — UNI2/CONCH/Virchow use custom configs + local state_dict"
+    )
+    lines.append(
+        "  loads that the generic HuggingFace loaders cannot dispatch."
+    )
+    lines.append("")
+    lines.append("Canonical usage:")
+    lines.append("  import os")
+    lines.append("  from common.extractors.registry import get_extractor")
+    lines.append('  extractor = get_extractor("uni2", hf_token=os.getenv("HF_TOKEN", ""))')
+    lines.append("  extractor.eval().cuda()")
+    lines.append("  feats = extractor(patch_tensor)   # (B, D) D=extractor.output_dim")
+    lines.append("  # preprocessing transforms: extractor.get_transforms()")
+    lines.append("")
+    lines.append(
+        "HF_TOKEN: Mahmood Lab gated repos (UNI, UNI2, CONCH) require a token;"
+    )
+    lines.append(
+        '  if not set, UNI2 init will error. If HF_TOKEN is unavailable in the'
+    )
+    lines.append(
+        "  sandbox, prefer Virchow2 / Phikon2 / H-Optimus-1 — they do not gate."
+    )
+    return "\n".join(lines)
 
 
 def detect_common_libs() -> str:
