@@ -25,6 +25,22 @@ export function buildSlideNavigationTooltip({
   return hasTarget ? `${labels.nextSlide} (${shortcut})` : labels.noNextSlide
 }
 
+export function getAdjacentSlideIds(orderedIds: string[], currentId: string) {
+  const currentIndex = orderedIds.indexOf(currentId)
+
+  if (currentIndex === -1) {
+    return {
+      previousId: null,
+      nextId: null,
+    }
+  }
+
+  return {
+    previousId: currentIndex > 0 ? orderedIds[currentIndex - 1] : null,
+    nextId: currentIndex < orderedIds.length - 1 ? orderedIds[currentIndex + 1] : null,
+  }
+}
+
 export function shouldPersistAnnotationsBeforeSlideNavigation(
   annotationMode: boolean,
   hasUnsavedChanges: boolean,

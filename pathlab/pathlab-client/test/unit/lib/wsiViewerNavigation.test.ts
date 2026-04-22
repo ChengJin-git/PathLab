@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildSlideNavigationTooltip,
+  getAdjacentSlideIds,
   shouldPersistAnnotationsBeforeSlideNavigation,
 } from '../../../src/renderer/src/lib/wsiViewerNavigation'
 
@@ -53,5 +54,27 @@ describe('wsiViewerNavigation', () => {
     expect(shouldPersistAnnotationsBeforeSlideNavigation(false, true)).toBe(false)
     expect(shouldPersistAnnotationsBeforeSlideNavigation(true, false)).toBe(false)
     expect(shouldPersistAnnotationsBeforeSlideNavigation(true, true)).toBe(true)
+  })
+
+  it('derives previous and next slide ids from an ordered id list', () => {
+    expect(getAdjacentSlideIds(['wsi-1', 'wsi-2', 'wsi-3'], 'wsi-2')).toEqual({
+      previousId: 'wsi-1',
+      nextId: 'wsi-3',
+    })
+
+    expect(getAdjacentSlideIds(['wsi-1', 'wsi-2', 'wsi-3'], 'wsi-1')).toEqual({
+      previousId: null,
+      nextId: 'wsi-2',
+    })
+
+    expect(getAdjacentSlideIds(['wsi-1', 'wsi-2', 'wsi-3'], 'wsi-3')).toEqual({
+      previousId: 'wsi-2',
+      nextId: null,
+    })
+
+    expect(getAdjacentSlideIds(['wsi-1', 'wsi-2', 'wsi-3'], 'missing')).toEqual({
+      previousId: null,
+      nextId: null,
+    })
   })
 })

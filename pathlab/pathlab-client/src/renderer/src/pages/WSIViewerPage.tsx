@@ -5,6 +5,7 @@ import {
   fetchWSIDetail,
   fetchAvailableHeatmaps,
   fetchWSIList,
+  fetchWSIIds,
   deleteWSIResults,
   HeatmapData,
   AvailableHeatmap,
@@ -30,7 +31,7 @@ import { AnnotationListPanel } from '../components/wsiViewer/AnnotationListPanel
 import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog'
 import { ShareAnnotationDialog } from '../components/wsiViewer/ShareAnnotationDialog'
 import { ViewerOverlayControls } from '../components/wsiViewer/ViewerOverlayControls'
-import { buildSlideNavigationTooltip, shouldPersistAnnotationsBeforeSlideNavigation } from '../lib/wsiViewerNavigation'
+import { buildSlideNavigationTooltip, getAdjacentSlideIds, shouldPersistAnnotationsBeforeSlideNavigation } from '../lib/wsiViewerNavigation'
 import {
   AnnotationRegion,
   AnnotationsMap,
@@ -107,6 +108,7 @@ export default function WSIViewerPage() {
 
   // Navigation state
   const [allWSIs, setAllWSIs] = useState<WSISummary[]>([])
+  const [orderedWsiIds, setOrderedWsiIds] = useState<string[]>([])
 
   // Multi-task heatmap state
   const [availableHeatmaps, setAvailableHeatmaps] = useState<AvailableHeatmap[]>([])
@@ -315,8 +317,8 @@ export default function WSIViewerPage() {
   const annotationIdRef = useRef<string | null>(null)
   const saveRequestRef = useRef<Promise<boolean> | null>(null)
   const slideNavRef = useRef({
-    prevWSI: null as WSISummary | null,
-    nextWSI: null as WSISummary | null,
+    prevWsiId: null as string | null,
+    nextWsiId: null as string | null,
     annotationMode: false,
     hasUnsavedChanges: false,
     persistAnnotations: null as ((opts?: { showToast?: boolean }) => Promise<boolean>) | null,
@@ -430,15 +432,60 @@ export default function WSIViewerPage() {
       .catch(() => setCanAnnotate(true))
   }, [effectiveDatasetId])
 
-  // Load WSI list for navigation
-  // If coming from a dataset, load only that dataset's WSIs; otherwise load all
   useEffect(() => {
-    fetchWSIList(fromDataset ? datasetId : undefined).then(res => {
-      if (res && res.items) {
-        setAllWSIs(res.items)
+    let cancelled = false
+
+    if (!fromDataset || !datasetId) {
+      setOrderedWsiIds([])
+      return () => {
+        cancelled = true
       }
-    })
+    }
+
+    fetchWSIIds(datasetId)
+      .then((res) => {
+        if (!cancelled) {
+          setOrderedWsiIds(res.items ?? [])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setOrderedWsiIds([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [fromDataset, datasetId])
+
+  useEffect(() => {
+    let cancelled = false
+    const shouldLoadSummaryList = !fromDataset || (editingMode === 'shared' && showCreateDatasetDialog && !!datasetId)
+
+    if (!shouldLoadSummaryList) {
+      setAllWSIs([])
+      return () => {
+        cancelled = true
+      }
+    }
+
+    fetchWSIList(fromDataset ? datasetId : undefined)
+      .then((res) => {
+        if (!cancelled) {
+          setAllWSIs(res?.items ?? [])
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAllWSIs([])
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [datasetId, editingMode, fromDataset, showCreateDatasetDialog])
 
   useEffect(() => {
     if (!annotationMode || !effectiveDatasetId) {
@@ -736,9 +783,18 @@ export default function WSIViewerPage() {
       })
   }, [isPatchLevel, patchHeatmapPreviewUrl, patchSegMaskPreviewUrl])
 
-  const currentIndex = allWSIs.findIndex(w => w.wsi_id === wsi_id)
-  const prevWSI = currentIndex > 0 ? allWSIs[currentIndex - 1] : null
-  const nextWSI = currentIndex >= 0 && currentIndex < allWSIs.length - 1 ? allWSIs[currentIndex + 1] : null
+  const orderedNavigationIds = useMemo(() => {
+    if (fromDataset) {
+      return orderedWsiIds
+    }
+
+    return allWSIs.map((wsi) => wsi.wsi_id)
+  }, [allWSIs, fromDataset, orderedWsiIds])
+
+  const { previousId: prevWsiId, nextId: nextWsiId } = useMemo(
+    () => getAdjacentSlideIds(orderedNavigationIds, wsi_id),
+    [orderedNavigationIds, wsi_id],
+  )
 
   // Annotation: computed values
   const currentRegions = useMemo(() => allAnnotations[wsi_id] || [], [allAnnotations, wsi_id])
@@ -1504,8 +1560,8 @@ export default function WSIViewerPage() {
   }, [editingMode, effectiveDatasetId, exitSharedMode, hasUnsavedChanges, user?.id, mergeLabelColorsFromAnnotations, t, toast])
 
   useEffect(() => {
-    slideNavRef.current.prevWSI = prevWSI
-    slideNavRef.current.nextWSI = nextWSI
+    slideNavRef.current.prevWsiId = prevWsiId
+    slideNavRef.current.nextWsiId = nextWsiId
     slideNavRef.current.annotationMode = annotationMode
     slideNavRef.current.hasUnsavedChanges = hasUnsavedChanges
     slideNavRef.current.persistAnnotations = persistAnnotations
@@ -1606,14 +1662,14 @@ export default function WSIViewerPage() {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
-      const { prevWSI: prev, nextWSI: next, annotationMode: inAnnotation, hasUnsavedChanges: unsaved, persistAnnotations: persist } = slideNavRef.current
+      const { prevWsiId: prev, nextWsiId: next, annotationMode: inAnnotation, hasUnsavedChanges: unsaved, persistAnnotations: persist } = slideNavRef.current
 
       if (e.code === 'KeyQ' && prev) {
         e.preventDefault()
         if (shouldPersistAnnotationsBeforeSlideNavigation(inAnnotation, unsaved) && persist) {
           await persist({ showToast: false })
         }
-        navigate(`/wsi/${prev.wsi_id}`, {
+        navigate(`/wsi/${prev}`, {
           state: { fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition },
         })
       } else if (e.code === 'KeyE' && next) {
@@ -1621,7 +1677,7 @@ export default function WSIViewerPage() {
         if (shouldPersistAnnotationsBeforeSlideNavigation(inAnnotation, unsaved) && persist) {
           await persist({ showToast: false })
         }
-        navigate(`/wsi/${next.wsi_id}`, {
+        navigate(`/wsi/${next}`, {
           state: { fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition },
         })
       }
@@ -1834,7 +1890,7 @@ export default function WSIViewerPage() {
             <div className="flex items-center gap-1 rounded-[1rem] border border-white/10 p-1">
               <Tooltip content={buildSlideNavigationTooltip({
                 direction: 'previous',
-                hasTarget: !!prevWSI,
+                hasTarget: !!prevWsiId,
                 shortcut: 'Q',
                 labels: {
                   previousSlide: t('wsiViewer.previousSlide'),
@@ -1845,7 +1901,7 @@ export default function WSIViewerPage() {
               })}>
               <button
                 type="button"
-                onClick={() => prevWSI && guardedNavigate(() => navigate(`/wsi/${prevWSI.wsi_id}`, {
+                onClick={() => prevWsiId && guardedNavigate(() => navigate(`/wsi/${prevWsiId}`, {
                   state: {
                     fromAIChat,
                     fromDataset,
@@ -1855,7 +1911,7 @@ export default function WSIViewerPage() {
                     chatScrollPosition,
                   }
                 }))}
-                disabled={!prevWSI}
+                disabled={!prevWsiId}
                 className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" />
@@ -1865,7 +1921,7 @@ export default function WSIViewerPage() {
               <div className="mx-0.5 h-5 w-px bg-white/10"></div>
               <Tooltip content={buildSlideNavigationTooltip({
                 direction: 'next',
-                hasTarget: !!nextWSI,
+                hasTarget: !!nextWsiId,
                 shortcut: 'E',
                 labels: {
                   previousSlide: t('wsiViewer.previousSlide'),
@@ -1876,7 +1932,7 @@ export default function WSIViewerPage() {
               })}>
               <button
                 type="button"
-                onClick={() => nextWSI && guardedNavigate(() => navigate(`/wsi/${nextWSI.wsi_id}`, {
+                onClick={() => nextWsiId && guardedNavigate(() => navigate(`/wsi/${nextWsiId}`, {
                   state: {
                     fromAIChat,
                     fromDataset,
@@ -1886,7 +1942,7 @@ export default function WSIViewerPage() {
                     chatScrollPosition,
                   }
                 }))}
-                disabled={!nextWSI}
+                disabled={!nextWsiId}
                 className="relative flex items-center justify-center rounded-[0.85rem] p-1.5 text-slate-300 outline-none transition-all hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 disabled:hover:bg-transparent sm:p-2"
               >
                 <ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" />
