@@ -18,7 +18,7 @@ import { formatFileSize } from '../lib/utils'
 import { clampDatasetPage, clampFilePage, getListPageFileViewState } from '../lib/datasetPagination'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
-import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, type ExportLabelsOptions } from '../components/list'
+import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, DatasetCard, type ExportLabelsOptions } from '../components/list'
 import { organSources, organSourceKeyMap } from '../constants/wsi'
 
 
@@ -1684,197 +1684,28 @@ export default function ListPage() {
                 const isDeleting = deletingDatasetNames.has(dataset.dataset_name)
 
                 return (
-                  <Card
+                  <DatasetCard
                     key={dataset.dataset_id ?? dataset.dataset_name}
-                    className={`group relative overflow-hidden transition-all duration-300 border-slate-200 bg-white ${isDeleting ? 'pointer-events-none' : 'hover:shadow-xl hover:-translate-y-1'}`}
-                    onClick={isDeleting ? undefined : () => handleDatasetClick(dataset)}
-                  >
-                    {isDeleting && (
-                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/75 backdrop-blur-[2px] rounded-xl">
-                        <div className="flex flex-col items-center gap-2">
-                          <Loader2 className="w-6 h-6 animate-spin text-red-400" />
-                          <span className="text-xs font-medium text-red-500">{t('listPage.datasetDeleting')}</span>
-                        </div>
-                      </div>
-                    )}
-                    <div className={`absolute inset-x-0 top-0 h-1 opacity-0 group-hover:opacity-100 transition-opacity bg-gradient-to-r ${itemType === 'slides' ? 'from-blue-500 to-indigo-500' : 'from-emerald-500 to-teal-500'
-                      }`} />
-                    <div className="p-4 sm:p-6">
-                      <div className="flex items-start justify-between mb-3 sm:mb-4">
-                        <div className={`p-2 sm:p-3 rounded-2xl transition-colors ${itemType === 'slides' ? 'bg-blue-50 group-hover:bg-blue-100' : 'bg-emerald-50 group-hover:bg-emerald-100'
-                          }`}>
-                          {itemType === 'slides' ? (
-                            <Microscope className="w-6 h-6 sm:w-8 sm:h-8 text-blue-600" />
-                          ) : (
-                            <LayoutGrid className="w-6 h-6 sm:w-8 sm:h-8 text-emerald-600" />
-                          )}
-                        </div>
-                        <div className="sm:opacity-0 group-hover:opacity-100 transition-opacity -mr-1 sm:-mr-2 -mt-1 sm:-mt-2">
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-400 hover:text-blue-600">
-                            <ChevronRight className="w-5 h-5" />
-                          </Button>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between mb-0.5 sm:mb-1 min-w-0 relative z-10">
-                        {renamingDatasetId === dataset.dataset_id ? (
-                          <div className="flex items-center gap-2 w-full animate-in fade-in duration-200">
-                            <input
-                              type="text"
-                              value={renameDatasetNewName}
-                              onChange={(e) => setRenameDatasetNewName(e.target.value)}
-                              className="flex-1 px-1 sm:px-2 py-0.5 text-base sm:text-lg font-bold text-slate-900 border-b-2 border-blue-500 bg-transparent focus:outline-none"
-                              ref={el => { if (el) el.focus() }}
-                              onClick={e => e.stopPropagation()}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') handleRenameConfirm()
-                                if (e.key === 'Escape') handleRenameCancel()
-                              }}
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 sm:h-7 sm:w-7 text-green-600 hover:text-green-700 hover:bg-green-50"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleRenameConfirm()
-                              }}
-                            >
-                              <CheckCircle className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-6 w-6 sm:h-7 sm:w-7 text-red-600 hover:text-red-700 hover:bg-red-50"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleRenameCancel()
-                              }}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-1 sm:gap-2 max-w-full group/title">
-                            <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
-                              {dataset.dataset_name}
-                            </h3>
-                              {dataset.can_delete && (
-                               <div className="flex items-center sm:opacity-0 group-hover/title:opacity-100 transition-all -ml-0.5 sm:-ml-1">
-                                   <Tooltip content={t('listPage.exportLabels')}>
-                                     <Button
-                                       variant="ghost"
-                                       size="icon"
-                                       className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-green-600"
-                                       onClick={(e) => handleExportLabelsClick(e, dataset)}
-                                       disabled={exporting}
-                                     >
-                                       {exporting && exportingDataset?.dataset_id === dataset.dataset_id ? (
-                                         <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                       ) : (
-                                         <Download className="w-3.5 h-3.5" />
-                                       )}
-                                     </Button>
-                                   </Tooltip>
-                                  <Tooltip content={t('listPage.editDataset')}>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-blue-600"
-                                      onClick={(e) => handleEditDatasetClick(e, dataset)}
-                                    >
-                                      <Pencil className="w-3.5 h-3.5" />
-                                    </Button>
-                                  </Tooltip>
-                                  <Tooltip content={t('listPage.deleteDataset')}>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-5 w-5 sm:h-6 sm:w-6 text-slate-300 hover:text-red-600"
-                                      onClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </Button>
-                                  </Tooltip>
-                              </div>
-                                          )}
-                                        </div>
-                                    )}
-                      </div>
-                      <div className="flex items-center gap-2 mb-3 sm:mb-4 flex-wrap">
-                        <p className="text-xs sm:text-sm text-slate-500 font-medium whitespace-nowrap">
-                          {itemType === 'slides' ? t('listPage.wholeSlideImaging') : t('listPage.patchCollection')}
-                        </p>
-                        <div className="w-1 h-1 rounded-full bg-slate-300" />
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                          normalizedTaskType === 'survival'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-100/50'
-                            : normalizedTaskType === 'segmentation'
-                              ? 'bg-violet-50 text-violet-700 border border-violet-100/50'
-                              : 'bg-indigo-50 text-indigo-700 border border-indigo-100/50'
-                        }`}>
-                          {normalizedTaskType === 'survival' ? t('listPage.survival') : normalizedTaskType === 'segmentation' ? t('listPage.segmentation') : t('listPage.classification')}
-                        </span>
-                        {itemType === 'slides' && (
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                            dataset.aggregation_level === 'case'
-                              ? 'bg-purple-50 text-purple-700 border border-purple-100/50'
-                              : 'bg-orange-50 text-orange-700 border border-orange-100/50'
-                          }`}>
-                            {dataset.aggregation_level === 'case' ? (
-                              <><Users className="w-3 h-3" />{t('listPage.patientLevel')}</>
-                            ) : (
-                              <><FileImage className="w-3 h-3" />{t('listPage.fileLevel')}</>
-                            )}
-                          </span>
-                        )}
-                         <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold ${
-                           sourceOrganValue === UNKNOWN_SOURCE_ORGAN_FILTER
-                             ? 'bg-slate-50 text-slate-600 border border-slate-200/70'
-                             : 'bg-cyan-50 text-cyan-700 border border-cyan-100/70'
-                         }`}>
-                           {sourceOrganLabel}
-                         </span>
-                         {dataset.is_public ? (
-                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-100/70">
-                             <Globe className="w-2.5 h-2.5" />{t('listComponents.editModals.public')}
-                           </span>
-                         ) : (
-                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] sm:text-xs font-semibold bg-slate-50 text-slate-600 border border-slate-200/70">
-                             <Lock className="w-2.5 h-2.5" />{t('listComponents.editModals.private')}
-                           </span>
-                         )}
-
-                       </div>
-
-                       {dataset.parent_dataset_name && (
-                         <div className="flex items-center gap-1.5 mb-3 sm:mb-4 text-[10px] sm:text-xs text-slate-500">
-                           <GitMerge className="w-3 h-3 text-slate-400 flex-shrink-0" />
-                           <span className="truncate" title={dataset.parent_dataset_name}>
-                             <span className="text-slate-400">{t('listPage.derivedFrom')}</span>{' '}
-                             <span className="font-medium text-slate-600">{dataset.parent_dataset_name}</span>
-                           </span>
-                         </div>
-                       )}
-
-                       <div className="flex items-center gap-3 sm:gap-4 text-xs sm:text-sm text-slate-500/90 pt-3 sm:pt-4 border-t border-slate-100">
-                        <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
-                          <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                          {dataset.file_count}<span className="hidden sm:inline ml-1">{itemType}</span>
-                        </span>
-                        <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap">
-                          <CheckCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-slate-400" />
-                          {formatFileSize(dataset.total_size)}
-                        </span>
-                        {isAdmin && dataset.username && (
-                          <span className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap text-slate-400 ml-auto">
-                            <User className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-300" />
-                            <span className="truncate max-w-[80px] sm:max-w-[120px]" title={dataset.username}>{dataset.username}</span>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </Card>
+                    dataset={dataset}
+                    itemType={itemType}
+                    normalizedTaskType={normalizedTaskType}
+                    sourceOrganLabel={sourceOrganLabel}
+                    sourceOrganValue={sourceOrganValue}
+                    isDeleting={isDeleting}
+                    isAdmin={isAdmin}
+                    renamingDatasetId={renamingDatasetId}
+                    renameDatasetNewName={renameDatasetNewName}
+                    exporting={exporting}
+                    exportingDatasetId={exportingDataset?.dataset_id ?? null}
+                    onClick={() => handleDatasetClick(dataset)}
+                    onRenameConfirm={handleRenameConfirm}
+                    onRenameCancel={handleRenameCancel}
+                    onRenameChange={setRenameDatasetNewName}
+                    onExportClick={(e) => handleExportLabelsClick(e, dataset)}
+                    onEditClick={(e) => handleEditDatasetClick(e, dataset)}
+                    onDeleteClick={(e) => handleDatasetDeleteClick(e, dataset.dataset_id, dataset.dataset_name, dataset.file_count)}
+                    unknownSourceOrganFilter={UNKNOWN_SOURCE_ORGAN_FILTER}
+                  />
                 )
               })}
 
@@ -1940,7 +1771,7 @@ export default function ListPage() {
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-3">
                             <div className="min-w-0">
-                              <h3 className="text-lg sm:text-xl font-bold text-slate-900 truncate" title={dataset.dataset_name}>
+                              <h3 className="text-lg sm:text-xl font-bold text-slate-900 line-clamp-2 leading-snug" title={dataset.dataset_name}>
                                 {dataset.dataset_name}
                               </h3>
                               <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -1990,7 +1821,7 @@ export default function ListPage() {
                                     <GitMerge className="w-2.5 h-2.5 text-slate-400 flex-shrink-0" />
                                     <span className="text-slate-400">{t('listPage.derivedFrom')}</span>
                                     {' '}
-                                    <span className="font-semibold text-slate-700 truncate max-w-[120px]" title={dataset.parent_dataset_name}>{dataset.parent_dataset_name}</span>
+                                    <span className="font-semibold text-slate-700 truncate max-w-[200px]" title={dataset.parent_dataset_name}>{dataset.parent_dataset_name}</span>
                                   </span>
                                 )}
                               </div>
@@ -2052,7 +1883,7 @@ export default function ListPage() {
                             {isAdmin && dataset.username && (
                               <span className="flex items-center gap-1.5 font-medium whitespace-nowrap text-slate-400">
                                 <User className="w-3.5 h-3.5 text-slate-300" />
-                                <span className="truncate max-w-[180px]" title={dataset.username}>{dataset.username}</span>
+                                <span className="truncate max-w-[240px]" title={dataset.username}>{dataset.username}</span>
                               </span>
                             )}
                           </div>
