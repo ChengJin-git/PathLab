@@ -229,11 +229,22 @@ def _build_references_content(context: dict[str, Any]) -> str:
 
 
 def _build_integrity_content(integrity_report: dict[str, Any]) -> str:
-    """Render integrity issues as a markdown table.
+    """Render integrity issues as a terse one-line preamble + bulleted list.
 
-    The paper draft is NOT marked ready whenever this section is emitted
-    with at least one ``fatal`` row — we call that out explicitly so the
-    user cannot miss the implication when skimming the markdown.
+    Motivated by Finding 7 of
+    docs/review/2026-04-22-pathscientist-latest-run-review.md. The previous
+    format (multi-row markdown table plus a framing sentence) gave the
+    downstream paper_writer LLM an equal prose budget for integrity
+    warnings and Results, so a one-warning session produced two long
+    defensive paragraphs above a two-sentence Results section. The
+    compact format below keeps the section to ≤ ~10 lines regardless of
+    the issue count: one summary line stating fatal / warning counts,
+    then one bullet per issue of the form ``- [severity] code: first-line
+    message``. No defensive prose, no per-issue table row.
+
+    When there are no issues, returns the empty string so the caller can
+    skip emitting the section entirely (a clean session leaves no trace
+    of integrity plumbing in the report).
     """
     issues = integrity_report.get("issues", []) or []
     if not issues:
@@ -242,24 +253,17 @@ def _build_integrity_content(integrity_report: dict[str, Any]) -> str:
     fatal_count = int(integrity_report.get("fatal_count", 0) or 0)
     warning_count = int(integrity_report.get("warning_count", 0) or 0)
 
-    lines: list[str] = []
-    lines.append(
-        "The following issues were detected at session end. "
-        + (
-            "The paper draft is NOT marked ready."
-            if fatal_count > 0
-            else "All checks passed but warnings were raised."
-        )
-    )
-    lines.append("")
-    lines.append(f"- Fatal: {fatal_count}")
-    lines.append(f"- Warning: {warning_count}")
-    lines.append("")
-    lines.append("| Severity | Code | Message |")
-    lines.append("|----------|------|---------|")
+    lines: list[str] = [
+        f"Session-end integrity report: {fatal_count} fatal, {warning_count} warning.",
+        "",
+    ]
     for issue in issues:
         severity = str(issue.get("severity", "")).strip() or "unknown"
         code = str(issue.get("code", "")).strip() or "unknown"
-        message = str(issue.get("message", "")).replace("|", "\\|").replace("\n", " ")
-        lines.append(f"| {severity} | {code} | {message} |")
+        # Keep only the first line / first sentence of the message so the
+        # bullet stays a single visual row even when the guard emits
+        # multi-sentence context.
+        raw_message = str(issue.get("message", "")).replace("\n", " ").strip()
+        first_line = raw_message.split(". ", 1)[0].rstrip(".")
+        lines.append(f"- [{severity}] {code}: {first_line}")
     return "\n".join(lines)
