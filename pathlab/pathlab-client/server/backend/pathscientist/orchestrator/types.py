@@ -12,7 +12,30 @@ STAGE_REVIEW = "review"
 STAGE_SYNTHESIS = "synthesis"
 STAGE_COMPLETED = "completed"
 
-MAX_CONSECUTIVE_STALLS = 2
+# Two-counter stall detection thresholds (Finding 6, 2026-04-22 review).
+#
+# Before: ``stall_count`` incremented on every turn that failed to ratchet,
+# even productive turns that ran ``validate_script`` / ``file_editor`` /
+# ``think`` back-to-back. With the old ``MAX_CONSECUTIVE_STALLS = 2`` a
+# single post-commit "think → edit" pair tripped the guard and killed
+# session_3f1795098784 at ``iteration_index=1`` of a 5-iteration budget.
+#
+# Now: two separate counters distinguish "frozen" from "working":
+#   - ``consecutive_idle_turns`` — turns with ZERO ``ActionEvent`` emissions
+#     (agent emitted nothing but a reply, not calling any tool). Threshold
+#     ``MAX_IDLE_TURNS`` is kept tight — a truly idle agent is stuck.
+#   - ``consecutive_non_finalized_turns`` — turns with tool calls but no
+#     successful ``ratchet_commit`` / ``ratchet_revert``. Threshold
+#     ``MAX_NON_FINALIZED_TURNS`` is deliberately generous so a normal
+#     ``validate → quick_check → think → edit → validate → run`` sequence
+#     has headroom.
+#
+# ``MAX_CONSECUTIVE_STALLS`` is preserved as the name of the legacy combined
+# threshold; the runner still honours it when comparing the max of both
+# counters so callers / tests that read ``state.stall_count`` keep working.
+MAX_IDLE_TURNS = 2
+MAX_NON_FINALIZED_TURNS = 6
+MAX_CONSECUTIVE_STALLS = MAX_NON_FINALIZED_TURNS
 
 ALLOWED_STAGE_TRANSITIONS: dict[str, set[str]] = {
     STAGE_INTAKE: {STAGE_GROUNDING},
@@ -60,6 +83,11 @@ class ResearchSessionState:
     best_metric_value: float = 0.0
     approval_status: str = "none"  # "none" | "pending" | "approved" | "rejected"
     stall_count: int = 0
+    # Two-counter stall tracking (Finding 6). ``stall_count`` above is
+    # preserved as ``max(consecutive_idle_turns, consecutive_non_finalized_turns)``
+    # so older persisted state / consumers keep reading a meaningful value.
+    consecutive_idle_turns: int = 0
+    consecutive_non_finalized_turns: int = 0
     stop_reason: str = ""  # "" | "stall_limit" | "approval_rejected" | "user_cancelled"
     final_summary: str = ""
     report_json_path: str = ""

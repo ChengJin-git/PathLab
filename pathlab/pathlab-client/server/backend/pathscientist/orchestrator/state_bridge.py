@@ -112,6 +112,8 @@ def load_research_session_state(
             "pending" if payload.get("pending_approval", False) else "none",
         ),
         stall_count=payload.get("stall_count", 0),
+        consecutive_idle_turns=payload.get("consecutive_idle_turns", 0),
+        consecutive_non_finalized_turns=payload.get("consecutive_non_finalized_turns", 0),
         stop_reason=payload.get("stop_reason", ""),
         final_summary=payload.get("final_summary", ""),
         report_json_path=payload.get("report_json_path", ""),

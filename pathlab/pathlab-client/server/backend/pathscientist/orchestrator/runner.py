@@ -12,7 +12,8 @@ from ..orchestrator.prompts import build_execution_brief
 from ..orchestrator.state_bridge import persist_research_session_state
 from ..orchestrator.summary import build_session_summary
 from ..orchestrator.types import (
-    MAX_CONSECUTIVE_STALLS,
+    MAX_IDLE_TURNS,
+    MAX_NON_FINALIZED_TURNS,
     STAGE_COMPLETED,
     STAGE_EXECUTION,
     STAGE_GROUNDING,
@@ -24,6 +25,67 @@ from ..orchestrator.types import (
 from ..runtime.integrity import check_session_integrity
 
 logger = logging.getLogger(__name__)
+
+
+def _count_action_events_since(conversation, event_index: int) -> int:
+    """Return number of ``ActionEvent`` instances since ``event_index``.
+
+    An ``ActionEvent`` is emitted whenever the agent issues a tool call — any
+    tool, including ``think`` / ``file_editor`` / ``validate_script`` /
+    ``get_metrics``. A turn with zero new ``ActionEvent``s is one where the
+    agent replied in text only and did not invoke any tool, i.e. it is
+    genuinely idle. See Finding 6 of
+    ``docs/review/2026-04-22-pathscientist-latest-run-review.md``.
+    """
+    try:
+        from openhands.sdk.event import ActionEvent  # Lazy import keeps tests happy.
+
+        events = list(conversation.state.events)[event_index:]
+        return sum(1 for e in events if isinstance(e, ActionEvent))
+    except Exception:
+        # Safety net: if anything goes wrong introspecting the event log,
+        # fall back to treating the turn as productive (0 idle) so we never
+        # *falsely* kill a session. ``consecutive_non_finalized_turns`` is
+        # still increased — so a truly frozen agent will still eventually
+        # trip the higher threshold.
+        return 1
+
+
+def _bump_stall_counters(
+    state: ResearchSessionState,
+    *,
+    idle: bool,
+) -> None:
+    """Update the two-counter stall tracking on a non-finalized turn.
+
+    ``idle`` is True when the agent did not call any tool on this turn.
+    ``state.stall_count`` is kept in sync as the max of the two counters
+    so legacy consumers (``test_orchestrator_runner.py``, integrity reports,
+    persisted older states) keep reading a meaningful value.
+    """
+    if idle:
+        state.consecutive_idle_turns += 1
+    else:
+        state.consecutive_non_finalized_turns += 1
+    state.stall_count = max(
+        state.consecutive_idle_turns,
+        state.consecutive_non_finalized_turns,
+    )
+
+
+def _reset_stall_counters(state: ResearchSessionState) -> None:
+    """Reset all stall counters on a successful finalization."""
+    state.consecutive_idle_turns = 0
+    state.consecutive_non_finalized_turns = 0
+    state.stall_count = 0
+
+
+def _stall_limit_reached(state: ResearchSessionState) -> bool:
+    """True if either stall counter has crossed its threshold."""
+    return (
+        state.consecutive_idle_turns >= MAX_IDLE_TURNS
+        or state.consecutive_non_finalized_turns >= MAX_NON_FINALIZED_TURNS
+    )
 
 
 def _build_literature_store():
@@ -321,11 +383,19 @@ def run_research_session(
 
     # Execution loop
     while state.stage == STAGE_EXECUTION:
-        # Stall detection: if agent failed to finalize N consecutive turns, abort
-        if state.stall_count >= MAX_CONSECUTIVE_STALLS:
+        # Stall detection — Finding 6 (2026-04-22 review):
+        # OLD rule: ``stall_count`` incremented on every non-finalized turn,
+        # so normal post-commit ``think → edit → validate`` work hit the
+        # limit of 2 almost immediately.
+        # NEW rule: two separate counters, thresholds tuned to the intent —
+        # idle (no ActionEvent at all) is tight, working-but-not-ratcheting
+        # is generous enough for the real workflow.
+        if _stall_limit_reached(state):
             logger.warning(
-                f"Stall limit reached ({state.stall_count} consecutive "
-                f"non-finalized turns). Forcing session to synthesis."
+                "Stall limit reached "
+                "(idle=%d/%d, non_finalized=%d/%d). Forcing session to synthesis.",
+                state.consecutive_idle_turns, MAX_IDLE_TURNS,
+                state.consecutive_non_finalized_turns, MAX_NON_FINALIZED_TURNS,
             )
             state.stop_reason = "stall_limit"
             state.advance("review")
@@ -337,9 +407,10 @@ def run_research_session(
             f"Execution iteration {state.iteration_index + 1}/{state.max_iterations}"
         )
 
-        # Snapshot tracker history length before agent runs
+        # Snapshot tracker history length + event log length before agent runs
         deps = get_session(session.session_id)
         history_len_before = len(deps.tracker.history) if deps.tracker else 0
+        events_len_before = len(conversation.state.events)
 
         # Build and send execution brief
         brief = build_execution_brief(state)
@@ -385,7 +456,7 @@ def run_research_session(
                 ))
                 state.iteration_index += 1
                 processed += 1
-            state.stall_count = 0  # Reset stall counter on successful finalization
+            _reset_stall_counters(state)  # Reset on successful finalization
 
             dropped = len(new_entries) - processed
             if dropped > 0 and not state.stop_reason:
@@ -398,13 +469,30 @@ def run_research_session(
                 )
                 state.stop_reason = "budget_exhausted"
         else:
-            # Agent did not finalize — stuck, error, or no ratchet call
-            # Do NOT consume iteration budget for non-finalized turns
-            state.stall_count += 1
-            logger.warning(
-                f"Agent turn completed without finalizing an iteration "
-                f"(stall {state.stall_count}/{MAX_CONSECUTIVE_STALLS})"
+            # Agent did not finalize — either fully idle (no tool calls
+            # at all) or working without ratcheting. The two-counter scheme
+            # treats these differently so a normal think/edit/validate
+            # sequence does not immediately trip the guard.
+            action_events = _count_action_events_since(
+                conversation, events_len_before,
             )
+            idle = action_events == 0
+            _bump_stall_counters(state, idle=idle)
+            if idle:
+                logger.warning(
+                    "Agent turn had zero tool activity "
+                    "(idle %d/%d, non_finalized %d/%d)",
+                    state.consecutive_idle_turns, MAX_IDLE_TURNS,
+                    state.consecutive_non_finalized_turns, MAX_NON_FINALIZED_TURNS,
+                )
+            else:
+                logger.info(
+                    "Agent turn did not finalize but called %d tool(s) "
+                    "(idle %d/%d, non_finalized %d/%d)",
+                    action_events,
+                    state.consecutive_idle_turns, MAX_IDLE_TURNS,
+                    state.consecutive_non_finalized_turns, MAX_NON_FINALIZED_TURNS,
+                )
 
         # Advance: execution -> review
         state.advance("review")
@@ -506,7 +594,9 @@ def continue_research_session(
     workspace = get_session(session.session_id).workspace
 
     while state.stage == STAGE_EXECUTION:
-        if state.stall_count >= MAX_CONSECUTIVE_STALLS:
+        # Stall detection (Finding 6) — see matching comment in
+        # ``run_research_session``.
+        if _stall_limit_reached(state):
             state.stop_reason = "stall_limit"
             state.advance("review")
             state = director.advance(state)
@@ -515,6 +605,7 @@ def continue_research_session(
 
         deps = get_session(session.session_id)
         history_len_before = len(deps.tracker.history) if deps.tracker else 0
+        events_len_before = len(conversation.state.events)
 
         brief = build_execution_brief(state)
         conversation.send_message(brief)
@@ -548,7 +639,7 @@ def continue_research_session(
                 ))
                 state.iteration_index += 1
                 processed += 1
-            state.stall_count = 0
+            _reset_stall_counters(state)
 
             dropped = len(new_entries) - processed
             if dropped > 0 and not state.stop_reason:
@@ -561,7 +652,10 @@ def continue_research_session(
                 )
                 state.stop_reason = "budget_exhausted"
         else:
-            state.stall_count += 1
+            action_events = _count_action_events_since(
+                conversation, events_len_before,
+            )
+            _bump_stall_counters(state, idle=(action_events == 0))
 
         state.advance("review")
         persist_research_session_state(conversation, state)
