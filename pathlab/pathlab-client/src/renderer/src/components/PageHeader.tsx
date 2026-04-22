@@ -11,7 +11,7 @@ export function PageHeader({ title, description, children, className }: PageHead
   return (
     <div
       data-page-header="true"
-      className={`flex flex-col gap-4 border-b border-[color:var(--surface-border)] pb-5 md:flex-row md:items-end md:justify-between ${className || 'mb-8'}`}
+      className={`flex flex-col gap-4 border-b border-[color:var(--surface-border)] pt-2 pb-4 md:flex-row md:items-start md:justify-between ${className || 'mb-4'}`}
     >
       <div className="min-w-0 space-y-2">
         <h1 className="text-[1.85rem] font-semibold leading-tight tracking-[-0.035em] text-slate-950 sm:text-[2.35rem]">{title}</h1>
