@@ -293,12 +293,12 @@ export function DatasetCard({
           </span>
           {isAdmin && dataset.username && (
               <span
-                className="flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap text-slate-400 ml-auto"
+                className="ml-auto min-w-0 pl-2 sm:pl-3 flex items-center gap-1 sm:gap-1.5 font-medium whitespace-nowrap text-slate-400"
               >
                 <User className="w-3 h-3 sm:w-3.5 sm:h-3.5 text-slate-300" />
                 <span
                   data-testid="dataset-card-owner"
-                  className="truncate max-w-[140px] sm:max-w-[200px]"
+                  className="truncate max-w-[120px] sm:max-w-[180px]"
                   title={dataset.username}
                 >
                   {dataset.username}

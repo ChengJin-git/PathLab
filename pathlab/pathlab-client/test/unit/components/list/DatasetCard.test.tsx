@@ -67,8 +67,23 @@ describe('DatasetCard', () => {
   it('applies wider owner-name max-width', () => {
     renderCard({ isAdmin: true })
     const owner = screen.getByTestId('dataset-card-owner')
-    expect(owner.className).toContain('max-w-[140px]')
-    expect(owner.className).toContain('sm:max-w-[200px]')
+    expect(owner.className).toContain('max-w-[120px]')
+    expect(owner.className).toContain('sm:max-w-[180px]')
+  })
+
+  it('lets the owner metadata shrink without hugging the footer edge', () => {
+    renderCard({
+      isAdmin: true,
+      dataset: {
+        ...mockDataset,
+        username: 'PWH Tester Long Name',
+      },
+    })
+
+    const ownerWrap = screen.getByTestId('dataset-card-owner').parentElement
+    expect(ownerWrap?.className).toContain('min-w-0')
+    expect(ownerWrap?.className).toContain('pl-2')
+    expect(ownerWrap?.className).toContain('sm:pl-3')
   })
 
   it('does not render the chevron affordance as a focusable button', () => {
