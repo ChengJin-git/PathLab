@@ -610,5 +610,192 @@ def test_metrics_drift_silent_when_metrics_json_missing(tmp_path):
     assert "metrics_drift_unrecorded" not in _codes(report)
 
 
+# ---------- tracker_vs_artifact_mismatch (Finding 5 of 2026-04-22 review) ----------
+
+
+def _write_artifact_metrics(
+    evidence_root: Path, run_id: str, payload: dict
+) -> Path:
+    """Write ``<evidence_root>/runs/<run_id>/artifacts/metrics.json``."""
+    artifact_dir = evidence_root / "runs" / run_id / "artifacts"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = artifact_dir / "metrics.json"
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+    return artifact_path
+
+
+def test_tracker_vs_artifact_mismatch_flagged_as_fatal(tmp_path):
+    """Tracker says auc=0.86, artifact metrics.json says test_auc=0.84 → fatal.
+
+    Mirrors the session_8e48c15d38cb Finding 5 scenario: tracker records
+    run_c5135625 as auc=0.8643 while its own .evidence/runs/.../metrics.json
+    records test.auc=0.8414. Paper verifier passed because it only checks
+    that claimed metrics have SUPPORT somewhere — not that tracker matches
+    the actual run artifact.
+    """
+    inputs = _base_happy_inputs(tmp_path)
+    # Tracker history claims auc=0.86 for run_a...
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.86, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.86),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    # Remove extra evidence record for run_b to keep the fixture tidy.
+    (inputs["evidence_root"] / "runs" / "run_b" / "record.json").unlink()
+    # ...but the artifact under .evidence/runs/run_a/artifacts/metrics.json
+    # only recorded test_auc=0.84.
+    _write_artifact_metrics(inputs["evidence_root"], "run_a", {"test_auc": 0.84})
+
+    report = check_session_integrity(**inputs)
+
+    codes = _codes(report)
+    assert "tracker_vs_artifact_mismatch" in codes, (
+        f"expected mismatch fatal; got {codes}"
+    )
+    issue = next(
+        i for i in report.issues if i.code == "tracker_vs_artifact_mismatch"
+    )
+    assert issue.severity == "fatal"
+    assert report.passed is False
+    assert report.fatal_count >= 1
+    # Context should pinpoint both sides of the split.
+    assert issue.context["run_id"] == "run_a"
+    assert issue.context["tracker_value"] == pytest.approx(0.86)
+    assert issue.context["artifact_value"] == pytest.approx(0.84)
+    assert issue.context["primary_metric"] == "auc"
+    assert "artifact_path" in issue.context
+
+
+def test_tracker_vs_artifact_match_passes(tmp_path):
+    """Tracker and artifact both at 0.86 → no mismatch issue."""
+    inputs = _base_happy_inputs(tmp_path)
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.86, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.86),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    (inputs["evidence_root"] / "runs" / "run_b" / "record.json").unlink()
+    _write_artifact_metrics(inputs["evidence_root"], "run_a", {"auc": 0.86})
+
+    report = check_session_integrity(**inputs)
+
+    assert "tracker_vs_artifact_mismatch" not in _codes(report)
+
+
+def test_tracker_vs_artifact_small_drift_accepted(tmp_path):
+    """Drift 0.002 < 0.005 threshold → no mismatch issue."""
+    inputs = _base_happy_inputs(tmp_path)
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.864, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.864),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    (inputs["evidence_root"] / "runs" / "run_b" / "record.json").unlink()
+    _write_artifact_metrics(inputs["evidence_root"], "run_a", {"auc": 0.862})
+
+    report = check_session_integrity(**inputs)
+
+    assert "tracker_vs_artifact_mismatch" not in _codes(report)
+
+
+def test_tracker_vs_artifact_tolerates_prefix_mismatch(tmp_path):
+    """Artifact has test_auc=0.85, tracker has auc=0.85, primary_metric 'auc'.
+
+    resolve_primary_metric must surface test_auc when only the bare 'auc'
+    name is configured. Otherwise the check would false-positive the moment
+    an artifact writes test_auc instead of auc.
+    """
+    inputs = _base_happy_inputs(tmp_path)
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.85, committed=True, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=True, metric_value=0.85),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    (inputs["evidence_root"] / "runs" / "run_b" / "record.json").unlink()
+    _write_artifact_metrics(
+        inputs["evidence_root"], "run_a", {"test_auc": 0.85, "val_auc": 0.92}
+    )
+
+    report = check_session_integrity(**inputs)
+
+    codes = _codes(report)
+    assert "tracker_vs_artifact_mismatch" not in codes, (
+        f"False positive from prefix mismatch: {codes}"
+    )
+
+
+def test_tracker_vs_artifact_silent_when_artifact_missing(tmp_path):
+    """Tracker references run_abc12345 but artifacts/metrics.json doesn't exist.
+
+    No issue from this check — ``evidence_run_missing`` handles the absent
+    evidence directory. This check should be silent.
+    """
+    workspace_root = tmp_path / "workspace"
+    evidence_root = workspace_root / ".evidence"
+    _init_git_repo(workspace_root)
+    _make_git_commit(workspace_root)
+
+    # record.json present (so evidence_run_missing stays silent) but no
+    # artifacts/metrics.json file.
+    _write_evidence_record(evidence_root, "run_abc12345", committed=True)
+    # Sanity: the artifact path does NOT exist.
+    assert not (
+        evidence_root / "runs" / "run_abc12345" / "artifacts" / "metrics.json"
+    ).exists()
+
+    tracker_history = [
+        _tracker_entry(iteration=0, auc=0.86, committed=True, run_id="run_abc12345"),
+    ]
+    research_run_history = [
+        _run_record(run_id="run_abc12345", iteration=0, committed=True, metric_value=0.86),
+    ]
+
+    report = check_session_integrity(
+        workspace_root=workspace_root,
+        evidence_root=evidence_root,
+        tracker_history=tracker_history,
+        iteration_history=[],
+        research_run_history=research_run_history,
+        max_iterations=3,
+        iteration_index=1,
+        stop_reason="",
+        primary_metric="auc",
+    )
+
+    assert "tracker_vs_artifact_mismatch" not in _codes(report)
+
+
+def test_tracker_vs_artifact_silent_for_uncommitted_entries(tmp_path):
+    """Uncommitted tracker entries must not trigger the check.
+
+    Even if an uncommitted entry disagrees with its artifact, we only care
+    about entries that were committed (and therefore might be cited in the
+    paper / report).
+    """
+    inputs = _base_happy_inputs(tmp_path)
+    # Uncommitted entry with mismatched metrics against the artifact.
+    inputs["tracker_history"] = [
+        _tracker_entry(iteration=0, auc=0.86, committed=False, run_id="run_a"),
+    ]
+    inputs["research_run_history"] = [
+        _run_record(run_id="run_a", iteration=0, committed=False, metric_value=0.86),
+    ]
+    inputs["iteration_history"] = inputs["iteration_history"][:1]
+    (inputs["evidence_root"] / "runs" / "run_b" / "record.json").unlink()
+    _write_artifact_metrics(inputs["evidence_root"], "run_a", {"auc": 0.70})
+
+    report = check_session_integrity(**inputs)
+
+    assert "tracker_vs_artifact_mismatch" not in _codes(report)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -133,6 +133,11 @@ def check_session_integrity(
     issues.extend(
         _check_metrics_json_drift(workspace_root, tracker_history, primary_metric)
     )
+    issues.extend(
+        _check_tracker_vs_artifact_mismatch(
+            workspace_root, evidence_root, tracker_history, primary_metric
+        )
+    )
 
     fatal_count = sum(1 for i in issues if i.severity == "fatal")
     warning_count = sum(1 for i in issues if i.severity == "warning")
@@ -568,3 +573,116 @@ def _check_metrics_json_drift(
             },
         )
     ]
+
+
+def _check_tracker_vs_artifact_mismatch(
+    workspace_root: Path,
+    evidence_root: Path,
+    tracker_history: list[dict],
+    primary_metric: str,
+    drift_threshold: float = 0.005,  # 0.5 percentage points of absolute disagreement
+) -> list[IntegrityIssue]:
+    """Fatal: a committed tracker entry's primary metric disagrees with the
+    value recorded in its own evidence artifact ``metrics.json``.
+
+    Per-tracker-entry counterpart to :func:`_check_metrics_json_drift`: while
+    that check compares workspace ``output/metrics.json`` against the best
+    tracker entry (catching direct-execution runs that bypassed
+    ``run_experiment``), this check compares each tracker entry against the
+    specific artifact produced by the run it references — catching the split
+    where the tracker was populated from agent-supplied ``action.metrics``
+    instead of the actual run output.
+
+    Concrete motivation: ``session_8e48c15d38cb`` (2026-04-22) had
+    ``run_c5135625`` with tracker ``auc=0.8643`` but its own
+    ``.evidence/runs/run_c5135625/artifacts/metrics.json`` said
+    ``test.auc=0.8414``. Paper verification passed because verifier only
+    checks that claimed metrics have SUPPORT somewhere — not that they match
+    the artifact the run actually produced.
+
+    Fixed going forward by commit ``e9b37652`` (RatchetCommitExecutor now
+    sources tracker metrics from ``deps.last_experiment["metrics"]``), but
+    this guard catches the same class of bug for older sessions and for any
+    future regression of the ratchet path.
+
+    For each committed tracker entry with a non-empty ``run_id``:
+
+    1. Locate ``<evidence_root>/runs/<run_id>/artifacts/metrics.json``.
+       Skip when missing — ``evidence_run_missing`` handles that case.
+    2. Load it. Extract the primary-metric value via
+       :func:`orchestrator.metrics_utils.resolve_primary_metric` (same prefix
+       tolerance as the existing ``tracker_metric_missing`` check).
+    3. Extract the tracker entry's primary metric the same way.
+    4. If both resolve to non-zero values and their absolute difference
+       exceeds ``drift_threshold``, emit a fatal issue.
+    """
+    if not tracker_history:
+        return []
+
+    # Narrow, function-scoped import to keep the orchestrator out of
+    # integrity.py's import-time surface.
+    from ..orchestrator.metrics_utils import resolve_primary_metric
+
+    runs_dir = Path(evidence_root) / "runs"
+    issues: list[IntegrityIssue] = []
+
+    for idx, entry in enumerate(tracker_history):
+        if not isinstance(entry, dict) or not entry.get("committed"):
+            continue
+        run_id = str(entry.get("run_id", "") or "")
+        if not run_id:
+            continue  # tracker_run_id_blank handles this
+
+        artifact_path = runs_dir / run_id / "artifacts" / "metrics.json"
+        if not artifact_path.exists():
+            # evidence_run_missing handles absent evidence dirs; don't
+            # double-flag here.
+            continue
+
+        try:
+            raw = artifact_path.read_text(encoding="utf-8")
+            artifact_metrics = json.loads(raw)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(artifact_metrics, dict):
+            continue
+
+        artifact_value = resolve_primary_metric(artifact_metrics, primary_metric)
+        if not isinstance(artifact_value, (int, float)) or artifact_value == 0.0:
+            continue
+        artifact_value = float(artifact_value)
+
+        tracker_value = resolve_primary_metric(
+            entry.get("metrics") or {}, primary_metric
+        )
+        if not isinstance(tracker_value, (int, float)) or tracker_value == 0.0:
+            continue
+        tracker_value = float(tracker_value)
+
+        if abs(tracker_value - artifact_value) <= drift_threshold:
+            continue
+
+        issues.append(
+            IntegrityIssue(
+                code="tracker_vs_artifact_mismatch",
+                severity="fatal",
+                message=(
+                    f"tracker_vs_artifact_mismatch — run {run_id!r} tracker "
+                    f"records {primary_metric}={tracker_value:.4f} but its "
+                    f"evidence artifact ({artifact_path}) records "
+                    f"{primary_metric}={artifact_value:.4f}. Tracker may have "
+                    "been populated from agent-supplied action.metrics rather "
+                    "than the run's actual output. Fixed for new sessions in "
+                    "commit e9b37652; old sessions retain the inconsistency."
+                ),
+                context={
+                    "run_id": run_id,
+                    "iteration": entry.get("iteration"),
+                    "tracker_value": tracker_value,
+                    "artifact_value": artifact_value,
+                    "artifact_path": str(artifact_path),
+                    "primary_metric": primary_metric,
+                },
+            )
+        )
+    return issues
