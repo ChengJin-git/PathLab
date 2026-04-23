@@ -205,10 +205,17 @@ class RunExperimentExecutor(ToolExecutor):
             if best_model.exists():
                 model_path = str(best_model)
 
-            # Copy metrics to output/latest/ for easy access
-            latest = output_dir / "latest"
-            latest.mkdir(parents=True, exist_ok=True)
-            if metrics:
+            # Copy metrics to output/latest/ so the agent can easily inspect
+            # the most recent non-provisional run from the next turn. We do
+            # NOT copy quick_check metrics into "latest" — quick_check is a
+            # 2-epoch sanity run and must not appear as the session's latest
+            # authoritative result. Catches F4 of the 2026-04-22 session
+            # review, where output/latest/metrics.json (quick_check, 0.8643)
+            # disagreed with the full run artifact (0.8436) and misled the
+            # agent into treating the quick_check number as the real result.
+            if metrics and not action.quick_check:
+                latest = output_dir / "latest"
+                latest.mkdir(parents=True, exist_ok=True)
                 (latest / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
             # Update iteration policy — mark quick check as passed
