@@ -96,10 +96,16 @@ def load_research_session_state(
     payload, changed = _repair_research_session_payload(payload, tracker_state)
     if changed:
         update_agent_state(conversation, **{RESEARCH_SESSION_KEY: payload})
+    objective_payload = dict(payload["objective"])
+    # Back-compat: older persisted states lack target_* fields.
+    for key in ("target_source", "target_confidence"):
+        objective_payload.setdefault(key, "")
+    objective_payload.setdefault("target_metric_value", 0.0)
+    objective = ResearchObjective(**objective_payload)
     return ResearchSessionState(
         session_id=payload["session_id"],
         conversation_id=UUID(payload["conversation_id"]),
-        objective=ResearchObjective(**payload["objective"]),
+        objective=objective,
         stage=payload["stage"],
         grounding=payload.get("grounding", {}),
         iteration_index=payload.get("iteration_index", 0),

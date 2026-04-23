@@ -55,6 +55,11 @@ class ResearchObjective:
     dataset_hint: str = ""
     preferred_skill: str = ""
     constraints: list[str] = field(default_factory=list)
+    # Target set by grounding.SotaLookup. target_metric_value == 0.0 means
+    # "no target" (no literature SOTA found, or lookup disabled).
+    target_metric_value: float = 0.0
+    target_source: str = ""           # human-readable "paper_id — paper_title"
+    target_confidence: str = ""       # "high" | "medium" | "low"
 
 
 @dataclass
