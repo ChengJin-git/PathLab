@@ -34,6 +34,8 @@ class ResearchDirector:
         literature_retriever=None,
         rag_top_k: int = 3,
         online_clients: list | None = None,
+        sota_lookup=None,
+        llm_parser=None,
     ):
         self.auto_approve = auto_approve
         self.llm_model = llm_model
@@ -43,6 +45,8 @@ class ResearchDirector:
         self.literature_retriever = literature_retriever
         self.rag_top_k = rag_top_k
         self.online_clients = online_clients or []
+        self.sota_lookup = sota_lookup
+        self.llm_parser = llm_parser
 
     def advance(self, state: ResearchSessionState) -> ResearchSessionState:
         """Advance the session to the next appropriate stage.
@@ -58,7 +62,7 @@ class ResearchDirector:
             # Populate grounding if not already done
             if not state.grounding:
                 state.grounding = ground_objective(
-                    state.objective,
+                    state,
                     llm_model=self.llm_model,
                     llm_api_key=self.llm_api_key,
                     llm_base_url=self.llm_base_url,
@@ -66,6 +70,8 @@ class ResearchDirector:
                     literature_retriever=self.literature_retriever,
                     rag_top_k=self.rag_top_k,
                     online_clients=self.online_clients,
+                    sota_lookup=self.sota_lookup,
+                    llm_parser=self.llm_parser,
                 )
 
             if not self.auto_approve:

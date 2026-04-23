@@ -7,6 +7,10 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..config import PathScientistConfig
+from ..literature.benchmark_extractor import BenchmarkExtractor
+from ..literature.pwc_client import PapersWithCodeClient
+from ..literature.sota_cache import SotaCache
+from ..literature.sota_lookup import SotaLookup
 from ..orchestrator.director import ResearchDirector
 from ..orchestrator.prompts import build_execution_brief
 from ..orchestrator.state_bridge import persist_research_session_state
@@ -25,6 +29,43 @@ from ..orchestrator.types import (
 from ..runtime.integrity import check_session_integrity
 
 logger = logging.getLogger(__name__)
+
+
+def _build_sota_lookup(config, literature_store) -> "SotaLookup | None":
+    """Construct a SotaLookup from session config. Returns None if the
+    runner can't wire one (e.g. missing persistence path) — grounding
+    tolerates None."""
+    try:
+        persist_root = Path(getattr(config, "persistence_root", ".") or ".")
+        cache_path = persist_root / "sota_cache.json"
+        offline = bool(getattr(config, "no_online_sota", False))
+        pwc = None if offline else PapersWithCodeClient()
+        online = None
+        extractor = None
+        if not offline:
+            try:
+                from ..literature.online_clients import create_online_client
+                online = create_online_client("openalex")
+            except Exception as e:
+                logger.warning("SotaLookup: openalex client init failed: %s", e)
+            try:
+                from ..runtime.metric_parser import build_llm_metric_parser
+                extractor = BenchmarkExtractor(
+                    llm_parser=build_llm_metric_parser(config),
+                )
+            except Exception as e:
+                logger.warning("SotaLookup: LLM extractor init failed: %s", e)
+        return SotaLookup(
+            store=literature_store,
+            cache=SotaCache(cache_path),
+            pwc_client=pwc,
+            online_client=online,
+            llm_extractor=extractor,
+            offline=offline,
+        )
+    except Exception as e:
+        logger.warning("SotaLookup construction failed: %s", e)
+        return None
 
 
 def _count_action_events_since(conversation, event_index: int) -> int:
@@ -351,6 +392,8 @@ def run_research_session(
     except Exception as e:
         logger.warning(f"Evidence store unavailable: {e}")
 
+    sota_lookup = _build_sota_lookup(config, literature_store)
+
     director = ResearchDirector(
         auto_approve=auto_approve,
         llm_model=config.llm_model,
@@ -360,6 +403,7 @@ def run_research_session(
         literature_retriever=literature_retriever,
         rag_top_k=config.literature_rag_top_k,
         online_clients=online_clients,
+        sota_lookup=sota_lookup,
     )
 
     # Advance: intake -> grounding
@@ -573,12 +617,15 @@ def continue_research_session(
     except Exception:
         pass
 
+    sota_lookup = _build_sota_lookup(config, literature_store)
+
     director = ResearchDirector(
         auto_approve=auto_approve,
         llm_model=config.llm_model,
         llm_api_key=config.llm_api_key,
         llm_base_url=config.llm_base_url,
         literature_store=literature_store,
+        sota_lookup=sota_lookup,
     )
 
     # Advance from current stage (grounding with approval -> execution)
