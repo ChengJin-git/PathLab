@@ -468,6 +468,7 @@ export default function TaskDetailPage() {
         model: {
           aggregator: task.model_config.aggregator ?? 'abmil',
           backbone: task.model_config.backbone,  // For patch-level tasks
+          classifier: task.model_config.classifier,
           learning_rate: task.model_config.learning_rate ?? 0.0001,
           epochs: task.model_config.epochs ?? 10,
           optimizer: task.model_config.optimizer ?? 'adam',
