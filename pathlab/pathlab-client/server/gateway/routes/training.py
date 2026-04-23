@@ -5,10 +5,7 @@ Handles training task creation, monitoring, and deletion
 
 import asyncio
 import json
-import os
-import random
 import uuid
-from collections import defaultdict
 from typing import Optional, Any
 from fastapi import APIRouter, HTTPException, Depends, Query
 
@@ -43,6 +40,10 @@ from ..pipeline import run_training_pipeline, run_patching_then_submit
 from ..task_queue import get_task_queue, TaskType
 from ..utils import cancel_ai_service_training, require_no_active_batch_imports
 from gateway.chat.context_cache import invalidate_chat_context
+from gateway.training_preflight import (
+    build_training_preflight_policy,
+    check_training_inputs,
+)
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
@@ -68,114 +69,13 @@ async def _check_file_accessibility(
     paths_to_check: list[tuple[Any, ...]],
     uploads_dir: str,
 ) -> list[str]:
-    local_paths = [
-        (wid, p, fn) for wid, p, fn in paths_to_check if p.startswith(uploads_dir)
-    ]
-    external_paths = [
-        (wid, p, fn) for wid, p, fn in paths_to_check if not p.startswith(uploads_dir)
-    ]
-
-    inaccessible: list[str] = []
-
-    async def _stat(wsi_id: str, path: str, filename: str) -> tuple[Any, ...]:
-        exists = await asyncio.to_thread(os.path.exists, path)
-        return (wsi_id, path, filename, exists)
-
-    def _mount_root(path: str) -> str:
-        abs_path = os.path.abspath(path)
-        try:
-            with open("/proc/mounts") as f:
-                mounts = [line.split()[1] for line in f if len(line.split()) >= 2]
-            return max(
-                (m for m in mounts if abs_path.startswith(m.rstrip("/") + "/")),
-                key=len,
-                default="/",
-            )
-        except OSError:
-            cur = abs_path
-            while cur != "/":
-                parent = os.path.dirname(cur)
-                if os.path.ismount(cur):
-                    return cur
-                cur = parent
-            return "/"
-
-    # ── Strategy A: local paths — exhaustive check ────────────────────────────
-    if local_paths:
-        LOCAL_TIMEOUT = 10
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*[_stat(wid, p, fn) for wid, p, fn in local_paths]),
-                timeout=LOCAL_TIMEOUT,
-            )
-            inaccessible += [fn or wid for wid, _, fn, ok in results if not ok]
-        except asyncio.TimeoutError:
-            raise HTTPException(
-                status_code=503,
-                detail=(
-                    f"Local storage I/O timeout after {LOCAL_TIMEOUT}s. "
-                    "The server may be experiencing disk issues."
-                ),
-            )
-
-    # ── Strategy B: external/NFS paths — mount-root check + per-root sampling ─
-    # NFS failures are mount-level. Per-file stat on thousands of files under
-    # load causes guaranteed timeouts. Verify mount roots first (O(1)), then
-    # sample a few files per root to catch individually-deleted files.
-    if external_paths:
-        EXTERNAL_TIMEOUT = 10
-        SAMPLE_SIZE = 5
-
-        mount_roots = {_mount_root(p) for _, p, _ in external_paths}
-        for root in mount_roots:
-            try:
-                accessible = await asyncio.wait_for(
-                    asyncio.to_thread(os.path.exists, root),
-                    timeout=EXTERNAL_TIMEOUT,
-                )
-            except asyncio.TimeoutError:
-                raise HTTPException(
-                    status_code=408,
-                    detail=(
-                        f"External storage not responding (timed out after {EXTERNAL_TIMEOUT}s): {root}. "
-                        "Please check your network storage connection and try again."
-                    ),
-                )
-            if not accessible:
-                raise HTTPException(
-                    status_code=503,
-                    detail=(
-                        f"External storage mount is not accessible: {root}. "
-                        "Please ensure the network storage is mounted and try again."
-                    ),
-                )
-
-        # 2. Random sample per mount root — catches individually-deleted files
-        paths_by_root: dict[str, Any] = defaultdict(list)
-        for item in external_paths:
-            paths_by_root[_mount_root(item[1])].append(item)
-
-        sample: list[tuple[Any, ...]] = []
-        for items in paths_by_root.values():
-            sample.extend(random.sample(items, min(SAMPLE_SIZE, len(items))))
-
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*[_stat(wid, p, fn) for wid, p, fn in sample]),
-                timeout=EXTERNAL_TIMEOUT,
-            )
-            inaccessible += [fn or wid for wid, _, fn, ok in results if not ok]
-        except asyncio.TimeoutError:
-            # Mount roots are reachable but individual stat is slow under heavy NFS
-            # load. This is not a missing-file error — warn and allow the submission
-            # to proceed. The training pipeline will catch any truly missing files.
-            logger.warning(
-                f"External storage sample check timed out ({EXTERNAL_TIMEOUT}s) but mount "
-                f"roots are accessible — NFS under heavy load. Allowing submission to proceed. "
-                f"Sampled paths: {[p for _, p, _ in sample]}"
-            )
-
-    return inaccessible
+    result = await check_training_inputs(
+        paths_to_check=paths_to_check,
+        uploads_dir=uploads_dir,
+        policy=build_training_preflight_policy(),
+        warn_fn=logger.warning,
+    )
+    return result.inaccessible
 
 
 async def _validate_files_and_enqueue(

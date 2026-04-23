@@ -53,6 +53,14 @@ class Config:
     DEFAULT_TASK_TIMEOUT = 86400 * 3  # 3 days
     _task_timeout: int | None = None  # Runtime cached value
 
+    # Training submit-time preflight settings
+    DEFAULT_TRAINING_PREFLIGHT_LOCAL_ROOT_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_SIZE = 8
+    DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_ROOT_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_TIMEOUT = 10
+    DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_SIZE = 5
+
     # ========== Centralized Constants ==========
     # Authentication
     JWT_LIFETIME_SECONDS = 3600 * 24 * 7  # 7 days

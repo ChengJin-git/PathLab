@@ -162,7 +162,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         # 1. Delete WSI file itself
         if wsi_path and os.path.exists(wsi_path):
-            if wsi_path.startswith(str(self.uploads_dir)):
+            uploads_root = str(self.uploads_dir)
+            if os.path.abspath(wsi_path) == os.path.abspath(uploads_root) or \
+               os.path.abspath(wsi_path).startswith(os.path.abspath(uploads_root) + os.sep):
                 try:
                     size = os.path.getsize(wsi_path)
                     os.remove(wsi_path)
@@ -586,7 +588,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
                 if model_dir.exists() and model_dir.is_dir():
                     # Safety check: only delete if in models directory
-                    if str(model_dir).startswith(str(self.models_dir)):
+                    models_root = str(self.models_dir)
+                    if os.path.abspath(str(model_dir)) == os.path.abspath(models_root) or \
+                       os.path.abspath(str(model_dir)).startswith(os.path.abspath(models_root) + os.sep):
                         try:
                             size = self._get_dir_size(model_dir)
                             shutil.rmtree(model_dir)

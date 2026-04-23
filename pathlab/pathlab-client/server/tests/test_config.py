@@ -1,6 +1,7 @@
 import json
-import pytest
+from importlib import import_module
 from pathlib import Path
+import pytest
 from unittest.mock import patch
 
 
@@ -11,7 +12,7 @@ def isolated_config(tmp_path, monkeypatch):
     monkeypatch.delenv("TURNSTILE_SECRET_KEY", raising=False)
     config_file = tmp_path / "storage.json"
     with patch("backend.common.config.Config.STORAGE_CONFIG_FILE", str(config_file)):
-        from backend.common.config import Config
+        Config = import_module("backend.common.config").Config
 
         Config._global_settings_cache = None
         Config._global_settings_dirty = True
@@ -155,6 +156,20 @@ class TestMaxConcurrent:
     def test_clamped_to_max_10(self, isolated_config):
         result = isolated_config.set_max_concurrent(20)
         assert result == 10
+
+
+class TestTrainingPreflightDefaults:
+    def test_defaults_are_positive(self, isolated_config):
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_ROOT_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_SIZE > 0
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_ROOT_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_TIMEOUT >= 1
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_SIZE > 0
+
+    def test_defaults_match_expected_policy_sizes(self, isolated_config):
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_LOCAL_SAMPLE_SIZE == 8
+        assert isolated_config.DEFAULT_TRAINING_PREFLIGHT_EXTERNAL_SAMPLE_SIZE == 5
 
 
 class TestMaintenanceMode:

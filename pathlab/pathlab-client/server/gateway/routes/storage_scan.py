@@ -438,6 +438,12 @@ def _check_wsi_file_availability(
     return True, "Available"
 
 
+def _is_under_uploads_dir(path: str, uploads_dir: str) -> bool:
+    abs_path = os.path.abspath(path)
+    abs_uploads = os.path.abspath(uploads_dir)
+    return abs_path == abs_uploads or abs_path.startswith(abs_uploads + os.sep)
+
+
 def _check_external_files_sync(
     wsi_data: list[dict[str, Any]], uploads_dir: str
 ) -> dict[str, Any]:
@@ -462,7 +468,7 @@ def _check_external_files_sync(
     for item in wsi_data:
         wsi_path = item["wsi_path"]
 
-        if not wsi_path.startswith(uploads_dir):
+        if not _is_under_uploads_dir(wsi_path, uploads_dir):
             file_info = {
                 "wsi_id": item["wsi_id"],
                 "original_filename": item["original_filename"],
@@ -551,7 +557,7 @@ async def get_external_datasets_summary(
         dataset_stats: dict[str, dict[str, Any]] = {}
         for wsi in wsi_list:
             wsi_path_str = str(wsi.wsi_path)
-            if not wsi_path_str.startswith(uploads_dir):
+            if not _is_under_uploads_dir(wsi_path_str, uploads_dir):
                 ds_id = str(wsi.dataset_id) if wsi.dataset_id else "uncategorized"
                 if ds_id not in dataset_stats:
                     dataset_stats[ds_id] = {
@@ -601,7 +607,7 @@ async def start_unbind_dataset_task(
         external_wsi_ids = [
             str(wsi.wsi_id)
             for wsi in wsi_list
-            if not str(wsi.wsi_path).startswith(uploads_dir)
+            if not _is_under_uploads_dir(str(wsi.wsi_path), uploads_dir)
         ]
 
         if not external_wsi_ids:
