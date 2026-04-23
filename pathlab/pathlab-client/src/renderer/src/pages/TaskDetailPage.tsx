@@ -28,12 +28,12 @@ import type { BatchInferenceSummary, BatchInferenceResult } from '../api/batchIn
 
 const makeSyntheticTask = (
   taskId: string,
-  options?: { taskName?: string; status?: TaskDetail['status']; errorMessage?: string }
+  options?: { taskName?: string; status?: TaskDetail['status']; errorMessage?: string; dataType?: TaskDetail['data_type'] }
 ): TaskDetail => ({
   task_id: taskId,
   task_name: options?.taskName || taskId,
   task_type: 'classification',
-  data_type: 'wsi',
+  data_type: options?.dataType || 'wsi',
   task_description: '',
   status: options?.status || 'creating',
   progress: 0,
@@ -438,7 +438,7 @@ export default function TaskDetailPage() {
     setRerunning(true)
     try {
       const taskId = `train_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
-      markTrainingSubmissionPending(taskId, `${task.task_name} (rerun)`)
+      markTrainingSubmissionPending(taskId, `${task.task_name} (rerun)`, task.data_type)
       void createTrainingTask({
         task_id: taskId,
         rerun_from_task_id: isAdmin ? task.task_id : undefined,
@@ -537,6 +537,7 @@ export default function TaskDetailPage() {
       taskName: trackedSubmission?.taskName,
       status: syntheticStatus,
       errorMessage: creationIssue?.message,
+      dataType: (trackedSubmission?.dataType as TaskDetail['data_type']) ?? 'wsi',
     })
     : task
 

@@ -4,6 +4,7 @@ export interface TrainingSubmissionRecord {
   taskId: string
   state: TrainingSubmissionState
   taskName?: string
+  dataType?: string
   error?: string
   createdAt: number
   updatedAt: number
@@ -49,12 +50,13 @@ function updateRecord(
   return next
 }
 
-export function markTrainingSubmissionPending(taskId: string, taskName?: string): TrainingSubmissionRecord {
+export function markTrainingSubmissionPending(taskId: string, taskName?: string, dataType?: string): TrainingSubmissionRecord {
   const now = Date.now()
   return updateRecord(taskId, previous => ({
     taskId,
     state: 'pending',
     taskName: taskName ?? previous?.taskName,
+    dataType: dataType ?? previous?.dataType,
     error: undefined,
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
