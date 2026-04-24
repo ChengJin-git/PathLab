@@ -65,7 +65,7 @@ async def client(admin, queue_stub, tmp_path):
     ):
         from backend.common.config import Config
 
-        Config._task_timeout = None
+        Config.reset_runtime_cache_for_tests()
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
         ) as c:

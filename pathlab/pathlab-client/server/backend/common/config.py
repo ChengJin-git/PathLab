@@ -176,6 +176,12 @@ class Config:
         return timeout
 
     @classmethod
+    def reset_runtime_cache_for_tests(cls) -> None:
+        cls._global_settings_cache = None
+        cls._global_settings_dirty = True
+        cls._task_timeout = None
+
+    @classmethod
     def get_max_concurrent(cls, default: int = 1) -> int:
         data = read_config(cls.STORAGE_CONFIG_FILE)
         value = data.get("max_concurrent", default)

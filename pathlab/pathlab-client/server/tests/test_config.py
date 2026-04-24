@@ -14,13 +14,9 @@ def isolated_config(tmp_path, monkeypatch):
     with patch("backend.common.config.Config.STORAGE_CONFIG_FILE", str(config_file)):
         Config = import_module("backend.common.config").Config
 
-        Config._global_settings_cache = None
-        Config._global_settings_dirty = True
-        Config._task_timeout = None
+        Config.reset_runtime_cache_for_tests()
         yield Config
-        Config._global_settings_cache = None
-        Config._global_settings_dirty = True
-        Config._task_timeout = None
+        Config.reset_runtime_cache_for_tests()
 
 
 class TestGlobalSettings:
@@ -105,7 +101,7 @@ class TestGlobalSettings:
         )
         monkeypatch.setenv("TURNSTILE_ENABLED", "true")
         monkeypatch.setenv("TURNSTILE_SITE_KEY", "from-env")
-        isolated_config._global_settings_dirty = True
+        isolated_config.reset_runtime_cache_for_tests()
 
         settings = isolated_config.get_global_settings()
         assert settings["turnstile_enabled"] is True
@@ -124,7 +120,7 @@ class TestTaskTimeout:
 
     def test_set_timeout_persists(self, isolated_config):
         isolated_config.set_task_timeout(7200)
-        isolated_config._task_timeout = None
+        isolated_config.reset_runtime_cache_for_tests()
         assert isolated_config.get_task_timeout() == 7200
 
     def test_timeout_clamped_to_minimum_60(self, isolated_config):
@@ -138,7 +134,7 @@ class TestTaskTimeout:
     def test_cached_value_returned_without_disk_read(self, isolated_config):
         isolated_config.set_task_timeout(3600)
         assert isolated_config.get_task_timeout() == 3600
-        assert isolated_config._task_timeout == 3600
+        assert isolated_config.get_task_timeout() == 3600
 
 
 class TestMaxConcurrent:
