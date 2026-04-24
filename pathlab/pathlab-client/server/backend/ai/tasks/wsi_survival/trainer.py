@@ -32,8 +32,8 @@ from backend.ai.schemas import (
     TrainResponse,
     FeatureExtractionResponse,
 )
+from backend.common.coords_cache import compute_params_hash
 from backend.ai.tasks.feature_cache import (
-    compute_params_hash,
     find_cached_features,
     get_cache_save_path,
     create_symlink_to_cache,
