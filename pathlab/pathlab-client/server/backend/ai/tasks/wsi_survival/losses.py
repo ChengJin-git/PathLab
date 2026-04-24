@@ -9,19 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-
-def compute_survival_from_hazards(hazards):
-    """Compute cumulative survival probabilities from discrete hazards."""
-    if isinstance(hazards, torch.Tensor):
-        return torch.cumprod(1 - hazards, dim=-1)
-    return np.cumprod(1 - np.asarray(hazards), axis=-1)
-
-
-def compute_risk_from_survival(survival):
-    """Compute scalar risk score with higher values indicating higher risk."""
-    if isinstance(survival, torch.Tensor):
-        return -torch.sum(survival, dim=-1)
-    return -np.sum(np.asarray(survival), axis=-1)
+from backend.ai.survival import compute_survival_from_hazards
 
 
 # -----------------------------------------------------------------------------
@@ -103,4 +91,3 @@ def calculate_c_index(y_true, y_pred, event):
     except Exception:
         # Fallback if calculation fails (e.g., no comparable pairs)
         return 0.5
-

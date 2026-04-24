@@ -66,6 +66,8 @@ from backend.ai.permission_revocation import (
 from backend.ai.tasks.wsi_survival.losses import (
     NLLSurvivalLoss,
     calculate_c_index,
+)
+from backend.ai.survival import (
     compute_risk_from_survival,
     compute_survival_from_hazards,
 )
