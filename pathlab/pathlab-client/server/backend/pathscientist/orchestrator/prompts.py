@@ -103,19 +103,34 @@ def build_execution_brief(state: ResearchSessionState) -> str:
     # --- Literature-grounded SOTA target (plan 2026-04-23) -----------------
     target_value = state.objective.target_metric_value
     if target_value > 0.0:
+        target_payload = (state.grounding or {}).get("sota_target") or {}
+        source_kind = (target_payload.get("source") or "").lower()
         target_src = state.objective.target_source or "(unknown source)"
-        conf = state.objective.target_confidence or "medium"
+        conf = (
+            target_payload.get("confidence")
+            or state.objective.target_confidence
+            or "medium"
+        ).lower()
+        hard_target = source_kind in {"pwc", "local_store"}
+        label = "Your SOTA target" if hard_target else "Literature reference target"
+        verb = "beat" if hard_target else "roughly match"
         lines.append("")
         lines.append(
-            f"Your SOTA target: beat "
+            f"{label}: {verb} "
             f"{target_value:.2f} {state.objective.success_metric} "
             f"on {state.objective.dataset_hint or 'the benchmark'} "
             f"({target_src}) ({conf} confidence)."
         )
-        if conf.lower() == "low":
+        if hard_target:
+            if conf == "low":
+                lines.append(
+                    "  Note: confidence is low — treat this target as a guide, "
+                    "not a hard ceiling; the literature value may be noisy."
+                )
+        else:
             lines.append(
-                "  Note: confidence is low — treat this target as a guide, "
-                "not a hard ceiling; the literature value may be noisy."
+                "  Note: this value comes from abstract-level literature extraction; "
+                "treat it as directional guidance, not a strict stopping rule."
             )
 
     # Evidence snippets from RAG retrieval
