@@ -2,10 +2,14 @@
 
 Order of resolution:
   1. Cache — return immediately on hit.
-  2. LiteratureStore — local seed baselines (already-curated, no network cost).
-  3. PapersWithCodeClient — dataset-specific leaderboard, high confidence.
+  2. PapersWithCodeClient — preferred structured leaderboard, human-curated.
+  3. LiteratureStore — local seed baselines, curated offline fallback.
   4. OnlineLiteratureClient + BenchmarkExtractor — OpenAlex abstracts + LLM.
   5. Give up, cache the negative result briefly.
+
+When ``offline=True`` we skip PwC and OpenAlex+LLM (both require network) and
+fall back to cache + local_store only. local_store is always tried because it
+is offline-safe.
 
 The highest metric value across sources wins. Every resolution path returns
 a SotaTarget with provenance (source, paper_id, evidence) so downstream
@@ -81,7 +85,14 @@ class SotaLookup:
         if cached is not Miss:
             return cached   # may be None (negative cache) or a real target
 
-        # 1. local store
+        # 1. PwC — preferred structured leaderboard (network-gated).
+        if not self._offline:
+            pwc = self._from_pwc(dataset, metric)
+            if pwc is not None:
+                self._cache.put(dataset, task_type, metric, pwc)
+                return pwc
+
+        # 2. local store — curated offline fallback (always available).
         local = self._from_local_store(dataset, task_type, metric)
         if local is not None:
             self._cache.put(dataset, task_type, metric, local)
@@ -93,13 +104,7 @@ class SotaLookup:
             self._cache.put(dataset, task_type, metric, None)
             return None
 
-        # 2. PwC
-        pwc = self._from_pwc(dataset, metric)
-        if pwc is not None:
-            self._cache.put(dataset, task_type, metric, pwc)
-            return pwc
-
-        # 3. OpenAlex + LLM
+        # 3. OpenAlex + LLM (network-gated).
         openalex = self._from_openalex_llm(dataset, task_type, metric)
         if openalex is not None:
             self._cache.put(dataset, task_type, metric, openalex)

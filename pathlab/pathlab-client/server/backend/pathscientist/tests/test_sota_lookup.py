@@ -60,7 +60,9 @@ def test_cache_hit_returns_cached_target(tmp_path):
     assert got == t
 
 
-def test_local_store_used_when_cache_miss(tmp_path):
+def test_local_store_used_when_pwc_misses(tmp_path):
+    """local_store is consulted only when PwC has no match."""
+    pwc = _StubPwc(slug=None)  # PwC cannot resolve dataset
     lookup = SotaLookup(
         store=_StubStore(baselines=[BaselineEntry(
             method="ABMIL", metric_name="auc", metric_value=0.82,
@@ -68,23 +70,33 @@ def test_local_store_used_when_cache_miss(tmp_path):
             paper_id="local:p1", paper_title="abmil",
         )]),
         cache=SotaCache(tmp_path / "c.json"),
-        pwc_client=_StubPwc(slug=None),
+        pwc_client=pwc,
     )
     t = lookup.lookup(dataset="CRC-MSI", task_type="classification", metric="auc")
     assert t is not None
     assert t.metric_value == 0.82
     assert t.source == "local_store"
+    # PwC must have been tried first.
+    assert pwc.slug_calls == ["CRC-MSI"]
 
 
-def test_pwc_used_when_local_empty(tmp_path):
+def test_pwc_used_before_local_store(tmp_path):
+    """PwC is preferred over local_store even when both have a result."""
     pwc = _StubPwc(slug="crc-msi", rows=[
         ExtractedBenchmark(paper_id="pwc:k", method="KatherNet",
                            dataset="crc-msi", metric_name="auc",
                            metric_value=0.87, evidence="...",
                            confidence="high"),
     ])
-    lookup = SotaLookup(store=_StubStore(), cache=SotaCache(tmp_path / "c.json"),
-                        pwc_client=pwc)
+    lookup = SotaLookup(
+        store=_StubStore(baselines=[BaselineEntry(
+            method="ABMIL", metric_name="auc", metric_value=0.82,
+            dataset="CRC-MSI", context="...",
+            paper_id="local:p1", paper_title="abmil",
+        )]),
+        cache=SotaCache(tmp_path / "c.json"),
+        pwc_client=pwc,
+    )
     t = lookup.lookup(dataset="CRC-MSI", task_type="classification", metric="auc")
     assert t is not None
     assert t.metric_value == 0.87
