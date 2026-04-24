@@ -223,7 +223,7 @@ def main():
     # NOTE: daemon=False allows AI service to spawn DataLoader workers (num_workers > 0)
     # Daemon processes cannot have children due to Python multiprocessing restrictions
     # Preprocessing uses multiple workers to handle concurrent tile requests
-    # Note: slide_cache/dzg_cache are process-local and won't be shared across workers
+    # Each worker owns its own SlideCacheManager; cached slide handles are not shared.
     preprocessing_workers = int(os.environ.get("PREPROCESSING_WORKERS", "4"))
     # Recycle preprocessing workers every 500 requests to release C library memory leaks
     # (SdpcSlide SDK accumulates internal buffers that are not fully freed on close).

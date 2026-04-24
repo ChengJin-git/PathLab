@@ -34,12 +34,14 @@ def _force_release_memory():
             pass
 
 
-from .tiling import (
+from .coords_utils import (
     get_or_compute_coordinates,
     check_coords_cache_valid,
+    visualize_segmentation,
+)
+from .tiling import (
     WSITiler,
     TissueSegmenter,
-    visualize_segmentation,
 )
 from .slide_access import clear_caches, evict_slide, get_deepzoom_generator, get_slide
 

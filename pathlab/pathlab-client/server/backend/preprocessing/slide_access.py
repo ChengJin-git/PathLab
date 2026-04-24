@@ -14,10 +14,81 @@ WSIRepository = import_module("backend.database.repositories").WSIRepository
 
 logger = logging.getLogger(__name__)
 
-slide_cache: OrderedDict[str, Any] = OrderedDict()
-dzg_cache: OrderedDict[str, Any] = OrderedDict()
-
 _ADeepZoomGenerator = None
+
+
+class SlideCacheManager:
+    def __init__(self, slide_cache_size: int, dzg_cache_size: int):
+        self.slide_cache_size = slide_cache_size
+        self.dzg_cache_size = dzg_cache_size
+        self.slide_cache: OrderedDict[str, Any] = OrderedDict()
+        self.dzg_cache: OrderedDict[str, Any] = OrderedDict()
+
+    def get_slide(self, wsi_id: str) -> Any | None:
+        if wsi_id not in self.slide_cache:
+            return None
+        slide = self.slide_cache.pop(wsi_id)
+        self.slide_cache[wsi_id] = slide
+        return slide
+
+    def put_slide(self, wsi_id: str, slide: Any) -> None:
+        self.slide_cache[wsi_id] = slide
+        if len(self.slide_cache) <= self.slide_cache_size:
+            return
+        evicted_key, evicted_slide = self.slide_cache.popitem(last=False)
+        self._close_slide(evicted_slide)
+        logger.debug(f"Evicted old slide from cache: {evicted_key}")
+
+    def evict_slide(self, wsi_id: str) -> None:
+        if wsi_id not in self.slide_cache:
+            return
+        evicted = self.slide_cache.pop(wsi_id)
+        self._close_slide(evicted)
+
+    def get_dzg(self, cache_key: str) -> Any | None:
+        if cache_key not in self.dzg_cache:
+            return None
+        dzg = self.dzg_cache.pop(cache_key)
+        self.dzg_cache[cache_key] = dzg
+        return dzg
+
+    def put_dzg(self, cache_key: str, dzg: Any) -> None:
+        self.dzg_cache[cache_key] = dzg
+        if len(self.dzg_cache) <= self.dzg_cache_size:
+            return
+        evicted_key, _ = self.dzg_cache.popitem(last=False)
+        logger.debug(f"Evicted old DZG from cache: {evicted_key}")
+
+    def clear(self) -> None:
+        logger.info(
+            "Shutting down: closing %s cached slides and clearing %s DZG entries",
+            len(self.slide_cache),
+            len(self.dzg_cache),
+        )
+        for _wsi_id, slide in list(self.slide_cache.items()):
+            self._close_slide(slide)
+        self.slide_cache.clear()
+        self.dzg_cache.clear()
+        logger.info("All cached slides closed")
+
+    @staticmethod
+    def _close_slide(slide: Any) -> None:
+        try:
+            slide.close()
+        except Exception as exc:
+            logger.warning("Failed to close cached slide: %s", exc)
+
+
+_cache_manager = SlideCacheManager(Config.SLIDE_CACHE_SIZE, Config.DZG_CACHE_SIZE)
+
+
+def set_cache_manager(manager: SlideCacheManager) -> None:
+    global _cache_manager
+    _cache_manager = manager
+
+
+def get_cache_manager() -> SlideCacheManager:
+    return _cache_manager
 
 
 def _get_deepzoom_generator():
@@ -61,25 +132,14 @@ async def _resolve_slide_path(wsi_id: str, db: AsyncSession) -> str:
 
 
 async def get_slide(wsi_id: str, db: AsyncSession):
-    if wsi_id in slide_cache:
-        slide = slide_cache.pop(wsi_id)
-        slide_cache[wsi_id] = slide
+    manager = get_cache_manager()
+    slide = manager.get_slide(wsi_id)
+    if slide is not None:
         return slide
 
     try:
         slide = _load_slide(await _resolve_slide_path(wsi_id, db))
-        slide_cache[wsi_id] = slide
-
-        if len(slide_cache) > Config.SLIDE_CACHE_SIZE:
-            try:
-                evicted_key, evicted_slide = slide_cache.popitem(last=False)
-                try:
-                    evicted_slide.close()
-                except Exception:
-                    pass
-                logger.debug(f"Evicted old slide from cache: {evicted_key}")
-            except Exception:
-                pass
+        manager.put_slide(wsi_id, slide)
         return slide
     except HTTPException:
         raise
@@ -89,35 +149,23 @@ async def get_slide(wsi_id: str, db: AsyncSession):
 
 
 def evict_slide(wsi_id: str) -> None:
-    if wsi_id in slide_cache:
-        try:
-            evicted = slide_cache.pop(wsi_id)
-            evicted.close()
-        except Exception:
-            pass
+    get_cache_manager().evict_slide(wsi_id)
 
 
 async def get_deepzoom_generator(
     wsi_id: str, db: AsyncSession, tile_size: int = 254, overlap: int = 1
 ):
     cache_key = f"{wsi_id}_{tile_size}_{overlap}"
-    if cache_key in dzg_cache:
-        dzg = dzg_cache.pop(cache_key)
-        dzg_cache[cache_key] = dzg
+    manager = get_cache_manager()
+    dzg = manager.get_dzg(cache_key)
+    if dzg is not None:
         return dzg
 
     try:
         slide = await get_slide(wsi_id, db)
         ADeepZoomGenerator = _get_deepzoom_generator()
         dzg = ADeepZoomGenerator(slide, tile_size=tile_size, overlap=overlap)
-        dzg_cache[cache_key] = dzg
-
-        if len(dzg_cache) > Config.DZG_CACHE_SIZE:
-            try:
-                evicted_key, _ = dzg_cache.popitem(last=False)
-                logger.debug(f"Evicted old DZG from cache: {evicted_key}")
-            except Exception:
-                pass
+        manager.put_dzg(cache_key, dzg)
         return dzg
     except HTTPException:
         raise
@@ -129,12 +177,4 @@ async def get_deepzoom_generator(
 
 
 def clear_caches() -> None:
-    logger.info(f"Shutting down: closing {len(slide_cache)} cached slides")
-    for _wsi_id, slide in list(slide_cache.items()):
-        try:
-            slide.close()
-        except Exception:
-            pass
-    slide_cache.clear()
-    dzg_cache.clear()
-    logger.info("All cached slides closed")
+    get_cache_manager().clear()
