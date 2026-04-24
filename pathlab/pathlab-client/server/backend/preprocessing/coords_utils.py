@@ -299,7 +299,7 @@ def check_coords_cache_valid(
     Uses params_hash-based directory structure:
         coords_dir/{params_hash}/{wsi_id}_coords.h5
     """
-    from backend.ai.tasks.feature_cache import compute_params_hash
+    from backend.common.coords_cache import compute_params_hash
 
     # Compute params_hash
     params_hash = compute_params_hash(
@@ -414,7 +414,7 @@ def get_or_compute_coordinates(
     """
     # Lazy imports to avoid circular dependency with tiling.py
     from .tiling import TissueSegmenter, WSITiler, get_native_mpp
-    from backend.ai.tasks.feature_cache import compute_params_hash
+    from backend.common.coords_cache import compute_params_hash
 
     # Compute params_hash for cache directory (PrePATH-style: no patch_size/stride)
     params_hash = compute_params_hash(
