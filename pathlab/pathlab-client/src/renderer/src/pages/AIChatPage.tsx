@@ -100,7 +100,7 @@ import type { CachedTaskData } from "../components/chat/TaskHistoryCard";
 import { Tooltip } from "../components/ui/tooltip";
 import { removeVoiceControlBlock } from "../components/chat/VoiceControlBlock";
 import { AudioVisualizer } from "../components/common/AudioVisualizer";
-import { MULTIMODAL_MODELS } from "../components/settings/GeneralTab";
+import { MULTIMODAL_MODELS } from "../constants/models";
 import { SCENARIO_CARDS } from "../constants/scenarios";
 import { BEFORE_LOGOUT_EVENT, useAuth } from "../contexts/AuthContext";
 import {

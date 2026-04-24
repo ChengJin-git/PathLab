@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Cloud, Server, Key, Info, CheckCircle, Mic, Globe, Mail } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '../ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
 import { Button } from '../ui/button'
 import { Input } from '../ui/input'
 import { Label } from '../ui/label'
@@ -10,6 +10,7 @@ import { buildAuthRequestInit } from '../../api/client'
 import { API_BASE } from '../../config'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { useTranslation } from 'react-i18next'
+import { CUSTOM_MODEL_SENTINEL, MODEL_OPTIONS, isCustomModelId } from '../../constants/models'
 
 // Status Badge Component
 function StatusBadge({ status }: { status: 'online' | 'offline' | 'checking' }) {
@@ -46,42 +47,6 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () =>
       />
     </button>
   )
-}
-
-/**
- * Single source of truth for all available AI models.
- * Used by GeneralTab (<select>) and AIChatPage (multimodal upload validation).
- */
-export interface ModelOption {
-  id: string
-  label: string
-  multimodal: boolean
-  closedSource?: boolean
-}
-
-export const MODEL_OPTIONS: ModelOption[] = [
-  // Multimodal models (support image input)
-  { id: 'qwen/qwen3.6-plus:free', label: 'Qwen3.6-Plus', multimodal: true },
-  { id: 'qwen/qwen3.5-plus-02-15', label: 'Qwen3.5-Plus-02-15', multimodal: true },
-  { id: 'moonshotai/kimi-k2.5', label: 'Kimi-K2.5', multimodal: true },
-  { id: 'openai/gpt-5.3-codex', label: 'GPT-5.3-Codex', multimodal: true, closedSource: true },
-  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', multimodal: true, closedSource: true },
-  // Text-only models
-  { id: 'z-ai/glm-5.1', label: 'GLM-5.1', multimodal: false },
-  { id: 'qwen/qwen3-235b-a22b-instruct-2507', label: 'Qwen3-235B-A22B-Instruct-2507', multimodal: false },
-  { id: 'stepfun/step-3.5-flash:free', label: 'Step-3.5-Flash', multimodal: false },
-  { id: 'minimax/minimax-m2.7', label: 'Minimax-M2.7', multimodal: false },
-  { id: 'xiaomi/mimo-v2-pro', label: 'MIMO-V2-Pro', multimodal: false },
-]
-
-export const CUSTOM_MODEL_SENTINEL = '__custom__'
-
-export const MULTIMODAL_MODELS = new Set(
-  MODEL_OPTIONS.filter(m => m.multimodal).map(m => m.id)
-)
-
-function isCustomModelId(id: string): boolean {
-  return !!id && id !== CUSTOM_MODEL_SENTINEL && !MODEL_OPTIONS.some(m => m.id === id)
 }
 
 export interface GeneralTabProps {
