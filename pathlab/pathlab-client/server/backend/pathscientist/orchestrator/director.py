@@ -62,7 +62,7 @@ class ResearchDirector:
             # Populate grounding if not already done
             if not state.grounding:
                 state.grounding = ground_objective(
-                    state,
+                    state.objective,
                     llm_model=self.llm_model,
                     llm_api_key=self.llm_api_key,
                     llm_base_url=self.llm_base_url,
@@ -73,6 +73,26 @@ class ResearchDirector:
                     sota_lookup=self.sota_lookup,
                     llm_parser=self.llm_parser,
                 )
+                # Copy grounding-discovered dataset hint and SOTA target
+                # payload onto state.objective. grounding.py itself stays
+                # pure — the director owns all state mutation.
+                dataset_hint = state.grounding.get("dataset_hint_inferred", "")
+                if dataset_hint and not state.objective.dataset_hint:
+                    state.objective.dataset_hint = dataset_hint
+                target_payload = state.grounding.get("sota_target") or {}
+                if target_payload:
+                    state.objective.target_metric_value = float(
+                        target_payload.get("metric_value", 0.0) or 0.0
+                    )
+                    paper_id = target_payload.get("paper_id", "")
+                    paper_title = target_payload.get("paper_title", "")
+                    state.objective.target_source = (
+                        f"{paper_id} — {paper_title}"
+                        if paper_title else paper_id
+                    )
+                    state.objective.target_confidence = target_payload.get(
+                        "confidence", ""
+                    )
 
             if not self.auto_approve:
                 if state.approval_status == "approved":

@@ -7,9 +7,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import pytest
 
+from pathscientist.orchestrator.director import ResearchDirector
 from pathscientist.orchestrator.grounding import ground_objective
 from pathscientist.orchestrator.types import (
-    ResearchObjective, ResearchSessionState,
+    ResearchObjective, ResearchSessionState, STAGE_GROUNDING,
 )
 from pathscientist.literature.types import SotaTarget
 
@@ -23,11 +24,15 @@ class _StubLookup:
         return self._t
 
 
-def _state(question: str, dataset_hint: str = "") -> ResearchSessionState:
-    obj = ResearchObjective(
+def _objective(question: str, dataset_hint: str = "") -> ResearchObjective:
+    return ResearchObjective(
         question=question, success_metric="auc",
         dataset_hint=dataset_hint, preferred_skill="patch_classification",
     )
+
+
+def _state(question: str, dataset_hint: str = "") -> ResearchSessionState:
+    obj = _objective(question, dataset_hint=dataset_hint)
     return ResearchSessionState.create(
         session_id="sid", conversation_id=uuid4(), objective=obj,
     )
@@ -42,38 +47,66 @@ def test_grounding_sets_target_from_lookup():
         retrieved_at=datetime.now(timezone.utc).isoformat(),
     )
     lookup = _StubLookup(target=target)
-    state = _state("improve AUC on CRC-MSI")
-    ground_objective(state, literature_store=None, sota_lookup=lookup)
-    assert state.objective.target_metric_value == 0.87
-    assert "kather2019" in state.objective.target_source.lower() or \
-           "deep learning msi" in state.objective.target_source.lower()
-    assert state.objective.target_confidence == "high"
+    obj = _objective("improve AUC on CRC-MSI")
+    grounding = ground_objective(obj, literature_store=None, sota_lookup=lookup)
+    sota = grounding.get("sota_target") or {}
+    assert sota.get("metric_value") == 0.87
+    assert sota.get("source") == "pwc"
+    assert sota.get("paper_id") == "pwc:kather2019"
+    assert sota.get("paper_title") == "Deep learning MSI"
+    assert sota.get("confidence") == "high"
 
 
 def test_grounding_leaves_target_empty_when_lookup_none():
     lookup = _StubLookup(target=None)
-    state = _state("improve AUC on NOVEL-NEW-DATASET")
-    ground_objective(state, literature_store=None, sota_lookup=lookup)
-    assert state.objective.target_metric_value == 0.0
-    assert state.objective.target_source == ""
+    obj = _objective("improve AUC on NOVEL-NEW-DATASET")
+    grounding = ground_objective(obj, literature_store=None, sota_lookup=lookup)
+    assert not grounding.get("sota_target")
 
 
 def test_grounding_fills_dataset_hint_from_question():
     """If dataset_hint is empty, grounding must extract it from the question
     BEFORE calling the lookup — otherwise lookup is invoked with dataset=''
-    and returns None unconditionally."""
+    and returns None unconditionally. Also emits dataset_hint_inferred in
+    the returned dict so the director can copy it onto state.objective."""
     lookup = _StubLookup(target=None)
-    state = _state("improve AUC on CRC-MSI", dataset_hint="")
-    ground_objective(state, literature_store=None, sota_lookup=lookup)
+    obj = _objective("improve AUC on CRC-MSI", dataset_hint="")
+    grounding = ground_objective(obj, literature_store=None, sota_lookup=lookup)
     # The recorded lookup call must have dataset="CRC-MSI", not "".
     assert lookup.calls[0][0] == "CRC-MSI"
-    # And the extracted dataset_hint must be persisted on the objective.
-    assert state.objective.dataset_hint == "CRC-MSI"
+    # Inferred hint surfaces in the returned dict.
+    assert grounding.get("dataset_hint_inferred") == "CRC-MSI"
+    # And the extracted dataset_hint is still written back to the passed
+    # objective for the legacy single-caller case.
+    assert obj.dataset_hint == "CRC-MSI"
 
 
 def test_grounding_skips_lookup_when_none_passed():
     """Backward compat: ground_objective without sota_lookup must not
     error — some tests and backfill paths call it without the new arg."""
-    state = _state("x")
-    ground_objective(state, literature_store=None, sota_lookup=None)
-    assert state.objective.target_metric_value == 0.0
+    obj = _objective("x")
+    grounding = ground_objective(obj, literature_store=None, sota_lookup=None)
+    assert not grounding.get("sota_target")
+
+
+def test_director_copies_grounding_target_onto_state_objective():
+    """The director, not grounding.py, is responsible for copying the
+    sota_target payload off the grounding dict onto state.objective."""
+    target = SotaTarget(
+        dataset="CRC-MSI", task_type="classification", metric_name="auc",
+        metric_value=0.87, paper_id="pwc:kather2019",
+        paper_title="Deep learning MSI", paper_url="https://example.org/k",
+        source="pwc", confidence="high",
+        retrieved_at=datetime.now(timezone.utc).isoformat(),
+    )
+    lookup = _StubLookup(target=target)
+    state = _state("improve AUC on CRC-MSI", dataset_hint="")
+    state.stage = STAGE_GROUNDING
+    director = ResearchDirector(
+        auto_approve=True, literature_store=None, sota_lookup=lookup,
+    )
+    director.advance(state)
+    assert state.objective.target_metric_value == 0.87
+    assert state.objective.target_confidence == "high"
+    assert "kather2019" in state.objective.target_source
+    assert state.objective.dataset_hint == "CRC-MSI"

@@ -15,7 +15,7 @@ from ..config import (
     resolve_llm_base_url,
     resolve_required_llm_model,
 )
-from ..orchestrator.types import ResearchObjective, ResearchSessionState
+from ..orchestrator.types import ResearchObjective
 from .objective_extractor import extract_dataset_and_task
 
 if TYPE_CHECKING:
@@ -104,7 +104,7 @@ def _llm_select_skill(
 
 
 def ground_objective(
-    objective_or_state: ResearchObjective | ResearchSessionState,
+    objective: ResearchObjective,
     llm_model: str = "",
     llm_api_key: str = "",
     llm_base_url: str = "",
@@ -118,17 +118,20 @@ def ground_objective(
 ) -> dict[str, Any]:
     """Ground a research objective into an execution plan.
 
-    Accepts either a ``ResearchObjective`` (legacy callers) or a
-    ``ResearchSessionState`` (preferred path so ``SotaLookup`` can set
-    target fields on ``state.objective``). When an ``ResearchObjective`` is
-    passed, target fields are still written on the passed instance so the
-    caller observes the SOTA target even without routing through state.
-
     Uses LLM to select the best skill, then retrieves relevant literature
-    and baselines from the local store. If ``sota_lookup`` is supplied, the
-    function also queries it for a published target metric and writes
-    ``target_metric_value`` / ``target_source`` / ``target_confidence`` onto
-    the underlying objective.
+    and baselines from the local store. If ``sota_lookup`` is supplied,
+    the function also queries it for a published target metric and emits
+    the result on the returned dict under the ``sota_target`` key (as
+    produced by ``SotaTarget.to_dict()``). Callers with a session state
+    (e.g. ``ResearchDirector.advance``) are responsible for copying the
+    payload onto ``state.objective`` — grounding itself no longer mutates
+    target fields on the passed objective.
+
+    When ``objective.dataset_hint`` is empty the function still extracts a
+    dataset from the question and writes it back onto the passed
+    ``objective`` (legacy behaviour preserved for single-caller uses) AND
+    emits the inferred value on the returned dict as
+    ``dataset_hint_inferred`` so the director can mirror it onto state.
 
     Returns a dict with at least:
       - selected_skill: str or "" if no match
@@ -137,15 +140,13 @@ def ground_objective(
       - papers: list[dict] (retrieved paper summaries)
       - baselines: list[dict] (relevant baselines)
       - citations: list[dict] (paper references for the execution brief)
-    """
-    # Normalize input: callers may pass either ResearchObjective or
-    # ResearchSessionState. Writing to `objective` mutates the same
-    # instance held by `state.objective` when a state was passed.
-    if isinstance(objective_or_state, ResearchSessionState):
-        objective = objective_or_state.objective
-    else:
-        objective = objective_or_state
 
+    Optional keys (present only when applicable):
+      - dataset_hint_inferred: str — inferred dataset name when the caller
+        left ``objective.dataset_hint`` empty.
+      - sota_target: dict — the ``SotaTarget.to_dict()`` payload for the
+        published target metric discovered via ``sota_lookup``.
+    """
     grounding: dict[str, Any] = {"selected_skill": "", "route": "free", "reason": ""}
 
     # 1. Explicit preferred skill — skip LLM
@@ -224,6 +225,10 @@ def ground_objective(
         grounding.setdefault("passages", [])
 
     # 6. Fill dataset_hint from the question if the caller did not supply one.
+    #    Emit the inferred value in the returned dict so callers holding a
+    #    session state (e.g. the director) can mirror it onto state.objective.
+    #    We also write it back onto the passed objective for legacy callers
+    #    that don't route through state.
     if not objective.dataset_hint:
         dataset, _task_from_q = extract_dataset_and_task(
             objective.question,
@@ -231,9 +236,12 @@ def ground_objective(
             preferred_skill=objective.preferred_skill,
         )
         if dataset:
+            grounding["dataset_hint_inferred"] = dataset
             objective.dataset_hint = dataset
 
-    # 7. Query SotaLookup for a real target when possible.
+    # 7. Query SotaLookup for a real target when possible. Emit the target
+    #    payload on the returned dict rather than mutating target fields on
+    #    the objective — the director owns copy-to-state.
     if sota_lookup is not None and objective.dataset_hint:
         task_type = (
             _infer_task_type(objective)
@@ -249,12 +257,7 @@ def ground_objective(
             logger.warning("SotaLookup raised: %s", e)
             target = None
         if target is not None:
-            objective.target_metric_value = target.metric_value
-            objective.target_source = (
-                f"{target.paper_id} — {target.paper_title}"
-                if target.paper_title else target.paper_id
-            )
-            objective.target_confidence = target.confidence
+            grounding["sota_target"] = target.to_dict()
             logger.info(
                 "SotaLookup: target=%.4f from %s (%s, %s)",
                 target.metric_value, target.source, target.paper_id,
