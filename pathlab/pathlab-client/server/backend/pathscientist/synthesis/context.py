@@ -28,6 +28,14 @@ def build_synthesis_context(
         "references": [],
         "run_history": [],
         "grounding": dict(state.grounding) if state.grounding else {},
+        "objective_target": {
+            "metric_value": state.objective.target_metric_value,
+            "source": state.objective.target_source,
+            "confidence": state.objective.target_confidence,
+            # Source-kind for hard-vs-advisory decisions. Mirrors the grounding
+            # payload set by ResearchDirector.advance().
+            "source_kind": ((state.grounding or {}).get("sota_target") or {}).get("source", ""),
+        },
         "reproducibility": {
             "session_id": state.session_id,
             "conversation_id": str(state.conversation_id),

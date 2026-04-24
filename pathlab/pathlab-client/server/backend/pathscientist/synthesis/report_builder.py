@@ -190,10 +190,38 @@ def _build_results_content(context: dict[str, Any], metric: str) -> str:
 
 
 def _build_limitations_content(context: dict[str, Any]) -> str:
-    failures = context.get("failures", [])
-    if not failures:
-        return ""
     lines: list[str] = []
+
+    # Literature-target comparison (SOTA plan Task 10). When the objective
+    # has a non-zero SOTA target set by grounding, prepend a one-line
+    # comparison between the best committed run and the literature target.
+    # Uses the same hard-vs-advisory semantics as the execution-brief
+    # renderer (Correction #4): pwc / local_store are quantitative targets;
+    # openalex+llm (and any other kind) is advisory "reference value"
+    # wording that must not be mistaken for a canonical SOTA bound.
+    target = context.get("objective_target", {}) or {}
+    target_value = float(target.get("metric_value", 0.0) or 0.0)
+    if target_value > 0.0:
+        best_value = float((context.get("best_run") or {}).get("primary_metric_value", 0.0) or 0.0)
+        metric = context.get("success_metric", "") or "metric"
+        src = target.get("source", "") or "literature"
+        conf = (target.get("confidence") or "medium").lower()
+        source_kind = (target.get("source_kind") or "").lower()
+        hard_target = source_kind in {"pwc", "local_store"}
+        if hard_target:
+            lines.append(
+                f"- The best committed run achieved {best_value:.4f} {metric}; "
+                f"the literature target for this dataset is {target_value:.4f} "
+                f"({src}, {conf} confidence)."
+            )
+        else:
+            lines.append(
+                f"- Abstract-level literature extraction suggests a reference value of "
+                f"{target_value:.4f} {metric} ({src}, {conf} confidence). "
+                f"Use this as directional context rather than a canonical SOTA bound."
+            )
+
+    failures = context.get("failures", []) or []
     for f in failures:
         run_id = f.get("run_id", "?")
         error = f.get("error_type", "unknown")
