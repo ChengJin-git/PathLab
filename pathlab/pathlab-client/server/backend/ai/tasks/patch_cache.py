@@ -12,8 +12,8 @@ The params_hash uniquely identifies the preprocessing configuration
 (patch_size, stride, level, seg_params, filter_params, etc.).
 Same preprocessing config will produce the same patch coordinates.
 
-This module reuses compute_params_hash from feature_cache to ensure
-that coordinates and features use the same cache key.
+This module reuses the shared coords_cache hash helper to ensure that
+coordinates and features use the same cache key.
 """
 import logging
 from contextlib import asynccontextmanager
@@ -23,10 +23,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Re-export compute_params_hash from feature_cache for consistency
+from backend.common.coords_cache import compute_params_hash
+
 from backend.ai.tasks.feature_cache import (
     FeatureLockTimeoutError,
-    compute_params_hash,
     file_lock,
 )
 from backend.common.config import Config
@@ -268,8 +268,8 @@ def safe_load_cached_coords(
         - On success: (coords_array, attrs_dict, None)
         - On failure: (None, None, error_message)
     """
-    # Delegate to tiling module's safe_load_h5_coords
-    from backend.preprocessing.tiling import safe_load_h5_coords
+    from backend.preprocessing.coords_utils import safe_load_h5_coords
+
     return safe_load_h5_coords(coords_path, delete_if_corrupted)
 
 
@@ -429,4 +429,3 @@ def list_all_cached_coords_for_wsi(
                 result.append(coords_file)
 
     return result
-

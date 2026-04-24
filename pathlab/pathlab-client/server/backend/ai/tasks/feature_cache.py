@@ -19,7 +19,6 @@ Concurrency:
 
 import asyncio
 import fcntl
-import hashlib
 import json
 import logging
 import os
@@ -31,6 +30,7 @@ from typing import Dict, List, Optional, Tuple, Any
 import torch
 
 from backend.common.config import Config
+from backend.common.coords_cache import compute_params_hash
 
 logger = logging.getLogger(__name__)
 
@@ -196,51 +196,6 @@ def get_lock_path(
     """
     lock_dir = uploads_root / "features" / ".locks" / extractor_name / params_hash
     return lock_dir / f"{wsi_id}.lock"
-
-
-def compute_params_hash(
-    level: int = 0,
-    seg_params: Optional[Dict[str, Any]] = None,
-    filter_params: Optional[Dict[str, Any]] = None,
-    contour_fn: str = "four_pt",
-    use_padding: bool = True,
-    seg_level: int = -1,
-    **kwargs,  # Ignore legacy patch_size, stride parameters
-) -> str:
-    """
-    Compute a hash of preprocessing parameters for cache key.
-
-    Returns a short hash string (8 characters) that uniquely identifies
-    the preprocessing configuration.
-
-    PrePATH-style: patch_size and stride are NOT included in the hash
-    because they are automatically determined by each WSI's magnification/MPP.
-    Cache is keyed only by segmentation and filter parameters.
-    """
-    # Always include all parameters with defaults to ensure consistent hashing
-    seg_params = seg_params or {}
-    filter_params = filter_params or {}
-
-    params = {
-        # Basic tiling parameters (NOT patch_size/stride - they're auto-determined by MPP)
-        "level": level,
-        "contour_fn": contour_fn,
-        "use_padding": use_padding,
-        # Segmentation parameters (always included with defaults)
-        "seg_level": seg_level,
-        "sthresh": seg_params.get("sthresh", 5),
-        "mthresh": seg_params.get("mthresh", 7),
-        "close": seg_params.get("close", 4),
-        "use_otsu": seg_params.get("use_otsu", False),
-        # Filter parameters (always included with defaults)
-        "a_t": filter_params.get("a_t", 100),
-        "a_h": filter_params.get("a_h", 16),
-        "max_n_holes": filter_params.get("max_n_holes", 8),
-    }
-
-    # Create deterministic JSON string and hash it
-    params_str = json.dumps(params, sort_keys=True)
-    return hashlib.md5(params_str.encode()).hexdigest()[:8]
 
 
 def get_cached_features_path(
@@ -452,7 +407,7 @@ def read_params_from_coords_h5(coords_h5_path: Path) -> Optional[str]:
     NOTE: All required attributes must exist in the h5 file. Old cache files without
     complete attributes will return None, forcing recomputation.
     """
-    from backend.preprocessing.tiling import safe_load_h5_coords
+    from backend.preprocessing.coords_utils import safe_load_h5_coords
 
     if not coords_h5_path.exists():
         return None
