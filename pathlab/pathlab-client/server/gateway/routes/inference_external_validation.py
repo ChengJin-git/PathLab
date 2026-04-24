@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, cast as type_cast
 from sqlalchemy import update as sql_update
 
 from backend.ai.schemas.base import TaskStatus
-from backend.ai.tasks.wsi_survival.losses import (
+from backend.ai.survival import (
     compute_risk_from_survival,
     compute_survival_from_hazards,
 )

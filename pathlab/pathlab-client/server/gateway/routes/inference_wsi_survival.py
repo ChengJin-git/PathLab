@@ -19,7 +19,7 @@ from backend.database.repositories import (
     TrainingTaskRepository,
     WSIRepository,
 )
-from backend.ai.tasks.wsi_survival.losses import (
+from backend.ai.survival import (
     compute_risk_from_survival,
     compute_survival_from_hazards,
 )
