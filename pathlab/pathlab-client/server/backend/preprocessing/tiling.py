@@ -784,13 +784,3 @@ class WSITiler:
             f"Extracted {len(patches)} patches (read_size={self.read_size}, output_size={self.patch_size})"
         )
         return patches
-
-
-# Re-export from coords_utils for backward compatibility
-from .coords_utils import (  # noqa: E402, F401
-    REQUIRED_COORDS_ATTRS,
-    safe_load_h5_coords,
-    check_coords_cache_valid,
-    get_or_compute_coordinates,
-    visualize_segmentation,
-)
