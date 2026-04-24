@@ -982,11 +982,8 @@ async def _run_external_validation(
     from backend.common.progress_store import set_progress, clear_progress
     from gateway.pipeline import ScopedLogger
     from gateway.dependencies import AI_SERVICE_URL
-    from backend.ai.tasks.feature_cache import (
-        compute_params_hash,
-        find_cached_features,
-        create_symlink_to_cache,
-    )
+    from backend.common.coords_cache import compute_params_hash
+    from backend.ai.tasks.feature_cache import find_cached_features, create_symlink_to_cache
     from gateway.utils import ensure_coords_ready
     from backend.ai.permission_revocation import (
         is_permission_revoked,

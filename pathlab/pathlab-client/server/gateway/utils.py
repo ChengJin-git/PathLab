@@ -16,7 +16,7 @@ from fastapi import HTTPException
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.ai.tasks.feature_cache import compute_params_hash
+from backend.common.coords_cache import compute_params_hash
 from backend.ai.tasks.patch_cache import (
     acquire_coords_lock,
     find_valid_cached_coords_summary,
