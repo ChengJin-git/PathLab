@@ -1,0 +1,137 @@
+[
+  {
+    "dataset_id": "zenodo:1214456",
+    "name": "NCT-CRC-HE-100K",
+    "provider": "zenodo",
+    "access": "public",
+    "task_types": ["patch_classification", "feature_extraction"],
+    "asset_types": ["patch_images"],
+    "organs": ["colorectal"],
+    "license": "CC-BY-4.0",
+    "estimated_size_gb": 4.0,
+    "tags": ["histology", "HE", "9-class"],
+    "source_paper_ids": ["doi:10.1371/journal.pmed.1002730"],
+    "download": {
+      "kind": "zenodo",
+      "remote_id": "10.5281/zenodo.1214456",
+      "urls": [
+        "https://zenodo.org/records/1214456/files/NCT-CRC-HE-100K.zip"
+      ],
+      "filename": "NCT-CRC-HE-100K.zip"
+    }
+  },
+  {
+    "dataset_id": "hf:1aurent/PatchCamelyon",
+    "name": "PatchCamelyon (PCam)",
+    "provider": "huggingface",
+    "access": "public",
+    "task_types": ["patch_classification"],
+    "asset_types": ["patch_images"],
+    "organs": ["breast"],
+    "license": "CC0-1.0",
+    "estimated_size_gb": 7.0,
+    "tags": ["histology", "HE", "binary", "tumor", "placeholder"],
+    "source_paper_ids": ["arxiv:1806.03962"],
+    "download": {
+      "kind": "hf_dataset",
+      "remote_id": "1aurent/PatchCamelyon"
+    }
+  },
+  {
+    "dataset_id": "gigadb:camelyon16",
+    "name": "CAMELYON16",
+    "provider": "direct_http",
+    "access": "public",
+    "task_types": ["mil_classification", "segmentation"],
+    "asset_types": ["wsi"],
+    "organs": ["breast", "lymph_node"],
+    "license": "CC0-1.0",
+    "estimated_size_gb": 700.0,
+    "tags": ["WSI", "HE", "metastasis", "sentinel_lymph_node", "large"],
+    "source_paper_ids": ["doi:10.1001/jama.2017.14585"],
+    "download": {
+      "kind": "direct_http",
+      "remote_id": "camelyon16",
+      "urls": [
+        "https://camelyon17.grand-challenge.org/Data/"
+      ]
+    }
+  },
+  {
+    "dataset_id": "tcga:BRCA",
+    "name": "TCGA-BRCA Diagnostic Slides",
+    "provider": "tcia",
+    "access": "gated",
+    "task_types": ["mil_classification", "survival_analysis", "feature_extraction"],
+    "asset_types": ["wsi"],
+    "organs": ["breast"],
+    "license": "NIH-GDC-Data-Use",
+    "estimated_size_gb": 0.0,
+    "tags": ["WSI", "HE", "TCGA", "gated", "size_unknown"],
+    "source_paper_ids": [],
+    "download": {
+      "kind": "manual",
+      "remote_id": "TCGA-BRCA",
+      "urls": [
+        "https://portal.gdc.cancer.gov/projects/TCGA-BRCA"
+      ]
+    }
+  },
+  {
+    "dataset_id": "zenodo:3632035",
+    "name": "BACH ICIAR 2018 Breast Cancer Histology",
+    "provider": "direct_http",
+    "access": "public",
+    "task_types": ["patch_classification"],
+    "asset_types": ["patch_images"],
+    "organs": ["breast"],
+    "license": "CC-BY-NC-4.0",
+    "estimated_size_gb": 10.0,
+    "tags": ["histology", "HE", "4-class", "ICIAR2018", "placeholder"],
+    "source_paper_ids": ["doi:10.1016/j.media.2019.05.010"],
+    "download": {
+      "kind": "direct_http",
+      "remote_id": "bach_iciar2018",
+      "urls": [
+        "https://iciar2018-challenge.grand-challenge.org/Dataset/"
+      ]
+    }
+  },
+  {
+    "dataset_id": "hf:jxie/nct-crc-he-7k",
+    "name": "CRC-VAL-HE-7K",
+    "provider": "huggingface",
+    "access": "public",
+    "task_types": ["patch_classification"],
+    "asset_types": ["patch_images"],
+    "organs": ["colorectal"],
+    "license": "CC-BY-4.0",
+    "estimated_size_gb": 0.3,
+    "tags": ["histology", "HE", "validation", "9-class", "placeholder"],
+    "source_paper_ids": ["doi:10.1371/journal.pmed.1002730"],
+    "download": {
+      "kind": "hf_dataset",
+      "remote_id": "jxie/nct-crc-he-7k"
+    }
+  },
+  {
+    "dataset_id": "kaggle:prostate-cancer-grade-assessment",
+    "name": "PANDA — Prostate cANcer graDe Assessment",
+    "provider": "kaggle",
+    "access": "manual",
+    "task_types": ["mil_classification"],
+    "asset_types": ["wsi"],
+    "organs": ["prostate"],
+    "license": "CC-BY-SA-NC-4.0",
+    "estimated_size_gb": 400.0,
+    "tags": ["WSI", "HE", "ISUP", "gleason", "kaggle"],
+    "source_paper_ids": ["doi:10.1038/s41591-021-01620-2"],
+    "download": {
+      "kind": "manual",
+      "remote_id": "prostate-cancer-grade-assessment",
+      "urls": [
+        "https://www.kaggle.com/competitions/prostate-cancer-grade-assessment/data"
+      ]
+    }
+  }
+]
