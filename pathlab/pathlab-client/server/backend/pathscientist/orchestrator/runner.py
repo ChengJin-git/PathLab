@@ -31,13 +31,27 @@ from ..runtime.integrity import check_session_integrity
 logger = logging.getLogger(__name__)
 
 
-def _build_sota_lookup(config, literature_store) -> "SotaLookup | None":
-    """Construct a SotaLookup from session config. Returns None if the
-    runner can't wire one (e.g. missing persistence path) — grounding
-    tolerates None."""
+def _build_sota_lookup(session, config, literature_store) -> "SotaLookup | None":
+    """Construct a SotaLookup rooted at the session's conversation-scoped
+    persistence directory. Returns None if the runner can't wire one (e.g.
+    missing persistence path) — grounding tolerates None.
+
+    The cache path is built from ``session.persistence_root`` (a
+    ``runtime.session.PathScientistSession``), NOT from ``config`` — the
+    ``PathScientistConfig`` dataclass has no ``persistence_root`` field, so
+    an earlier ``getattr(config, "persistence_root", ".")`` would silently
+    fall back to the process cwd.
+    """
     try:
-        persist_root = Path(getattr(config, "persistence_root", ".") or ".")
-        cache_path = persist_root / "sota_cache.json"
+        persist_root = getattr(session, "persistence_root", None)
+        if not persist_root or str(persist_root) in ("", "."):
+            logger.warning(
+                "SotaLookup: session.persistence_root is unset (%r); "
+                "refusing to build a cache at cwd",
+                persist_root,
+            )
+            return None
+        cache_path = Path(persist_root) / "sota_cache.json"
         offline = bool(getattr(config, "no_online_sota", False))
         pwc = None if offline else PapersWithCodeClient()
         online = None
@@ -392,7 +406,7 @@ def run_research_session(
     except Exception as e:
         logger.warning(f"Evidence store unavailable: {e}")
 
-    sota_lookup = _build_sota_lookup(config, literature_store)
+    sota_lookup = _build_sota_lookup(session, config, literature_store)
 
     director = ResearchDirector(
         auto_approve=auto_approve,
@@ -617,7 +631,7 @@ def continue_research_session(
     except Exception:
         pass
 
-    sota_lookup = _build_sota_lookup(config, literature_store)
+    sota_lookup = _build_sota_lookup(session, config, literature_store)
 
     director = ResearchDirector(
         auto_approve=auto_approve,
