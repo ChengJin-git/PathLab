@@ -236,3 +236,53 @@ Plan docs:          14 .md files
 Review docs:        11 .md files
 Prompts:             1 .j2 file
 ```
+
+## Dataset Acquisition (2026-04-25)
+
+PathScientist now has an orchestrator-owned dataset acquisition stage that
+runs between grounding and execution when `auto_acquire_data=True` and the
+user has not supplied `data_mounts`.
+
+**Flow:**
+1. Grounding emits a `task_profile` (heuristic; see `dataset/task_profile.py`).
+2. Acquisition stage scouts `dataset/seed_data/pathology_datasets.json` via
+   `DatasetScout` (scoring: +5 task / +3 organ / +2 asset / +1 keyword;
+   policy reject −100).
+3. `AcquisitionPolicy` defaults to `public_only` and 20 GB max — gated /
+   manual / oversize records skip with evidence rather than a silent attempt.
+4. The first allowed candidate is handed to its provider:
+   - `HuggingFaceProvider` (snapshot_download)
+   - `ZenodoProvider` (file URL list; DOI metadata is later)
+   - `DirectHTTPProvider` (rejects landing-page URLs as `skipped_policy`)
+5. Archives are extracted via `extract_archive` (zip + tar + tar.gz with
+   path-traversal protection).
+6. A normalizer (`PatchClassificationNormalizer` or
+   `MILClassificationNormalizer`) writes a prepared layout under
+   `<persistence_root>/datasets/prepared/<normalizer>/<safe_id>/` and emits
+   a contract dict (`images_dir`, `splits_file`, `data_mounts`, ...).
+7. `<workspace>/.dataset/manifest.json` and
+   `<workspace>/.evidence/datasets/<safe_id>.json` are written.
+8. `state.acquisition_status / dataset_manifest_path / selected_dataset` are
+   populated; `config.data_mounts` is mutated so runtime tools see the
+   prepared paths; the execution brief renders
+   `Selected dataset:` and `Dataset manifest:` lines.
+
+**Config knobs (CLI flags pending — see deferred T2b / SOTA T11):**
+- `auto_acquire_data: bool = False`
+- `download_policy: "public_only" | "manual_only" | "disabled"`
+- `dataset_cache_dir: str` (defaults to `<persistence_root>/datasets/`)
+- `max_download_size_gb: float = 20.0`
+- `allow_large_downloads: bool = False`
+
+**Failure semantics — every path produces a manifest, no exceptions
+propagate:**
+- `no_candidate`: registry returned 0 records or all policy-rejected.
+- `skipped_policy`: top candidate denied by access / size policy.
+- `failed`: provider returned `failed`, no normalizer supports the task,
+  or the normalizer raised.
+- `skipped`: user supplied `config.data_mounts` (acquisition is a no-op
+  in this case — the user paths are authoritative).
+
+The acquisition stage is orchestrator-owned. The OpenHands code agent
+receives prepared paths via `config.data_mounts` and the execution brief;
+it must NOT invent download commands.
