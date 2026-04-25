@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from dataset.normalizers.base import NormalizerError
 from dataset.normalizers.mil_classification import MILClassificationNormalizer
 from dataset.normalizers.patch_classification import PatchClassificationNormalizer
 
@@ -48,9 +49,12 @@ def test_patch_normalizer_skips_non_image_files(tmp_path):
     (raw / "tumor").mkdir()
     (raw / "tumor" / "a.png").write_bytes(b"a")
     (raw / "tumor" / "README.txt").write_text("ignore me")
+    (raw / "normal").mkdir()
+    (raw / "normal" / "b.png").write_bytes(b"b")
+    (raw / "normal" / "NOTES.md").write_text("ignore me")
     prepared = tmp_path / "prepared"
     contract = PatchClassificationNormalizer().prepare(raw, prepared)
-    assert contract["n_train"] + contract["n_val"] == 1
+    assert contract["n_train"] + contract["n_val"] == 2
 
 
 def test_patch_normalizer_supports_check():
@@ -135,3 +139,80 @@ def test_mil_normalizer_data_mounts_present(tmp_path):
     prepared = tmp_path / "prepared"
     contract = MILClassificationNormalizer().prepare(raw, prepared)
     assert contract["data_mounts"] == {str(prepared): "/data"}
+
+
+# ---- Empty / unsupported layout validation (Review fix R3 / P1 #4) ----
+
+
+def test_patch_normalizer_raises_on_empty_raw(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    prepared = tmp_path / "prepared"
+    with pytest.raises(NormalizerError, match="unsupported_layout|no_images"):
+        PatchClassificationNormalizer().prepare(raw, prepared)
+
+
+def test_patch_normalizer_raises_when_only_non_image_files(tmp_path):
+    raw = tmp_path / "raw"
+    (raw / "tumor").mkdir(parents=True)
+    (raw / "tumor" / "README.txt").write_text("ignore")
+    (raw / "normal").mkdir()
+    (raw / "normal" / "notes.md").write_text("ignore")
+    prepared = tmp_path / "prepared"
+    with pytest.raises(NormalizerError, match="unsupported_layout|no_images"):
+        PatchClassificationNormalizer().prepare(raw, prepared)
+
+
+def test_patch_normalizer_raises_on_single_class(tmp_path):
+    raw = tmp_path / "raw"
+    (raw / "tumor").mkdir(parents=True)
+    (raw / "tumor" / "a.png").write_bytes(b"a")
+    (raw / "tumor" / "b.png").write_bytes(b"b")
+    prepared = tmp_path / "prepared"
+    with pytest.raises(NormalizerError, match="insufficient_classes"):
+        PatchClassificationNormalizer().prepare(raw, prepared)
+
+
+def test_patch_normalizer_handles_single_top_level_dir(tmp_path):
+    """Common .zip extraction pattern: archive contains one top-level dir
+    that holds the actual class subdirs."""
+    raw = tmp_path / "raw"
+    inner = raw / "MyDataset"
+    (inner / "tumor").mkdir(parents=True)
+    (inner / "normal").mkdir()
+    (inner / "tumor" / "a.png").write_bytes(b"a")
+    (inner / "normal" / "b.png").write_bytes(b"b")
+    (inner / "tumor" / "c.png").write_bytes(b"c")
+    prepared = tmp_path / "prepared"
+    contract = PatchClassificationNormalizer().prepare(raw, prepared)
+    assert contract["n_train"] + contract["n_val"] == 3
+
+
+def test_patch_normalizer_clamps_split_for_tiny_dataset(tmp_path):
+    """A 2-image dataset must produce 1 train + 1 val (not 1+1 with empty side)."""
+    raw = tmp_path / "raw"
+    (raw / "a").mkdir(parents=True)
+    (raw / "b").mkdir()
+    (raw / "a" / "x.png").write_bytes(b"x")
+    (raw / "b" / "y.png").write_bytes(b"y")
+    prepared = tmp_path / "prepared"
+    contract = PatchClassificationNormalizer().prepare(raw, prepared)
+    assert contract["n_train"] >= 1
+    assert contract["n_val"] >= 1
+
+
+def test_mil_normalizer_raises_on_no_slides(tmp_path):
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    (raw / "README.txt").write_text("no slides here")
+    prepared = tmp_path / "prepared"
+    with pytest.raises(NormalizerError, match="no_slides"):
+        MILClassificationNormalizer().prepare(raw, prepared)
+
+
+def test_mil_normalizer_raises_when_slides_dir_present_but_empty(tmp_path):
+    raw = tmp_path / "raw"
+    (raw / "slides").mkdir(parents=True)
+    prepared = tmp_path / "prepared"
+    with pytest.raises(NormalizerError, match="no_slides"):
+        MILClassificationNormalizer().prepare(raw, prepared)

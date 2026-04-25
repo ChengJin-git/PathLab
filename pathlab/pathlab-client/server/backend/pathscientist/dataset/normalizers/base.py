@@ -11,6 +11,10 @@ from pathlib import Path
 from typing import Any, Protocol
 
 
+class NormalizerError(Exception):
+    """Raised by a normalizer when the prepared output would be unusable."""
+
+
 class DatasetNormalizer(Protocol):
     name: str
     supported_task_types: set[str]

@@ -307,3 +307,35 @@ def test_acquisition_skipped_policy_cites_relevant_candidate(tmp_path):
     # Evidence cites the relevant candidate, not the irrelevant public one.
     assert result.candidate is not None
     assert result.candidate.record.dataset_id == "gated-mil"
+
+
+# ---- Review fix R3 (P1): normalizer empty-output validation ----
+
+
+def test_acquisition_failed_when_normalizer_raises_normalizer_error(tmp_path):
+    """Empty raw layout -> NormalizerError -> manifest.status=failed with normalize_empty reason."""
+    from dataset.normalizers.base import NormalizerError
+
+    class _RaisingNormalizer:
+        name = "patch_classification"
+        supported_task_types = {"patch_classification"}
+
+        def supports(self, task_type):
+            return task_type in self.supported_task_types
+
+        def prepare(self, raw_root, prepared_root):
+            raise NormalizerError("no_images")
+
+    reg = _registry_with([_public_record()], tmp_path)
+    workspace = tmp_path / "workspace"
+    fake_provider = _FakeProvider(status="downloaded", files_to_create=[("a.bin", b"x")])
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": fake_provider},
+        normalizers=[_RaisingNormalizer()],
+        cache_root=tmp_path / "cache",
+    )
+    result = service.acquire(_profile(), workspace_root=workspace)
+    assert result.status == "failed"
+    assert result.reason.startswith("normalize_empty:no_images")
+    assert result.manifest.status == "failed"

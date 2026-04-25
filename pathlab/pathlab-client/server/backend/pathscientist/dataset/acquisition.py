@@ -17,7 +17,7 @@ from typing import Iterable
 from .downloader import compute_sha256, extract_archive, safe_dataset_id
 from .evidence import write_acquisition_record
 from .manifests import manifest_path_for_workspace, save_manifest
-from .normalizers.base import DatasetNormalizer
+from .normalizers.base import DatasetNormalizer, NormalizerError
 from .policy import AcquisitionPolicy
 from .providers.base import DatasetProvider, DownloadResult
 from .registry import DatasetRegistry
@@ -246,6 +246,29 @@ class DatasetAcquisitionService:
         prepared_root = self._cache_root / "prepared" / normalizer.name / safe_dataset_id(record.dataset_id)
         try:
             contract = normalizer.prepare(raw_root, prepared_root)
+        except NormalizerError as e:
+            logger.warning("Normalizer rejected: %s", e)
+            manifest = DatasetManifest(
+                dataset_id=record.dataset_id, provider=record.provider,
+                selected_for_task=profile.task_type,
+                raw_root=str(raw_root), prepared_root=str(prepared_root),
+                data_mounts={}, prepared_contract={},
+                access=record.access, status="failed",
+            )
+            save_manifest(manifest_path, manifest)
+            ev = write_acquisition_record(
+                workspace_root,
+                {
+                    "status": "failed", "reason": f"normalize_empty:{e}",
+                    "candidate": {"dataset_id": record.dataset_id, "score": chosen.score},
+                    "task_profile": profile.to_dict(),
+                },
+            )
+            return AcquisitionResult(
+                status="failed", manifest=manifest, manifest_path=manifest_path,
+                candidate=chosen, evidence_path=ev,
+                reason=f"normalize_empty:{e}",
+            )
         except Exception as e:
             logger.warning("Normalizer failed: %s", e)
             manifest = DatasetManifest(

@@ -22,6 +22,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .base import NormalizerError
+
 logger = logging.getLogger(__name__)
 
 _WSI_EXTS = (".svs", ".tif", ".tiff", ".ndpi", ".mrxs", ".scn", ".vms", ".vmu")
@@ -62,6 +64,9 @@ class MILClassificationNormalizer:
                 except OSError:
                     shutil.copy2(src, dest)
                 slide_count += 1
+
+        if slide_count == 0:
+            raise NormalizerError("no_slides")
 
         # Carry through labels.csv if present; otherwise leave empty.
         labels_src = raw_root / "labels.csv"
