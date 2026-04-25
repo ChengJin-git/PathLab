@@ -69,6 +69,12 @@ def build_execution_brief(state: ResearchSessionState) -> str:
     if state.objective.dataset_hint:
         lines.append(f"Dataset hint: {state.objective.dataset_hint}")
 
+    profile = (state.grounding or {}).get("task_profile") or {}
+    if profile:
+        lines.append(
+            f"Task profile: {profile.get('task_type', '?')} / {profile.get('asset_level', '?')}"
+        )
+
     if state.objective.constraints:
         lines.append("Constraints:")
         for c in state.objective.constraints:

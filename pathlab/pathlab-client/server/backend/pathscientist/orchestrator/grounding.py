@@ -15,6 +15,7 @@ from ..config import (
     resolve_llm_base_url,
     resolve_required_llm_model,
 )
+from ..dataset.task_profile import infer_task_profile
 from ..orchestrator.types import ResearchObjective
 from .objective_extractor import extract_dataset_and_task
 
@@ -238,6 +239,14 @@ def ground_objective(
         if dataset:
             grounding["dataset_hint_inferred"] = dataset
             objective.dataset_hint = dataset
+
+    # 6.5. Task profile (heuristic) — used by acquisition layer.
+    profile = infer_task_profile(
+        objective.question,
+        selected_skill=grounding.get("selected_skill", "") or objective.preferred_skill,
+        dataset_hint=objective.dataset_hint,
+    )
+    grounding["task_profile"] = profile.to_dict()
 
     # 7. Query SotaLookup for a real target when possible. Emit the target
     #    payload on the returned dict rather than mutating target fields on
