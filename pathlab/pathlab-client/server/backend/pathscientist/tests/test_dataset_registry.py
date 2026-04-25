@@ -137,3 +137,19 @@ def test_real_seed_file_loads():
         assert r.name
         assert r.provider
         assert r.access in {"public", "gated", "manual"}
+
+
+def test_public_direct_http_seed_urls_are_file_like():
+    """T0: every direct_http public seed entry must have file-like URLs.
+    Landing-page URLs must be reclassified as manual access + manual kind."""
+    seed_path = Path(__file__).resolve().parent.parent / "dataset" / "seed_data" / "pathology_datasets.json"
+    rows = json.loads(seed_path.read_text())
+    records = [DatasetRecord.from_dict(r) for r in rows]
+    bad: list[tuple[str, str]] = []
+    for r in records:
+        if r.access == "public" and r.download.kind == "direct_http":
+            for url in r.download.urls:
+                stripped = url.lower().split("?", 1)[0]
+                if not stripped.endswith((".zip", ".tar", ".tar.gz", ".tgz")):
+                    bad.append((r.dataset_id, url))
+    assert bad == [], f"Public direct_http seed records must have file-like URLs: {bad}"

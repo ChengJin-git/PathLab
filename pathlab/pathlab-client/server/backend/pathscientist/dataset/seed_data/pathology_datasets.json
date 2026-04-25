@@ -41,7 +41,7 @@
     "dataset_id": "gigadb:camelyon16",
     "name": "CAMELYON16",
     "provider": "direct_http",
-    "access": "public",
+    "access": "manual",
     "task_types": ["mil_classification", "segmentation"],
     "asset_types": ["wsi"],
     "organs": ["breast", "lymph_node"],
@@ -50,7 +50,7 @@
     "tags": ["WSI", "HE", "metastasis", "sentinel_lymph_node", "large"],
     "source_paper_ids": ["doi:10.1001/jama.2017.14585"],
     "download": {
-      "kind": "direct_http",
+      "kind": "manual",
       "remote_id": "camelyon16",
       "urls": [
         "https://camelyon17.grand-challenge.org/Data/"
@@ -81,7 +81,7 @@
     "dataset_id": "zenodo:3632035",
     "name": "BACH ICIAR 2018 Breast Cancer Histology",
     "provider": "direct_http",
-    "access": "public",
+    "access": "manual",
     "task_types": ["patch_classification"],
     "asset_types": ["patch_images"],
     "organs": ["breast"],
@@ -90,7 +90,7 @@
     "tags": ["histology", "HE", "4-class", "ICIAR2018", "placeholder"],
     "source_paper_ids": ["doi:10.1016/j.media.2019.05.010"],
     "download": {
-      "kind": "direct_http",
+      "kind": "manual",
       "remote_id": "bach_iciar2018",
       "urls": [
         "https://iciar2018-challenge.grand-challenge.org/Dataset/"

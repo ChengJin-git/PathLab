@@ -131,3 +131,30 @@ def test_dataset_manifest_roundtrip_with_mounts_and_contract():
     assert m == m2
     assert m2.data_mounts == {"/host/data": "/data"}
     assert m2.prepared_contract["splits_file"] == "/data/splits.json"
+
+
+def test_manifest_missing_status_defaults_pending():
+    manifest = DatasetManifest.from_dict({
+        "dataset_id": "x",
+        "provider": "huggingface",
+        "selected_for_task": "patch_classification",
+        "raw_root": "/tmp/raw",
+        "prepared_root": "/tmp/prepared",
+        "data_mounts": {},
+        "prepared_contract": {},
+    })
+    assert manifest.status == "pending"
+
+
+def test_manifest_default_status_is_pending_on_construction():
+    """A bare DatasetManifest() must also start at "pending"."""
+    manifest = DatasetManifest(
+        dataset_id="x",
+        provider="huggingface",
+        selected_for_task="patch_classification",
+        raw_root="/tmp/raw",
+        prepared_root="/tmp/prepared",
+        data_mounts={},
+        prepared_contract={},
+    )
+    assert manifest.status == "pending"

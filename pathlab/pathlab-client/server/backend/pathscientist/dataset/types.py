@@ -108,7 +108,7 @@ class DatasetManifest:
     prepared_contract: dict[str, str]        # e.g. {"images_dir": "/data/images", "splits_file": "/data/splits.json"}
     checksum_sha256: str = ""
     access: str = "public"
-    status: str = "prepared"                 # "prepared" | "failed" | "skipped_policy"
+    status: str = "pending"                  # "pending" | "prepared" | "failed" | "skipped_policy"
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -125,5 +125,5 @@ class DatasetManifest:
             prepared_contract=dict(d.get("prepared_contract") or {}),
             checksum_sha256=d.get("checksum_sha256", ""),
             access=d.get("access", "public"),
-            status=d.get("status", "prepared"),
+            status=d.get("status", "pending"),
         )
