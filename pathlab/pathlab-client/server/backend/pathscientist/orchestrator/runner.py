@@ -182,7 +182,7 @@ def _run_acquisition_stage(
         )
 
         profile = TaskProfile.from_dict(profile_dict)
-        result = service.acquire(profile, workspace_root=session.workspace.root)
+        result = service.acquire(profile, workspace_root=session.workspace_dir)
     except Exception as e:
         logger.warning("Acquisition service failed: %s", e)
         state.acquisition_status = "failed"

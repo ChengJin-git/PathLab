@@ -178,9 +178,8 @@ def test_run_acquisition_stage_skips_when_user_supplied_data_mounts(tmp_path):
     config.data_mounts = {"/host/path": "/data"}
     session = type("S", (), {})()
     session.persistence_root = tmp_path
-    session.workspace = type("W", (), {})()
-    session.workspace.root = tmp_path / "workspace"
-    session.workspace.root.mkdir()
+    session.workspace_dir = tmp_path / "workspace"
+    session.workspace_dir.mkdir()
 
     state = _run_acquisition_stage(state, session, config)
     assert state.acquisition_status == "skipped"
@@ -196,10 +195,108 @@ def test_run_acquisition_stage_fails_when_no_task_profile(tmp_path):
     config.data_mounts = {}
     session = type("S", (), {})()
     session.persistence_root = tmp_path
-    session.workspace = type("W", (), {})()
-    session.workspace.root = tmp_path / "workspace"
-    session.workspace.root.mkdir()
+    session.workspace_dir = tmp_path / "workspace"
+    session.workspace_dir.mkdir()
 
     state = _run_acquisition_stage(state, session, config)
     assert state.acquisition_status == "failed"
     assert "task_profile" in state.acquisition_notes
+
+
+def test_run_acquisition_stage_works_with_real_session(tmp_path, monkeypatch):
+    """Regression for review P0 #1: a real PathScientistSession exposes
+    `workspace_dir`, not `workspace.root`. Pre-fix this test crashed silently
+    inside the broad except and recorded
+    'service_error: ... has no attribute "workspace"'.
+    """
+    from pathscientist.dataset.acquisition import AcquisitionResult
+    from pathscientist.dataset.types import DatasetManifest
+    from pathscientist.orchestrator import runner as runner_mod
+    from pathscientist.orchestrator.runner import _run_acquisition_stage
+    from pathscientist.runtime.session import PathScientistSession
+
+    base = tmp_path / "base"
+    base.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    session = PathScientistSession.create(
+        research_question="crc patch",
+        base_dir=str(base),
+        workspace_dir=str(workspace),
+    )
+
+    state = ResearchSessionState.create(
+        session_id=session.session_id,
+        conversation_id=session.conversation_id,
+        objective=ResearchObjective(question="crc patch", success_metric="auc"),
+    )
+    state.advance(STAGE_GROUNDING)
+    state.advance(STAGE_ACQUISITION)
+    state.task_profile = {
+        "task_type": "patch_classification", "asset_level": "patch",
+        "input_modality": "patch_images", "label_granularity": "patch",
+        "organ": "colorectal",
+    }
+
+    # Fake the service so we don't hit the network. We must patch BOTH the
+    # alias on `runner_mod` and the original symbol on
+    # `pathscientist.dataset.acquisition`, because runner does a function-local
+    # import that re-binds the name from the source module each call.
+    fake_manifest = DatasetManifest(
+        dataset_id="demo:fake", provider="huggingface",
+        selected_for_task="patch_classification",
+        raw_root=str(tmp_path / "raw"), prepared_root=str(tmp_path / "prepared"),
+        data_mounts={str(tmp_path / "prepared"): "/data"},
+        prepared_contract={"task_type": "patch_classification"},
+        access="public", status="prepared",
+    )
+    class _FakeCandidate:
+        class _Rec:
+            dataset_id = "demo:fake"
+            name = "Fake"
+            provider = "huggingface"
+            access = "public"
+            license = "MIT"
+        record = _Rec()
+        score = 5.0
+        reasons = []
+    fake_result = AcquisitionResult(
+        status="prepared",
+        manifest=fake_manifest,
+        manifest_path=workspace / ".dataset" / "manifest.json",
+        candidate=_FakeCandidate(),
+    )
+
+    class _FakeService:
+        def __init__(self, **kwargs): pass
+        def acquire(self, profile, workspace_root):
+            # CRITICAL: this is the real production call.
+            # Pre-fix it raised AttributeError on session.workspace.root.
+            # Post-fix it receives workspace_dir.
+            assert workspace_root == workspace, (
+                f"acquire received workspace_root={workspace_root}, expected {workspace}"
+            )
+            (workspace / ".dataset").mkdir(parents=True, exist_ok=True)
+            (workspace / ".dataset" / "manifest.json").write_text("{}")
+            return fake_result
+
+    import pathscientist.dataset.acquisition as acq_mod
+    monkeypatch.setattr(runner_mod, "DatasetAcquisitionService", _FakeService, raising=False)
+    monkeypatch.setattr(acq_mod, "DatasetAcquisitionService", _FakeService, raising=True)
+
+    config = type("Cfg", (), {})()
+    config.data_mounts = {}
+    config.dataset_cache_dir = ""
+    config.download_policy = "public_only"
+    config.max_download_size_gb = 20.0
+    config.allow_large_downloads = False
+
+    state = _run_acquisition_stage(state, session, config)
+
+    assert state.acquisition_status == "prepared", (
+        f"acquisition_status={state.acquisition_status}, "
+        f"notes={state.acquisition_notes}"
+    )
+    # Belt and braces: ensure the silent-failure mode is gone.
+    assert "service_error" not in state.acquisition_notes
+    assert "has no attribute" not in state.acquisition_notes

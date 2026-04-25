@@ -255,8 +255,7 @@ def test_run_acquisition_stage_e2e_with_monkeypatched_service(tmp_path, monkeypa
     session = type("S", (), {})()
     session.persistence_root = tmp_path / "persist"
     session.persistence_root.mkdir()
-    session.workspace = type("W", (), {})()
-    session.workspace.root = workspace_root
+    session.workspace_dir = workspace_root
 
     state = runner_mod._run_acquisition_stage(state, session, config)
 
