@@ -36,6 +36,12 @@ def build_synthesis_context(
             # payload set by ResearchDirector.advance().
             "source_kind": ((state.grounding or {}).get("sota_target") or {}).get("source", ""),
         },
+        "acquisition": {
+            "status": getattr(state, "acquisition_status", "none"),
+            "manifest_path": getattr(state, "dataset_manifest_path", ""),
+            "selected_dataset": dict(getattr(state, "selected_dataset", {}) or {}),
+            "notes": getattr(state, "acquisition_notes", ""),
+        },
         "reproducibility": {
             "session_id": state.session_id,
             "conversation_id": str(state.conversation_id),

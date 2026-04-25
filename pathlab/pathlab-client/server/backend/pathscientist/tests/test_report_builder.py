@@ -209,6 +209,73 @@ def test_integrity_section_uses_bulleted_list_format():
     assert "prefer running through run_experiment" not in md
 
 
+# --- Dataset section (T8a: surface acquisition in synthesis) -----------------
+
+
+def _make_acquisition_context(status: str, **acq_overrides):
+    """Helper: a minimal context with an ``acquisition`` block."""
+    ctx = _make_context(failures=[])
+    selected = {
+        "dataset_id": "hf:demo/x",
+        "name": "Demo",
+        "provider": "huggingface",
+        "access": "public",
+        "license": "CC-BY-4.0",
+    }
+    acq = {
+        "status": status,
+        "manifest_path": "/workspace/.dataset/manifest.json",
+        "selected_dataset": selected,
+        "notes": "",
+    }
+    acq.update(acq_overrides)
+    ctx["acquisition"] = acq
+    return ctx
+
+
+def test_report_includes_dataset_section_when_acquisition_prepared():
+    """When acquisition.status == 'prepared', a ``dataset`` section is emitted
+    with the dataset name, provider, license, and manifest path."""
+    ctx = _make_acquisition_context("prepared")
+    report = build_report(ctx)
+    section_names = [s.name for s in report.sections]
+    assert "dataset" in section_names
+    dataset_section = next(s for s in report.sections if s.name == "dataset")
+    assert "Demo" in dataset_section.content
+    assert "huggingface" in dataset_section.content
+    assert "/workspace/.dataset/manifest.json" in dataset_section.content
+    # Rendered markdown should also contain the section.
+    md = render_report_markdown(report)
+    assert "## Dataset" in md
+    assert "Demo" in md
+
+
+def test_report_omits_dataset_section_when_acquisition_none():
+    """Default ``acquisition.status == 'none'`` -> no dataset section."""
+    ctx = _make_context(failures=[])
+    # No "acquisition" key at all → the helper still must not emit a section.
+    report = build_report(ctx)
+    section_names = [s.name for s in report.sections]
+    assert "dataset" not in section_names
+    md = render_report_markdown(report)
+    assert "## Dataset" not in md
+
+
+def test_report_omits_dataset_section_when_acquisition_skipped_policy():
+    """``skipped_policy`` -> no dataset section here (limitations path
+    surfaces it elsewhere; the dataset section is for the *prepared* path)."""
+    ctx = _make_acquisition_context(
+        "skipped_policy",
+        selected_dataset={},
+        notes="access=gated",
+    )
+    report = build_report(ctx)
+    section_names = [s.name for s in report.sections]
+    assert "dataset" not in section_names
+    md = render_report_markdown(report)
+    assert "## Dataset" not in md
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

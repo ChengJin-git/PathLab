@@ -120,6 +120,20 @@ def _build_sections(
         claim_ids=[c.claim_id for c in result_claims],
     ))
 
+    # Dataset (T8a: surface acquisition in synthesis). Only emitted when
+    # the acquisition stage successfully prepared a dataset; skipped/failed
+    # acquisitions are surfaced in the limitations / status path elsewhere.
+    # Placed before Limitations so a reader sees what was used before what
+    # failed.
+    dataset_content = _build_dataset_content(context)
+    if dataset_content:
+        sections.append(ReportSection(
+            name="dataset",
+            title="Dataset",
+            content=dataset_content,
+            claim_ids=[],
+        ))
+
     # Limitations
     limitation_claims = [c for c in claims if c.section == "limitations"]
     limitations_content = _build_limitations_content(context)
@@ -186,6 +200,37 @@ def _build_results_content(context: dict[str, Any], metric: str) -> str:
             lines.append(f"| {i} | {run_id} | {value:.4f} | {committed} | {error} |")
         lines.append("")
 
+    return "\n".join(lines)
+
+
+def _build_dataset_content(context: dict[str, Any]) -> str:
+    """Compact section listing the dataset used by acquisition.
+
+    Only emitted when acquisition.status == 'prepared'. Skipped/failed
+    acquisitions are surfaced in the limitations section instead.
+    """
+    acq = context.get("acquisition") or {}
+    if (acq.get("status") or "") != "prepared":
+        return ""
+    sel = acq.get("selected_dataset") or {}
+    if not sel:
+        return ""
+    name = sel.get("name") or sel.get("dataset_id") or "?"
+    provider = sel.get("provider") or "?"
+    access = sel.get("access") or ""
+    license_ = sel.get("license") or ""
+    manifest_path = acq.get("manifest_path") or ""
+
+    lines: list[str] = [
+        f"- **Dataset:** {name}",
+        f"- **Provider:** {provider}",
+    ]
+    if access:
+        lines.append(f"- **Access:** {access}")
+    if license_:
+        lines.append(f"- **License:** {license_}")
+    if manifest_path:
+        lines.append(f"- **Manifest:** `{manifest_path}`")
     return "\n".join(lines)
 
 
