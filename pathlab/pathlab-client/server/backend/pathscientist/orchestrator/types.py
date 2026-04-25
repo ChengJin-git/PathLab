@@ -7,6 +7,7 @@ from uuid import UUID
 
 STAGE_INTAKE = "intake"
 STAGE_GROUNDING = "grounding"
+STAGE_ACQUISITION = "acquisition"
 STAGE_EXECUTION = "execution"
 STAGE_REVIEW = "review"
 STAGE_SYNTHESIS = "synthesis"
@@ -39,7 +40,8 @@ MAX_CONSECUTIVE_STALLS = MAX_NON_FINALIZED_TURNS
 
 ALLOWED_STAGE_TRANSITIONS: dict[str, set[str]] = {
     STAGE_INTAKE: {STAGE_GROUNDING},
-    STAGE_GROUNDING: {STAGE_EXECUTION, STAGE_COMPLETED},
+    STAGE_GROUNDING: {STAGE_EXECUTION, STAGE_ACQUISITION, STAGE_COMPLETED},
+    STAGE_ACQUISITION: {STAGE_EXECUTION, STAGE_COMPLETED},
     STAGE_EXECUTION: {STAGE_REVIEW},
     STAGE_REVIEW: {STAGE_EXECUTION, STAGE_SYNTHESIS},
     STAGE_SYNTHESIS: {STAGE_COMPLETED},
@@ -111,6 +113,17 @@ class ResearchSessionState:
     # Present so downstream CLI surfaces and ``synthesis.report_builder`` can
     # render the invariants that failed without re-running the checks.
     integrity_report: dict = field(default_factory=dict)
+    # Dataset acquisition fields (plan 2026-04-25 T7). Populated when the
+    # orchestrator routes through ``STAGE_ACQUISITION``. ``task_profile`` is
+    # the dict emitted by grounding (T1); ``selected_dataset`` summarizes the
+    # winning candidate; ``dataset_manifest_path`` is the on-disk manifest
+    # written by ``DatasetAcquisitionService``.
+    task_profile: dict = field(default_factory=dict)
+    dataset_candidates: list[dict] = field(default_factory=list)
+    selected_dataset: dict = field(default_factory=dict)
+    dataset_manifest_path: str = ""
+    acquisition_status: str = "none"  # "none" | "prepared" | "skipped" | "skipped_policy" | "failed"
+    acquisition_notes: str = ""
 
     @classmethod
     def create(

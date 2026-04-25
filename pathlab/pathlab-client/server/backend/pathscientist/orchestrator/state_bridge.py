@@ -83,19 +83,28 @@ def persist_research_session_state(
 
 
 def load_research_session_state(
-    conversation: LocalConversation,
+    conversation: "LocalConversation | dict[str, Any]",
 ) -> ResearchSessionState | None:
-    """Read research session state from conversation's agent_state.
+    """Read research session state from a conversation or a raw payload dict.
 
-    Returns None if no research session has been persisted.
+    The historical signature took a ``LocalConversation`` and read the
+    payload out of agent_state. To keep the contract usable from tests and
+    from places that already hold the dict (plan 2026-04-25 T7 unit tests),
+    a plain ``dict`` is also accepted — in that case no agent_state read /
+    write happens. Returns ``None`` when nothing is persisted.
     """
-    payload = read_agent_state(conversation, RESEARCH_SESSION_KEY)
-    if not payload:
-        return None
-    tracker_state = read_agent_state(conversation, "tracker_state", {})
-    payload, changed = _repair_research_session_payload(payload, tracker_state)
-    if changed:
-        update_agent_state(conversation, **{RESEARCH_SESSION_KEY: payload})
+    if isinstance(conversation, dict):
+        payload = conversation
+        if not payload:
+            return None
+    else:
+        payload = read_agent_state(conversation, RESEARCH_SESSION_KEY)
+        if not payload:
+            return None
+        tracker_state = read_agent_state(conversation, "tracker_state", {})
+        payload, changed = _repair_research_session_payload(payload, tracker_state)
+        if changed:
+            update_agent_state(conversation, **{RESEARCH_SESSION_KEY: payload})
     objective_payload = dict(payload["objective"])
     # Back-compat: older persisted states lack target_* fields.
     for key in ("target_source", "target_confidence"):
@@ -133,4 +142,12 @@ def load_research_session_state(
         paper_critique_issue_count=payload.get("paper_critique_issue_count", 0),
         paper_ready=payload.get("paper_ready", False),
         integrity_report=payload.get("integrity_report", {}) or {},
+        # Back-compat for plan 2026-04-25 (T7): older states lack
+        # acquisition fields. Default everything to empty / "none".
+        task_profile=dict(payload.get("task_profile") or {}),
+        dataset_candidates=list(payload.get("dataset_candidates") or []),
+        selected_dataset=dict(payload.get("selected_dataset") or {}),
+        dataset_manifest_path=payload.get("dataset_manifest_path", ""),
+        acquisition_status=payload.get("acquisition_status", "none"),
+        acquisition_notes=payload.get("acquisition_notes", ""),
     )

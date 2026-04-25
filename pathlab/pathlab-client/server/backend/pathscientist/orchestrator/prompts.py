@@ -69,10 +69,32 @@ def build_execution_brief(state: ResearchSessionState) -> str:
     if state.objective.dataset_hint:
         lines.append(f"Dataset hint: {state.objective.dataset_hint}")
 
-    profile = (state.grounding or {}).get("task_profile") or {}
+    profile = (state.grounding or {}).get("task_profile") or state.task_profile or {}
     if profile:
         lines.append(
             f"Task profile: {profile.get('task_type', '?')} / {profile.get('asset_level', '?')}"
+        )
+
+    # Dataset acquisition surface (plan 2026-04-25 T7). When acquisition has
+    # actually prepared a dataset, the agent needs to see the manifest path
+    # and the selected dataset's identity. When acquisition was skipped due
+    # to policy or failed outright, surface the reason so the agent doesn't
+    # silently assume "the data must already be there".
+    if state.acquisition_status == "prepared" and state.selected_dataset:
+        sel = state.selected_dataset
+        lines.append("")
+        lines.append(
+            f"Selected dataset: {sel.get('name', '?')} "
+            f"(provider: {sel.get('provider', '?')}, "
+            f"access: {sel.get('access', '?')})"
+        )
+        if state.dataset_manifest_path:
+            lines.append(f"Dataset manifest: {state.dataset_manifest_path}")
+    elif state.acquisition_status in {"skipped_policy", "failed"} and state.acquisition_notes:
+        lines.append("")
+        lines.append(
+            f"Dataset acquisition: {state.acquisition_status} "
+            f"({state.acquisition_notes})"
         )
 
     if state.objective.constraints:

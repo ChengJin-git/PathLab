@@ -18,6 +18,7 @@ from ..orchestrator.summary import build_session_summary
 from ..orchestrator.types import (
     MAX_IDLE_TURNS,
     MAX_NON_FINALIZED_TURNS,
+    STAGE_ACQUISITION,
     STAGE_COMPLETED,
     STAGE_EXECUTION,
     STAGE_GROUNDING,
@@ -80,6 +81,134 @@ def _build_sota_lookup(session, config, literature_store) -> "SotaLookup | None"
     except Exception as e:
         logger.warning("SotaLookup construction failed: %s", e)
         return None
+
+
+def _run_acquisition_stage(
+    state: ResearchSessionState,
+    session,
+    config,
+) -> ResearchSessionState:
+    """Run the dataset acquisition service when enabled.
+
+    If ``config.data_mounts`` already has entries the user has supplied a
+    prepared dataset path — the stage records ``acquisition_status='skipped'``
+    and returns without invoking the registry. If grounding never produced a
+    ``task_profile`` the stage records ``failed`` and returns. Otherwise the
+    stage builds a :class:`DatasetAcquisitionService`, calls ``.acquire()``,
+    and copies the result onto:
+
+      * ``state.acquisition_status`` / ``state.acquisition_notes``
+      * ``state.dataset_manifest_path``
+      * ``state.selected_dataset`` (when a candidate was chosen)
+      * ``config.data_mounts`` (so the OpenHands runtime mounts the dataset)
+
+    Mutates ``state`` and ``config.data_mounts`` in place; returns ``state``.
+    Never raises — failures are surfaced via ``acquisition_status='failed'``
+    so the runner can still advance to execution if the user wants to.
+    """
+    # Skip when user already provided mounts.
+    if getattr(config, "data_mounts", None):
+        state.acquisition_status = "skipped"
+        state.acquisition_notes = (
+            "user-supplied data_mounts; acquisition skipped"
+        )
+        return state
+
+    # Skip when grounding didn't produce a profile.
+    profile_dict = (
+        state.task_profile
+        or (state.grounding or {}).get("task_profile")
+        or {}
+    )
+    if not profile_dict:
+        state.acquisition_status = "failed"
+        state.acquisition_notes = "no task_profile in grounding"
+        return state
+
+    try:
+        from pathlib import Path as _Path
+
+        from ..dataset.acquisition import DatasetAcquisitionService
+        from ..dataset.normalizers import (
+            MILClassificationNormalizer,
+            PatchClassificationNormalizer,
+        )
+        from ..dataset.policy import AcquisitionPolicy
+        from ..dataset.providers.direct_http import DirectHTTPProvider
+        from ..dataset.providers.huggingface import HuggingFaceProvider
+        from ..dataset.providers.zenodo import ZenodoProvider
+        from ..dataset.registry import DatasetRegistry
+        from ..dataset.types import TaskProfile
+
+        seed_path = (
+            _Path(__file__).parent.parent
+            / "dataset" / "seed_data" / "pathology_datasets.json"
+        )
+        cache_dir = getattr(config, "dataset_cache_dir", "") or ""
+        registry_path = (
+            _Path(cache_dir) / "datasets.json" if cache_dir else seed_path
+        )
+        registry = DatasetRegistry(registry_path)
+        if not registry_path.exists():
+            registry.seed_from_json(seed_path)
+
+        cache_root = (
+            _Path(cache_dir) if cache_dir
+            else _Path(session.persistence_root) / "datasets"
+        )
+        service = DatasetAcquisitionService(
+            registry=registry,
+            providers={
+                "direct_http": DirectHTTPProvider(),
+                "zenodo": ZenodoProvider(),
+                "huggingface": HuggingFaceProvider(),
+            },
+            normalizers=[
+                PatchClassificationNormalizer(),
+                MILClassificationNormalizer(),
+            ],
+            cache_root=cache_root,
+            policy=AcquisitionPolicy(
+                download_policy=getattr(
+                    config, "download_policy", "public_only",
+                ),
+                max_download_size_gb=getattr(
+                    config, "max_download_size_gb", 20.0,
+                ),
+                allow_large_downloads=getattr(
+                    config, "allow_large_downloads", False,
+                ),
+            ),
+        )
+
+        profile = TaskProfile.from_dict(profile_dict)
+        result = service.acquire(profile, workspace_root=session.workspace.root)
+    except Exception as e:
+        logger.warning("Acquisition service failed: %s", e)
+        state.acquisition_status = "failed"
+        state.acquisition_notes = f"service_error:{e}"
+        return state
+
+    state.acquisition_status = result.status
+    state.dataset_manifest_path = str(result.manifest_path)
+    state.acquisition_notes = result.reason or ""
+    if result.candidate is not None:
+        record = result.candidate.record
+        state.selected_dataset = {
+            "dataset_id": record.dataset_id,
+            "name": record.name,
+            "provider": record.provider,
+            "access": record.access,
+            "license": record.license,
+        }
+
+    manifest_mounts = getattr(result.manifest, "data_mounts", None) or {}
+    if manifest_mounts:
+        if not isinstance(getattr(config, "data_mounts", None), dict):
+            config.data_mounts = {}
+        config.data_mounts.update(manifest_mounts)
+
+    return state
 
 
 def _count_action_events_since(conversation, event_index: int) -> int:
@@ -418,11 +547,12 @@ def run_research_session(
         rag_top_k=config.literature_rag_top_k,
         online_clients=online_clients,
         sota_lookup=sota_lookup,
+        enable_acquisition=bool(getattr(config, "auto_acquire_data", False)),
     )
 
     # Advance: intake -> grounding
     state = director.advance(state)
-    # Advance: grounding -> execution (populates grounding)
+    # Advance: grounding -> execution (or acquisition, or pending approval)
     state = director.advance(state)
 
     if state.approval_status == "pending":
@@ -437,6 +567,13 @@ def run_research_session(
             return state, session, conversation
     else:
         _persist_grounding_citations(state, citation_tracker)
+        persist_research_session_state(conversation, state)
+
+    # If routed into acquisition, run the service then advance to execution.
+    if state.stage == STAGE_ACQUISITION:
+        state = _run_acquisition_stage(state, session, config)
+        persist_research_session_state(conversation, state)
+        state = director.advance(state)
         persist_research_session_state(conversation, state)
 
     # Execution loop
@@ -640,15 +777,25 @@ def continue_research_session(
         llm_base_url=config.llm_base_url,
         literature_store=literature_store,
         sota_lookup=sota_lookup,
+        enable_acquisition=bool(getattr(config, "auto_acquire_data", False)),
     )
 
-    # Advance from current stage (grounding with approval -> execution)
+    # Advance from current stage (grounding with approval -> execution
+    # or -> acquisition when enable_acquisition=True).
     if state.stage == STAGE_GROUNDING:
         state = director.advance(state)
         if state.stage == STAGE_COMPLETED:
             persist_research_session_state(conversation, state)
             return state, session, conversation
         _persist_grounding_citations(state, citation_tracker)
+        persist_research_session_state(conversation, state)
+
+    # If routed into acquisition (either by this advance or because we
+    # resumed mid-acquisition), run the service and advance to execution.
+    if state.stage == STAGE_ACQUISITION:
+        state = _run_acquisition_stage(state, session, config)
+        persist_research_session_state(conversation, state)
+        state = director.advance(state)
         persist_research_session_state(conversation, state)
 
     # Execution loop (same as run_research_session)

@@ -5,6 +5,7 @@ import logging
 
 from .grounding import ground_objective
 from .types import (
+    STAGE_ACQUISITION,
     STAGE_COMPLETED,
     STAGE_EXECUTION,
     STAGE_GROUNDING,
@@ -36,6 +37,7 @@ class ResearchDirector:
         online_clients: list | None = None,
         sota_lookup=None,
         llm_parser=None,
+        enable_acquisition: bool = False,
     ):
         self.auto_approve = auto_approve
         self.llm_model = llm_model
@@ -47,6 +49,7 @@ class ResearchDirector:
         self.online_clients = online_clients or []
         self.sota_lookup = sota_lookup
         self.llm_parser = llm_parser
+        self.enable_acquisition = enable_acquisition
 
     def advance(self, state: ResearchSessionState) -> ResearchSessionState:
         """Advance the session to the next appropriate stage.
@@ -94,10 +97,23 @@ class ResearchDirector:
                         "confidence", ""
                     )
 
+            # Copy the grounding-emitted task_profile (T1) onto state so the
+            # acquisition stage can read it without going through grounding
+            # again, and so persisted state preserves it.
+            grounded_profile = (state.grounding or {}).get("task_profile")
+            if grounded_profile and not state.task_profile:
+                state.task_profile = dict(grounded_profile)
+
             if not self.auto_approve:
                 if state.approval_status == "approved":
-                    state.advance(STAGE_EXECUTION)
-                    logger.info("Director: grounding -> execution (approved)")
+                    next_stage = (
+                        STAGE_ACQUISITION
+                        if self.enable_acquisition else STAGE_EXECUTION
+                    )
+                    state.advance(next_stage)
+                    logger.info(
+                        "Director: grounding -> %s (approved)", next_stage,
+                    )
                     return state
                 if state.approval_status == "rejected":
                     state.stop_reason = "approval_rejected"
@@ -110,8 +126,20 @@ class ResearchDirector:
                 return state
 
             state.approval_status = "none"
+            if self.enable_acquisition:
+                state.advance(STAGE_ACQUISITION)
+                logger.info("Director: grounding -> acquisition")
+            else:
+                state.advance(STAGE_EXECUTION)
+                logger.info("Director: grounding -> execution")
+            return state
+
+        if state.stage == STAGE_ACQUISITION:
             state.advance(STAGE_EXECUTION)
-            logger.info("Director: grounding -> execution")
+            logger.info(
+                "Director: acquisition -> execution (status=%s)",
+                state.acquisition_status,
+            )
             return state
 
         if state.stage == STAGE_REVIEW:
