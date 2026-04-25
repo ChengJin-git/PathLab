@@ -223,3 +223,87 @@ def test_acquisition_evidence_written_with_safe_id(tmp_path):
     )
     result = service.acquire(_profile(), workspace_root=workspace)
     assert result.evidence_path.name == "hf_org_path.json"
+
+
+# ---- Review fix R2 (P1): relevance gate ----
+
+
+def test_acquisition_failed_when_no_relevant_candidate(tmp_path):
+    """Review P1 #3: only-irrelevant-public candidates should NOT be picked.
+
+    Profile = survival_analysis. Registry has only a public patch dataset
+    that happens to pass policy. Acquisition must return failed/no_relevant_candidate
+    rather than silently selecting the wrong dataset.
+    """
+    reg = _registry_with([
+        DatasetRecord(
+            dataset_id="x", name="CRC Patches",
+            provider="huggingface", access="public",
+            task_types=["patch_classification"],
+            asset_types=["patch_images"],
+            organs=["colorectal"], estimated_size_gb=1.0,
+            download=DownloadSpec(kind="hf_dataset", remote_id="x"),
+        ),
+    ], tmp_path)
+    workspace = tmp_path / "workspace"
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": _FakeProvider(status="downloaded", files_to_create=[("a.bin", b"x")])},
+        normalizers=[_FakeNormalizer()],
+        cache_root=tmp_path / "cache",
+    )
+    result = service.acquire(
+        TaskProfile(
+            task_type="survival_analysis", asset_level="slide",
+            input_modality="clinical_table", label_granularity="slide", organ="lung",
+        ),
+        workspace_root=workspace,
+    )
+    assert result.status == "failed"
+    assert result.reason == "no_relevant_candidate"
+
+
+def test_acquisition_skipped_policy_cites_relevant_candidate(tmp_path):
+    """Review P1 #3: when the only relevant candidate is policy-blocked,
+    skipped_policy evidence should cite the relevant blocked candidate,
+    not an irrelevant public one."""
+    reg = _registry_with([
+        # Irrelevant but public — must NOT be selected.
+        DatasetRecord(
+            dataset_id="public-patches", name="Public Patches",
+            provider="huggingface", access="public",
+            task_types=["patch_classification"],
+            asset_types=["patch_images"],
+            organs=["colorectal"], estimated_size_gb=1.0,
+            download=DownloadSpec(kind="hf_dataset", remote_id="x"),
+        ),
+        # Relevant but gated.
+        DatasetRecord(
+            dataset_id="gated-mil", name="Gated MIL Cohort",
+            provider="huggingface", access="gated",
+            task_types=["mil_classification"],
+            asset_types=["wsi"],
+            organs=["lung"], estimated_size_gb=2.0,
+            download=DownloadSpec(kind="hf_dataset", remote_id="g"),
+        ),
+    ], tmp_path)
+    workspace = tmp_path / "workspace"
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": _FakeProvider()},
+        normalizers=[_FakeNormalizer()],
+        cache_root=tmp_path / "cache",
+        policy=AcquisitionPolicy(download_policy="public_only"),
+    )
+    result = service.acquire(
+        TaskProfile(
+            task_type="mil_classification", asset_level="slide",
+            input_modality="wsi", label_granularity="slide", organ="lung",
+        ),
+        workspace_root=workspace,
+    )
+    assert result.status == "skipped_policy"
+    assert "access=gated" in result.reason
+    # Evidence cites the relevant candidate, not the irrelevant public one.
+    assert result.candidate is not None
+    assert result.candidate.record.dataset_id == "gated-mil"

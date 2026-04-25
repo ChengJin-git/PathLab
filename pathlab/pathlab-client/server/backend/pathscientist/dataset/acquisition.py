@@ -95,10 +95,35 @@ class DatasetAcquisitionService:
                 evidence_path=ev, reason="no_candidate",
             )
 
-        # 2. Pick first allowed candidate
-        allowed = [c for c in candidates if c.decision.allowed]
+        # 2. Filter by relevance first (Review fix R2 / P1 #3): a candidate
+        #    must demonstrate task-shape compatibility before it's eligible,
+        #    so we never pick a public-but-unrelated dataset over a relevant
+        #    gated one.
+        relevant_candidates = [c for c in candidates if c.relevant]
+        if not relevant_candidates:
+            manifest = self._empty_manifest("failed", "no_relevant_candidate", workspace_root)
+            save_manifest(manifest_path, manifest)
+            ev = write_acquisition_record(
+                workspace_root,
+                {
+                    "status": "failed", "reason": "no_relevant_candidate",
+                    "task_profile": profile.to_dict(),
+                    "considered": [
+                        {"dataset_id": c.record.dataset_id, "score": c.score, "reasons": c.reasons}
+                        for c in candidates
+                    ],
+                },
+            )
+            return AcquisitionResult(
+                status="failed", manifest=manifest, manifest_path=manifest_path,
+                evidence_path=ev, reason="no_relevant_candidate",
+            )
+
+        # 3. Pick first allowed candidate from the relevant set
+        allowed = [c for c in relevant_candidates if c.decision.allowed]
         if not allowed:
-            top = candidates[0]
+            # Best relevant candidate is policy-blocked: report skipped_policy.
+            top = relevant_candidates[0]   # already sorted by score desc
             manifest = DatasetManifest(
                 dataset_id=top.record.dataset_id,
                 provider=top.record.provider,

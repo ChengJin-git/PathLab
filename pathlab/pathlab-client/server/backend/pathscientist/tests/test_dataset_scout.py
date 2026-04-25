@@ -171,3 +171,110 @@ def test_scout_empty_registry_returns_empty(tmp_path: Path):
         top_k=5,
     )
     assert candidates == []
+
+
+# ---- Review fix R2 (P1): relevance gating ----
+
+
+def test_scout_marks_organ_only_match_as_not_relevant(tmp_path):
+    """Organ match without task_type match is NOT relevant — prevents
+    picking a patch dataset when the profile asks for MIL."""
+    rec = DatasetRecord(
+        dataset_id="patch-only", name="Breast Patches",
+        provider="huggingface", access="public",
+        task_types=["patch_classification"],
+        asset_types=["patch_images"],
+        organs=["breast"], estimated_size_gb=1.0,
+        download=DownloadSpec(kind="hf_dataset", remote_id="x/y"),
+    )
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save([rec])
+    scout = DatasetScout(registry=reg)
+    profile = TaskProfile(
+        task_type="mil_classification", asset_level="slide",
+        input_modality="wsi", label_granularity="slide", organ="breast",
+    )
+    cand = scout.find_candidates(profile, top_k=1)[0]
+    assert cand.relevant is False
+    assert "not_relevant" in cand.reasons
+
+
+def test_scout_marks_exact_task_match_as_relevant(tmp_path):
+    rec = DatasetRecord(
+        dataset_id="patch-public", name="CRC Patches",
+        provider="huggingface", access="public",
+        task_types=["patch_classification"],
+        asset_types=["patch_images"],
+        organs=["colorectal"], estimated_size_gb=1.0,
+        download=DownloadSpec(kind="hf_dataset", remote_id="x/y"),
+    )
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save([rec])
+    scout = DatasetScout(registry=reg)
+    profile = TaskProfile(
+        task_type="patch_classification", asset_level="patch",
+        input_modality="patch_images", label_granularity="patch",
+        organ="colorectal",
+    )
+    cand = scout.find_candidates(profile, top_k=1)[0]
+    assert cand.relevant is True
+    assert "not_relevant" not in cand.reasons
+
+
+def test_scout_marks_asset_plus_keyword_as_relevant(tmp_path):
+    rec = DatasetRecord(
+        dataset_id="x", name="Breast WSI Cohort",
+        provider="huggingface", access="public",
+        task_types=["segmentation"],
+        asset_types=["wsi"],
+        organs=["breast"], tags=["histology"],
+        estimated_size_gb=1.0,
+        download=DownloadSpec(kind="hf_dataset", remote_id="x/y"),
+    )
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save([rec])
+    scout = DatasetScout(registry=reg)
+    # Different task_type but same asset + keyword "wsi" hits.
+    profile = TaskProfile(
+        task_type="mil_classification", asset_level="slide",
+        input_modality="wsi", label_granularity="slide", organ="breast",
+        dataset_keywords=["wsi"],
+    )
+    cand = scout.find_candidates(profile, top_k=1)[0]
+    assert cand.relevant is True
+
+
+def test_scout_score_zero_record_is_not_relevant(tmp_path):
+    rec = DatasetRecord(
+        dataset_id="z", name="Zero Match Lung Survival",
+        provider="zenodo", access="public",
+        task_types=["survival_analysis"],
+        asset_types=["clinical_table"],
+        organs=["lung"], estimated_size_gb=1.0,
+        download=DownloadSpec(kind="direct_http", urls=["https://example.org/x.zip"]),
+    )
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save([rec])
+    scout = DatasetScout(registry=reg)
+    profile = TaskProfile(
+        task_type="patch_classification", asset_level="patch",
+        input_modality="patch_images", label_granularity="patch",
+        organ="colorectal",
+    )
+    cand = scout.find_candidates(profile, top_k=1)[0]
+    assert cand.relevant is False
+    assert cand.score == 0
+
+
+def test_scout_dataclass_default_relevant_is_false():
+    """A bare DatasetCandidate() must default relevant=False."""
+    from dataset.scout import DatasetCandidate
+    from dataset.policy import PolicyDecision
+    rec = DatasetRecord(
+        dataset_id="x", name="x", provider="huggingface", access="public",
+        task_types=["patch_classification"], asset_types=["patch_images"],
+        organs=[], estimated_size_gb=1.0,
+        download=DownloadSpec(kind="hf_dataset", remote_id="x"),
+    )
+    cand = DatasetCandidate(record=rec, score=0.0, decision=PolicyDecision(True, "ok"))
+    assert cand.relevant is False

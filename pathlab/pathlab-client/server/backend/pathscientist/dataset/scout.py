@@ -17,6 +17,7 @@ class DatasetCandidate:
     score: float
     decision: PolicyDecision
     reasons: list[str] = field(default_factory=list)
+    relevant: bool = False
 
 
 class DatasetScout:
@@ -31,15 +32,45 @@ class DatasetScout:
         scored: list[DatasetCandidate] = []
         for r in records:
             score, reasons = self._score(r, profile)
+            relevant = self._is_relevant(r, profile)
             decision = self._policy.allow(
                 access=r.access, estimated_size_gb=r.estimated_size_gb,
             )
             if not decision.allowed:
                 score -= 100
                 reasons.append(f"policy_reject:{decision.reason}")
-            scored.append(DatasetCandidate(record=r, score=score, decision=decision, reasons=reasons))
+            if not relevant:
+                reasons.append("not_relevant")
+            scored.append(DatasetCandidate(
+                record=r, score=score, decision=decision,
+                reasons=reasons, relevant=relevant,
+            ))
         scored.sort(key=lambda c: c.score, reverse=True)
         return scored[:top_k]
+
+    def _is_relevant(self, record: DatasetRecord, profile: TaskProfile) -> bool:
+        """Strict relevance gate (Review fix R2 / P1 #3).
+
+        A candidate is relevant ONLY when at least one of these holds:
+          1. profile.task_type is in record.task_types (exact task match), OR
+          2. profile.input_modality matches record.asset_types AND at least one
+             of profile.dataset_keywords matches record name/dataset_id/tags.
+
+        Organ-only, asset-only, and keyword-only matches are insufficient —
+        this prevents picking a patch_classification dataset for a
+        mil_classification profile just because both are "breast".
+        """
+        # Rule 1: exact task_type match
+        if profile.task_type and profile.task_type in record.task_types:
+            return True
+        # Rule 2: asset_type match + keyword/hint match
+        if profile.input_modality and profile.input_modality.lower() in {a.lower() for a in record.asset_types}:
+            if profile.dataset_keywords:
+                text = f"{record.name} {record.dataset_id} {' '.join(record.tags)}".lower()
+                for kw in profile.dataset_keywords:
+                    if kw and kw.lower() in text:
+                        return True
+        return False
 
     def _score(self, record: DatasetRecord, profile: TaskProfile) -> tuple[float, list[str]]:
         score = 0.0
