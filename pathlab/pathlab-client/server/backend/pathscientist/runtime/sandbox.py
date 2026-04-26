@@ -94,6 +94,7 @@ class ApptainerSandbox:
         output_dir: Path,
         env_vars: dict[str, str] | None = None,
         timeout: float = 600.0,
+        data_mounts: dict[str, str] | None = None,
     ) -> SandboxResult:
         """Execute a Python script inside the container.
 
@@ -103,8 +104,12 @@ class ApptainerSandbox:
             output_dir: Host path for experiment outputs (bind as rw).
             env_vars: Extra environment variables to inject.
             timeout: Wall-clock timeout in seconds.
+            data_mounts: Optional ``host_path -> container_path`` map. Each
+                entry becomes an additional ``--bind`` so prepared dataset
+                roots from acquisition land at their declared container
+                locations (e.g. ``prepared_root -> /data``).
         """
-        cmd = self._build_exec_cmd(workspace_dir, output_dir)
+        cmd = self._build_exec_cmd(workspace_dir, output_dir, data_mounts=data_mounts)
         cmd.extend([self.image, "bash", "-c", f"cd {workspace_dir} && python {script_path}"])
         env = self._build_env(env_vars)
 
@@ -146,7 +151,12 @@ class ApptainerSandbox:
     # Command building
     # ------------------------------------------------------------------
 
-    def _build_exec_cmd(self, workspace_dir: Path, output_dir: Path) -> list[str]:
+    def _build_exec_cmd(
+        self,
+        workspace_dir: Path,
+        output_dir: Path,
+        data_mounts: dict[str, str] | None = None,
+    ) -> list[str]:
         """Build the `apptainer exec` command with all flags and bind mounts."""
         cmd = [
             self.apptainer, "exec",
@@ -163,11 +173,16 @@ class ApptainerSandbox:
         output_dir.mkdir(parents=True, exist_ok=True)
         cmd.extend(["--bind", f"{output_dir}:{output_dir}:rw"])
 
+        # Track already-bound host paths so we don't double-bind. Apptainer
+        # tolerates duplicates but they make the command harder to read.
+        bound_hosts: set[str] = {str(workspace_dir), str(output_dir)}
+
         # Bind common host root directories (data paths typically live under these)
         for root_dir in ["/project", "/tmp", "/data"]:
             root = Path(root_dir)
             if root.exists() and root != workspace_dir and root != output_dir:
                 cmd.extend(["--bind", f"{root_dir}:{root_dir}"])
+                bound_hosts.add(root_dir)
 
         # Bind common/ template utilities into workspace
         common_dir = Path(__file__).parents[1] / "domain" / "templates" / "common"
@@ -183,6 +198,25 @@ class ApptainerSandbox:
         ]:
             if cache_dir and Path(cache_dir).exists():
                 cmd.extend(["--bind", f"{cache_dir}:{cache_dir}:rw"])
+                bound_hosts.add(cache_dir)
+
+        # data_mounts from acquisition / user --data-mount flags. Bound rw so
+        # prepared-contract scripts can write feature outputs back into
+        # prepared_root if needed. Skip entries whose host path is missing
+        # or already bound (workspace/output/fixed roots) so the command
+        # stays idempotent and tidy.
+        for host_path, container_path in (data_mounts or {}).items():
+            host_str = str(host_path)
+            if host_str in bound_hosts:
+                continue
+            if not Path(host_str).exists():
+                logger.warning(
+                    "Skipping data_mount %s -> %s: host path does not exist",
+                    host_str, container_path,
+                )
+                continue
+            cmd.extend(["--bind", f"{host_str}:{container_path}:rw"])
+            bound_hosts.add(host_str)
 
         return cmd
 

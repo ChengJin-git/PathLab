@@ -89,11 +89,18 @@ class Workspace:
         script_path: str = "train.py",
         env_vars: dict[str, str] | None = None,
         timeout: float = 600.0,
+        data_mounts: dict[str, str] | None = None,
     ) -> CommandResult:
         """Run a Python script in the workspace.
 
         Uses the sandbox passed at construction if present, otherwise runs
         via direct subprocess through the SDK workspace.
+
+        When a sandbox is configured, additional ``data_mounts`` (host_path
+        -> container_path) get bound into the container so prepared-dataset
+        paths from acquisition land at their declared container locations.
+        The non-sandbox branch ignores ``data_mounts`` since host paths are
+        directly accessible without any bind translation.
         """
         if self._sandbox is not None:
             result = self._sandbox.run_script(
@@ -102,6 +109,7 @@ class Workspace:
                 output_dir=self.root / "output",
                 env_vars=env_vars,
                 timeout=timeout,
+                data_mounts=data_mounts,
             )
             return CommandResult(
                 command=f"[apptainer] python {script_path}",

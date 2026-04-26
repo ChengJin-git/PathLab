@@ -91,7 +91,7 @@ class _StubWorkspace:
         # Stable exit code used by the stub; tests may override in-place.
         self.exit_code = 0
 
-    def run_script(self, script_path, env_vars=None, timeout=600.0):
+    def run_script(self, script_path, env_vars=None, timeout=600.0, data_mounts=None):
         self.calls.append(
             {
                 "script_path": script_path,

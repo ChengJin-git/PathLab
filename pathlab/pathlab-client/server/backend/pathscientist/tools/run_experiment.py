@@ -182,6 +182,7 @@ class RunExperimentExecutor(ToolExecutor):
             script_path=action.script_path,
             env_vars=env_vars,
             timeout=float(timeout),
+            data_mounts=data_mounts,
         )
         duration = time.time() - start
         data_output_artifacts = []

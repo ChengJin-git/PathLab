@@ -1,9 +1,12 @@
 """Build execution briefs for the code agent from orchestrator state."""
 from __future__ import annotations
 
+import logging
 import re
 
 from .types import ResearchSessionState
+
+logger = logging.getLogger(__name__)
 
 
 def _normalize_match_text(value: str) -> str:
@@ -25,6 +28,55 @@ def _objective_mentions_dataset(state: ResearchSessionState, dataset: str) -> bo
         return False
 
     return _normalize_match_text(dataset) in _normalize_match_text(haystack)
+
+
+def _render_prepared_contract(state: ResearchSessionState) -> list[str]:
+    """Return per-field lines for the prepared contract, in a stable order.
+
+    Reads the manifest at ``state.dataset_manifest_path``. Returns ``[]`` if
+    the manifest is missing or unreadable — the higher-level "Selected
+    dataset" line already states the dataset name even when the contract
+    is opaque, so brief rendering must not crash on a bad manifest.
+    """
+    path = (state.dataset_manifest_path or "").strip()
+    if not path:
+        return []
+    try:
+        from pathlib import Path
+
+        from ..dataset.manifests import load_manifest
+
+        manifest = load_manifest(Path(path))
+    except FileNotFoundError:
+        return []
+    except Exception as e:
+        # Don't kill brief rendering for an unreadable manifest.
+        logger.warning("Failed to load manifest at %s: %s", path, e)
+        return []
+
+    contract = manifest.prepared_contract or {}
+    lines: list[str] = []
+    # Stable ordering: most-likely-needed first.
+    for key in (
+        "task_type",
+        "images_dir",
+        "splits_file",
+        "wsi_dir",
+        "labels_file",
+        "n_train",
+        "n_val",
+        "n_slides",
+        "requires_feature_extraction",
+    ):
+        if key in contract and contract[key] != "":
+            lines.append(f"{key}: {contract[key]}")
+    # Render data_mounts last (they're a dict, render compactly).
+    if manifest.data_mounts:
+        mounts_str = ", ".join(
+            f"{h} -> {c}" for h, c in manifest.data_mounts.items()
+        )
+        lines.append(f"data_mounts: {mounts_str}")
+    return lines
 
 
 def _select_target_baseline(state: ResearchSessionState, baselines: list[dict]) -> dict | None:
@@ -90,6 +142,15 @@ def build_execution_brief(state: ResearchSessionState) -> str:
         )
         if state.dataset_manifest_path:
             lines.append(f"Dataset manifest: {state.dataset_manifest_path}")
+
+        # Surface prepared contract paths so the agent uses them directly
+        # rather than re-deriving from the manifest. Read from the manifest
+        # at brief-render time — cheap and avoids stuffing the contract
+        # into ``state.grounding`` just to read it back here.
+        contract_lines = _render_prepared_contract(state)
+        if contract_lines:
+            lines.append("Prepared contract:")
+            lines.extend(f"  - {line}" for line in contract_lines)
     elif state.acquisition_status in {"skipped_policy", "failed"} and state.acquisition_notes:
         lines.append("")
         lines.append(

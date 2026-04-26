@@ -53,7 +53,7 @@ class _StubWorkspace:
         self.root = real_workspace.root
         self._metrics = metrics
 
-    def run_script(self, script_path, env_vars=None, timeout=600.0):
+    def run_script(self, script_path, env_vars=None, timeout=600.0, data_mounts=None):
         env = env_vars or {}
         out_dir = env.get("OUTPUT_DIR")
         if out_dir:
