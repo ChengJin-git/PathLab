@@ -45,7 +45,11 @@ class DatasetScout:
                 record=r, score=score, decision=decision,
                 reasons=reasons, relevant=relevant,
             ))
-        scored.sort(key=lambda c: c.score, reverse=True)
+        # R2-followup (P1): relevance is a primary sort key, not a tiebreaker.
+        # bool sorts as False < True; with reverse=True, relevant=True comes
+        # first, so a relevant policy-blocked record cannot be truncated out
+        # by irrelevant high-scoring records before acquisition sees it.
+        scored.sort(key=lambda c: (c.relevant, c.score), reverse=True)
         return scored[:top_k]
 
     def _is_relevant(self, record: DatasetRecord, profile: TaskProfile) -> bool:

@@ -309,6 +309,54 @@ def test_acquisition_skipped_policy_cites_relevant_candidate(tmp_path):
     assert result.candidate.record.dataset_id == "gated-mil"
 
 
+# ---- Review fix R2-followup (P1): relevant blocked candidate must not be truncated ----
+
+
+def test_acquisition_finds_relevant_blocked_candidate_despite_many_irrelevant(tmp_path):
+    """R2-followup: with 11 irrelevant public + 1 relevant gated, acquisition
+    returns skipped_policy (citing the relevant gated record), NOT failed/no_relevant_candidate."""
+    records = []
+    for i in range(11):
+        records.append(DatasetRecord(
+            dataset_id=f"public-irrel-{i}",
+            name=f"Irrelevant patch {i}",
+            provider="huggingface", access="public",
+            task_types=["patch_classification"],
+            asset_types=["patch_images"],
+            organs=["colorectal"], estimated_size_gb=1.0,
+            download=DownloadSpec(kind="hf_dataset", remote_id=f"x/{i}"),
+        ))
+    records.append(DatasetRecord(
+        dataset_id="gated-mil",
+        name="Gated MIL Cohort",
+        provider="huggingface", access="gated",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["lung"], estimated_size_gb=2.0,
+        download=DownloadSpec(kind="hf_dataset", remote_id="g"),
+    ))
+    reg = _registry_with(records, tmp_path)
+    workspace = tmp_path / "workspace"
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": _FakeProvider()},
+        normalizers=[_FakeNormalizer()],
+        cache_root=tmp_path / "cache",
+        policy=AcquisitionPolicy(download_policy="public_only"),
+    )
+    result = service.acquire(
+        TaskProfile(
+            task_type="mil_classification", asset_level="slide",
+            input_modality="wsi", label_granularity="slide", organ="lung",
+        ),
+        workspace_root=workspace,
+    )
+    assert result.status == "skipped_policy"
+    assert result.candidate is not None
+    assert result.candidate.record.dataset_id == "gated-mil"
+    assert "access=gated" in result.reason
+
+
 # ---- Review fix R3 (P1): normalizer empty-output validation ----
 
 

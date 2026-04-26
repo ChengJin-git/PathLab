@@ -278,3 +278,92 @@ def test_scout_dataclass_default_relevant_is_false():
     )
     cand = DatasetCandidate(record=rec, score=0.0, decision=PolicyDecision(True, "ok"))
     assert cand.relevant is False
+
+
+# ---- Review fix R2-followup (P1): relevance is a primary sort key, not a tiebreaker ----
+
+
+def test_scout_keeps_relevant_blocked_candidate_above_irrelevant_top_k(tmp_path):
+    """R2-followup: 11 irrelevant + 1 relevant blocked. The relevant one
+    must NOT be truncated out of top_k=10."""
+    records = []
+    # 11 irrelevant public records (no task match, no asset match against a MIL profile)
+    for i in range(11):
+        records.append(DatasetRecord(
+            dataset_id=f"public-irrel-{i}",
+            name=f"Irrelevant {i}",
+            provider="huggingface",
+            access="public",
+            task_types=["patch_classification"],
+            asset_types=["patch_images"],
+            organs=["colorectal"],
+            estimated_size_gb=1.0,
+            download=DownloadSpec(kind="hf_dataset", remote_id=f"x/{i}"),
+        ))
+    # 1 relevant gated MIL record
+    records.append(DatasetRecord(
+        dataset_id="gated-mil",
+        name="Gated MIL Cohort",
+        provider="huggingface",
+        access="gated",
+        task_types=["mil_classification"],
+        asset_types=["wsi"],
+        organs=["lung"], estimated_size_gb=2.0,
+        download=DownloadSpec(kind="hf_dataset", remote_id="g"),
+    ))
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save(records)
+    scout = DatasetScout(registry=reg, policy=AcquisitionPolicy(download_policy="public_only"))
+    profile = TaskProfile(
+        task_type="mil_classification", asset_level="slide",
+        input_modality="wsi", label_granularity="slide", organ="lung",
+    )
+    candidates = scout.find_candidates(profile, top_k=10)
+    # The relevant gated MIL record must appear in the top_k window even
+    # though its score is negative (policy rejection penalty).
+    relevant = [c for c in candidates if c.relevant]
+    assert len(relevant) == 1
+    assert relevant[0].record.dataset_id == "gated-mil"
+    assert relevant[0].decision.allowed is False
+
+
+def test_scout_relevant_records_sort_above_irrelevant(tmp_path):
+    """Within the candidate list, all relevant records come before irrelevant
+    ones, regardless of score sign."""
+    records = [
+        # Irrelevant high score: task=patch matches against patch profile.
+        DatasetRecord(
+            dataset_id="hi-irrel",
+            name="High score irrel",
+            provider="huggingface", access="public",
+            task_types=["patch_classification"],
+            asset_types=["patch_images"],
+            organs=["colorectal"], estimated_size_gb=1.0,
+            download=DownloadSpec(kind="hf_dataset", remote_id="x"),
+        ),
+        # Relevant low score: task=mil + gated penalty.
+        DatasetRecord(
+            dataset_id="lo-rel",
+            name="Low score relevant",
+            provider="huggingface", access="gated",
+            task_types=["mil_classification"],
+            asset_types=["wsi"],
+            organs=[], estimated_size_gb=1.0,
+            download=DownloadSpec(kind="hf_dataset", remote_id="y"),
+        ),
+    ]
+    # Score against a MIL profile: hi-irrel scores 0 (no match), lo-rel scores 5-100=-95.
+    reg = DatasetRegistry(tmp_path / "ds.json")
+    reg.save(records)
+    scout = DatasetScout(registry=reg, policy=AcquisitionPolicy(download_policy="public_only"))
+    profile = TaskProfile(
+        task_type="mil_classification", asset_level="slide",
+        input_modality="wsi", label_granularity="slide",
+    )
+    candidates = scout.find_candidates(profile, top_k=5)
+    # Even though lo-rel has a much lower score, it should sort first because
+    # it's the only relevant candidate.
+    assert candidates[0].record.dataset_id == "lo-rel"
+    assert candidates[0].relevant is True
+    assert candidates[1].record.dataset_id == "hi-irrel"
+    assert candidates[1].relevant is False
