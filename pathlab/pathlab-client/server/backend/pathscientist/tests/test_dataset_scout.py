@@ -1,14 +1,17 @@
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+import json
 
 import pytest
 
-from dataset.policy import AcquisitionPolicy
-from dataset.registry import DatasetRegistry
-from dataset.scout import DatasetCandidate, DatasetScout
-from dataset.types import DatasetRecord, DownloadSpec, TaskProfile
+from pathscientist.dataset.policy import AcquisitionPolicy
+from pathscientist.dataset.registry import DatasetRegistry
+from pathscientist.dataset.scout import DatasetCandidate, DatasetScout
+from pathscientist.dataset.types import DatasetRecord, DownloadSpec, TaskProfile
 
 
 @pytest.fixture
@@ -268,8 +271,8 @@ def test_scout_score_zero_record_is_not_relevant(tmp_path):
 
 def test_scout_dataclass_default_relevant_is_false():
     """A bare DatasetCandidate() must default relevant=False."""
-    from dataset.scout import DatasetCandidate
-    from dataset.policy import PolicyDecision
+    from pathscientist.dataset.scout import DatasetCandidate
+    from pathscientist.dataset.policy import PolicyDecision
     rec = DatasetRecord(
         dataset_id="x", name="x", provider="huggingface", access="public",
         task_types=["patch_classification"], asset_types=["patch_images"],

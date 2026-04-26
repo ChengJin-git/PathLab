@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from dataset.manifests import load_manifest, manifest_path_for_workspace, save_manifest
-from dataset.types import DatasetManifest
+import json
+
+from pathscientist.dataset.manifests import load_manifest, manifest_path_for_workspace, save_manifest
+from pathscientist.dataset.types import DatasetManifest
 
 
 def test_manifest_path_for_workspace(tmp_path):

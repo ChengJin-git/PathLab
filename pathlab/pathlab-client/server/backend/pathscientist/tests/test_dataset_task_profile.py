@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import os
 os.environ["OPENHANDS_SUPPRESS_BANNER"] = "1"
 
-# Bare-import path matches tests/test_dataset_types.py convention.
-from dataset.task_profile import infer_task_profile
+# Canonical pathscientist-prefix path matches the rest of the test suite.
+from pathscientist.dataset.task_profile import infer_task_profile
 
 # pathscientist-prefix path matches tests/test_grounding_target_integration.py.
 from pathscientist.orchestrator.grounding import ground_objective

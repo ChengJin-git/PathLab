@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 import tarfile
 import zipfile
-from pathlib import Path
 
 import pytest
 
-from dataset.downloader import compute_sha256, extract_archive, safe_dataset_id
+from pathscientist.dataset.downloader import compute_sha256, extract_archive, safe_dataset_id
 
 
 # ---- safe_dataset_id ----

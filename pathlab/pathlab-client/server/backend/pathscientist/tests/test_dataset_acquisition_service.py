@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+import json
 
 import pytest
 
-from dataset.acquisition import AcquisitionResult, DatasetAcquisitionService
-from dataset.policy import AcquisitionPolicy
-from dataset.providers.base import DownloadResult
-from dataset.registry import DatasetRegistry
-from dataset.types import DatasetRecord, DownloadSpec, TaskProfile
+from pathscientist.dataset.acquisition import AcquisitionResult, DatasetAcquisitionService
+from pathscientist.dataset.policy import AcquisitionPolicy
+from pathscientist.dataset.providers.base import DownloadResult
+from pathscientist.dataset.registry import DatasetRegistry
+from pathscientist.dataset.types import DatasetRecord, DownloadSpec, TaskProfile
 
 
 # ---- fakes ----
@@ -362,7 +365,7 @@ def test_acquisition_finds_relevant_blocked_candidate_despite_many_irrelevant(tm
 
 def test_acquisition_failed_when_normalizer_raises_normalizer_error(tmp_path):
     """Empty raw layout -> NormalizerError -> manifest.status=failed with normalize_empty reason."""
-    from dataset.normalizers.base import NormalizerError
+    from pathscientist.dataset.normalizers.base import NormalizerError
 
     class _RaisingNormalizer:
         name = "patch_classification"

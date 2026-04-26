@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
 from unittest.mock import MagicMock
 
 import pytest
 
-from dataset.providers.base import DownloadResult
-from dataset.providers.direct_http import DirectHTTPProvider
-from dataset.providers.huggingface import HuggingFaceProvider
-from dataset.providers.zenodo import ZenodoProvider
-from dataset.types import DatasetRecord, DownloadSpec
+from pathscientist.dataset.providers.base import DownloadResult
+from pathscientist.dataset.providers.direct_http import DirectHTTPProvider
+from pathscientist.dataset.providers.huggingface import HuggingFaceProvider
+from pathscientist.dataset.providers.zenodo import ZenodoProvider
+from pathscientist.dataset.types import DatasetRecord, DownloadSpec
 
 
 def _make_record(**overrides) -> DatasetRecord:

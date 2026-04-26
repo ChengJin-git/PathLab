@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from dataset.policy import AcquisitionPolicy, PolicyDecision
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from pathscientist.dataset.policy import AcquisitionPolicy, PolicyDecision
 
 
 def test_default_policy_allows_public_small():

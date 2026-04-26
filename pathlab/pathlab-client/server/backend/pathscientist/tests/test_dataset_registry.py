@@ -1,13 +1,16 @@
 """Tests for DatasetRegistry JSON persistence + filtering."""
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+import json
 
 import pytest
 
-from dataset.registry import DatasetRegistry
-from dataset.types import DatasetRecord, DownloadSpec
+from pathscientist.dataset.registry import DatasetRegistry
+from pathscientist.dataset.types import DatasetRecord, DownloadSpec
 
 
 def _rec(dataset_id: str, task_types, organs, asset_types=None) -> DatasetRecord:

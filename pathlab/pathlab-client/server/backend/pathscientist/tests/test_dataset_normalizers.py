@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-import json
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+import json
 
 import pytest
 
-from dataset.normalizers.base import NormalizerError
-from dataset.normalizers.mil_classification import MILClassificationNormalizer
-from dataset.normalizers.patch_classification import PatchClassificationNormalizer
+from pathscientist.dataset.normalizers.base import NormalizerError
+from pathscientist.dataset.normalizers.mil_classification import MILClassificationNormalizer
+from pathscientist.dataset.normalizers.patch_classification import PatchClassificationNormalizer
 
 
 # ---- Patch ----

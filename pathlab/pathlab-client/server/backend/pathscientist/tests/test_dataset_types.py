@@ -1,7 +1,11 @@
 """Tests for dataset domain dataclasses."""
 from __future__ import annotations
 
-from dataset.types import (
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+
+from pathscientist.dataset.types import (
     DatasetManifest,
     DatasetRecord,
     DownloadSpec,
