@@ -390,3 +390,138 @@ def test_acquisition_failed_when_normalizer_raises_normalizer_error(tmp_path):
     assert result.status == "failed"
     assert result.reason.startswith("normalize_empty:no_images")
     assert result.manifest.status == "failed"
+
+
+# ---- Review fix R6 (P2): checksum verification ----
+
+
+def test_acquisition_passes_when_checksum_matches(tmp_path):
+    """R6: when record.download.checksum_sha256 matches the downloaded file,
+    acquisition proceeds normally."""
+    # SHA256 of b"hello"
+    expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    rec = DatasetRecord(
+        dataset_id="hf:demo/x",
+        name="Demo",
+        provider="huggingface",
+        access="public",
+        task_types=["patch_classification"],
+        asset_types=["patch_images"],
+        organs=["colorectal"],
+        estimated_size_gb=1.0,
+        download=DownloadSpec(
+            kind="hf_dataset", remote_id="demo/x",
+            checksum_sha256=expected,
+        ),
+    )
+    reg = _registry_with([rec], tmp_path)
+
+    class _ChecksumProvider:
+        provider_name = "huggingface"
+        def __init__(self, files_to_create, sha):
+            self._f = files_to_create
+            self._sha = sha
+        def probe(self, record): return record
+        def download(self, record, target_dir):
+            target_dir = Path(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            files = []
+            for fname, content in self._f:
+                p = target_dir / fname
+                p.write_bytes(content)
+                files.append(p)
+            from pathscientist.dataset.providers.base import DownloadResult
+            return DownloadResult(
+                status="downloaded", raw_root=target_dir, files=files,
+                checksum_sha256=self._sha,
+            )
+
+    provider = _ChecksumProvider([("data.bin", b"hello")], expected)
+    workspace = tmp_path / "workspace"
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": provider},
+        normalizers=[_FakeNormalizer()],
+        cache_root=tmp_path / "cache",
+    )
+    result = service.acquire(_profile(), workspace_root=workspace)
+    assert result.status == "prepared"
+
+
+def test_acquisition_fails_on_checksum_mismatch(tmp_path):
+    """R6: mismatching checksum -> status='failed', reason='checksum_mismatch:...'."""
+    expected = "0" * 64   # certainly not the actual hash of 'hello'
+    rec = DatasetRecord(
+        dataset_id="hf:demo/x",
+        name="Demo",
+        provider="huggingface",
+        access="public",
+        task_types=["patch_classification"],
+        asset_types=["patch_images"],
+        organs=["colorectal"],
+        estimated_size_gb=1.0,
+        download=DownloadSpec(
+            kind="hf_dataset", remote_id="demo/x",
+            checksum_sha256=expected,
+        ),
+    )
+    reg = _registry_with([rec], tmp_path)
+
+    class _ChecksumProvider:
+        provider_name = "huggingface"
+        def probe(self, record): return record
+        def download(self, record, target_dir):
+            target_dir = Path(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            (target_dir / "data.bin").write_bytes(b"hello")
+            from pathscientist.dataset.providers.base import DownloadResult
+            return DownloadResult(
+                status="downloaded", raw_root=target_dir,
+                files=[target_dir / "data.bin"],
+                checksum_sha256="2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+            )
+
+    workspace = tmp_path / "workspace"
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": _ChecksumProvider()},
+        normalizers=[_FakeNormalizer()],
+        cache_root=tmp_path / "cache",
+    )
+    result = service.acquire(_profile(), workspace_root=workspace)
+    assert result.status == "failed"
+    assert result.reason.startswith("checksum_mismatch:")
+
+
+def test_acquisition_proceeds_when_provider_no_checksum_but_record_has_one(tmp_path):
+    """R6: when expected checksum is set but provider returned blank checksum
+    (e.g., multi-file snapshot), acquisition proceeds with a log warning rather
+    than failing - multi-file checksumming is out of v1 scope."""
+    expected = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+    rec = DatasetRecord(
+        dataset_id="hf:demo/x",
+        name="Demo",
+        provider="huggingface",
+        access="public",
+        task_types=["patch_classification"],
+        asset_types=["patch_images"],
+        organs=["colorectal"],
+        estimated_size_gb=1.0,
+        download=DownloadSpec(
+            kind="hf_dataset", remote_id="demo/x",
+            checksum_sha256=expected,
+        ),
+    )
+    reg = _registry_with([rec], tmp_path)
+    fake_provider = _FakeProvider(status="downloaded", files_to_create=[("a.bin", b"x")])
+    # _FakeProvider's DownloadResult has empty checksum_sha256 by default,
+    # which is the multi-file / snapshot case the test pins.
+    workspace = tmp_path / "workspace"
+    service = DatasetAcquisitionService(
+        registry=reg,
+        providers={"huggingface": fake_provider},
+        normalizers=[_FakeNormalizer()],
+        cache_root=tmp_path / "cache",
+    )
+    result = service.acquire(_profile(), workspace_root=workspace)
+    assert result.status == "prepared"

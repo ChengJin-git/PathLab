@@ -208,6 +208,42 @@ class DatasetAcquisitionService:
                 candidate=chosen, evidence_path=ev, reason=download_result.reason,
             )
 
+        # 3b. Verify checksum if record specifies one (Review fix R6 / P2 #7).
+        expected_checksum = (record.download.checksum_sha256 or "").lower()
+        actual_checksum = (download_result.checksum_sha256 or "").lower()
+        if expected_checksum:
+            if not actual_checksum:
+                # Provider didn't compute one (e.g., multi-file). For v1, treat
+                # as unverifiable rather than failing - record it for the manifest.
+                logger.info(
+                    "Provider did not compute checksum for %s; expected=%s",
+                    record.dataset_id, expected_checksum,
+                )
+            elif actual_checksum != expected_checksum:
+                manifest = DatasetManifest(
+                    dataset_id=record.dataset_id, provider=record.provider,
+                    selected_for_task=profile.task_type,
+                    raw_root=str(raw_root), prepared_root="",
+                    data_mounts={}, prepared_contract={},
+                    access=record.access, status="failed",
+                )
+                save_manifest(manifest_path, manifest)
+                reason = f"checksum_mismatch:expected={expected_checksum},actual={actual_checksum}"
+                ev = write_acquisition_record(
+                    workspace_root,
+                    {
+                        "status": "failed",
+                        "reason": reason,
+                        "candidate": {"dataset_id": record.dataset_id, "score": chosen.score},
+                        "task_profile": profile.to_dict(),
+                    },
+                )
+                return AcquisitionResult(
+                    status="failed", manifest=manifest, manifest_path=manifest_path,
+                    candidate=chosen, evidence_path=ev,
+                    reason=reason,
+                )
+
         # 4. Extract archives if needed
         for f in list(download_result.files):
             if _looks_like_archive(f):

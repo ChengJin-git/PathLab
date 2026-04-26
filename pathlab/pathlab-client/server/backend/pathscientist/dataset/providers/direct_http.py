@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from ..downloader import compute_sha256
 from ..types import DatasetRecord
 from .base import DownloadResult
 
@@ -77,4 +78,7 @@ class DirectHTTPProvider:
             files.append(dest)
         return DownloadResult(
             status="downloaded", raw_root=target_dir, files=files,
+            checksum_sha256=(
+                compute_sha256(files[0]) if len(files) == 1 else ""
+            ),
         )
