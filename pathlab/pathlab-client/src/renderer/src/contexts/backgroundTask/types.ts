@@ -17,7 +17,7 @@ export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update
 export type TrainingTaskStatus = 'creating' | 'pending' | 'queued' | 'resuming' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
 
 // Server task type from backend
-export type ServerTaskType = CanonicalTrainingTaskType | 'classification' | 'survival' | 'segmentation' | 'external_validation' | 'batch_inference'
+export type ServerTaskType = CanonicalTrainingTaskType | 'external_validation' | 'batch_inference'
 
 // Individual task item (e.g., one file in a batch)
 export interface TaskItem {
@@ -65,7 +65,7 @@ export interface MetadataUploadTaskConfig {
   csvFile: File              // Already-converted CSV file (or raw CSV if user selected CSV)
   datasetName: string        // Dataset name to find/poll for
   datasetId?: string         // If already known
-  uploadMode: CanonicalTrainingTaskType | 'classification' | 'survival' | 'segmentation'
+  uploadMode: CanonicalTrainingTaskType
   dataLevel: 'file' | 'case'
 }
 
@@ -87,7 +87,7 @@ export interface UploadTaskFile {
     source_organ?: string  // Source organ/tissue for new dataset
     aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     is_public?: boolean
-    task_type?: CanonicalTrainingTaskType | 'classification' | 'survival' | 'segmentation'
+    task_type?: CanonicalTrainingTaskType
     label?: string
     case_id?: string
     age?: number

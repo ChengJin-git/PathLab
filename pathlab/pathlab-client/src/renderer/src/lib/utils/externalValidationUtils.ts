@@ -41,11 +41,11 @@ export const EXTRACTOR_EMBED_DIM: Record<string, number> = {
  * Helper to determine if a task type is survival
  */
 export function isSurvivalTask(taskType: string | undefined): boolean {
-  return isCanonicalSurvivalTask(taskType) || taskType === 'survival' || taskType === 'patch_survival'
+  return isCanonicalSurvivalTask(taskType)
 }
 
 export function isSegmentationTask(taskType: string | undefined): boolean {
-  return isCanonicalSegmentationTask(taskType) || taskType === 'segmentation'
+  return isCanonicalSegmentationTask(taskType)
 }
 
 /**
