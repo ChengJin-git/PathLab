@@ -36,23 +36,22 @@ describe('canonical training task taxonomy', () => {
     expect(isSegmentationTask('segmentation')).toBe(false)
   })
 
-  it('maps canonical and legacy dataset records to task families', () => {
+  it('maps canonical dataset records to task families only', () => {
     expect(getTaskFamily('wsi_classification')).toBe('classification')
     expect(getTaskFamily('patch_classification')).toBe('classification')
     expect(getTaskFamily('wsi_survival')).toBe('survival')
     expect(getTaskFamily('patch_segmentation')).toBe('segmentation')
-    expect(getTaskFamily('classification')).toBe('classification')
-    expect(getTaskFamily('survival')).toBe('survival')
-    expect(getTaskFamily('segmentation')).toBe('segmentation')
+    expect(getTaskFamily('classification')).toBeNull()
+    expect(getTaskFamily('survival')).toBeNull()
+    expect(getTaskFamily('segmentation')).toBeNull()
     expect(getTaskFamily('unknown')).toBeNull()
   })
 
-  it('normalizes legacy task families to canonical ids using data type', () => {
-    expect(toCanonicalTaskType('classification', 'wsi')).toBe('wsi_classification')
-    expect(toCanonicalTaskType('classification', 'patch')).toBe('patch_classification')
-    expect(toCanonicalTaskType('survival', 'patch')).toBe('wsi_survival')
-    expect(toCanonicalTaskType('segmentation', 'wsi')).toBe('patch_segmentation')
+  it('accepts canonical task ids without normalizing legacy families', () => {
     expect(toCanonicalTaskType('patch_segmentation', 'wsi')).toBe('patch_segmentation')
+    expect(toCanonicalTaskType('classification', 'wsi')).toBeNull()
+    expect(toCanonicalTaskType('survival', 'patch')).toBeNull()
+    expect(toCanonicalTaskType('segmentation', 'wsi')).toBeNull()
     expect(toCanonicalTaskType('unknown', 'wsi')).toBeNull()
   })
 })

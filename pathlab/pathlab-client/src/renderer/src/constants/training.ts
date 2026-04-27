@@ -81,20 +81,11 @@ export function getTaskMetadata(taskType: TaskType): TaskMetadata {
 
 export function getTaskFamily(taskType: string | null | undefined): TaskFamily | null {
   if (isCanonicalTaskType(taskType)) return TASK_METADATA_BY_ID[taskType].taskFamily
-  if (taskType === 'classification') return 'classification'
-  if (taskType === 'survival') return 'survival'
-  if (taskType === 'segmentation') return 'segmentation'
   return null
 }
 
-export function toCanonicalTaskType(
-  taskType: string | null | undefined,
-  dataType: DataLevel = 'wsi'
-): TaskType | null {
+export function toCanonicalTaskType(taskType: string | null | undefined): TaskType | null {
   if (isCanonicalTaskType(taskType)) return taskType
-  if (taskType === 'classification') return dataType === 'patch' ? 'patch_classification' : 'wsi_classification'
-  if (taskType === 'survival') return 'wsi_survival'
-  if (taskType === 'segmentation') return 'patch_segmentation'
   return null
 }
 
