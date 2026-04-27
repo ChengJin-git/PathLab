@@ -38,6 +38,14 @@ from .routes.chat_training_recommendation import (
 from .task_queue import TaskType, get_task_queue, init_task_queue, shutdown_task_queue
 
 
+def _is_external_validation_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("extval_")
+
+
+def _is_batch_inference_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("binfer_")
+
+
 async def wait_for_services_ready(
     timeout: float = 60.0, check_interval: float = 2.0
 ) -> bool:
@@ -427,10 +435,10 @@ async def resume_interrupted_tasks() -> None:
                     task_type = (
                         task.data_group.task_type
                         if task.data_group
-                        else "classification"
+                        else "wsi_classification"
                     )
 
-                    if task_type == "batch_inference":
+                    if _is_batch_inference_task_id(task.task_id):
                         from gateway.routes.inference_batch import _run_batch_inference
 
                         cfg = task.model_config or {}
@@ -448,7 +456,7 @@ async def resume_interrupted_tasks() -> None:
                         )
                         continue
 
-                    if task_type == "external_validation":
+                    if _is_external_validation_task_id(task.task_id):
                         external_validation_dataset_id = (task.model_config or {}).get(
                             "dataset_id", ""
                         )
@@ -484,7 +492,7 @@ async def resume_interrupted_tasks() -> None:
 
                     task_queue = get_task_queue()
 
-                    if task_type == "external_validation":
+                    if _is_external_validation_task_id(task.task_id):
                         from gateway.routes.results import _run_external_validation
 
                         model_config = task.model_config or {}
@@ -508,7 +516,7 @@ async def resume_interrupted_tasks() -> None:
                                         )
 
                         resolved_model_task_type = (
-                            resolved_model_task_type or "classification"
+                            resolved_model_task_type or "wsi_classification"
                         )
                         resolved_model_data_type = resolved_model_data_type or data_type
 

@@ -273,19 +273,14 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                 )
                 wsis.extend(wsi_list.scalars().all())
 
-        # Validate task based on task_type
-        task_type = task_data.get("task_type", "classification")
+        # Validate task based on canonical task_type.
+        task_type = task_data.get("task_type", "wsi_classification")
         classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
         segmentation_multilabels: Dict[str, Set[str]] = {}
         task_type_normalized = str(task_type).strip().lower()
-        try:
-            classification_task = is_classification_task(task_type_normalized)
-            survival_task = is_survival_task(task_type_normalized)
-            segmentation_task = is_segmentation_task(task_type_normalized)
-        except ValueError:
-            classification_task = task_type_normalized == "classification"
-            survival_task = task_type_normalized == "survival"
-            segmentation_task = task_type_normalized == "segmentation"
+        classification_task = is_classification_task(task_type_normalized)
+        survival_task = is_survival_task(task_type_normalized)
+        segmentation_task = is_segmentation_task(task_type_normalized)
 
         if segmentation_task:
             classes, segmentation_multilabels = await load_segmentation_multilabels(db, wsis)
@@ -1139,9 +1134,8 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
     ) -> List[TrainingTask]:
         query = (
             select(TrainingTask)
-            .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
             .options(selectinload(TrainingTask.data_group))
-            .where(DataGroup.task_type == "batch_inference")
+            .where(cast(TrainingTask.task_id, String).startswith("binfer_"))
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
@@ -1156,8 +1150,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
     ) -> int:
         query = (
             select(func.count(TrainingTask.id))
-            .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
-            .where(DataGroup.task_type == "batch_inference")
+            .where(cast(TrainingTask.task_id, String).startswith("binfer_"))
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)

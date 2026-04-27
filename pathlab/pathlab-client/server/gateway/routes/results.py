@@ -129,6 +129,14 @@ router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
 
 
+def _is_external_validation_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("extval_")
+
+
+def _is_batch_inference_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("binfer_")
+
+
 def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
     return _normalize_label_names(
         [
@@ -1303,9 +1311,6 @@ async def get_datasets_for_validation(
         if not dg:
             continue
 
-        if dg.task_type == "external_validation":
-            continue
-
         dataset_id = _coerce_str(ds.dataset_id)
 
         if not user.is_admin():
@@ -1434,7 +1439,7 @@ async def get_datasets_for_inference(
     - Segmentation: no imported/finalized GT annotation or paired GT mask exists;
       viewer annotations do not count as dataset labels
 
-    Excludes batch_inference and external_validation task_type datasets.
+    Excludes non-training workflow datasets; external validation reuses canonical target datasets.
     """
     datasets = await DatasetRepository.get_all(db)
     elevated_dataset_ids: set[str] = set()
@@ -1447,9 +1452,6 @@ async def get_datasets_for_inference(
     for ds in datasets:
         dg = ds.data_group
         if not dg:
-            continue
-
-        if dg.task_type in ("batch_inference", "external_validation"):
             continue
 
         dataset_id = _coerce_str(ds.dataset_id)
@@ -1590,19 +1592,12 @@ async def start_batch_inference(
         )
 
     batch_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
-    batch_data_group = await DataGroupRepository.get_or_create(
-        db,
-        data_type=dataset_data_type,
-        aggregation_level=dataset_aggregation_level,
-        task_type="batch_inference",
-    )
-
     batch_task = TrainingTask(
         task_id=batch_id,
         task_name=f"{model_task.task_name} → {target_dataset.name or req.dataset_id}"[
             :200
         ],
-        group_id=batch_data_group.group_id,
+        group_id=dataset_dg.group_id,
         user_id=effective_user_id,
         status=TaskStatus.PENDING,
         progress=0,
@@ -1651,7 +1646,7 @@ async def _require_batch_inference_task(
             status_code=404, detail=f"Batch inference task not found: {task_id}"
         )
     dg = task.data_group
-    if not dg or dg.task_type != "batch_inference":
+    if not _is_batch_inference_task_id(getattr(task, "task_id", None)) or not dg:
         raise HTTPException(
             status_code=404, detail=f"Task {task_id} is not a batch inference task"
         )
@@ -1889,8 +1884,8 @@ async def start_external_validation(
     Requires pathologist/admin role OR temporary elevated permission for the dataset.
     Users can only validate with models/data they own.
 
-    Creates a TrainingTask record with task_type="external_validation" and submits to the
-    GPU task queue for execution. Progress is tracked via SSE like training tasks.
+    Creates an extval_* workflow TrainingTask on the target dataset's canonical task type
+    and submits it to the GPU task queue. Progress is tracked via SSE like training tasks.
 
     Returns the task_id that can be used to track progress.
     """
@@ -2390,10 +2385,7 @@ async def get_validation_progress(
         forbidden_detail="You don't have permission to view this task",
     )
 
-    # Check if this is an external validation task via DataGroup
-    task_data_group = task.data_group
-    task_type = task_data_group.task_type if task_data_group else None
-    if task_type != "external_validation":
+    if not _is_external_validation_task_id(task_id):
         raise HTTPException(
             status_code=400, detail=f"Task {task_id} is not an external validation task"
         )
@@ -2612,8 +2604,8 @@ async def run_task_analysis(
     task_data_group = task.data_group
     task_type_str = task_data_group.task_type if task_data_group else "wsi_classification"
 
-    # Build meaningful title based on task type
-    is_external = task_type_str == "external_validation"
+    # Build meaningful title based on workflow id.
+    is_external = _is_external_validation_task_id(task.task_id)
     if is_external:
         model_config = task.model_config or {}
         model_id = model_config.get("model_id", "")
@@ -2886,8 +2878,8 @@ async def get_quick_analysis(
             else "wsi_classification"
         )
 
-        # Build meaningful title and metadata for background task display
-        is_external = quick_task_type_str == "external_validation"
+        # Build meaningful title and metadata for background task display.
+        is_external = _is_external_validation_task_id(task.task_id)
         if is_external:
             model_config = task.model_config or {}
             model_id = model_config.get("model_id", "")
@@ -3529,13 +3521,13 @@ async def run_analysis_pipeline(
             if (
                 is_kfold
                 and has_ci_calculation
-                and task_type_str != "external_validation"
+                and not _is_external_validation_task_id(task_id)
             ):
                 has_ci_calculation = (
                     False  # K-Fold doesn't use Bootstrap CI (internal analysis only)
                 )
 
-            if task_type_str != "external_validation":
+            if not _is_external_validation_task_id(task_id):
                 # Check if AI results exist
                 task_id_str = _coerce_str(task.task_id)
                 resources = await _check_task_resources(task_id_str, db)
