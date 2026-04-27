@@ -197,7 +197,7 @@ async def _run_inference_wsi_survival(
                 case_to_wsi=case_to_wsi,
                 times=case_times,
                 statuses=case_statuses,
-                task_type="survival",
+                task_family="survival",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
@@ -262,7 +262,7 @@ async def _run_inference_wsi_survival(
                 wsi_ids=valid_wsi_ids,
                 times=times_map,
                 statuses=statuses_map,
-                task_type="survival",
+                task_family="survival",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
             total_items = len(valid_wsi_ids)

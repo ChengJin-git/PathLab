@@ -179,7 +179,7 @@ async def _run_inference_wsi_classification(
                 case_ids=case_ids,
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
-                task_type="classification",
+                task_family="classification",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
 
@@ -324,7 +324,7 @@ async def _run_inference_wsi_classification(
                 features_dir=features_dir,
                 wsi_ids=valid_wsi_ids,
                 labels=labels,
-                task_type="classification",
+                task_family="classification",
             )
             dataloader = DataLoader(dataset, batch_size=1, shuffle=False)
             total_items = len(valid_wsi_ids)

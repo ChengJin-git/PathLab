@@ -1764,7 +1764,7 @@ async def _run_external_validation(
                     case_to_wsi=case_to_wsi,
                     times=case_times,
                     statuses=case_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=device,
                 )
             else:
@@ -1773,7 +1773,7 @@ async def _run_external_validation(
                     case_ids=case_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels_map,
-                    task_type="classification",
+                    task_family="classification",
                     device=device,
                 )
             total = len(case_ids)
@@ -1804,7 +1804,7 @@ async def _run_external_validation(
                     wsi_ids=valid_wsi_ids,
                     times=times_map,
                     statuses=statuses_map,
-                    task_type="survival",
+                    task_family="survival",
                     device=device,
                 )
             else:
@@ -1812,7 +1812,7 @@ async def _run_external_validation(
                     features_dir=features_dir,
                     wsi_ids=valid_wsi_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=device,
                 )
             total = len(valid_wsi_ids)
