@@ -1,6 +1,6 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, ACTIVITY_CACHE_TTL } from '../lib/cache'
-import { getTaskFamily, type TaskType } from '../constants/training'
+import type { TaskType } from '../constants/training'
 import { apiFetch, apiFetchBlob, buildSearchParams, downloadApiFile, downloadBlobFile, getAuthToken, type DownloadApiFileResult, type PaginatedResponse } from './client'
 import { invalidateHeatmapAvailabilityCache } from './heatmap'
 
@@ -285,7 +285,7 @@ export interface DatasetSummary {
   file_count: number
   total_size: number
   data_type: 'wsi' | 'patch'  // Data type: WSI collection or Patch collection
-  task_type: TaskType | 'classification' | 'survival' | 'segmentation' // Canonical task id; legacy family values tolerated during migration
+  task_type: TaskType
   aggregation_level: 'case' | 'file'  // Aggregation level: case-level or file-level dataset
   is_public?: boolean
   // Permission flag - whether user can delete this dataset
@@ -312,7 +312,7 @@ export interface DatasetListQueryOptions {
   page?: number
   page_size?: number
   search?: string
-  task_type?: TaskType | 'classification' | 'survival' | 'segmentation'
+  task_type?: TaskType
   aggregation_level?: 'file' | 'case'
   source_organ?: string
   is_public?: boolean
@@ -410,19 +410,19 @@ export async function renameDataset(
 export interface UpdateDatasetTypeResponse {
   message: string
   dataset_id: string
-  new_type: TaskType | 'classification' | 'survival' | 'segmentation'
+  new_type: TaskType
   updated_count: number
 }
 
 /**
- * Update dataset type (classification, survival, or segmentation)
+ * Update dataset type.
  * @param datasetId - Dataset UUID
- * @param datasetType - New type: "classification", "survival", or "segmentation"
+ * @param datasetType - New canonical task id.
  * @throws {ApiError} If the request fails
  */
 export async function updateDatasetType(
   datasetId: string,
-  datasetType: TaskType | 'classification' | 'survival' | 'segmentation'
+  datasetType: TaskType
 ): Promise<UpdateDatasetTypeResponse> {
   const result = await apiFetch<UpdateDatasetTypeResponse>(
     `${API_BASE}/wsi/datasets/${encodeURIComponent(datasetId)}/type`,
@@ -613,7 +613,7 @@ export async function uploadWSIFile(
     source_organ?: string
     aggregation_level?: 'case' | 'file'
     is_public?: boolean
-    task_type?: TaskType | 'classification' | 'survival' | 'segmentation'
+    task_type?: TaskType
     label?: string
     case_id?: string
     age?: number
@@ -721,7 +721,7 @@ export async function uploadWSIByPath(
     source_organ?: string
     aggregation_level?: 'case' | 'file'
     is_public?: boolean
-    task_type?: TaskType | 'classification' | 'survival' | 'segmentation'
+    task_type?: TaskType
     label?: string
     case_id?: string
     wsi_id?: string
@@ -763,24 +763,24 @@ export async function uploadWSIByPath(
 
 /**
  * Download CSV template for batch WSI metadata configuration.
- * @param taskType - 'classification', 'survival', or 'segmentation'
+ * @param taskType - Canonical task id.
  * @throws {ApiError} If the request fails
  */
 export async function downloadCSVTemplate(
-  taskType: TaskType | 'classification' | 'survival' | 'segmentation' = 'wsi_classification'
+  taskType: TaskType = 'wsi_classification'
 ): Promise<void> {
-  const filenames: Record<'classification' | 'survival' | 'segmentation', string> = {
-    survival: 'wsi_survival_metadata_template.csv',
-    segmentation: 'segmentation_metadata_template.csv',
-    classification: 'wsi_classification_metadata_template.csv',
+  const filenames: Record<TaskType, string> = {
+    wsi_classification: 'wsi_classification_metadata_template.csv',
+    patch_classification: 'patch_classification_metadata_template.csv',
+    wsi_survival: 'wsi_survival_metadata_template.csv',
+    patch_segmentation: 'segmentation_metadata_template.csv',
   }
-  const taskFamily = getTaskFamily(taskType) ?? 'classification'
   const blob = await apiFetchBlob(
     `${API_BASE}/wsi/upload/csv/template?task_type=${taskType}`,
     undefined,
     'Failed to download CSV template'
   )
-  downloadBlobFile(blob, filenames[taskFamily])
+  downloadBlobFile(blob, filenames[taskType])
 }
 
 /**

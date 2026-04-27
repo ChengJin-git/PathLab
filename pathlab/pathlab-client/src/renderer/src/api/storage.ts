@@ -461,7 +461,7 @@ export interface ScanDirectoryResponse {
 
 export interface ScanDirectoryOptions {
   scanId?: string
-  taskType?: TaskType | 'classification' | 'survival' | 'segmentation'
+  taskType?: TaskType
   page?: number
   pageSize?: number
 }
@@ -507,7 +507,7 @@ export interface BatchRegisterRequest {
   selected_paths?: string[]
   excluded_paths?: string[]
   aggregation_level?: 'case' | 'file'
-  task_type?: TaskType | 'classification' | 'survival' | 'segmentation'
+  task_type?: TaskType
   is_public?: boolean
   default_label?: string
   default_event_time?: number
