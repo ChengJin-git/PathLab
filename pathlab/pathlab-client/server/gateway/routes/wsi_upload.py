@@ -81,7 +81,7 @@ def _resolve_task_type_for_axes(
     aggregation_level: str,
     dataset_task_type: Optional[str] = None,
 ) -> str:
-    baseline_task_type = requested_task_type or dataset_task_type or "classification"
+    baseline_task_type = requested_task_type or dataset_task_type or "wsi_classification"
     resolved_task_type = _canonicalize_task_type_for_axes(
         baseline_task_type,
         data_type=data_type,

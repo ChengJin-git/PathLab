@@ -22,6 +22,8 @@ def _normalize_task_type_for_dataset_axes(
     aggregation_level: Optional[str],
 ) -> str:
     normalized = task_type.strip().lower()
+    if not is_canonical_task_type(normalized):
+        raise ValueError(f"task_type must be one of {CANONICAL_TASK_IDS}, got: {normalized}")
     metadata = get_task_metadata(normalized)
     validate_task_axes(
         task_type=normalized,
@@ -123,7 +125,7 @@ class TrainingTaskRequest(BaseModel):
         None  # Admin rerun only: preserve owner from source task
     )
     task_name: str
-    task_type: str  # "classification", "survival", or "segmentation"
+    task_type: str  # Canonical task id from CANONICAL_TASK_IDS.
     data_type: str  # "wsi" or "patch"
     task_description: Optional[str] = None
     dataset_id: Optional[str] = (
@@ -199,7 +201,7 @@ class BaseDatasetRequest(BaseModel):
     dataset_name: Optional[str] = None
     source_organ: Optional[str] = None
     aggregation_level: Optional[str] = None
-    task_type: Optional[str] = None
+    task_type: Optional[str] = "wsi_classification"
     is_public: bool = False
     default_label: Optional[str] = None
     default_event_time: Optional[float] = None
@@ -207,10 +209,9 @@ class BaseDatasetRequest(BaseModel):
 
     @model_validator(mode="after")
     def normalize_task_type_value(self):
-        if self.task_type is None:
-            return self
+        task_type = self.task_type or "wsi_classification"
         self.task_type = _normalize_task_type_for_dataset_axes(
-            self.task_type,
+            task_type,
             aggregation_level=self.aggregation_level,
         )
         return self
@@ -372,7 +373,7 @@ class BatchRegisterRequest(BaseModel):
     scan_root: Optional[str] = (
         None  # Directory used during external scan (for segmentation annotation matching)
     )
-    task_type: str = "classification"  # "classification", "survival", or "segmentation"
+    task_type: str = "wsi_classification"  # Canonical task id from CANONICAL_TASK_IDS.
     is_public: bool = False
     # Classification fields
     default_label: Optional[str] = None  # Default label for classification files
@@ -417,11 +418,11 @@ class StartBatchImportRequest(BaseDatasetRequest):
     selected_paths: List[str] = Field(default_factory=list)
     excluded_paths: List[str] = Field(default_factory=list)
     aggregation_level: Optional[str] = "file"
-    task_type: Optional[str] = "classification"
+    task_type: Optional[str] = "wsi_classification"
 
     @model_validator(mode="after")
     def normalize_task_type_value(self):
-        task_type = self.task_type or "classification"
+        task_type = self.task_type or "wsi_classification"
         aggregation_level = self.aggregation_level or "file"
 
         inferred_data_type = _infer_batch_register_data_type(self.files or [])

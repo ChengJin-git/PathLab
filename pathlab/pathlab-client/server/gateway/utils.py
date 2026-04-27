@@ -317,10 +317,7 @@ def ensure_segmentation_contract(
         return
 
     raw_task_type = task_type.strip().lower()
-    is_segmentation_family_input = raw_task_type in {
-        "segmentation",
-        SEGMENTATION_TASK_TYPE,
-    }
+    is_segmentation_family_input = raw_task_type == SEGMENTATION_TASK_TYPE
 
     normalized_task_type = raw_task_type
     normalized_data_type = data_type.strip().lower() if data_type else None
@@ -333,9 +330,7 @@ def ensure_segmentation_contract(
             aggregation_level=normalized_aggregation or "file",
         )
     except ValueError:
-        # Preserve legacy segmentation contract checks even when task-axis normalization fails.
-        if not is_segmentation_family_input:
-            return
+        return
 
     if normalized_task_type != SEGMENTATION_TASK_TYPE:
         if not is_segmentation_family_input:
