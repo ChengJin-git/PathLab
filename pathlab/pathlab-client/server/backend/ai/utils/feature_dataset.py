@@ -99,7 +99,7 @@ class WSIFeatureDataset(Dataset[Any]):
         labels: Dict mapping wsi_id -> label (int), for classification
         times: Dict mapping wsi_id -> event_time (float), for survival
         statuses: Dict mapping wsi_id -> event_status (int), for survival
-        task_type: "classification" or "survival"
+        task_family: "classification" or "survival"
         device: Target device for features (e.g., 'cuda:0'). If specified,
                 features are loaded directly to this device, avoiding
                 CPU -> GPU transfer overhead in the training loop.
@@ -112,7 +112,7 @@ class WSIFeatureDataset(Dataset[Any]):
         labels: Optional[Dict[str, int]] = None,
         times: Optional[Dict[str, float]] = None,
         statuses: Optional[Dict[str, int]] = None,
-        task_type: str = "classification",
+        task_family: str = "classification",
         device: Optional[str] = None,
     ):
         self.features_dir = Path(features_dir)
@@ -120,7 +120,7 @@ class WSIFeatureDataset(Dataset[Any]):
         self.labels = labels or {}
         self.times = times or {}
         self.statuses = statuses or {}
-        self.task_type = task_type
+        self.task_family = task_family
         self.device = device
         self._feature_dim: Optional[int] = None
 
@@ -162,7 +162,7 @@ class WSIFeatureDataset(Dataset[Any]):
             # Try to cache on CPU for next epoch
             _try_cache(cache_key, loaded_feats)
 
-        if self.task_type == "survival":
+        if self.task_family == "survival":
             time = self.times.get(wsi_id, 0.0)
             status = self.statuses.get(wsi_id, 0)
             return loaded_feats, time, status, wsi_id
@@ -239,7 +239,7 @@ class CaseFeatureDataset(Dataset[Any]):
         labels: Dict mapping case_id -> label (int), for classification
         times: Dict mapping case_id -> event_time (float), for survival
         statuses: Dict mapping case_id -> event_status (int), for survival
-        task_type: "classification" or "survival"
+        task_family: "classification" or "survival"
         device: Target device for features (e.g., 'cuda:0'). If specified,
                 features are loaded directly to this device, avoiding
                 CPU -> GPU transfer overhead in the training loop.
@@ -253,7 +253,7 @@ class CaseFeatureDataset(Dataset[Any]):
         labels: Optional[Dict[str, int]] = None,
         times: Optional[Dict[str, float]] = None,
         statuses: Optional[Dict[str, int]] = None,
-        task_type: str = "classification",
+        task_family: str = "classification",
         device: Optional[str] = None,
     ):
         self.features_dir = Path(features_dir)
@@ -262,7 +262,7 @@ class CaseFeatureDataset(Dataset[Any]):
         self.labels = labels or {}
         self.times = times or {}
         self.statuses = statuses or {}
-        self.task_type = task_type
+        self.task_family = task_family
         self.device = device
         self._feature_dim: Optional[int] = None
 
@@ -312,7 +312,7 @@ class CaseFeatureDataset(Dataset[Any]):
         # Concatenate all slide features
         features = torch.cat(slide_feats, dim=0) if slide_feats else torch.empty(0)
 
-        if self.task_type == "survival":
+        if self.task_family == "survival":
             time = self.times.get(case_id, 0.0)
             status = self.statuses.get(case_id, 0)
             return features, time, status, case_id, wsi_ids, patch_counts
