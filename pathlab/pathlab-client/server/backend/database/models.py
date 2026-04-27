@@ -72,7 +72,7 @@ class DataGroup(TimestampMixin, Base):
     aggregation_level = Column(String(20), nullable=False)  # 'file' | 'case'
     task_type = Column(
         String(50), nullable=False
-    )  # 'classification' | 'survival' | ... (extensible)
+    )  # 'wsi_classification' | 'patch_classification' | 'wsi_survival' | 'patch_segmentation'
 
     # Relationships
     datasets = relationship(
