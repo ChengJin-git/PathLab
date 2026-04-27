@@ -1,4 +1,5 @@
 import type { TrainingTaskStatus } from '../../contexts/backgroundTask/types'
+import type { TaskType } from '../../constants/training'
 
 export interface LogEntry {
   id: number
@@ -13,7 +14,7 @@ export interface LogEntry {
 export interface TaskDetail {
   task_id: string
   task_name: string
-  task_type: 'classification' | 'survival' | 'segmentation' | 'external_validation' | 'batch_inference'
+  task_type: TaskType | 'classification' | 'survival' | 'segmentation' | 'external_validation' | 'batch_inference'
   data_type: 'wsi' | 'patch'
   task_description: string
   status: TrainingTaskStatus

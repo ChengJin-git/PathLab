@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { Layers, Brain, Activity } from 'lucide-react'
 import { Card } from '../ui/card'
 import { TaskDetail } from './types'
-import { isSegFmEncoder } from '../../constants/training'
+import { isSegFmEncoder, isSegmentationTask } from '../../constants/training'
 
 interface ConfigurationPanelProps {
   task: TaskDetail
@@ -86,7 +86,7 @@ const formatStratification = (
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
   const { t } = useTranslation()
   const isExternalValidation = task.task_type === 'external_validation'
-  const isSegmentation = task.task_type === 'segmentation'
+  const isSegmentation = isSegmentationTask(task.task_type)
   const segIsFm = isSegmentation && isSegFmEncoder(task.model_config.backbone)
 
   return (

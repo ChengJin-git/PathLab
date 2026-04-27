@@ -36,6 +36,7 @@ from backend.common.split_generation import (
     generate_split_assignments,
     load_segmentation_multilabels,
 )
+from backend.ai.task_taxonomy import is_canonical_task_type, is_segmentation_task, is_survival_task
 from backend.auth import current_active_user, User
 from backend.auth.dependencies import (
     require_pathologist_or_admin,
@@ -125,7 +126,7 @@ def _is_split_stratification_error(exc: Exception) -> bool:
 
 def _build_export_fieldnames(task_type: str) -> List[str]:
     common = ["filename", "case_id", "age", "gender", "split"]
-    if task_type == "survival":
+    if is_survival_task(task_type):
         return [
             "filename",
             "event_time",
@@ -135,7 +136,7 @@ def _build_export_fieldnames(task_type: str) -> List[str]:
             "gender",
             "split",
         ]
-    if task_type == SEGMENTATION_TASK_TYPE:
+    if is_segmentation_task(task_type):
         return common
     return ["filename", "label", *common[1:]]
 
@@ -148,10 +149,10 @@ def _build_export_row(wsi, task_type: str, split_value: str) -> Dict[str, object
         "gender": wsi.gender or "",
         "split": split_value,
     }
-    if task_type == "survival":
+    if is_survival_task(task_type):
         row["event_time"] = wsi.event_time if wsi.event_time is not None else ""
         row["event_status"] = wsi.event_status if wsi.event_status is not None else ""
-    elif task_type != SEGMENTATION_TASK_TYPE:
+    elif not is_segmentation_task(task_type):
         row["label"] = wsi.label or ""
     return row
 
@@ -171,26 +172,33 @@ def _generate_split_assignments(
     test_ratio: float,
     segmentation_multilabels: Dict[str, Set[str]],
 ) -> tuple[Dict[str, str], bool]:
-    split_kwargs: Dict[str, object] = {
+    split_config: Dict[str, object] = {
         "strategy": strategy,
         "seed": seed,
+        "stratified": stratified,
     }
     if strategy == "k_fold":
-        split_kwargs["n_splits"] = n_splits
+        split_config["n_splits"] = n_splits
     else:
-        split_kwargs["ratios"] = {
+        split_config["ratios"] = {
             "train": train_ratio,
             "val": val_ratio,
             "test": test_ratio,
         }
 
-    if task_type == "survival":
+    survival_task = is_survival_task(task_type)
+    segmentation_task = is_segmentation_task(task_type)
+    splitter_task_type = (
+        "segmentation" if segmentation_task else "survival" if survival_task else "classification"
+    )
+
+    if survival_task:
         labels = {
             wsi.wsi_id: str(wsi.event_status)
             for wsi in wsis
             if wsi.event_status is not None
         }
-    elif task_type == SEGMENTATION_TASK_TYPE:
+    elif segmentation_task:
         labels = {}
     else:
         labels = {wsi.wsi_id: wsi.label for wsi in wsis if wsi.label}
@@ -198,44 +206,12 @@ def _generate_split_assignments(
     wsi_ids = [wsi.wsi_id for wsi in wsis]
 
     try:
-        if aggregation_level == "case":
-            case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
-            case_labels: Dict[str, str] = {}
-            for wsi in wsis:
-                case_id = wsi.case_id or wsi.wsi_id
-                if case_id in case_labels:
-                    continue
-                if task_type == "survival" and wsi.event_status is not None:
-                    case_labels[case_id] = str(wsi.event_status)
-                elif task_type != SEGMENTATION_TASK_TYPE and wsi.label:
-                    case_labels[case_id] = wsi.label
-            return (
-                split_case_dataset(
-                    wsi_ids=wsi_ids,
-                    case_id_map=case_id_map,
-                    multilabels=segmentation_multilabels
-                    if task_type == SEGMENTATION_TASK_TYPE
-                    else None,
-                    labels=case_labels
-                    if stratified and task_type != SEGMENTATION_TASK_TYPE
-                    else None,
-                    **split_kwargs,
-                ),
-                False,
-            )
-
-        return (
-            split_wsi_dataset(
-                wsi_ids=wsi_ids,
-                multilabels=segmentation_multilabels
-                if task_type == SEGMENTATION_TASK_TYPE
-                else None,
-                labels=labels
-                if stratified and task_type != SEGMENTATION_TASK_TYPE
-                else None,
-                **split_kwargs,
-            ),
-            False,
+        return generate_split_assignments(
+            wsis,
+            aggregation_level=aggregation_level,
+            task_type=splitter_task_type,
+            split_config=split_config,
+            segmentation_multilabels=segmentation_multilabels,
         )
     except Exception as exc:
         if _is_split_stratification_error(exc):
@@ -249,31 +225,16 @@ def _generate_split_assignments(
                 stratified,
                 exc,
             )
-            if aggregation_level == "case":
-                case_id_map = {wsi.wsi_id: wsi.case_id or wsi.wsi_id for wsi in wsis}
-                return (
-                    split_case_dataset(
-                        wsi_ids=wsi_ids,
-                        case_id_map=case_id_map,
-                        multilabels=segmentation_multilabels
-                        if task_type == SEGMENTATION_TASK_TYPE
-                        else None,
-                        labels=None,
-                        **split_kwargs,
-                    ),
-                    True,
-                )
-            return (
-                split_wsi_dataset(
-                    wsi_ids=wsi_ids,
-                    multilabels=segmentation_multilabels
-                    if task_type == SEGMENTATION_TASK_TYPE
-                    else None,
-                    labels=None,
-                    **split_kwargs,
-                ),
-                True,
+            fallback_config = dict(split_config)
+            fallback_config["stratified"] = False
+            assignments, _ = generate_split_assignments(
+                wsis,
+                aggregation_level=aggregation_level,
+                task_type=splitter_task_type,
+                split_config=fallback_config,
+                segmentation_multilabels=segmentation_multilabels,
             )
+            return assignments, True
         raise
 
 
@@ -858,10 +819,10 @@ async def update_dataset_type(
     """
     try:
         # Validate task_type
-        if req.task_type not in ["classification", "survival", "segmentation"]:
+        if not is_canonical_task_type(req.task_type):
             raise HTTPException(
                 status_code=400,
-                detail="task_type must be 'classification', 'survival', or 'segmentation'",
+                detail="task_type must be one of the canonical training task ids",
             )
 
         # Check dataset exists (with data_group loaded)
@@ -882,7 +843,7 @@ async def update_dataset_type(
             )
         ensure_dataset_segmentation_contract(dataset, context="Dataset update")
 
-        if req.task_type == "segmentation":
+        if is_segmentation_task(req.task_type):
             ensure_segmentation_contract(
                 req.task_type,
                 current_data_group.data_type,
@@ -894,7 +855,7 @@ async def update_dataset_type(
         from sqlalchemy import update as sql_update
         from backend.database.models import WSISlide
 
-        if req.task_type == "survival":
+        if is_survival_task(req.task_type):
             # Set default event_time=0, event_status=0 for WSIs without event_time
             result = await db.execute(
                 sql_update(WSISlide)
@@ -904,7 +865,7 @@ async def update_dataset_type(
             )
             updated_count = result.rowcount
             message = f"Dataset type changed to survival. Set default event_time/status for {updated_count} slides."
-        elif req.task_type == SEGMENTATION_TASK_TYPE:
+        elif is_segmentation_task(req.task_type):
             result = await db.execute(
                 sql_update(WSISlide)
                 .where(WSISlide.dataset_id == dataset_id)
@@ -1009,7 +970,7 @@ async def update_dataset_data_level(
             dataset, context="Dataset data-level update"
         )
 
-        if current_group.task_type == "segmentation" and aggregation_level != "file":
+        if is_segmentation_task(current_group.task_type) and aggregation_level != "file":
             raise HTTPException(
                 status_code=400,
                 detail="Segmentation datasets must keep aggregation_level='file'",
@@ -1558,7 +1519,7 @@ async def upload_dataset_splits(
     # Access aggregation_level and task_type through the DataGroup relationship
     data_group = dataset.data_group
     aggregation_level = data_group.aggregation_level if data_group else "file"
-    task_type = data_group.task_type if data_group else "classification"
+    task_type = data_group.task_type if data_group else "wsi_classification"
     if task_type == SEGMENTATION_TASK_TYPE:
         label_key = (
             next((h for h in rows[0].keys() if h.strip().lower() == "label"), None)
@@ -1582,7 +1543,7 @@ async def upload_dataset_splits(
                         f"Invalid rows: {', '.join(invalid_rows)}"
                     ),
                 )
-    if aggregation_level == "case" and task_type == "survival":
+    if aggregation_level == "case" and is_survival_task(task_type):
         # Group rows by case_id to check for consistency
         case_groups = {}  # case_id -> [(event_time, event_status, filename), ...]
         case_id_key = (
@@ -1697,7 +1658,7 @@ async def upload_dataset_splits(
 
             val = val.strip()
             if norm_key == "label":
-                if task_type == SEGMENTATION_TASK_TYPE:
+                if is_segmentation_task(task_type):
                     continue
                 target_wsi.label = val
             elif norm_key == "case_id":
@@ -1806,7 +1767,7 @@ async def export_dataset_labels(
     aggregation_level = (
         dataset.data_group.aggregation_level if dataset.data_group else "file"
     )
-    task_type = dataset.data_group.task_type if dataset.data_group else "classification"
+    task_type = dataset.data_group.task_type if dataset.data_group else "wsi_classification"
 
     # Get all WSI slides in dataset
     wsis = await WSIRepository.get_by_dataset(db, dataset_id, skip=0, limit=0)
@@ -1855,12 +1816,18 @@ async def export_dataset_labels(
                 "test": test_ratio,
             },
         }
-        splits, split_fallback_applied = await asyncio.to_thread(
-            generate_split_assignments,
+        splits, split_fallback_applied = _generate_split_assignments(
             wsis,
+            dataset_id=dataset_id,
             aggregation_level=aggregation_level,
             task_type=task_type,
-            split_config=split_config,
+            strategy=strategy,
+            n_splits=n_splits,
+            seed=seed,
+            stratified=stratified,
+            train_ratio=train_ratio,
+            val_ratio=val_ratio,
+            test_ratio=test_ratio,
             segmentation_multilabels=segmentation_multilabels,
         )
 

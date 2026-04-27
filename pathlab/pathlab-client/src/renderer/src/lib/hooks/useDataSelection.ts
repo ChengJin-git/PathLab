@@ -8,7 +8,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { fetchDatasets, fetchWSIList } from '../../api/wsi'
 import type { DatasetSummary } from '../../api/wsi'
 import { getFileType } from '../../constants/fileTypes'
-import { DataLevel, TaskType } from '../../constants/training'
+import { DataLevel, TaskType, getTaskFamily, getTaskMetadata } from '../../constants/training'
 import { WSIItem } from '../../types/training'
 import { useDraftState } from './useDraftState'
 
@@ -195,14 +195,11 @@ export function useDataSelection({
     setSelectedIds(new Set())
   }, [dataLevel, taskType, setSelectedDatasetId, setSelectedDatasetName])
 
-  // Filter datasets by task type
-  // Segmentation tasks may be stored as 'segmentation' or 'patch_segmentation' in backend
+  // Filter datasets by canonical task type while tolerating legacy rows during migration.
   const filteredDatasets = useMemo(() => {
     if (!datasets || datasets.length === 0) return []
-    if (taskType === 'segmentation') {
-      return datasets.filter((d) => d.task_type === 'segmentation' || (d.task_type as string) === 'patch_segmentation')
-    }
-    return datasets.filter((d) => d.task_type === taskType)
+    const currentFamily = getTaskMetadata(taskType).taskFamily
+    return datasets.filter((d) => getTaskFamily(d.task_type) === currentFamily)
   }, [datasets, taskType])
 
   // Filter items by search query
@@ -432,4 +429,3 @@ export function useDataSelection({
     reloadItems,
   }
 }
-

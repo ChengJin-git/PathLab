@@ -265,6 +265,13 @@ describe('scanDirectory', () => {
     expect(body.page).toBe(2)
     expect(body.page_size).toBe(50)
   })
+
+  it('accepts canonical task types in scan options', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ scan_id: 'scan_001', directory: '/data', files: [], total_count: 0, valid_count: 0, total_size: 0, wsi_count: 0, patch_count: 0, page: 1, page_size: 100, total_pages: 0 }))
+    await scanDirectory('/data', { taskType: 'patch_segmentation' })
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.task_type).toBe('patch_segmentation')
+  })
 })
 
 describe('startBatchImportTask', () => {

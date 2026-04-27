@@ -206,7 +206,7 @@ async def test_run_task_analysis_admin_skips_dataset_access_check(monkeypatch):
         return (
             types.SimpleNamespace(
                 task_id=_task_id,
-                data_group=types.SimpleNamespace(task_type="classification"),
+                data_group=types.SimpleNamespace(task_type="wsi_classification"),
             ),
             dataset_id,
         )

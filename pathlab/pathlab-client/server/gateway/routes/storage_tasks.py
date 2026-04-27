@@ -39,6 +39,7 @@ from ..models import (
     StartDeleteDatasetRequest,
     StartDeleteExternalRequest,
     StartBatchUpdateMetadataRequest,
+    _normalize_task_type_for_dataset_axes,
 )
 from ..scan_sessions import get_scan_session, resolve_scan_selection
 from ..utils import (
@@ -53,6 +54,7 @@ from ..utils import (
     load_coco_annotation_file,
     SEGMENTATION_TASK_TYPE,
 )
+from backend.ai.task_taxonomy import is_classification_task, is_segmentation_task, is_survival_task, normalize_task_type
 from backend.ai.schemas.base import TaskStatus
 from backend.annotation.summary_cache import (
     get_dataset_annotation_summary_cache_path,
@@ -184,7 +186,9 @@ async def _run_batch_import_task(
             source_organ = request_params.get("source_organ")
             scan_root = request_params.get("scan_root")
             aggregation_level = request_params.get("aggregation_level", "file")
-            task_type = request_params.get("task_type", "classification")
+            task_type = normalize_task_type(
+                task_type=request_params.get("task_type", "wsi_classification")
+            )
             is_public = request_params.get("is_public", False)
             default_label = request_params.get("default_label")
             default_event_time = request_params.get("default_event_time")
@@ -201,7 +205,7 @@ async def _run_batch_import_task(
             resolved_dataset_name = None
             target_dataset = None
 
-            if task_type == "segmentation" and aggregation_level != "file":
+            if is_segmentation_task(task_type) and aggregation_level != "file":
                 await StorageTaskRepository.update_status(
                     db,
                     task_id,
@@ -252,7 +256,7 @@ async def _run_batch_import_task(
                 ]
                 anchor_path = None
                 data_type = "patch"
-                if task_type == "segmentation":
+                if is_segmentation_task(task_type):
                     if all(
                         file_data_type in {"wsi", "patch"}
                         for file_data_type in batch_file_data_types
@@ -368,7 +372,7 @@ async def _run_batch_import_task(
             existing_set = {wsi.original_filename for wsi in existing_wsi}
             annotation_index = (
                 build_segmentation_annotation_index(scan_root)
-                if task_type == "segmentation" and scan_root
+                if is_segmentation_task(task_type) and scan_root
                 else None
             )
 
@@ -490,10 +494,10 @@ async def _run_batch_import_task(
                     }
 
                     # Set label or survival data based on task type
-                    if task_type == "survival":
+                    if is_survival_task(task_type):
                         wsi_data["event_time"] = default_event_time
                         wsi_data["event_status"] = default_event_status
-                    elif task_type == "segmentation":
+                    elif is_segmentation_task(task_type):
                         if file_data_type != "patch":
                             results.append(
                                 {
@@ -566,7 +570,7 @@ async def _run_batch_import_task(
                         )
 
                     # For segmentation tasks: import matched COCO JSON annotation file
-                    if task_type == "segmentation":
+                    if is_segmentation_task(task_type):
                         annotation_id = f"label_{wsi_id}"
                         await SegmentationAnnotationRepository.upsert(
                             db,
@@ -639,7 +643,7 @@ async def _run_batch_import_task(
             await db.commit()
 
             if (
-                task_type == "segmentation"
+                is_segmentation_task(task_type)
                 and resolved_dataset_id
                 and success_count > 0
             ):
@@ -1391,7 +1395,8 @@ async def start_batch_import_task(
     Progress can be monitored via SSE at /storage/tasks/stream
     """
     try:
-        if request.task_type == "segmentation" and request.aggregation_level != "file":
+        canonical_request_task_type = normalize_task_type(task_type=request.task_type)
+        if is_segmentation_task(canonical_request_task_type) and request.aggregation_level != "file":
             raise HTTPException(
                 status_code=400,
                 detail="Segmentation batch import must use aggregation_level='file'",
@@ -1882,8 +1887,14 @@ def _build_batch_import_task_params(
     resolved_files: list[dict[str, Any]],
     resolved_scan_root: str | None,
 ) -> dict[str, Any]:
+    task_type_normalized = _normalize_task_type_for_dataset_axes(
+        request.task_type or "wsi_classification",
+        aggregation_level=request.aggregation_level,
+    )
     default_label = (
-        request.default_label if request.task_type == "classification" else None
+        request.default_label
+        if is_classification_task(task_type_normalized)
+        else None
     )
     return {
         "files": resolved_files,

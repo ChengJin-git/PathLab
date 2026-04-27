@@ -262,7 +262,7 @@ async def scan_directory(
         directory = request.directory_path
         page = max(1, request.page)
         page_size = min(max(1, request.page_size), 500)
-        include_annotation_json = request.task_type == "segmentation"
+        include_annotation_json = request.task_type == "patch_segmentation"
 
         if request.scan_id:
             session = get_scan_session(request.scan_id, str(user.id))

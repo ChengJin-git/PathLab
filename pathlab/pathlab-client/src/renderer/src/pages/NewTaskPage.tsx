@@ -40,7 +40,11 @@ import { formatFileSize } from '../lib/utils'
 import {
   FEATURE_EXTRACTORS,
   FM_SEGMENTATION_ARCHITECTURE,
+  getTaskMetadata,
   isSegFmEncoder,
+  isClassificationTask,
+  isSegmentationTask,
+  isSurvivalTask,
   SEG_TRAINING_DEFAULTS,
   TRAINING_DEFAULTS,
 } from '../constants/training'
@@ -79,6 +83,9 @@ export default function NewTaskPage() {
   // Get COCO category count for segmentation datasets
   const selectedDataset = dataSelection.datasets.find(d => d.dataset_id === dataSelection.selectedDatasetId)
   const numCocoCategories = selectedDataset?.num_coco_categories
+  const selectedTaskMetadata = getTaskMetadata(wizard.taskType)
+  const selectedDataLevel = selectedTaskMetadata.dataType
+  const selectedAggregationLevel = selectedDataset?.aggregation_level ?? 'file'
   const effectiveSelectedCount = dataSelection.isWholeDatasetSelected
     ? dataSelection.selectedDatasetFileCount
     : dataSelection.selectedIds.size
@@ -88,6 +95,7 @@ export default function NewTaskPage() {
     selectedIds: dataSelection.selectedIds,
     taskType: wizard.taskType,
     dataLevel: wizard.dataLevel,
+    aggregationLevel: selectedAggregationLevel,
     selectedCount: effectiveSelectedCount,
     numCocoCategories,
   })
@@ -176,11 +184,11 @@ export default function NewTaskPage() {
 
   // Auto-adjust default parameters when taskType changes
   useEffect(() => {
-    if (wizard.taskType === 'survival') {
+    if (isSurvivalTask(wizard.taskType)) {
       trainingConfig.setLearningRate(TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(30)
       trainingConfig.setTrainBatchSize(TRAINING_DEFAULTS.batchSize)
-    } else if (wizard.taskType === 'segmentation') {
+    } else if (isSegmentationTask(wizard.taskType)) {
       trainingConfig.setLearningRate(SEG_TRAINING_DEFAULTS.learningRate)
       trainingConfig.setEpochs(SEG_TRAINING_DEFAULTS.epochs)
       trainingConfig.setTrainBatchSize(SEG_TRAINING_DEFAULTS.batchSize)
@@ -379,13 +387,13 @@ export default function NewTaskPage() {
   }) => {
     if (!editingWSI) return
     void runUpdating(async () => {
-      const isSegmentationTask = wizard.taskType === 'segmentation'
+      const isSegmentation = isSegmentationTask(wizard.taskType)
       const age = data.age ? parseInt(data.age) : undefined
       const event_time = data.event_time ? parseFloat(data.event_time) : undefined
       const event_status = data.event_status ? parseInt(data.event_status) : undefined
 
       await updateWSIMetadata(editingWSI.wsi_id, {
-        label: isSegmentationTask ? undefined : (data.label || undefined),
+        label: isSegmentation ? undefined : (data.label || undefined),
         case_id: data.case_id,
         age: age,
         gender: data.gender,
@@ -420,9 +428,9 @@ export default function NewTaskPage() {
     event_status: string
   }) => {
     if (dataSelection.selectedIds.size === 0) return
-    const isSegmentationTask = wizard.taskType === 'segmentation'
+    const isSegmentation = isSegmentationTask(wizard.taskType)
     const hasUpdates =
-      (!isSegmentationTask && data.label) ||
+      (!isSegmentation && data.label) ||
       data.case_id ||
       data.age ||
       data.gender ||
@@ -440,7 +448,7 @@ export default function NewTaskPage() {
 
       const request = {
         wsi_ids: Array.from(dataSelection.selectedIds),
-        label: isSegmentationTask ? undefined : (data.label || undefined),
+        label: isSegmentation ? undefined : (data.label || undefined),
         case_id: data.case_id || undefined,
         age: age,
         gender: data.gender || undefined,
@@ -501,19 +509,19 @@ export default function NewTaskPage() {
           strategy: 'k_fold',
           n_splits: trainingConfig.kFoldSplits,
           seed: trainingConfig.randomSeed,
-          ...(wizard.taskType === 'segmentation' ? { stratified: trainingConfig.stratified } : {}),
+          ...(isSegmentationTask(wizard.taskType) ? { stratified: trainingConfig.stratified } : {}),
         }
       } else {
         splitConfig = {
           strategy: 'random',
           ratios: { train: 0.7, val: 0.1, test: 0.2 },
           seed: trainingConfig.randomSeed,
-          ...(wizard.taskType === 'segmentation' ? { stratified: trainingConfig.stratified } : {}),
+          ...(isSegmentationTask(wizard.taskType) ? { stratified: trainingConfig.stratified } : {}),
         }
       }
 
       // Build model config based on task type
-      const isSegTask = wizard.taskType === 'segmentation'
+      const isSegTask = isSegmentationTask(wizard.taskType)
       const isSegFmTask = isSegTask && isSegFmEncoder(trainingConfig.segBackbone)
       const modelConfig = isSegTask
         ? {
@@ -529,9 +537,9 @@ export default function NewTaskPage() {
             early_stopping_patience: trainingConfig.earlyStoppingPatience,
           }
         : {
-            aggregator: wizard.dataLevel === 'wsi' ? trainingConfig.aggregator : 'none',
-            backbone: wizard.dataLevel === 'patch' ? trainingConfig.featureExtractor : undefined,
-            classifier: wizard.dataLevel === 'patch' ? trainingConfig.classifier : undefined,
+            aggregator: selectedDataLevel === 'wsi' ? trainingConfig.aggregator : 'none',
+            backbone: selectedDataLevel === 'patch' ? trainingConfig.featureExtractor : undefined,
+            classifier: selectedDataLevel === 'patch' ? trainingConfig.classifier : undefined,
             learning_rate: trainingConfig.learningRate,
             epochs: trainingConfig.epochs,
             optimizer: trainingConfig.optimizer,
@@ -547,7 +555,7 @@ export default function NewTaskPage() {
         task_id: taskId,
         task_name: wizard.taskName,
         task_type: wizard.taskType,
-        data_type: wizard.dataLevel,
+        data_type: selectedDataLevel,
         task_description: wizard.taskDescription,
         // Use dataset_id for whole-dataset selection, otherwise pass individual wsi_ids
         ...(dataSelection.isWholeDatasetSelected
@@ -626,12 +634,12 @@ export default function NewTaskPage() {
     }
 
     // Skip label-derived validations for whole-dataset selection; backend validates against full dataset.
-    if (!dataSelection.isWholeDatasetSelected && wizard.taskType === 'classification') {
+    if (!dataSelection.isWholeDatasetSelected && isClassificationTask(wizard.taskType)) {
       const classes = Object.keys(splitValidation.classDistribution).filter((k) => k !== '__unlabeled__')
       if (classes.length < 2) {
         errors.push(t('newTask.validation.classificationMinClasses'))
       }
-    } else if (!dataSelection.isWholeDatasetSelected && wizard.taskType === 'survival') {
+    } else if (!dataSelection.isWholeDatasetSelected && isSurvivalTask(wizard.taskType)) {
       const eventCount = splitValidation.classDistribution['__event__'] || 0
       const censoredCount = splitValidation.classDistribution['__censored__'] || 0
       if (eventCount === 0 || censoredCount === 0) {

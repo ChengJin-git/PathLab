@@ -10,6 +10,7 @@ import { Label } from '../../ui/label'
 import { Badge } from '../../ui/badge'
 import { Checkbox } from '../../ui/checkbox'
 import { ScanDirectoryResponse, DatasetSummary } from '../../../api'
+import { isSegmentationTask, isSurvivalTask, type TaskType } from '../../../constants/training'
 import { DataLevelSelection } from './DataLevelSelection'
 import { DatasetSelection } from './DatasetSelection'
 
@@ -25,8 +26,8 @@ interface BatchScanResultsProps {
   batchRegistering: boolean
   batchImportTaskId: string | null
   batchDatasets: DatasetSummary[]
-  batchTaskType: 'classification' | 'survival' | 'segmentation'
-  setBatchTaskType: (type: 'classification' | 'survival' | 'segmentation') => void
+  batchTaskType: TaskType
+  setBatchTaskType: (type: TaskType) => void
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
   batchIsPublic: boolean
@@ -67,6 +68,8 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
   formatFileSize
 }) => {
   const { t } = useTranslation()
+  const isSegmentation = isSegmentationTask(batchTaskType)
+  const isSurvival = isSurvivalTask(batchTaskType)
 
   return (
     <div className="space-y-4">
@@ -105,7 +108,7 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
               <th className="px-3 py-3 text-left w-16 font-semibold text-gray-700">{t('settings.storage.type')}</th>
               <th className="px-3 py-3 text-left w-20 font-semibold text-gray-700">{t('settings.storage.format')}</th>
               <th className="px-3 py-3 text-right w-24 font-semibold text-gray-700">{t('settings.storage.size')}</th>
-              {batchTaskType === 'segmentation' && (
+              {isSegmentation && (
                 <th className="px-3 py-3 text-left w-20 font-semibold text-gray-700" title={t('settings.storage.annotationJsonTooltip')}>JSON</th>
               )}
               <th className="px-3 py-3 text-left w-32 font-semibold text-gray-700">{t('settings.storage.status')}</th>
@@ -146,7 +149,7 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
                 <td className="px-3 py-3 text-right text-gray-500">
                   {formatFileSize(file.size)}
                 </td>
-                {batchTaskType === 'segmentation' && (
+                {isSegmentation && (
                   <td className="px-3 py-3">
                     {file.has_annotation_json ? (
                       <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded bg-teal-50 text-teal-700" title={t('settings.storage.annotationJsonFound')}>
@@ -218,43 +221,43 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => setBatchTaskType('classification')}
+            onClick={() => setBatchTaskType('wsi_classification')}
             className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              batchTaskType === 'classification'
+              !isSurvival && !isSegmentation
                 ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
                 : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
             }`}
           >
             <div className="flex items-center justify-center gap-2">
-              <Layers className={`w-4 h-4 ${batchTaskType === 'classification' ? 'text-primary-700' : 'text-gray-400'}`} />
+              <Layers className={`w-4 h-4 ${!isSurvival && !isSegmentation ? 'text-primary-700' : 'text-gray-400'}`} />
               {t('settings.storage.classification')}
             </div>
           </button>
           <button
             type="button"
-            onClick={() => setBatchTaskType('survival')}
+            onClick={() => setBatchTaskType('wsi_survival')}
             className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              batchTaskType === 'survival'
+              isSurvival
                 ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
                 : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
             }`}
           >
             <div className="flex items-center justify-center gap-2">
-              <Clock className={`w-4 h-4 ${batchTaskType === 'survival' ? 'text-primary-700' : 'text-gray-400'}`} />
+              <Clock className={`w-4 h-4 ${isSurvival ? 'text-primary-700' : 'text-gray-400'}`} />
               {t('settings.storage.survivalAnalysis')}
             </div>
           </button>
           <button
             type="button"
-            onClick={() => setBatchTaskType('segmentation')}
+            onClick={() => setBatchTaskType('patch_segmentation')}
             className={`flex-1 px-4 py-2.5 rounded-lg text-sm font-medium transition-all ${
-              batchTaskType === 'segmentation'
+              isSegmentation
                 ? 'bg-primary-100 text-primary-900 border-2 border-primary-300 shadow-sm'
                 : 'bg-white text-gray-500 border border-gray-100 hover:border-primary-200 hover:text-primary-600'
             }`}
           >
             <div className="flex items-center justify-center gap-2">
-              <Grid3X3 className={`w-4 h-4 ${batchTaskType === 'segmentation' ? 'text-primary-700' : 'text-gray-400'}`} />
+              <Grid3X3 className={`w-4 h-4 ${isSegmentation ? 'text-primary-700' : 'text-gray-400'}`} />
               {t('settings.storage.segmentation')}
             </div>
           </button>
@@ -263,9 +266,9 @@ export const BatchScanResults: React.FC<BatchScanResultsProps> = ({
         <div className="flex items-start gap-2 p-3 bg-white rounded-lg border border-slate-100">
           <Info className="w-4 h-4 text-primary-500 mt-0.5 flex-shrink-0" />
           <div className="text-xs text-gray-600">
-            {batchTaskType === 'classification'
+            {!isSurvival && !isSegmentation
               ? t('settings.storage.classificationInfo')
-              : batchTaskType === 'segmentation'
+              : isSegmentation
                 ? t('settings.storage.segmentationInfo')
                 : t('settings.storage.survivalInfo')
             }

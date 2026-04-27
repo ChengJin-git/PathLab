@@ -17,6 +17,7 @@ from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.coords_cache import compute_params_hash
+from backend.ai.task_taxonomy import normalize_task_type, validate_task_axes
 from backend.ai.tasks.patch_cache import (
     acquire_coords_lock,
     find_valid_cached_coords_summary,
@@ -38,7 +39,7 @@ from backend.common.file_types import (
 from .dependencies import logger, AI_SERVICE_URL, PREPROCESSING_SERVICE_URL
 
 
-SEGMENTATION_TASK_TYPE = "segmentation"
+SEGMENTATION_TASK_TYPE = "patch_segmentation"
 SEGMENTATION_DATA_TYPE = "patch"
 SEGMENTATION_AGGREGATION_LEVEL = "file"
 PROXY_BINARY_CACHE_HEADER_NAMES = (
@@ -312,12 +313,49 @@ def ensure_segmentation_contract(
     context: str,
 ) -> None:
     """Raise HTTP 400 when a segmentation combination violates the patch/file contract."""
-    if task_type != SEGMENTATION_TASK_TYPE:
+    if task_type is None:
         return
 
+    raw_task_type = task_type.strip().lower()
+    is_segmentation_family_input = raw_task_type in {
+        "segmentation",
+        SEGMENTATION_TASK_TYPE,
+    }
+
+    normalized_task_type = raw_task_type
+    normalized_data_type = data_type.strip().lower() if data_type else None
+    normalized_aggregation = aggregation_level.strip().lower() if aggregation_level else None
+
+    try:
+        normalized_task_type = normalize_task_type(
+            task_type=normalized_task_type,
+            data_type=normalized_data_type,
+            aggregation_level=normalized_aggregation or "file",
+        )
+    except ValueError:
+        # Preserve legacy segmentation contract checks even when task-axis normalization fails.
+        if not is_segmentation_family_input:
+            return
+
+    if normalized_task_type != SEGMENTATION_TASK_TYPE:
+        if not is_segmentation_family_input:
+            return
+        normalized_task_type = SEGMENTATION_TASK_TYPE
+
+    if normalized_data_type is not None and normalized_aggregation is not None:
+        try:
+            validate_task_axes(
+                task_type=normalized_task_type,
+                data_type=normalized_data_type,
+                aggregation_level=normalized_aggregation,
+            )
+            return
+        except ValueError:
+            pass
+
     if (
-        data_type != SEGMENTATION_DATA_TYPE
-        or aggregation_level != SEGMENTATION_AGGREGATION_LEVEL
+        normalized_data_type != SEGMENTATION_DATA_TYPE
+        or normalized_aggregation != SEGMENTATION_AGGREGATION_LEVEL
     ):
         raise HTTPException(
             status_code=400,

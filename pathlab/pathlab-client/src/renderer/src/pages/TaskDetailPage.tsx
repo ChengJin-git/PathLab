@@ -25,6 +25,7 @@ import {
 import { formatDateTime } from '../lib/utils'
 import { getBatchInferenceSummary, getBatchInferenceResults, exportBatchInferenceCsv } from '../api/batchInference'
 import type { BatchInferenceSummary, BatchInferenceResult } from '../api/batchInference'
+import { isSegmentationTask } from '../constants/training'
 
 const makeSyntheticTask = (
   taskId: string,
@@ -32,7 +33,7 @@ const makeSyntheticTask = (
 ): TaskDetail => ({
   task_id: taskId,
   task_name: options?.taskName || taskId,
-  task_type: 'classification',
+  task_type: 'wsi_classification',
   data_type: options?.dataType || 'wsi',
   task_description: '',
   status: options?.status || 'creating',
@@ -476,7 +477,7 @@ export default function TaskDetailPage() {
           auto_balance: task.model_config.auto_balance ?? false,
           early_stopping_patience: task.model_config.early_stopping_patience,
           // Segmentation-specific fields
-          ...(task.task_type === 'segmentation' ? {
+          ...(isSegmentationTask(task.task_type) ? {
             architecture: task.model_config.architecture,
             loss_names: task.model_config.loss_names,
             loss_weights: task.model_config.loss_weights,

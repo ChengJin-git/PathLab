@@ -31,6 +31,7 @@ import {
   downloadCSVTemplate,
 } from '@renderer/api/wsi'
 import { invalidateHeatmapAvailabilityCache } from '@renderer/api/heatmap'
+import * as clientApi from '@renderer/api/client'
 import { setAuthToken } from '@renderer/api/client'
 
 const mockFetch = vi.mocked(fetch)
@@ -183,6 +184,13 @@ describe('fetchDatasets', () => {
     expect(url).toContain('task_type=survival')
   })
 
+  it('accepts canonical task_type filters', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
+    await fetchDatasets(undefined, { task_type: 'wsi_survival' })
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('task_type=wsi_survival')
+  })
+
   it('filters by aggregation_level', async () => {
     mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
     await fetchDatasets(undefined, { aggregation_level: 'file' })
@@ -277,6 +285,14 @@ describe('updateDatasetType', () => {
     const body = JSON.parse(opts?.body as string)
     expect(body.task_type).toBe('survival')
     expect(result.new_type).toBe('survival')
+  })
+
+  it('accepts canonical task_type values', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ message: 'ok', dataset_id: 'ds_1', new_type: 'wsi_survival', updated_count: 50 }))
+    const result = await updateDatasetType('ds_1', 'wsi_survival')
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.task_type).toBe('wsi_survival')
+    expect(result.new_type).toBe('wsi_survival')
   })
 })
 
@@ -441,7 +457,7 @@ describe('downloadCSVTemplate', () => {
     } as unknown as Response)
     await downloadCSVTemplate()
     const [url] = mockFetch.mock.calls[0]
-    expect(url).toContain('task_type=classification')
+    expect(url).toContain('task_type=wsi_classification')
     vi.stubGlobal('URL', origURL)
     appendSpy.mockRestore()
     removeSpy.mockRestore()
@@ -464,5 +480,49 @@ describe('downloadCSVTemplate', () => {
     vi.stubGlobal('URL', origURL)
     appendSpy.mockRestore()
     removeSpy.mockRestore()
+  })
+
+  it('fetches segmentation template when task_type is canonical patch_segmentation', async () => {
+    const origURL = globalThis.URL
+    vi.stubGlobal('URL', { createObjectURL: vi.fn().mockReturnValue('blob:url'), revokeObjectURL: vi.fn() })
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n) => n)
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/csv' }),
+      blob: () => Promise.resolve(new Blob(['wsi_path,label'])),
+    } as unknown as Response)
+    await downloadCSVTemplate('patch_segmentation')
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('task_type=patch_segmentation')
+    vi.stubGlobal('URL', origURL)
+    appendSpy.mockRestore()
+    removeSpy.mockRestore()
+  })
+
+  it('maps canonical survival task_type to survival template filename', async () => {
+    const origURL = globalThis.URL
+    vi.stubGlobal('URL', { createObjectURL: vi.fn().mockReturnValue('blob:url'), revokeObjectURL: vi.fn() })
+    const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
+    const removeSpy = vi.spyOn(document.body, 'removeChild').mockImplementation((n) => n)
+    const downloadSpy = vi.spyOn(clientApi, 'downloadBlobFile')
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/csv' }),
+      blob: () => Promise.resolve(new Blob(['wsi_path,event_time,event_status'])),
+    } as unknown as Response)
+
+    await downloadCSVTemplate('wsi_survival')
+
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('task_type=wsi_survival')
+    expect(downloadSpy).toHaveBeenCalled()
+    expect(downloadSpy.mock.calls[0][1]).toBe('wsi_survival_metadata_template.csv')
+    vi.stubGlobal('URL', origURL)
+    appendSpy.mockRestore()
+    removeSpy.mockRestore()
+    downloadSpy.mockRestore()
   })
 })

@@ -29,7 +29,7 @@ const mockFetch = vi.mocked(fetch)
 const MOCK_TASK = {
   task_id: 'task_001',
   task_name: 'BRCA Classification',
-  task_type: 'classification',
+  task_type: 'wsi_classification',
   data_type: 'wsi',
   task_description: 'BRCA subtype classification',
   status: 'completed',
@@ -134,7 +134,7 @@ describe('getTrainingTask', () => {
 describe('createTrainingTask', () => {
   const baseConfig: TrainingTaskConfig = {
     task_name: 'Test Task',
-    task_type: 'classification',
+    task_type: 'wsi_classification',
     data_type: 'wsi',
     task_description: 'Test',
     dataset_id: 'ds_1',
@@ -182,6 +182,30 @@ describe('createTrainingTask', () => {
     expect(body.task_name).toBe('Test Task')
     expect(body.preprocessing.feature_extractor).toBe('uni')
     expect(body.model.aggregator).toBe('abmil')
+  })
+
+  it('accepts and sends canonical patch segmentation task ids', async () => {
+    const segmentationConfig: TrainingTaskConfig = {
+      ...baseConfig,
+      task_type: 'patch_segmentation',
+      data_type: 'patch',
+      model: {
+        backbone: 'resnet50',
+        architecture: 'unet',
+        learning_rate: 1e-4,
+        epochs: 20,
+        optimizer: 'adam',
+        batch_size: 4,
+        loss_names: ['dice'],
+        loss_weights: [1],
+      },
+    }
+
+    mockFetch.mockResolvedValueOnce(ok({ ...MOCK_TASK, wsi_count: 50 }))
+    await createTrainingTask(segmentationConfig)
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.task_type).toBe('patch_segmentation')
+    expect(body.data_type).toBe('patch')
   })
 
   it('invalidates training tasks cache after creation', async () => {

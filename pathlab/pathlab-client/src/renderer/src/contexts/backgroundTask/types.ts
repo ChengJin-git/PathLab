@@ -4,6 +4,7 @@
 
 import type { TrainingTaskDetail } from '../../api/training'
 import type { UploadSplitsResponse } from '../../api/wsi'
+import type { TaskType as CanonicalTrainingTaskType } from '../../constants/training'
 
 // Task types - includes server-side training tasks and storage tasks
 export type TaskType = 'upload' | 'delete_wsi' | 'delete_task' | 'training' | 'external_validation' | 'batch_inference' | 'analysis' | 'migration' | 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'delete_dataset' | 'cleanup_empty_datasets' | 'unbind_dataset' | 'reset_derived_data' | 'metadata_upload' | 'extraction'
@@ -16,7 +17,7 @@ export type StorageTaskType = 'batch_import' | 'delete_external' | 'batch_update
 export type TrainingTaskStatus = 'creating' | 'pending' | 'queued' | 'resuming' | 'patching' | 'extracting' | 'training' | 'completed' | 'failed' | 'cancelled'
 
 // Server task type from backend
-export type ServerTaskType = 'classification' | 'survival' | 'segmentation' | 'external_validation' | 'batch_inference'
+export type ServerTaskType = CanonicalTrainingTaskType | 'classification' | 'survival' | 'segmentation' | 'external_validation' | 'batch_inference'
 
 // Individual task item (e.g., one file in a batch)
 export interface TaskItem {
@@ -64,7 +65,7 @@ export interface MetadataUploadTaskConfig {
   csvFile: File              // Already-converted CSV file (or raw CSV if user selected CSV)
   datasetName: string        // Dataset name to find/poll for
   datasetId?: string         // If already known
-  uploadMode: 'classification' | 'survival' | 'segmentation'
+  uploadMode: CanonicalTrainingTaskType | 'classification' | 'survival' | 'segmentation'
   dataLevel: 'file' | 'case'
 }
 
@@ -86,7 +87,7 @@ export interface UploadTaskFile {
     source_organ?: string  // Source organ/tissue for new dataset
     aggregation_level?: 'case' | 'file'  // Aggregation level for new dataset
     is_public?: boolean
-    task_type?: 'classification' | 'survival' | 'segmentation'
+    task_type?: CanonicalTrainingTaskType | 'classification' | 'survival' | 'segmentation'
     label?: string
     case_id?: string
     age?: number

@@ -99,7 +99,7 @@ class ExtvalDatasetInfo(TypedDict):
 
 
 def _is_extval_segmentation_task(task_type: Optional[str]) -> bool:
-    return task_type in ("segmentation", "patch_segmentation")
+    return task_type == "patch_segmentation"
 
 
 def _norm_labels(labels: List[str]) -> List[str]:
@@ -112,12 +112,12 @@ def check_extval_compatibility(
 ) -> Optional[str]:
     model_data_type = model_info["data_type"]
     model_task_type = model_info["task_type"]
-    model_is_survival = model_task_type in ("wsi_survival", "survival")
+    model_is_survival = model_task_type == "wsi_survival"
     model_is_seg = _is_extval_segmentation_task(model_task_type)
 
     ds_data_type = dataset_info["data_type"]
     ds_task_type = dataset_info["task_type"]
-    ds_is_survival = ds_task_type in ("wsi_survival", "survival")
+    ds_is_survival = ds_task_type == "wsi_survival"
     ds_is_seg = _is_extval_segmentation_task(ds_task_type)
 
     if ds_data_type != model_data_type:
@@ -505,7 +505,7 @@ async def _run_external_validation_segmentation_analysis(
 
     summary = {
         "task_id": task_id,
-        "task_type": "segmentation",
+        "task_type": "patch_segmentation",
         "timestamp": utc_timestamp_z(),
         "description": request.description,
         "num_samples": len(image_results),
@@ -551,7 +551,7 @@ async def _run_external_validation_segmentation_analysis(
         analysis_dir / "results.json",
         {
             "task_id": task_id,
-            "task_type": "segmentation",
+            "task_type": "patch_segmentation",
             "num_samples": len(image_results),
             "num_with_ground_truth": num_with_ground_truth,
             "num_classes": num_classes,
@@ -1201,7 +1201,7 @@ async def _run_external_validation_analysis(
             progress_config=progress_config,
             submitted_by=submitted_by,
         )
-    elif model_task_type in ("survival", "wsi_survival"):
+    elif model_task_type == "wsi_survival":
         return await _run_external_validation_survival_analysis(
             task,
             request,

@@ -1,5 +1,6 @@
 import { API_BASE } from '../config'
 import { createPersistentCache, PERSISTENT_CACHE_TTL } from '../lib/cache'
+import type { TaskType } from '../constants/training'
 import { apiFetch } from './client'
 
 // ============================================================================
@@ -460,7 +461,7 @@ export interface ScanDirectoryResponse {
 
 export interface ScanDirectoryOptions {
   scanId?: string
-  taskType?: 'classification' | 'survival' | 'segmentation'
+  taskType?: TaskType | 'classification' | 'survival' | 'segmentation'
   page?: number
   pageSize?: number
 }
@@ -506,7 +507,7 @@ export interface BatchRegisterRequest {
   selected_paths?: string[]
   excluded_paths?: string[]
   aggregation_level?: 'case' | 'file'
-  task_type?: 'classification' | 'survival' | 'segmentation'
+  task_type?: TaskType | 'classification' | 'survival' | 'segmentation'
   is_public?: boolean
   default_label?: string
   default_event_time?: number

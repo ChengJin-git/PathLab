@@ -31,6 +31,7 @@ SegmentationAnnotationRepository = _repositories.SegmentationAnnotationRepositor
 WSIRepository = _repositories.WSIRepository
 TrainingLogger = import_module("backend.database.utils.training_logger").TrainingLogger
 Config = import_module("backend.common.config").Config
+_task_taxonomy = import_module("backend.ai.task_taxonomy")
 from .dependencies import logger, AI_SERVICE_URL
 from .utils import cancel_ai_service_training, ensure_coords_ready
 
@@ -47,6 +48,11 @@ def _get_gpu_utils_module():
 
 def _get_results_route_module():
     return import_module("gateway.routes.results")
+
+
+def _training_task_family(training_task_type: str) -> str:
+    normalized = str(training_task_type or "wsi_classification").strip().lower()
+    return _task_taxonomy.get_task_metadata(normalized).task_family
 
 
 async def _ensure_gpu_vram_for_step(
@@ -858,9 +864,11 @@ async def run_training_pipeline(
                 f"Starting training pipeline for task: {task_id} (data_type: {data_type})"
             )
 
+        task_family = _training_task_family(training_task_type)
+
         # For patch-level tasks, route based on training_task_type
         if data_type == "patch":
-            if training_task_type == "segmentation":
+            if task_family == "segmentation":
                 preprocessing_config = dict(preprocessing_config or {})
                 async with logger_manager.session() as (logger, db):
                     await logger.info("Patch-level segmentation task detected")
@@ -1137,7 +1145,7 @@ async def run_training_pipeline(
             await logger.info(f"Calling AI service to train {aggregator.upper()} model")
 
         # Use correct endpoint based on training_task_type
-        if training_task_type == "survival":
+        if task_family == "survival":
             endpoint = f"{AI_SERVICE_URL}/api/ai/training/wsi_survival"
             payload = {
                 "task_id": task_id,

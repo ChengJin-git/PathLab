@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
-import { TaskType, DataLevel } from '../../constants/training'
+import { TaskType, DataLevel, TASK_TYPES, getTaskMetadata } from '../../constants/training'
 
 export interface TaskSetupStepProps {
   taskName: string
@@ -128,18 +128,23 @@ export function TaskSetupStep({
             <div>
               <label className="block text-xs sm:text-sm font-semibold text-gray-800 mb-2">{t('training.taskSetup.taskTypeLabel')}</label>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                <RadioOption
-                  selected={taskType === 'classification'}
-                  onClick={() => setTaskType('classification')}
-                  title={t('training.taskSetup.classification')}
-                  subtitle={t('training.taskSetup.categoricalLabels')}
-                />
-                <RadioOption
-                  selected={dataLevel === 'patch' ? taskType === 'segmentation' : taskType === 'survival'}
-                  onClick={() => setTaskType(dataLevel === 'patch' ? 'segmentation' : 'survival')}
-                  title={dataLevel === 'patch' ? t('training.taskSetup.segmentation') : t('training.taskSetup.survivalPrediction')}
-                  subtitle={dataLevel === 'patch' ? t('training.taskSetup.segmentationMasks') : t('training.taskSetup.timeToEvent')}
-                />
+                {TASK_TYPES.map((option) => {
+                  const metadata = getTaskMetadata(option.value)
+                  const subtitle = metadata.taskFamily === 'survival'
+                    ? t('training.taskSetup.timeToEvent')
+                    : metadata.taskFamily === 'segmentation'
+                      ? t('training.taskSetup.segmentationMasks')
+                      : t('training.taskSetup.categoricalLabels')
+                  return (
+                    <RadioOption
+                      key={option.value}
+                      selected={taskType === option.value}
+                      onClick={() => setTaskType(option.value)}
+                      title={t(`training.taskSetup.${option.value}`)}
+                      subtitle={subtitle}
+                    />
+                  )
+                })}
               </div>
             </div>
 

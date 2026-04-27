@@ -22,15 +22,101 @@ export interface SelectOption<T = string> {
 // ============================================================================
 
 /**
- * Available task types for training.
+ * Canonical training task ids. Keep data shape and aggregation separate:
+ * dataType describes WSI vs patch data, while aggregation levels describe file/case organization.
  */
-export const TASK_TYPES: readonly SelectOption[] = [
-  { value: 'classification', label: 'Classification' },
-  { value: 'survival', label: 'Survival Prediction' },
-  { value: 'segmentation', label: 'Segmentation' }
+export const TASK_TYPES = [
+  { value: 'wsi_classification', label: 'WSI Classification' },
+  { value: 'patch_classification', label: 'Patch Classification' },
+  { value: 'wsi_survival', label: 'WSI Survival' },
+  { value: 'patch_segmentation', label: 'Patch Segmentation' },
 ] as const
 
-export type TaskType = 'classification' | 'survival' | 'segmentation'
+export type TaskType = typeof TASK_TYPES[number]['value']
+export type TaskFamily = 'classification' | 'survival' | 'segmentation'
+export type AggregationLevel = 'file' | 'case'
+
+export interface TaskMetadata {
+  taskType: TaskType
+  label: string
+  taskFamily: TaskFamily
+  dataType: DataLevel
+  allowedAggregationLevels: readonly AggregationLevel[]
+}
+
+export const TASK_METADATA_BY_ID: Record<TaskType, TaskMetadata> = {
+  wsi_classification: {
+    taskType: 'wsi_classification',
+    label: 'WSI Classification',
+    taskFamily: 'classification',
+    dataType: 'wsi',
+    allowedAggregationLevels: ['file', 'case'],
+  },
+  patch_classification: {
+    taskType: 'patch_classification',
+    label: 'Patch Classification',
+    taskFamily: 'classification',
+    dataType: 'patch',
+    allowedAggregationLevels: ['file'],
+  },
+  wsi_survival: {
+    taskType: 'wsi_survival',
+    label: 'WSI Survival',
+    taskFamily: 'survival',
+    dataType: 'wsi',
+    allowedAggregationLevels: ['file', 'case'],
+  },
+  patch_segmentation: {
+    taskType: 'patch_segmentation',
+    label: 'Patch Segmentation',
+    taskFamily: 'segmentation',
+    dataType: 'patch',
+    allowedAggregationLevels: ['file'],
+  },
+}
+
+export function getTaskMetadata(taskType: TaskType): TaskMetadata {
+  return TASK_METADATA_BY_ID[taskType]
+}
+
+export function getTaskFamily(taskType: string | null | undefined): TaskFamily | null {
+  if (isCanonicalTaskType(taskType)) return TASK_METADATA_BY_ID[taskType].taskFamily
+  if (taskType === 'classification') return 'classification'
+  if (taskType === 'survival') return 'survival'
+  if (taskType === 'segmentation') return 'segmentation'
+  return null
+}
+
+export function toCanonicalTaskType(
+  taskType: string | null | undefined,
+  dataType: DataLevel = 'wsi'
+): TaskType | null {
+  if (isCanonicalTaskType(taskType)) return taskType
+  if (taskType === 'classification') return dataType === 'patch' ? 'patch_classification' : 'wsi_classification'
+  if (taskType === 'survival') return 'wsi_survival'
+  if (taskType === 'segmentation') return 'patch_segmentation'
+  return null
+}
+
+export function toLegacyTaskFamily(taskType: string | null | undefined): TaskFamily | null {
+  return getTaskFamily(taskType)
+}
+
+export function isCanonicalTaskType(taskType: string | null | undefined): taskType is TaskType {
+  return typeof taskType === 'string' && taskType in TASK_METADATA_BY_ID
+}
+
+export function isClassificationTask(taskType: string | null | undefined): boolean {
+  return isCanonicalTaskType(taskType) && getTaskFamily(taskType) === 'classification'
+}
+
+export function isSurvivalTask(taskType: string | null | undefined): boolean {
+  return isCanonicalTaskType(taskType) && getTaskFamily(taskType) === 'survival'
+}
+
+export function isSegmentationTask(taskType: string | null | undefined): boolean {
+  return isCanonicalTaskType(taskType) && getTaskFamily(taskType) === 'segmentation'
+}
 
 // ============================================================================
 // Data Levels
@@ -575,4 +661,3 @@ export const SPLIT_DEFAULTS: SplitDefaults = {
   stratified: true,
   splitRatio: 70,
 }
-

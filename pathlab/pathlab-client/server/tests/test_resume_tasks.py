@@ -5,7 +5,7 @@ from backend.ai.schemas.base import TaskStatus
 from gateway.task_queue import TaskType
 
 
-def _make_task(task_id, status, data_type="wsi", task_type="classification"):
+def _make_task(task_id, status, data_type="wsi", task_type="wsi_classification"):
     task = MagicMock()
     task.task_id = task_id
     task.task_name = f"Task {task_id}"

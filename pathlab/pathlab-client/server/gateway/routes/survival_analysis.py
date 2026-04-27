@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from backend.ai.schemas.base import TaskStatus
+from backend.ai.task_taxonomy import normalize_task_type
 from backend.common.config import Config
 from backend.database.models import TrainingTaskWSI
 from backend.database.repositories import TrainingTaskRepository
@@ -39,6 +40,13 @@ from .analysis_metrics import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _canonical_analysis_task_type(task) -> str:
+    return normalize_task_type(
+        task_type=getattr(task, "task_type", "wsi_survival"),
+        data_type=getattr(task, "data_type", "wsi"),
+    )
 
 
 async def _run_survival_analysis(
@@ -365,7 +373,7 @@ async def _run_survival_analysis(
     # Save Summary
     summary = {
         "task_id": task_id,
-        "task_type": "survival",
+        "task_type": _canonical_analysis_task_type(task),
         "timestamp": utc_timestamp_z(),
         "description": request.description,
         "num_samples": len(risks),

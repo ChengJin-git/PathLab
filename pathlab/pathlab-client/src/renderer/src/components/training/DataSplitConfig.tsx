@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { Card } from '../ui/card'
 import { Button } from '../ui/button'
 import { Layers, AlertCircle, CheckCircle2, UploadCloud } from 'lucide-react'
-import { SplitStrategy, TaskType, KFOLD_MAX_SPLITS } from '../../constants/training'
+import { SplitStrategy, TaskType, KFOLD_MAX_SPLITS, isSegmentationTask } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation } from '../../types/training'
 
 export interface DataSplitConfigProps {
@@ -48,7 +48,7 @@ export function DataSplitConfig({
 }: DataSplitConfigProps) {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const showStratifiedToggle = taskType === 'segmentation' && splitStrategy !== 'manual'
+  const showStratifiedToggle = isSegmentationTask(taskType) && splitStrategy !== 'manual'
 
   return (
     <Card className="mt-6 p-6">
@@ -191,7 +191,7 @@ function RandomSplitDetails({
   validation: RandomSplitValidation
 }) {
   const { t } = useTranslation()
-  const isSegmentation = taskType === 'segmentation'
+  const isSegmentation = isSegmentationTask(taskType)
 
   return (
     <div className="space-y-3">

@@ -6,6 +6,7 @@ import { useNavigate } from 'react-router-dom'
 import { downloadTrainedModelExport } from '../../api'
 import { Card, CardContent } from '../ui/card'
 import { cn } from '../../lib/utils'
+import { isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 export interface ModelInfo {
   id: string
@@ -128,8 +129,8 @@ export function ModelListCard({ config, onToast }: ModelListCardProps) {
 
       <div className="flex flex-col gap-2">
         {visibleModels.map((model, index) => {
-          const isSegType = model.task_type === 'segmentation' || model.task_type === 'patch_segmentation'
-          const isSurvival = model.task_type === 'survival'
+          const isSegType = isSegmentationTask(model.task_type)
+          const isSurvival = isSurvivalTask(model.task_type)
           const isExporting = exportingModelId === model.id
 
           return (

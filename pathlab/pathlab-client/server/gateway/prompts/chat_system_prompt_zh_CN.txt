@@ -415,7 +415,7 @@ AI 回复：
     {
       "id": "model_uuid_1",
       "name": "肺癌分类器",
-      "task_type": "classification",
+      "task_type": "wsi_classification",
       "data_type": "wsi",
       "feature_extractor": "resnet50",
       "embedding_dim": 2048,
@@ -425,7 +425,7 @@ AI 回复：
     {
       "id": "model_uuid_2",
       "name": "生存预测模型",
-      "task_type": "survival",
+      "task_type": "wsi_survival",
       "data_type": "wsi",
       "feature_extractor": "uni",
       "embedding_dim": 1024,
@@ -543,7 +543,7 @@ AI 回复：
 [DATASET_REGISTRATION]
 {
   "dataset_name": "新乳腺癌数据集",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "file"
 }
 [/DATASET_REGISTRATION]
@@ -552,7 +552,7 @@ AI 回复：
 **[DATASET_REGISTRATION] 字段说明：**
 - `dataset_id`：（可选）要追加的现有数据集 ID。省略则创建新数据集。
 - `dataset_name`：（可选）新数据集名称。创建新数据集时必填。
-- `upload_mode`："classification"（默认）、"survival" 或 "segmentation"。
+- `upload_mode`："wsi_classification"、"patch_classification"、"wsi_survival" 或 "patch_segmentation"。
 - `aggregation_level`："file"（标准）或 "case"（仅 WSI）。
 
 **验证规则：**
@@ -572,7 +572,7 @@ AI 回复：
 {
   "task_name": "肺癌分类",
   "task_description": "使用 ABMIL 对肺腺癌与鳞状细胞癌进行分类",
-  "task_type": "classification",
+  "task_type": "wsi_classification",
   "data_type": "wsi",
   "dataset_id": "dataset_abc123",
   "encoder": "resnet50",
@@ -602,7 +602,7 @@ AI 回复：
 {
   "task_name": "肿瘤 Patch 分类",
   "task_description": "使用 CONCH 特征提取器 + MLP 头对肿瘤与正常 patch 进行分类",
-  "task_type": "classification",
+  "task_type": "wsi_classification",
   "data_type": "patch",
   "dataset_id": "dataset_abc123",
   "encoder": "conch",
@@ -624,7 +624,7 @@ AI 回复：
 {
   "task_name": "组织分割",
   "task_description": "使用 U-Net + ResNet-50 骨干网络进行组织区域分割",
-  "task_type": "segmentation",
+  "task_type": "patch_segmentation",
   "data_type": "patch",
   "dataset_id": "dataset_abc123",
   "seg_architecture": "unet",
@@ -648,7 +648,7 @@ AI 回复：
 {
   "task_name": "肿瘤区域分割（FM）",
   "task_description": "使用冻结的 Virchow 特征提取器和固定卷积解码器（默认，最稳定）进行肿瘤区域分割",
-  "task_type": "segmentation",
+  "task_type": "patch_segmentation",
   "data_type": "patch",
   "dataset_id": "dataset_abc123",
   "seg_architecture": "conv_decoder",
@@ -848,7 +848,7 @@ AI 回复：
 [DATASET_REGISTRATION]
 {
   "dataset_name": "肺癌2024",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "case",
   "initial_view": "new"
 }
@@ -862,7 +862,7 @@ AI 回复：
 [DATASET_REGISTRATION]
 {
   "dataset_name": "图像块数据集",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "file",
   "initial_view": "new"
 }
@@ -886,7 +886,7 @@ AI 回复：
 [DATASET_REGISTRATION]
 {
   "dataset_name": "组织分割",
-  "upload_mode": "segmentation",
+  "upload_mode": "patch_segmentation",
   "aggregation_level": "file",
   "initial_view": "new"
 }
@@ -942,7 +942,7 @@ AI 回复：
 [METADATA_UPLOAD]
 {
   "dataset_name": "肺癌2024",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "case"
 }
 [/METADATA_UPLOAD]
@@ -959,7 +959,7 @@ AI 回复：
 [METADATA_UPLOAD]
 {
   "dataset_name": "组织分割",
-  "upload_mode": "segmentation",
+  "upload_mode": "patch_segmentation",
   "aggregation_level": "file"
 }
 [/METADATA_UPLOAD]
@@ -970,7 +970,7 @@ AI 回复：
 **[METADATA_UPLOAD] 字段说明：**
 - `dataset_id`：（可选）已知数据集 UUID（用于现有数据集）。
 - `dataset_name`：（可选）用于查找的数据集名称（用于新创建的数据集）。
-- `upload_mode`："classification"、"survival" 或 "segmentation"——决定所需的列。
+- `upload_mode`："wsi_classification"、"patch_classification"、"wsi_survival" 或 "patch_segmentation"——决定所需的列。
 - `aggregation_level`："file" 或 "case"——用于显示。
 
 **CSV/Excel 按 upload_mode 所需列：**
@@ -1308,7 +1308,7 @@ AI 回复：
 ```
 
 **数据注册流程中的分割引导：**
-当用户在数据注册流程中选择 upload_mode="segmentation" 时，注册完成后主动引导标注：
+当用户在数据注册流程中选择 upload_mode="patch_segmentation" 时，注册完成后主动引导标注：
 ```
 数据集注册完成！分割任务需要先对 WSI 进行标注才能训练。接下来您想做什么？
 
@@ -1862,8 +1862,8 @@ AI 回复：
 - "给我看一下我的 kfold 任务" → split_strategy: "k_fold"
 - "给我看随机划分的任务" → split_strategy: "random"
 - "给我看手动划分的任务" → split_strategy: "manual"
-- "给我看分类任务" → task_type: "classification"
-- "给我看生存预测任务" → task_type: "survival"
+- "给我看分类任务" → task_type: "wsi_classification"
+- "给我看生存预测任务" → task_type: "wsi_survival"
 
 ### 查看训练进度流程
 
@@ -2074,7 +2074,7 @@ AI 回复：
   "dataset_id": "dataset_xyz789",
   "model_name": "肺癌分类器",
   "dataset_name": "TCGA-LUAD",
-  "task_type": "classification"
+  "task_type": "wsi_classification"
 }
 [/BATCH_INFERENCE_CONFIG]
 ```

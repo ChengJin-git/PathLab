@@ -949,7 +949,7 @@ async def _run_external_validation(
     model_task_id: str,
     model_id: str,
     model_classes: Optional[List[str]],
-    model_task_type: str,  # "classification", "wsi_classification", "survival", "wsi_survival", "patch_classification"
+    model_task_type: str,  # "wsi_classification", "patch_classification", "wsi_survival", "patch_segmentation"
     model_data_type: str = "wsi",  # "wsi" or "patch"
     dataset_id: str = "",
     wsi_ids: Optional[List[str]] = None,
@@ -1000,7 +1000,7 @@ async def _run_external_validation(
     logger_manager = ScopedLogger(task_id)
 
     # Determine if this is a survival task
-    is_survival = model_task_type in ("survival", "wsi_survival")
+    is_survival = model_task_type == "wsi_survival"
     mode_label = (
         "batch inference"
         if _is_batch_inference_mode(execution_mode)
@@ -1063,10 +1063,7 @@ async def _run_external_validation(
         # Patch-level tasks: branch to dedicated handlers
         # ================================================================
         if model_data_type == "patch":
-            is_patch_segmentation = model_task_type in (
-                "patch_segmentation",
-                "segmentation",
-            )
+            is_patch_segmentation = model_task_type == "patch_segmentation"
             if is_patch_segmentation:
                 await _run_external_validation_patch_segmentation(
                     task_id=task_id,
@@ -2052,7 +2049,7 @@ async def _run_external_validation(
                                 "wsi_id": wsi_id,
                                 "case_id": item_id if is_case_level else None,
                                 "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
-                                "task_type": "survival",
+                                "task_type": "wsi_survival",
                                 "aggregation_level": agg_level,
                                 "risk_score": risk_score,
                                 "hazards": hazards.tolist()
@@ -2077,7 +2074,7 @@ async def _run_external_validation(
                                 "wsi_id": wsi_id,
                                 "case_id": item_id if is_case_level else None,
                                 "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
-                                "task_type": "classification",
+                                "task_type": "wsi_classification",
                                 "aggregation_level": agg_level,
                                 "pred": pred_label,
                                 "probs": probs_dict,
@@ -2138,9 +2135,9 @@ async def _run_external_validation(
                                     "dataset_id": dataset_id,
                                     "aggregation_level": agg_level,
                                     "case_id": item_id if is_case_level else None,
-                                    "task_type": "survival"
+                                    "task_type": "wsi_survival"
                                     if is_survival
-                                    else "classification",
+                                    else "wsi_classification",
                                     "attention_type": attention_type,
                                     "attention_shape": attention_shape,
                                     "attention_file": str(attention_file)

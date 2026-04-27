@@ -19,7 +19,7 @@ import {
   Check,
   Eye,
 } from 'lucide-react'
-import { TaskType, SplitStrategy } from '../../constants/training'
+import { TaskType, SplitStrategy, isSegmentationTask, isSurvivalTask } from '../../constants/training'
 import { KFoldValidation, RandomSplitValidation, WSIItem } from '../../types/training'
 import { DatasetSummary } from '../../api'
 import { WSIDataTable } from './WSIDataTable'
@@ -298,6 +298,8 @@ function DatasetGrid({
 }) {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const isSurvival = isSurvivalTask(taskType)
+  const isSegmentation = isSegmentationTask(taskType)
 
   if (datasetsLoading) {
     return (
@@ -313,16 +315,16 @@ function DatasetGrid({
       <div className="text-center py-12 sm:py-16 bg-gray-50/50 rounded-2xl border-2 border-dashed border-gray-200">
         <FolderOpen className="w-12 h-12 mx-auto mb-4 text-gray-300" />
         <p className="text-base sm:text-lg font-bold text-gray-700">
-          {taskType === 'survival'
+          {isSurvival
             ? t('training.dataSelection.noSurvivalDatasets')
-            : taskType === 'segmentation'
+            : isSegmentation
               ? t('training.dataSelection.noSegmentationDatasets')
               : t('training.dataSelection.noClassificationDatasets')}
         </p>
         <p className="text-xs sm:text-sm text-gray-500 mt-1">
-          {taskType === 'survival'
+          {isSurvival
             ? t('training.dataSelection.registerSurvivalHint')
-            : taskType === 'segmentation'
+            : isSegmentation
               ? t('training.dataSelection.registerSegmentationHint')
               : t('training.dataSelection.registerClassificationHint')}
         </p>

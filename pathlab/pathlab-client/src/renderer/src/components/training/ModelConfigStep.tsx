@@ -26,6 +26,7 @@ import {
   isSegFmEncoder,
   FmDecoderType,
   FM_DECODER_TYPES,
+  isSegmentationTask,
 } from '../../constants/training'
 
 export interface ModelConfigStepProps {
@@ -123,7 +124,7 @@ export function ModelConfigStep({
 }: ModelConfigStepProps) {
   const { t } = useTranslation()
 
-  const isSegmentation = taskType === 'segmentation'
+  const isSegmentation = isSegmentationTask(taskType)
 
   // Backbone search & group filter state
   const [backboneSearch, setBackboneSearch] = useState('')

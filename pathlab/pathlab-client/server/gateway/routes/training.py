@@ -44,6 +44,7 @@ from gateway.training_preflight import (
     build_training_preflight_policy,
     check_training_inputs,
 )
+from backend.ai.task_taxonomy import normalize_task_type
 
 router = APIRouter(prefix="/tasks/training", tags=["Training Tasks"])
 
@@ -190,6 +191,7 @@ async def create_training_task(
         expected_task_type = None
         expected_data_type = None
         expected_aggregation_level = "file"
+        requested_task_type = req.task_type
 
         # --- Session 1: Read-only validations (fetch WSIs, check permissions, check storage tasks) ---
         async with safe_session() as db:
@@ -265,9 +267,17 @@ async def create_training_task(
                 data_group = ensure_dataset_segmentation_contract(
                     dataset, context="Training dataset"
                 )
+                try:
+                    normalized_group_task_type = normalize_task_type(
+                        task_type=data_group.task_type,
+                        data_type=data_group.data_type,
+                        aggregation_level=data_group.aggregation_level,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
                 group_contracts.add(
                     (
-                        data_group.task_type,
+                        normalized_group_task_type,
                         data_group.data_type,
                         data_group.aggregation_level,
                     )
@@ -283,15 +293,26 @@ async def create_training_task(
                 expected_task_type, expected_data_type, expected_aggregation_level = (
                     group_contracts.pop()
                 )
-                if req.task_type != expected_task_type:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Requested task_type '{req.task_type}' does not match dataset task_type '{expected_task_type}'",
-                    )
+
                 if req.data_type != expected_data_type:
                     raise HTTPException(
                         status_code=400,
                         detail=f"Requested data_type '{req.data_type}' does not match dataset data_type '{expected_data_type}'",
+                    )
+
+                try:
+                    requested_task_type = normalize_task_type(
+                        task_type=req.task_type,
+                        data_type=req.data_type,
+                        aggregation_level=expected_aggregation_level,
+                    )
+                except ValueError as e:
+                    raise HTTPException(status_code=400, detail=str(e))
+
+                if requested_task_type != expected_task_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Requested task_type '{requested_task_type}' does not match dataset task_type '{expected_task_type}'",
                     )
 
             # Check GPU permission for non-GPU users (in same session)
@@ -312,38 +333,53 @@ async def create_training_task(
         # --- Session 2: Write - create task and WSI associations ---
         async with safe_session() as db:
             aggregation_level = expected_aggregation_level
-
-            # Get or create DataGroup for this training task
-            data_group = await DataGroupRepository.get_or_create(
-                db,
-                data_type=req.data_type,  # 'wsi' or 'patch'
-                aggregation_level=aggregation_level,  # 'file' or 'case'
-                task_type=req.task_type,  # 'classification' or 'survival'
-            )
-
-            # Prepare task data
-            task_data = {
-                "task_id": task_id,
-                "task_name": req.task_name,
-                "task_type": req.task_type,  # Add task_type for validation
-                "group_id": data_group.group_id,
-                "task_description": req.task_description,
-                "preprocessing_config": req.preprocessing,
-                "model_config": req.model,
-                "user_id": effective_task_owner_user_id,
-            }
-
-            # Create training task with pre-fetched WSIs (avoids redundant DB query)
-            split_config_dict = req.split_config.dict() if req.split_config else None
-            pipeline_preprocessing_config = dict(req.preprocessing or {})
-            if split_config_dict is not None:
-                pipeline_preprocessing_config["split_config"] = split_config_dict
-            # Preserve the original WSI ordering used to resolve `wsi_ids`.
-            # Survival/random/k-fold split generation is order-sensitive when
-            # stratified splitting shuffles indices with a fixed seed, so we
-            # must keep the same order as dataset export / selection flows.
-            prefetched_wsis = [wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map]
             try:
+                # Get or create DataGroup for this training task
+                data_group = await DataGroupRepository.get_or_create(
+                    db,
+                    data_type=req.data_type,  # 'wsi' or 'patch'
+                    aggregation_level=aggregation_level,  # 'file' or 'case'
+                    task_type=requested_task_type,
+                )
+
+                resolved_data_group_task_type = normalize_task_type(
+                    task_type=str(data_group.task_type),
+                    data_type=str(data_group.data_type),
+                    aggregation_level=str(data_group.aggregation_level),
+                )
+                if resolved_data_group_task_type != requested_task_type:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Resolved data_group task_type '{resolved_data_group_task_type}' "
+                            f"does not match requested task_type '{requested_task_type}'"
+                        ),
+                    )
+
+                # Prepare task data
+                task_data = {
+                    "task_id": task_id,
+                    "task_name": req.task_name,
+                    "task_type": requested_task_type,
+                    "group_id": data_group.group_id,
+                    "task_description": req.task_description,
+                    "preprocessing_config": req.preprocessing,
+                    "model_config": req.model,
+                    "user_id": effective_task_owner_user_id,
+                }
+
+                # Create training task with pre-fetched WSIs (avoids redundant DB query)
+                split_config_dict = req.split_config.dict() if req.split_config else None
+                pipeline_preprocessing_config = dict(req.preprocessing or {})
+                if split_config_dict is not None:
+                    pipeline_preprocessing_config["split_config"] = split_config_dict
+                # Preserve the original WSI ordering used to resolve `wsi_ids`.
+                # Survival/random/k-fold split generation is order-sensitive when
+                # stratified splitting shuffles indices with a fixed seed, so we
+                # must keep the same order as dataset export / selection flows.
+                prefetched_wsis = [
+                    wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map
+                ]
                 task = await TrainingTaskRepository.create(
                     db,
                     task_data,
@@ -359,7 +395,7 @@ async def create_training_task(
         logger.info(f"Created training task: {task_id}")
         logger.info(f"  - Task name: {req.task_name}")
         logger.info(
-            f"  - Task type: {req.task_type} (from DataGroup: {data_group.task_type})"
+            f"  - Task type: {requested_task_type} (from DataGroup: {data_group.task_type})"
         )
         logger.info(
             f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}"
@@ -378,7 +414,7 @@ async def create_training_task(
             "preprocessing_config": pipeline_preprocessing_config,
             "model_config": req.model,
             "huggingface_token": huggingface_token,
-            "training_task_type": req.task_type,
+            "training_task_type": requested_task_type,
             "user_id": str(user.id),
             "user_is_admin": user.is_admin(),
         }

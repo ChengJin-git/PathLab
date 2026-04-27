@@ -158,7 +158,7 @@ from .chat_llm_client import (
 router.include_router(chat_conversation_router)
 router.include_router(chat_pdf_router)
 
-SEGMENTATION_TASK_TYPES = {"segmentation", "patch_segmentation"}
+SEGMENTATION_TASK_TYPES = {"patch_segmentation"}
 ACTIVE_TRAINING_STATUSES = {
     "pending",
     "queued",

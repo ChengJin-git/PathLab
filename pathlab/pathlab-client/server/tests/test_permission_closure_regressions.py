@@ -101,7 +101,7 @@ def test_build_batch_import_task_params_keeps_visibility_flags():
         dataset_name=None,
         source_organ="lung",
         aggregation_level="file",
-        task_type="classification",
+        task_type="wsi_classification",
         default_label="tumor",
         default_event_time=None,
         default_event_status=None,
@@ -131,7 +131,7 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
             group_id="group-1",
             data_type=kwargs.get("data_type", "wsi"),
             aggregation_level=kwargs.get("aggregation_level", "file"),
-            task_type=kwargs.get("task_type", "classification"),
+            task_type=kwargs.get("task_type", "wsi_classification"),
         )
 
     async def _fake_get_or_create_dataset(db, dataset_name, **kwargs):
@@ -223,7 +223,7 @@ async def test_upload_by_path_uses_request_visibility_flags_for_new_dataset(
         dataset_name="new-dataset",
         source_organ="lung",
         aggregation_level="file",
-        task_type="classification",
+        task_type="wsi_classification",
         is_public=True,
         wsi_id="wsi-1",
         case_id="case-1",

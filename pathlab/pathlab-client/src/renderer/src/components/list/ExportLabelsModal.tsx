@@ -5,6 +5,7 @@ import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { ModalShell } from '../ui/modal-shell'
 import type { DatasetSummary, ExportLabelsOptions } from '../../api/wsi'
+import { isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 export type { ExportLabelsOptions } from '../../api/wsi'
 
@@ -71,8 +72,8 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
             </p>
             <p className="text-xs sm:text-sm text-gray-600">
               <span className="font-medium">{t('listPage.type')}:</span>{' '}
-              {dataset.task_type === 'survival' ? t('listPage.survival') : 
-               dataset.task_type === 'segmentation' ? t('listPage.segmentation') : 
+              {isSurvivalTask(dataset.task_type) ? t('listPage.survival') : 
+               isSegmentationTask(dataset.task_type) ? t('listPage.segmentation') : 
                t('listPage.classification')}
               {' '}({dataset.aggregation_level === 'case' ? t('listPage.patientLevel') : t('listPage.fileLevel')})
             </p>
@@ -214,4 +215,3 @@ export function ExportLabelsModal({ dataset, onConfirm, onCancel }: ExportLabels
     </ModalShell>
   )
 }
-

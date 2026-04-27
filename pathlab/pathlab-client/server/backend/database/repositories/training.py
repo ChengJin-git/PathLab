@@ -48,6 +48,11 @@ from backend.common.split_generation import (
     generate_split_assignments,
     load_segmentation_multilabels,
 )
+from backend.ai.task_taxonomy import (
+    is_classification_task,
+    is_segmentation_task,
+    is_survival_task,
+)
 
 
 def _build_segmentation_wsi_lookups(
@@ -272,15 +277,24 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
         task_type = task_data.get("task_type", "classification")
         classes = sorted(list(set(wsi.label for wsi in wsis if wsi.label)))
         segmentation_multilabels: Dict[str, Set[str]] = {}
+        task_type_normalized = str(task_type).strip().lower()
+        try:
+            classification_task = is_classification_task(task_type_normalized)
+            survival_task = is_survival_task(task_type_normalized)
+            segmentation_task = is_segmentation_task(task_type_normalized)
+        except ValueError:
+            classification_task = task_type_normalized == "classification"
+            survival_task = task_type_normalized == "survival"
+            segmentation_task = task_type_normalized == "segmentation"
 
-        if task_type == "segmentation":
+        if segmentation_task:
             classes, segmentation_multilabels = await load_segmentation_multilabels(db, wsis)
             if not classes:
                 raise ValueError(
                     "Segmentation tasks require at least one COCO category in the selected dataset."
                 )
 
-        if task_type == "classification":
+        if classification_task:
             # Classification tasks require at least 2 classes
             if len(classes) < 2:
                 raise ValueError(
@@ -288,7 +302,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                     f"Found {len(classes)} class(es): {classes}. "
                     f"Please assign different labels to your slides."
                 )
-        elif task_type == "survival":
+        elif survival_task:
             # Survival tasks require both event (status=1) and censored (status=0) samples
             event_statuses = set(
                 wsi.event_status
@@ -346,11 +360,21 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                         if group_row:
                             aggregation_level = group_row[0]
                             task_type_from_group = group_row[1]
+                task_family_for_splitter = "classification"
+                normalized_group_task_type = str(task_type_from_group).strip().lower()
+                try:
+                    if is_survival_task(normalized_group_task_type):
+                        task_family_for_splitter = "survival"
+                    elif is_segmentation_task(normalized_group_task_type):
+                        task_family_for_splitter = "segmentation"
+                except ValueError:
+                    if normalized_group_task_type in {"survival", "segmentation"}:
+                        task_family_for_splitter = normalized_group_task_type
                 wsi_splits, _ = await asyncio.to_thread(
                     generate_split_assignments,
                     wsis,
                     aggregation_level=aggregation_level,
-                    task_type=task_type_from_group,
+                    task_type=task_family_for_splitter,
                     split_config=split_config,
                     segmentation_multilabels=segmentation_multilabels,
                 )

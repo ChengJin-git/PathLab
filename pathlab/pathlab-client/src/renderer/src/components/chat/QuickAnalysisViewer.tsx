@@ -12,6 +12,7 @@ import {
   formatMetricName,
   formatMetricValue
 } from '../../constants/metrics'
+import { isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 // Metric value type
 export type MetricValue = number | { value: number; ci_lower: number; ci_upper: number }
@@ -69,16 +70,6 @@ const METRIC_ICONS: Record<string, React.ReactNode> = {
   mean_iou: <Layers className="w-4 h-4" />,
   mean_dice: <Layers className="w-4 h-4" />,
   pixel_accuracy: <Target className="w-4 h-4" />,
-}
-
-/** Check if task type is segmentation */
-function isSegmentationTask(taskType: string): boolean {
-  return taskType === 'segmentation' || taskType === 'patch_segmentation'
-}
-
-/** Check if task type is survival */
-function isSurvivalTask(taskType: string): boolean {
-  return taskType === 'survival' || taskType === 'wsi_survival' || taskType === 'external_validation_survival'
 }
 
 /** Get header gradient classes based on task type */
@@ -742,4 +733,3 @@ export function QuickAnalysisViewer({ config, onError, onDataLoaded }: QuickAnal
     </div>
   )
 }
-

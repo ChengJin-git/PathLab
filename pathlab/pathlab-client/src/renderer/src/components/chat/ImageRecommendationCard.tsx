@@ -19,6 +19,7 @@ import {
   type AvailableHeatmap
 } from '../../api'
 import { getFileType } from '../../constants/fileTypes'
+import { isSegmentationTask } from '../../constants/training'
 import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
 
 type SegmentationMaskSource = 'gt' | 'model_pred' | 'both'
@@ -300,7 +301,7 @@ function dedupeLatestResultsByWsi(items: ResultWithWSI[]): ResultWithWSI[] {
 }
 
 function getLatestSegmentationMaskOverlay(overlays: AvailableHeatmap[], taskId?: string): AvailableHeatmap | undefined {
-  const segmentationOverlays = overlays.filter(o => o.data_type === 'patch_segmentation')
+  const segmentationOverlays = overlays.filter(o => isSegmentationTask(o.task_type))
   if (segmentationOverlays.length === 0) return undefined
   return taskId
     ? segmentationOverlays.find(o => o.task_id === taskId) ?? segmentationOverlays[0]
@@ -842,7 +843,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
             if (recommendation.heatmap_filter) {
               const { feature_extractor, aggregator } = recommendation.heatmap_filter
               overlays = overlays.filter(h => {
-                if (h.data_type === 'patch_segmentation') {
+                if (isSegmentationTask(h.task_type)) {
                   return true
                 }
                 // Filter by feature_extractor if specified
@@ -957,7 +958,7 @@ export function ImageRecommendationCard({ recommendation }: ImageRecommendationC
   }).length
 
   const imagesWithPredictionMaskCount = imagesWithOverlays.filter(({ overlays }) =>
-    overlays.some(o => o.data_type === 'patch_segmentation')
+    overlays.some(o => isSegmentationTask(o.task_type))
   ).length
 
   return (

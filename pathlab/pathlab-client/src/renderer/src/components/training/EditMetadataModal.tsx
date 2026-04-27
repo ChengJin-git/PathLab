@@ -8,7 +8,7 @@ import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Edit2 } from 'lucide-react'
 import { ModalShell } from '../ui/modal-shell'
-import { TaskType } from '../../constants/training'
+import { TaskType, isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 export interface WSIEditInfo {
   wsi_id: string
@@ -57,8 +57,8 @@ export function EditMetadataModal({ taskType, editingWSI, updating, onConfirm, o
     onConfirm({ label, case_id: caseId, age, gender, event_time: eventTime, event_status: eventStatus })
   }
 
-  const isSurvival = taskType === 'survival'
-  const isSegmentation = taskType === 'segmentation'
+  const isSurvival = isSurvivalTask(taskType)
+  const isSegmentation = isSegmentationTask(taskType)
   const labelHint = t('training.editMetadata.labelHint')
 
   return (

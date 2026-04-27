@@ -45,6 +45,7 @@ import { fetchDatasets } from '../../api/wsi'
 import type { DatasetSummary } from '../../api/wsi'
 import { formatFileSize } from '../../lib/utils'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
+import { isSegmentationTask, type TaskType } from '../../constants/training'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { MigrationModal } from './MigrationModal'
 import {
@@ -110,12 +111,12 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const [batchRegistering, runBatchRegistering] = useAsyncAction<void>({ onError: (err) => setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartImport')) })
   const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
-  const [batchTaskType, setBatchTaskTypeRaw] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [batchTaskType, setBatchTaskTypeRaw] = useState<TaskType>('wsi_classification')
   const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
   const [batchIsPublic, setBatchIsPublic] = useState(false)
-  const setBatchTaskType = (type: 'classification' | 'survival' | 'segmentation') => {
+  const setBatchTaskType = (type: TaskType) => {
     setBatchTaskTypeRaw(type)
-    if (type === 'segmentation') setBatchDataLevel('file')
+    if (isSegmentationTask(type)) setBatchDataLevel('file')
   }
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
@@ -248,7 +249,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   }
 
   useEffect(() => {
-    if (batchTaskType !== 'segmentation' || !batchScanResult?.directory || batchScanResult.annotation_scan_enabled) {
+    if (!isSegmentationTask(batchTaskType) || !batchScanResult?.directory || batchScanResult.annotation_scan_enabled) {
       return
     }
 
@@ -258,7 +259,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchScanStage('segmentationRefresh')
     void runBatchScanning(async () => {
       const result = await scanDirectory(batchScanResult.directory, {
-        taskType: 'segmentation',
+        taskType: 'patch_segmentation',
         page: batchScanResult.page,
         pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })

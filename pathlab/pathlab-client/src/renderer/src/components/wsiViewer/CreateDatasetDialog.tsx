@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import { PackagePlus, Loader2, ChevronDown } from 'lucide-react'
 import { Tooltip } from '../ui/tooltip'
 import { AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
+import type { TaskType } from '../../constants/training'
 import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 interface CreateDatasetDialogProps {
@@ -13,7 +14,7 @@ interface CreateDatasetDialogProps {
   labelColors: Record<string, string>
   hasWsiSources?: boolean
   defaultSource?: string | null
-  onSubmitCreateDataset: (params: { datasetName: string; taskType: 'classification' | 'segmentation'; sourceOrgan: string }) => Promise<void>
+  onSubmitCreateDataset: (params: { datasetName: string; taskType: TaskType | 'classification' | 'segmentation'; sourceOrgan: string }) => Promise<void>
 }
 
 export function CreateDatasetDialog({

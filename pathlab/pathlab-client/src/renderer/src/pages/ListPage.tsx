@@ -20,6 +20,7 @@ import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, DatasetCard, type ExportLabelsOptions } from '../components/list'
 import { organSources, organSourceKeyMap } from '../constants/wsi'
+import { getTaskFamily } from '../constants/training'
 
 
 type ListWSIItem = import('../api/wsi').WSISummary
@@ -33,8 +34,8 @@ type DatasetViewMode = 'grid' | 'list'
 const UNKNOWN_SOURCE_ORGAN_FILTER = '__unknown__'
 
 const getNormalizedDatasetTaskType = (taskType: string): Exclude<DatasetTaskFilter, 'all'> => {
-  if (taskType === 'survival') return 'survival'
-  if (taskType === 'segmentation' || taskType === 'patch_segmentation') return 'segmentation'
+  const family = getTaskFamily(taskType)
+  if (family) return family
   return 'classification'
 }
 

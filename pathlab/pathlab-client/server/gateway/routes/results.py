@@ -231,7 +231,7 @@ def _required_ai_result_artifacts(
     )
     artifacts: List[Tuple[str, Path]] = [("result_file", result_file)]
 
-    if task_type in ("segmentation", "patch_segmentation"):
+    if task_type == "patch_segmentation":
         pred_mask_file = _coerce_path(
             metadata.get("pred_mask_file")
         ) or _derive_companion_artifact_path(result_file, "_pred_mask.npy")
@@ -337,7 +337,7 @@ def _analysis_requires_training_metrics(
 
     requested_charts = set(charts or [])
     required_charts = {"loss_curve"}
-    if task_type in ("segmentation", "patch_segmentation"):
+    if task_type == "patch_segmentation":
         required_charts.update({"iou_curve", "dice_curve"})
     return bool(requested_charts & required_charts)
 
@@ -1087,7 +1087,7 @@ async def get_analysis_tasks(
         # Get data_type and task_type from DataGroup relationship
         data_group = task.data_group
         data_type = data_group.data_type if data_group else "wsi"
-        task_type = data_group.task_type if data_group else "classification"
+        task_type = data_group.task_type if data_group else "wsi_classification"
 
         # For WSI-level tasks: require both features and model
         # For patch-level tasks: only require model (features extracted on-the-fly during training)
@@ -1197,7 +1197,7 @@ async def _run_inference_if_needed(
     task_id = task.task_id
     # Get data_type and task_type from DataGroup relationship
     data_group = task.data_group
-    task_type = data_group.task_type if data_group else "classification"
+    task_type = data_group.task_type if data_group else "wsi_classification"
     data_type = data_group.data_type if data_group else "wsi"
 
     # Check resources
@@ -1233,7 +1233,7 @@ async def _run_inference_if_needed(
 
     # Route to appropriate inference handler based on data_type and task_type
     if data_type == "patch":
-        if task_type in ("segmentation", "patch_segmentation"):
+        if task_type == "patch_segmentation":
             await _run_inference_patch_segmentation(
                 task,
                 wsi_ids,
@@ -1251,7 +1251,7 @@ async def _run_inference_if_needed(
                 progress_callback,
                 assigned_device=assigned_device,
             )
-    elif task_type in ("wsi_survival", "survival"):
+    elif task_type == "wsi_survival":
         await _run_inference_wsi_survival(
             task,
             wsi_ids,
@@ -1357,7 +1357,7 @@ async def get_datasets_for_validation(
             total_case_count if dg.aggregation_level == "case" else total_wsi_count
         )
         segmentation_labels: List[str] = []
-        if dg.task_type in ("segmentation", "patch_segmentation"):
+        if dg.task_type == "patch_segmentation":
             coco_categories = await WSIRepository._get_coco_categories_for_dataset(
                 db, dataset_id
             )
@@ -1390,7 +1390,7 @@ async def _is_dataset_unlabeled_for_batch_inference(
     task_type: str,
 ) -> bool:
     normalized_task_type = (task_type or "").lower()
-    if "segmentation" in normalized_task_type:
+    if normalized_task_type == "patch_segmentation":
         # For segmentation, only imported / dataset-backed finalized GT annotations
         # count as labels. Viewer-drawn annotations are user edits and should not
         # block batch inference. A dataset becomes labeled as soon as any such GT
@@ -1405,7 +1405,7 @@ async def _is_dataset_unlabeled_for_batch_inference(
         )
         return (gt_check.scalar() or 0) == 0
 
-    if "survival" in normalized_task_type:
+    if normalized_task_type == "wsi_survival":
         survival_check = await db.execute(
             select(func.count(WSISlide.id))
             .where(WSISlide.dataset_id == dataset_id)
@@ -1770,12 +1770,12 @@ async def get_batch_inference_summary(
             else None
         ),
     }
-    if "classification" in task_type:
+    if task_type in ("wsi_classification", "patch_classification"):
         from collections import Counter
 
         dist = Counter(r.pred for r in results if r.pred)
         summary["class_distribution"] = dict(dist)
-    elif "survival" in task_type:
+    elif task_type == "wsi_survival":
         risk_scores = [
             r.extra_metadata.get("risk_score")
             for r in results
@@ -1795,7 +1795,7 @@ async def get_batch_inference_summary(
         summary["mean_risk_score"] = (
             sum(risk_scores) / len(risk_scores) if risk_scores else None
         )
-    elif "segmentation" in task_type:
+    elif task_type == "patch_segmentation":
         summary["masks_generated"] = sum(
             1
             for r in results
@@ -1823,7 +1823,7 @@ async def export_batch_inference_csv(
     task_type = mc.get("model_task_type", "")
 
     output = io.StringIO()
-    if "classification" in task_type:
+    if task_type in ("wsi_classification", "patch_classification"):
         fieldnames = [
             "wsi_id",
             "original_filename",
@@ -1832,7 +1832,7 @@ async def export_batch_inference_csv(
             "probs",
             "created_at",
         ]
-    elif "survival" in task_type:
+    elif task_type == "wsi_survival":
         fieldnames = [
             "wsi_id",
             "original_filename",
@@ -1969,10 +1969,10 @@ async def start_external_validation(
     model_data_type = model_data_group.data_type if model_data_group else "wsi"
     target_data_type = target_data_group.data_type if target_data_group else "wsi"
     model_task_type = (
-        model_data_group.task_type if model_data_group else "classification"
+        model_data_group.task_type if model_data_group else "wsi_classification"
     )
     target_task_type = (
-        target_data_group.task_type if target_data_group else "classification"
+        target_data_group.task_type if target_data_group else "wsi_classification"
     )
     target_aggregation_level = (
         target_data_group.aggregation_level if target_data_group else "file"
@@ -2279,7 +2279,7 @@ async def start_external_validation(
                 "classifier"
             ),  # Store classifier for patch task list display
             # Store pipeline params needed to re-submit after system restart (resume_interrupted_tasks)
-            "model_task_type": model_task_type,  # e.g. "classification", "survival", "wsi_survival"
+            "model_task_type": model_task_type,  # e.g. "wsi_classification", "wsi_survival", "patch_segmentation"
             "model_data_type": model_data_type,  # "wsi" or "patch"
             # Store analysis options for auto-triggered analysis
             "analysis_metrics": analysis_metrics,
@@ -2620,7 +2620,7 @@ async def run_task_analysis(
 
     # Get task_type from DataGroup relationship
     task_data_group = task.data_group
-    task_type_str = task_data_group.task_type if task_data_group else "classification"
+    task_type_str = task_data_group.task_type if task_data_group else "wsi_classification"
 
     # Build meaningful title based on task type
     is_external = task_type_str == "external_validation"
@@ -2648,9 +2648,9 @@ async def run_task_analysis(
         task_category = None
     else:
         # Internal analysis: use task name only (category sent as separate field for i18n)
-        if task_type_str in ("wsi_survival", "survival"):
+        if task_type_str == "wsi_survival":
             task_category = "survival"
-        elif task_type_str in ("segmentation", "patch_segmentation"):
+        elif task_type_str == "patch_segmentation":
             task_category = "segmentation"
         else:
             task_category = "classification"
@@ -2693,7 +2693,7 @@ async def run_task_analysis(
             else {}
         )
         is_kfold = (
-            task_type_str not in ("segmentation", "patch_segmentation")
+            task_type_str != "patch_segmentation"
             and split_config.get("strategy", "random") == "k_fold"
         )
         if _analysis_requires_training_metrics(
@@ -2893,7 +2893,7 @@ async def get_quick_analysis(
         quick_task_type_str = (
             quick_task_data_group.task_type
             if quick_task_data_group
-            else "classification"
+            else "wsi_classification"
         )
 
         # Build meaningful title and metadata for background task display
@@ -2920,9 +2920,9 @@ async def get_quick_analysis(
             analysis_type = "external"
             task_category = None
         else:
-            if quick_task_type_str in ("wsi_survival", "survival"):
+            if quick_task_type_str == "wsi_survival":
                 task_category = "survival"
-            elif quick_task_type_str in ("segmentation", "patch_segmentation"):
+            elif quick_task_type_str == "patch_segmentation":
                 task_category = "segmentation"
             else:
                 task_category = "classification"
@@ -2940,8 +2940,8 @@ async def get_quick_analysis(
         )
 
         # Default metrics and charts based on task type
-        is_survival_task = quick_task_type_str in ("wsi_survival", "survival")
-        is_seg_task = quick_task_type_str in ("segmentation", "patch_segmentation")
+        is_survival_task = quick_task_type_str == "wsi_survival"
+        is_seg_task = quick_task_type_str == "patch_segmentation"
         if is_survival_task:
             default_metrics = ["c_index", "integrated_brier_score"]
             default_charts = ["km_curve", "loss_curve"]
@@ -2975,7 +2975,7 @@ async def get_quick_analysis(
             else {}
         )
         is_kfold = (
-            quick_task_type_str not in ("segmentation", "patch_segmentation")
+            quick_task_type_str != "patch_segmentation"
             and split_config.get("strategy", "random") == "k_fold"
         )
         if _analysis_requires_training_metrics(
@@ -3102,7 +3102,7 @@ async def get_quick_analysis(
         "analysis_id": analysis_id,
         "has_analysis": True,
         "timestamp": latest_summary.get("timestamp"),
-        "task_type": latest_summary.get("task_type", "classification"),
+        "task_type": latest_summary.get("task_type", "wsi_classification"),
         "num_samples": latest_summary.get("num_samples"),
         "classes": latest_summary.get("classes", []),
         "is_binary": latest_summary.get("is_binary", False),
@@ -3119,8 +3119,8 @@ async def get_quick_analysis(
 
     # Include K-Fold training details if available
     kfold_training = latest_summary.get("kfold_training")
-    task_type = latest_summary.get("task_type", "classification")
-    if task_type not in ("segmentation", "patch_segmentation") and kfold_training:
+    task_type = latest_summary.get("task_type", "wsi_classification")
+    if task_type != "patch_segmentation" and kfold_training:
         response["kfold_training"] = kfold_training
 
     return response
@@ -3534,10 +3534,7 @@ async def run_analysis_pipeline(
                 else {}
             )
             split_strategy = split_config.get("strategy", "random")
-            is_segmentation_task = task_type_str in (
-                "segmentation",
-                "patch_segmentation",
-            )
+            is_segmentation_task = task_type_str == "patch_segmentation"
             is_kfold = not is_segmentation_task and split_strategy == "k_fold"
             if (
                 is_kfold
@@ -3637,7 +3634,7 @@ async def run_analysis_pipeline(
             }
 
             match task_type_str:
-                case "wsi_survival" | "survival":
+                case "wsi_survival":
                     result = await _run_survival_analysis(
                         task,
                         request,
@@ -3655,7 +3652,7 @@ async def run_analysis_pipeline(
                         progress_config=progress_config,
                         submitted_by=submitted_by,
                     )
-                case "segmentation" | "patch_segmentation":
+                case "patch_segmentation":
                     result = await _run_segmentation_analysis(
                         task,
                         request,

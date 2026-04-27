@@ -5,6 +5,7 @@ import { ConfusionMatrixChart, RocCurveChart, LossCurveChart, KFoldLossCurveChar
 import { downloadApiFile, withAuthTokenQuery } from '../../api/client'
 import { downloadTrainedModelExport } from '../../api/training'
 import { API_BASE } from '../../config'
+import { isSegmentationTask, isSurvivalTask } from '../../constants/training'
 
 // --- Types shared with ResultsViewerPage ---
 
@@ -85,8 +86,8 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
   const { t } = useTranslation()
   const [isExportingModel, setIsExportingModel] = useState(false)
   const effectiveTaskId = analysis.task_id || taskId
-  const isSurvival = analysis.task_type === 'wsi_survival' || analysis.task_type === 'survival' || analysis.task_type === 'external_validation_survival'
-  const isSegmentation = analysis.task_type === 'segmentation' || analysis.task_type === 'patch_segmentation'
+  const isSurvival = isSurvivalTask(analysis.task_type) || analysis.task_type === 'external_validation_survival'
+  const isSegmentation = isSegmentationTask(analysis.task_type)
   const segmentationClassCount = isSegmentation
     ? Math.max(
       analysis.num_classes ?? 0,

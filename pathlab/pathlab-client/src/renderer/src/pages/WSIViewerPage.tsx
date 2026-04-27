@@ -55,6 +55,7 @@ import { useToast } from '../contexts/ToastContext'
 import { useAuth } from '../contexts/AuthContext'
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { getFileType } from '../constants/fileTypes'
+import { isSegmentationTask, type TaskType } from '../constants/training'
 import { ApiError, getAuthToken } from '../api/client'
 import { API_BASE } from '../config'
 
@@ -564,11 +565,11 @@ export default function WSIViewerPage() {
     return availableHeatmaps.filter(h => h.task_id === selectedTaskId)
   }, [availableHeatmaps, selectedTaskId])
 
-  const isSegmentationTask = selectedTaskGroup.some(
-    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+  const isSelectedSegmentationTask = selectedTaskGroup.some(
+    h => isSegmentationTask(h.task_type)
   )
 
-  const effectiveFoldKey = isSegmentationTask ? undefined : selectedFoldKey
+  const effectiveFoldKey = isSelectedSegmentationTask ? undefined : selectedFoldKey
 
   const selectedTaskEntries = useMemo(() => {
     if (selectedTaskGroup.length === 0) return []
@@ -584,12 +585,12 @@ export default function WSIViewerPage() {
 
   const selectedTask = selectedTaskEntries.find(h => h.data_type === 'wsi' || h.data_type === 'patch') ?? selectedTaskEntries[0]
   const selectedSegmentationEntry = selectedTaskEntries.find(
-    h => h.task_type === 'segmentation' || h.task_type === 'patch_segmentation' || h.data_type === 'patch_segmentation'
+    h => isSegmentationTask(h.task_type)
   )
   const hasPatchHeatmap = selectedTaskEntries.some(h => h.data_type === 'patch')
-  const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch' || h.data_type === 'patch_segmentation')
+  const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch')
   const canShowHeatmapOverlay = selectedTaskEntries.some(h => h.data_type === 'wsi' || h.data_type === 'patch')
-  const canShowSegMaskOverlay = selectedTaskEntries.some(h => h.data_type === 'patch_segmentation')
+  const canShowSegMaskOverlay = selectedTaskEntries.some(h => isSegmentationTask(h.task_type))
   const shouldShowOverlayControls = canShowHeatmapOverlay || canShowSegMaskOverlay
   const segmentationClasses = selectedSegmentationEntry?.classes ?? []
   const viewerDataLevel: 'wsi' | 'patch' = selectedTask?.data_type === 'patch' ? 'patch' : 'wsi'
@@ -1379,7 +1380,7 @@ export default function WSIViewerPage() {
     sourceOrgan,
   }: {
     datasetName: string
-    taskType: 'classification' | 'segmentation'
+    taskType: TaskType | 'classification' | 'segmentation'
     sourceOrgan: string
   }) => {
     try {

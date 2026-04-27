@@ -7,6 +7,7 @@
 
 import type { TrainedModel } from '../../api/training'
 import type { ValidationDataset } from '../../api/analysis'
+import { isSegmentationTask as isCanonicalSegmentationTask, isSurvivalTask as isCanonicalSurvivalTask } from '../../constants/training'
 
 /**
  * Feature extractor name → embedding dimension mapping.
@@ -40,11 +41,11 @@ export const EXTRACTOR_EMBED_DIM: Record<string, number> = {
  * Helper to determine if a task type is survival
  */
 export function isSurvivalTask(taskType: string | undefined): boolean {
-  return taskType === 'survival' || taskType === 'wsi_survival' || taskType === 'patch_survival'
+  return isCanonicalSurvivalTask(taskType) || taskType === 'survival' || taskType === 'patch_survival'
 }
 
 export function isSegmentationTask(taskType: string | undefined): boolean {
-  return taskType === 'segmentation' || taskType === 'patch_segmentation'
+  return isCanonicalSegmentationTask(taskType) || taskType === 'segmentation'
 }
 
 /**
@@ -108,7 +109,7 @@ export function getDatasetCompatibilityError(
     return 'Data type mismatch between source model and target dataset.'
   }
 
-  const datasetIsSurvival = dataset.task_type === 'survival'
+  const datasetIsSurvival = isSurvivalTask(dataset.task_type)
   const datasetIsSegmentation = isSegmentationTask(dataset.task_type)
   if (modelIsSurvival !== datasetIsSurvival) {
     return 'Task type mismatch between source model and target dataset.'

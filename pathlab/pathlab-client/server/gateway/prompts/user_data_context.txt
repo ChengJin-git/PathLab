@@ -47,7 +47,7 @@ CRITICAL: The list above may not include all of the user's models — it is a po
 
 **Model Information Format**: Each model shows:
 - model_id: Unique identifier for external validation
-- task_type: "classification", "survival", or "segmentation"
+- task_type: one of "wsi_classification", "patch_classification", "wsi_survival", or "patch_segmentation"
 - data_type: "wsi" or "patch"
 - feature_extractor: Feature extractor used for embedding (e.g. UNI, GPFM)
 - aggregator: Aggregation architecture (e.g. ABMIL, TransMIL)

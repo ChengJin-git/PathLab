@@ -18,7 +18,40 @@ from backend.common.file_types import (
     TIF_EXTENSIONS,
     SIZE_THRESHOLD,
 )
+from backend.ai.task_taxonomy import normalize_task_type, is_segmentation_task
 from .base import BaseRepository
+
+
+def _canonical_task_type_for_response(
+    task_type: Optional[str], data_type: Optional[str]
+) -> str:
+    raw_task_type = (task_type or "").strip().lower()
+    response_data_type = (data_type or "wsi").strip().lower()
+    if not raw_task_type:
+        # Default: infer from data_type
+        return "patch_classification" if response_data_type == "patch" else "wsi_classification"
+    try:
+        return normalize_task_type(task_type=raw_task_type, data_type=response_data_type)
+    except ValueError:
+        return raw_task_type
+
+
+def _canonical_task_type_for_filter(
+    task_type: Optional[str], data_type: Optional[str]
+) -> Optional[str]:
+    if not task_type:
+        return None
+    try:
+        if data_type in {"wsi", "patch"}:
+            return normalize_task_type(task_type=task_type, data_type=data_type)
+        raw = task_type.strip().lower()
+        if raw == "segmentation":
+            return normalize_task_type(task_type=raw, data_type="patch")
+        if raw == "survival":
+            return normalize_task_type(task_type=raw, data_type="wsi")
+        return normalize_task_type(task_type=task_type)
+    except ValueError:
+        return task_type
 
 
 def _dataset_with_group_loader():
@@ -727,10 +760,12 @@ class WSIRepository(BaseRepository[WSISlide]):
 
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)
-            task_type_str = row.group_task_type or ""
-            if "segmentation" in task_type_str:
+            canonical_group_task_type = _canonical_task_type_for_response(
+                row.group_task_type, row.data_type
+            )
+            if is_segmentation_task(canonical_group_task_type):
                 is_unlabeled = dataset_seg_annotation_map.get(row.dataset_id, 0) == 0
-            elif "survival" in task_type_str:
+            elif "survival" in canonical_group_task_type:
                 is_unlabeled = survival_count == 0
             else:
                 is_unlabeled = len(ds_labels) == 0
@@ -766,7 +801,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                     "source_organ": row.source_organ or None,
                     "file_count": row.file_count,
                     "data_type": data_type,
-                    "group_task_type": row.group_task_type,
+                    "group_task_type": canonical_group_task_type,
                     "aggregation_level": row.aggregation_level or "file",
                     "labels": ds_labels,
                     "survival_count": survival_count,
@@ -885,8 +920,9 @@ class WSIRepository(BaseRepository[WSISlide]):
         if dataset_id:
             query = query.where(Dataset.dataset_id == dataset_id)
 
-        if task_type:
-            query = query.where(DataGroup.task_type == task_type)
+        canonical_task_type = _canonical_task_type_for_filter(task_type, data_type)
+        if canonical_task_type:
+            query = query.where(DataGroup.task_type == canonical_task_type)
 
         if aggregation_level:
             query = query.where(DataGroup.aggregation_level == aggregation_level)
@@ -976,7 +1012,10 @@ class WSIRepository(BaseRepository[WSISlide]):
         rows = result.all()
 
         seg_ids = [
-            r.dataset_id for r in rows if r.task_type == "segmentation" and r.dataset_id
+            r.dataset_id
+            for r in rows
+            if is_segmentation_task(_canonical_task_type_for_response(r.task_type, r.data_type))
+            and r.dataset_id
         ]
         coco_map: Dict[str, List[Dict[str, Any]]] = {}
         if seg_ids:
@@ -989,6 +1028,9 @@ class WSIRepository(BaseRepository[WSISlide]):
             test_count = row.split_test_count or 0
             has_predefined_splits = (train_count + val_count + test_count) > 0
 
+            canonical_task_type = _canonical_task_type_for_response(
+                row.task_type, row.data_type
+            )
             dataset_dict = {
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name or "Uncategorized",
@@ -996,7 +1038,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 "group_id": row.group_id,
                 "data_type": row.data_type,
                 "aggregation_level": row.aggregation_level,
-                "task_type": row.task_type or "classification",
+                "task_type": canonical_task_type,
                 "source_organ": row.source_organ,
                 "is_public": bool(row.is_public),
                 "parent_dataset_id": row.parent_dataset_id,
@@ -1014,7 +1056,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 },
             }
 
-            if row.task_type == "segmentation" and row.dataset_id:
+            if is_segmentation_task(canonical_task_type) and row.dataset_id:
                 coco_categories = coco_map.get(row.dataset_id, [])
                 if coco_categories:
                     dataset_dict["coco_categories"] = coco_categories
@@ -1144,7 +1186,10 @@ class WSIRepository(BaseRepository[WSISlide]):
         total = int(rows[0]._total_count)
 
         seg_ids = [
-            r.dataset_id for r in rows if r.task_type == "segmentation" and r.dataset_id
+            r.dataset_id
+            for r in rows
+            if is_segmentation_task(_canonical_task_type_for_response(r.task_type, r.data_type))
+            and r.dataset_id
         ]
         coco_map: Dict[str, List[Dict[str, Any]]] = {}
         if seg_ids:
@@ -1155,6 +1200,9 @@ class WSIRepository(BaseRepository[WSISlide]):
             train_count = row.split_train_count or 0
             val_count = row.split_val_count or 0
             test_count = row.split_test_count or 0
+            canonical_task_type = _canonical_task_type_for_response(
+                row.task_type, row.data_type
+            )
             dataset_dict = {
                 "dataset_id": row.dataset_id,
                 "dataset_name": row.dataset_name or "Uncategorized",
@@ -1162,7 +1210,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 "group_id": row.group_id,
                 "data_type": row.data_type,
                 "aggregation_level": row.aggregation_level,
-                "task_type": row.task_type or "classification",
+                "task_type": canonical_task_type,
                 "source_organ": row.source_organ,
                 "is_public": bool(row.is_public),
                 "parent_dataset_id": row.parent_dataset_id,
@@ -1179,7 +1227,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                     "test": test_count,
                 },
             }
-            if row.task_type == "segmentation" and row.dataset_id:
+            if is_segmentation_task(canonical_task_type) and row.dataset_id:
                 coco_categories = coco_map.get(row.dataset_id, [])
                 if coco_categories:
                     dataset_dict["coco_categories"] = coco_categories

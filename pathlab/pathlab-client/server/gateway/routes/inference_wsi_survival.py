@@ -389,7 +389,7 @@ async def _run_inference_wsi_survival(
                     "pred": risk_group,
                     "probs": None,
                     "extra_metadata": {
-                        "task_type": "survival",
+                        "task_type": "wsi_survival",
                         "risk_score": risk_score,
                         "risk_group": risk_group,
                         "median_risk_score": median_risk_score,
@@ -468,7 +468,7 @@ async def _run_inference_wsi_survival(
                 "pred": risk_group,
                 "probs": None,
                 "extra_metadata": {
-                    "task_type": "survival",
+                    "task_type": "wsi_survival",
                     "risk_score": risk_score,
                     "risk_group": risk_group,
                     "median_risk_score": median_risk_score,

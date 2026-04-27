@@ -10,6 +10,7 @@ import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTask
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 import { Select } from '../ui/select'
 import { organSources, organSourceKeyMap } from '../../constants/wsi'
+import { getTaskFamily, toCanonicalTaskType, type TaskType } from '../../constants/training'
 import { collectItemsFromDataTransfer, type CollectionProgressSnapshot, type LocalItem } from '../upload'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
@@ -30,7 +31,7 @@ interface DatasetRegistrationConfig {
   dataset_id?: string
   dataset_name?: string
   source_organ?: string
-  upload_mode?: 'classification' | 'survival' | 'segmentation'
+  upload_mode?: TaskType | 'classification' | 'survival' | 'segmentation'
   aggregation_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
   submitted_task_id?: string
@@ -76,7 +77,8 @@ export function DatasetRegistrationCard({
   const [datasetSourceSelection, setDatasetSourceSelection] = useState<string>(config?.source_organ || '')
   const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
   const [isPublic, setIsPublic] = useState<boolean>(Boolean(config?.is_public))
-  const isSegmentation = config?.upload_mode === 'segmentation'
+  const canonicalUploadMode = toCanonicalTaskType(config?.upload_mode) || 'wsi_classification'
+  const isSegmentation = getTaskFamily(canonicalUploadMode) === 'segmentation'
   const [dataLevel, setDataLevel] = useState<'file' | 'case'>(isSegmentation ? 'file' : (config?.aggregation_level || 'file'))
   
   const [helpfulnessFeedback, setHelpfulnessFeedback] = useState<'helpful' | 'not_helpful' | null>(savedHelpfulnessFeedback || null)
@@ -101,12 +103,12 @@ export function DatasetRegistrationCard({
   const filteredDatasets = useMemo(() => {
     return datasets.filter(dataset => {
       if (isSegmentation) {
-        return dataset.task_type === 'segmentation' && dataset.data_type === 'patch' && dataset.aggregation_level === 'file'
+        return getTaskFamily(dataset.task_type) === 'segmentation' && dataset.data_type === 'patch' && dataset.aggregation_level === 'file'
       }
       if (!config?.upload_mode) return true
-      return dataset.task_type === config.upload_mode
+      return getTaskFamily(dataset.task_type) === getTaskFamily(canonicalUploadMode)
     })
-  }, [datasets, isSegmentation, config?.upload_mode])
+  }, [datasets, isSegmentation, config?.upload_mode, canonicalUploadMode])
 
   const selectedDataset = useMemo(
     () => datasets.find(dataset => dataset.dataset_id === selectedDatasetId),
@@ -196,15 +198,15 @@ export function DatasetRegistrationCard({
 
   const handleDownloadTemplate = async () => {
     try {
-      let uploadMode: 'classification' | 'survival' | 'segmentation' = 'classification'
+      let uploadMode: TaskType = canonicalUploadMode
 
       if (mode === 'existing' && selectedDatasetId) {
         const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
         if (dataset && dataset.task_type) {
-          uploadMode = dataset.task_type as 'classification' | 'survival' | 'segmentation'
+          uploadMode = toCanonicalTaskType(dataset.task_type, dataset.data_type) || canonicalUploadMode
         }
       } else {
-        uploadMode = config?.upload_mode || 'classification'
+        uploadMode = canonicalUploadMode
       }
 
       await downloadCSVTemplate(uploadMode)
@@ -323,7 +325,7 @@ export function DatasetRegistrationCard({
           file,
           metadata: {
             dataset_id: selectedDatasetId,
-            task_type: config?.upload_mode || 'classification',
+            task_type: canonicalUploadMode,
           }
         }))
         : localItems.map(item => {
@@ -343,7 +345,7 @@ export function DatasetRegistrationCard({
                 source_organ: mode === 'new' ? (resolvedDatasetSource || undefined) : undefined,
                 aggregation_level: dataLevel,
                 is_public: mode === 'new' ? isPublic : undefined,
-                task_type: config?.upload_mode || 'classification',
+                task_type: canonicalUploadMode,
                 label: isSegmentation ? undefined : '',
                 case_id: '',
               age: undefined,
@@ -736,8 +738,9 @@ export function DatasetRegistrationCard({
                   const resolvedMode = mode === 'existing' && selectedDatasetId
                     ? datasets.find(d => d.dataset_id === selectedDatasetId)?.task_type
                     : config?.upload_mode
-                  if (resolvedMode === 'survival') modeLabel = t('chatComponents.datasetRegistration.survival')
-                  else if (resolvedMode === 'segmentation') modeLabel = t('chatComponents.datasetRegistration.segmentation')
+                  const resolvedFamily = getTaskFamily(resolvedMode)
+                  if (resolvedFamily === 'survival') modeLabel = t('chatComponents.datasetRegistration.survival')
+                  else if (resolvedFamily === 'segmentation') modeLabel = t('chatComponents.datasetRegistration.segmentation')
                   return t('chatComponents.datasetRegistration.downloadTemplate', { mode: modeLabel })
                 })()}
               </button>

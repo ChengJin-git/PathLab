@@ -9,7 +9,7 @@ import { useTranslation } from 'react-i18next'
 import { Button } from '../ui/button'
 import { Tooltip } from '../ui/tooltip'
 import { Loader2, ChevronLeft, ChevronRight, ChevronDown, Edit2, Trash2, Users } from 'lucide-react'
-import { TaskType } from '../../constants/training'
+import { TaskType, isSurvivalTask } from '../../constants/training'
 
 // Re-export WSIItem from shared types for consistency
 import { WSIItem } from '../../types/training'
@@ -77,6 +77,7 @@ export function WSIDataTable({
   getFileType,
 }: WSIDataTableProps) {
   const { t } = useTranslation()
+  const isSurvival = isSurvivalTask(taskType)
 
   return (
     <div className="space-y-4">
@@ -108,7 +109,7 @@ export function WSIDataTable({
                   <>
                     <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.slideId')}</th>
                     <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.type')}</th>
-                    {taskType === 'survival' ? (
+                    {isSurvival ? (
                       <>
                         <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.timeM')}</th>
                         <th className="px-3 sm:px-6 py-3 text-left text-[10px] sm:text-xs font-semibold text-gray-500 uppercase tracking-wider whitespace-nowrap">{t('training.wsiTable.status')}</th>
@@ -407,7 +408,7 @@ function SlideRow({
           </span>
         )}
       </td>
-      {taskType === 'survival' ? (
+      {isSurvivalTask(taskType) ? (
         <>
           <td className={`px-3 sm:px-6 py-${nested ? '3' : '4'} sm:py-${nested ? '4' : '5'}`}>
             {item.event_time != null ? (
@@ -651,7 +652,7 @@ function CaseRow({
 function CaseLabelCell({ slides, taskType }: { slides: WSIItem[]; taskType: TaskType }) {
   const { t } = useTranslation()
 
-  if (taskType === 'survival') {
+  if (isSurvivalTask(taskType)) {
     const events = slides.filter((s) => s.event_status === 1).length
     const censored = slides.filter((s) => s.event_status === 0).length
 

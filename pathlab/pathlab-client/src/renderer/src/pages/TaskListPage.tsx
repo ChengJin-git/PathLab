@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
-import { isSegFmEncoder } from '../constants/training'
+import { isSegFmEncoder, isSegmentationTask } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
 import { Tooltip } from '../components/ui/tooltip'
 import { Card } from '../components/ui/card'
@@ -187,7 +187,7 @@ export default function TaskListPage() {
     .map(record => ({
       task_id: record.taskId,
       task_name: record.taskName || record.taskId,
-      task_type: 'classification',
+      task_type: 'wsi_classification',
       data_type: 'wsi',
       status: record.state === 'failed' ? 'failed' : record.state === 'cancelled' ? 'cancelled' : 'creating',
       progress: 0,
@@ -680,13 +680,14 @@ export default function TaskListPage() {
                         </div>
                       </>
                     ) : (() => {
-                      const segBackbone = task.task_type === 'segmentation' ? (task.model_config as Record<string, unknown>)?.backbone as string : undefined
+                      const isSegmentation = isSegmentationTask(task.task_type)
+                      const segBackbone = isSegmentation ? (task.model_config as Record<string, unknown>)?.backbone as string : undefined
                       const segIsFm = isSegFmEncoder(segBackbone)
                       const fmDecoderType = ((task.model_config as Record<string, unknown>)?.decoder_type as string) || 'conv'
-                      const col1Label = task.task_type === 'segmentation'
+                      const col1Label = isSegmentation
                         ? (segIsFm ? t('taskList.columns.featureExtractorSeg') : t('taskList.columns.backbone'))
                         : t('taskList.columns.extractor')
-                      const col2Label = task.task_type === 'segmentation'
+                      const col2Label = isSegmentation
                         ? (segIsFm ? t('taskList.columns.decoder') : t('taskList.columns.architecture'))
                         : t('taskList.columns.model')
                       return (
@@ -698,7 +699,7 @@ export default function TaskListPage() {
                             <div className="flex items-center gap-1.5 sm:gap-2">
                               <Microscope className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                               <span className="text-sm sm:text-base font-bold truncate text-gray-900">
-                                {task.task_type === 'segmentation'
+                                {isSegmentation
                                   ? (segBackbone || t('taskList.na'))
                                   : (task.preprocessing_config?.feature_extractor || t('taskList.na'))}
                               </span>
@@ -712,7 +713,7 @@ export default function TaskListPage() {
                             <div className="flex items-center gap-1.5 sm:gap-2">
                               <Brain className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-gray-400" />
                               <span className="text-sm sm:text-base font-bold truncate text-gray-900">
-                                {task.task_type === 'segmentation'
+                                {isSegmentation
                                   ? (segIsFm
                                     ? t(`training.modelConfig.decoder.${fmDecoderType}`, fmDecoderType.toUpperCase())
                                     : ((task.model_config as Record<string, unknown>)?.architecture as string || t('taskList.na')))

@@ -128,7 +128,7 @@ async def _run_batch_inference(
             )
             return
 
-        if task_type in ("wsi_classification", "classification", "wsi_survival", "survival"):
+        if task_type in ("wsi_classification", "wsi_survival"):
             await _run_external_validation(
                 task_id=task_id,
                 model_task_id=model_task_id,
@@ -154,7 +154,7 @@ async def _run_batch_inference(
                 total=total,
                 update_task_progress=_update_task_progress,
             )
-        elif task_type in ("patch_segmentation", "segmentation"):
+        elif task_type == "patch_segmentation":
             await _run_batch_patch_segmentation(
                 task_id=task_id,
                 model_task_id=model_task_id,
@@ -205,7 +205,7 @@ async def _run_batch_wsi_classification(
         model_task_id=model_task_id,
         model_id=model_id,
         model_classes=getattr(trained_model, "classes", None),
-        model_task_type="classification",
+        model_task_type="wsi_classification",
         model_data_type="wsi",
         dataset_id=dataset_id,
         wsi_ids=wsi_ids,
@@ -258,7 +258,7 @@ async def _run_batch_wsi_survival(
         model_task_id=model_task_id,
         model_id=model_id,
         model_classes=getattr(trained_model, "classes", None),
-        model_task_type="survival",
+        model_task_type="wsi_survival",
         model_data_type="wsi",
         dataset_id=dataset_id,
         wsi_ids=wsi_ids,

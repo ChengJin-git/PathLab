@@ -8,6 +8,7 @@ import {
   ScanDirectoryResponse, DatasetSummary,
   ExternalDatasetInfo
 } from '../../../api'
+import type { TaskType } from '../../../constants/training'
 import { BatchScanResults } from './BatchScanResults'
 import { ExternalDatasetsTable } from './ExternalDatasetsTable'
 
@@ -27,8 +28,8 @@ interface BatchRegisterCardProps {
   batchRegistering: boolean
   batchImportTaskId: string | null
   batchDatasets: DatasetSummary[]
-  batchTaskType: 'classification' | 'survival' | 'segmentation'
-  setBatchTaskType: (type: 'classification' | 'survival' | 'segmentation') => void
+  batchTaskType: TaskType
+  setBatchTaskType: (type: TaskType) => void
   batchDataLevel: 'case' | 'file'
   setBatchDataLevel: (level: 'case' | 'file') => void
   batchIsPublic: boolean

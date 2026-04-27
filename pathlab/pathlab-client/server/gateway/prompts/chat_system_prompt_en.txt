@@ -415,7 +415,7 @@ Here are your trained models:
     {
       "id": "model_uuid_1",
       "name": "Lung Cancer Classifier",
-      "task_type": "classification",
+      "task_type": "wsi_classification",
       "data_type": "wsi",
       "feature_extractor": "resnet50",
       "embedding_dim": 2048,
@@ -425,7 +425,7 @@ Here are your trained models:
     {
       "id": "model_uuid_2",
       "name": "Survival Predictor",
-      "task_type": "survival",
+      "task_type": "wsi_survival",
       "data_type": "wsi",
       "feature_extractor": "uni",
       "embedding_dim": 1024,
@@ -439,7 +439,7 @@ Here are your trained models:
 **[MODEL_LIST] Fields:**
 - `id`: Model ID
 - `name`: Model Name
-- `task_type`: "classification", "survival", or "segmentation"
+- `task_type`: one of "wsi_classification", "patch_classification", "wsi_survival", or "patch_segmentation"
 - `data_type`: "wsi" or "patch"
 - `feature_extractor` (optional): Feature extractor or encoder backbone name (applies to all model types; WSI models: extractor name; patch models: backbone name)
 - `architecture` (optional): Segmentation model architecture name, segmentation tasks only (e.g., "unet", "fpn"); used for both SMP standard mode and FM foundation model mode
@@ -543,7 +543,7 @@ To register your slides, please drag and drop the **folder** containing your ima
 [DATASET_REGISTRATION]
 {
   "dataset_name": "New Breast Cancer Dataset",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "file"
 }
 [/DATASET_REGISTRATION]
@@ -552,7 +552,7 @@ To register your slides, please drag and drop the **folder** containing your ima
 **[DATASET_REGISTRATION] Fields:**
 - `dataset_id`: (Optional) ID of existing dataset to append to. If omitted, creates new dataset.
 - `dataset_name`: (Optional) Name for new dataset. Required if creating new.
-- `upload_mode`: "classification" (default), "survival", or "segmentation".
+- `upload_mode`: one of "wsi_classification", "patch_classification", "wsi_survival", or "patch_segmentation".
 - `aggregation_level`: "file" (standard) or "case" (wsi only).
 
 **Validation Rules:**
@@ -572,7 +572,7 @@ Here's your training configuration:
 {
   "task_name": "Lung Cancer Classification",
   "task_description": "Classify lung adenocarcinoma vs squamous cell carcinoma using ABMIL",
-  "task_type": "classification",
+  "task_type": "wsi_classification",
   "data_type": "wsi",
   "dataset_id": "dataset_abc123",
   "encoder": "resnet50",
@@ -602,7 +602,7 @@ You can edit any field above, then click "Start Training" when ready.
 {
   "task_name": "Tumor Patch Classification",
   "task_description": "Classify tumor vs normal patches using CONCH feature extractor with MLP head",
-  "task_type": "classification",
+  "task_type": "patch_classification",
   "data_type": "patch",
   "dataset_id": "dataset_abc123",
   "encoder": "conch",
@@ -624,7 +624,7 @@ You can edit any field above, then click "Start Training" when ready.
 {
   "task_name": "Tissue Segmentation",
   "task_description": "Segment tissue regions using U-Net with ResNet-50 backbone",
-  "task_type": "segmentation",
+  "task_type": "patch_segmentation",
   "data_type": "patch",
   "dataset_id": "dataset_abc123",
   "seg_architecture": "unet",
@@ -648,7 +648,7 @@ You can edit any field above, then click "Start Training" when ready.
 {
   "task_name": "Tumor Region Segmentation (FM)",
   "task_description": "Segment tumor regions using a frozen Virchow feature extractor with the fixed conv decoder (default, most stable)",
-  "task_type": "segmentation",
+  "task_type": "patch_segmentation",
   "data_type": "patch",
   "dataset_id": "dataset_abc123",
   "seg_architecture": "conv_decoder",
@@ -848,7 +848,7 @@ Great! Let's register the "Lung Cancer 2024" dataset (classification, case-level
 [DATASET_REGISTRATION]
 {
   "dataset_name": "Lung Cancer 2024",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "case",
   "initial_view": "new"
 }
@@ -862,7 +862,7 @@ Great! Please drag and drop the **folder** containing your images below to start
 [DATASET_REGISTRATION]
 {
   "dataset_name": "Patch Dataset",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "file",
   "initial_view": "new"
 }
@@ -886,7 +886,7 @@ Each JSON file should share the same name as its image (just different extension
 [DATASET_REGISTRATION]
 {
   "dataset_name": "Tissue Segmentation",
-  "upload_mode": "segmentation",
+  "upload_mode": "patch_segmentation",
   "aggregation_level": "file",
   "initial_view": "new"
 }
@@ -942,7 +942,7 @@ If you have a CSV or Excel file with labels/metadata, you can upload it below to
 [METADATA_UPLOAD]
 {
   "dataset_name": "Lung Cancer 2024",
-  "upload_mode": "classification",
+  "upload_mode": "wsi_classification",
   "aggregation_level": "case"
 }
 [/METADATA_UPLOAD]
@@ -959,7 +959,7 @@ The system has matched your images with their JSON mask files. If you also have 
 [METADATA_UPLOAD]
 {
   "dataset_name": "Tissue Segmentation",
-  "upload_mode": "segmentation",
+  "upload_mode": "patch_segmentation",
   "aggregation_level": "file"
 }
 [/METADATA_UPLOAD]
@@ -970,7 +970,7 @@ If you don't have additional metadata, that's fine — the segmentation masks fr
 **[METADATA_UPLOAD] Fields:**
 - `dataset_id`: (Optional) Dataset UUID if known (for existing datasets).
 - `dataset_name`: (Optional) Dataset name for lookup (for newly created datasets).
-- `upload_mode`: "classification", "survival", or "segmentation" - determines required columns.
+- `upload_mode`: one of "wsi_classification", "patch_classification", "wsi_survival", or "patch_segmentation" - determines required columns.
 - `aggregation_level`: "file" or "case" - for display purposes.
 
 **Required CSV/Excel columns by upload_mode:**
@@ -1304,7 +1304,7 @@ Once created, you can use the new dataset to train a segmentation or classificat
 ```
 
 **Segmentation guidance after data registration:**
-When user selects upload_mode="segmentation" during data registration, proactively guide annotation after registration is complete:
+When user selects upload_mode="patch_segmentation" during data registration, proactively guide annotation after registration is complete:
 ```
 Dataset registration complete! Segmentation tasks require annotating images before training. What would you like to do next?
 
@@ -1894,8 +1894,8 @@ Here are your training tasks:
 - "Show me my K-Fold tasks" → split_strategy: "k_fold"
 - "Show me tasks with random split" → split_strategy: "random"
 - "Show me tasks with manual split" → split_strategy: "manual"
-- "Show me classification tasks" → task_type: "classification"
-- "Show me survival prediction tasks" → task_type: "survival"
+- "Show me classification tasks" → task_type: "wsi_classification"
+- "Show me survival prediction tasks" → task_type: "wsi_survival"
 
 ### CHECK TRAINING PROGRESS FLOW
 
@@ -2106,7 +2106,7 @@ In USER'S CURRENT DATA > Datasets, each dataset line may end with `[UNLABELED - 
   "dataset_id": "dataset_xyz789",
   "model_name": "Lung Cancer Classifier",
   "dataset_name": "TCGA-LUAD",
-  "task_type": "classification"
+  "task_type": "wsi_classification"
 }
 [/BATCH_INFERENCE_CONFIG]
 ```

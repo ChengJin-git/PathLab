@@ -105,4 +105,59 @@ describe('DatasetRegistrationCard', () => {
     })
     expect(screen.getByText('chatComponents.datasetRegistration.filesSelected')).toBeInTheDocument()
   })
+
+  it('downloads canonical segmentation templates from legacy chat config', async () => {
+    render(
+      <DatasetRegistrationCard
+        config={{ upload_mode: 'segmentation' }}
+      />,
+    )
+
+    fireEvent.click(screen.getByText('chatComponents.datasetRegistration.downloadTemplate'))
+
+    await waitFor(() => {
+      expect(downloadCSVTemplateMock).toHaveBeenCalledWith('patch_segmentation')
+    })
+  })
+
+  it('adds upload tasks with canonical task_type metadata from legacy chat config', async () => {
+    collectItemsFromDataTransferMock.mockResolvedValue({
+      items: [
+        {
+          key: 'patch-a',
+          name: 'patch-a.png',
+          file: new File(['data'], 'patch-a.png'),
+          type: 'standard',
+        },
+      ],
+      orphanFolders: [],
+      orphanDtFiles: new Map(),
+      unsupportedFileNames: [],
+      jsonFiles: [new File(['{}'], 'patch-a.json')],
+    })
+    addUploadTaskMock.mockResolvedValue('upload_task_1')
+
+    render(
+      <DatasetRegistrationCard
+        config={{ upload_mode: 'segmentation', dataset_name: 'Masks' }}
+      />,
+    )
+
+    const dropTarget = screen.getByText('chatComponents.datasetRegistration.dragDropFolder').closest('div')
+    expect(dropTarget).not.toBeNull()
+
+    fireEvent.drop(dropTarget as HTMLElement, {
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'patch-a.png' }) }], files: [new File(['data'], 'patch-a.png')] },
+    })
+
+    await screen.findByText('chatComponents.datasetRegistration.filesSelected')
+    fireEvent.click(screen.getByText('chatComponents.datasetRegistration.startRegistration'))
+
+    await waitFor(() => {
+      const files = addUploadTaskMock.mock.calls[0][0]
+      expect(files[0].metadata.task_type).toBe('patch_segmentation')
+    })
+  })
 })

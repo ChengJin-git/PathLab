@@ -1016,7 +1016,7 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
             heatmaps.append(
                 {
                     "task_id": effective_task_id,
-                    "task_type": "segmentation",
+                    "task_type": "patch_segmentation",
                     "task_name": task_name or "segmentation",
                     "fold_key": effective_fold_key,
                     "prediction": "segmentation",
@@ -1025,7 +1025,7 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
                     "feature_extractor": None,
                     "created_at": mask_file.stat().st_mtime,
                     "attention_file": str(mask_file.name),
-                    "data_type": "patch_segmentation",
+                    "data_type": "patch",
                     "num_classes": num_classes,
                     "image_size": result_meta.get("image_size"),
                 }

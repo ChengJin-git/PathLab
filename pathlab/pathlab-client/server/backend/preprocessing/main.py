@@ -55,6 +55,7 @@ get_db = import_module("backend.database").get_db
 WSIRepository = import_module("backend.database.repositories").WSIRepository
 Config = import_module("backend.common.config").Config
 is_patch_file = import_module("backend.common.file_types").is_patch_file
+is_segmentation_task = import_module("backend.ai.task_taxonomy").is_segmentation_task
 
 # Preprocessing service: WSI processing, tissue segmentation, patch extraction
 from contextlib import asynccontextmanager
@@ -1018,7 +1019,7 @@ async def _extract_regions_background(
 
         async with async_session_maker() as db:
             # Segmentation + source_dataset_id and no new name: legacy reuse path (writes COCO JSON to existing dataset)
-            if task_type == "segmentation" and source_dataset_id and not dataset_name:
+            if is_segmentation_task(task_type) and source_dataset_id and not dataset_name:
                 logger.info(
                     f"Segmentation reuse mode: adding COCO JSON to existing dataset {source_dataset_id}"
                 )
@@ -1060,7 +1061,7 @@ async def _extract_regions_background(
                 await db.commit()
 
                 # 2. Extract regions — segmentation vs classification have different flows
-                if task_type == "segmentation":
+                if is_segmentation_task(task_type):
                     # Segmentation on patches: copy original images + generate COCO JSON
                     completed = await _extract_segmentation_dataset(
                         db=db,
