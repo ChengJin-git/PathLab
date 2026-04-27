@@ -106,10 +106,10 @@ describe('DatasetRegistrationCard', () => {
     expect(screen.getByText('chatComponents.datasetRegistration.filesSelected')).toBeInTheDocument()
   })
 
-  it('downloads canonical segmentation templates from legacy chat config', async () => {
+  it('downloads canonical segmentation templates from canonical chat config', async () => {
     render(
       <DatasetRegistrationCard
-        config={{ upload_mode: 'segmentation' }}
+        config={{ upload_mode: 'patch_segmentation' }}
       />,
     )
 
@@ -120,7 +120,7 @@ describe('DatasetRegistrationCard', () => {
     })
   })
 
-  it('adds upload tasks with canonical task_type metadata from legacy chat config', async () => {
+  it('adds upload tasks with canonical task_type metadata from canonical chat config', async () => {
     collectItemsFromDataTransferMock.mockResolvedValue({
       items: [
         {
@@ -139,7 +139,7 @@ describe('DatasetRegistrationCard', () => {
 
     render(
       <DatasetRegistrationCard
-        config={{ upload_mode: 'segmentation', dataset_name: 'Masks' }}
+        config={{ upload_mode: 'patch_segmentation', dataset_name: 'Masks' }}
       />,
     )
 

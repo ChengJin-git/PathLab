@@ -31,7 +31,7 @@ interface DatasetRegistrationConfig {
   dataset_id?: string
   dataset_name?: string
   source_organ?: string
-  upload_mode?: TaskType | 'classification' | 'survival' | 'segmentation'
+  upload_mode?: TaskType
   aggregation_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
   submitted_task_id?: string
