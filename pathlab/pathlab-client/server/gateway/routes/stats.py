@@ -239,8 +239,7 @@ async def get_user_usage_stats(
                 TrainingTask.user_id,
                 func.count(TrainingTask.id).label("training_count"),
             )
-            .join(DataGroup, DataGroup.group_id == TrainingTask.group_id)
-            .where(DataGroup.task_type != "external_validation")
+            .where(TrainingTask.task_id.notlike("extval_%"))
             .group_by(TrainingTask.user_id)
             .subquery()
         )
@@ -256,8 +255,7 @@ async def get_user_usage_stats(
                 TrainingTask.user_id,
                 func.count(TrainingTask.id).label("external_count"),
             )
-            .join(DataGroup, DataGroup.group_id == TrainingTask.group_id)
-            .where(DataGroup.task_type == "external_validation")
+            .where(TrainingTask.task_id.like("extval_%"))
             .group_by(TrainingTask.user_id)
             .subquery()
         )

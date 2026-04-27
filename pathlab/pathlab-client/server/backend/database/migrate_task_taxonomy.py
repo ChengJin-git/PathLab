@@ -7,9 +7,10 @@ It updates the data_groups table in-place, mapping legacy strings
 (e.g. 'wsi_classification', 'wsi_survival', 'patch_segmentation').
 
 Invalid combinations (patch/case classification, patch survival) that
-have zero datasets are deleted.  external_validation groups are left
-untouched because they represent inference operations, not training
-families.
+have zero datasets are deleted.
+
+external_validation groups are deleted after migrating their associated
+TrainingTask records to the target dataset's DataGroup.
 """
 
 import asyncio
@@ -82,12 +83,28 @@ async def migrate() -> None:
 
         for g in legacy_groups:
             key = (g["task_type"], g["data_type"], g["aggregation_level"])
-            
+
             if g["task_type"] == "external_validation":
-                logger.info(f"  Skipping external_validation group {g['group_id']}")
-                skipped += 1
+                result = await db.execute(
+                    text("""
+                        UPDATE training_tasks tt
+                        SET group_id = sub.dataset_group_id
+                        FROM (
+                            SELECT tt2.task_id, d.group_id as dataset_group_id
+                            FROM training_tasks tt2
+                            JOIN datasets d ON tt2.model_config->>'dataset_id' = d.dataset_id
+                            WHERE tt2.group_id = :gid
+                        ) sub
+                        WHERE tt.task_id = sub.task_id
+                    """),
+                    {"gid": g["group_id"]},
+                )
+                migrated_count = result.rowcount if hasattr(result, 'rowcount') else 0
+                logger.info(f"  Migrated {migrated_count} training_task(s) from external_validation group {g['group_id']}")
+                await _delete_group(db, g["group_id"])
+                deleted += 1
                 continue
-            
+
             canonical = LEGACY_TO_CANONICAL.get(key)
 
             if canonical is None:
@@ -103,7 +120,6 @@ async def migrate() -> None:
                 deleted += 1
                 continue
 
-            # Update task_type (and try to fix the name)
             old_name = g["name"]
             new_name = old_name.replace(g["task_type"].capitalize(), canonical.replace("_", " ").title())
             await db.execute(

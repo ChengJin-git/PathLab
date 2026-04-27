@@ -1181,8 +1181,8 @@ class AnalysisRun(Base):
     """
     Analysis Run table.
     Tracks internal analysis runs (statistical analysis on training task results).
-    External validation runs are tracked via TrainingTask (task_type='external_validation'
-    in the linked DataGroup) and are NOT stored here to avoid double-counting.
+    External validation runs are tracked via TrainingTask (task_id prefix 'extval_')
+    and are NOT stored here to avoid double-counting.
     """
 
     __tablename__ = "analysis_runs"

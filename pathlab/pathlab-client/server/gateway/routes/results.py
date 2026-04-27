@@ -2237,18 +2237,10 @@ async def start_external_validation(
     # Create validation task ID
     validation_id = f"extval_{uuid_module.uuid4().hex[:16]}"
 
-    # Get or create DataGroup for external validation
-    # Use the same data_type as the target dataset, with "external_validation" task_type
-    # and the target dataset's aggregation level
     target_aggregation_level = (
         target_data_group.aggregation_level if target_data_group else "file"
     )
-    validation_data_group = await DataGroupRepository.get_or_create(
-        db,
-        data_type=target_data_type,
-        aggregation_level=target_aggregation_level,
-        task_type="external_validation",
-    )
+    validation_data_group = target_data_group
 
     # Create task record in database (reuse TrainingTask table)
     from backend.database.models import TrainingTask
@@ -2335,13 +2327,11 @@ async def get_completed_external_validations(
     Returns a list of completed extval tasks with model_id, dataset_id,
     and whether analysis results exist.
     """
-    # Query completed external validation tasks
     query = (
         select(TrainingTask)
-        .join(DataGroup, TrainingTask.group_id == DataGroup.group_id)
         .where(
             and_(
-                DataGroup.task_type == "external_validation",
+                TrainingTask.task_id.like("extval_%"),
                 TrainingTask.status == TaskStatus.COMPLETED,
             )
         )
