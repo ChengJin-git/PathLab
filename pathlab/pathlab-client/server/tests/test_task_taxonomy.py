@@ -1,4 +1,5 @@
 from importlib import import_module
+from pathlib import Path
 from typing import Protocol, cast
 
 import pytest
@@ -135,6 +136,25 @@ def test_is_canonical_task_type_accepts_only_canonical_ids():
     assert not taxonomy.is_canonical_task_type("patch_survival")
 
 
+def test_feature_dataset_call_sites_do_not_use_legacy_task_type_keyword():
+    server_root = Path(__file__).resolve().parents[1]
+    paths = [
+        server_root / "backend/ai/tasks/wsi_classification/trainer.py",
+        server_root / "backend/ai/tasks/wsi_survival/trainer.py",
+        server_root / "gateway/routes/inference_wsi_classification.py",
+        server_root / "gateway/routes/inference_wsi_survival.py",
+        server_root / "gateway/routes/inference_external_validation.py",
+    ]
+
+    leaked_lines = []
+    for path in paths:
+        for line_number, line in enumerate(path.read_text().splitlines(), start=1):
+            if 'task_type="classification"' in line or 'task_type="survival"' in line:
+                leaked_lines.append(f"{path.relative_to(server_root)}:{line_number}: {line.strip()}")
+
+    assert leaked_lines == []
+
+
 def test_canonical_id_tuple_and_metadata_lookup():
     canonical_id, metadata = taxonomy.get_canonical_id_tuple(
         task_type="patch_classification",
@@ -200,6 +220,17 @@ def test_training_task_request_normalizes_wsi_classification_to_canonical_id():
     assert request.data_type == "wsi"
 
 
+def test_training_task_request_rejects_legacy_classification_task_type():
+    with pytest.raises(ValidationError, match="task_type must be one of"):
+        gateway_models.TrainingTaskRequest(
+            task_name="legacy cls",
+            task_type="classification",
+            data_type="wsi",
+            preprocessing={"tile_size": 224},
+            model={"architecture": "resnet18"},
+        )
+
+
 @pytest.mark.parametrize(
     ("request_cls_name", "task_type", "expected"),
     [
@@ -250,12 +281,50 @@ def test_batch_register_normalizes_classification_from_file_data_type():
     assert request.task_type == "patch_classification"
 
 
+def test_batch_register_request_rejects_legacy_classification_task_type():
+    with pytest.raises(ValidationError, match="task_type must be one of"):
+        gateway_models.BatchRegisterRequest(
+            task_type="classification",
+            files=[
+                gateway_models.BatchRegisterFileInfo(
+                    path="/tmp/a.svs",
+                    data_type="wsi",
+                )
+            ],
+        )
+
+
 def test_base_dataset_request_normalizes_segmentation():
     request = gateway_models.BaseDatasetRequest(
         task_type="patch_segmentation",
         aggregation_level="file",
     )
     assert request.task_type == "patch_segmentation"
+
+
+def test_base_dataset_request_defaults_to_canonical_wsi_classification():
+    request = gateway_models.BaseDatasetRequest()
+
+    assert request.task_type == "wsi_classification"
+
+
+def test_base_dataset_request_rejects_legacy_classification_task_type():
+    with pytest.raises(ValidationError, match="task_type must be one of"):
+        gateway_models.BaseDatasetRequest(task_type="classification")
+
+
+def test_start_batch_import_rejects_legacy_classification_task_type():
+    with pytest.raises(ValidationError, match="task_type must be one of"):
+        gateway_models.StartBatchImportRequest(
+            task_type="classification",
+            aggregation_level="file",
+            files=[
+                gateway_models.BatchRegisterFileInfo(
+                    path="/tmp/a.svs",
+                    data_type="wsi",
+                )
+            ],
+        )
 
 
 @pytest.mark.parametrize(
@@ -322,3 +391,12 @@ def test_is_survival_task_raises_on_legacy_value():
 def test_is_segmentation_task_raises_on_legacy_value():
     with pytest.raises(ValueError, match="unknown canonical task id: segmentation"):
         taxonomy.is_segmentation_task("segmentation")
+
+
+def test_segmentation_contract_ignores_legacy_segmentation_family():
+    gateway_utils.ensure_segmentation_contract(
+        "segmentation",
+        "patch",
+        "case",
+        context="legacy segmentation probe",
+    )
