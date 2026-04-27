@@ -73,6 +73,9 @@ export interface TaskDetail {
     dataset_id?: string
     dataset_name?: string  // Dataset name for display
     total_wsi?: number
+    analysis_metrics?: string[]
+    analysis_charts?: string[]
+    bootstrap_ci_metrics?: string[]
   }
   classes?: string[]
   error_message?: string

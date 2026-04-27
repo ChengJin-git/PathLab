@@ -85,7 +85,7 @@ const formatStratification = (
 
 export const ConfigurationPanel: React.FC<ConfigurationPanelProps> = ({ task }) => {
   const { t } = useTranslation()
-  const isExternalValidation = task.task_type === 'external_validation'
+  const isExternalValidation = task.task_id.startsWith('extval_')
   const isSegmentation = isSegmentationTask(task.task_type)
   const segIsFm = isSegmentation && isSegFmEncoder(task.model_config.backbone)
 

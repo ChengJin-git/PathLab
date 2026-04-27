@@ -42,8 +42,12 @@ interface Task {
   username?: string | null  // Username of task creator (only for admin users)
 }
 
+function isExternalValidationTask(task: Pick<Task, 'task_id'>): boolean {
+  return task.task_id.startsWith('extval_')
+}
+
 function isTaskCancellable(task: Task): boolean {
-  const cancellableStatuses = task.task_type === 'external_validation'
+  const cancellableStatuses = isExternalValidationTask(task)
     ? VALIDATION_CANCELLABLE_STATUSES
     : TRAINING_CANCELLABLE_STATUSES
 
@@ -345,7 +349,7 @@ export default function TaskListPage() {
     })
   }
 
-  const getStatusBadge = (status: Task['status'], taskType?: string, isSyntheticTask?: boolean) => {
+  const getStatusBadge = (status: Task['status'], taskType?: string, isSyntheticTask?: boolean, isExternalValidation?: boolean) => {
     const badge = TASK_LIST_STATUS_BADGES[status] ?? TASK_LIST_STATUS_BADGES.pending
 
     // Use the same taskList.progress keys that the progress section uses for active statuses,
@@ -353,7 +357,7 @@ export default function TaskListPage() {
     let label: string
     if (isSyntheticTask && status === 'creating') {
       label = t('taskList.progress.creatingTask')
-    } else if (taskType === 'external_validation') {
+    } else if (isExternalValidation) {
       // For validation tasks, 'training' status means "Running Inference"
       if (status === 'patching') label = t('taskList.progress.patching') 
       else if (status === 'extracting') label = t('taskList.progress.extracting')
@@ -583,9 +587,10 @@ export default function TaskListPage() {
         />
       ) : (
         <div className="space-y-3 pb-8">
-          {displayTasks.map(task => {
-            const isSyntheticTask = syntheticTaskIdSet.has(task.task_id)
-            return (
+            {displayTasks.map(task => {
+              const isSyntheticTask = syntheticTaskIdSet.has(task.task_id)
+              const isExternalValidation = isExternalValidationTask(task)
+              return (
             <Card
               key={task.task_id}
               className={`group p-4 sm:p-6 hover:shadow-lg transition-all cursor-pointer overflow-visible border-gray-100 ${selectedTasks.includes(task.task_id) ? 'ring-2 ring-gray-900 bg-gray-50' : 'bg-white'
@@ -608,7 +613,7 @@ export default function TaskListPage() {
                     <div className="flex items-center gap-2 flex-wrap">
                       <h3 className="text-sm sm:text-base font-bold text-gray-900 truncate max-w-[200px] sm:max-w-none" title={task.task_name}>{task.task_name}</h3>
                       <div className="sm:scale-90 origin-left">
-                        {getStatusBadge(task.status, task.task_type, isSyntheticTask)}
+                        {getStatusBadge(task.status, task.task_type, isSyntheticTask, isExternalValidation)}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 text-[10px] sm:text-xs text-gray-400 group/id">
@@ -740,7 +745,7 @@ export default function TaskListPage() {
                         <span className="text-[10px] sm:text-xs font-bold text-gray-400 uppercase tracking-wider">
                           {isSyntheticTask && task.status === 'creating'
                             ? t('taskList.progress.creatingTask')
-                            : task.task_type === 'external_validation'
+                            : isExternalValidation
                             ? (task.status === 'patching' ? t('taskList.progress.patching') :
                               task.status === 'extracting' ? t('taskList.progress.extracting') :
                               task.status === 'training' ? t('taskList.progress.testing') : t('taskList.progress.progress'))

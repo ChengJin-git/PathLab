@@ -67,7 +67,7 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
             finished_at?: string
           }) => {
             // Determine if this is an external validation or batch inference task
-            const isExternalValidation = task.task_type === 'external_validation'
+            const isExternalValidation = task.task_id.startsWith('extval_')
             const isBatchInference = task.task_type === 'batch_inference'
 
             // Cap progress to the standard 0-100 range for display.
@@ -136,4 +136,3 @@ export function useTrainingSSE(isLoggedIn: boolean, enabled: boolean) {
 
   return { trainingTasks, rawTrainingTasks }
 }
-

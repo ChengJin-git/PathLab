@@ -25,7 +25,7 @@ import {
 import { formatDateTime } from '../lib/utils'
 import { getBatchInferenceSummary, getBatchInferenceResults, exportBatchInferenceCsv } from '../api/batchInference'
 import type { BatchInferenceSummary, BatchInferenceResult } from '../api/batchInference'
-import { isSegmentationTask } from '../constants/training'
+import { isCanonicalTaskType, isSegmentationTask } from '../constants/training'
 
 const makeSyntheticTask = (
   taskId: string,
@@ -76,6 +76,9 @@ const makeSyntheticCancelledLogEntry = (taskId: string, message: string): LogEnt
   sequence: -3,
   created_at: new Date().toISOString(),
 })
+
+const isExternalValidationTaskId = (taskId: string | undefined): boolean => Boolean(taskId?.startsWith('extval_'))
+
 export default function TaskDetailPage() {
   const { t } = useTranslation()
   const { task_id } = useParams<{ task_id: string }>()
@@ -358,7 +361,7 @@ export default function TaskDetailPage() {
 
     // Use the same i18n key strategy as TaskListPage for consistency
     let label: string
-    if (taskType === 'external_validation') {
+    if (isExternalValidationTaskId(task_id)) {
       if (status === 'patching') label = t('taskList.progress.patching')
       else if (status === 'extracting') label = t('taskList.progress.extracting')
       else if (status === 'training') label = t('taskList.progress.testing')
@@ -389,7 +392,7 @@ export default function TaskDetailPage() {
   const handleRerun = async () => {
     setRerunError(null)
 
-    if (task?.task_type === 'external_validation') {
+    if (task && isExternalValidationTaskId(task.task_id)) {
       const modelId = task.model_config?.model_id
       const datasetId = task.model_config?.dataset_id
       if (!modelId || !datasetId) {
@@ -401,9 +404,9 @@ export default function TaskDetailPage() {
         const result = await startExternalValidation(
           modelId,
           datasetId,
-          (task.model_config as any)?.analysis_metrics,
-          (task.model_config as any)?.analysis_charts,
-          ((task.model_config as any)?.bootstrap_ci_metrics?.length ?? 0) > 0,
+          task.model_config.analysis_metrics,
+          task.model_config.analysis_charts,
+          (task.model_config.bootstrap_ci_metrics?.length ?? 0) > 0,
           isAdmin ? task.task_id : undefined
         )
         navigate(`/task/${result.task_id}`)
@@ -431,6 +434,12 @@ export default function TaskDetailPage() {
       return
     }
 
+    if (!isCanonicalTaskType(task.task_type)) {
+      setRerunError(t('taskDetail.rerunErrorGeneric'))
+      return
+    }
+    const canonicalTaskType = task.task_type
+
     if (!task.preprocessing_config || !task.model_config) {
       setRerunError(t('taskDetail.rerunErrorMissingConfig'))
       return
@@ -444,7 +453,7 @@ export default function TaskDetailPage() {
         task_id: taskId,
         rerun_from_task_id: isAdmin ? task.task_id : undefined,
         task_name: `${task.task_name} (rerun)`,
-        task_type: task.task_type,
+        task_type: canonicalTaskType,
         data_type: task.data_type,
         task_description: task.task_description,
         wsi_ids: task.wsi_ids,
@@ -568,7 +577,7 @@ export default function TaskDetailPage() {
   }
 
   const isPatchLevel = displayTask.data_type === 'patch'
-  const isExternalValidation = displayTask.task_type === 'external_validation'
+  const isExternalValidation = isExternalValidationTaskId(displayTask.task_id)
   const isBatchInference = displayTask.task_type === 'batch_inference'
   const batchTaskType = batchSummary?.task_type ?? ''
 
