@@ -761,7 +761,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             ds_labels = dataset_labels_map.get(row.dataset_id, {})
             survival_count = dataset_survival_map.get(row.dataset_id, 0)
             canonical_group_task_type = _canonical_task_type_for_response(
-                row.group_task_type, row.data_type
+                row.group_task_type, group_data_type
             )
             if is_segmentation_task(canonical_group_task_type):
                 is_unlabeled = dataset_seg_annotation_map.get(row.dataset_id, 0) == 0

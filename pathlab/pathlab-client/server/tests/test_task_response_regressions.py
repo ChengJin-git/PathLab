@@ -42,6 +42,43 @@ def _parse_sse_payload(event: str):
     return json.loads(event.removeprefix("data: ").strip())
 
 
+@pytest.mark.asyncio
+async def test_chat_context_stats_uses_labeled_data_group_columns():
+    from backend.database.repositories.wsi import WSIRepository
+
+    stats_row = SimpleNamespace(total_count=1, wsi_count=1, patch_count=0)
+    dataset_row = SimpleNamespace(
+        dataset_id="dataset_1",
+        dataset_name="Canonical WSI",
+        dataset_owner_id="user_1",
+        is_public=False,
+        source_organ="lung",
+        group_data_type="wsi",
+        group_task_type="wsi_classification",
+        aggregation_level="case",
+        file_count=1,
+        wsi_count=1,
+        patch_count=0,
+    )
+    db = _SequentialDb(
+        [
+            _AsyncResult(one_value=stats_row),
+            _AsyncResult(all_values=[]),
+            _AsyncResult(all_values=[dataset_row]),
+            _AsyncResult(all_values=[]),
+            _AsyncResult(all_values=[]),
+            _AsyncResult(all_values=[]),
+            _AsyncResult(all_values=[]),
+            _AsyncResult(all_values=[]),
+        ]
+    )
+
+    stats = await WSIRepository.get_chat_context_stats(db)
+
+    assert stats["datasets"][0]["data_type"] == "wsi"
+    assert stats["datasets"][0]["group_task_type"] == "wsi_classification"
+
+
 def _extval_task_dict():
     return {
         "task_id": "extval_123",
