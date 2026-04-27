@@ -19,6 +19,12 @@ def _make_task(task_id, status, data_type="wsi", task_type="wsi_classification")
     return task
 
 
+def _make_batch_inference_task(task_id, status, data_type="wsi", task_type="wsi_classification"):
+    task = _make_task(task_id, status, data_type=data_type, task_type=task_type)
+    task.task_id = task_id if task_id.startswith("binfer_") else f"binfer_{task_id}"
+    return task
+
+
 @pytest.mark.asyncio
 async def test_resume_wsi_extracting_task_skips_patching():
     """WSI task in EXTRACTING state resumes with patching_complete=True."""
@@ -144,8 +150,8 @@ async def test_resume_patch_task_submits_to_queue():
 @pytest.mark.asyncio
 async def test_resume_batch_inference_task():
     """Interrupted batch_inference task is re-submitted with TaskType.BATCH_INFERENCE."""
-    task = _make_task(
-        "task_bi_1", TaskStatus.TRAINING, data_type="wsi", task_type="batch_inference"
+    task = _make_batch_inference_task(
+        "task_bi_1", TaskStatus.TRAINING, data_type="wsi", task_type="wsi_classification"
     )
     task.model_config = {
         "model_task_id": "src_task_abc",
@@ -183,7 +189,7 @@ async def test_resume_batch_inference_task():
 
     mock_queue.submit.assert_awaited_once()
     call_kwargs = mock_queue.submit.call_args.kwargs
-    assert call_kwargs["task_id"] == "task_bi_1"
+    assert call_kwargs["task_id"] == "binfer_task_bi_1"
     assert call_kwargs["task_type"] == TaskType.BATCH_INFERENCE
     assert call_kwargs["model_task_id"] == "src_task_abc"
     assert call_kwargs["model_id"] == "model_xyz"
@@ -194,8 +200,8 @@ async def test_resume_batch_inference_task():
 @pytest.mark.asyncio
 async def test_resume_batch_inference_skips_wsi_ids_fetch():
     """Batch inference resume does NOT call TrainingTaskRepository.get_wsi_ids."""
-    task = _make_task(
-        "task_bi_2", TaskStatus.TRAINING, data_type="wsi", task_type="batch_inference"
+    task = _make_batch_inference_task(
+        "task_bi_2", TaskStatus.TRAINING, data_type="wsi", task_type="wsi_classification"
     )
     task.model_config = {"model_task_id": "t", "model_id": "m", "dataset_id": "d"}
 

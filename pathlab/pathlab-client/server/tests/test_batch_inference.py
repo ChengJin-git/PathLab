@@ -283,6 +283,7 @@ async def test_batch_inference_submit_success():
     trained_model = _mock_trained_model()
 
     dataset_dg = MagicMock()
+    dataset_dg.group_id = "targetgroup-1"
     dataset_dg.task_type = "wsi_classification"
     dataset_dg.data_type = "wsi"
     dataset_dg.aggregation_level = "file"
@@ -293,9 +294,6 @@ async def test_batch_inference_submit_success():
     target_dataset.data_group = dataset_dg
     target_dataset.is_public = False
     target_dataset.parent_dataset_id = None
-
-    mock_batch_dg = MagicMock()
-    mock_batch_dg.group_id = "batchgroup-1"
 
     mock_queue = MagicMock()
     mock_queue.submit = AsyncMock()
@@ -332,11 +330,6 @@ async def test_batch_inference_submit_success():
             new_callable=AsyncMock,
             return_value=0,
         ),
-        patch(
-            "gateway.routes.results.DataGroupRepository.get_or_create",
-            new_callable=AsyncMock,
-            return_value=mock_batch_dg,
-        ),
         patch("gateway.routes.results.get_task_queue", return_value=mock_queue),
     ):
         from gateway.routes.results import start_batch_inference
@@ -356,6 +349,8 @@ async def test_batch_inference_submit_success():
 
     assert "task_id" in result
     assert result["status"] == "pending"
+    created_task = mock_db.add.call_args.args[0]
+    assert created_task.group_id == "targetgroup-1"
     mock_queue.submit.assert_awaited_once()
 
 
@@ -424,12 +419,12 @@ async def test_batch_inference_submit_labeled_dataset_raises():
 
 
 def _mock_batch_task(
-    task_id: str = "binfer-test-1", task_type: str = "wsi_classification"
+    task_id: str = "binfer_test_1", task_type: str = "wsi_classification"
 ) -> MagicMock:
     from datetime import datetime, timezone
 
     dg = MagicMock()
-    dg.task_type = "batch_inference"
+    dg.task_type = task_type
     dg.data_type = "wsi"
     dg.aggregation_level = "file"
 
@@ -459,7 +454,7 @@ def _mock_batch_task(
     return task
 
 
-def _mock_ai_result(wsi_id: str = "wsi-1", task_id: str = "binfer-test-1") -> MagicMock:
+def _mock_ai_result(wsi_id: str = "wsi-1", task_id: str = "binfer_test_1") -> MagicMock:
     from datetime import datetime, timezone
 
     r = MagicMock()
@@ -515,7 +510,7 @@ async def test_list_batch_inference_tasks_returns_items():
     assert "items" in result
     assert "total" in result
     assert result["total"] == 1
-    assert result["items"][0]["task_id"] == "binfer-test-1"
+    assert result["items"][0]["task_id"] == "binfer_test_1"
 
 
 @pytest.mark.asyncio
@@ -563,7 +558,7 @@ async def test_get_batch_inference_results_returns_paginated():
         from gateway.routes.results import get_batch_inference_results
 
         result = await get_batch_inference_results(
-            task_id="binfer-test-1",
+            task_id="binfer_test_1",
             skip=0,
             limit=100,
             user=_make_user("admin"),
@@ -594,9 +589,9 @@ async def test_get_batch_inference_summary_classification():
         from gateway.routes.results import get_batch_inference_summary
 
         result = await get_batch_inference_summary(
-            task_id="binfer-test-1", user=_make_user("admin"), db=AsyncMock()
+            task_id="binfer_test_1", user=_make_user("admin"), db=AsyncMock()
         )
-    assert result["task_id"] == "binfer-test-1"
+    assert result["task_id"] == "binfer_test_1"
     assert result["total_slides"] == 5
     assert "class_distribution" in result
     assert result["class_distribution"]["ClassA"] == 5
@@ -639,7 +634,7 @@ async def test_export_batch_inference_csv_returns_streaming():
         from fastapi.responses import StreamingResponse
 
         result = await export_batch_inference_csv(
-            task_id="binfer-test-1", user=_make_user("admin"), db=AsyncMock()
+            task_id="binfer_test_1", user=_make_user("admin"), db=AsyncMock()
         )
     assert isinstance(result, StreamingResponse)
     assert result.media_type == "text/csv"

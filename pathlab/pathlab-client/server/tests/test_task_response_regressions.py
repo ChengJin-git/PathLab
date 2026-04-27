@@ -258,5 +258,42 @@ async def test_training_log_stream_uses_extval_prefix_for_total_wsi_count(monkey
     await stream.aclose()
 
 
+@pytest.mark.asyncio
+async def test_external_validation_progress_uses_extval_prefix_not_task_type(monkeypatch):
+    from gateway.routes import results as results_routes
+
+    task = SimpleNamespace(
+        task_id="extval_123",
+        status="running",
+        progress=45,
+        error_message=None,
+        data_group=SimpleNamespace(task_type="wsi_classification"),
+        model_config={"total_wsi": 10, "processed_wsi": 0, "model_id": "m1"},
+    )
+    monkeypatch.setattr(
+        results_routes,
+        "_get_task_with_access",
+        lambda *args, **kwargs: _async_value((task, None)),
+    )
+    monkeypatch.setattr(results_routes, "get_progress", lambda _task_id: _async_value(None))
+
+    response = await results_routes.get_validation_progress(
+        "extval_123",
+        user=SimpleNamespace(id="user_1"),
+        db=SimpleNamespace(),
+    )
+
+    assert response["task_id"] == "extval_123"
+    assert response["total_wsi"] == 10
+    assert response["processed_wsi"] == 5
+
+
+def test_gateway_startup_detects_extval_by_task_id_prefix():
+    from gateway import startup
+
+    assert startup._is_external_validation_task_id("extval_123") is True
+    assert startup._is_external_validation_task_id("train_123") is False
+
+
 async def _async_value(value):
     return value
