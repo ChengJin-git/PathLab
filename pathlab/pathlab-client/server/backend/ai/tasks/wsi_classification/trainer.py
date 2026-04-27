@@ -1844,7 +1844,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_ids=train_ids,
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
             val_dataset = (
@@ -1853,7 +1853,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=val_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if val_ids
@@ -1865,7 +1865,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=test_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if test_ids
@@ -1876,7 +1876,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 features_dir=features_dir,
                 wsi_ids=train_ids,
                 labels=labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
             val_dataset = (
@@ -1884,7 +1884,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     features_dir=features_dir,
                     wsi_ids=val_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if val_ids
@@ -1895,7 +1895,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     features_dir=features_dir,
                     wsi_ids=test_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 if test_ids
@@ -2000,7 +2000,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 case_ids=all_sample_ids,
                 case_to_wsi=case_to_wsi,
                 labels=case_labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
         else:
@@ -2008,7 +2008,7 @@ class WSIClassificationTrainer(BaseTrainer):
                 features_dir=features_dir,
                 wsi_ids=all_sample_ids,
                 labels=labels,
-                task_type="classification",
+                task_family="classification",
                 device=self.device,
             )
 
@@ -2135,7 +2135,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=train_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 val_dataset = CaseFeatureDataset(
@@ -2143,7 +2143,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     case_ids=val_ids,
                     case_to_wsi=case_to_wsi,
                     labels=case_labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
             else:
@@ -2151,14 +2151,14 @@ class WSIClassificationTrainer(BaseTrainer):
                     features_dir=features_dir,
                     wsi_ids=train_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
                 val_dataset = WSIFeatureDataset(
                     features_dir=features_dir,
                     wsi_ids=val_ids,
                     labels=labels,
-                    task_type="classification",
+                    task_family="classification",
                     device=self.device,
                 )
 

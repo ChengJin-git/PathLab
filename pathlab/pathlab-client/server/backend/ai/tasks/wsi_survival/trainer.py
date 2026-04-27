@@ -675,7 +675,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 case_to_wsi=case_to_wsi,
                 times=training_times,
                 statuses=training_statuses,
-                task_type="survival",
+                task_family="survival",
                 device=self.device,
             )
             val_dataset = (
@@ -685,7 +685,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     case_to_wsi=case_to_wsi,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
                 if val_ids
@@ -698,7 +698,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     case_to_wsi=case_to_wsi,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
                 if test_ids
@@ -711,7 +711,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 wsi_ids=train_ids,
                 times=training_times,
                 statuses=training_statuses,
-                task_type="survival",
+                task_family="survival",
                 device=self.device,
             )
             val_dataset = (
@@ -720,7 +720,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     wsi_ids=val_ids,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
                 if val_ids
@@ -732,7 +732,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     wsi_ids=test_ids,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
                 if test_ids
@@ -1073,7 +1073,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 case_to_wsi=case_to_wsi,
                 times=training_times,
                 statuses=training_statuses,
-                task_type="survival",
+                task_family="survival",
                 device=self.device,
             )
         else:
@@ -1082,7 +1082,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 wsi_ids=all_ids,
                 times=training_times,
                 statuses=training_statuses,
-                task_type="survival",
+                task_family="survival",
                 device=self.device,
             )
 
@@ -1587,7 +1587,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     case_to_wsi=case_to_wsi,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
                 val_dataset = CaseFeatureDataset(
@@ -1596,7 +1596,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     case_to_wsi=case_to_wsi,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
             else:
@@ -1605,7 +1605,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     wsi_ids=train_ids,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
                 val_dataset = WSIFeatureDataset(
@@ -1613,7 +1613,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     wsi_ids=val_ids,
                     times=training_times,
                     statuses=training_statuses,
-                    task_type="survival",
+                    task_family="survival",
                     device=self.device,
                 )
 
@@ -2407,7 +2407,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                             "pred": risk_group,
                             "probs": None,
                             "extra_metadata": {
-                                "task_type": "survival",
+                                "task_type": "wsi_survival",
                                 "case_id": case_id,
                                 "risk_score": float(risk_score),
                                 "risk_group": risk_group,
@@ -2470,7 +2470,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         "pred": risk_group,
                         "probs": None,
                         "extra_metadata": {
-                            "task_type": "survival",
+                            "task_type": "wsi_survival",
                             "risk_score": float(risk_score),
                             "risk_group": risk_group,
                             "median_risk_score": median_risk_score,
