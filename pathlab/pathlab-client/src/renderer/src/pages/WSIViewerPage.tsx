@@ -1380,7 +1380,7 @@ export default function WSIViewerPage() {
     sourceOrgan,
   }: {
     datasetName: string
-    taskType: TaskType | 'classification' | 'segmentation'
+    taskType: TaskType
     sourceOrgan: string
   }) => {
     try {
