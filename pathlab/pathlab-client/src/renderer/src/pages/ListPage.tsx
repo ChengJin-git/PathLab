@@ -20,7 +20,7 @@ import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, DatasetCard, type ExportLabelsOptions } from '../components/list'
 import { organSources, organSourceKeyMap } from '../constants/wsi'
-import { getTaskFamily } from '../constants/training'
+import { getTaskFamily, type TaskType } from '../constants/training'
 
 
 type ListWSIItem = import('../api/wsi').WSISummary
@@ -37,6 +37,19 @@ const getNormalizedDatasetTaskType = (taskType: string): Exclude<DatasetTaskFilt
   const family = getTaskFamily(taskType)
   if (family) return family
   return 'classification'
+}
+
+const getCanonicalDatasetTaskFilter = (taskType: DatasetTaskFilter): TaskType | undefined => {
+  switch (taskType) {
+    case 'classification':
+      return 'wsi_classification'
+    case 'survival':
+      return 'wsi_survival'
+    case 'segmentation':
+      return 'patch_segmentation'
+    case 'all':
+      return undefined
+  }
 }
 
 const getDatasetVisualType = (dataset: DatasetSummary): 'slides' | 'images' => {
@@ -329,7 +342,7 @@ export default function ListPage() {
       const d = await fetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
         page: datasetCurrentPage,
         page_size: datasetItemsPerPage,
-        task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
+        task_type: getCanonicalDatasetTaskFilter(datasetTaskFilter),
         aggregation_level:
           datasetLevelFilter === 'all'
             ? undefined
@@ -344,7 +357,7 @@ export default function ListPage() {
       const totalPages = Math.max(1, Math.ceil((d.total || 0) / datasetItemsPerPage))
       const prefetchBase = {
         page_size: datasetItemsPerPage,
-        task_type: datasetTaskFilter === 'all' ? undefined : datasetTaskFilter,
+        task_type: getCanonicalDatasetTaskFilter(datasetTaskFilter),
         aggregation_level:
           datasetLevelFilter === 'all'
             ? undefined
@@ -722,7 +735,7 @@ export default function ListPage() {
         fetchDatasets(dataType === 'all' ? undefined : dataType, {
           page: 1,
           page_size: pageSize,
-          task_type: taskType === 'all' ? undefined : (taskType as 'classification' | 'survival' | 'segmentation'),
+          task_type: getCanonicalDatasetTaskFilter(taskType),
           aggregation_level:
             level === 'all' ? undefined : level === 'patient' ? 'case' : 'file',
           source_organ: datasetSourceFilter === 'all' ? undefined : datasetSourceFilter,
