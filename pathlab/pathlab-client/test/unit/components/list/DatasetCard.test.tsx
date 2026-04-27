@@ -14,7 +14,7 @@ const mockDataset = {
   file_count: 42,
   total_size: 1024000,
   data_type: 'wsi' as const,
-  task_type: 'classification' as const,
+  task_type: 'wsi_classification' as const,
   aggregation_level: 'file' as const,
   can_delete: true,
   username: 'testuser',

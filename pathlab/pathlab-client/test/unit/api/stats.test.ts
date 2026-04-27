@@ -45,7 +45,7 @@ const MOCK_RECENT_ACTIVITY = {
     {
       task_id: 'task_001',
       task_name: 'BRCA Classification',
-      task_type: 'classification',
+      task_type: 'wsi_classification',
       task_category: 'training' as const,
       status: 'completed',
       progress: 100,

@@ -26,7 +26,7 @@ const MOCK_DATASET: InferenceDataset = {
   dataset_id: 'ds_unlabeled_1',
   name: 'TCGA Unlabeled',
   data_type: 'wsi',
-  task_type: 'classification',
+  task_type: 'wsi_classification',
   aggregation_level: 'file',
   slide_count: 80,
 }
@@ -39,10 +39,10 @@ const MOCK_TASK: BatchInferenceTask = {
   model_task_id: 'task_src_1',
   model_id: 'model_1',
   dataset_id: 'ds_unlabeled_1',
-  model_task_type: 'classification',
+  model_task_type: 'wsi_classification',
   model_data_type: 'wsi',
   data_type: 'wsi',
-  task_type: 'batch_inference',
+  task_type: 'wsi_classification',
   total_wsi: 80,
   results_count: 80,
   error: null,
@@ -54,7 +54,7 @@ const MOCK_SUMMARY: BatchInferenceSummary = {
   task_id: 'binfer_abc123',
   task_name: 'Lung Model → TCGA Unlabeled',
   status: 'completed',
-  task_type: 'classification',
+  task_type: 'wsi_classification',
   data_type: 'wsi',
   model_task_id: 'task_src_1',
   model_id: 'model_1',
@@ -82,10 +82,10 @@ describe('fetchDatasetsForInference', () => {
 
   it('appends unlabeled_only and task_type query params', async () => {
     mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
-    await fetchDatasetsForInference(true, 'classification')
+    await fetchDatasetsForInference(true, 'wsi_classification')
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('unlabeled_only=true')
-    expect(String(url)).toContain('task_type=classification')
+    expect(String(url)).toContain('task_type=wsi_classification')
   })
 
   it('throws on API error', async () => {
@@ -149,17 +149,17 @@ describe('listBatchInferenceTasks', () => {
 describe('getBatchInferenceResults', () => {
   it('fetches from GET /results/batch-inference/:taskId/results', async () => {
     mockFetch.mockResolvedValueOnce(
-      ok({ task_type: 'classification', data_type: 'wsi', items: [], total: 0, skip: 0, limit: 100 })
+      ok({ task_type: 'wsi_classification', data_type: 'wsi', items: [], total: 0, skip: 0, limit: 100 })
     )
     const result = await getBatchInferenceResults('binfer_abc123')
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/results/batch-inference/binfer_abc123/results')
-    expect(result.task_type).toBe('classification')
+    expect(result.task_type).toBe('wsi_classification')
   })
 
   it('includes skip and limit in URL', async () => {
     mockFetch.mockResolvedValueOnce(
-      ok({ task_type: 'classification', data_type: 'wsi', items: [], total: 0, skip: 10, limit: 50 })
+      ok({ task_type: 'wsi_classification', data_type: 'wsi', items: [], total: 0, skip: 10, limit: 50 })
     )
     await getBatchInferenceResults('binfer_abc123', 10, 50)
     const [url] = mockFetch.mock.calls[0]

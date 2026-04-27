@@ -63,7 +63,7 @@ const MOCK_DATASET = {
   file_count: 50,
   total_size: 1024 * 1024 * 1024 * 10,
   data_type: 'wsi' as const,
-  task_type: 'classification' as const,
+  task_type: 'wsi_classification' as const,
   aggregation_level: 'case' as const,
 }
 
@@ -179,9 +179,9 @@ describe('fetchDatasets', () => {
 
   it('filters by task_type', async () => {
     mockFetch.mockResolvedValueOnce(ok({ items: [], total: 0 }))
-    await fetchDatasets(undefined, { task_type: 'survival' })
+    await fetchDatasets(undefined, { task_type: 'wsi_survival' })
     const [url] = mockFetch.mock.calls[0]
-    expect(url).toContain('task_type=survival')
+    expect(url).toContain('task_type=wsi_survival')
   })
 
   it('accepts canonical task_type filters', async () => {
@@ -277,14 +277,14 @@ describe('renameDataset', () => {
 
 describe('updateDatasetType', () => {
   it('sends PUT request to correct endpoint', async () => {
-    mockFetch.mockResolvedValueOnce(ok({ message: 'ok', dataset_id: 'ds_1', new_type: 'survival', updated_count: 50 }))
-    const result = await updateDatasetType('ds_1', 'survival')
+    mockFetch.mockResolvedValueOnce(ok({ message: 'ok', dataset_id: 'ds_1', new_type: 'wsi_survival', updated_count: 50 }))
+    const result = await updateDatasetType('ds_1', 'wsi_survival')
     const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toContain('/wsi/datasets/ds_1/type')
     expect(opts?.method).toBe('PUT')
     const body = JSON.parse(opts?.body as string)
-    expect(body.task_type).toBe('survival')
-    expect(result.new_type).toBe('survival')
+    expect(body.task_type).toBe('wsi_survival')
+    expect(result.new_type).toBe('wsi_survival')
   })
 
   it('accepts canonical task_type values', async () => {
@@ -340,7 +340,7 @@ describe('uploadWSIByPath', () => {
       dataset_name: 'TCGA-BRCA',
       label: 'LUAD',
       case_id: 'case_001',
-      task_type: 'classification',
+      task_type: 'wsi_classification',
     })
     const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toContain('/wsi/upload/path')
@@ -463,7 +463,7 @@ describe('downloadCSVTemplate', () => {
     removeSpy.mockRestore()
   })
 
-  it('fetches survival template when task_type is survival', async () => {
+  it('fetches survival template when task_type is canonical wsi_survival', async () => {
     const origURL = globalThis.URL
     vi.stubGlobal('URL', { createObjectURL: vi.fn().mockReturnValue('blob:url'), revokeObjectURL: vi.fn() })
     const appendSpy = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => n)
@@ -474,9 +474,9 @@ describe('downloadCSVTemplate', () => {
       headers: new Headers({ 'content-type': 'text/csv' }),
       blob: () => Promise.resolve(new Blob(['wsi_path,event_time,event_status'])),
     } as unknown as Response)
-    await downloadCSVTemplate('survival')
+    await downloadCSVTemplate('wsi_survival')
     const [url] = mockFetch.mock.calls[0]
-    expect(url).toContain('task_type=survival')
+    expect(url).toContain('task_type=wsi_survival')
     vi.stubGlobal('URL', origURL)
     appendSpy.mockRestore()
     removeSpy.mockRestore()
