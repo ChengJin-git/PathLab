@@ -963,17 +963,39 @@ export default function TaskListPage() {
 
             {!isBatchDelete && taskStorageInfo && !loadingStorageInfo && (() => {
               if (taskStorageInfo.quick) {
+                const quickDeleteItems = [
+                  taskStorageInfo.training_dir.exists && 'trainingDataQuick',
+                  taskStorageInfo.ai_results.exists && 'aiResultsQuick',
+                  taskStorageInfo.training_logs.exists && 'logsQuick',
+                  taskStorageInfo.analysis_logs.exists && 'analysisLogsQuick',
+                  deleteMode === 'complete' && taskStorageInfo.models.some(model => model.exists) && 'modelsQuick',
+                ].filter(Boolean) as string[]
+
                 return (
                   <div className="bg-sky-50/70 border border-sky-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
                     <div className="flex items-start gap-3">
                       <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.12)]" />
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <div className="text-[11px] sm:text-sm font-bold text-sky-950">
-                          {t('taskList.deleteModal.cleanupPendingTitle')}
+                          {t('taskList.deleteModal.quickScopeTitle')}
                         </div>
                         <p className="mt-1 text-[10px] sm:text-xs leading-relaxed text-sky-800/80">
-                          {t('taskList.deleteModal.cleanupPendingDesc')}
+                          {t(deleteMode === 'complete' ? 'taskList.deleteModal.quickScopeCompleteDesc' : 'taskList.deleteModal.quickScopeStandardDesc')}
                         </p>
+                        <ul className="mt-3 grid gap-1.5 text-[10px] sm:text-xs text-sky-900">
+                          {quickDeleteItems.map(itemKey => (
+                            <li key={itemKey} className="flex items-center gap-2">
+                              <span className="h-1.5 w-1.5 rounded-full bg-sky-500" />
+                              <span>{t(`taskList.deleteModal.${itemKey}`)}</span>
+                            </li>
+                          ))}
+                          {deleteMode === 'standard' && taskStorageInfo.models.some(model => model.exists) && (
+                            <li className="flex items-center gap-2 text-emerald-700">
+                              <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                              <span>{t('taskList.deleteModal.modelsKeptQuick')}</span>
+                            </li>
+                          )}
+                        </ul>
                       </div>
                     </div>
                   </div>

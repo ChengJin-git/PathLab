@@ -40,7 +40,7 @@ describe('TaskListPage delete modal', () => {
     sessionStorage.clear()
   })
 
-  it('shows pending cleanup copy instead of exact zero totals for quick storage summaries', async () => {
+  it('shows mode-specific cleanup scope instead of exact zero totals for quick storage summaries', async () => {
     vi.spyOn(apiModule, 'getTrainingTasks').mockResolvedValue({
       items: [
         {
@@ -72,8 +72,8 @@ describe('TaskListPage delete modal', () => {
       ai_results: { path: '', size: 0, exists: true, file_count: 0, wsi_dir_count: 0 },
       training_dir: { path: '', size: 0, exists: true, file_count: 0 },
       training_logs: { path: '', size: 0, exists: true, file_count: 0 },
-      analysis_logs: { path: '', size: 0, exists: false, file_count: 0 },
-      models: [],
+      analysis_logs: { path: '', size: 0, exists: true, file_count: 0 },
+      models: [{ path: '', size: 0, exists: true, file_count: 0 }],
       total_size: 0,
       total_size_mb: 0,
       total_size_gb: 0,
@@ -107,10 +107,21 @@ describe('TaskListPage delete modal', () => {
       expect(apiModule.getTrainingTaskStorageInfo).toHaveBeenCalledWith('task-1', { quick: true })
     })
 
-    expect(await screen.findByText('taskList.deleteModal.cleanupPendingTitle')).toBeInTheDocument()
+    expect(await screen.findByText('taskList.deleteModal.quickScopeTitle')).toBeInTheDocument()
+    expect(screen.getByText('taskList.deleteModal.trainingDataQuick')).toBeInTheDocument()
+    expect(screen.getByText('taskList.deleteModal.aiResultsQuick')).toBeInTheDocument()
+    expect(screen.getByText('taskList.deleteModal.logsQuick')).toBeInTheDocument()
+    expect(screen.getByText('taskList.deleteModal.analysisLogsQuick')).toBeInTheDocument()
+    expect(screen.getByText('taskList.deleteModal.modelsKeptQuick')).toBeInTheDocument()
+    expect(screen.queryByText('taskList.deleteModal.modelsQuick')).not.toBeInTheDocument()
     expect(screen.queryByText('0 B')).not.toBeInTheDocument()
     expect(screen.queryByText('taskList.deleteModal.files:0')).not.toBeInTheDocument()
     expect(screen.queryByText(/不准确的 0 B/)).not.toBeInTheDocument()
     expect(screen.queryByText(/后台清理任务统计/)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByDisplayValue('complete'))
+
+    expect(screen.getByText('taskList.deleteModal.modelsQuick')).toBeInTheDocument()
+    expect(screen.queryByText('taskList.deleteModal.modelsKeptQuick')).not.toBeInTheDocument()
   })
 })
