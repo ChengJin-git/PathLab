@@ -2694,6 +2694,8 @@
       "viewTaskDetail": "View Task Detail",
       "missingConfig": "Missing required configuration (model or dataset)",
       "failedToSubmit": "Failed to submit",
+      "uploadedImages": "Uploaded images",
+      "imageCount": "{{count}} images",
       "inferenceStarted": "Inference task started"
     },
     "renameTask": {

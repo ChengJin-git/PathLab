@@ -2,12 +2,14 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { Play, CheckCircle, Loader2, AlertCircle, ArrowRight, PlayCircle, Cpu } from 'lucide-react'
-import { startBatchInference } from '../../api/batchInference'
+import { startBatchInference, startIndependentInference } from '../../api/batchInference'
 
 export interface BatchInferenceConfig {
-  model_task_id: string
+  mode?: 'dataset' | 'uploaded_wsi'
+  model_task_id?: string
   model_id: string
-  dataset_id: string
+  dataset_id?: string
+  wsi_ids?: string[]
   model_name?: string
   dataset_name?: string
   task_type?: string
@@ -28,6 +30,10 @@ export function parseBatchInferenceConfig(content: string): BatchInferenceConfig
   if (!match) return null
   try {
     const config = JSON.parse(match[1].trim()) as BatchInferenceConfig
+    if (config.mode === 'uploaded_wsi') {
+      if (!config.model_id || !Array.isArray(config.wsi_ids) || config.wsi_ids.length === 0) return null
+      return config
+    }
     if (!config.model_task_id || !config.model_id || !config.dataset_id) return null
     return config
   } catch {
@@ -54,18 +60,28 @@ export function BatchInferenceConfigCard({
   )
   const [errorMessage, setErrorMessage] = useState<string>('')
 
-  const isMissingConfig = !config.model_task_id || !config.model_id || !config.dataset_id
+  const isUploadedWsiMode = config.mode === 'uploaded_wsi'
+  const hasUploadedWsiConfig = Boolean(
+    config.model_id && Array.isArray(config.wsi_ids) && config.wsi_ids.length > 0
+  )
+  const hasDatasetConfig = Boolean(config.model_task_id && config.model_id && config.dataset_id)
+  const isMissingConfig = isUploadedWsiMode ? !hasUploadedWsiConfig : !hasDatasetConfig
 
   const handleSubmit = async () => {
     if (isMissingConfig || isSubmitting || submitStatus === 'success') return
     setIsSubmitting(true)
     setErrorMessage('')
     try {
-      const result = await startBatchInference({
-        model_task_id: config.model_task_id,
-        model_id: config.model_id,
-        dataset_id: config.dataset_id,
-      })
+      const result = isUploadedWsiMode
+        ? await startIndependentInference({
+            model_id: config.model_id,
+            wsi_ids: config.wsi_ids ?? [],
+          })
+        : await startBatchInference({
+            model_task_id: config.model_task_id ?? '',
+            model_id: config.model_id,
+            dataset_id: config.dataset_id ?? '',
+          })
       const updatedConfig = { ...config, submitted_task_id: result.task_id }
       setConfig(updatedConfig)
       onConfigChange?.(updatedConfig)
@@ -120,7 +136,16 @@ export function BatchInferenceConfigCard({
                 {t('chatComponents.batchInferenceConfig.dataset')}
               </label>
               <div className="p-3 bg-gray-50 border border-gray-200 rounded-lg">
-                <div className="font-medium text-gray-900 text-sm">{config.dataset_name || config.dataset_id}</div>
+                <div className="font-medium text-gray-900 text-sm">
+                  {isUploadedWsiMode
+                    ? t('chatComponents.batchInferenceConfig.uploadedImages')
+                    : config.dataset_name || config.dataset_id}
+                </div>
+                {isUploadedWsiMode && (
+                  <div className="text-xs text-gray-500 mt-0.5">
+                    {t('chatComponents.batchInferenceConfig.imageCount', { count: config.wsi_ids?.length ?? 0 })}
+                  </div>
+                )}
                 {config.data_type && (
                   <div className="text-xs text-gray-500 mt-0.5">{config.data_type}</div>
                 )}

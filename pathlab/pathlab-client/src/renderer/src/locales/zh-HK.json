@@ -2695,6 +2695,8 @@
       "viewTaskDetail": "查看任務詳情",
       "missingConfig": "缺少必要配置（模型或資料集）",
       "failedToSubmit": "提交失敗",
+      "uploadedImages": "已上載圖像",
+      "imageCount": "{{count}} 張圖像",
       "inferenceStarted": "推理任務已啟動"
     },
     "renameTask": {
