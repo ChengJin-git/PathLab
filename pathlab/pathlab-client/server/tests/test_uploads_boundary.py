@@ -69,6 +69,32 @@ class TestStorageManagerUploadsBoundary:
         assert collision_model.exists()
         assert str(collision_model) not in result["deleted_dirs"]
 
+    def test_training_task_storage_info_quick_mode_skips_recursive_stats(self, tmp_path):
+        uploads_dir = tmp_path / "uploads"
+        training_dir = uploads_dir / "training" / "task_fast"
+        training_dir.mkdir(parents=True)
+        model_dir = uploads_dir / "models" / "model_fast"
+        model_dir.mkdir(parents=True)
+
+        manager = StorageManager(str(uploads_dir))
+
+        with patch.object(
+            manager,
+            "_get_directory_stats",
+            side_effect=AssertionError("quick mode should not recursively scan directories"),
+        ):
+            result = manager.get_training_task_storage_info(
+                "task_fast",
+                model_paths=[str(model_dir)],
+                quick=True,
+            )
+
+        assert result["quick"] is True
+        assert result["training_dir"]["exists"] is True
+        assert result["models"][0]["exists"] is True
+        assert result["total_size"] == 0
+        assert result["total_files"] == 0
+
 
 class TestStorageScanUploadsBoundary:
     def test_check_external_files_sync_treats_prefix_collision_as_external(self):

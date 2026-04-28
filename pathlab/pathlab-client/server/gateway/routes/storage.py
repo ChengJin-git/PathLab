@@ -407,6 +407,7 @@ async def get_wsi_storage_info(
 @router.get("/training/{task_id}")
 async def get_training_task_storage_info(
     task_id: str,
+    quick: bool = Query(False, description="Return existence-only metadata without recursive size scans"),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -440,7 +441,7 @@ async def get_training_task_storage_info(
 
         # Run file operations in thread pool to avoid blocking event loop
         info = await asyncio.to_thread(
-            storage_manager.get_training_task_storage_info, task_id, model_paths
+            storage_manager.get_training_task_storage_info, task_id, model_paths, quick
         )
 
         # Add human-readable sizes

@@ -771,7 +771,10 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         return info
 
     def get_training_task_storage_info(
-        self, task_id: str, model_paths: Optional[List[str]] = None
+        self,
+        task_id: str,
+        model_paths: Optional[List[str]] = None,
+        quick: bool = False,
     ) -> Dict[str, Any]:
         """
         Get storage information for a training task.
@@ -779,6 +782,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         Args:
             task_id: Training task identifier
             model_paths: List of model paths (optional)
+            quick: Return existence-only metadata without recursive size scans
 
         Returns:
             Dictionary with storage information
@@ -786,8 +790,9 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         OPTIMIZED: Uses _get_directory_stats for single-pass directory traversal
         instead of separate size and file count calculations.
         """
-        info = {
+        info: Dict[str, Any] = {
             "task_id": task_id,
+            "quick": quick,
             "ai_results": {},
             "training_dir": {},
             "training_logs": {},
@@ -796,6 +801,53 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             "total_size": 0,
             "total_files": 0,
         }
+
+        if quick:
+            training_dir = self.training_dir / task_id
+            training_log_dir = self.logs_dir / "training" / task_id
+            analysis_log_dir = self.logs_dir / "analysis" / task_id
+
+            info["ai_results"] = {
+                "path": str(self.ai_results_dir),
+                "size": 0,
+                "exists": self.ai_results_dir.exists(),
+                "file_count": 0,
+                "wsi_dir_count": 0,
+            }
+            info["training_dir"] = {
+                "path": str(training_dir),
+                "size": 0,
+                "exists": training_dir.exists() and training_dir.is_dir(),
+                "file_count": 0,
+            }
+            info["training_logs"] = {
+                "path": str(training_log_dir),
+                "size": 0,
+                "exists": training_log_dir.exists() and training_log_dir.is_dir(),
+                "file_count": 0,
+            }
+            info["analysis_logs"] = {
+                "path": str(analysis_log_dir),
+                "size": 0,
+                "exists": analysis_log_dir.exists() and analysis_log_dir.is_dir(),
+                "file_count": 0,
+            }
+            if model_paths:
+                for model_path in model_paths:
+                    model_dir = (
+                        Path(model_path).parent
+                        if Path(model_path).is_file()
+                        else Path(model_path)
+                    )
+                    info["models"].append(
+                        {
+                            "path": str(model_dir),
+                            "size": 0,
+                            "file_count": 0,
+                            "exists": model_dir.exists() and model_dir.is_dir(),
+                        }
+                    )
+            return info
 
         # Task-scoped AI result files across ai_results/{wsi_id}/
         ai_result_size = 0
