@@ -1419,6 +1419,8 @@
       "batchWarning": "You are about to delete {{count}} tasks. All associated data will be removed according to the selected mode.",
       "loadingStorageInfo": "Loading storage info...",
       "freesSurface": "Frees Surface",
+      "cleanupPendingTitle": "Task data will be cleaned up",
+      "cleanupPendingDesc": "Deleting this task will free its training data, logs, and result files.",
       "files": "Files ({{count}})",
       "trainingData": "Training data ({{size}})",
       "aiResults": "AI results ({{size}})",
