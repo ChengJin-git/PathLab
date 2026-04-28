@@ -32,6 +32,8 @@ import { CreateDatasetDialog } from '../components/wsiViewer/CreateDatasetDialog
 import { ShareAnnotationDialog } from '../components/wsiViewer/ShareAnnotationDialog'
 import { ViewerOverlayControls } from '../components/wsiViewer/ViewerOverlayControls'
 import { buildSlideNavigationTooltip, getAdjacentSlideIds, shouldPersistAnnotationsBeforeSlideNavigation } from '../lib/wsiViewerNavigation'
+import { deriveAnnotationLabels, isMissingCurrentLabel } from '../lib/annotationLabels'
+import { getLabelFromDigitShortcut, isEditableTarget } from '../lib/wsiViewerAnnotationShortcuts'
 import {
   AnnotationRegion,
   AnnotationsMap,
@@ -47,7 +49,6 @@ import {
   saveSharedAnnotation,
   getSharedAnnotationSSEUrl,
   SharedAnnotationEvent,
-  deleteSharedAnnotation,
   listCollaborators,
   getMyAnnotationAccess,
 } from '../api/annotation'
@@ -281,6 +282,10 @@ export default function WSIViewerPage() {
   const [hasGTAnnotations, setHasGTAnnotations] = useState(false)
   const [drawingTool, setDrawingTool] = useState<'rect' | 'polygon'>('rect')
   const [currentLabel, setCurrentLabel] = useState('')
+  const [rememberedLabelsByMode, setRememberedLabelsByMode] = useState<Record<'personal' | 'shared', string[]>>({
+    personal: [],
+    shared: [],
+  })
   const [labelColors, setLabelColors] = useState<Record<string, string>>({})
   const [isLabelDropdownOpen, setIsLabelDropdownOpen] = useState(false)
   const [allAnnotations, setAllAnnotations] = useState<AnnotationsMap>({})
@@ -363,6 +368,7 @@ export default function WSIViewerPage() {
   const [savingAnnotations, setSavingAnnotations] = useState(false)
   // Pending navigation when user tries to leave with unsaved changes
   const [pendingNavigation, setPendingNavigation] = useState<(() => void) | null>(null)
+  const [annotationCancelToken, setAnnotationCancelToken] = useState(0)
 
   const handleRemoteAnnotationPatch = useCallback((event: AnnotationPatchEvent) => {
     if (editingMode !== 'shared') return
@@ -587,6 +593,7 @@ export default function WSIViewerPage() {
   const selectedSegmentationEntry = selectedTaskEntries.find(
     h => isSegmentationTask(h.task_type)
   )
+  const selectedTaskIsSegmentation = isSegmentationTask(selectedTask?.task_type)
   const hasPatchHeatmap = selectedTaskEntries.some(h => h.data_type === 'patch')
   const isPatchLevel = selectedTaskEntries.some(h => h.data_type === 'patch')
   const canShowHeatmapOverlay = selectedTaskEntries.some(h => h.data_type === 'wsi' || h.data_type === 'patch')
@@ -619,7 +626,7 @@ export default function WSIViewerPage() {
 
   // Get available folds for the selected task (K-fold support)
   const availableFolds = useMemo(() => {
-    if (selectedTaskGroup.length === 0 || isSegmentationTask) return []
+    if (selectedTaskGroup.length === 0 || selectedTaskIsSegmentation) return []
     const folds = selectedTaskGroup
       .filter(h => h.fold_key)
       .map(h => h.fold_key!)
@@ -631,7 +638,7 @@ export default function WSIViewerPage() {
         return numA - numB
       })
     return folds
-  }, [isSegmentationTask, selectedTaskGroup])
+  }, [selectedTaskGroup, selectedTaskIsSegmentation])
 
   // Get unique tasks for dropdown (deduplicate K-fold entries)
   const uniqueTasks = useMemo(() => {
@@ -819,15 +826,15 @@ export default function WSIViewerPage() {
     setFocusedRegionId(prev => prev && currentRegions.some(region => region.id === prev) ? prev : null)
   }, [currentRegions])
 
-  const allLabels = useMemo(() => {
-    const labels = new Set<string>()
-    for (const regions of Object.values(allAnnotations)) {
-      for (const r of regions) {
-        if (r.label) labels.add(r.label)
-      }
-    }
-    return Array.from(labels)
-  }, [allAnnotations])
+  const visibleLabels = useMemo(() => {
+    return deriveAnnotationLabels(allAnnotations, rememberedLabelsByMode[editingMode] ?? [])
+  }, [allAnnotations, editingMode, rememberedLabelsByMode])
+
+  const allLabels = visibleLabels
+
+  const missingCurrentLabel = useMemo(() => {
+    return isMissingCurrentLabel(currentLabel, visibleLabels)
+  }, [currentLabel, visibleLabels])
 
   const currentColor = useMemo(() => {
     if (!currentLabel) return '#3b82f6'
@@ -1058,15 +1065,48 @@ export default function WSIViewerPage() {
 
   const handleLabelChange = useCallback((label: string) => {
     setCurrentLabel(label)
-    if (label) {
-      setLabelColors(prev => {
-        if (prev[label]) return prev
+    const trimmedLabel = label.trim()
+    if (trimmedLabel) {
+      setRememberedLabelsByMode(prev => {
+        const labelsInMode = prev[editingMode]
+        if (labelsInMode.includes(trimmedLabel)) return prev
         return {
           ...prev,
-          [label]: getColorForLabel(label, prev),
+          [editingMode]: [...labelsInMode, trimmedLabel],
+        }
+      })
+      setLabelColors(prev => {
+        if (prev[trimmedLabel]) return prev
+        return {
+          ...prev,
+          [trimmedLabel]: getColorForLabel(trimmedLabel, prev),
         }
       })
     }
+  }, [editingMode])
+
+  const handleCreateCurrentLabelInMode = useCallback(() => {
+    const trimmed = currentLabel.trim()
+    if (!trimmed) return
+    setRememberedLabelsByMode(prev => {
+      const labelsInMode = prev[editingMode]
+      if (labelsInMode.includes(trimmed)) return prev
+      return {
+        ...prev,
+        [editingMode]: [...labelsInMode, trimmed],
+      }
+    })
+    setLabelColors(prev => {
+      if (prev[trimmed]) return prev
+      return {
+        ...prev,
+        [trimmed]: getColorForLabel(trimmed, prev),
+      }
+    })
+  }, [currentLabel, editingMode])
+
+  const requestAnnotationCancel = useCallback(() => {
+    setAnnotationCancelToken(prev => prev + 1)
   }, [])
 
   const buildEmptyDatasetDraftAnnotations = useCallback((): AnnotationsMap => {
@@ -1602,10 +1642,7 @@ export default function WSIViewerPage() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!slideNavRef.current.isPatchLevel) return
-      const el = document.activeElement as HTMLElement | null
-      if (!el) return
-      const tag = el.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) return
+      if (isEditableTarget(document.activeElement)) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
       const wasdCodes = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD'])
@@ -1657,10 +1694,7 @@ export default function WSIViewerPage() {
 
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      const el = document.activeElement as HTMLElement | null
-      if (!el) return
-      const tag = el.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable) return
+      if (isEditableTarget(document.activeElement)) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
 
       const { prevWsiId: prev, nextWsiId: next, annotationMode: inAnnotation, hasUnsavedChanges: unsaved, persistAnnotations: persist } = slideNavRef.current
@@ -1687,6 +1721,29 @@ export default function WSIViewerPage() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [navigate, fromAIChat, fromDataset, datasetId, datasetName, conversationId, chatScrollPosition])
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!annotationMode) return
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return
+      if (isEditableTarget(document.activeElement)) return
+
+      if (e.code === 'Escape') {
+        e.preventDefault()
+        requestAnnotationCancel()
+        return
+      }
+
+      const nextLabel = getLabelFromDigitShortcut(e.code, visibleLabels, e.key)
+      if (nextLabel) {
+        e.preventDefault()
+        handleLabelChange(nextLabel)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [annotationMode, handleLabelChange, requestAnnotationCancel, visibleLabels])
 
   const guardedNavigate = useCallback((navigateFn: () => void) => {
     if (shouldPersistAnnotationsBeforeSlideNavigation(annotationMode, hasUnsavedChanges)) {
@@ -1973,6 +2030,9 @@ export default function WSIViewerPage() {
                   onLabelChange={handleLabelChange}
                   labelColors={labelColors}
                   allLabels={allLabels}
+                  visibleLabels={visibleLabels}
+                  missingCurrentLabel={missingCurrentLabel}
+                  onCreateCurrentLabelInMode={handleCreateCurrentLabelInMode}
                   onDropdownOpenChange={setIsLabelDropdownOpen}
                   editingMode={editingMode}
                   onToggleEditingMode={handleToggleEditingMode}
@@ -2128,19 +2188,20 @@ export default function WSIViewerPage() {
                   transformOrigin: 'center center'
                 }}
                 onBaseImageLoad={handlePatchImageLoad}
-                 regions={overlayRegions}
-                 labelColors={overlayLabelColors}
-                 highlightedRegionId={focusedRegionId}
-                 slideWidth={slideWidth}
-                 slideHeight={slideHeight}
-                 annotationMode={annotationMode}
-                 drawingTool={drawingTool}
-                 currentLabel={currentLabel}
-                 currentColor={currentColor}
-                 onRegionCreated={handleRegionCreated}
-                 onRegionTooLarge={handleRegionTooLarge}
-                 isLabelDropdownOpen={isLabelDropdownOpen}
-               />
+                regions={overlayRegions}
+                labelColors={overlayLabelColors}
+                highlightedRegionId={focusedRegionId}
+                slideWidth={slideWidth}
+                slideHeight={slideHeight}
+                annotationMode={annotationMode}
+                drawingTool={drawingTool}
+                currentLabel={currentLabel}
+                currentColor={currentColor}
+                onRegionCreated={handleRegionCreated}
+                onRegionTooLarge={handleRegionTooLarge}
+                isLabelDropdownOpen={isLabelDropdownOpen}
+                cancelToken={annotationCancelToken}
+              />
             </div>
           ) : (
             // WSI-level viewer
@@ -2157,27 +2218,28 @@ export default function WSIViewerPage() {
                 onViewerReady={handleViewerReady}
                 onSlideInfo={handleSlideInfo}
               />
-               <AnnotationOverlay
-                 viewer={osdViewer}
-                 annotationMode={annotationMode}
-                 drawingTool={drawingTool}
-                 currentLabel={currentLabel}
-                 currentColor={currentColor}
-                 highlightedRegionId={focusedRegionId}
-                 regions={overlayRegions}
-                 labelColors={overlayLabelColors}
-                 slideWidth={slideWidth}
-                 slideHeight={slideHeight}
-                 onRegionCreated={handleRegionCreated}
-                 onRegionTooLarge={handleRegionTooLarge}
-                 isLabelDropdownOpen={isLabelDropdownOpen}
-               />
-               <PresenceCursorOverlay
-                 viewer={osdViewer}
-                 wsiId={wsi_id}
-                 cursors={cursors}
-                 enabled={editingMode === 'shared'}
-               />
+              <AnnotationOverlay
+                viewer={osdViewer}
+                annotationMode={annotationMode}
+                drawingTool={drawingTool}
+                currentLabel={currentLabel}
+                currentColor={currentColor}
+                highlightedRegionId={focusedRegionId}
+                regions={overlayRegions}
+                labelColors={overlayLabelColors}
+                slideWidth={slideWidth}
+                slideHeight={slideHeight}
+                onRegionCreated={handleRegionCreated}
+                onRegionTooLarge={handleRegionTooLarge}
+                isLabelDropdownOpen={isLabelDropdownOpen}
+                cancelToken={annotationCancelToken}
+              />
+              <PresenceCursorOverlay
+                viewer={osdViewer}
+                wsiId={wsi_id}
+                cursors={cursors}
+                enabled={editingMode === 'shared'}
+              />
             </>
           )}
 
@@ -2194,7 +2256,7 @@ export default function WSIViewerPage() {
               segMaskOpacity={segMaskOpacity}
               onSegMaskOpacityChange={setSegMaskOpacity}
               segmentationClasses={segmentationClasses}
-              canShowGT={isSegmentationTask || hasGTAnnotations}
+              canShowGT={selectedTaskIsSegmentation || hasGTAnnotations}
               showGT={showGT}
               onToggleGT={handleToggleGT}
             />
@@ -2269,7 +2331,7 @@ export default function WSIViewerPage() {
                   selectedFoldKey={effectiveFoldKey}
                   setSelectedFoldKey={handleSelectedFoldChange}
                   availableFolds={availableFolds}
-                  supportsFoldSelection={!isSegmentationTask}
+                  supportsFoldSelection={!selectedTaskIsSegmentation}
                   uniqueTasks={uniqueTasks}
                   isTaskDropdownOpen={isTaskDropdownOpen}
                   setIsTaskDropdownOpen={setIsTaskDropdownOpen}
