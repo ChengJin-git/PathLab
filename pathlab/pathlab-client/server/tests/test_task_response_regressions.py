@@ -288,6 +288,63 @@ async def test_external_validation_progress_uses_extval_prefix_not_task_type(mon
     assert response["processed_wsi"] == 5
 
 
+@pytest.mark.asyncio
+async def test_delete_training_task_returns_after_db_delete_without_waiting_for_storage_cleanup(monkeypatch):
+    from gateway.routes import training as training_routes
+
+    task = SimpleNamespace(
+        task_id="task_123",
+        user_id="user_1",
+        status="completed",
+    )
+    model = SimpleNamespace(model_id="model_123")
+    db = SimpleNamespace(commit=_async_value_none)
+    scheduled = []
+
+    def create_background_task(coro):
+        scheduled.append(coro)
+        coro.close()
+        return SimpleNamespace()
+
+    def fail_if_cleanup_runs_inline(*_args, **_kwargs):
+        raise AssertionError("storage cleanup should be scheduled after the response")
+
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_by_id",
+        lambda *_args, **_kwargs: _async_value(task),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainedModelRepository,
+        "get_by_task_id",
+        lambda *_args, **_kwargs: _async_value([model]),
+    )
+    monkeypatch.setattr(
+        training_routes.AIResultRepository,
+        "delete_by_task_id",
+        lambda *_args, **_kwargs: _async_value(0),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "delete",
+        lambda *_args, **_kwargs: _async_value(True),
+    )
+    monkeypatch.setattr(training_routes, "invalidate_chat_context", lambda *_args: _async_value(None))
+    monkeypatch.setattr(training_routes.storage_manager, "delete_training_task_files", fail_if_cleanup_runs_inline)
+    monkeypatch.setattr(training_routes.asyncio, "create_task", create_background_task)
+
+    response = await training_routes.delete_training_task(
+        "task_123",
+        mode="standard",
+        user=SimpleNamespace(id="user_1", role="pathologist", is_admin=lambda: False),
+        db=db,
+    )
+
+    assert response["task_id"] == "task_123"
+    assert response["storage_cleanup"]["status"] == "scheduled"
+    assert scheduled
+
+
 def test_gateway_startup_detects_extval_by_task_id_prefix():
     from gateway import startup
 
@@ -297,3 +354,7 @@ def test_gateway_startup_detects_extval_by_task_id_prefix():
 
 async def _async_value(value):
     return value
+
+
+async def _async_value_none():
+    return None

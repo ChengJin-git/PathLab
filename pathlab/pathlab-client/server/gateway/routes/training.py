@@ -67,6 +67,31 @@ def _get_external_validation_wsi_count(
     return junction_count
 
 
+async def _cleanup_deleted_training_task_files(
+    task_id: str,
+    model_ids: list[str],
+    mode: str,
+) -> None:
+    """Clean task files after the database delete has already succeeded."""
+    try:
+        storage_cleanup = await asyncio.to_thread(
+            storage_manager.delete_training_task_files,
+            task_id,
+            model_ids,
+            mode,
+        )
+        logger.info(storage_cleanup["summary"])
+    except Exception as e:
+        logger.error(f"Failed to clean deleted training task files for {task_id}: {e}")
+
+    try:
+        from backend.common.progress_store import clear_progress
+
+        await clear_progress(task_id)
+    except Exception as e:
+        logger.warning(f"Failed to clear progress for deleted training task {task_id}: {e}")
+
+
 async def _has_wsi_training_access(user: User, wsi: Any, db: AsyncSession) -> bool:
     dataset_is_public = bool(wsi.dataset and getattr(wsi.dataset, "is_public", False))
     parent_dataset_id = (
@@ -812,7 +837,7 @@ async def delete_training_task(
 
         # Get all trained models for this task
         models = await TrainedModelRepository.get_by_task_id(db, task_id)
-        model_ids = [model.model_id for model in models]
+        model_ids = [str(model.model_id) for model in models]
 
         # Delete task-scoped AI result records before removing the task record itself.
         await AIResultRepository.delete_by_task_id(db, task_id)
@@ -823,20 +848,18 @@ async def delete_training_task(
 
         await invalidate_chat_context(task_owner_id)
 
-        storage_cleanup = storage_manager.delete_training_task_files(
-            task_id, model_ids, mode
+        asyncio.create_task(
+            _cleanup_deleted_training_task_files(task_id, model_ids, mode)
         )
-        logger.info(storage_cleanup["summary"])
-
-        # Clean up progress file (ephemeral, may still exist if AI Service didn't finish cleanup)
-        from backend.common.progress_store import clear_progress
-
-        await clear_progress(task_id)
 
         return {
             "message": "Training task deleted successfully",
             "task_id": task_id,
-            "storage_cleanup": storage_cleanup,
+            "storage_cleanup": {
+                "status": "scheduled",
+                "mode": mode,
+                "summary": "Training task file cleanup scheduled",
+            },
         }
 
     except HTTPException:

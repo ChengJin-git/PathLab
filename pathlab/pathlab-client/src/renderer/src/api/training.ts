@@ -190,13 +190,19 @@ export interface FeatureExtractorListResponse {
 export interface TrainingTaskDeleteResult {
   message: string
   task_id: string
-  storage_cleanup?: {
-    deleted_files: string[]
-    deleted_dirs: string[]
-    failed: [string, string][]
-    total_size: number
-    summary: string
-  }
+  storage_cleanup?:
+    | {
+      status: 'scheduled'
+      mode: string
+      summary: string
+    }
+    | {
+      deleted_files: string[]
+      deleted_dirs: string[]
+      failed: [string, string][]
+      total_size: number
+      summary: string
+    }
 }
 
 /**
