@@ -1105,6 +1105,76 @@ export default function WSIViewerPage() {
     })
   }, [currentLabel, editingMode])
 
+  const handleCreateLabelInCurrentMode = useCallback((label: string) => {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    handleLabelChange(trimmed)
+  }, [handleLabelChange])
+
+  const handleRenameLabelInCurrentMode = useCallback((oldLabel: string, newLabel: string) => {
+    const trimmedOld = oldLabel.trim()
+    const trimmedNew = newLabel.trim()
+    if (!trimmedOld || !trimmedNew || trimmedOld === trimmedNew) return
+
+    const affectedRegions = currentRegions.filter(region => region.label === trimmedOld)
+    if (affectedRegions.length > 0) {
+      setAllAnnotations(prev => ({
+        ...prev,
+        [wsi_id]: (prev[wsi_id] || []).map(region => region.label === trimmedOld ? { ...region, label: trimmedNew } : region),
+      }))
+      setHasUnsavedChanges(true)
+      if (editingMode === 'shared') {
+        locallyModifiedWsiIdsRef.current.add(wsi_id)
+        for (const region of affectedRegions) {
+          sendAnnotationPatch('update', wsi_id, { region_id: region.id, region_updates: { label: trimmedNew } })
+        }
+      } else {
+        immediatePersonalSaveRef.current = true
+      }
+    }
+
+    setRememberedLabelsByMode(prev => {
+      const labelsInMode = prev[editingMode]
+      const nextLabels = labelsInMode.map(label => label === trimmedOld ? trimmedNew : label)
+      if (!nextLabels.includes(trimmedNew)) nextLabels.push(trimmedNew)
+      return { ...prev, [editingMode]: Array.from(new Set(nextLabels)) }
+    })
+    setLabelColors(prev => {
+      if (prev[trimmedNew]) return prev
+      return { ...prev, [trimmedNew]: getColorForLabel(trimmedNew, prev) }
+    })
+    if (currentLabel === trimmedOld) setCurrentLabel(trimmedNew)
+  }, [currentLabel, currentRegions, editingMode, sendAnnotationPatch, wsi_id])
+
+  const handleDeleteLabelInCurrentMode = useCallback((label: string) => {
+    const trimmed = label.trim()
+    if (!trimmed) return
+    const affectedRegions = currentRegions.filter(region => region.label === trimmed)
+    if (affectedRegions.length > 0) {
+      setAllAnnotations(prev => ({
+        ...prev,
+        [wsi_id]: (prev[wsi_id] || []).filter(region => region.label !== trimmed),
+      }))
+      setHasUnsavedChanges(true)
+      if (editingMode === 'shared') {
+        locallyModifiedWsiIdsRef.current.add(wsi_id)
+        for (const region of affectedRegions) {
+          sendAnnotationPatch('delete', wsi_id, { region_id: region.id })
+        }
+      } else {
+        immediatePersonalSaveRef.current = true
+      }
+    }
+    setRememberedLabelsByMode(prev => ({
+      ...prev,
+      [editingMode]: prev[editingMode].filter(item => item !== trimmed),
+    }))
+    if (currentLabel === trimmed) {
+      const nextLabel = visibleLabels.find(item => item !== trimmed) || t('annotation.defaultLabel')
+      handleLabelChange(nextLabel)
+    }
+  }, [currentLabel, currentRegions, editingMode, handleLabelChange, sendAnnotationPatch, t, visibleLabels, wsi_id])
+
   const requestAnnotationCancel = useCallback(() => {
     setAnnotationCancelToken(prev => prev + 1)
   }, [])
@@ -2288,6 +2358,13 @@ export default function WSIViewerPage() {
             canCreateDataset={editingMode !== 'shared' || isDatasetOwnerOrAdmin}
             labelColors={labelColors}
             focusedRegionId={focusedRegionId}
+            currentLabel={currentLabel}
+            visibleLabels={visibleLabels}
+            missingCurrentLabel={missingCurrentLabel}
+            onCurrentLabelChange={handleLabelChange}
+            onCreateLabel={handleCreateLabelInCurrentMode}
+            onRenameLabel={handleRenameLabelInCurrentMode}
+            onDeleteLabel={handleDeleteLabelInCurrentMode}
             onFocusRegion={handleFocusRegion}
             onUpdateRegion={handleUpdateRegion}
             onDeleteRegion={handleDeleteRegion}
