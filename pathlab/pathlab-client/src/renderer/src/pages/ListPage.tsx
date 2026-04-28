@@ -16,6 +16,12 @@ import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { ALL_ACCEPT_STRING, getFileType } from '../constants/fileTypes'
 import { formatFileSize } from '../lib/utils'
 import { clampDatasetPage, clampFilePage, getListPageFileViewState } from '../lib/datasetPagination'
+import {
+  DATASET_REPOSITORY_QUERY_KEYS,
+  buildDatasetRepositoryPageQueryKey,
+  invalidateDatasetRepositoryCache,
+  invalidateDatasetSourceOptions,
+} from '../lib/datasetQueryInvalidation'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, DatasetCard, type ExportLabelsOptions } from '../components/list'
@@ -26,6 +32,7 @@ import { getTaskFamily, type TaskType } from '../constants/training'
 type ListWSIItem = import('../api/wsi').WSISummary
 
 type DatasetTaskFilter = 'all' | 'classification' | 'survival' | 'segmentation'
+type DatasetTaskFamily = Exclude<DatasetTaskFilter, 'all'>
 type DatasetTypeFilter = 'all' | 'wsi' | 'patch'
 type DatasetLevelFilter = 'all' | 'file' | 'patient'
 type DatasetVisibilityFilter = 'all' | 'public' | 'private'
@@ -33,13 +40,13 @@ type DatasetViewMode = 'grid' | 'list'
 
 const UNKNOWN_SOURCE_ORGAN_FILTER = '__unknown__'
 
-const getNormalizedDatasetTaskType = (taskType: string): Exclude<DatasetTaskFilter, 'all'> => {
+const getNormalizedDatasetTaskType = (taskType: string): DatasetTaskFamily => {
   const family = getTaskFamily(taskType)
   if (family) return family
   return 'classification'
 }
 
-const getCanonicalDatasetTaskFilter = (taskType: DatasetTaskFilter): TaskType | undefined => {
+const getCanonicalDatasetTaskType = (taskType: DatasetTaskFamily): TaskType => {
   switch (taskType) {
     case 'classification':
       return 'wsi_classification'
@@ -47,9 +54,11 @@ const getCanonicalDatasetTaskFilter = (taskType: DatasetTaskFilter): TaskType | 
       return 'wsi_survival'
     case 'segmentation':
       return 'patch_segmentation'
-    case 'all':
-      return undefined
   }
+}
+
+const getCanonicalDatasetTaskFilter = (taskType: DatasetTaskFilter): TaskType | undefined => {
+  return taskType === 'all' ? undefined : getCanonicalDatasetTaskType(taskType)
 }
 
 const getDatasetVisualType = (dataset: DatasetSummary): 'slides' | 'images' => {
@@ -100,7 +109,7 @@ export default function ListPage() {
   // selectedDatasetId is used for API calls, selectedDatasetName is used for display
   const [selectedDatasetId, setSelectedDatasetId] = useState<string | null>(initialDatasetId || null)
   const [selectedDatasetName, setSelectedDatasetName] = useState<string>('')
-  const [selectedDatasetType, setSelectedDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [selectedDatasetType, setSelectedDatasetType] = useState<DatasetTaskFamily>('classification')
   const [selectedDatasetSummary, setSelectedDatasetSummary] = useState<DatasetSummary | null>(null)
 
   // Search and Filter state
@@ -227,8 +236,8 @@ export default function ListPage() {
   // Edit dataset - stores dataset_id for the dataset being edited (rename + type + aggregation_level change)
   const [editingDatasetId, setEditingDatasetId] = useState<string | null>(null)
   const [editingDatasetName, setEditingDatasetName] = useState('')
-  const [editingDatasetType, setEditingDatasetType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
-  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<'classification' | 'survival' | 'segmentation'>('classification')
+  const [editingDatasetType, setEditingDatasetType] = useState<DatasetTaskFamily>('classification')
+  const [editingDatasetOriginalType, setEditingDatasetOriginalType] = useState<DatasetTaskFamily>('classification')
   const [editingDatasetDataLevel, setEditingDatasetDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetOriginalDataLevel, setEditingDatasetOriginalDataLevel] = useState<'case' | 'file'>('file')
   const [editingDatasetSourceSelection, setEditingDatasetSourceSelection] = useState('')
@@ -323,21 +332,19 @@ export default function ListPage() {
   }
 
   const datasetItemsPerPage = datasetViewMode === 'grid' ? 8 : datasetListItemsPerPage
+  const datasetRepositoryPageFilters = {
+    page: datasetCurrentPage,
+    pageSize: datasetItemsPerPage,
+    search: datasetDebouncedSearch,
+    taskType: datasetTaskFilter,
+    dataType: datasetTypeFilter,
+    level: datasetLevelFilter,
+    visibility: datasetVisibilityFilter,
+    source: datasetSourceFilter,
+  }
 
   const datasetsQuery = useQuery({
-    queryKey: [
-      'page-datasets',
-      {
-        page: datasetCurrentPage,
-        pageSize: datasetItemsPerPage,
-        search: datasetDebouncedSearch,
-        taskType: datasetTaskFilter,
-        dataType: datasetTypeFilter,
-        level: datasetLevelFilter,
-        visibility: datasetVisibilityFilter,
-        source: datasetSourceFilter,
-      },
-    ],
+    queryKey: buildDatasetRepositoryPageQueryKey(datasetRepositoryPageFilters),
     queryFn: async () => {
       const d = await fetchDatasets(datasetTypeFilter === 'all' ? undefined : datasetTypeFilter, {
         page: datasetCurrentPage,
@@ -418,7 +425,7 @@ export default function ListPage() {
   })
 
   const sourceOptionsQuery = useQuery({
-    queryKey: ['dataset-source-options'],
+    queryKey: [DATASET_REPOSITORY_QUERY_KEYS.sourceOptions],
     queryFn: async () => {
       const response = await fetchDatasets(undefined, { page_size: 0 })
       return Array.from(new Set(
@@ -525,7 +532,7 @@ export default function ListPage() {
     // Optimistic update: immediately remove deleted datasets from all cached pages
     if (deletedNames.size > 0) {
       qc.setQueriesData<{ items?: DatasetSummary[]; total?: number }>(
-        { queryKey: ['page-datasets'] },
+        { queryKey: [DATASET_REPOSITORY_QUERY_KEYS.pages] },
         (oldData) => {
           if (!oldData?.items) return oldData
           const filtered = oldData.items.filter(
@@ -550,8 +557,7 @@ export default function ListPage() {
     }
 
     // Single background refetch to reconcile with server (e.g. fix total count, pagination)
-    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
-    void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+    void invalidateDatasetRepositoryCache(qc)
   }, [tasks, qc, removeDeletingDatasetByTaskId])
 
   useEffect(() => {
@@ -579,8 +585,7 @@ export default function ListPage() {
       completedUploadTaskIdsRef.current.add(task.id)
     }
     setDatasetCurrentPage(1)
-    void qc.invalidateQueries({ queryKey: ['page-datasets'] })
-    void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+    void invalidateDatasetRepositoryCache(qc)
   }, [tasks, qc, selectedDatasetId])
 
   useEffect(() => {
@@ -590,7 +595,7 @@ export default function ListPage() {
           const dataset = await fetchDatasetSummary(selectedDatasetId)
           setSelectedDatasetSummary(dataset)
           setSelectedDatasetName(dataset.dataset_name)
-          setSelectedDatasetType(dataset.task_type)
+          setSelectedDatasetType(getNormalizedDatasetTaskType(dataset.task_type))
         } catch (err) {
           console.error('Failed to load selected dataset summary:', err)
         }
@@ -680,7 +685,7 @@ export default function ListPage() {
   const handleDatasetClick = (dataset: DatasetSummary) => {
     setSelectedDatasetId(dataset.dataset_id)
     setSelectedDatasetName(dataset.dataset_name)
-    setSelectedDatasetType(dataset.task_type)
+    setSelectedDatasetType(getNormalizedDatasetTaskType(dataset.task_type))
     setSelectedDatasetSummary(dataset)
     setCurrentPage(1)
     setSearchQuery('')
@@ -718,19 +723,16 @@ export default function ListPage() {
     const pageSize = datasetViewMode === 'grid' ? 8 : datasetListItemsPerPage
 
     void qc.prefetchQuery({
-      queryKey: [
-        'page-datasets',
-        {
-          page: 1,
-          pageSize,
-          search: datasetDebouncedSearch,
-          taskType,
-          dataType,
-          level,
-          visibility: datasetVisibilityFilter,
-          source: datasetSourceFilter,
-        },
-      ],
+      queryKey: buildDatasetRepositoryPageQueryKey({
+        page: 1,
+        pageSize,
+        search: datasetDebouncedSearch,
+        taskType,
+        dataType,
+        level,
+        visibility: datasetVisibilityFilter,
+        source: datasetSourceFilter,
+      }),
       queryFn: () =>
         fetchDatasets(dataType === 'all' ? undefined : dataType, {
           page: 1,
@@ -824,7 +826,7 @@ export default function ListPage() {
           const currentSource = currentDataset?.source_organ?.trim() || ''
           if (resolvedDatasetSource !== currentSource) {
             await updateDatasetSource(selectedDatasetId, resolvedDatasetSource)
-            void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+            void invalidateDatasetSourceOptions(qc)
           }
         }
 
@@ -957,7 +959,7 @@ export default function ListPage() {
           setDatasetToDeleteId(null)
           setDatasetToDeleteName('')
           setDatasetToDeleteFileCount(0)
-          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+          void invalidateDatasetSourceOptions(qc)
         } else {
           const idsToDelete = Array.from(selectedIds)
           await addDeleteWSITask(idsToDelete, deleteMode)
@@ -1089,8 +1091,9 @@ export default function ListPage() {
     if (!dataset.dataset_id) return
     setEditingDatasetId(dataset.dataset_id)
     setEditingDatasetName(dataset.dataset_name)
-    setEditingDatasetType(dataset.task_type)
-    setEditingDatasetOriginalType(dataset.task_type)
+    const taskFamily = getNormalizedDatasetTaskType(dataset.task_type)
+    setEditingDatasetType(taskFamily)
+    setEditingDatasetOriginalType(taskFamily)
     const dataLevel = dataset.aggregation_level || 'file'
     setEditingDatasetDataLevel(dataLevel)
     setEditingDatasetOriginalDataLevel(dataLevel)
@@ -1133,7 +1136,7 @@ export default function ListPage() {
         }
 
         if (editingDatasetType !== editingDatasetOriginalType) {
-          await updateDatasetType(editingDatasetId, editingDatasetType)
+          await updateDatasetType(editingDatasetId, getCanonicalDatasetTaskType(editingDatasetType))
         }
 
         if (editingDatasetDataLevel !== editingDatasetOriginalDataLevel) {
@@ -1149,8 +1152,7 @@ export default function ListPage() {
           await updateDatasetVisibility(editingDatasetId, editingDatasetIsPublic)
         }
 
-        void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-        await qc.invalidateQueries({ queryKey: ['page-datasets'] })
+        await invalidateDatasetRepositoryCache(qc)
 
         if (selectedDatasetId === editingDatasetId) {
           setSelectedDatasetName(editingDatasetName)
@@ -1230,8 +1232,7 @@ export default function ListPage() {
 
     try {
       await renameDataset(renamingDatasetId, renameDatasetNewName)
-      void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
-      await qc.invalidateQueries({ queryKey: ['page-datasets'] })
+      await invalidateDatasetRepositoryCache(qc)
 
       // If the renamed dataset was selected, update the displayed name
       if (selectedDatasetId === renamingDatasetId) {

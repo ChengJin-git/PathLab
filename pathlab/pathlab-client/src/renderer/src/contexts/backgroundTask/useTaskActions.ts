@@ -15,6 +15,7 @@ import { cancelQueueTask } from '../../api/queue'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
 import { generateId } from './helpers'
 import { markTrainingSubmissionCancelled } from '../../lib/trainingSubmissionTracker'
+import { invalidateDatasetRepositoryCache } from '../../lib/datasetQueryInvalidation'
 import type {
   BackgroundTask, TaskItem, TaskStatus,
   UploadTaskFile, UploadTaskOptions,
@@ -736,8 +737,7 @@ export function useTaskActions(params: TaskActionsParams) {
           // Task finished (cleared from Redis)
           eventSource.close()
           updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
-          void qc.invalidateQueries({ queryKey: ['page-datasets'] })
-          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+          void invalidateDatasetRepositoryCache(qc)
         } else if (progress < 0) {
           // Error
           eventSource.close()
@@ -750,8 +750,7 @@ export function useTaskActions(params: TaskActionsParams) {
           // Completed
           eventSource.close()
           updateTaskItem(taskId, 'extraction_main', { status: 'success', progress: 100 })
-          void qc.invalidateQueries({ queryKey: ['page-datasets'] })
-          void qc.invalidateQueries({ queryKey: ['dataset-source-options'] })
+          void invalidateDatasetRepositoryCache(qc)
         } else {
           // In progress
           updateTaskItem(taskId, 'extraction_main', { status: 'running', progress })
