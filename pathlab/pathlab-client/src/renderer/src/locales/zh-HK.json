@@ -1421,6 +1421,8 @@
       "batchWarning": "您即將刪除 {{count}} 個任務。所有關聯資料將按照所選模式被移除。",
       "loadingStorageInfo": "正在載入儲存資訊...",
       "freesSurface": "釋放空間",
+      "cleanupPendingTitle": "將清理任務相關資料",
+      "cleanupPendingDesc": "刪除後會釋放此任務佔用的訓練資料、日誌和結果檔案。",
       "files": "檔案 ({{count}})",
       "trainingData": "訓練資料 ({{size}})",
       "aiResults": "AI 結果 ({{size}})",

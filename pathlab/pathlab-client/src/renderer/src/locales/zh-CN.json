@@ -1421,6 +1421,8 @@
       "batchWarning": "您即将删除 {{count}} 个任务。所有关联数据将按照所选模式被移除。",
       "loadingStorageInfo": "正在加载存储信息...",
       "freesSurface": "释放空间",
+      "cleanupPendingTitle": "将清理任务相关数据",
+      "cleanupPendingDesc": "删除后会释放此任务占用的训练数据、日志和结果文件。",
       "files": "文件 ({{count}})",
       "trainingData": "训练数据 ({{size}})",
       "aiResults": "AI 结果 ({{size}})",
