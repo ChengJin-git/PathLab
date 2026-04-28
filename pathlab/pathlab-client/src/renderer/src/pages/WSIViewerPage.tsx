@@ -2000,7 +2000,7 @@ export default function WSIViewerPage() {
                 navigate('/wsi-list')
               }
             })}
-            className="flex items-center gap-1 sm:gap-2 rounded-full border border-transparent px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-all hover:border-white/10 hover:bg-white/6 hover:text-white sm:px-3 sm:py-2 sm:text-sm"
+            className="flex items-center gap-1 sm:gap-2 rounded-full border border-transparent px-2.5 py-1.5 text-xs font-medium text-slate-500 transition-all hover:border-gray-200 hover:bg-gray-100 hover:text-slate-900 sm:px-3 sm:py-2 sm:text-sm"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">
