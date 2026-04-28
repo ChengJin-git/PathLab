@@ -14,9 +14,14 @@ import {
   getBatchInferenceResults,
   getBatchInferenceSummary,
   exportBatchInferenceCsv,
+  fetchWSIForIndependentInference,
+  startIndependentInference,
+  listIndependentInferenceTasks,
+  getIndependentInferenceResults,
   type InferenceDataset,
   type BatchInferenceTask,
   type BatchInferenceSummary,
+  type IndependentInferenceWSI,
 } from '@renderer/api/batchInference'
 import { setAuthToken } from '@renderer/api/client'
 
@@ -64,6 +69,18 @@ const MOCK_SUMMARY: BatchInferenceSummary = {
   created_at: '2026-03-28T10:00:00Z',
   completed_at: '2026-03-28T10:05:00Z',
   class_distribution: { Tumor: 50, Normal: 30 },
+}
+
+const MOCK_INDEPENDENT_WSI: IndependentInferenceWSI = {
+  wsi_id: 'wsi_1',
+  original_filename: 'slide.svs',
+  dataset_id: 'ds_unlabeled_1',
+  dataset_name: 'Uploaded images',
+  case_id: 'case-1',
+  data_type: 'wsi',
+  task_type: 'wsi_classification',
+  aggregation_level: 'file',
+  created_at: '2026-03-28T10:00:00Z',
 }
 
 beforeEach(() => {
@@ -204,5 +221,46 @@ describe('exportBatchInferenceCsv', () => {
 
     URL.createObjectURL = origCreateObjectURL
     URL.revokeObjectURL = origRevokeObjectURL
+  })
+})
+
+describe('independent inference API', () => {
+  it('fetches uploaded WSI candidates from GET /results/independent-inference/wsi', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [MOCK_INDEPENDENT_WSI], total: 1, models_available: true }))
+    const result = await fetchWSIForIndependentInference('wsi_classification')
+    const [url] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/results/independent-inference/wsi')
+    expect(String(url)).toContain('task_type=wsi_classification')
+    expect(result.models_available).toBe(true)
+    expect(result.items[0].wsi_id).toBe('wsi_1')
+  })
+
+  it('submits model_id and wsi_ids to POST /results/independent-inference', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ task_id: 'indinfer_abc123', status: 'pending', message: 'ok', total_wsi: 1, model_id: 'model_1', model_task_id: 'task_1', wsi_ids: ['wsi_1'], skipped: [] }))
+    const result = await startIndependentInference({ model_id: 'model_1', wsi_ids: ['wsi_1'] })
+    const [url, opts] = mockFetch.mock.calls[0]
+    const body = JSON.parse(opts?.body as string)
+    expect(String(url)).toContain('/results/independent-inference')
+    expect(opts?.method).toBe('POST')
+    expect(body.model_id).toBe('model_1')
+    expect(body.wsi_ids).toEqual(['wsi_1'])
+    expect(result.task_id).toBe('indinfer_abc123')
+  })
+
+  it('lists independent inference tasks', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ items: [{ ...MOCK_TASK, task_id: 'indinfer_abc123', wsi_ids: ['wsi_1'], skipped: [] }], total: 1 }))
+    const result = await listIndependentInferenceTasks(0, 25)
+    const [url] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/results/independent-inference/tasks')
+    expect(String(url)).toContain('limit=25')
+    expect(result.items[0].task_id).toBe('indinfer_abc123')
+  })
+
+  it('gets independent inference results', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ task_type: 'wsi_classification', data_type: 'wsi', wsi_ids: ['wsi_1'], skipped: [], items: [], total: 0, skip: 0, limit: 100 }))
+    const result = await getIndependentInferenceResults('indinfer_abc123')
+    const [url] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/results/independent-inference/indinfer_abc123/results')
+    expect(result.wsi_ids).toEqual(['wsi_1'])
   })
 })

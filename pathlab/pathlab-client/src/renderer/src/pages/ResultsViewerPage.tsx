@@ -16,7 +16,7 @@ import { getTrainedModels, TrainedModel, buildAuthRequestInit, startExternalVali
 import { useBackgroundTask } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { AnalysisDetails, type AnalysisSummary, type BootstrapCI, type ChartData } from '../components/results/AnalysisDetails'
-import { BatchInferencePanel } from '../components/results/BatchInferencePanel'
+import { IndependentInferencePanel } from '../components/results/IndependentInferencePanel'
 import {
   CLASSIFICATION_METRICS,
   CLASSIFICATION_CHARTS,
@@ -1300,7 +1300,7 @@ export default function ResultsViewerPage() {
         </div>
       ) : pageMode === 'batch-inference' ? (
         /* Batch Inference Mode */
-        <BatchInferencePanel trainedModels={trainedModels} />
+        <IndependentInferencePanel trainedModels={trainedModels} />
       ) : (
         /* Internal Analysis Mode */
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 sm:gap-6 items-stretch">

@@ -33,6 +33,23 @@ export interface BatchInferenceTask {
   finished_at: string | null
 }
 
+export interface IndependentInferenceTask extends BatchInferenceTask {
+  wsi_ids: string[]
+  skipped: Array<Record<string, unknown>>
+}
+
+export interface IndependentInferenceWSI {
+  wsi_id: string
+  original_filename: string | null
+  dataset_id: string | null
+  dataset_name: string | null
+  case_id: string | null
+  data_type: string | null
+  task_type: string | null
+  aggregation_level: string | null
+  created_at: string | null
+}
+
 export interface BatchInferenceResult {
   wsi_id: string
   original_filename: string | null
@@ -73,6 +90,23 @@ export interface StartBatchInferenceRequest {
   model_task_id: string
   model_id: string
   dataset_id: string
+}
+
+export interface StartIndependentInferenceRequest {
+  model_id: string
+  wsi_ids: string[]
+  rerun_from_task_id?: string
+}
+
+export interface StartIndependentInferenceResponse {
+  task_id: string
+  status: string
+  message: string
+  total_wsi: number
+  model_id: string
+  model_task_id: string
+  wsi_ids: string[]
+  skipped: Array<Record<string, unknown>>
 }
 
 // ============================================================================
@@ -157,4 +191,57 @@ export async function exportBatchInferenceCsv(taskId: string, filename?: string)
     'Failed to export batch inference CSV'
   )
   downloadBlobFile(blob, filename ?? `batch_inference_${taskId}.csv`)
+}
+
+export async function fetchWSIForIndependentInference(
+  taskType?: string | null
+): Promise<{ items: IndependentInferenceWSI[]; total: number; models_available: boolean }> {
+  const params = buildSearchParams({ task_type: taskType })
+  const qs = params.toString()
+  const url = `${API_BASE}/results/independent-inference/wsi${qs ? `?${qs}` : ''}`
+  return apiFetch(url, {}, 'Failed to fetch images for batch inference')
+}
+
+export async function startIndependentInference(
+  req: StartIndependentInferenceRequest
+): Promise<StartIndependentInferenceResponse> {
+  return apiFetch<StartIndependentInferenceResponse>(
+    `${API_BASE}/results/independent-inference`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    },
+    'Failed to start batch inference'
+  )
+}
+
+export async function listIndependentInferenceTasks(
+  skip = 0,
+  limit = 50
+): Promise<{ items: IndependentInferenceTask[]; total: number }> {
+  const params = buildSearchParams({ skip, limit })
+  const qs = params.toString()
+  const url = `${API_BASE}/results/independent-inference/tasks${qs ? `?${qs}` : ''}`
+  return apiFetch(url, {}, 'Failed to list batch inference tasks')
+}
+
+export async function getIndependentInferenceResults(
+  taskId: string,
+  skip = 0,
+  limit = 100
+): Promise<{
+  task_type: string
+  data_type: string | null
+  wsi_ids: string[]
+  skipped: Array<Record<string, unknown>>
+  items: BatchInferenceResult[]
+  total: number
+  skip: number
+  limit: number
+}> {
+  const params = buildSearchParams({ skip, limit })
+  const qs = params.toString()
+  const url = `${API_BASE}/results/independent-inference/${taskId}/results${qs ? `?${qs}` : ''}`
+  return apiFetch(url, {}, 'Failed to get batch inference results')
 }
