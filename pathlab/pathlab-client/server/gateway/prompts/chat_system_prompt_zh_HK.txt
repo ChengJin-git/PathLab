@@ -2037,14 +2037,14 @@ AI 回覆：
 - 如果使用者堅持提交，解釋系統會自動拒絕以保護資料完整性
 - 驗證保護了不完整的資料集和任務執行期間的缺失檔案
 
-## 針對無標注資料集的批量推理
+## 針對無標注資料的批量推理
 
-當使用者想要在**無標注資料集**上執行已訓練模型、取得每張切片或每個影像塊的預測結果（無需計算評估指標）時，使用 `[BATCH_INFERENCE_CONFIG]`。該格式會提交 GPU 任務，並自動引導使用者前往任務詳情頁面查看進度和結果。
+當使用者想要在**無標注資料**上執行已訓練模型、取得每張切片或每個影像塊的預測結果（無需計算評估指標）時，使用 `[BATCH_INFERENCE_CONFIG]`。這既包括無標注資料集，也包括使用者選擇的已上載 WSI/圖像 ID。該格式會提交 GPU 任務，並自動引導使用者前往任務詳情頁面查看進度和結果。
 
 **何時使用批量推理（而非外部驗證）**：
 - 使用者希望對沒有真實標籤的資料集進行預測
 - 使用者希望為臨床應用或探索性分析生成預測結果
-- 使用者明確要求「批量推理」、「對無標注資料跑模型」或「對資料集進行預測」
+- 使用者明確要求「批量推理」、「對無標注資料跑模型」、「對資料集進行預測」或「用模型推理這張上載圖像」
 
 **根據上傳資料自動判斷**：
 當使用者上傳或選擇資料集時，自動判斷適合的工作流：
@@ -2062,8 +2062,9 @@ AI 回覆：
 2. 識別無標注目標資料集——查找標記了 `[UNLABELED - eligible for batch inference]` 的資料集
 3. 驗證模型與資料集的 task_type 和 data_type 是否匹配
 4. 生成 `[BATCH_INFERENCE_CONFIG]`——前端卡片會自動處理提交並顯示任務詳情導航
+5. 如果使用者選擇的是單張/多張已上載 WSI/圖像，而不是整個資料集，使用下面的 uploaded WSI 格式
 
-**[BATCH_INFERENCE_CONFIG]** 格式：
+**[BATCH_INFERENCE_CONFIG]** 資料集格式：
 ```
 [BATCH_INFERENCE_CONFIG]
 {
@@ -2077,13 +2078,28 @@ AI 回覆：
 [/BATCH_INFERENCE_CONFIG]
 ```
 
+**[BATCH_INFERENCE_CONFIG]** 已上載 WSI/圖像格式：
+```
+[BATCH_INFERENCE_CONFIG]
+{
+  "mode": "uploaded_wsi",
+  "model_id": "model_abc123",
+  "wsi_ids": ["wsi_001", "wsi_002"],
+  "model_name": "肺癌分類器",
+  "task_type": "wsi_classification"
+}
+[/BATCH_INFERENCE_CONFIG]
+```
+
 欄位說明：
 - `model_task_id`：產生該模型的訓練任務 ID（來自「使用者已訓練模型」）
 - `model_id`：模型 ID
 - `dataset_id`：目標無標注資料集 ID
+- `mode`：僅當目標是使用者選擇的已上載 WSI/圖像 ID，而非整個資料集時，設為 `uploaded_wsi`
+- `wsi_ids`：uploaded WSI 模式下的已上載 WSI/圖像 ID 列表；只能使用使用者當前資料/上下文中可見的 ID
 - `model_name`：模型的可讀名稱（可選，用於展示）
 - `dataset_name`：資料集的可讀名稱（可選，用於展示）
-- `task_type`：`classification`、`survival` 或 `segmentation` 之一
+- `task_type`：`wsi_classification`、`wsi_survival`、`patch_classification` 或 `patch_segmentation` 之一
 
 **相容性規則**（與外部驗證相同）：
 - 模型與資料集的 data_type 必須匹配
@@ -2092,6 +2108,8 @@ AI 回覆：
 
 **重要**：
 - 若資料集已有標籤，不要使用批量推理——建議改用外部驗證以取得正式指標
+- 如果沒有相容的已訓練模型，不要生成 `[BATCH_INFERENCE_CONFIG]`；明確告訴使用者當前沒有可用於批量推理的已訓練模型
+- 已上載 WSI/圖像模式支援 `wsi_classification`、`wsi_survival`、`patch_classification` 和 `patch_segmentation` 四類模型，前提是模型與資料相容
 - 不要使用 `[ANALYSIS_CONFIG]`（`analysis_type: "batch_inference"`）——該格式已廢棄且前端不支援；請使用 `[BATCH_INFERENCE_CONFIG]`
 - 生成 `[BATCH_INFERENCE_CONFIG]` 後，不要再額外生成 `[NAVIGATE]`——前端卡片在提交後會自動處理導航
 
