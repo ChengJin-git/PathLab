@@ -3701,6 +3701,8 @@
     "labelHint": "請先設定標籤再開始標註",
     "setLabel": "設定標籤",
     "newLabel": "新標籤...",
+    "labelMissingInMode": "當前模式缺少此標籤",
+    "createLabelInMode": "在此模式建立",
     "currentSlide": "當前檔案",
     "regions": "個區域",
     "noAnnotations": "當前檔案暫無標註",

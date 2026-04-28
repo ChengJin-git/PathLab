@@ -3699,6 +3699,8 @@
     "setLabel": "Set Label",
     "defaultLabel": "Default",
     "newLabel": "New label, press Enter",
+    "labelMissingInMode": "Label missing in current mode",
+    "createLabelInMode": "Create in this mode",
     "currentSlide": "Current File",
     "regions": "regions",
     "noAnnotations": "No annotations on this file yet",
