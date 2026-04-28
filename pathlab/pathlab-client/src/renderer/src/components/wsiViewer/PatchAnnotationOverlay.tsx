@@ -14,6 +14,7 @@ interface PatchAnnotationOverlayProps {
   onRegionCreated: (region: Omit<AnnotationRegion, 'id'>) => void
   onRegionTooLarge?: () => void
   isLabelDropdownOpen?: boolean
+  cancelToken?: number
 }
 
 const MAX_ROI_SIZE = 8192
@@ -35,6 +36,7 @@ export function PatchAnnotationOverlay({
   onRegionCreated,
   onRegionTooLarge,
   isLabelDropdownOpen = false,
+  cancelToken,
 }: PatchAnnotationOverlayProps) {
   const svgRef = useRef<SVGSVGElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -63,11 +65,30 @@ export function PatchAnnotationOverlay({
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return
+      const target = e.target as HTMLElement | null
+      const tag = target?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return
       if (e.code === 'Space' && annotationMode) {
         e.preventDefault()
         setSpaceHeld(true)
+        return
+      }
+      if (!annotationMode) return
+
+      if (e.code === 'Escape') {
+        e.preventDefault()
+        setIsDrawing(false)
+        setRectStart(null)
+        setRectEnd(null)
+        setPolygonPoints([])
+        setMousePos(null)
+        return
+      }
+
+      if (drawingTool === 'polygon' && (e.code === 'Backspace' || e.code === 'Delete')) {
+        e.preventDefault()
+        setPolygonPoints(prev => prev.slice(0, -1))
+        setMousePos(null)
       }
     }
 
@@ -83,7 +104,7 @@ export function PatchAnnotationOverlay({
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [annotationMode])
+  }, [annotationMode, drawingTool])
 
   useEffect(() => {
     if (!annotationMode) {
@@ -94,6 +115,15 @@ export function PatchAnnotationOverlay({
       setMousePos(null)
     }
   }, [annotationMode])
+
+  useEffect(() => {
+    if (cancelToken === undefined) return
+    setIsDrawing(false)
+    setRectStart(null)
+    setRectEnd(null)
+    setPolygonPoints([])
+    setMousePos(null)
+  }, [cancelToken])
 
   const stopEvent = (event: React.MouseEvent<SVGSVGElement>) => {
     event.preventDefault()
