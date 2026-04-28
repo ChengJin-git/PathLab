@@ -3704,6 +3704,7 @@
     "annotations": "Annotations",
     "labels": "Labels",
     "labelManagement": "Label Management",
+    "annotationList": "Annotation List",
     "renameLabel": "Rename label",
     "deleteLabel": "Delete label",
     "noLabels": "No labels in this mode yet",

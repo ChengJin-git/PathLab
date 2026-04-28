@@ -3706,6 +3706,7 @@
     "annotations": "標註",
     "labels": "標籤",
     "labelManagement": "標籤管理",
+    "annotationList": "標註清單",
     "renameLabel": "重新命名標籤",
     "deleteLabel": "刪除標籤",
     "noLabels": "當前模式暫無標籤",
