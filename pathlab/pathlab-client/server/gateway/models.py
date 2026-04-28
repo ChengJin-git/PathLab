@@ -493,6 +493,8 @@ class AnnotationExtractRequest(BaseModel):
         normalized = self.task_type.strip().lower()
         if not is_canonical_task_type(normalized):
             raise ValueError(f"task_type must be one of {CANONICAL_TASK_IDS}, got: {normalized}")
+        if not normalized.startswith("patch_"):
+            raise ValueError("Annotation extraction creates patch datasets; task_type must be patch_classification or patch_segmentation")
         self.task_type = normalized
         return self
 

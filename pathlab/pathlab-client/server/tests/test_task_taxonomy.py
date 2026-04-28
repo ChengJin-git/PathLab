@@ -18,6 +18,12 @@ class _TaskTaxonomyModule(Protocol):
 
     def is_canonical_task_type(self, task_type: object) -> bool: ...
 
+    def is_classification_task(self, task_id: object) -> bool: ...
+
+    def is_survival_task(self, task_id: object) -> bool: ...
+
+    def is_segmentation_task(self, task_id: object) -> bool: ...
+
     def normalize_task_type(
         self,
         *,
@@ -236,6 +242,7 @@ def test_training_task_request_rejects_legacy_classification_task_type():
     [
         ("DatasetUpdateTypeRequest", "patch_segmentation", "patch_segmentation"),
         ("DatasetUpdateTypeRequest", "wsi_survival", "wsi_survival"),
+        ("AnnotationExtractRequest", "patch_classification", "patch_classification"),
         ("AnnotationExtractRequest", "patch_segmentation", "patch_segmentation"),
     ],
 )
@@ -255,6 +262,14 @@ def test_task_only_request_models_accept_canonical_values(
 def test_task_only_request_models_reject_ambiguous_classification():
     with pytest.raises(ValidationError, match="task_type must be one of"):
         gateway_models.DatasetUpdateTypeRequest(task_type="classification")
+
+
+def test_annotation_extract_request_rejects_wsi_classification():
+    with pytest.raises(ValidationError, match="Annotation extraction creates patch datasets"):
+        gateway_models.AnnotationExtractRequest(
+            dataset_name="roi patches",
+            task_type="wsi_classification",
+        )
 
 
 def test_start_batch_import_rejects_invalid_aggregation():
