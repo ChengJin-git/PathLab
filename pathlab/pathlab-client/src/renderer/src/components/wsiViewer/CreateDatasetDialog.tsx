@@ -26,7 +26,7 @@ export function CreateDatasetDialog({
   const { t } = useTranslation()
   const [datasetName, setDatasetName] = useState('')
   const [nameError, setNameError] = useState(false)
-  const [taskType, setTaskType] = useState<TaskType>('wsi_classification')
+  const [taskType, setTaskType] = useState<TaskType>('patch_classification')
   const [sourceSelection, setSourceSelection] = useState('')
   const [sourceCustom, setSourceCustom] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -68,7 +68,7 @@ export function CreateDatasetDialog({
     if (show) {
       setDatasetName('')
       setNameError(false)
-      setTaskType('wsi_classification')
+      setTaskType('patch_classification')
       setSubmitting(false)
       const normalized = defaultSource?.trim() || ''
       if (!normalized) {
@@ -139,7 +139,7 @@ export function CreateDatasetDialog({
             <legend className="block text-sm font-medium text-gray-700 mb-1">{t('annotation.taskType')}</legend>
             <div className="flex gap-2">
               {([
-                { value: 'wsi_classification', labelKey: 'classification' },
+                { value: 'patch_classification', labelKey: 'classification' },
                 { value: 'patch_segmentation', labelKey: 'segmentation' },
               ] as const).map(({ value, labelKey }) => {
                 const isDisabled = submitting || (value === 'patch_segmentation' && hasWsiSources)
