@@ -962,6 +962,24 @@ export default function TaskListPage() {
             )}
 
             {!isBatchDelete && taskStorageInfo && !loadingStorageInfo && (() => {
+              if (taskStorageInfo.quick) {
+                return (
+                  <div className="bg-sky-50/70 border border-sky-100 rounded-xl p-3 sm:p-4 mb-3 sm:mb-4">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.12)]" />
+                      <div className="min-w-0">
+                        <div className="text-[11px] sm:text-sm font-bold text-sky-950">
+                          {t('taskList.deleteModal.cleanupPendingTitle')}
+                        </div>
+                        <p className="mt-1 text-[10px] sm:text-xs leading-relaxed text-sky-800/80">
+                          {t('taskList.deleteModal.cleanupPendingDesc')}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              }
+
               // Calculate size and file count based on delete mode
               const modelsSize = taskStorageInfo.models.reduce((sum, m) => sum + m.size, 0)
               const modelsCount = taskStorageInfo.models.reduce((sum, m) => sum + m.file_count, 0)
