@@ -252,7 +252,7 @@ export default function TaskListPage() {
     })
 
     try {
-      const info = await getTrainingTaskStorageInfo(taskId)
+      const info = await getTrainingTaskStorageInfo(taskId, { quick: true })
       setTaskStorageInfo(info)
     } catch (err) {
       console.error('Failed to load storage info:', err)

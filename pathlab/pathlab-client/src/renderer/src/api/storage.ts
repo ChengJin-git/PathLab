@@ -109,6 +109,7 @@ export interface WSIStorageInfo {
 
 export interface TrainingTaskStorageInfo {
   task_id: string
+  quick?: boolean
   ai_results: {
     path: string
     size: number
@@ -138,6 +139,7 @@ export interface TrainingTaskStorageInfo {
     path: string
     size: number
     file_count: number
+    exists?: boolean
   }>
   total_size: number
   total_size_mb: number
@@ -244,9 +246,13 @@ export async function getWSIStorageInfo(wsi_id: string): Promise<WSIStorageInfo>
  * @returns Detailed storage information for the training task
  * @throws {ApiError} If the request fails
  */
-export async function getTrainingTaskStorageInfo(task_id: string): Promise<TrainingTaskStorageInfo> {
+export async function getTrainingTaskStorageInfo(
+  task_id: string,
+  options: { quick?: boolean } = {}
+): Promise<TrainingTaskStorageInfo> {
+  const quickParam = options.quick ? '?quick=true' : ''
   return apiFetch<TrainingTaskStorageInfo>(
-    `${API_BASE}/storage/training/${encodeURIComponent(task_id)}`,
+    `${API_BASE}/storage/training/${encodeURIComponent(task_id)}${quickParam}`,
     undefined,
     'Failed to get training task storage info'
   )

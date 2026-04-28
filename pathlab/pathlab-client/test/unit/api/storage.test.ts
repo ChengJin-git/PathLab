@@ -185,6 +185,13 @@ describe('getTrainingTaskStorageInfo', () => {
     const [url] = mockFetch.mock.calls[0]
     expect(String(url)).toContain('/storage/training/task_001')
   })
+
+  it('requests quick summary mode when asked', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ task_id: 'task_001', quick: true, ai_results: { path: '', size: 0, exists: false, file_count: 0, wsi_dir_count: 0 }, training_dir: { path: '', size: 0, exists: false, file_count: 0 }, training_logs: { path: '', size: 0, exists: false, file_count: 0 }, analysis_logs: { path: '', size: 0, exists: false, file_count: 0 }, models: [], total_size: 0, total_size_mb: 0, total_size_gb: 0, total_files: 0 }))
+    await getTrainingTaskStorageInfo('task_001', { quick: true })
+    const [url] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/storage/training/task_001?quick=true')
+  })
 })
 
 describe('detectOrphanedFiles', () => {
