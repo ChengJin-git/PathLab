@@ -240,6 +240,23 @@ describe('fetchDatasets', () => {
     await fetchDatasets()
     expect(mockFetch).toHaveBeenCalledOnce()
   })
+
+  it('fetches fresh dataset cards after list cache invalidation', async () => {
+    const staleDataset = { ...MOCK_DATASET, dataset_id: 'ds_old', dataset_name: 'Old Dataset' }
+    const freshDataset = { ...MOCK_DATASET, dataset_id: 'ds_new', dataset_name: 'New Dataset' }
+
+    mockFetch
+      .mockResolvedValueOnce(ok({ items: [staleDataset], total: 1 }))
+      .mockResolvedValueOnce(ok({ items: [freshDataset], total: 1 }))
+
+    const firstResult = await fetchDatasets(undefined, { page: 1, page_size: 8 })
+    invalidateWSIListCache()
+    const secondResult = await fetchDatasets(undefined, { page: 1, page_size: 8 })
+
+    expect(firstResult.items[0].dataset_name).toBe('Old Dataset')
+    expect(secondResult.items[0].dataset_name).toBe('New Dataset')
+    expect(mockFetch).toHaveBeenCalledTimes(2)
+  })
 })
 
 describe('fetchDatasetSummary', () => {
