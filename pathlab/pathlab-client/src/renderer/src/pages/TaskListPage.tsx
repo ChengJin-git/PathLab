@@ -934,14 +934,14 @@ export default function TaskListPage() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-3 sm:p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-[95vw] p-4 sm:p-6 max-h-[90vh] overflow-y-auto">
             {/* Header */}
-            <div className="text-center mb-4 sm:mb-6">
+            <div className="mb-4 flex flex-col items-center text-center sm:mb-6">
               <div className="w-12 h-12 sm:w-16 sm:h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
                 <AlertCircle className="w-7 h-7 sm:w-10 sm:h-10 text-red-600" />
               </div>
-              <h2 className="text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
+              <h2 className="w-full text-center text-lg sm:text-2xl font-bold text-gray-900 leading-tight">
                 {isBatchDelete ? t('taskList.deleteModal.batchTitle', { count: selectedTasks.length }) : t('taskList.deleteModal.singleTitle')}
               </h2>
-              <p className="text-xs sm:text-sm text-gray-500 mt-1">{t('taskList.deleteModal.cannotBeUndone')}</p>
+              <p className="mt-1 w-full text-center text-xs sm:text-sm text-gray-500">{t('taskList.deleteModal.cannotBeUndone')}</p>
             </div>
 
             {/* Batch Delete Warning */}
@@ -976,10 +976,7 @@ export default function TaskListPage() {
                     <div className="flex items-start gap-3">
                       <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-sky-500 shadow-[0_0_0_4px_rgba(14,165,233,0.12)]" />
                       <div className="min-w-0 flex-1">
-                        <div className="text-[11px] sm:text-sm font-bold text-sky-950">
-                          {t('taskList.deleteModal.quickScopeTitle')}
-                        </div>
-                        <p className="mt-1 text-[10px] sm:text-xs leading-relaxed text-sky-800/80">
+                        <p className="text-[10px] sm:text-xs leading-relaxed text-sky-800/80">
                           {t(deleteMode === 'complete' ? 'taskList.deleteModal.quickScopeCompleteDesc' : 'taskList.deleteModal.quickScopeStandardDesc')}
                         </p>
                         <ul className="mt-3 grid gap-1.5 text-[10px] sm:text-xs text-sky-900">

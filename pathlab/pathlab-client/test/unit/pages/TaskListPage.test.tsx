@@ -107,7 +107,11 @@ describe('TaskListPage delete modal', () => {
       expect(apiModule.getTrainingTaskStorageInfo).toHaveBeenCalledWith('task-1', { quick: true })
     })
 
-    expect(await screen.findByText('taskList.deleteModal.quickScopeTitle')).toBeInTheDocument()
+    const modalTitle = screen.getByText('taskList.deleteModal.singleTitle')
+    const modalSubtitle = screen.getByText('taskList.deleteModal.cannotBeUndone')
+    expect(modalTitle).toHaveClass('text-center')
+    expect(modalSubtitle).toHaveClass('text-center')
+    expect(screen.queryByText('taskList.deleteModal.quickScopeTitle')).not.toBeInTheDocument()
     expect(screen.getByText('taskList.deleteModal.trainingDataQuick')).toBeInTheDocument()
     expect(screen.getByText('taskList.deleteModal.aiResultsQuick')).toBeInTheDocument()
     expect(screen.getByText('taskList.deleteModal.logsQuick')).toBeInTheDocument()
