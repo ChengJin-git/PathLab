@@ -141,4 +141,34 @@ describe('AnnotationListPanel label management', () => {
     expect(screen.getByRole('button', { name: 'annotation.labelManagement' })).toHaveClass('bg-indigo-50')
     expect(screen.queryByText('annotation.currentSlide')).not.toBeInTheDocument()
   })
+
+  it('removes highlight when currentLabel prop changes to empty', () => {
+    const onCurrentLabelChange = vi.fn()
+    const { rerender } = render(<AnnotationListPanel {...baseProps} currentLabel="A" onCurrentLabelChange={onCurrentLabelChange} />)
+
+    const labelAButton = screen.getAllByRole('button', { name: /^A/ })[0]
+    expect(labelAButton.closest('div')).toHaveClass('bg-indigo-50')
+
+    rerender(<AnnotationListPanel {...baseProps} currentLabel="" onCurrentLabelChange={onCurrentLabelChange} />)
+
+    expect(labelAButton.closest('div')).not.toHaveClass('bg-indigo-50')
+  })
+
+  it('toggles focused region when clicking an already focused annotation', () => {
+    const onFocusRegion = vi.fn()
+    const { rerender } = render(<AnnotationListPanel {...baseProps} onFocusRegion={onFocusRegion} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'annotation.annotationList' }))
+
+    const regionRows = screen.getAllByRole('button', { name: /#/ })
+    expect(regionRows.length).toBeGreaterThan(0)
+
+    fireEvent.click(regionRows[0])
+    expect(onFocusRegion).toHaveBeenLastCalledWith('r1')
+
+    rerender(<AnnotationListPanel {...baseProps} focusedRegionId="r1" onFocusRegion={onFocusRegion} />)
+
+    fireEvent.click(regionRows[0])
+    expect(onFocusRegion).toHaveBeenLastCalledWith(null)
+  })
 })

@@ -929,8 +929,10 @@ export default function WSIViewerPage() {
     })
   }, [slideHeight, slideWidth])
 
-  const handleFocusRegion = useCallback((regionId: string) => {
+  const handleFocusRegion = useCallback((regionId: string | null) => {
     setFocusedRegionId(regionId)
+
+    if (!regionId) return
 
     const region = currentRegions.find(item => item.id === regionId)
     if (!region || slideWidth <= 0 || slideHeight <= 0) {

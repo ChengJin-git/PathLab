@@ -31,7 +31,7 @@ interface AnnotationListPanelProps {
   onCreateLabel?: (label: string) => void
   onRenameLabel?: (oldLabel: string, newLabel: string) => void
   onDeleteLabel?: (label: string) => void
-  onFocusRegion?: (regionId: string) => void
+  onFocusRegion?: (regionId: string | null) => void
   onUpdateRegion: (regionId: string, updates: Partial<AnnotationRegion>) => void
   onDeleteRegion: (regionId: string) => void
   onDeleteRegions: (regionIds: string[]) => void
@@ -422,12 +422,12 @@ export function AnnotationListPanel({
                   key={region.id}
                   role="button"
                   tabIndex={0}
-                  onClick={() => onFocusRegion?.(region.id)}
+                  onClick={() => onFocusRegion?.(focusedRegionId === region.id ? null : region.id)}
                   onKeyDown={e => {
                     if (e.target !== e.currentTarget) return
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault()
-                      onFocusRegion?.(region.id)
+                      onFocusRegion?.(focusedRegionId === region.id ? null : region.id)
                     }
                   }}
                   className={`flex items-center gap-2 px-2.5 py-2 rounded-lg group transition-all cursor-pointer ${focusedRegionId === region.id ? 'bg-amber-50 ring-2 ring-amber-300 shadow-sm' : selectedRegionIds.has(region.id) ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-gray-50 hover:bg-gray-100'}`}
