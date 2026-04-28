@@ -104,6 +104,14 @@ class WSIClassifyRequest(BaseModel):
     params: Optional[Dict[str, Any]] = None
 
 
+class IndependentInferenceRequest(BaseModel):
+    """Request model for inference on selected uploaded, unlabeled images."""
+
+    model_id: str
+    wsi_ids: List[str] = Field(min_length=1)
+    rerun_from_task_id: Optional[str] = None
+
+
 class SplitConfig(BaseModel):
     """Configuration for data splitting strategy"""
 

@@ -71,6 +71,7 @@ from gateway.models import (
     ExternalValidationRequest,
     QuickAnalysisRequest,
     BatchInferenceRequest,
+    IndependentInferenceRequest,
 )
 
 # Analysis modules (extracted from this file for maintainability)
@@ -135,6 +136,14 @@ def _is_external_validation_task_id(task_id: object) -> bool:
 
 def _is_batch_inference_task_id(task_id: object) -> bool:
     return isinstance(task_id, str) and task_id.startswith("binfer_")
+
+
+def _is_independent_inference_task_id(task_id: object) -> bool:
+    return isinstance(task_id, str) and task_id.startswith("indinfer_")
+
+
+def _is_inference_only_task_id(task_id: object) -> bool:
+    return _is_batch_inference_task_id(task_id) or _is_independent_inference_task_id(task_id)
 
 
 def _extract_segmentation_label_names(categories: List[Dict[str, Any]]) -> List[str]:
@@ -1423,6 +1432,73 @@ async def _is_dataset_unlabeled_for_batch_inference(
     return distinct_label_count == 0
 
 
+async def _is_wsi_unlabeled_for_independent_inference(
+    db: AsyncSession, wsi: WSISlide, task_type: Optional[str]
+) -> bool:
+    normalized_task_type = (task_type or "").strip().lower()
+    if normalized_task_type == "wsi_survival":
+        return wsi.event_time is None and wsi.event_status is None
+    if normalized_task_type == "patch_segmentation":
+        query_result = await db.execute(
+            select(func.count())
+            .select_from(SegmentationAnnotation)
+            .where(SegmentationAnnotation.wsi_id == wsi.wsi_id)
+            .where(SegmentationAnnotation.source != "viewer")
+            .where(SegmentationAnnotation.status == "finalized")
+        )
+        return (query_result.scalar() or 0) == 0
+    return not str(wsi.label or "").strip()
+
+
+def _independent_wsi_item(wsi: WSISlide) -> Dict[str, Any]:
+    dataset = wsi.dataset
+    data_group = dataset.data_group if dataset else None
+    return {
+        "wsi_id": _coerce_str(wsi.wsi_id),
+        "original_filename": wsi.original_filename,
+        "dataset_id": _coerce_str(wsi.dataset_id),
+        "dataset_name": dataset.name if dataset else None,
+        "case_id": wsi.case_id,
+        "data_type": data_group.data_type if data_group else wsi.data_type,
+        "task_type": data_group.task_type if data_group else None,
+        "aggregation_level": data_group.aggregation_level if data_group else None,
+        "created_at": (
+            wsi.created_at.isoformat() + "Z" if isinstance(wsi.created_at, datetime) else None
+        ),
+    }
+
+
+@router.get("/independent-inference/wsi")
+async def get_wsi_for_independent_inference(
+    task_type: Optional[str] = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    active_models = await TrainedModelRepository.get_active_models(db)
+    elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+    wsi_rows = await WSIRepository.get_all_with_dataset(
+        db,
+        user_id=None if user.is_admin() else str(user.id),
+        elevated_dataset_ids=elevated_dataset_ids,
+    )
+
+    items: List[Dict[str, Any]] = []
+    for wsi in wsi_rows:
+        dataset = wsi.dataset
+        data_group = dataset.data_group if dataset else None
+        row_task_type = data_group.task_type if data_group else None
+        if task_type and row_task_type != task_type:
+            continue
+        if await _is_wsi_unlabeled_for_independent_inference(db, wsi, row_task_type):
+            items.append(_independent_wsi_item(wsi))
+
+    return {
+        "items": items,
+        "total": len(items),
+        "models_available": any(bool(getattr(model, "is_active", False)) for model in active_models),
+    }
+
+
 @router.get("/datasets-for-inference")
 async def get_datasets_for_inference(
     unlabeled_only: bool = True,
@@ -1635,6 +1711,171 @@ async def start_batch_inference(
     }
 
 
+async def _resolve_independent_inference_wsi_ids(
+    db: AsyncSession,
+    user: User,
+    wsi_ids: List[str],
+    model_task_type: str,
+    model_data_type: str,
+    elevated_dataset_ids: Optional[List[str]] = None,
+) -> tuple[List[str], List[Dict[str, Any]], Optional[DataGroup], Optional[str], Optional[str]]:
+    wsi_map = await WSIRepository.get_by_ids_with_dataset(db, wsi_ids)
+    valid_ids: List[str] = []
+    skipped: List[Dict[str, Any]] = []
+    target_data_group: Optional[DataGroup] = None
+    target_dataset_id: Optional[str] = None
+    validation_error: Optional[str] = None
+    elevated_dataset_id_set = set(elevated_dataset_ids or [])
+
+    for requested_id in wsi_ids:
+        wsi = wsi_map.get(requested_id)
+        if not wsi:
+            skipped.append({"wsi_id": requested_id, "reason": "unavailable"})
+            continue
+
+        dataset_id = _coerce_str(wsi.dataset_id)
+        if (
+            not user.is_admin()
+            and _coerce_str(wsi.user_id) != str(user.id)
+            and dataset_id not in elevated_dataset_id_set
+        ):
+            skipped.append({"wsi_id": requested_id, "reason": "unavailable"})
+            continue
+
+        dataset = wsi.dataset
+        data_group = dataset.data_group if dataset else None
+        wsi_task_type = data_group.task_type if data_group else None
+        wsi_data_type = data_group.data_type if data_group else wsi.data_type
+        if wsi_task_type != model_task_type or wsi_data_type != model_data_type:
+            skipped.append({"wsi_id": requested_id, "reason": "incompatible_type"})
+            continue
+
+        if not await _is_wsi_unlabeled_for_independent_inference(db, wsi, wsi_task_type):
+            skipped.append({"wsi_id": requested_id, "reason": "labeled"})
+            continue
+
+        if target_data_group is None:
+            target_data_group = data_group
+            target_dataset_id = dataset_id
+        elif dataset_id != target_dataset_id:
+            validation_error = "mixed_dataset"
+            skipped.append({"wsi_id": requested_id, "reason": "mixed_dataset"})
+            continue
+        valid_ids.append(requested_id)
+
+    return valid_ids, skipped, target_data_group, target_dataset_id, validation_error
+
+
+@router.post("/independent-inference")
+async def start_independent_inference(
+    req: IndependentInferenceRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    import uuid as uuid_module
+
+    trained_model = await TrainedModelRepository.get_by_id(db, req.model_id)
+    if not trained_model:
+        raise HTTPException(status_code=404, detail=f"Model not found: {req.model_id}")
+    if not trained_model.is_active:
+        raise HTTPException(status_code=400, detail="Model is not active")
+
+    model_task_id = _coerce_str(trained_model.task_id)
+    model_task = await TrainingTaskRepository.get_by_id(db, model_task_id)
+    if not model_task:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Model's training task not found: {model_task_id}",
+        )
+
+    await _require_task_access(
+        user,
+        model_task,
+        db,
+        owner_user_id=_coerce_str(trained_model.user_id),
+        forbidden_detail="You don't have permission to use this model",
+    )
+
+    model_dg = model_task.data_group
+    model_task_type = model_dg.task_type if model_dg else ""
+    model_data_type = model_dg.data_type if model_dg else "wsi"
+    elevated_dataset_ids = await _get_elevated_dataset_ids(user, db)
+    valid_ids, skipped, target_data_group, target_dataset_id, validation_error = await _resolve_independent_inference_wsi_ids(
+        db, user, req.wsi_ids, model_task_type, model_data_type, elevated_dataset_ids
+    )
+    if validation_error == "mixed_dataset":
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Select images from a single dataset",
+                "skipped": skipped,
+            },
+        )
+    if not valid_ids:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "No eligible unlabeled images found for this model",
+                "skipped": skipped,
+            },
+        )
+    if target_data_group is None:
+        raise HTTPException(status_code=400, detail="No compatible data group found")
+
+    task_id = f"indinfer_{uuid_module.uuid4().hex[:16]}"
+    task_name = f"{model_task.task_name} independent inference"[:200]
+    independent_task = TrainingTask(
+        task_id=task_id,
+        task_name=task_name,
+        group_id=target_data_group.group_id,
+        user_id=str(user.id),
+        status=TaskStatus.PENDING,
+        progress=0,
+        classes=trained_model.classes,
+        preprocessing_config=model_task.preprocessing_config
+        or {"feature_extractor": trained_model.feature_extractor},
+        model_config={
+            "model_task_id": model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": target_dataset_id,
+            "wsi_ids": valid_ids,
+            "skipped": skipped,
+            "model_task_type": model_task_type,
+            "model_data_type": model_data_type,
+            "execution_mode": "independent_inference",
+            "total_wsi": len(valid_ids),
+            "processed_wsi": 0,
+            "results_count": 0,
+        },
+    )
+    db.add(independent_task)
+    await db.flush()
+    await db.commit()
+
+    task_queue = get_task_queue()
+    await task_queue.submit(
+        task_id=task_id,
+        task_type=TaskType.BATCH_INFERENCE,
+        coro_func=_run_batch_inference,
+        model_task_id=model_task_id,
+        model_id=str(trained_model.model_id),
+        dataset_id=target_dataset_id or "",
+        wsi_ids=valid_ids,
+        execution_mode="independent_inference",
+    )
+
+    return {
+        "task_id": task_id,
+        "status": "pending",
+        "message": "Independent inference job submitted",
+        "total_wsi": len(valid_ids),
+        "model_id": str(trained_model.model_id),
+        "model_task_id": model_task_id,
+        "wsi_ids": valid_ids,
+        "skipped": skipped,
+    }
+
+
 async def _require_batch_inference_task(
     task_id: str,
     user: User,
@@ -1657,6 +1898,56 @@ async def _require_batch_inference_task(
     return task
 
 
+async def _require_independent_inference_task(
+    task_id: str,
+    user: User,
+    db: AsyncSession,
+) -> TrainingTask:
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if not task:
+        raise HTTPException(
+            status_code=404, detail=f"Independent inference task not found: {task_id}"
+        )
+    if not _is_independent_inference_task_id(getattr(task, "task_id", None)):
+        raise HTTPException(
+            status_code=404, detail=f"Task {task_id} is not an independent inference task"
+        )
+    if not user.is_admin() and _coerce_str(task.user_id) != str(user.id):
+        raise HTTPException(
+            status_code=403, detail="You don't have permission to access this task"
+        )
+    return task
+
+
+def _inference_task_item(t: TrainingTask) -> Dict[str, Any]:
+    mc = t.model_config if isinstance(t.model_config, dict) else {}
+    dg = t.data_group
+    return {
+        "task_id": _coerce_str(t.task_id),
+        "task_name": t.task_name,
+        "status": t.status,
+        "progress": t.progress or 0,
+        "model_task_id": mc.get("model_task_id"),
+        "model_id": mc.get("model_id"),
+        "dataset_id": mc.get("dataset_id"),
+        "wsi_ids": mc.get("wsi_ids", []),
+        "skipped": mc.get("skipped", []),
+        "model_task_type": mc.get("model_task_type"),
+        "model_data_type": mc.get("model_data_type"),
+        "data_type": dg.data_type if dg else None,
+        "task_type": dg.task_type if dg else None,
+        "total_wsi": mc.get("total_wsi", 0),
+        "results_count": mc.get("results_count", 0),
+        "error": t.error_message,
+        "created_at": (
+            t.created_at.isoformat() + "Z" if isinstance(t.created_at, datetime) else None
+        ),
+        "finished_at": (
+            t.finished_at.isoformat() + "Z" if isinstance(t.finished_at, datetime) else None
+        ),
+    }
+
+
 @router.get("/batch-inference/tasks")
 async def list_batch_inference_tasks(
     skip: int = Query(default=0, ge=0),
@@ -1673,39 +1964,61 @@ async def list_batch_inference_tasks(
     )
     items = []
     for t in tasks:
-        mc = t.model_config if isinstance(t.model_config, dict) else {}
-        dg = t.data_group
         file_prog = await get_progress(_coerce_str(t.task_id))
-        progress = file_prog if file_prog is not None else (t.progress or 0)
-        items.append(
-            {
-                "task_id": _coerce_str(t.task_id),
-                "task_name": t.task_name,
-                "status": t.status,
-                "progress": progress,
-                "model_task_id": mc.get("model_task_id"),
-                "model_id": mc.get("model_id"),
-                "dataset_id": mc.get("dataset_id"),
-                "model_task_type": mc.get("model_task_type"),
-                "model_data_type": mc.get("model_data_type"),
-                "data_type": dg.data_type if dg else None,
-                "task_type": dg.task_type if dg else None,
-                "total_wsi": mc.get("total_wsi", 0),
-                "results_count": mc.get("results_count", 0),
-                "error": t.error_message,
-                "created_at": (
-                    t.created_at.isoformat() + "Z"
-                    if isinstance(t.created_at, datetime)
-                    else None
-                ),
-                "finished_at": (
-                    t.finished_at.isoformat() + "Z"
-                    if isinstance(t.finished_at, datetime)
-                    else None
-                ),
-            }
-        )
+        item = _inference_task_item(t)
+        item["progress"] = file_prog if file_prog is not None else item["progress"]
+        items.append(item)
     return {"items": items, "total": total}
+
+
+@router.get("/independent-inference/tasks")
+async def list_independent_inference_tasks(
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=200),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    user_id_filter = None if user.is_admin() else str(user.id)
+    tasks = await TrainingTaskRepository.get_batch_inference_tasks(
+        db, user_id=user_id_filter, skip=skip, limit=limit, task_id_prefix="indinfer_"
+    )
+    total = await TrainingTaskRepository.count_batch_inference_tasks(
+        db, user_id=user_id_filter, task_id_prefix="indinfer_"
+    )
+    items = []
+    for t in tasks:
+        file_prog = await get_progress(_coerce_str(t.task_id))
+        item = _inference_task_item(t)
+        item["progress"] = file_prog if file_prog is not None else item["progress"]
+        items.append(item)
+    return {"items": items, "total": total}
+
+
+@router.get("/independent-inference/{task_id}/results")
+async def get_independent_inference_results(
+    task_id: str,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await _require_independent_inference_task(task_id, user, db)
+    results = await AIResultRepository.get_by_task_paginated(
+        db, task_id, skip=skip, limit=limit
+    )
+    total = await AIResultRepository.count_by_task(db, task_id)
+    mc = task.model_config if isinstance(task.model_config, dict) else {}
+    dg = task.data_group
+    return {
+        "task_type": mc.get("model_task_type", ""),
+        "data_type": dg.data_type if dg else None,
+        "wsi_ids": mc.get("wsi_ids", []),
+        "skipped": mc.get("skipped", []),
+        "items": [r.to_dict() for r in results],
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+    }
 
 
 @router.get("/batch-inference/{task_id}/results")

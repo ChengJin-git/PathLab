@@ -1131,11 +1131,12 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
         user_id: Optional[str] = None,
         skip: int = 0,
         limit: int = 50,
+        task_id_prefix: str = "binfer_",
     ) -> List[TrainingTask]:
         query = (
             select(TrainingTask)
             .options(selectinload(TrainingTask.data_group))
-            .where(cast(TrainingTask.task_id, String).startswith("binfer_"))
+            .where(cast(TrainingTask.task_id, String).startswith(task_id_prefix))
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)
@@ -1147,10 +1148,11 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
     async def count_batch_inference_tasks(
         db: AsyncSession,
         user_id: Optional[str] = None,
+        task_id_prefix: str = "binfer_",
     ) -> int:
         query = (
             select(func.count(TrainingTask.id))
-            .where(cast(TrainingTask.task_id, String).startswith("binfer_"))
+            .where(cast(TrainingTask.task_id, String).startswith(task_id_prefix))
         )
         if user_id is not None:
             query = query.where(TrainingTask.user_id == user_id)

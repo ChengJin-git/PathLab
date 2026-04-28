@@ -43,6 +43,8 @@ async def _run_batch_inference(
     model_id: str,
     dataset_id: str,
     assigned_device: Optional[str] = None,
+    wsi_ids: Optional[List[str]] = None,
+    execution_mode: str = "batch_inference",
     **kwargs: Any,
 ) -> None:
     """
@@ -102,8 +104,10 @@ async def _run_batch_inference(
             dg = model_task.data_group
             task_type = dg.task_type if dg else ""
             model_data_type = dg.data_type if dg else ""
-            dataset_wsi_ids: List[str] = await DatasetRepository.get_wsi_ids(
-                db, dataset_id
+            dataset_wsi_ids: List[str] = (
+                list(wsi_ids)
+                if wsi_ids is not None
+                else await DatasetRepository.get_wsi_ids(db, dataset_id)
             )
             await AIResultRepository.delete_by_task_id(db, task_id)
             await db.commit()
@@ -139,7 +143,7 @@ async def _run_batch_inference(
                 dataset_id=dataset_id,
                 wsi_ids=dataset_wsi_ids,
                 assigned_device=assigned_device,
-                execution_mode="batch_inference",
+                execution_mode=execution_mode,
                 auto_trigger_analysis=False,
             )
         elif task_type == "patch_classification":
@@ -153,6 +157,7 @@ async def _run_batch_inference(
                 assigned_device=assigned_device,
                 total=total,
                 update_task_progress=_update_task_progress,
+                execution_mode=execution_mode,
             )
         elif task_type == "patch_segmentation":
             await _run_batch_patch_segmentation(
@@ -164,6 +169,7 @@ async def _run_batch_inference(
                 assigned_device=assigned_device,
                 total=total,
                 update_task_progress=_update_task_progress,
+                execution_mode=execution_mode,
             )
         else:
             raise ValueError(f"Unsupported task_type for batch inference: {task_type}")
@@ -199,6 +205,7 @@ async def _run_batch_wsi_classification(
     wsi_ids: List[str],
     assigned_device: Optional[str],
     total: int = 0,
+    execution_mode: str = "batch_inference",
 ) -> None:
     await _run_external_validation(
         task_id=task_id,
@@ -210,7 +217,7 @@ async def _run_batch_wsi_classification(
         dataset_id=dataset_id,
         wsi_ids=wsi_ids,
         assigned_device=assigned_device,
-        execution_mode="batch_inference",
+        execution_mode=execution_mode,
         auto_trigger_analysis=False,
     )
 
@@ -225,6 +232,7 @@ async def _run_batch_patch_classification(
     assigned_device: Optional[str],
     total: int = 0,
     update_task_progress=None,
+    execution_mode: str = "batch_inference",
 ) -> None:
     logger_manager = ScopedLogger(task_id)
     await _run_external_validation_patch_classification(
@@ -237,7 +245,7 @@ async def _run_batch_patch_classification(
         assigned_device=assigned_device or "",
         logger_manager=logger_manager,
         update_task_progress=update_task_progress,
-        execution_mode="batch_inference",
+        execution_mode=execution_mode,
         auto_trigger_analysis=False,
     )
 
@@ -252,6 +260,7 @@ async def _run_batch_wsi_survival(
     assigned_device: Optional[str],
     total: int = 0,
     update_task_progress=None,
+    execution_mode: str = "batch_inference",
 ) -> None:
     await _run_external_validation(
         task_id=task_id,
@@ -263,7 +272,7 @@ async def _run_batch_wsi_survival(
         dataset_id=dataset_id,
         wsi_ids=wsi_ids,
         assigned_device=assigned_device,
-        execution_mode="batch_inference",
+        execution_mode=execution_mode,
         auto_trigger_analysis=False,
     )
 
@@ -277,6 +286,7 @@ async def _run_batch_patch_segmentation(
     assigned_device: Optional[str],
     total: int = 0,
     update_task_progress=None,
+    execution_mode: str = "batch_inference",
 ) -> None:
     logger_manager = ScopedLogger(task_id)
     await _run_external_validation_patch_segmentation(
@@ -288,6 +298,6 @@ async def _run_batch_patch_segmentation(
         assigned_device=assigned_device or "",
         logger_manager=logger_manager,
         update_task_progress=update_task_progress,
-        execution_mode="batch_inference",
+        execution_mode=execution_mode,
         auto_trigger_analysis=False,
     )
