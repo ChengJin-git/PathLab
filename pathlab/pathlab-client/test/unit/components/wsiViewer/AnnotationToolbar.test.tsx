@@ -22,36 +22,34 @@ const baseProps = {
   allLabels: ['A', 'B', 'C'],
 }
 
-describe('AnnotationToolbar label palette', () => {
-  it('renders visible labels as selectable chips', () => {
+describe('AnnotationToolbar label selector', () => {
+  it('keeps visible labels out of the top bar so the toolbar stays one row', () => {
     render(<AnnotationToolbar {...baseProps} visibleLabels={['A', 'B']} />)
 
-    const chipA = screen.getByRole('button', { name: 'A', pressed: true })
-    const chipB = screen.getByRole('button', { name: 'B', pressed: false })
-
-    expect(chipA).toBeInTheDocument()
-    expect(chipB).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'A', pressed: true })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'B', pressed: false })).not.toBeInTheDocument()
   })
 
-  it('switches labels when a chip is clicked', () => {
+  it('switches labels from the compact dropdown instead of top-bar chips', () => {
     const onLabelChange = vi.fn()
     render(
       <AnnotationToolbar {...baseProps} visibleLabels={['A', 'B']} onLabelChange={onLabelChange} />,
     )
 
-    fireEvent.click(screen.getByRole('button', { name: 'B', pressed: false }))
+    fireEvent.click(screen.getByRole('button', { name: 'A' }))
+    fireEvent.click(screen.getByRole('button', { name: 'B' }))
     expect(onLabelChange).toHaveBeenCalledWith('B')
   })
 
-  it('falls back to allLabels when visibleLabels is not provided', () => {
+  it('does not render all labels as top-bar chips when visibleLabels is omitted', () => {
     render(<AnnotationToolbar {...baseProps} />)
 
-    expect(screen.getByRole('button', { name: 'A', pressed: true })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'B', pressed: false })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'C', pressed: false })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'A', pressed: true })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'B', pressed: false })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'C', pressed: false })).not.toBeInTheDocument()
   })
 
-  it('shows a missing-label action when current label is absent in this mode', () => {
+  it('keeps missing-label management out of the top toolbar', () => {
     const onCreateCurrentLabelInMode = vi.fn()
     render(
       <AnnotationToolbar
@@ -63,12 +61,9 @@ describe('AnnotationToolbar label palette', () => {
       />,
     )
 
-    expect(screen.getByText('annotation.labelMissingInMode')).toBeInTheDocument()
-    const actionButton = screen.getByRole('button', { name: 'annotation.createLabelInMode' })
-    expect(actionButton).toBeInTheDocument()
-
-    fireEvent.click(actionButton)
-    expect(onCreateCurrentLabelInMode).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText('annotation.labelMissingInMode')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'annotation.createLabelInMode' })).not.toBeInTheDocument()
+    expect(onCreateCurrentLabelInMode).not.toHaveBeenCalled()
   })
 
   it('does not show missing-label warning when missingCurrentLabel is false', () => {
@@ -96,13 +91,11 @@ describe('AnnotationToolbar label palette', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('renders chips with label colors', () => {
+  it('renders the current label color on the compact selector', () => {
     render(<AnnotationToolbar {...baseProps} visibleLabels={['A', 'B']} />)
 
-    const chipA = screen.getByRole('button', { name: 'A', pressed: true })
-    const chipB = screen.getByRole('button', { name: 'B', pressed: false })
+    const selector = screen.getByRole('button', { name: 'A' })
 
-    expect(chipA.querySelector('span[style*="background-color: rgb(239, 68, 68)"]')).toBeInTheDocument()
-    expect(chipB.querySelector('span[style*="background-color: rgb(34, 197, 94)"]')).toBeInTheDocument()
+    expect(selector.querySelector('span[style*="background-color: rgb(239, 68, 68)"]')).toBeInTheDocument()
   })
 })

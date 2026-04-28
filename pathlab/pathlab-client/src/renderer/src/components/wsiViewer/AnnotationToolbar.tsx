@@ -47,9 +47,9 @@ export function AnnotationToolbar({
   currentLabel, onLabelChange,
   labelColors, allLabels,
   onDropdownOpenChange,
-  visibleLabels,
-  missingCurrentLabel,
-  onCreateCurrentLabelInMode,
+  visibleLabels: _visibleLabels,
+  missingCurrentLabel: _missingCurrentLabel,
+  onCreateCurrentLabelInMode: _onCreateCurrentLabelInMode,
   editingMode = 'personal',
   onToggleEditingMode,
   modeTransitioning = false,
@@ -80,8 +80,6 @@ export function AnnotationToolbar({
   }, [])
 
   const currentColor = labelColors[currentLabel] || '#3b82f6'
-  const paletteLabels = visibleLabels ?? allLabels
-
   const handleCustomLabelSubmit = () => {
     if (customLabel.trim()) {
       onLabelChange(customLabel.trim())
@@ -183,7 +181,7 @@ export function AnnotationToolbar({
 
           <div className="w-px h-5 bg-gray-200 mx-1" />
 
-          <div className="flex flex-col gap-1">
+          <div className="flex items-center">
             <div className="relative" ref={dropdownRef}>
               <button
                 type="button"
@@ -233,44 +231,6 @@ export function AnnotationToolbar({
                 </div>
               )}
             </div>
-
-            {paletteLabels.length > 0 && (
-              <div className="flex items-center gap-1 flex-wrap">
-                {paletteLabels.map(label => {
-                  const isSelected = label === currentLabel
-                  const color = labelColors[label] || getColorForLabel(label, labelColors)
-                  return (
-                    <button
-                      type="button"
-                      key={label}
-                      onClick={() => onLabelChange(label)}
-                      aria-pressed={isSelected}
-                      className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-all border ${
-                        isSelected
-                          ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300 hover:bg-gray-50'
-                      }`}
-                    >
-                      <span className="w-2 h-2 rounded-full border border-gray-200 flex-shrink-0" style={{ backgroundColor: color }} />
-                      <span className="truncate max-w-[60px]">{label}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-
-            {missingCurrentLabel && onCreateCurrentLabelInMode && (
-              <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-amber-50 border border-amber-200">
-                <span className="text-[10px] text-amber-700">{t('annotation.labelMissingInMode')}</span>
-                <button
-                  type="button"
-                  onClick={onCreateCurrentLabelInMode}
-                  className="text-[10px] font-medium text-amber-800 hover:text-amber-900 underline"
-                >
-                  {t('annotation.createLabelInMode')}
-                </button>
-              </div>
-            )}
           </div>
 
           {/* Shared Mode Actions - Only visible in shared mode */}
