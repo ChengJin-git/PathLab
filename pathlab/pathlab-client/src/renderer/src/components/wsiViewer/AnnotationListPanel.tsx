@@ -5,6 +5,16 @@ import { Tooltip } from '../ui/tooltip'
 import { AnnotationRegion, AnnotationsMap, DatasetAnnotationSummaryResponse } from '../../api/annotation'
 import { Card } from '../common'
 
+type AnnotationPanelTab = 'labelManagement' | 'annotationList'
+
+const ANNOTATION_PANEL_TAB_STORAGE_KEY = 'annotationListPanelActiveTab'
+const VALID_PANEL_TABS: AnnotationPanelTab[] = ['labelManagement', 'annotationList']
+
+function getInitialPanelTab(): AnnotationPanelTab {
+  const stored = localStorage.getItem(ANNOTATION_PANEL_TAB_STORAGE_KEY)
+  return VALID_PANEL_TABS.includes(stored as AnnotationPanelTab) ? stored as AnnotationPanelTab : 'labelManagement'
+}
+
 interface AnnotationListPanelProps {
   regions: AnnotationRegion[]
   allAnnotations: AnnotationsMap
@@ -56,7 +66,7 @@ export function AnnotationListPanel({
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editLabel, setEditLabel] = useState('')
   const [showSummary, setShowSummary] = useState(true)
-  const [activePanelTab, setActivePanelTab] = useState<'annotations' | 'labels'>('annotations')
+  const [activePanelTab, setActivePanelTab] = useState<AnnotationPanelTab>(getInitialPanelTab)
   const [selectedRegionIds, setSelectedRegionIds] = useState<Set<string>>(new Set())
   const [selectedCrossSlideLabels, setSelectedCrossSlideLabels] = useState<Set<string>>(new Set())
   const [newLabel, setNewLabel] = useState('')
@@ -243,28 +253,33 @@ export function AnnotationListPanel({
     })
   }
 
+  const handlePanelTabChange = (tab: AnnotationPanelTab) => {
+    setActivePanelTab(tab)
+    localStorage.setItem(ANNOTATION_PANEL_TAB_STORAGE_KEY, tab)
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <Card className="overflow-hidden">
         <div className="flex items-center gap-1 border-b border-gray-200 bg-white p-1">
           <button
             type="button"
-            onClick={() => setActivePanelTab('annotations')}
-            className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${activePanelTab === 'annotations' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+            onClick={() => handlePanelTabChange('labelManagement')}
+            className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${activePanelTab === 'labelManagement' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
           >
-            {t('annotation.annotations')}
+            {t('annotation.labelManagement')}
           </button>
           <button
             type="button"
-            onClick={() => setActivePanelTab('labels')}
-            className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${activePanelTab === 'labels' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
+            onClick={() => handlePanelTabChange('annotationList')}
+            className={`flex-1 rounded-xl px-3 py-2 text-xs font-semibold transition-colors ${activePanelTab === 'annotationList' ? 'bg-indigo-50 text-indigo-700' : 'text-gray-500 hover:bg-gray-50 hover:text-gray-700'}`}
           >
-            {t('annotation.labels')}
+            {t('annotation.annotationList')}
           </button>
         </div>
       </Card>
 
-      {activePanelTab === 'labels' ? (
+      {activePanelTab === 'labelManagement' ? (
         <Card className="overflow-hidden">
           <div className="flex items-center gap-2.5 px-4 py-3 border-b border-gray-200 bg-gradient-to-br from-gray-50 to-white">
             <Tags className="w-4 h-4 text-indigo-500" />
@@ -316,7 +331,7 @@ export function AnnotationListPanel({
                   <div key={label} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 transition-colors ${isCurrent ? 'bg-indigo-50 ring-1 ring-indigo-200' : 'bg-gray-50 hover:bg-gray-100'}`}>
                     <button
                       type="button"
-                      onClick={() => onCurrentLabelChange?.(label)}
+                      onClick={() => onCurrentLabelChange?.(isCurrent ? '' : label)}
                       className="flex min-w-0 flex-1 items-center gap-2 text-left"
                     >
                       <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-gray-200" style={{ backgroundColor: labelColors[label] || '#3b82f6' }} />
