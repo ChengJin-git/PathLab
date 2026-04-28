@@ -229,7 +229,7 @@ async def init_db():
             await conn.execute(
                 text(
                     "UPDATE users SET first_activated_at = NOW() "
-                    "WHERE first_activated_at IS NULL"
+                    "WHERE first_activated_at IS NULL AND is_active = TRUE"
                 )
             )
             logger.info("users.first_activated_at column ensured and backfilled")
