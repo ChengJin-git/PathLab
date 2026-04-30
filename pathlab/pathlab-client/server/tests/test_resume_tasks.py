@@ -194,6 +194,54 @@ async def test_resume_batch_inference_task():
     assert call_kwargs["model_task_id"] == "src_task_abc"
     assert call_kwargs["model_id"] == "model_xyz"
     assert call_kwargs["dataset_id"] == "ds_999"
+    assert call_kwargs["wsi_ids"] is None
+    mock_repo.get_wsi_ids.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_resume_selected_wsi_batch_inference_preserves_wsi_ids():
+    """Selected-WSI unlabeled inference resumes with its stored WSI subset."""
+    task = _make_batch_inference_task(
+        "task_bi_selected", TaskStatus.TRAINING, data_type="wsi", task_type="wsi_classification"
+    )
+    task.model_config = {
+        "model_task_id": "src_task_abc",
+        "model_id": "model_xyz",
+        "dataset_id": "ds_999",
+        "wsi_ids": ["wsi-1", "wsi-2"],
+        "source": "selected_wsi",
+    }
+
+    mock_queue = AsyncMock()
+    mock_queue.submit = AsyncMock()
+    mock_repo = MagicMock()
+    mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
+    mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
+    mock_repo.update_status = AsyncMock()
+
+    with (
+        patch("gateway.startup.TrainingTaskRepository", mock_repo),
+        patch("gateway.startup.get_task_queue", return_value=mock_queue),
+        patch("gateway.startup.wait_for_services_ready", return_value=True),
+        patch("gateway.startup.get_db") as mock_get_db,
+    ):
+        db_mock = AsyncMock()
+        db_mock.commit = AsyncMock()
+
+        async def _db_gen():
+            yield db_mock
+
+        mock_get_db.return_value = _db_gen()
+
+        from gateway.startup import resume_interrupted_tasks
+
+        await resume_interrupted_tasks()
+
+    mock_queue.submit.assert_awaited_once()
+    call_kwargs = mock_queue.submit.call_args.kwargs
+    assert call_kwargs["task_id"] == "binfer_task_bi_selected"
+    assert call_kwargs["task_type"] == TaskType.BATCH_INFERENCE
+    assert call_kwargs["wsi_ids"] == ["wsi-1", "wsi-2"]
     mock_repo.get_wsi_ids.assert_not_called()
 
 

@@ -450,6 +450,7 @@ async def resume_interrupted_tasks() -> None:
                             model_task_id=cfg.get("model_task_id", ""),
                             model_id=cfg.get("model_id", ""),
                             dataset_id=cfg.get("dataset_id", ""),
+                            wsi_ids=cfg.get("wsi_ids"),
                         )
                         logger.info(
                             f"✓ Resumed batch inference task {task.task_id} (claimed by this instance)"
