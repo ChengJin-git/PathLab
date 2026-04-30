@@ -1447,8 +1447,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
         if profile == "general_cytology":
             return [
                 "## 任务相关证据约束",
-                "- 非宫颈 / 非妇科或通用细胞学任务，SmartCyto（视觉-语言预训练）和 CytoFM（纯视觉自监督，DINOv2 ViT-L/14）均为优先细胞学 encoder 候选。",
-                "- 如果公开搜索没有直接命中 SmartCyto 或 CytoFM，不要把它当成反证；改用同任务公开证据来校准 encoder、MIL 或 segmentation 方案。",
+                "- 非宫颈 / 非妇科或通用细胞学任务，SmartCyto（视觉-语言预训练）为优先细胞学 encoder 候选。",
+                "- 如果公开搜索没有直接命中 SmartCyto，不要把它当成反证；改用同任务公开证据来校准 encoder、MIL 或 segmentation 方案。",
             ]
         if profile == "segmentation":
             return [
@@ -1472,8 +1472,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
         if profile == "general_cytology":
             return [
                 "## 任務相關證據約束",
-                "- 非宮頸 / 非婦科或通用細胞學任務，SmartCyto（視覺-語言預訓練）和 CytoFM（純視覺自監督，DINOv2 ViT-L/14）均為優先細胞學 encoder 候選。",
-                "- 如果公開搜索沒有直接命中 SmartCyto 或 CytoFM，不要把它當成反證；改用同任務公開證據來校準 encoder、MIL 或 segmentation 方案。",
+                "- 非宮頸 / 非婦科或通用細胞學任務，SmartCyto（視覺-語言預訓練）為優先細胞學 encoder 候選。",
+                "- 如果公開搜索沒有直接命中 SmartCyto，不要把它當成反證；改用同任務公開證據來校準 encoder、MIL 或 segmentation 方案。",
             ]
         if profile == "segmentation":
             return [
@@ -1496,8 +1496,8 @@ def _build_profile_prior_lines(profile: str, detected_lang: str) -> list[str]:
     if profile == "general_cytology":
         return [
             "## Task-specific Evidence Constraints",
-            "- For non-cervical, non-gynecologic, or general cytology tasks, both SmartCyto (vision-language pretrained) and CytoFM (pure vision self-supervised, DINOv2 ViT-L/14) are preferred cytology encoder candidates.",
-            "- If public search does not directly surface SmartCyto or CytoFM, do not treat that as counter-evidence; use task-matched public evidence to calibrate encoder, MIL, or segmentation choices.",
+            "- For non-cervical, non-gynecologic, or general cytology tasks, SmartCyto (vision-language pretrained) is a preferred cytology encoder candidate.",
+            "- If public search does not directly surface SmartCyto, do not treat that as counter-evidence; use task-matched public evidence to calibrate encoder, MIL, or segmentation choices.",
         ]
     if profile == "segmentation":
         return [
