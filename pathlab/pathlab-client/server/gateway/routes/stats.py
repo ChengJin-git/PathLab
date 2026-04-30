@@ -311,7 +311,7 @@ async def get_user_usage_stats(
         query = (
             select(
                 user_id_str.label("user_id"),
-                UserModel.email,
+                UserModel.username,
                 UserModel.nickname,
                 UserModel.role,
                 func.coalesce(wsi_sq.c.wsi_count, 0).label("wsi_count"),
@@ -347,7 +347,7 @@ async def get_user_usage_stats(
             .outerjoin(feedback_sq, feedback_sq.c.user_id == user_id_str)
             .where(UserModel.role != UserModel.ROLE_ADMIN)
             .where(UserModel.is_active == True)
-            .order_by(UserModel.email)
+            .order_by(UserModel.username)
         )
 
         result = await db.execute(query)
@@ -358,7 +358,7 @@ async def get_user_usage_stats(
         users.append(
             {
                 "user_id": row.user_id,
-                "email": row.email,
+                "email": row.username,
                 "nickname": row.nickname,
                 "role": row.role,
                 "wsi_count": row.wsi_count,

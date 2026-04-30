@@ -617,14 +617,14 @@ class TaskQueueManager:
                     return
 
                 to_email = user.registration_email or ""
-                display_name = user.nickname or user.email
+                display_name = user.nickname or user.username
 
             await send_templated_email(
                 template_key="task_completed_notice",
                 to_email=to_email,
                 context={
                     "display_name": display_name,
-                    "username": user.email,
+                    "username": user.username,
                     "task_name": task_name,
                     "task_status": self._STATUS_SUBJECT.get(status, status),
                     "task_status_desc": self._STATUS_DESC.get(status, status),
