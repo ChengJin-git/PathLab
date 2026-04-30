@@ -89,6 +89,14 @@ def _select_artifact_target(
                 task_id, wsi_id, artifact, fold_key=candidate_fold, strict=True
             ):
                 return task_id, candidate_fold
+        for item in store.list_task_wsi_artifacts(task_id, wsi_id):
+            if item.get("artifact") != artifact:
+                continue
+            discovered_fold = item.get("fold_key")
+            if discovered_fold and store.artifact_exists(
+                task_id, wsi_id, artifact, fold_key=discovered_fold, strict=True
+            ):
+                return task_id, discovered_fold
         return None
 
     task_ids = sorted(

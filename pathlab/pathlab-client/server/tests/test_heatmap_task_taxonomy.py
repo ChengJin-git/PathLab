@@ -62,6 +62,28 @@ def test_heatmap_artifact_selection_respects_taskless_fold_key(tmp_path, monkeyp
     ) == ("task-folded", "fold_1")
 
 
+def test_heatmap_artifact_selection_discovers_actual_fold_keys(tmp_path, monkeypatch):
+    uploads_dir = tmp_path / "uploads"
+    store = AIResultStore(uploads_dir)
+    store.write_wsi_result(
+        task_id="task-folded",
+        wsi_id="wsi-folded",
+        fold_key="fold_12",
+        result={"task_id": "task-folded", "fold_key": "fold_12"},
+        arrays={ATTENTION_ARTIFACT: np.array([12.0], dtype=np.float32)},
+    )
+
+    monkeypatch.setattr(heatmap_routes, "_uploads_dir", lambda: uploads_dir)
+
+    assert heatmap_routes._select_artifact_target(
+        store,
+        "wsi-folded",
+        ATTENTION_ARTIFACT,
+        task_id="task-folded",
+        fold_key=None,
+    ) == ("task-folded", "fold_12")
+
+
 @pytest.mark.asyncio
 async def test_available_heatmaps_uses_canonical_patch_segmentation_for_masks(monkeypatch, tmp_path):
     uploads_dir = tmp_path / "uploads"
