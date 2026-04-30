@@ -223,6 +223,117 @@ async def init_db():
             await conn.execute(
                 text(
                     "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
+                    "username VARCHAR(255)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "UPDATE users SET username = email "
+                    "WHERE username IS NULL OR LENGTH(TRIM(username)) = 0"
+                )
+            )
+            await conn.execute(
+                text(
+                    "UPDATE users SET email = registration_email "
+                    "WHERE registration_email IS NOT NULL AND "
+                    "(email IS NULL OR email = username)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "UPDATE users SET username = CONCAT('user_', SUBSTRING(REPLACE(id::text, '-', '') FROM 1 FOR 12)) "
+                    "WHERE username IS NULL OR LENGTH(TRIM(username)) = 0"
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    WITH ranked AS (
+                        SELECT
+                            id,
+                            username,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY username
+                                ORDER BY created_at NULLS FIRST, id
+                            ) AS rn
+                        FROM users
+                        WHERE username IS NOT NULL AND LENGTH(TRIM(username)) > 0
+                    )
+                    UPDATE users u
+                    SET username = CONCAT(
+                        r.username,
+                        '_',
+                        SUBSTRING(REPLACE(u.id::text, '-', '') FROM 1 FOR 8)
+                    )
+                    FROM ranked r
+                    WHERE u.id = r.id AND r.rn > 1
+                    """
+                )
+            )
+            await conn.execute(text("ALTER TABLE users ALTER COLUMN email DROP NOT NULL"))
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    DECLARE c RECORD;
+                    BEGIN
+                        FOR c IN
+                            SELECT con.conname
+                            FROM pg_constraint con
+                            JOIN pg_class rel ON rel.oid = con.conrelid
+                            JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                            JOIN unnest(con.conkey) AS colnum(attnum) ON TRUE
+                            JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = colnum.attnum
+                            WHERE rel.relname = 'users'
+                              AND nsp.nspname = current_schema()
+                              AND con.contype = 'u'
+                              AND att.attname = 'email'
+                        LOOP
+                            EXECUTE format('ALTER TABLE %I.users DROP CONSTRAINT IF EXISTS %I', current_schema(), c.conname);
+                        END LOOP;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    DECLARE idx RECORD;
+                    BEGIN
+                        FOR idx IN
+                            SELECT i.indexname
+                            FROM pg_indexes i
+                            JOIN pg_class rel ON rel.relname = i.tablename
+                            JOIN pg_namespace nsp ON nsp.nspname = i.schemaname
+                            JOIN pg_class ic ON ic.relname = i.indexname AND ic.relnamespace = nsp.oid
+                            JOIN pg_index pi ON pi.indexrelid = ic.oid
+                            JOIN pg_attribute att ON att.attrelid = rel.oid AND att.attnum = ANY(pi.indkey)
+                            WHERE i.schemaname = current_schema()
+                              AND i.tablename = 'users'
+                              AND pi.indisunique = TRUE
+                              AND att.attname = 'email'
+                        LOOP
+                            EXECUTE format('DROP INDEX IF EXISTS %I.%I', current_schema(), idx.indexname);
+                        END LOOP;
+                    END $$;
+                    """
+                )
+            )
+            await conn.execute(
+                text("ALTER TABLE users ALTER COLUMN username SET NOT NULL")
+            )
+            await conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username "
+                    "ON users (username)"
+                )
+            )
+            logger.info("users.username column ensured and identity backfill completed")
+
+            await conn.execute(
+                text(
+                    "ALTER TABLE users ADD COLUMN IF NOT EXISTS "
                     "first_activated_at TIMESTAMP DEFAULT NULL"
                 )
             )
@@ -411,7 +522,8 @@ async def _create_default_admin():
 
                 admin_user = User(
                     id=uuid.uuid4(),
-                    email="admin",
+                    username="admin",
+                    email=None,
                     hashed_password=hashed_password,
                     password_sha256=password_sha256,
                     is_active=True,
