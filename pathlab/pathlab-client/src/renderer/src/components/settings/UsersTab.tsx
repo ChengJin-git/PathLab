@@ -8,16 +8,14 @@ import { Tooltip } from '../ui/tooltip'
 import { Input } from '../ui/input'
 import { Select } from '../ui/select'
 import {
-  listUsersPaged, updateUser, deleteUser, revokeUserAgreement,
+  listUsersPaged, createUser, updateUser, deleteUser, revokeUserAgreement,
   batchActivateUsers, batchDeactivateUsers, batchDeleteUsers,
   getMaintenanceMode, setMaintenanceMode as setMaintenanceModeApi,
   getMaintenanceNotice, setMaintenanceNotice as setMaintenanceNoticeApi,
 } from '../../api/users'
 import type { UserListItem } from '../../api/users'
-import { registerUser } from '../../api/auth'
 import type { AdminUserUpdateRequest } from '../../api/auth'
 import { getGlobalSettings, updateGlobalSettings } from '../../api/settings'
-import { buildAdminCreateUserPlan } from '../../lib/adminUserCreation'
 import { ShowConfirmDialog } from './ConfirmDialog'
 import { EditUserModal } from './EditUserModal'
 import { CreateUserModal } from './CreateUserModal'
@@ -210,11 +208,13 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
     if (createForm.password.length < 6) { setUsersError(t('settings.usersTab.passwordMinLength')); return }
     setUsersError(null)
     void runCreatingUser(async () => {
-      const createPlan = buildAdminCreateUserPlan(createForm)
-      const createdUser = await registerUser(createPlan.registerData)
-      if (createPlan.targetRole !== 'guest') {
-        await updateUser(createdUser.id, { role: createPlan.targetRole })
-      }
+      await createUser({
+        username: createForm.username,
+        password: createForm.password,
+        nickname: createForm.nickname || undefined,
+        role: createForm.role as 'admin' | 'pathologist' | 'guest',
+        registration_email: createForm.registration_email || undefined,
+      })
       setShowCreateUser(false)
       setCreateForm({ username: '', password: '', nickname: '', role: 'pathologist', registration_email: '' })
       loadUsers()
