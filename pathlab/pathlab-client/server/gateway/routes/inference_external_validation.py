@@ -20,6 +20,13 @@ from typing import Any, Dict, List, Optional, cast as type_cast
 from sqlalchemy import update as sql_update
 
 from backend.ai.schemas.base import TaskStatus
+from backend.ai.result_store import (
+    AIResultStore,
+    ATTENTION_ARTIFACT,
+    ATTENTION_RAW_ARTIFACT,
+    CAM_ARTIFACT,
+    PRED_MASK_ARTIFACT,
+)
 from backend.ai.survival import (
     compute_risk_from_survival,
     compute_survival_from_hazards,
@@ -51,6 +58,23 @@ from .inference_patch_segmentation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _save_extval_result_bundle(
+    uploads_dir,
+    extval_task_id: str,
+    wsi_id: str,
+    result_data: dict[str, Any],
+    arrays: dict[str, Any] | None = None,
+) -> None:
+    """Persist external-validation artifacts into task-level Zarr bundle."""
+    store = AIResultStore(uploads_dir)
+    store.write_wsi_result(
+        task_id=extval_task_id,
+        wsi_id=wsi_id,
+        result=result_data,
+        arrays=arrays or {},
+    )
 
 
 def _is_batch_inference_mode(execution_mode: str) -> bool:
@@ -255,7 +279,6 @@ async def _run_external_validation_patch_segmentation(
             normalization_mean=norm_mean,
             normalization_std=norm_std,
         )
-        ai_results_root = uploads_dir / "ai_results"
         results_saved = 0
         total_items = len(image_paths)
 
@@ -354,18 +377,12 @@ async def _run_external_validation_patch_segmentation(
                                 recall,
                             )
 
-                        # Save prediction mask
-                        wsi_result_dir = ai_results_root / wsi_id
-                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
                         # Keep segmentation artifacts streamed to disk during inference to avoid
                         # retaining many large masks/CAMs in memory. Store binary masks as uint8
                         # to reduce write volume without changing viewer semantics.
                         pred_mask = (
                             preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
                         )
-                        mask_file = wsi_result_dir / f"extval_{task_id}_pred_mask.npy"
-                        np.save(mask_file, pred_mask)
 
                         # Extract Grad-CAM for segmentation model
                         try:
@@ -419,10 +436,6 @@ async def _run_external_validation_patch_segmentation(
                                 dtype=np.float32,
                             )
 
-                        cam_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_cam.npy"
-                        np.save(cam_file, cam_map)
-
-                        # Save result JSON
                         result_data = {
                             "wsi_id": wsi_id,
                             "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
@@ -431,9 +444,9 @@ async def _run_external_validation_patch_segmentation(
                             "num_classes": num_classes,
                             "class_names": class_names,
                             "image_size": list(original_size),
-                            "pred_mask_file": str(mask_file),
-                            "pred_mask_path": str(mask_file),
-                            "cam_file": str(cam_file),
+                            "pred_mask_file": None,
+                            "pred_mask_path": None,
+                            "cam_file": None,
                             "cam_size": list(cam_map.shape),
                             "has_ground_truth": has_gt,
                             "metrics": per_image_metrics,
@@ -441,10 +454,16 @@ async def _run_external_validation_patch_segmentation(
                         if not _is_batch_inference_mode(execution_mode):
                             result_data["validation_source"] = dataset_id
                             result_data["validation_task_id"] = task_id
-
-                        result_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_result.json"
-                        with open(result_file, "w", encoding="utf-8") as f:
-                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+                        _save_extval_result_bundle(
+                            uploads_dir=uploads_dir,
+                            extval_task_id=task_id,
+                            wsi_id=wsi_id,
+                            result_data=result_data,
+                            arrays={
+                                PRED_MASK_ARTIFACT: pred_mask,
+                                CAM_ARTIFACT: cam_map,
+                            },
+                        )
 
                         all_results.append(
                             {
@@ -452,9 +471,9 @@ async def _run_external_validation_patch_segmentation(
                                 "metrics": per_image_metrics,
                                 "has_ground_truth": has_gt,
                                 "class_names": class_names,
-                                "pred_mask_file": str(mask_file),
-                                "pred_mask_path": str(mask_file),
-                                "result_file": str(result_file),
+                                "pred_mask_file": None,
+                                "pred_mask_path": None,
+                                "result_file": None,
                             }
                         )
                         results_saved += 1
@@ -491,9 +510,9 @@ async def _run_external_validation_patch_segmentation(
                             "has_ground_truth": r["has_ground_truth"],
                             "class_names": r.get("class_names", []),
                             "metrics": r["metrics"],
-                            "pred_mask_file": r["pred_mask_file"],
-                            "pred_mask_path": r.get("pred_mask_path") or r["pred_mask_file"],
-                            "result_file": r["result_file"],
+                            "pred_mask_file": None,
+                            "pred_mask_path": None,
+                            "result_file": None,
                         },
                     }
                 )
@@ -754,7 +773,6 @@ async def _run_external_validation_patch_classification(
                 )
 
         # Run inference (in thread to avoid blocking event loop)
-        ai_results_root = uploads_dir / "ai_results"
         results_saved = 0
         total_items = len(image_paths)
 
@@ -814,14 +832,7 @@ async def _run_external_validation_patch_classification(
                             classes[labels[wsi_id]] if wsi_id in labels else "unknown"
                         )
 
-                        wsi_result_dir = ai_results_root / wsi_id
-                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-                        # Save CAM
-                        cam_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_cam.npy"
-                        np.save(cam_file, cam_map)
-
-                        # Save result JSON (aligned with WSI branch fields)
+                        # Save result (aligned with WSI branch fields)
                         result_data = {
                             "wsi_id": wsi_id,
                             "task_id": task_id if _is_batch_inference_mode(execution_mode) else model_task_id,
@@ -834,7 +845,7 @@ async def _run_external_validation_patch_classification(
                             if gt_label != "unknown"
                             else None,
                             "classes": classes,
-                            "cam_file": str(cam_file),
+                            "cam_file": None,
                             "cam_size": list(cam_size),
                             "is_kfold": is_kfold,
                             "num_folds": num_folds if is_kfold else None,
@@ -842,10 +853,13 @@ async def _run_external_validation_patch_classification(
                         if not _is_batch_inference_mode(execution_mode):
                             result_data["validation_source"] = dataset_id
                             result_data["validation_task_id"] = task_id
-
-                        result_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_result.json"
-                        with open(result_file, "w", encoding="utf-8") as f:
-                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+                        _save_extval_result_bundle(
+                            uploads_dir=uploads_dir,
+                            extval_task_id=task_id,
+                            wsi_id=wsi_id,
+                            result_data=result_data,
+                            arrays={CAM_ARTIFACT: cam_map},
+                        )
 
                         all_results.append(
                             {
@@ -856,9 +870,9 @@ async def _run_external_validation_patch_classification(
                                 "correct": pred_label == gt_label
                                 if gt_label != "unknown"
                                 else None,
-                                "cam_file": str(cam_file),
+                                "cam_file": None,
                                 "cam_size": list(cam_size),
-                                "result_file": str(result_file),
+                                "result_file": None,
                             }
                         )
                         results_saved += 1
@@ -889,9 +903,9 @@ async def _run_external_validation_patch_classification(
                         "correct": r["correct"],
                         "classes": classes,
                         "task_type": "patch_classification",
-                        "cam_file": r["cam_file"],
+                        "cam_file": None,
                         "cam_size": r["cam_size"],
-                        "result_file": r["result_file"],
+                        "result_file": None,
                     },
                 }
                 await AIResultRepository.create(db, db_result_data)
@@ -1702,8 +1716,6 @@ async def _run_external_validation(
                 f"Features ready for {valid_count}/{len(wsi_ids)} WSIs. Starting inference..."
             )
 
-        ai_results_root = uploads_dir / "ai_results"
-
         # Import Dataset classes for memory-efficient loading
         from backend.ai.utils.feature_dataset import (
             WSIFeatureDataset,
@@ -1835,7 +1847,7 @@ async def _run_external_validation(
             """Process dataset[start_idx:end_idx]. Returns partial results."""
             _chunk_saved = 0
             _chunk_risk_scores = []
-            _chunk_result_files = []
+            _chunk_survival_results = []
             _chunk_db_records = []
 
             with torch.inference_mode():
@@ -2022,9 +2034,6 @@ async def _run_external_validation(
 
                     # --- Save per-WSI results ---
                     for wsi_id in item_wsi_ids:
-                        wsi_result_dir = ai_results_root / wsi_id
-                        wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
                         if is_case_level:
                             slide_attn = slide_attentions.get(wsi_id)
                             slide_raw_attn = slide_raw_attentions.get(wsi_id)
@@ -2093,31 +2102,24 @@ async def _run_external_validation(
                                 result_data["validation_source"] = dataset_id
                                 result_data["validation_task_id"] = task_id
 
-                        result_file = wsi_result_dir / f"{artifact_prefix}_{task_id}_result.json"
-                        attention_file = None
+                        result_data["attention_file"] = None
 
+                        arrays: dict[str, Any] = {}
                         if slide_raw_attn is not None:
-                            np.save(
-                                wsi_result_dir / f"{artifact_prefix}_{task_id}_attention_raw.npy",
-                                slide_raw_attn,
-                            )
+                            arrays[ATTENTION_RAW_ARTIFACT] = slide_raw_attn
                         if slide_attn is not None:
-                            attention_file = (
-                                wsi_result_dir / f"{artifact_prefix}_{task_id}_attention.npy"
-                            )
-                            np.save(attention_file, slide_attn)
-                            ensure_recommendation_preview_cache(
-                                wsi_id, attention_file, Config.get_uploads_dir()
-                            )
+                            arrays[ATTENTION_ARTIFACT] = slide_attn
 
-                        if attention_file is not None:
-                            result_data["attention_file"] = str(attention_file)
-
-                        with open(result_file, "w", encoding="utf-8") as f:
-                            json.dump(result_data, f, ensure_ascii=False, indent=2)
+                        _save_extval_result_bundle(
+                            uploads_dir=uploads_dir,
+                            extval_task_id=task_id,
+                            wsi_id=wsi_id,
+                            result_data=result_data,
+                            arrays=arrays,
+                        )
 
                         if is_survival:
-                            _chunk_result_files.append((str(result_file), wsi_id))
+                            _chunk_survival_results.append((wsi_id, result_data))
 
                         _chunk_saved += 1
 
@@ -2140,13 +2142,11 @@ async def _run_external_validation(
                                     else "wsi_classification",
                                     "attention_type": attention_type,
                                     "attention_shape": attention_shape,
-                                    "attention_file": str(attention_file)
-                                    if attention_file is not None
-                                    else None,
+                                    "attention_file": None,
                                     "risk_score": risk_score if is_survival else None,
                                     "event_time": gt_data.get("event_time") if is_survival else None,
                                     "event_status": gt_data.get("event_status") if is_survival else None,
-                                    "result_file": str(result_file),
+                                    "result_file": None,
                                 },
                             }
                         )
@@ -2154,7 +2154,7 @@ async def _run_external_validation(
             return (
                 _chunk_saved,
                 _chunk_risk_scores,
-                _chunk_result_files,
+                _chunk_survival_results,
                 _chunk_db_records,
             )
 
@@ -2169,7 +2169,7 @@ async def _run_external_validation(
 
         results_saved = 0
         all_risk_scores = []
-        saved_result_files = []
+        saved_survival_results: list[tuple[str, dict[str, Any]]] = []
         db_records = []
 
         for chunk_start in range(0, total, CHUNK_SIZE):
@@ -2177,14 +2177,14 @@ async def _run_external_validation(
             (
                 chunk_saved,
                 chunk_risk_scores,
-                chunk_result_files,
+                chunk_survival_results,
                 chunk_db_records,
             ) = await asyncio.to_thread(_sync_run_chunk, chunk_start, chunk_end)
             results_saved += chunk_saved
             db_records.extend(chunk_db_records)
             if is_survival:
                 all_risk_scores.extend(chunk_risk_scores)
-                saved_result_files.extend(chunk_result_files)
+                saved_survival_results.extend(chunk_survival_results)
 
             # Update progress via file-based store (35% to 95% for inference phase)
             progress = 35 + int(chunk_end / total * 60)
@@ -2193,32 +2193,30 @@ async def _run_external_validation(
             # Yield to event loop - this is the KEY fix that prevents blocking
             await asyncio.sleep(0)
 
-        # For survival: compute median risk score and update all result files with risk_group
-        # NOTE: This loop reads+writes potentially thousands of JSON files.
-        # Run in thread to avoid blocking the event loop.
+        # For survival: compute median risk score and update all bundle results with risk_group.
         if is_survival and all_risk_scores:
             median_risk_score = float(np.median(all_risk_scores))
             logger.info(
                 f"Survival {mode_label}: median risk score = {median_risk_score:.4f}"
             )
 
-            def _sync_update_survival_result_files():
-                for result_file, wsi_id in saved_result_files:
-                    with open(result_file, "r") as f:
-                        result_data = json.load(f)
+            for wsi_id, result_data in saved_survival_results:
+                risk_group = (
+                    "High Risk"
+                    if float(result_data["risk_score"]) >= median_risk_score
+                    else "Low Risk"
+                )
+                enriched_result = dict(result_data)
+                enriched_result["median_risk_score"] = median_risk_score
+                enriched_result["risk_group"] = risk_group
+                _save_extval_result_bundle(
+                    uploads_dir=uploads_dir,
+                    extval_task_id=task_id,
+                    wsi_id=wsi_id,
+                    result_data=enriched_result,
+                    arrays={},
+                )
 
-                    risk_group = (
-                        "High Risk"
-                        if result_data["risk_score"] >= median_risk_score
-                        else "Low Risk"
-                    )
-                    result_data["median_risk_score"] = median_risk_score
-                    result_data["risk_group"] = risk_group
-
-                    with open(result_file, "w", encoding="utf-8") as f:
-                        json.dump(result_data, f, ensure_ascii=False, indent=2)
-
-            await asyncio.to_thread(_sync_update_survival_result_files)
             for record in db_records:
                 meta = record.get("extra_metadata") or {}
                 risk_score = meta.get("risk_score")
