@@ -11,16 +11,19 @@ Extracted from main.py to reduce file size. Handles:
 import json
 import logging
 import math
-import re
-import struct
 from importlib import import_module
 from pathlib import Path
 from typing import Dict, Optional, Any, Mapping, cast
 
 from fastapi import APIRouter, HTTPException, Query, Depends
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+_result_store_mod = import_module("backend.ai.result_store")
+AIResultStore = _result_store_mod.AIResultStore
+ATTENTION_ARTIFACT = _result_store_mod.ATTENTION_ARTIFACT
+CAM_ARTIFACT = _result_store_mod.CAM_ARTIFACT
+PRED_MASK_ARTIFACT = _result_store_mod.PRED_MASK_ARTIFACT
 get_db = import_module("backend.database").get_db
 WSIRepository = import_module("backend.database.repositories").WSIRepository
 Config = import_module("backend.common.config").Config
@@ -30,17 +33,9 @@ find_any_cached_coords_for_wsi = import_module(
 ).find_any_cached_coords_for_wsi
 from .coords_utils import safe_load_h5_coords, safe_load_h5_coords_attrs
 from .heatmap_utils import (
-    load_result_meta,
-    select_attention_file,
     handle_multi_class_attention,
     normalize_attention,
     find_best_fold,
-)
-from .heatmap_preview_cache import (
-    ensure_resized_recommendation_preview_cache,
-    ensure_patch_cam_recommendation_preview_cache,
-    ensure_recommendation_preview_cache,
-    ensure_segmentation_recommendation_preview_cache,
 )
 from .slide_access import get_slide
 
@@ -51,6 +46,81 @@ router = APIRouter()
 
 def _uploads_dir() -> Path:
     return Config.get_uploads_dir()
+
+
+def _result_store() -> AIResultStore:
+    return AIResultStore(_uploads_dir())
+
+
+def _probe_fold_candidates(task_id: str) -> list[str | None]:
+    candidates: list[str | None] = [None]
+    best_fold = find_best_fold(task_id, _uploads_dir())
+    if best_fold:
+        candidates.append(best_fold)
+    for idx in range(10):
+        fold = f"fold_{idx}"
+        if fold not in candidates:
+            candidates.append(fold)
+    return candidates
+
+
+def _select_artifact_target(
+    store: AIResultStore,
+    wsi_id: str,
+    artifact: str,
+    task_id: str | None,
+    fold_key: str | None,
+) -> tuple[str, str | None] | None:
+    if task_id:
+        if fold_key is not None:
+            if store.artifact_exists(
+                task_id, wsi_id, artifact, fold_key=fold_key, strict=True
+            ):
+                return task_id, fold_key
+            return None
+        if store.artifact_exists(
+            task_id, wsi_id, artifact, fold_key=None, strict=True
+        ):
+            return task_id, None
+        for candidate_fold in _probe_fold_candidates(task_id):
+            if candidate_fold is None:
+                continue
+            if store.artifact_exists(
+                task_id, wsi_id, artifact, fold_key=candidate_fold, strict=True
+            ):
+                return task_id, candidate_fold
+        return None
+
+    task_ids = sorted(
+        {
+            item["task_id"]
+            for item in store.list_wsi_artifacts(wsi_id)
+            if item.get("artifact") == artifact
+        }
+    )
+    for current_task_id in task_ids:
+        if fold_key is not None:
+            if store.artifact_exists(
+                current_task_id, wsi_id, artifact, fold_key=fold_key, strict=True
+            ):
+                return current_task_id, fold_key
+            continue
+        if store.artifact_exists(
+            current_task_id, wsi_id, artifact, fold_key=None, strict=True
+        ):
+            return current_task_id, None
+        for candidate_fold in _probe_fold_candidates(current_task_id):
+            if candidate_fold is None:
+                continue
+            if store.artifact_exists(
+                current_task_id,
+                wsi_id,
+                artifact,
+                fold_key=candidate_fold,
+                strict=True,
+            ):
+                return current_task_id, candidate_fold
+    return None
 
 
 RECOMMENDATION_PRESET = "recommendation"
@@ -123,6 +193,15 @@ def _coerce_float(value: Any, default: float) -> float:
         return default
 
 
+def _timestamp_value(value: Any) -> float:
+    if hasattr(value, "timestamp"):
+        try:
+            return float(value.timestamp())
+        except Exception:
+            return 0.0
+    return _coerce_float(value, 0.0)
+
+
 def _enhance_overlay_image(image, contrast_boost: float, saturation_boost: float):
     from PIL import ImageEnhance
 
@@ -174,42 +253,6 @@ def _get_thumbnail_blur_radius(
     return max(1.0, base_radius)
 
 
-def _get_npy_shape_fast(filepath: Path) -> Optional[tuple[Any, ...]]:
-    """
-    Read numpy array shape from file header without loading the entire array.
-    This is much faster than np.load() for large arrays.
-    """
-    try:
-        with open(filepath, "rb") as f:
-            # Read magic string and version
-            magic = f.read(6)
-            if magic[:6] != b"\x93NUMPY":
-                return None
-
-            # Re-read properly
-            f.seek(0)
-            f.read(6)  # Skip magic
-            version_major = struct.unpack("B", f.read(1))[0]
-            f.read(1)  # Skip version_minor
-
-            # Read header length
-            if version_major == 1:
-                header_len = struct.unpack("<H", f.read(2))[0]
-            else:  # version 2 or 3
-                header_len = struct.unpack("<I", f.read(4))[0]
-
-            # Read and parse header
-            header = f.read(header_len).decode("latin1")
-            # Parse the dict-like string to extract shape using regex
-            # Format: {'descr': '<f4', 'fortran_order': False, 'shape': (10, 20), }
-            shape_match = re.search(r"'shape':\s*\((\d+),\s*(\d+)\)", header)
-            if shape_match:
-                return (int(shape_match.group(1)), int(shape_match.group(2)))
-            return None
-    except Exception:
-        return None
-
-
 @router.get("/wsi/{wsi_id}/heatmap")
 async def get_heatmap_data(
     wsi_id: str,
@@ -232,8 +275,6 @@ async def get_heatmap_data(
     Returns:
         JSON with coordinates, attention weights, and metadata for rendering heatmap
     """
-    import numpy as np
-
     logger.info(
         f"Getting heatmap data for {wsi_id}, task_id={task_id}, fold_key={fold_key}"
     )
@@ -260,25 +301,11 @@ async def get_heatmap_data(
         }
 
     try:
-        # Find result directory
-        result_dir = _uploads_dir() / "ai_results" / wsi_id
-        if not result_dir.exists():
-            # Return empty data instead of 404 when no inference results
-            logger.info(f"No AI results directory for {wsi_id}")
-            return empty_heatmap_response("No inference results available")
-
-        # Find attention file (with or without task_id and fold_key)
-        attention_files = list(result_dir.glob("*_attention.npy"))
-        if not attention_files:
-            # Return empty data instead of 404 when no attention files
-            logger.info(f"No attention files found for {wsi_id}")
-            return empty_heatmap_response("No attention data available")
-
-        # Select the right attention file based on task_id and fold_key
-        attention_file = select_attention_file(
-            attention_files, task_id, fold_key, _uploads_dir()
+        store = _result_store()
+        selected = _select_artifact_target(
+            store, wsi_id, ATTENTION_ARTIFACT, task_id, fold_key
         )
-        if attention_file is None:
+        if selected is None:
             logger.info(
                 f"No attention data found for task {task_id}, fold_key={fold_key}"
             )
@@ -287,14 +314,23 @@ async def get_heatmap_data(
                 + (f" fold {fold_key}" if fold_key else "")
             )
 
-        # Load attention weights
-        attention = np.load(str(attention_file), allow_pickle=True)
+        selected_task_id, selected_fold_key = selected
+        attention = store.read_array(
+            selected_task_id,
+            wsi_id,
+            ATTENTION_ARTIFACT,
+            fold_key=selected_fold_key,
+            strict=True,
+        )
         logger.info(
             f"Loaded attention: shape={attention.shape}, min={attention.min()}, max={attention.max()}"
         )
-
-        # Load corresponding result.json for metadata
-        result_meta = load_result_meta(attention_file, "_attention.npy")
+        result_meta = store.read_result(
+            selected_task_id,
+            wsi_id,
+            fold_key=selected_fold_key,
+            strict=True,
+        )
 
         # Load coordinates from coords.h5 (search across all params_hash directories)
         coords_file = find_any_cached_coords_for_wsi(_uploads_dir(), wsi_id)
@@ -365,12 +401,7 @@ async def get_heatmap_data(
         # Determine task type from result_meta or file prefix
         task_type = result_meta.get("task_type")
         if not task_type:
-            # Infer from file name (train_xxx for classification, survival_xxx for survival)
-            if attention_file.stem.startswith("train_"):
-                # Check if this is a survival task by looking for risk_score
-                task_type = "survival" if "risk_score" in result_meta else "train"
-            else:
-                task_type = "unknown"
+            task_type = "survival" if "risk_score" in result_meta else "train"
 
         return {
             "wsi_id": wsi_id,
@@ -454,9 +485,9 @@ async def get_heatmap_thumbnail(
     Returns:
         PNG image with heatmap overlay
     """
-    import numpy as np
     from PIL import Image
     import io
+    import numpy as np
 
     _load_slide = import_module("backend.common.slide_utils").load_slide
 
@@ -469,59 +500,31 @@ async def get_heatmap_thumbnail(
     )
 
     try:
-        # Find result directory
-        result_dir = _uploads_dir() / "ai_results" / wsi_id
-        if not result_dir.exists():
-            raise HTTPException(
-                status_code=404, detail="No inference results available"
-            )
-
-        # Find attention file
-        attention_files = list(result_dir.glob("*_attention.npy"))
-        if not attention_files:
-            raise HTTPException(status_code=404, detail="No attention data available")
-
-        # Select the right attention file
-        attention_file = select_attention_file(
-            attention_files, task_id, fold_key, _uploads_dir()
+        store = _result_store()
+        selected = _select_artifact_target(
+            store, wsi_id, ATTENTION_ARTIFACT, task_id, fold_key
         )
-        if attention_file is None:
+        if selected is None:
             raise HTTPException(
                 status_code=404, detail=f"No attention data for task {task_id}"
             )
+        selected_task_id, selected_fold_key = selected
 
         wsi = None
 
-        if preset == RECOMMENDATION_PRESET:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi:
-                raise HTTPException(status_code=404, detail=f"WSI not found: {wsi_id}")
-            cached_preview_path = ensure_recommendation_preview_cache(
-                wsi_id,
-                attention_file,
-                _uploads_dir(),
-                patch_size=patch_size,
-                class_idx=class_idx,
-                wsi_path=wsi.wsi_path,
-                file_size=wsi.file_size,
-            )
-            if cached_preview_path and cached_preview_path.exists():
-                response_preview_path = ensure_resized_recommendation_preview_cache(
-                    cached_preview_path,
-                    size,
-                )
-                if response_preview_path is not None:
-                    return FileResponse(
-                        response_preview_path,
-                        media_type="image/png",
-                        headers=_cache_headers(render_settings),
-                    )
-
-        # Load attention weights
-        attention = np.load(str(attention_file), allow_pickle=True)
-
-        # Load result metadata
-        result_meta = load_result_meta(attention_file, "_attention.npy")
+        attention = store.read_array(
+            selected_task_id,
+            wsi_id,
+            ATTENTION_ARTIFACT,
+            fold_key=selected_fold_key,
+            strict=True,
+        )
+        result_meta = store.read_result(
+            selected_task_id,
+            wsi_id,
+            fold_key=selected_fold_key,
+            strict=True,
+        )
 
         # Load coordinates (search across all params_hash directories)
         coords_file = find_any_cached_coords_for_wsi(_uploads_dir(), wsi_id)
@@ -723,8 +726,6 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
     Returns:
         List of available tasks with attention data
     """
-    import re
-
     TrainingTaskRepository = import_module(
         "backend.database.repositories"
     ).TrainingTaskRepository
@@ -732,132 +733,114 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
     logger.info(f"Getting available heatmaps for {wsi_id}")
 
     try:
-        # Find result directory
-        result_dir = _uploads_dir() / "ai_results" / wsi_id
-        if not result_dir.exists():
+        store = _result_store()
+        wsi_artifacts = store.list_wsi_artifacts(wsi_id)
+        if not wsi_artifacts:
             return {"wsi_id": wsi_id, "heatmaps": []}
 
-        # Find all attention files (WSI-level), CAM files (patch-level), and segmentation masks
-        attention_files = list(result_dir.glob("*_attention.npy"))
-        cam_files = list(result_dir.glob("*_cam.npy"))
-        seg_mask_files = list(result_dir.glob("*_pred_mask.npy"))
-
-        if not attention_files and not cam_files and not seg_mask_files:
-            return {"wsi_id": wsi_id, "heatmaps": []}
-
-        # Phase 1: Parse all files and collect task_ids that need DB lookup
-        attention_data_list = []  # List of (file, task_type, task_id, fold_key, result_meta)
-        cam_data_list = []  # List of (file, task_type, task_id, result_meta)
-        seg_mask_data_list = []  # List of (file, task_type, task_id, fold_key, result_meta)
+        # Phase 1: Collect artifacts and metadata; keep deterministic ordering.
+        attention_data_list = []
+        cam_data_list = []
+        seg_mask_data_list = []
         task_ids_needing_db = set()
+        for item in sorted(
+            wsi_artifacts,
+            key=lambda x: (
+                str(x.get("task_id", "")),
+                str(x.get("artifact", "")),
+                str(x.get("fold_key") or ""),
+            ),
+        ):
+            current_task_id = str(item.get("task_id"))
+            artifact = str(item.get("artifact"))
+            selected_fold_key: str | None = item.get("fold_key")
+            if store.artifact_exists(
+                current_task_id, wsi_id, artifact, fold_key=None, strict=True
+            ):
+                selected_fold_key = None
+            elif selected_fold_key is None or not store.artifact_exists(
+                current_task_id,
+                wsi_id,
+                artifact,
+                fold_key=selected_fold_key,
+                strict=True,
+            ):
+                for candidate_fold in _probe_fold_candidates(current_task_id):
+                    if candidate_fold is None:
+                        continue
+                    if store.artifact_exists(
+                        current_task_id,
+                        wsi_id,
+                        artifact,
+                        fold_key=candidate_fold,
+                        strict=True,
+                    ):
+                        selected_fold_key = candidate_fold
+                        break
+                if selected_fold_key is None:
+                    continue
 
-        # Process WSI-level attention files (parse only, no DB calls yet)
-        for attention_file in attention_files:
-            filename = attention_file.stem
-            base_name = filename.replace("_attention", "")
-
-            fold_key = None
-            if "_fold_" in base_name:
-                fold_match = re.search(r"(fold_\d+)$", base_name)
-                if fold_match:
-                    fold_key = fold_match.group(1)
-                    base_name = base_name[: fold_match.start()].rstrip("_")
-
-            parts = base_name.split("_", 1)
-            task_type = parts[0] if parts else "unknown"
-            task_id = parts[1] if len(parts) > 1 else None
-
-            # Load result.json for metadata
-            result_meta = load_result_meta(attention_file, "_attention.npy")
-
-            effective_task_id = task_id or result_meta.get("task_id")
-            effective_fold_key = fold_key or result_meta.get("fold_key")
-
-            # Check if we need DB lookup for this task
-            classes = result_meta.get("classes")
-            feature_extractor = result_meta.get("feature_extractor")
-            if effective_task_id and (not classes or not feature_extractor):
-                task_ids_needing_db.add(effective_task_id)
-
-            attention_data_list.append(
-                (
-                    attention_file,
-                    task_type,
-                    effective_task_id,
-                    effective_fold_key,
-                    result_meta,
+            try:
+                result_meta = store.read_result(
+                    current_task_id,
+                    wsi_id,
+                    fold_key=selected_fold_key,
+                    strict=True,
                 )
+            except Exception:
+                result_meta = {}
+            task_type = str(result_meta.get("task_type") or "unknown")
+            effective_task_id = str(result_meta.get("task_id") or current_task_id)
+            effective_fold_key = result_meta.get("fold_key") or selected_fold_key
+            synthetic_name = (
+                f"train_{effective_task_id}_{effective_fold_key}_{artifact}.npy"
+                if effective_fold_key
+                else f"train_{effective_task_id}_{artifact}.npy"
             )
 
-        # Process patch-level CAM files (parse only, no DB calls yet)
-        for cam_file in cam_files:
-            filename = cam_file.stem
-            base_name = filename.replace("_cam", "")
-
-            fold_key = None
-            if "_fold_" in base_name:
-                fold_match = re.search(r"(fold_\d+)$", base_name)
-                if fold_match:
-                    fold_key = fold_match.group(1)
-                    base_name = base_name[: fold_match.start()].rstrip("_")
-
-            parts = base_name.split("_", 1)
-            task_type = parts[0] if parts else "unknown"
-            task_id = parts[1] if len(parts) > 1 else None
-
-            result_meta = load_result_meta(cam_file, "_cam.npy")
-
-            effective_task_id = task_id or result_meta.get("task_id")
-            effective_fold_key = fold_key or result_meta.get("fold_key")
-
-            classes = result_meta.get("classes")
-            feature_extractor = result_meta.get("feature_extractor")
-            if effective_task_id and (not classes or not feature_extractor):
-                task_ids_needing_db.add(effective_task_id)
-
-            cam_data_list.append(
-                (
-                    cam_file,
-                    task_type,
-                    effective_task_id,
-                    effective_fold_key,
-                    result_meta,
+            if artifact == ATTENTION_ARTIFACT:
+                classes = result_meta.get("classes")
+                feature_extractor = result_meta.get("feature_extractor")
+                if effective_task_id and (not classes or not feature_extractor):
+                    task_ids_needing_db.add(effective_task_id)
+                attention_data_list.append(
+                    (
+                        synthetic_name,
+                        task_type,
+                        effective_task_id,
+                        effective_fold_key,
+                        result_meta,
+                        current_task_id,
+                    )
                 )
-            )
-
-        # Process patch-level segmentation mask files (parse only, no DB calls yet)
-        for mask_file in seg_mask_files:
-            filename = mask_file.stem
-            base_name = filename.replace("_pred_mask", "")
-
-            fold_key = None
-            if "_fold_" in base_name:
-                fold_match = re.search(r"(fold_\d+)$", base_name)
-                if fold_match:
-                    fold_key = fold_match.group(1)
-                    base_name = base_name[: fold_match.start()].rstrip("_")
-
-            parts = base_name.split("_", 1)
-            task_type = parts[0] if parts else "unknown"
-            task_id = parts[1] if len(parts) > 1 else None
-
-            result_meta = load_result_meta(mask_file, "_pred_mask.npy")
-
-            effective_task_id = task_id or result_meta.get("task_id")
-            effective_fold_key = fold_key or result_meta.get("fold_key")
-
-            if effective_task_id:
-                task_ids_needing_db.add(effective_task_id)
-
-            seg_mask_data_list.append(
-                (
-                    mask_file,
-                    task_type,
-                    effective_task_id,
-                    effective_fold_key,
-                    result_meta,
+            elif artifact == CAM_ARTIFACT:
+                classes = result_meta.get("classes")
+                feature_extractor = result_meta.get("feature_extractor")
+                if effective_task_id and (not classes or not feature_extractor):
+                    task_ids_needing_db.add(effective_task_id)
+                cam_data_list.append(
+                    (
+                        synthetic_name,
+                        task_type,
+                        effective_task_id,
+                        effective_fold_key,
+                        result_meta,
+                        current_task_id,
+                    )
                 )
-            )
+            elif artifact == PRED_MASK_ARTIFACT:
+                if effective_task_id:
+                    task_ids_needing_db.add(effective_task_id)
+                seg_mask_data_list.append(
+                    (
+                        synthetic_name,
+                        task_type,
+                        effective_task_id,
+                        effective_fold_key,
+                        result_meta,
+                        current_task_id,
+                    )
+                )
 
         # Phase 2: Batch fetch all needed training tasks from DB (single query)
         training_tasks_map: Dict[str, Any] = {}
@@ -893,11 +876,12 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
         heatmaps = []
 
         for (
-            attention_file,
+            attention_file_name,
             task_type,
             effective_task_id,
             effective_fold_key,
             result_meta,
+            artifact_task_id,
         ) in attention_data_list:
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
@@ -922,12 +906,27 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
             attention_type = result_meta.get("attention_type", "single")
             num_attention_classes = result_meta.get("num_attention_classes")
 
-            # Only read from file if not in result_meta
+            # Only read artifact array when class metadata is absent.
             if "attention_type" not in result_meta:
-                shape = _get_npy_shape_fast(attention_file)
-                if shape and len(shape) == 2:
+                try:
+                    attention_array = store.read_array(
+                        artifact_task_id,
+                        wsi_id,
+                        ATTENTION_ARTIFACT,
+                        fold_key=effective_fold_key,
+                        strict=True,
+                    )
+                except Exception:
+                    attention_array = None
+                if attention_array is not None and attention_array.ndim == 2:
                     attention_type = "multi_class"
-                    num_attention_classes = shape[0]
+                    num_attention_classes = int(attention_array.shape[0])
+
+            created_at = 0.0
+            if effective_task_id and effective_task_id in training_tasks_map:
+                created_at = _timestamp_value(
+                    getattr(training_tasks_map[effective_task_id], "created_at", 0)
+                )
 
             # Determine if this is a survival task by checking for risk_score
             is_survival = "risk_score" in result_meta
@@ -944,8 +943,8 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
                     "classes": classes,
                     "feature_extractor": feature_extractor,
                     "aggregator": aggregator,
-                    "created_at": attention_file.stat().st_mtime,
-                    "attention_file": str(attention_file.name),
+                    "created_at": created_at,
+                    "attention_file": attention_file_name,
                     "data_type": "wsi",
                     "patch_size": coords_patch_size,
                     "attention_type": attention_type,
@@ -957,11 +956,12 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
             )
 
         for (
-            cam_file,
+            cam_file_name,
             task_type,
             effective_task_id,
             effective_fold_key,
             result_meta,
+            _artifact_task_id,
         ) in cam_data_list:
             classes = result_meta.get("classes")
             feature_extractor = result_meta.get("feature_extractor")
@@ -978,6 +978,12 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
                 if not task_name and training_task.task_name:
                     task_name = training_task.task_name
 
+            created_at = 0.0
+            if effective_task_id and effective_task_id in training_tasks_map:
+                created_at = _timestamp_value(
+                    getattr(training_tasks_map[effective_task_id], "created_at", 0)
+                )
+
             heatmaps.append(
                 {
                     "task_id": effective_task_id,
@@ -988,8 +994,8 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
                     "probs": result_meta.get("probs"),
                     "classes": classes,
                     "feature_extractor": feature_extractor,
-                    "created_at": cam_file.stat().st_mtime,
-                    "attention_file": str(cam_file.name),
+                    "created_at": created_at,
+                    "attention_file": cam_file_name,
                     "data_type": "patch",
                     "cam_size": result_meta.get("cam_size"),
                 }
@@ -997,11 +1003,12 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
 
         # Build heatmap entries for segmentation masks
         for (
-            mask_file,
+            mask_file_name,
             task_type,
             effective_task_id,
             effective_fold_key,
             result_meta,
+            _artifact_task_id,
         ) in seg_mask_data_list:
             task_name = result_meta.get("task_name")
 
@@ -1013,6 +1020,12 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
             num_classes = result_meta.get("num_classes", 1)
             class_names = result_meta.get("class_names", [])
 
+            created_at = 0.0
+            if effective_task_id and effective_task_id in training_tasks_map:
+                created_at = _timestamp_value(
+                    getattr(training_tasks_map[effective_task_id], "created_at", 0)
+                )
+
             heatmaps.append(
                 {
                     "task_id": effective_task_id,
@@ -1023,8 +1036,8 @@ async def get_available_heatmaps(wsi_id: str, db: AsyncSession = Depends(get_db)
                     "probs": result_meta.get("metrics"),
                     "classes": class_names or None,
                     "feature_extractor": None,
-                    "created_at": mask_file.stat().st_mtime,
-                    "attention_file": str(mask_file.name),
+                    "created_at": created_at,
+                    "attention_file": mask_file_name,
                     "data_type": "patch",
                     "num_classes": num_classes,
                     "image_size": result_meta.get("image_size"),
@@ -1233,94 +1246,30 @@ async def get_patch_cam(
             )
 
     try:
-        # Find result directory
-        result_dir = _uploads_dir() / "ai_results" / wsi_id
-        if not result_dir.exists():
-            logger.info(f"No AI results directory for {wsi_id}")
-            return empty_cam_response("No inference results available")
-
-        # Find CAM file
-        cam_files = list(result_dir.glob("*_cam.npy"))
-        if not cam_files:
-            logger.info(f"No CAM files found for {wsi_id}")
+        store = _result_store()
+        selected = _select_artifact_target(
+            store, wsi_id, CAM_ARTIFACT, task_id, fold_key
+        )
+        if selected is None:
+            logger.info(f"No CAM data found for {wsi_id}, task={task_id}")
             return empty_cam_response("No CAM data available")
-
-        # Select the right CAM file based on task_id and fold_key
-        if task_id:
-            matching = [f for f in cam_files if task_id in f.name]
-            if not matching:
-                logger.info(f"No CAM data found for task {task_id}")
-                return empty_cam_response(f"No CAM data for task {task_id}")
-
-            # Handle K-Fold selection
-            if fold_key:
-                # Explicit fold_key specified - use it
-                fold_matching = [f for f in matching if fold_key in f.name]
-                if fold_matching:
-                    matching = fold_matching
-                    logger.info(
-                        f"Using specified fold {fold_key} for patch CAM task {task_id}"
-                    )
-                else:
-                    logger.warning(
-                        f"Fold {fold_key} not found for task {task_id}, using fallback"
-                    )
-            else:
-                # No fold_key specified - prefer non-fold files, or use best_fold
-                non_fold = [f for f in matching if "fold_" not in f.name]
-                if non_fold:
-                    matching = non_fold
-                elif matching:
-                    # All files are k-fold - try to find best fold from metrics.json
-                    best_fold = find_best_fold(task_id, _uploads_dir())
-                    if best_fold:
-                        best_matching = [f for f in matching if best_fold in f.name]
-                        if best_matching:
-                            matching = best_matching
-                            logger.info(
-                                f"Using best fold {best_fold} for patch CAM task {task_id}"
-                            )
-
-            cam_file = matching[0]
-        else:
-            cam_file = sorted(cam_files, key=lambda f: f.stat().st_mtime, reverse=True)[
-                0
-            ]
-
-        if format != "json" and preset == RECOMMENDATION_PRESET:
-            wsi = await WSIRepository.get_by_id(db, wsi_id)
-            if not wsi:
-                raise HTTPException(
-                    status_code=404, detail=f"Patch not found: {wsi_id}"
-                )
-
-            preview_path = ensure_patch_cam_recommendation_preview_cache(
-                wsi_id,
-                cam_file,
-                _uploads_dir(),
-                wsi_path=wsi.wsi_path,
-                file_size=getattr(wsi, "file_size", None),
-            )
-            if preview_path is not None:
-                response_preview_path = ensure_resized_recommendation_preview_cache(
-                    preview_path,
-                    size,
-                )
-                if response_preview_path is not None:
-                    return FileResponse(
-                        response_preview_path,
-                        media_type="image/png",
-                        headers=render_settings["cache_headers"],
-                    )
-
-        # Load CAM data
-        cam = np.load(str(cam_file), allow_pickle=True)
+        selected_task_id, selected_fold_key = selected
+        cam = store.read_array(
+            selected_task_id,
+            wsi_id,
+            CAM_ARTIFACT,
+            fold_key=selected_fold_key,
+            strict=True,
+        )
         logger.info(
             f"Loaded CAM: shape={cam.shape}, min={cam.min():.4f}, max={cam.max():.4f}"
         )
-
-        # Load corresponding result.json for metadata
-        result_meta = load_result_meta(cam_file, "_cam.npy")
+        result_meta = store.read_result(
+            selected_task_id,
+            wsi_id,
+            fold_key=selected_fold_key,
+            strict=True,
+        )
 
         if format == "json":
             return {
@@ -1468,70 +1417,26 @@ async def get_seg_mask(
 
     try:
         render_settings = _get_render_settings(preset, None, None, None, None)
-        result_dir = _uploads_dir() / "ai_results" / wsi_id
-        if not result_dir.exists():
-            raise HTTPException(status_code=404, detail="No results for this WSI")
-
-        mask_files = list(result_dir.glob("*_pred_mask.npy"))
-        if not mask_files:
+        store = _result_store()
+        selected = _select_artifact_target(
+            store, wsi_id, PRED_MASK_ARTIFACT, task_id, fold_key
+        )
+        if selected is None:
             raise HTTPException(status_code=404, detail="No segmentation mask found")
-
-        # Select the right mask file
-        if task_id:
-            matching = [f for f in mask_files if task_id in f.name]
-            if not matching:
-                raise HTTPException(
-                    status_code=404, detail=f"No mask for task {task_id}"
-                )
-
-            if fold_key:
-                fold_matching = [f for f in matching if fold_key in f.name]
-                if fold_matching:
-                    matching = fold_matching
-            else:
-                non_fold = [f for f in matching if "fold_" not in f.name]
-                if non_fold:
-                    matching = non_fold
-                elif matching:
-                    best_fold = find_best_fold(task_id, _uploads_dir())
-                    if best_fold:
-                        best_matching = [f for f in matching if best_fold in f.name]
-                        if best_matching:
-                            matching = best_matching
-
-            mask_file = matching[0]
-        else:
-            mask_file = sorted(
-                mask_files, key=lambda f: f.stat().st_mtime, reverse=True
-            )[0]
+        selected_task_id, selected_fold_key = selected
 
         wsi = await WSIRepository.get_by_id(db, wsi_id)
         if not wsi:
             raise HTTPException(status_code=404, detail=f"Patch not found: {wsi_id}")
 
-        if preset == RECOMMENDATION_PRESET:
-            preview_path = ensure_segmentation_recommendation_preview_cache(
-                wsi_id,
-                mask_file,
-                _uploads_dir(),
-                seg_colors=_SEG_COLORS,
-                wsi_path=wsi.wsi_path,
-                file_size=getattr(wsi, "file_size", None),
-            )
-            if preview_path is not None:
-                response_preview_path = ensure_resized_recommendation_preview_cache(
-                    preview_path,
-                    size,
-                )
-                if response_preview_path is not None:
-                    return FileResponse(
-                        response_preview_path,
-                        media_type="image/png",
-                        headers=render_settings["cache_headers"],
-                    )
-
         # Load mask: shape (num_classes, H, W), values 0/1
-        mask = np.load(str(mask_file), allow_pickle=True)
+        mask = store.read_array(
+            selected_task_id,
+            wsi_id,
+            PRED_MASK_ARTIFACT,
+            fold_key=selected_fold_key,
+            strict=True,
+        )
         # Normalize persisted masks across historical dtypes (bool/float/uint8)
         # so viewer/chat overlay rendering always consumes a binary uint8 array.
         mask = (mask > 0).astype(np.uint8, copy=False)

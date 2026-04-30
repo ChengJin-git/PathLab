@@ -5,12 +5,24 @@ Extracted from heatmap_routes.py to reduce duplication.
 """
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
 
 import numpy as np
+from backend.ai.result_store import AIResultStore
 
 logger = logging.getLogger(__name__)
+
+
+def _infer_uploads_root_from_ai_result_path(ai_result_file: Path) -> Optional[Path]:
+    """Infer uploads root from uploads/ai_results/<wsi>/<artifact> path."""
+    try:
+        if ai_result_file.parent.parent.name == "ai_results":
+            return ai_result_file.parent.parent.parent
+    except Exception:
+        return None
+    return None
 
 
 def load_result_meta(attention_or_cam_file: Path, suffix: str = "_attention.npy") -> Dict[str, Any]:
@@ -33,6 +45,18 @@ def load_result_meta(attention_or_cam_file: Path, suffix: str = "_attention.npy"
                 return json.load(f)
         except Exception as e:
             logger.warning(f"Failed to load result meta from {result_json_file}: {e}")
+
+    # Bundle fallback for train_<task_id>[_fold_*] artifacts when legacy JSON is absent.
+    match = re.match(r"^train_(.+?)(?:_(fold_\d+))?$", attention_or_cam_file.stem.replace(suffix.removesuffix('.npy'), ""))
+    if match:
+        task_id, fold_key = match.group(1), match.group(2)
+        uploads_root = _infer_uploads_root_from_ai_result_path(attention_or_cam_file)
+        if uploads_root is not None:
+            try:
+                wsi_id = attention_or_cam_file.parent.name
+                return AIResultStore(uploads_root).read_result(task_id, wsi_id, fold_key=fold_key)
+            except Exception:
+                pass
     return {}
 
 
@@ -193,4 +217,3 @@ def normalize_attention(attention: np.ndarray[Any, Any]) -> Tuple[np.ndarray[Any
         attention_normalized = (attention_clipped - p_low) / (p_high - p_low + 1e-8)
         logger.debug(f"Softmax + percentile normalization: p5={p_low:.6f}, p95={p_high:.6f}")
         return attention_normalized, attention_softmax
-
