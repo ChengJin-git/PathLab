@@ -13,7 +13,7 @@ describe('buildAdminCreateUserPlan', () => {
     })
 
     expect(plan.registerData).toMatchObject({
-      email: 'new-admin',
+      username: 'new-admin',
       password: 'pass1234',
       nickname: 'Admin User',
       role: 'guest',

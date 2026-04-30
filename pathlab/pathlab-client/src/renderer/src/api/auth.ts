@@ -9,7 +9,8 @@ import { invalidateRecentActivityCache } from './stats'
 
 export interface AuthUser {
   id: string
-  email: string
+  username: string
+  email?: string | null
   nickname?: string
   avatar_url?: string
   role: 'admin' | 'pathologist' | 'guest'
@@ -71,11 +72,12 @@ export interface UserInfoResponse {
 }
 
 export interface RegisterRequest {
-  email: string
+  username: string
   password: string
   nickname?: string
   role?: 'guest'
   registration_email?: string
+  email?: string
 }
 
 export interface AccessRequest {
@@ -112,7 +114,7 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
  * - Timestamp validation on server prevents replay attacks (5 minute window)
  * - Rainbow table attacks are mitigated by timestamp + salt
  *
- * @param username - Username (stored in email field internally)
+ * @param username - Username
  * @param password - User password
  * @param turnstileToken - Optional Cloudflare Turnstile token
  * @returns JWT access token

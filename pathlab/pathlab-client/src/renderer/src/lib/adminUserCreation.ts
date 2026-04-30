@@ -26,7 +26,7 @@ export function buildAdminCreateUserPlan(form: AdminCreateUserForm): AdminCreate
   const targetRole = normalizeRequestedRole(form.role)
   return {
     registerData: {
-      email: form.username,
+      username: form.username,
       password: form.password,
       nickname: form.nickname || undefined,
       role: 'guest',
