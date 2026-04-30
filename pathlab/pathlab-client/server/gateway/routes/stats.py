@@ -358,7 +358,7 @@ async def get_user_usage_stats(
         users.append(
             {
                 "user_id": row.user_id,
-                "email": row.username,
+                "username": row.username,
                 "nickname": row.nickname,
                 "role": row.role,
                 "wsi_count": row.wsi_count,

@@ -33,6 +33,11 @@ from .models import User
 logger = logging.getLogger(__name__)
 
 
+def _contact_email_log_part(user: User) -> str:
+    contact = getattr(user, "email", None)
+    return f", contact_email={contact}" if contact else ""
+
+
 # Secret key for JWT tokens - use environment variable or generate a random secret
 _jwt_secret_env = os.getenv("JWT_SECRET")
 if _jwt_secret_env:
@@ -68,7 +73,8 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
 
     async def on_after_register(self, user: User, request: Optional[Request] = None):
         logger.info(
-            f"User {user.email} (id={user.id}) has registered with role={user.role}"
+            f"User {user.username} (id={user.id}) has registered with "
+            f"role={user.role}{_contact_email_log_part(user)}"
         )
 
         # Auto-verify user (no email verification required)
@@ -80,18 +86,25 @@ class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
         self, user: User, token: str, request: Optional[Request] = None
     ):
         logger.info(
-            f"User {user.email} requested password reset. Token: {token[:8]}..."
+            f"User {user.username} requested password reset. "
+            f"Token: {token[:8]}...{_contact_email_log_part(user)}"
         )
 
     async def on_after_request_verify(
         self, user: User, token: str, request: Optional[Request] = None
     ):
-        logger.info(f"User {user.email} requested verification. Token: {token[:8]}...")
+        logger.info(
+            f"User {user.username} requested verification. "
+            f"Token: {token[:8]}...{_contact_email_log_part(user)}"
+        )
 
     async def on_after_login(
         self, user: User, request: Optional[Request] = None, response=None
     ):
-        logger.info(f"User {user.email} (role={user.role}) logged in")
+        logger.info(
+            f"User {user.username} (role={user.role}) logged in"
+            f"{_contact_email_log_part(user)}"
+        )
 
 
 async def get_user_manager(user_db: SQLAlchemyUserDatabase[User, uuid.UUID] = Depends(get_user_db)):
