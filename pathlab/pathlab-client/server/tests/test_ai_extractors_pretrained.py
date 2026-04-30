@@ -60,7 +60,6 @@ HF_EXTRACTOR_CONFIGS = [
     ("GPFM", 1024, 224),
     ("SmartCCS", 1024, 224),
     ("SmartCyto", 768, 224),
-    ("CytoFM", 1024, 224),
 ]
 
 HF_SPATIAL_CONFIGS = [
@@ -81,7 +80,6 @@ HF_SPATIAL_CONFIGS = [
     ("GPFM", 1024, 224),
     ("SmartCCS", 1024, 224),
     ("SmartCyto", 768, 224),
-    ("CytoFM", 1024, 224),
 ]
 
 
