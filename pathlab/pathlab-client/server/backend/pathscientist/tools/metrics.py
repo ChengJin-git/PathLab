@@ -37,32 +37,99 @@ class MetricsTracker:
         self.iteration: int = 0
         self.history: list[dict] = []
 
-    def record(self, metrics: dict, committed: bool, iteration: int) -> None:
-        test_metrics = metrics.get("test", metrics)
-        value = test_metrics.get(self.primary_metric, 0.0)
+    def record(self, metrics: dict, committed: bool, iteration: int, run_id: str = "") -> None:
+        from ..orchestrator.metrics_utils import resolve_primary_metric
+        value = resolve_primary_metric(metrics, self.primary_metric)
         if committed and value > self.best_value:
             self.best_value = value
         self.history.append({
             "iteration": iteration,
             "metrics": metrics,
             "committed": committed,
+            "run_id": run_id,
             f"best_{self.primary_metric}": self.best_value,
         })
         self.iteration = iteration
 
 
 class GetMetricsExecutor(ToolExecutor):
-    def __init__(self, tracker: MetricsTracker):
+    def __init__(self, tracker: MetricsTracker, session_id: str = ""):
         self._tracker = tracker
+        self._session_id = session_id
+
+    def _pending_last_experiment(self) -> dict:
+        if not self._session_id:
+            return {}
+        try:
+            from ..runtime.session_registry import get_session
+
+            deps = get_session(self._session_id)
+        except Exception:
+            return {}
+        exp = getattr(deps, "last_experiment", None) or {}
+        if not isinstance(exp, dict):
+            return {}
+        metrics = exp.get("metrics")
+        if not isinstance(metrics, dict) or not metrics:
+            return {}
+        return exp
 
     def __call__(
         self,
         action: GetMetricsAction,
         conversation: "LocalConversation | None" = None,
     ) -> GetMetricsObservation:
+        # Plan-2026-04-29 P0 #1: compute effective best including the
+        # pending last_experiment so the agent's commit decision sees
+        # the latest successful full run, not just the tracker's
+        # already-committed best. Pre-fix, get_metrics showed
+        # `Best value: 0.8126` immediately after a full run achieved
+        # 0.8166 — the agent could (and did) make commit decisions on
+        # stale data (session_7a23f8edcce9 event-00161/00162).
+        pending = self._pending_last_experiment()
+        pending_metric: float | None = None
+        pending_run_id = ""
+        pending_is_clean_full_run = False
+        if pending:
+            pending_run_id = pending.get("run_id", "")
+            try:
+                from ..orchestrator.metrics_utils import resolve_primary_metric
+                pending_metric = float(
+                    resolve_primary_metric(
+                        pending.get("metrics") or {},
+                        self._tracker.primary_metric,
+                    )
+                )
+            except Exception:
+                pending_metric = None
+            # Only treat the pending run as a candidate best when it
+            # cleanly completed a full (non-quick_check) pass — failed
+            # runs (exit_code != 0 or error_type set) and quick checks
+            # must NOT influence the effective best.
+            pending_is_clean_full_run = bool(
+                pending.get("exit_code", 0) == 0
+                and not pending.get("error_type", "")
+                and not pending.get("quick_check", False)
+                and pending_metric is not None
+                and pending_metric > 0.0
+            )
+
+        committed_best = self._tracker.best_value
+        if pending_is_clean_full_run and pending_metric is not None:
+            effective_best = max(committed_best, pending_metric)
+        else:
+            effective_best = committed_best
+
         text = (
             f"Primary metric: {self._tracker.primary_metric}\n"
-            f"Best value: {self._tracker.best_value:.4f}\n"
+            f"Best value (committed): {committed_best:.4f}\n"
+        )
+        if effective_best != committed_best:
+            text += (
+                f"Best value (effective, includes pending): "
+                f"{effective_best:.4f}  ← latest run beats committed best\n"
+            )
+        text += (
             f"Iteration: {self._tracker.iteration}\n"
             f"History ({len(self._tracker.history)} entries):\n"
         )
@@ -70,8 +137,27 @@ class GetMetricsExecutor(ToolExecutor):
             text += f"  iter {entry['iteration']}: {entry['metrics']} "
             text += f"({'committed' if entry['committed'] else 'reverted'})\n"
 
+        if pending:
+            kind = (
+                "FAILED" if pending.get("exit_code", 0) != 0 or pending.get("error_type", "")
+                else ("quick_check" if pending.get("quick_check") else "full run")
+            )
+            verdict = ""
+            if pending_is_clean_full_run and pending_metric is not None:
+                if pending_metric > committed_best:
+                    verdict = " — beats committed best, ratchet_commit would record a new best"
+                else:
+                    verdict = " — does not beat committed best; ratchet_revert is the right call"
+            text += (
+                f"\nPending last run (not yet ratcheted): "
+                f"{pending_run_id} [{kind}] metrics={pending.get('metrics', {})}{verdict}\n"
+            )
+
         return GetMetricsObservation(
-            best_metric=self._tracker.best_value,
+            # Surface the effective best so callers (LLM included) see
+            # the latest pending value when it's the new best. The old
+            # committed-only behavior is still recoverable via tracker.history.
+            best_metric=effective_best,
             best_metric_name=self._tracker.primary_metric,
             iteration=self._tracker.iteration,
             history=self._tracker.history,
@@ -96,7 +182,7 @@ class GetMetricsTool(ToolDefinition[GetMetricsAction, GetMetricsObservation]):
                 ),
                 action_type=GetMetricsAction,
                 observation_type=GetMetricsObservation,
-                executor=GetMetricsExecutor(tracker),
+                executor=GetMetricsExecutor(tracker, session_id=session_id),
                 annotations=ToolAnnotations(
                     title="Get Metrics",
                     readOnlyHint=True,

@@ -131,7 +131,30 @@ class SkillBrowserExecutor(ToolExecutor):
                 is_error=True,
             )
 
-        template = skill.get_template_content()
+        # Plan T5: defense-in-depth — surface a structured error if the
+        # skill's template file is missing instead of crashing the tool
+        # loop. Pre-fix, a missing patch_classification_template.py raised
+        # FileNotFoundError that propagated up to the OpenHands tool
+        # dispatcher and stalled the session (session_a70dd3a564c1).
+        try:
+            template = skill.get_template_content()
+        except FileNotFoundError as e:
+            return SkillBrowserObservation.from_text(
+                text=(
+                    f"Skill template missing for {name!r}: {e}. "
+                    f"This is an installation/packaging bug — pick a "
+                    f"different skill via 'list' or write code from scratch."
+                ),
+                is_error=True,
+            )
+        except Exception as e:
+            return SkillBrowserObservation.from_text(
+                text=(
+                    f"Failed to load skill template for {name!r}: "
+                    f"{type(e).__name__}: {e}"
+                ),
+                is_error=True,
+            )
         self._workspace.set_baseline({"train.py": template})
         self._loaded_skill = skill
 

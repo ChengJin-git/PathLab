@@ -140,8 +140,17 @@ class RunExperimentExecutor(ToolExecutor):
 
         env_vars = {}
         if action.quick_check:
+            # Plan T6: stronger quick-check env contract. Templates that
+            # honor PATHLAB_QUICK_CHECK should also cap epochs and
+            # subsample. Older templates may only check
+            # PATHLAB_QUICK_CHECK; stricter caps give them an explicit
+            # numeric limit to fall back on.
             env_vars["PATHLAB_QUICK_CHECK"] = "1"
+            env_vars["PATHLAB_RUN_MODE"] = "quick_check"
             env_vars["PATHLAB_MAX_EPOCHS"] = "2"
+            env_vars["PATHLAB_MAX_TRAIN_SAMPLES"] = "128"
+            env_vars["PATHLAB_MAX_VAL_SAMPLES"] = "64"
+            env_vars["PATHLAB_MAX_TEST_SAMPLES"] = "64"
 
         timeout = (
             self._config.quick_check_timeout if action.quick_check
@@ -219,8 +228,27 @@ class RunExperimentExecutor(ToolExecutor):
                 latest.mkdir(parents=True, exist_ok=True)
                 (latest / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
-            # Update iteration policy — mark quick check as passed
-            if action.quick_check and iteration_state and file_hash:
+            # Plan T6: enforce the quick-check contract. If the agent
+            # ran with quick_check=True but the script wrote
+            # ``"quick_check": false`` into metrics.json, the script
+            # IGNORED PATHLAB_QUICK_CHECK and ran a full training pass.
+            # Refuse to mark this as a passed quick-check (which would
+            # unlock a full run for the same code) and surface the
+            # violation as a hard error so the agent fixes its template.
+            quick_check_contract_failed = (
+                action.quick_check
+                and bool(metrics)
+                and metrics.get("quick_check") is False
+            )
+
+            # Update iteration policy — mark quick check as passed only
+            # when the script actually honored the env contract.
+            if (
+                action.quick_check
+                and iteration_state
+                and file_hash
+                and not quick_check_contract_failed
+            ):
                 iteration_state.mark_quick_check_passed(file_hash)
 
         # Classify the error type so the ratchet gates (Finding 2/3 of the
@@ -236,6 +264,36 @@ class RunExperimentExecutor(ToolExecutor):
                 error_type_str = classify_error(result.stderr or "").value
             except Exception:
                 error_type_str = "Unknown"
+
+        # Plan T6 contract violation: agent passed quick_check=True but
+        # the script wrote ``"quick_check": false`` in metrics.json. Flip
+        # the result to a failure so the ratchet gate refuses to commit
+        # this as if it were a clean quick-check, AND so the agent gets
+        # an actionable error pointing at PATHLAB_QUICK_CHECK.
+        quick_check_violation_text = ""
+        if (
+            action.quick_check
+            and bool(metrics)
+            and metrics.get("quick_check") is False
+        ):
+            error_type_str = "QuickCheckContractViolation"
+            quick_check_violation_text = (
+                "\n\nQUICK CHECK CONTRACT VIOLATION: "
+                "the agent invoked run_experiment with quick_check=True, but "
+                "the script ignored PATHLAB_QUICK_CHECK and ran a full pass "
+                "(metrics.json contains \"quick_check\": false). The script "
+                "MUST honor PATHLAB_QUICK_CHECK by capping epochs to "
+                "PATHLAB_MAX_EPOCHS (currently 2), subsampling train/val to "
+                "PATHLAB_MAX_TRAIN_SAMPLES / PATHLAB_MAX_VAL_SAMPLES, and "
+                "writing \"quick_check\": true into metrics.json. Until the "
+                "script honors the contract, quick_check WILL NOT unlock "
+                "full runs of the same code."
+            )
+            # Force a -1 exit code on the result so ratchet gates / agent
+            # see this as a failure not a success.
+            result_exit_code = -1
+        else:
+            result_exit_code = result.exit_code
 
         # Store last experiment output in SessionDeps for evidence collection.
         # ``last_run_id`` was already written at tool entry, so we don't
@@ -257,7 +315,7 @@ class RunExperimentExecutor(ToolExecutor):
                 deps.last_experiment = {
                     "run_id": run_id,
                     "run_dir": rel_run_dir,
-                    "exit_code": result.exit_code,
+                    "exit_code": result_exit_code,
                     "stdout": result.stdout,
                     "stderr": result.stderr,
                     "metrics": metrics,
@@ -277,7 +335,7 @@ class RunExperimentExecutor(ToolExecutor):
         if len(logs) > 10000:
             logs = logs[:5000] + "\n...[truncated]...\n" + logs[-5000:]
 
-        text = f"Exit code: {result.exit_code}\nDuration: {duration:.1f}s\n"
+        text = f"Exit code: {result_exit_code}\nDuration: {duration:.1f}s\n"
         if metrics:
             text += f"Metrics: {json.dumps(metrics, indent=2)}\n"
         if result.exit_code != 0:
@@ -287,14 +345,18 @@ class RunExperimentExecutor(ToolExecutor):
             text += format_error_analysis(logs)
         elif logs:
             text += f"\nOutput (last 2000 chars):\n{logs[-2000:]}"
+        # Append the quick-check contract violation banner (if any) AFTER
+        # the normal output so it's the last thing the agent sees.
+        if quick_check_violation_text:
+            text += quick_check_violation_text
 
         return RunExperimentObservation(
-            exit_code=result.exit_code,
+            exit_code=result_exit_code,
             metrics=metrics,
             duration=duration,
             model_path=model_path,
             content=[TextContent(text=text)],
-            is_error=result.exit_code != 0,
+            is_error=result_exit_code != 0,
         )
 
 

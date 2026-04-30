@@ -109,6 +109,39 @@ def _finalize_iteration(
         deps = get_session(session_id)
         resolved_metrics = _resolve_finalization_metrics(session_id, metrics)
 
+        # Plan-2026-04-29 P0 #3: a failed/timeout run must NOT promote
+        # val_<metric> into primary <metric> via resolve_primary_metric's
+        # fallback chain (test_ → val_ → best_val_). Pre-fix,
+        # session_7a23f8edcce9 run_e568e217 had exit_code=-1 and only
+        # val_auc=0.8424 in metrics; the tracker recorded auc=0.8424,
+        # which polluted run_history and the comparison table.
+        is_failed_run = bool(
+            deps.last_experiment and (
+                deps.last_experiment.get("exit_code", 0) != 0
+                or deps.last_experiment.get("error_type", "")
+            )
+        )
+        if is_failed_run and resolved_metrics:
+            primary_name = (
+                deps.config.primary_metric if deps.config else "auc"
+            )
+            # Move any direct primary-metric value into ``partial_metrics``
+            # alongside val_/best_/test_ prefixed keys, then strip the
+            # primary key from the top-level dict so resolve_primary_metric
+            # sees no positive primary value for the failed run.
+            partial: dict = {}
+            cleaned: dict = {}
+            for k, v in resolved_metrics.items():
+                if k == primary_name or k.startswith(("val_", "best_val_", "best_")):
+                    partial[k] = v
+                else:
+                    cleaned[k] = v
+            # Keep a partial_metrics block for diagnostics so the agent /
+            # synthesis can still show val_auc on the failed-run row.
+            if partial:
+                cleaned.setdefault("partial_metrics", partial)
+            resolved_metrics = cleaned
+
         # Capture pre-increment iteration index — this is the canonical iteration number
         # for tracker, evidence, and orchestrator to all use consistently
         pre_increment_iteration = deps.iteration_state.iteration_index if deps.iteration_state else (deps.tracker.iteration if deps.tracker else 0)
@@ -237,6 +270,41 @@ def _finalize_iteration(
             deps.evidence_skipped_runs.append(
                 {"run_id": run_id, "reason": result.skipped_reason}
             )
+
+        # Plan T2: persist evidence as a tracked metadata commit so a later
+        # ratchet_revert (which calls `git clean -fd`) cannot wipe a
+        # committed run's evidence record. This was the session_a70dd3a564c1
+        # failure mode — evidence was on disk but untracked, then deleted on
+        # the next failed iteration's revert, leaving evidence_run_missing
+        # as the canonical state for a run that actually succeeded.
+        #
+        # Use commit_paths (NOT commit) so we don't sweep an unrelated dirty
+        # train.py from a follow-up iteration into the metadata commit.
+        if (
+            result
+            and not result.skipped
+            and result.record_path
+            and deps.workspace
+        ):
+            commit_paths = getattr(deps.workspace, "commit_paths", None)
+            if callable(commit_paths):
+                try:
+                    commit_paths(
+                        [".evidence"],
+                        f"evidence: record {run_id}",
+                    )
+                except Exception as e:
+                    # Don't fail the whole ratchet on metadata-commit failure;
+                    # surface it to the integrity guard instead.
+                    deps.evidence_skipped_runs.append({
+                        "run_id": run_id,
+                        "reason": f"evidence_commit_failed:{type(e).__name__}:{e}",
+                    })
+                    logger.exception("Evidence metadata commit failed")
+            else:
+                logger.debug(
+                    "Workspace has no commit_paths(); evidence record left uncommitted"
+                )
 
         deps.last_experiment = None  # clear whether collected or skipped
     except (KeyError, AttributeError):
@@ -408,6 +476,34 @@ class RatchetCommitExecutor(ToolExecutor):
             artifact_metrics = dict(deps.last_experiment["metrics"])
         commit_metrics_source = artifact_metrics or dict(action.metrics or {})
 
+        # Gate D (Plan-2026-04-29 P0 #2): refuse experiment commits with
+        # an empty metrics dict. Pre-fix, session_7a23f8edcce9
+        # event-00163 called ``ratchet_commit(metrics={})`` — the metrics
+        # were embedded only in the prose commit message, so the tracker
+        # had no machine-checkable record. Either action.metrics OR
+        # last_experiment.metrics must contain the configured primary
+        # metric for the commit to proceed. ``external=True`` callers
+        # are exempt (they explicitly opted into out-of-band commits).
+        if not action.external and not commit_metrics_source:
+            primary_metric_name = (
+                deps.config.primary_metric if deps and deps.config else "auc"
+            )
+            return RatchetCommitObservation(
+                commit_hash="",
+                files=self._workspace.list_files(),
+                content=[TextContent(text=(
+                    "❌ ratchet_commit refused: empty metrics dict.\n"
+                    f"  An experiment commit must include the primary metric "
+                    f"({primary_metric_name!r}). Either:\n"
+                    "  1. Pass metrics={\"<primary>\": <value>, ...} on the action, OR\n"
+                    "  2. Run the experiment via run_experiment first so\n"
+                    "     deps.last_experiment.metrics carries the artifact values.\n"
+                    "  Commit messages with metrics in prose alone are not\n"
+                    "  machine-checkable and were how stale numbers slipped\n"
+                    "  through in session_7a23f8edcce9."
+                ))],
+            )
+
         # Detect > 0.5pp disagreement on the primary metric so the agent
         # sees the discrepancy in the observation text. Uses the same
         # primary_metric resolver the tracker uses, so comparisons are
@@ -437,14 +533,11 @@ class RatchetCommitExecutor(ToolExecutor):
                 pass
 
         try:
-            commit_hash = self._workspace.commit(action.message, action.metrics)
-        except CommitFailed as exc:
-            _finalize_iteration(
-                self._session_id,
+            commit_hash = self._workspace.commit(
+                action.message,
                 commit_metrics_source,
-                committed=False,
-                action_external=action.external,
             )
+        except CommitFailed as exc:
             trimmed_stderr = (exc.stderr or "").strip()[:200]
             return RatchetCommitObservation(
                 commit_hash="",
@@ -453,7 +546,10 @@ class RatchetCommitExecutor(ToolExecutor):
                     TextContent(
                         text=(
                             f"❌ Commit failed at stage '{exc.stage}' "
-                            f"(exit={exc.exit_code}): {trimmed_stderr}"
+                            f"(exit={exc.exit_code}): {trimmed_stderr}\n"
+                            "  The last run is still pending and can be "
+                            "retried after fixing the git/artifact issue. "
+                            "Do not delete output/ or .evidence/ to recover."
                         )
                     )
                 ],

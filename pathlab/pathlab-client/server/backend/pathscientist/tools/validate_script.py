@@ -20,6 +20,7 @@ agent can see exactly why the handoff failed.
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Self
 
@@ -30,6 +31,61 @@ from openhands.sdk.tool.tool import ToolAnnotations, ToolDefinition, ToolExecuto
 
 if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
+
+
+# Plan-2026-04-28 P1 #6: scan scripts for ``get_extractor("X")`` /
+# ``get_extractor('X')`` so we can preflight the runtime import of X
+# before quick-check spends an iteration on a missing module.
+_EXTRACTOR_NAME_RE = re.compile(
+    r"""get_extractor\s*\(\s*(?P<q>['"])(?P<name>[A-Za-z0-9_\-]+)(?P=q)"""
+)
+
+
+def _extract_extractor_names(script: str) -> list[str]:
+    """Return the set of extractor names referenced via
+    ``get_extractor("...")``. Deterministic order = first-seen."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for m in _EXTRACTOR_NAME_RE.finditer(script or ""):
+        n = m.group("name")
+        if n not in seen:
+            seen.add(n)
+            out.append(n)
+    return out
+
+
+def _check_extractor_available(name: str) -> str:
+    """Return a short error message when extractor ``name`` cannot be
+    loaded by the runtime registry, or "" when it's importable.
+
+    We call ``_resolve_extractor_class`` (lazy class load), NOT
+    ``get_extractor`` (which would also try to load weights) — the goal
+    is to catch missing-runtime-dependency cases like
+    ``No module named 'conch'`` (session_a70dd3a564c1) without paying
+    the weight-load cost.
+    """
+    try:
+        # Local import: registry pulls in torch + extractor base which
+        # we don't need at module load time.
+        from ..domain.templates.common.extractors.registry import (
+            _resolve_extractor_class,
+        )
+    except Exception as e:
+        # Registry itself unimportable — let the script run; we have no
+        # ground truth here.
+        return ""
+    try:
+        _resolve_extractor_class(name)
+    except ImportError as e:
+        return f"ImportError: {e}"
+    except ValueError as e:
+        # Unknown extractor name — surface as well so the agent doesn't
+        # call get_extractor("uno") thinking it's UNI.
+        return f"unknown name: {e}"
+    except Exception as e:
+        # Any other failure (network, file missing) is informational.
+        return f"{type(e).__name__}: {e}"
+    return ""
 
 
 class ValidateScriptAction(Action):
@@ -190,6 +246,22 @@ class ValidateScriptExecutor(ToolExecutor):
             if risk_level == ScriptRisk.HIGH:
                 for reason in risk_reasons:
                     errors.append(f"Safety: {reason}")
+
+            # Plan-2026-04-28 P1 #6: extractor availability preflight.
+            # Pre-fix, a script that called `get_extractor("conch")`
+            # passed validate_script but quick-check died with
+            # `No module named 'conch'` — wasted an iteration. Now we
+            # try the lazy import at validate time and surface
+            # unavailable extractors as errors before the run starts.
+            for ext_name in _extract_extractor_names(script_for_checks):
+                err = _check_extractor_available(ext_name)
+                if err:
+                    errors.append(
+                        f"Extractor '{ext_name}' is not available at "
+                        f"runtime: {err}. Pick a different extractor "
+                        f"from the installed list (see environment context "
+                        f"in the execution brief)."
+                    )
         else:
             from ..runtime.script_safety import ScriptRisk
             risk_level = ScriptRisk.LOW
