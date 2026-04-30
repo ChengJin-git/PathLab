@@ -355,6 +355,87 @@ def _collect_missing_ai_result_artifacts(
     return missing_count, missing_artifacts
 
 
+def _iter_extval_bundle_task_ids(store: AIResultStore) -> List[str]:
+    task_ids: List[str] = []
+    for bundle_path in store.bundle_dir.glob("extval_*.zarr.zip"):
+        if not bundle_path.is_file():
+            continue
+        task_id = bundle_path.name[: -len(".zarr.zip")]
+        if task_id.startswith("extval_"):
+            task_ids.append(task_id)
+    return sorted(set(task_ids))
+
+
+def _check_existing_extval_results_from_store(
+    uploads_dir: Path,
+    wsi_ids: List[str],
+    trained_model_task_id: str,
+    model_task_type: str,
+    model_data_type: str,
+) -> Tuple[int, Optional[str], List[Dict[str, Any]]]:
+    store = AIResultStore(uploads_dir)
+    existing_results_count = 0
+    existing_validation_id: Optional[str] = None
+    incomplete_existing_examples: List[Dict[str, Any]] = []
+
+    candidate_task_ids = _iter_extval_bundle_task_ids(store)
+    if not candidate_task_ids:
+        return existing_results_count, existing_validation_id, incomplete_existing_examples
+
+    for wsi_id in wsi_ids:
+        matched_for_wsi = False
+        for candidate_task_id in candidate_task_ids:
+            artifact_presence: Optional[Dict[str, set[tuple[str, Optional[str]]]]] = None
+            try:
+                artifact_presence = store.task_artifact_presence_for_items(
+                    candidate_task_id,
+                    [(wsi_id, None)],
+                    {"result", "attention", "cam", "pred_mask"},
+                )
+            except Exception:
+                artifact_presence = None
+
+            try:
+                result_data = store.read_result(candidate_task_id, wsi_id, strict=True)
+            except Exception:
+                continue
+
+            if str(result_data.get("task_id") or "") != trained_model_task_id:
+                continue
+
+            validation_task_id = str(
+                result_data.get("validation_task_id") or candidate_task_id
+            )
+
+            metadata = dict(result_data)
+            metadata["result_file"] = None
+
+            missing_count, missing_examples = _collect_missing_ai_result_artifacts(
+                task_id=candidate_task_id,
+                task_type=str(result_data.get("task_type") or model_task_type),
+                data_type=model_data_type,
+                wsi_id=wsi_id,
+                extra_metadata=metadata,
+                sample_limit=1,
+                artifact_presence=artifact_presence,
+            )
+            if missing_count > 0:
+                if len(incomplete_existing_examples) < 5 and missing_examples:
+                    incomplete_existing_examples.extend(missing_examples)
+                continue
+
+            existing_results_count += 1
+            if existing_validation_id is None:
+                existing_validation_id = validation_task_id
+            matched_for_wsi = True
+            break
+
+        if not matched_for_wsi:
+            continue
+
+    return existing_results_count, existing_validation_id, incomplete_existing_examples
+
+
 def _analysis_has_required_files(analysis_run_dir: Path) -> bool:
     if not analysis_run_dir.is_dir():
         return False
@@ -2449,84 +2530,20 @@ async def start_external_validation(
         raise HTTPException(status_code=400, detail=compat_error)
 
     # Check if inference results already exist for this model + data combination
-    # Look for existing extval_*_result.json files in the WSI ai_results directories
+    # by scanning extval task-level Zarr bundles.
     uploads_dir = Config.get_uploads_dir()
-    existing_results_count = 0
-    existing_validation_id = None
-    incomplete_existing_examples: List[Dict[str, Any]] = []
-
-    def _check_existing_results():
-        """Check for existing external validation results."""
-        nonlocal \
-            existing_results_count, \
-            existing_validation_id, \
-            incomplete_existing_examples
-        for wsi_id in wsi_ids:
-            ai_results_dir = uploads_dir / "ai_results" / wsi_id
-            if ai_results_dir.exists():
-                # Look for extval_*_result.json files
-                for result_file in ai_results_dir.glob("extval_*_result.json"):
-                    try:
-                        with open(result_file, "r") as f:
-                            result_data = json.load(f)
-                        # Check if this result is from the same model
-                        if result_data.get("task_id") == trained_model.task_id:
-                            validation_task_id = result_data.get("validation_task_id")
-                            if not validation_task_id and result_file.name.endswith(
-                                "_result.json"
-                            ):
-                                validation_task_id = result_file.name[
-                                    : -len("_result.json")
-                                ]
-
-                            result_metadata = dict(result_data)
-                            result_metadata["result_file"] = str(result_file)
-                            derived_attention_file = _derive_companion_artifact_path(
-                                result_file, "_attention.npy"
-                            )
-                            if (
-                                model_data_type != "patch"
-                                and not result_metadata.get("attention_file")
-                                and derived_attention_file.exists()
-                            ):
-                                result_metadata["attention_file"] = str(
-                                    derived_attention_file
-                                )
-                                result_metadata.setdefault("attention_type", "derived")
-
-                            missing_count, missing_examples = (
-                                _collect_missing_ai_result_artifacts(
-                                    task_id=validation_task_id
-                                    or result_file.name[: -len("_result.json")],
-                                    task_type=str(
-                                        result_data.get("task_type") or model_task_type
-                                    ),
-                                    data_type=model_data_type,
-                                    wsi_id=wsi_id,
-                                    extra_metadata=result_metadata,
-                                    sample_limit=1,
-                                )
-                            )
-                            if missing_count > 0:
-                                if (
-                                    len(incomplete_existing_examples) < 5
-                                    and missing_examples
-                                ):
-                                    incomplete_existing_examples.extend(
-                                        missing_examples
-                                    )
-                                continue
-
-                            existing_results_count += 1
-                            # Extract validation_task_id from the result
-                            if existing_validation_id is None:
-                                existing_validation_id = validation_task_id
-                            break  # Found result for this WSI, move to next
-                    except Exception:
-                        continue
-        return existing_results_count, existing_validation_id
-
-    await asyncio.to_thread(_check_existing_results)
+    (
+        existing_results_count,
+        existing_validation_id,
+        incomplete_existing_examples,
+    ) = await asyncio.to_thread(
+        _check_existing_extval_results_from_store,
+        uploads_dir,
+        wsi_ids,
+        trained_model_task_id,
+        model_task_type,
+        model_data_type,
+    )
     if incomplete_existing_examples:
         logger.info(
             f"Ignoring incomplete external validation cache entries for model {trained_model.task_id}: "
