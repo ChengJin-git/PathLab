@@ -10,6 +10,14 @@ export interface UserListItem extends AuthUser {
   id: string
 }
 
+export interface AdminCreateUserRequest {
+  username: string
+  password: string
+  nickname?: string
+  role?: 'admin' | 'pathologist' | 'guest'
+  registration_email?: string
+}
+
 export interface ListUsersPagedOptions {
   search?: string
   page?: number
@@ -53,6 +61,22 @@ export async function listUsersPaged(options: ListUsersPagedOptions = {}): Promi
  */
 export async function getUserById(userId: string): Promise<AuthUser> {
   return apiFetch<AuthUser>(`${API_BASE}/auth/users/${userId}`, undefined, 'Failed to get user')
+}
+
+/**
+ * Create a user directly as an admin.
+ * @throws {ApiError} If request fails or not authorized
+ */
+export async function createUser(data: AdminCreateUserRequest): Promise<UserListItem> {
+  return apiFetch<UserListItem>(
+    `${API_BASE}/auth/users`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    },
+    'Failed to create user'
+  )
 }
 
 /**
@@ -304,4 +328,3 @@ export async function acknowledgeNotice(): Promise<AuthUser> {
     'Failed to acknowledge notice'
   )
 }
-

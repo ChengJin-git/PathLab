@@ -11,6 +11,7 @@ import {
   listUsers,
   listUsersPaged,
   getUserById,
+  createUser,
   updateUser,
   deleteUser,
   batchActivateUsers,
@@ -103,6 +104,41 @@ describe('getUserById', () => {
     const [url] = mockFetch.mock.calls[0]
     expect(url).toContain('/auth/users/user_1')
     expect(result.email).toBe('doctor@hospital.com')
+  })
+})
+
+describe('createUser', () => {
+  it('sends POST to /auth/users with full admin create payload', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ ...MOCK_USER, id: 'new_user_1' }))
+    const result = await createUser({
+      username: 'newpath',
+      password: 'secure123',
+      nickname: 'New Pathologist',
+      role: 'pathologist',
+      registration_email: 'newpath@hospital.com',
+    })
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(url).toContain('/auth/users')
+    expect(opts?.method).toBe('POST')
+    const body = JSON.parse(opts?.body as string)
+    expect(body.username).toBe('newpath')
+    expect(body.password).toBe('secure123')
+    expect(body.nickname).toBe('New Pathologist')
+    expect(body.role).toBe('pathologist')
+    expect(body.registration_email).toBe('newpath@hospital.com')
+    expect(result.id).toBe('new_user_1')
+  })
+
+  it('omits optional registration_email when not provided', async () => {
+    mockFetch.mockResolvedValueOnce(ok({ ...MOCK_USER, id: 'new_user_2' }))
+    await createUser({
+      username: 'bare',
+      password: 'pass1234',
+      nickname: '',
+      role: 'guest',
+    })
+    const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string)
+    expect(body.registration_email).toBeUndefined()
   })
 })
 
