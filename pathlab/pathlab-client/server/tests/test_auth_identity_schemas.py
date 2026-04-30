@@ -20,16 +20,31 @@ def test_user_read_exposes_username_and_contact_email_fields():
     assert model.email == "alice@example.edu"
 
 
-def test_user_create_requires_username_or_legacy_email_fallback():
+def test_user_create_rejects_contact_email_without_username():
+    try:
+        UserCreate.model_validate(
+            {
+                "email": "legacy_user",
+                "password": "secret123",
+                "role": "guest",
+            }
+        )
+    except ValidationError:
+        return
+    raise AssertionError("Expected ValidationError when username is missing")
+
+
+def test_user_create_keeps_email_as_contact_email():
     model = UserCreate.model_validate(
         {
-            "email": "legacy_user",
+            "username": " alice ",
+            "email": "alice@example.edu",
             "password": "secret123",
             "role": "guest",
         }
     )
-    assert model.username == "legacy_user"
-    assert model.email is None
+    assert model.username == "alice"
+    assert model.email == "alice@example.edu"
 
 
 def test_user_create_rejects_missing_username_and_email():

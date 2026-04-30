@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 VALID_ROLES = {"admin", "pathologist", "guest"}
@@ -90,10 +90,10 @@ class UserCreate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    username: Optional[str] = Field(default=None, description="Login username")
+    username: str = Field(description="Login username")
     email: Optional[str] = Field(
         default=None,
-        description="Contact email (legacy clients may still send username here)",
+        description="Contact email",
     )
     password: str = Field(description="User password")
     role: str = Field(default="guest", description="User role: pathologist, guest")
@@ -101,16 +101,6 @@ class UserCreate(BaseModel):
     registration_email: Optional[str] = Field(
         default=None, description="Contact email for the user"
     )
-
-    @model_validator(mode="after")
-    def normalize_identity_fields(self):
-        # Transition compatibility: treat legacy email as username when username missing.
-        if self.username is None and self.email is not None:
-            self.username = self.email
-            self.email = None
-        if self.username is None:
-            raise ValueError("Username is required")
-        return self
 
     @field_validator("role")
     @classmethod

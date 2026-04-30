@@ -246,7 +246,7 @@ async def register_user(
     import uuid as uuid_module
 
     # Check if username already exists
-    username = user_create.username or ""
+    username = user_create.username
     result = await db.execute(select(User).where(User.username == username))
     existing_user = result.scalar_one_or_none()
     if existing_user:
@@ -278,7 +278,7 @@ async def register_user(
     )
 
     # Race-condition safe: catch IntegrityError if concurrent registration
-    # with same email passes the existence check above (PostgreSQL READ COMMITTED)
+    # with same username passes the existence check above (PostgreSQL READ COMMITTED)
     try:
         db.add(user)
         await db.commit()
