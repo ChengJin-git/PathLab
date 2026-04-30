@@ -57,8 +57,7 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数 / Hook 测试（13 个文件）
-    │   ├── adminUserCreation.test.ts
+    ├── lib/              # 纯工具函数 / Hook 测试（12 个文件）
     │   ├── avatarUrl.test.ts
     │   ├── cache.test.ts
     │   ├── utils.test.ts
@@ -73,9 +72,12 @@ test/
     │   └── useDebounce.test.tsx
     ├── contexts/         # React Context 测试
     │   └── AuthContext.test.tsx
-    └── components/       # 组件测试（4 个文件）
+    └── components/       # 组件测试（7 个文件）
         ├── settings/
         │   ├── PermissionCenterModal.test.tsx
+        │   ├── UsersTab.test.tsx
+        │   ├── CreateUserModal.test.tsx
+        │   ├── EditUserModal.test.tsx
         │   └── storage/
         │       └── BatchScanResults.test.tsx
         └── ui/
@@ -377,7 +379,7 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 
 **`registerUser()`**
 
-- 发送 `POST` 到 `/auth/register`，body 包含 email / password / role
+- 发送 `POST` 到已禁用的 `/auth/register`；测试保留该客户端函数的请求封装行为，管理员创建用户不再使用它
 
 **`uploadAvatar()` / `deleteAvatar()`**
 
@@ -941,17 +943,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 - 所有测试使用 `vi.useFakeTimers()` 精确控制时间推进
 
 ---
-
-## unit/lib/adminUserCreation.test.ts
-
-**对应源文件**：`src/renderer/src/lib/adminUserCreation.ts`
-
-覆盖管理员创建用户时的角色规范化逻辑：
-
-- `buildAdminCreateUserPlan()`：
-  - 注册 payload 始终使用 `guest` 角色（满足 `/auth/register` 的公开注册规则），`targetRole` 保留管理员指定的目标角色
-  - 未知角色自动规范化为 `guest`
-  - `pathologist` 与 `admin` 角色在 `targetRole` 中原样保留，供后续 `AdminUserUpdate` 升级
 
 ---
 

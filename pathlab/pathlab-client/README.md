@@ -127,7 +127,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前共 **38 个测试文件**：
+当前共 **40 个测试文件**：
 
 | 分类 | 文件 | 覆盖内容 |
 |------|------|---------|
@@ -162,10 +162,12 @@ npm run test:coverage # 生成覆盖率报告
 | 工具函数 | `unit/lib/useAsyncAction.test.tsx` | `useAsyncAction` Hook：isPending 状态、并发引用计数、onError 回调、默认 console.error 降级 |
 | 工具函数 | `unit/lib/useConfirmDialog.test.tsx` | `useConfirmDialog` Hook |
 | 工具函数 | `unit/lib/useDebounce.test.tsx` | `useDebounce` Hook |
-| 工具函数 | `unit/lib/adminUserCreation.test.ts` | `buildAdminCreateUserPlan()` 管理员创建用户时角色规范化逻辑 |
 | 工具函数 | `unit/lib/listPageFileView.test.ts` | `getListPageFileViewState()` 列表页文件视图状态机逻辑 |
 | React Context | `unit/contexts/AuthContext.test.tsx` | 认证状态机、角色判断、协议签署、维护公告 |
 | 组件 | `unit/components/settings/PermissionCenterModal.test.tsx` | 权限中心弹窗数据集选择与展示逻辑 |
+| 组件 | `unit/components/settings/UsersTab.test.tsx` | 管理员创建用户流程 |
+| 组件 | `unit/components/settings/CreateUserModal.test.tsx` | 创建用户弹窗字段文案 |
+| 组件 | `unit/components/settings/EditUserModal.test.tsx` | 编辑用户弹窗字段文案 |
 | 组件 | `unit/components/settings/storage/BatchScanResults.test.tsx` | 存储批量扫描结果展示组件 |
 | 组件 | `unit/components/ui/modal-shell.test.tsx` | ModalShell 基础弹窗组件 |
 | 组件 | `unit/components/ui/pagination-footer.test.tsx` | PaginationFooter 分页组件 |
