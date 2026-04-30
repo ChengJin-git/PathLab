@@ -64,6 +64,7 @@ from backend.auth.dependencies import (
 )
 from .access_control import assert_owner
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
+from backend.ai.result_store import AIResultStore
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
@@ -239,12 +240,10 @@ def _required_ai_result_artifacts(
     wsi_id: str,
     extra_metadata: Optional[Dict[str, Any]],
 ) -> List[Tuple[str, Path]]:
-    uploads_dir = Config.get_uploads_dir()
-    result_dir = uploads_dir / "ai_results" / wsi_id
     metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
 
-    result_file = _coerce_path(metadata.get("result_file")) or (
-        result_dir / f"train_{task_id}_result.json"
+    result_file = _coerce_path(metadata.get("result_file")) or Path(
+        f"bundle://{task_id}/{wsi_id}/result"
     )
     artifacts: List[Tuple[str, Path]] = [("result_file", result_file)]
 
@@ -278,6 +277,25 @@ def _required_ai_result_artifacts(
     return artifacts
 
 
+def _artifact_exists_via_store(
+    task_id: str,
+    wsi_id: str,
+    artifact_name: str,
+    artifact_path: Path,
+) -> bool:
+    store = AIResultStore(Config.get_uploads_dir())
+    artifact_map = {
+        "result_file": "result",
+        "attention_file": "attention",
+        "cam_file": "cam",
+        "pred_mask_file": "pred_mask",
+    }
+    store_artifact = artifact_map.get(artifact_name)
+    if store_artifact is None:
+        return artifact_path.exists()
+    return store.artifact_exists(task_id, wsi_id, store_artifact, strict=True)
+
+
 def _collect_missing_ai_result_artifacts(
     task_id: str,
     task_type: str,
@@ -293,7 +311,7 @@ def _collect_missing_ai_result_artifacts(
     for artifact_name, artifact_path in _required_ai_result_artifacts(
         task_id, task_type, data_type, wsi_id, metadata
     ):
-        if artifact_path.exists():
+        if _artifact_exists_via_store(task_id, wsi_id, artifact_name, artifact_path):
             continue
         missing_count += 1
         if len(missing_artifacts) < sample_limit:
