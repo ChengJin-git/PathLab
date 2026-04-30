@@ -68,7 +68,6 @@ EXTRACTOR_EMBED_DIM: Dict[str, int] = {
     "GPFM": 1024,
     "SmartCCS": 1024,
     "SmartCyto": 768,
-    "CytoFM": 1024,
 }
 
 
