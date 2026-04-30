@@ -5,12 +5,28 @@ import pytest
 from pytest import MonkeyPatch
 
 
+class _FakeMappingResult:
+    def mappings(self) -> "_FakeMappingResult":
+        return self
+
+    def all(self) -> list[dict[str, object]]:
+        return []
+
+
 class _FakeConnection:
     def __init__(self):
         self.statements: list[str] = []
 
-    async def execute(self, statement: object) -> None:
-        self.statements.append(str(statement))
+    async def execute(
+        self,
+        statement: object,
+        _params: object | None = None,
+    ) -> _FakeMappingResult | None:
+        statement_text = str(statement)
+        self.statements.append(statement_text)
+        if "SELECT id, username, created_at FROM users" in statement_text:
+            return _FakeMappingResult()
+        return None
 
     async def run_sync(self, _fn: object) -> None:
         return None
