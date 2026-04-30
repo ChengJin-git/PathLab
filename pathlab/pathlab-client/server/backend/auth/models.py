@@ -47,6 +47,19 @@ class User(SQLAlchemyBaseUserTableUUID, Base):
 
     __tablename__ = "users"
 
+    # Contact email is optional and not identity.
+    email: Mapped[Optional[str]] = mapped_column(
+        String(320),
+        nullable=True,
+        default=None,
+        doc="Optional contact email for notifications and account communication.",
+    )
+
+    # Login identity (separate from contact email)
+    username: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
+
     # Custom fields
     role: Mapped[str] = mapped_column(
         String(50), nullable=False, default="guest", index=True

@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 VALID_ROLES = {"admin", "pathologist", "guest"}
@@ -40,14 +40,12 @@ def _validate_role(value: Optional[str], allowed_roles: set[str]) -> Optional[st
 class UserRead(BaseModel):
     """Schema for reading user data (API responses).
 
-    Note: We use 'email' field name for compatibility with FastAPI-Users,
-    but it actually stores username (no email validation).
+    username is login identity; email is real contact email.
     """
 
+    username: str = Field(description="Login username")
     id: uuid.UUID
-    email: str = Field(
-        description="Username (stored in email field for FastAPI-Users compatibility)"
-    )
+    email: Optional[str] = Field(default=None, description="Contact email")
     is_active: bool = True
     is_superuser: bool = False
     is_verified: bool = False
@@ -87,13 +85,16 @@ class UserCreate(BaseModel):
 
     Public registration schema.
 
-    Note: 'email' field is actually username (no email validation).
     Self-registration may only create non-admin accounts.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    email: str = Field(description="Username (stored in email field)")
+    username: Optional[str] = Field(default=None, description="Login username")
+    email: Optional[str] = Field(
+        default=None,
+        description="Contact email (legacy clients may still send username here)",
+    )
     password: str = Field(description="User password")
     role: str = Field(default="guest", description="User role: pathologist, guest")
     nickname: Optional[str] = Field(default=None, description="Display name")
@@ -101,13 +102,23 @@ class UserCreate(BaseModel):
         default=None, description="Contact email for the user"
     )
 
+    @model_validator(mode="after")
+    def normalize_identity_fields(self):
+        # Transition compatibility: treat legacy email as username when username missing.
+        if self.username is None and self.email is not None:
+            self.username = self.email
+            self.email = None
+        if self.username is None:
+            raise ValueError("Username is required")
+        return self
+
     @field_validator("role")
     @classmethod
     def validate_role(cls, v: str) -> str:
         """Validate role is one of the allowed public registration values."""
         return _validate_role(v, PUBLIC_REGISTRATION_ROLES) or "guest"
 
-    @field_validator("email")
+    @field_validator("username")
     @classmethod
     def validate_username(cls, v: str) -> str:
         """Validate username is not empty and has reasonable length."""
@@ -120,20 +131,11 @@ class UserUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     password: Optional[str] = Field(default=None, description="New password")
-    email: Optional[str] = Field(
-        default=None, description="Username (stored in email field)"
-    )
+    email: Optional[str] = Field(default=None, description="Contact email")
     nickname: Optional[str] = Field(default=None, description="Display name")
     notify_on_success: Optional[bool] = None
     notify_on_failed: Optional[bool] = None
     notify_on_cancelled: Optional[bool] = None
-
-    @field_validator("email")
-    @classmethod
-    def validate_username(cls, v: Optional[str]) -> Optional[str]:
-        """Validate updated username if provided."""
-        return _normalize_username(v)
-
 
 class AdminUserUpdate(UserUpdate):
     """Schema for admin-managed updates to user accounts."""

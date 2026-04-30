@@ -645,7 +645,7 @@ class ModelUpdateRequest(BaseModel):
 
 
 class AccessRequest(BaseModel):
-    username: str = Field(description="Desired username (stored in email field)")
+    username: str = Field(description="Desired login username")
     password: str = Field(description="Account password")
     registration_email: str = Field(
         description="Educational email for identity verification"
