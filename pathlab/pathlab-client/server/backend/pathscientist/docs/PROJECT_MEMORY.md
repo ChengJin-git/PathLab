@@ -286,3 +286,191 @@ propagate:**
 The acquisition stage is orchestrator-owned. The OpenHands code agent
 receives prepared paths via `config.data_mounts` and the execution brief;
 it must NOT invent download commands.
+
+## LLM Task-Profile Enrichment (2026-04-30)
+
+Grounding now keeps the deterministic `dataset/task_profile.py` heuristic as
+the offline baseline, then optionally runs structured LLM enrichment before
+skill selection, literature retrieval, RAG/SOTA, and acquisition.
+
+**Why:** keyword organ inference misses implicit medical knowledge such as
+`Gleason grading -> prostate / Gleason-ISUP labels`. The LLM enrichment fills
+missing fields without becoming an unchecked source of truth.
+
+**Behavior:**
+1. `infer_task_profile()` builds the initial heuristic `TaskProfile`.
+2. `dataset/llm_task_profile.py` asks an LLM/text caller for strict JSON:
+   organ, confidence, task shape, modality, prediction target, label keywords,
+   and dataset hint candidates.
+3. The JSON is validated against allowlists. Invalid JSON, unknown organs, or
+   missing LLM config fail open and keep the heuristic profile.
+4. High-confidence LLM fields can fill missing organ/target metadata; explicit
+   user `preferred_skill` is not overridden.
+5. Grounding records provenance in `grounding["llm_task_profile"]`,
+   `grounding["task_profile_sources"]`, and `grounding["dataset_hint_candidates"]`.
+
+For example, with an LLM caller available, "训练一个 Gleason 分级任务" can now
+produce `organ=prostate`, `prediction_target=gleason_grade`, and PANDA as a
+candidate dataset hint before literature search/acquisition run.
+
+## Literature-Grounded Dataset Discovery (2026-04-30)
+
+The acquisition stage now runs an offline-by-default discovery pass before
+hitting the curated registry, turning literature evidence (`baselines`,
+`sota_target`, `papers[].datasets`, `dataset_hint_candidates`, `passages`)
+into auditable dataset candidates without spending any new network budget.
+
+**Flow (`orchestrator/runner.py::_run_acquisition_stage`):**
+1. `dataset/discovery_extractor.extract_dataset_candidates(grounding, profile)`
+   reads the **persisted** `state.grounding` dict — it does NOT re-call
+   `LiteratureService.find_papers()`. Source priority: baseline (medium) →
+   sota_target (medium) → papers.datasets (low) → dataset_hint_candidates
+   (LLM-supplied confidence) → passages (medium when a known provider URL
+   appears, denylisted otherwise).
+2. `paper_id` on every evidence entry is canonicalized via
+   `literature.id_resolver.to_canonical_id` so cross-session linking through
+   `PaperRegistry` works.
+3. `dataset/discovery_store.save_discovery_records()` writes
+   `<workspace>/.dataset/discovery.json` (always — even when empty).
+4. `dataset/discovery_registry.merge_curated_and_discovered()` merges the
+   curated registry with discovered records into a session-local
+   `<workspace>/.dataset/session_registry.json`. Curated wins on name + tags
+   conflict; discovered records require `confidence ∈ {medium, high}` AND ≥1
+   evidence entry. Discovered records always start `access="manual"` —
+   discovery is NEVER proof of downloadability.
+5. `DatasetAcquisitionService.acquire()` consumes the session-local registry,
+   calls `provider.probe()` on each candidate (probe only adds tags such as
+   `probe:hf_remote_unverified` — it never upgrades access), runs the same
+   relevance / policy / download / normalize gates as before.
+6. `dataset/acquisition_plan.acquisition_plan_path_for_workspace` writes
+   `<workspace>/.dataset/acquisition_plan.json` at every exit path —
+   considered candidates + selected_dataset_id + status — so reviewers can
+   inspect "what would have been picked" even under
+   `--stop-before-execution` or `download_policy=disabled`.
+7. `state.grounding["dataset_discovery_path"]` and
+   `state.grounding["dataset_acquisition_plan_path"]` are persisted, so the
+   execution brief always renders both paths regardless of acquisition
+   outcome.
+
+**Optional LLM enrichment** (`dataset/discovery_llm_extractor.py`): when
+`build_llm_text_caller(config)` returns a callable, the LLM extractor
+parses passage / baseline texts into additional `DatasetDiscoveryRecord`s.
+Merge rule: heuristic records win on name conflict unless the LLM record
+has higher confidence AND at least one provider hint. Malformed JSON or
+LLM exceptions return `[]` cleanly so the heuristic path stays the source
+of truth.
+
+**Network policy leg** (`runtime/network_policy.py`): `LegName` includes
+`"dataset_discovery"`; `NetworkPolicy.allow_dataset_discovery` defaults
+True (heuristic extraction is offline-safe). Disabled by `stage="local"`,
+by `allow_dataset_discovery=False`, or by env
+`PATHSCIENTIST_DATASET_DISCOVERY=0`. CLI flags
+(`--dataset-discovery` / `--no-dataset-discovery`) deferred to Phase 1.5
+alongside `--network=...`, `--no-online-papers`, `--allow-auto-ingest`.
+
+**Files:**
+- `dataset/discovery_types.py` — `DatasetDiscoveryEvidence` /
+  `ProviderHint` / `DatasetDiscoveryRecord` (paper_id docstring documents
+  canonical-shape expectation).
+- `dataset/discovery_store.py` — JSON read/write helpers.
+- `dataset/discovery_extractor.py` — heuristic + optional LLM enrichment.
+- `dataset/discovery_registry.py` — `discovery_record_to_dataset_record`
+  (always `access="manual"`) + `merge_curated_and_discovered` (curated
+  wins).
+- `dataset/discovery_llm_extractor.py` — `DatasetDiscoveryLLMExtractor`
+  (caller injects `llm_parser` from `build_llm_text_caller`).
+- `dataset/acquisition_plan.py` — plan artifact helpers.
+- `dataset/providers/{direct_http,zenodo,huggingface}.py` — `probe()`
+  methods that ONLY tag, never upgrade access.
+
+**Tests (78 new):**
+`test_dataset_discovery_types.py` (7),
+`test_dataset_discovery_store.py` (6),
+`test_dataset_discovery_extractor.py` (15),
+`test_dataset_discovery_registry.py` (12),
+`test_dataset_provider_probe.py` (11),
+`test_dataset_acquisition_with_discovery.py` (4),
+`test_dataset_acquisition_plan_artifact.py` (6),
+`test_orchestrator_runner_dataset_discovery.py` (6),
+`test_execution_brief_dataset_discovery.py` (4),
+`test_dataset_discovery_llm_extractor.py` (9),
+`test_dataset_discovery_network_policy.py` (8),
+`test_dataset_discovery_e2e.py` (3).
+
+## Dataset Provider Repair (2026-04-30)
+
+Follow-up plan
+(`docs/plans/2026-04-30-pathscientist-dataset-provider-repair-plan.md`)
+hardened the acquisition surface so PANDA / TCGA-style records reach a
+real provider rather than silently falling back to ``no_provider:<name>``.
+
+**Provider factory (Task 1 / `dataset/providers/factory.py`):**
+``build_default_providers()`` is the only place to register a provider.
+It returns fresh instances each call to keep injected sessions / runners
+from leaking between tests. Current map (Task 4 / 5 added Kaggle + GDC):
+
+| key | class | notes |
+|---|---|---|
+| `direct_http` | `DirectHTTPProvider` | rejects landing-page URLs |
+| `zenodo` | `ZenodoProvider` | resolves `/api/records/<id>` when no urls |
+| `huggingface` | `HuggingFaceProvider` | `snapshot_download` |
+| `kaggle` | `KaggleProvider` | runner-injectable CLI; `kaggle_competition` / `kaggle_dataset` kinds |
+| `gdc` | `GDCProvider` | manifest / explicit `api.gdc.cancer.gov/data/<uuid>` only |
+| `tcia` | (alias to same `GDCProvider` instance) | so legacy seed records reach an adapter |
+
+**Plan entries (Task 6) — `acquisition_plan.json["considered"][i]` carry:**
+
+`dataset_id`, `name`, `provider`, `provider_available`, `access`,
+`estimated_size_gb`, `license`, `source_paper_ids`, full `download` dict,
+`score`, `relevant`, `allowed`, `policy_reason`, `reasons`, `tags`. Plan
+is written **before** `provider.download()` (status=`planned`) and again
+at every final exit, so ``--stop-before-execution`` reviewers always have
+a complete artifact even if download takes minutes or crashes.
+
+**PANDA / Gleason behavior contracts (Task 7 — characterization):**
+
+- `download_policy="public_only"` → PANDA selected as top relevant
+  candidate, `skipped_policy/access=manual`.
+- `download_policy="manual_only"` + default `max_download_size_gb=20` →
+  PANDA selected, `skipped_policy/too_large` (PANDA is 400 GB).
+- `download_policy="manual_only"` + `max_size=500` +
+  `allow_large_downloads=True` + Kaggle creds → policy + provider both
+  pass; `KaggleProvider` runner is invoked with `kaggle competitions
+  download -c prostate-cancer-grade-assessment …`.
+
+**Brief surfacing (Task 8):**
+
+For `acquisition_status in {skipped_policy, failed}` AND
+`state.selected_dataset` set, the execution brief renders:
+
+```
+Selected dataset candidate: <name> (provider: <p>, access: <a>)
+Dataset acquisition: skipped_policy (<reason>)
+```
+
+so the agent / reviewer sees *which* dataset got blocked, not just a
+status string.
+
+**Operational reference:** `docs/dataset_acquisition.md` for the full
+provider matrix, recipes (safe Gleason dry run, real Kaggle attempt,
+TCGA-BRCA), and reason-string catalogue.
+
+**Files added in this round:**
+- `dataset/providers/factory.py`
+- `dataset/providers/kaggle.py`
+- `dataset/providers/gdc.py`
+- `dataset/acquisition_plan.py` (Task 8 of dataset-discovery; enriched in Task 6)
+- `docs/dataset_acquisition.md`
+
+**Tests added (40 new in this plan):**
+`test_dataset_provider_factory.py` (4),
+`test_dataset_providers_kaggle.py` (9),
+`test_dataset_providers_gdc.py` (9),
+`test_dataset_acquisition_gleason_panda.py` (4),
+`test_dataset_provider_e2e_stop_before_execution.py` (2),
+plus 4 new tests added to `test_dataset_providers.py` (Zenodo metadata),
+plus 6 review-blocker tests added to `test_dataset_acquisition_plan_artifact.py`,
+`test_orchestrator_runner_dataset_discovery.py`, `test_execution_brief_dataset_discovery.py`,
+`test_dataset_provider_probe.py`,
+plus 2 enrichment tests added to `test_dataset_acquisition_plan_artifact.py` (Task 6),
+plus 2 brief tests added to `test_execution_brief_dataset_discovery.py` (Task 8).

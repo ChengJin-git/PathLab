@@ -19,6 +19,27 @@ class HuggingFaceProvider:
         self._snapshot_fn = snapshot_fn
 
     def probe(self, record: DatasetRecord) -> DatasetRecord:
+        """Annotate provisional probe state. NEVER upgrades access.
+
+        Plan-2026-04-30 dataset-discovery T5 / review constraint #3:
+        - no remote_id → ``probe:no_remote_id``.
+        - remote_id present → ``probe:hf_remote_unverified``.
+        - existing ``gated`` tag → also ``probe:hf_gated`` so policy can
+          see the marker explicitly.
+        """
+        repo_id = (record.download.remote_id or "").strip()
+        if not repo_id:
+            tag = "probe:no_remote_id"
+            if tag not in record.tags:
+                record.tags.append(tag)
+            return record
+        unverified = "probe:hf_remote_unverified"
+        if unverified not in record.tags:
+            record.tags.append(unverified)
+        if any((t or "").strip().lower() == "gated" for t in record.tags):
+            gated = "probe:hf_gated"
+            if gated not in record.tags:
+                record.tags.append(gated)
         return record
 
     def _resolve_snapshot(self):

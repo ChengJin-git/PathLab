@@ -37,6 +37,23 @@ class DirectHTTPProvider:
         self._chunk = chunk_size
 
     def probe(self, record: DatasetRecord) -> DatasetRecord:
+        """Annotate the record with provisional probe tags. NEVER upgrades access.
+
+        Plan-2026-04-30 dataset-discovery T5 / review constraint #3:
+        no live HEAD calls; record stays at whatever ``access`` it had on
+        entry. The tags surface what *would* be checked if the network
+        leg ran.
+        """
+        urls = list(record.download.urls or [])
+        tag: str
+        if not urls:
+            tag = "probe:no_urls"
+        elif any(not _is_file_url(u) for u in urls):
+            tag = "probe:not_file_url"
+        else:
+            tag = "probe:file_url_unverified"
+        if tag not in record.tags:
+            record.tags.append(tag)
         return record
 
     def download(self, record: DatasetRecord, target_dir: Path) -> DownloadResult:

@@ -99,6 +99,115 @@ def test_zenodo_skips_with_no_urls(tmp_path):
     assert "doi" in result.reason.lower() or "no_urls" in result.reason.lower()
 
 
+class _ZenodoResponse:
+    """Test stub for the Zenodo API JSON response + the file-stream that follows."""
+
+    def __init__(self, payload=None, content_chunks=None):
+        self._payload = payload or {}
+        self._chunks = content_chunks or [b"zipdata"]
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._payload
+
+    def iter_content(self, chunk_size):
+        return iter(self._chunks)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return None
+
+
+def test_zenodo_resolves_record_metadata_when_no_urls(tmp_path):
+    """Plan-2026-04-30 dataset-provider-repair Task 3: when no explicit
+    urls, resolve via ``zenodo.org/api/records/<id>`` and stream files."""
+    from unittest.mock import MagicMock
+
+    session = MagicMock()
+    session.get.side_effect = [
+        _ZenodoResponse(payload={
+            "files": [{
+                "key": "data.zip",
+                "links": {
+                    "self": "https://zenodo.org/api/records/123/files/data.zip/content",
+                },
+            }]
+        }),
+        _ZenodoResponse(content_chunks=[b"abc"]),
+    ]
+    record = _make_record(
+        provider="zenodo",
+        download=DownloadSpec(kind="zenodo", remote_id="123", urls=[]),
+    )
+    result = ZenodoProvider(session=session).download(record, tmp_path)
+    assert result.status == "downloaded"
+    assert result.files[0].name == "data.zip"
+
+
+def test_zenodo_resolution_with_doi_in_remote_id_strips_to_record_id(tmp_path):
+    """A remote_id that looks like ``10.5281/zenodo.123`` resolves to ``123``."""
+    from unittest.mock import MagicMock
+
+    captured: list[str] = []
+
+    def fake_get(url, *a, **k):
+        captured.append(url)
+        if "/api/records/" in url:
+            return _ZenodoResponse(payload={
+                "files": [{
+                    "key": "data.zip",
+                    "links": {"self": "https://zenodo.org/api/records/77/files/data.zip/content"},
+                }]
+            })
+        return _ZenodoResponse(content_chunks=[b"x"])
+
+    session = MagicMock()
+    session.get.side_effect = fake_get
+
+    record = _make_record(
+        provider="zenodo",
+        download=DownloadSpec(kind="zenodo", remote_id="10.5281/zenodo.77", urls=[]),
+    )
+    result = ZenodoProvider(session=session).download(record, tmp_path)
+    assert result.status == "downloaded"
+    assert any("/api/records/77" in u for u in captured), captured
+
+
+def test_zenodo_resolution_failed_metadata_returns_structured_failure(tmp_path):
+    """API call exception → ``failed/zenodo_metadata_error:..`` (does NOT raise)."""
+    from unittest.mock import MagicMock
+
+    session = MagicMock()
+    session.get.side_effect = RuntimeError("network down")
+
+    record = _make_record(
+        provider="zenodo",
+        download=DownloadSpec(kind="zenodo", remote_id="999", urls=[]),
+    )
+    result = ZenodoProvider(session=session).download(record, tmp_path)
+    assert result.status == "failed"
+    assert "metadata" in result.reason.lower() or "zenodo" in result.reason.lower()
+
+
+def test_zenodo_resolution_no_files_returns_skipped_policy(tmp_path):
+    """API returns no ``files`` array → ``skipped_policy/zenodo_no_files``."""
+    from unittest.mock import MagicMock
+
+    session = MagicMock()
+    session.get.return_value = _ZenodoResponse(payload={"files": []})
+
+    record = _make_record(
+        provider="zenodo",
+        download=DownloadSpec(kind="zenodo", remote_id="42", urls=[]),
+    )
+    result = ZenodoProvider(session=session).download(record, tmp_path)
+    assert result.status == "skipped_policy"
+
+
 def test_zenodo_uses_direct_http_when_urls_provided(tmp_path):
     fake_response = MagicMock()
     fake_response.iter_content.return_value = [b"data"]

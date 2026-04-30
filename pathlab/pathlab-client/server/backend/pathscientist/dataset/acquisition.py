@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from .acquisition_plan import (
+    acquisition_plan_path_for_workspace,
+    candidate_to_plan_entry,
+    save_acquisition_plan,
+)
 from .downloader import compute_sha256, extract_archive, safe_dataset_id
 from .evidence import write_acquisition_record
 from .manifests import manifest_path_for_workspace, save_manifest
@@ -75,12 +80,93 @@ class DatasetAcquisitionService:
             access="", status=status,
         )
 
+    def _probe_records(self, records):
+        """Plan-2026-04-30 dataset-discovery T6 / review constraint #2:
+        run ``provider.probe(record)`` BEFORE scoring/policy so probe tags
+        (e.g. ``probe:hf_remote_unverified``) are visible to relevance and
+        evidence — without making any live network calls.
+
+        Plan-2026-04-30 dataset-provider-repair Task 0 / blocker #4:
+        honor the probe's return value. Providers that return a fresh
+        ``DatasetRecord`` (instead of mutating in-place) had their tag
+        annotations dropped under the previous in-place-only assumption.
+        """
+        out = []
+        for r in records:
+            provider = self._providers.get(r.provider)
+            probe = getattr(provider, "probe", None) if provider is not None else None
+            if probe is None:
+                out.append(r)
+                continue
+            try:
+                probed = probe(r)
+                out.append(probed if probed is not None else r)
+            except Exception as e:
+                logger.warning("probe failed for %s: %s", r.dataset_id, e)
+                out.append(r)
+        return out
+
+    def _candidate_to_plan_entry(self, candidate) -> dict:
+        """Plan-2026-04-30 dataset-provider-repair Task 6: enrich plan
+        entries with ``provider_available`` (lookup against the registered
+        providers map at write time) plus full ``download`` dict, size,
+        license, and source_paper_ids — so reviewers can see exactly why a
+        candidate would have been picked or rejected, even if the runtime
+        environment has no matching provider.
+        """
+        entry = candidate_to_plan_entry(candidate)
+        record = candidate.record
+        entry["provider_available"] = record.provider in self._providers
+        entry["estimated_size_gb"] = float(record.estimated_size_gb or 0.0)
+        entry["license"] = record.license or ""
+        entry["source_paper_ids"] = list(record.source_paper_ids or [])
+        entry["download"] = record.download.to_dict()
+        return entry
+
+    def _write_plan(
+        self,
+        workspace_root: Path,
+        candidates,
+        *,
+        status: str,
+        selected_dataset_id: str = "",
+        reason: str = "",
+        profile=None,
+    ) -> None:
+        """Plan-2026-04-30 dataset-discovery T8: persist .dataset/acquisition_plan.json
+        with everything the scout considered + the final selection.
+
+        Plan-2026-04-30 dataset-provider-repair Task 0 / blocker #5: also
+        records ``task_profile`` so reviewers see what the user asked for.
+        """
+        try:
+            payload = {
+                "status": status,
+                "selected_dataset_id": selected_dataset_id,
+                "reason": reason,
+                "task_profile": profile.to_dict() if profile is not None else {},
+                "considered": [
+                    self._candidate_to_plan_entry(c) for c in (candidates or [])
+                ],
+            }
+            save_acquisition_plan(
+                acquisition_plan_path_for_workspace(workspace_root),
+                payload,
+            )
+        except Exception as e:
+            logger.warning("acquisition plan persistence failed: %s", e)
+
     def acquire(self, profile: TaskProfile, workspace_root: Path) -> AcquisitionResult:
         workspace_root = Path(workspace_root)
         manifest_path = manifest_path_for_workspace(workspace_root)
 
+        # Plan-2026-04-30 dataset-discovery T6: probe each registry record
+        # before scout sees it. Probe never upgrades access; it only annotates
+        # tags so downstream evidence reflects what was checked.
+        all_records = self._probe_records(self._registry.load())
+
         scout = DatasetScout(self._registry, policy=self._policy)
-        candidates = scout.find_candidates(profile, top_k=10)
+        candidates = scout.find_candidates(profile, top_k=10, records=all_records)
 
         # 1. No candidates at all
         if not candidates:
@@ -89,6 +175,10 @@ class DatasetAcquisitionService:
             ev = write_acquisition_record(
                 workspace_root,
                 {"status": "failed", "reason": "no_candidate", "task_profile": profile.to_dict()},
+            )
+            self._write_plan(
+                workspace_root, [],
+                status="failed", reason="no_candidate", profile=profile,
             )
             return AcquisitionResult(
                 status="failed", manifest=manifest, manifest_path=manifest_path,
@@ -113,6 +203,11 @@ class DatasetAcquisitionService:
                         for c in candidates
                     ],
                 },
+            )
+            self._write_plan(
+                workspace_root, candidates,
+                status="failed", reason="no_relevant_candidate",
+                profile=profile,
             )
             return AcquisitionResult(
                 status="failed", manifest=manifest, manifest_path=manifest_path,
@@ -147,6 +242,12 @@ class DatasetAcquisitionService:
                     "task_profile": profile.to_dict(),
                 },
             )
+            self._write_plan(
+                workspace_root, candidates,
+                status="skipped_policy", reason=top.decision.reason,
+                selected_dataset_id=top.record.dataset_id,
+                profile=profile,
+            )
             return AcquisitionResult(
                 status="skipped_policy", manifest=manifest, manifest_path=manifest_path,
                 candidate=top, evidence_path=ev, reason=top.decision.reason,
@@ -174,6 +275,13 @@ class DatasetAcquisitionService:
                     "task_profile": profile.to_dict(),
                 },
             )
+            self._write_plan(
+                workspace_root, candidates,
+                status="failed",
+                selected_dataset_id=record.dataset_id,
+                reason=f"no_provider:{record.provider}",
+                profile=profile,
+            )
             return AcquisitionResult(
                 status="failed", manifest=manifest, manifest_path=manifest_path,
                 candidate=chosen, evidence_path=ev,
@@ -182,6 +290,19 @@ class DatasetAcquisitionService:
 
         raw_root = self._cache_root / "raw" / record.provider / safe_dataset_id(record.dataset_id)
         raw_root.mkdir(parents=True, exist_ok=True)
+
+        # Plan-2026-04-30 dataset-provider-repair Task 0 / blocker #1:
+        # write a provisional "planned" plan BEFORE the download fires.
+        # If download() takes minutes / hangs / crashes, reviewers under
+        # --stop-before-execution still have a complete audit artifact.
+        self._write_plan(
+            workspace_root, candidates,
+            status="planned",
+            selected_dataset_id=record.dataset_id,
+            reason="before_download",
+            profile=profile,
+        )
+
         download_result: DownloadResult = provider.download(record, raw_root)
 
         if download_result.status not in ("downloaded",):
@@ -202,6 +323,13 @@ class DatasetAcquisitionService:
                     "download": {"status": download_result.status, "files": [str(p) for p in download_result.files]},
                     "task_profile": profile.to_dict(),
                 },
+            )
+            self._write_plan(
+                workspace_root, candidates,
+                status=manifest.status,
+                selected_dataset_id=record.dataset_id,
+                reason=download_result.reason or "",
+                profile=profile,
             )
             return AcquisitionResult(
                 status=manifest.status, manifest=manifest, manifest_path=manifest_path,
@@ -238,6 +366,13 @@ class DatasetAcquisitionService:
                         "task_profile": profile.to_dict(),
                     },
                 )
+                self._write_plan(
+                    workspace_root, candidates,
+                    status="failed",
+                    selected_dataset_id=record.dataset_id,
+                    reason=reason,
+                    profile=profile,
+                )
                 return AcquisitionResult(
                     status="failed", manifest=manifest, manifest_path=manifest_path,
                     candidate=chosen, evidence_path=ev,
@@ -273,6 +408,13 @@ class DatasetAcquisitionService:
                     "task_profile": profile.to_dict(),
                 },
             )
+            self._write_plan(
+                workspace_root, candidates,
+                status="failed",
+                selected_dataset_id=record.dataset_id,
+                reason=f"no_normalizer:{profile.task_type}",
+                profile=profile,
+            )
             return AcquisitionResult(
                 status="failed", manifest=manifest, manifest_path=manifest_path,
                 candidate=chosen, evidence_path=ev,
@@ -300,6 +442,13 @@ class DatasetAcquisitionService:
                     "task_profile": profile.to_dict(),
                 },
             )
+            self._write_plan(
+                workspace_root, candidates,
+                status="failed",
+                selected_dataset_id=record.dataset_id,
+                reason=f"normalize_empty:{e}",
+                profile=profile,
+            )
             return AcquisitionResult(
                 status="failed", manifest=manifest, manifest_path=manifest_path,
                 candidate=chosen, evidence_path=ev,
@@ -322,6 +471,13 @@ class DatasetAcquisitionService:
                     "candidate": {"dataset_id": record.dataset_id, "score": chosen.score},
                     "task_profile": profile.to_dict(),
                 },
+            )
+            self._write_plan(
+                workspace_root, candidates,
+                status="failed",
+                selected_dataset_id=record.dataset_id,
+                reason=f"normalize_error:{e}",
+                profile=profile,
             )
             return AcquisitionResult(
                 status="failed", manifest=manifest, manifest_path=manifest_path,
@@ -354,6 +510,12 @@ class DatasetAcquisitionService:
                 "prepared_contract": manifest.prepared_contract,
                 "task_profile": profile.to_dict(),
             },
+        )
+        self._write_plan(
+            workspace_root, candidates,
+            status="prepared",
+            selected_dataset_id=record.dataset_id,
+            profile=profile,
         )
         return AcquisitionResult(
             status="prepared", manifest=manifest, manifest_path=manifest_path,

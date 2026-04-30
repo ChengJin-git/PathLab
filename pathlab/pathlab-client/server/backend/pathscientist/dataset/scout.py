@@ -27,8 +27,20 @@ class DatasetScout:
         self._registry = registry
         self._policy = policy or AcquisitionPolicy()
 
-    def find_candidates(self, profile: TaskProfile, top_k: int = 5) -> list[DatasetCandidate]:
-        records = self._registry.load()
+    def find_candidates(
+        self,
+        profile: TaskProfile,
+        top_k: int = 5,
+        *,
+        records: list[DatasetRecord] | None = None,
+    ) -> list[DatasetCandidate]:
+        """Score and rank candidates.
+
+        ``records`` overrides the registry load — used by acquisition to pass
+        provider-probed records (Plan-2026-04-30 dataset-discovery T6).
+        """
+        if records is None:
+            records = self._registry.load()
         scored: list[DatasetCandidate] = []
         for r in records:
             score, reasons = self._score(r, profile)
@@ -63,7 +75,29 @@ class DatasetScout:
         Organ-only, asset-only, and keyword-only matches are insufficient —
         this prevents picking a patch_classification dataset for a
         mil_classification profile just because both are "breast".
+
+        Plan-2026-04-29 P1-6: when ``profile.required_label_keywords`` is
+        set (e.g. MSI prediction names ["MSI","MSI-H","MSS",...]), the
+        candidate must surface at least one of those tokens in its
+        name/dataset_id/tags. A patch_classification + colorectal record
+        with no MSI labels is NOT relevant for an MSI prediction task.
         """
+        # Plan-2026-04-29 P1-6: hard label-semantics gate — must run before
+        # the lenient task_type/asset checks. If the profile names a
+        # specific prediction target (MSI, HER2, etc.) and the candidate
+        # has no overlap with any required label keyword, refuse the
+        # match outright.
+        if profile.required_label_keywords:
+            text = (
+                f"{record.name} {record.dataset_id} "
+                f"{' '.join(record.tags)}"
+            ).lower()
+            if not any(
+                kw and kw.lower() in text
+                for kw in profile.required_label_keywords
+            ):
+                return False
+
         # Rule 1: exact task_type match
         if profile.task_type and profile.task_type in record.task_types:
             return True

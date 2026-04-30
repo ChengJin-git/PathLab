@@ -127,7 +127,7 @@
     "tags": ["WSI", "HE", "ISUP", "gleason", "kaggle"],
     "source_paper_ids": ["doi:10.1038/s41591-021-01620-2"],
     "download": {
-      "kind": "manual",
+      "kind": "kaggle_competition",
       "remote_id": "prostate-cancer-grade-assessment",
       "urls": [
         "https://www.kaggle.com/competitions/prostate-cancer-grade-assessment/data"
