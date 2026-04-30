@@ -16,7 +16,7 @@ from sqlalchemy import select
 
 from backend.ai.schemas.base import TaskStatus
 from backend.ai.task_taxonomy import normalize_task_type
-from backend.common.config import Config
+from backend.database.models import AIResult
 from backend.database.models import TrainingTaskWSI
 from backend.database.repositories import TrainingTaskRepository
 
@@ -112,11 +112,6 @@ async def _run_survival_analysis(
             f"Survival analysis for task {task_id}: no test set found, using all WSIs"
         )
 
-    # We load result JSONs from ai_results dir since survival results structure is different
-    # and might not be fully in DB (AIResult table is optimized for classification)
-
-    ai_results_dir = Config.get_uploads_dir() / "ai_results"
-
     risks = []
     times = []
     events = []
@@ -124,65 +119,38 @@ async def _run_survival_analysis(
     surv_probs = []  # list of lists
     bin_edges = None
 
-    if ai_results_dir.exists():
-        for wsi_dir in ai_results_dir.iterdir():
-            if wsi_dir.is_dir():
-                # Match both regular (train_{task_id}_result.json) and K-Fold (train_{task_id}_fold_*_result.json) files
-                matched_files = list(wsi_dir.glob(f"train_{task_id}*_result.json"))
-                if matched_files:
-                    logger.debug(
-                        f"Found {len(matched_files)} result files in {wsi_dir.name}: {[f.name for f in matched_files]}"
-                    )
-                for json_file in matched_files:
-                    try:
-                        with open(json_file, "r") as f:
-                            data = json.load(f)
-                            if data.get("task_id") == task_id:
-                                wsi_id = data.get("wsi_id", wsi_dir.name)
-
-                                # Only include if no test set defined OR wsi is in test set
-                                if test_wsi_ids and wsi_id not in test_wsi_ids:
-                                    continue  # Skip non-test set WSIs
-
-                                # Required fields
-                                if "risk_score" not in data or "event_time" not in data:
-                                    continue
-
-                                # Get case_id for this wsi
-                                case_id = (
-                                    wsi_case_map.get(wsi_id, wsi_id)
-                                    if is_case_level
-                                    else wsi_id
-                                )
-
-                                risks.append(data["risk_score"])
-                                times.append(data["event_time"])
-                                events.append(data.get("event_status", 0))
-
-                                if "surv_probs" in data:
-                                    surv_probs.append(data["surv_probs"])
-                                else:
-                                    logger.warning(f"No surv_probs in {json_file.name}")
-
-                                if "bin_edges" in data and bin_edges is None:
-                                    bin_edges = data["bin_edges"]
-
-                                wsi_results.append(
-                                    {
-                                        "wsi_id": wsi_id,
-                                        "filename": None,
-                                        "case_id": case_id,
-                                        "risk_score": data["risk_score"],
-                                        "event_time": data["event_time"],
-                                        "event_status": data.get("event_status", 0),
-                                        "surv_probs": data.get("surv_probs"),
-                                    }
-                                )
-                    except Exception as e:
-                        logger.warning(
-                            f"Failed to load survival result from {json_file}: {e}"
-                        )
-                        continue
+    query = select(AIResult).where(AIResult.task_id == task_id)
+    if test_wsi_ids:
+        query = query.where(AIResult.wsi_id.in_(test_wsi_ids))
+    result = await db.execute(query)
+    ai_results = result.scalars().all()
+    for ai_result in ai_results:
+        metadata = ai_result.extra_metadata if isinstance(ai_result.extra_metadata, dict) else {}
+        risk_score = metadata.get("risk_score")
+        event_time = metadata.get("event_time")
+        if risk_score is None or event_time is None:
+            continue
+        wsi_id = ai_result.wsi_id
+        case_id = wsi_case_map.get(wsi_id, wsi_id) if is_case_level else wsi_id
+        risks.append(float(risk_score))
+        times.append(float(event_time))
+        events.append(int(metadata.get("event_status", 0)))
+        maybe_surv_probs = metadata.get("surv_probs")
+        if isinstance(maybe_surv_probs, list):
+            surv_probs.append(maybe_surv_probs)
+        if bin_edges is None and isinstance(metadata.get("bin_edges"), list):
+            bin_edges = metadata.get("bin_edges")
+        wsi_results.append(
+            {
+                "wsi_id": wsi_id,
+                "filename": None,
+                "case_id": case_id,
+                "risk_score": float(risk_score),
+                "event_time": float(event_time),
+                "event_status": int(metadata.get("event_status", 0)),
+                "surv_probs": maybe_surv_probs,
+            }
+        )
 
     if not risks:
         # Check database if not found in files (fallback)

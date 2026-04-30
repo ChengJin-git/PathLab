@@ -7,7 +7,6 @@ metric calculation, bootstrap CI, chart generation, and result persistence.
 
 import asyncio
 import functools
-import json
 import logging
 from collections import defaultdict
 from typing import Dict, List, Optional, Any
@@ -17,7 +16,6 @@ from sqlalchemy import select
 
 from backend.ai.schemas.base import TaskStatus
 from backend.ai.task_taxonomy import normalize_task_type
-from backend.common.config import Config
 from backend.database.models import AIResult, WSISlide, TrainingTaskWSI
 from backend.database.repositories import TrainingTaskRepository, WSIRepository
 
@@ -146,58 +144,6 @@ async def _run_classification_analysis(
                     "probs": ai_result.probs,
                 }
             )
-
-    # If no results from database, try to load from ai_results directory
-    if not predictions:
-        # Get test set WSI IDs for file-based fallback
-        test_wsi_query = (
-            select(TrainingTaskWSI.wsi_id)
-            .where(TrainingTaskWSI.task_id == task_id)
-            .where(TrainingTaskWSI.split == "test")
-        )
-        test_wsi_result = await db.execute(test_wsi_query)
-        test_wsi_ids = {row[0] for row in test_wsi_result.all()}
-
-        ai_results_dir = Config.get_uploads_dir() / "ai_results"
-        if ai_results_dir.exists():
-            for wsi_dir in ai_results_dir.iterdir():
-                if wsi_dir.is_dir():
-                    for json_file in wsi_dir.glob("*.json"):
-                        # Add explicit yield to event loop to keep server responsive during large CPU file I/O
-                        await asyncio.sleep(0.001)
-                        try:
-                            with open(json_file, "r") as f:
-                                data = json.load(f)
-                                wsi_id = data.get("wsi_id", wsi_dir.name)
-                                # Only include if task matches and (no test set defined OR wsi is in test set)
-                                if data.get("task_id") == task_id and data.get("pred"):
-                                    if test_wsi_ids and wsi_id not in test_wsi_ids:
-                                        continue  # Skip non-test set WSIs
-                                    predictions.append(data["pred"])
-                                    labels.append(data.get("ground_truth", "unknown"))
-                                    probs_list.append(data.get("probs", {}))
-                                    wsi_results.append(
-                                        {
-                                            "wsi_id": wsi_id,
-                                            "filename": None,  # filled by batch lookup below
-                                            "case_id": data.get("case_id", wsi_id),
-                                            "label": data.get(
-                                                "ground_truth", "unknown"
-                                            ),
-                                            "pred": data["pred"],
-                                            "correct": data.get(
-                                                "correct",
-                                                data["pred"]
-                                                == data.get("ground_truth"),
-                                            ),
-                                            "probs": data.get("probs"),
-                                        }
-                                    )
-                        except Exception as e:
-                            logger.warning(
-                                f"Failed to load result from {json_file}: {e}"
-                            )
-                            continue
 
     if not predictions:
         raise HTTPException(
