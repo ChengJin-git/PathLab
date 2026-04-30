@@ -692,11 +692,11 @@ async def list_datasets(
         if owner_ids:
             result = await db.execute(
                 sql_select(
-                    cast(AuthUser.id, String), AuthUser.email, AuthUser.nickname
+                    cast(AuthUser.id, String), AuthUser.username, AuthUser.nickname
                 ).where(cast(AuthUser.id, String).in_(owner_ids))
             )
-            for uid, email, nickname in result.all():
-                username_map[uid] = nickname or email or None
+            for uid, username, nickname in result.all():
+                username_map[uid] = nickname or username or None
 
     items = []
     for dataset in datasets:
@@ -749,12 +749,12 @@ async def get_dataset_summary(
         from backend.auth.models import User as AuthUser
 
         result = await db.execute(
-            sql_select(AuthUser.email, AuthUser.nickname).where(
+            sql_select(AuthUser.username, AuthUser.nickname).where(
                 cast(AuthUser.id, String) == dataset["user_id"]
             )
         )
         owner = result.one_or_none()
-        dataset["username"] = (owner.nickname or owner.email) if owner else None
+        dataset["username"] = (owner.nickname or owner.username) if owner else None
 
     return dataset
 

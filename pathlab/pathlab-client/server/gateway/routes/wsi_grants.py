@@ -409,7 +409,7 @@ async def list_dataset_grants(
         user_rows = await db.execute(
             select(
                 UserModel.id,
-                UserModel.email,
+                UserModel.username,
                 UserModel.nickname,
                 UserModel.role,
                 UserModel.is_active,
