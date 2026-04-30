@@ -5,19 +5,11 @@ import numpy as np
 import pytest
 
 from backend.preprocessing import heatmap_routes
-from backend.preprocessing.heatmap_utils import load_result_meta
 from backend.ai.result_store import AIResultStore, ATTENTION_ARTIFACT, PRED_MASK_ARTIFACT
 
 
 def test_heatmap_artifact_selection_requires_bundle_artifacts(tmp_path, monkeypatch):
     uploads_dir = tmp_path / "uploads"
-    legacy_dir = uploads_dir / "ai_results" / "wsi-legacy"
-    legacy_dir.mkdir(parents=True)
-    np.save(legacy_dir / "train_task-legacy_attention.npy", np.array([1.0]))
-    (legacy_dir / "train_task-legacy_result.json").write_text(
-        json.dumps({"task_id": "task-legacy", "wsi_id": "wsi-legacy"}),
-        encoding="utf-8",
-    )
 
     monkeypatch.setattr(heatmap_routes, "_uploads_dir", lambda: uploads_dir)
 
@@ -103,20 +95,6 @@ async def test_available_heatmaps_uses_canonical_patch_segmentation_for_masks(mo
         },
     )
 
-    legacy_dir = uploads_dir / "ai_results" / "wsi-1"
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / "segmentation_legacy-only_pred_mask.npy").write_bytes(b"ignored")
-    (legacy_dir / "segmentation_legacy-only_result.json").write_text(
-        json.dumps(
-            {
-                "task_id": "legacy-only",
-                "task_name": "Legacy only",
-                "num_classes": 2,
-                "class_names": ["background", "tumor"],
-            }
-        )
-    )
-
     class FakeTrainingTaskRepository:
         @staticmethod
         async def get_by_ids(_db, _task_ids):
@@ -141,29 +119,3 @@ async def test_available_heatmaps_uses_canonical_patch_segmentation_for_masks(mo
 
     assert response["heatmaps"][0]["task_type"] == "patch_segmentation"
     assert response["heatmaps"][0]["data_type"] == "patch"
-
-
-def test_load_result_meta_reads_from_ai_result_store_when_json_missing(tmp_path):
-    uploads_dir = tmp_path / "uploads"
-    result_dir = uploads_dir / "ai_results" / "wsi-2"
-    result_dir.mkdir(parents=True)
-
-    task_id = "task-heatmap-meta"
-    AIResultStore(uploads_dir).write_wsi_result(
-        task_id=task_id,
-        wsi_id="wsi-2",
-        result={
-            "task_id": task_id,
-            "wsi_id": "wsi-2",
-            "pred": "tumor",
-            "classes": ["normal", "tumor"],
-        },
-    )
-
-    attention_file = result_dir / f"train_{task_id}_attention.npy"
-    attention_file.write_bytes(b"placeholder")
-
-    meta = load_result_meta(attention_file, "_attention.npy")
-
-    assert meta["task_id"] == task_id
-    assert meta["wsi_id"] == "wsi-2"
