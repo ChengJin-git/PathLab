@@ -158,6 +158,12 @@ describe('listTrainingSubmissionRecords', () => {
   it('returns empty array when no records exist', () => {
     expect(listTrainingSubmissionRecords()).toHaveLength(0)
   })
+
+  it('does not return date-formatted analysis cancellation ids as training submissions', () => {
+    markTrainingSubmissionCancelled('20260430_115900')
+
+    expect(listTrainingSubmissionRecords(['cancelled'])).toHaveLength(0)
+  })
 })
 
 // ---------------------------------------------------------------------------
