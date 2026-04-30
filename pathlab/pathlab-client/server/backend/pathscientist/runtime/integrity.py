@@ -7,7 +7,7 @@ tracker, or workspace objects.
 Motivated by session ``session_142a4acaed08`` (2026-04-18) where the run
 reported success even though git log was empty, ``.evidence/runs/`` was
 empty, and every tracker entry had ``run_id=""`` — five invariants broken at
-once with zero error surfaced to the user. See ``docs/plan/`` for the
+once with zero error surfaced to the user. See ``docs/plans/`` for the
 Session Integrity Hardening plan.
 """
 from __future__ import annotations

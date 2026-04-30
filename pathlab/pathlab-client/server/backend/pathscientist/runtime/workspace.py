@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,6 +21,50 @@ if TYPE_CHECKING:
     from .sandbox import ApptainerSandbox
 
 logger = logging.getLogger(__name__)
+
+# Runtime artifacts are captured by output/evidence plumbing, not by broad
+# git ratchet commits. Keep this list conservative and only for generated
+# files that can be huge or volatile.
+_GENERATED_ARTIFACT_PATHS = (
+    "output",
+    "output/**",
+    ".evidence",
+    ".evidence/**",
+    # Plan-2026-04-29 P1 #4: synthesis writes report manifests / paper
+    # drafts under ``.reports/<session_id>/`` — these belong with
+    # evidence, not with code commits. Pre-fix, ratchet swept them up
+    # via ``git add -A``.
+    ".reports",
+    ".reports/**",
+    "logs/completions",
+    "logs/completions/**",
+    "cache",
+    "cache/**",
+    ".cache",
+    ".cache/**",
+    "__pycache__",
+    "**/__pycache__/**",
+    "*.pt",
+    "**/*.pt",
+    "*.pth",
+    "**/*.pth",
+    "*.ckpt",
+    "**/*.ckpt",
+    "*.safetensors",
+    "**/*.safetensors",
+    "*.h5",
+    "**/*.h5",
+    "*.hdf5",
+    "**/*.hdf5",
+)
+
+
+def _artifact_exclusion_pathspecs() -> str:
+    """Return shell-quoted git pathspec excludes for generated artifacts."""
+    specs = ["."]
+    specs.extend(f":(exclude){pattern}" for pattern in _GENERATED_ARTIFACT_PATHS)
+    return " ".join(shlex.quote(spec) for spec in specs)
+
 
 # Regex for SEARCH/REPLACE diff blocks
 _DIFF_PATTERN = re.compile(
@@ -143,7 +188,10 @@ class Workspace:
 
     def list_files(self) -> list[str]:
         """List all tracked + untracked files in workspace."""
-        result = self._git("ls-files --cached --others --exclude-standard")
+        result = self._git(
+            "ls-files --cached --others --exclude-standard -- "
+            f"{_artifact_exclusion_pathspecs()}"
+        )
         if result.exit_code != 0:
             return []
         return [f for f in result.stdout.strip().split("\n") if f]
@@ -155,7 +203,7 @@ class Workspace:
         for rel_path, content in files.items():
             self.write_file(rel_path, content)
 
-        add = self._git("add -A")
+        add = self._git(f"add -A -- {_artifact_exclusion_pathspecs()}")
         if add.exit_code != 0:
             raise CommitFailed("add", add.exit_code, add.stderr)
 
@@ -175,7 +223,7 @@ class Workspace:
         where a Chinese objective + metrics JSON silently failed ``git commit``
         under the old single-quoted form.
         """
-        add = self._git("add -A")
+        add = self._git(f"add -A -- {_artifact_exclusion_pathspecs()}")
         if add.exit_code != 0:
             raise CommitFailed("add", add.exit_code, add.stderr)
 
@@ -208,6 +256,52 @@ class Workspace:
             raise CommitFailed("revert_clean", clean.exit_code, clean.stderr)
 
         logger.info("[workspace] Reverted to last commit")
+
+    def commit_paths(self, paths: list[str], message: str) -> str:
+        """Commit ONLY the supplied workspace-relative paths.
+
+        Used for metadata commits (e.g. .evidence) after a scientific run
+        has already been finalized. Unlike ``commit()`` this must NOT use
+        ``git add -A`` because we don't want unrelated dirty train.py
+        changes from a follow-up iteration sweeping into the metadata
+        commit.
+
+        Returns the new HEAD's commit hash. If nothing in ``paths`` was
+        actually staged (no diff), returns the existing HEAD without
+        creating an empty commit. Raises ``CommitFailed`` on any git
+        error.
+
+        Plan T2 (docs/plans/2026-04-28-pathscientist-latest-session-review-fixes-plan.md):
+        evidence files were previously left untracked after ratchet_commit,
+        and a later iteration's ``git clean -fd`` (in revert()) would wipe
+        them, leading to ``evidence_run_missing`` and a downgraded report.
+        """
+        safe_paths = [p for p in paths if p]
+        if not safe_paths:
+            return self.get_current_commit()
+
+        quoted = " ".join(shlex.quote(p) for p in safe_paths)
+        add = self._git(f"add -- {quoted}")
+        if add.exit_code != 0:
+            raise CommitFailed("commit_paths_add", add.exit_code, add.stderr)
+
+        # exit code 0 = no staged changes, 1 = staged changes present.
+        diff = self._git(f"diff --cached --quiet -- {quoted}")
+        if diff.exit_code == 0:
+            return self.get_current_commit()
+        if diff.exit_code != 1:
+            raise CommitFailed("commit_paths_diff", diff.exit_code, diff.stderr)
+
+        commit = self._commit_with_message_file(message)
+        if commit.exit_code != 0:
+            raise CommitFailed("commit_paths_commit", commit.exit_code, commit.stderr)
+
+        rev = self._git("rev-parse HEAD")
+        if rev.exit_code != 0:
+            raise CommitFailed("commit_paths_rev", rev.exit_code, rev.stderr)
+        commit_hash = rev.stdout.strip()
+        logger.info(f"[workspace] Metadata-committed paths {safe_paths}: {commit_hash[:8]} — {message}")
+        return commit_hash
 
     # --- Internal: commit helper ------------------------------------------
 

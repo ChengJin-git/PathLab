@@ -37,6 +37,7 @@ def load_conversation_summary(conversation_dir: Path) -> dict:
         "best_metric": agent_state.get("best_metric", {}),
         "tracker_state": agent_state.get("tracker_state", {}),
         "iteration_state": agent_state.get("iteration_state", {}),
+        "research_summary": agent_state.get("research_session", {}).get("final_summary", ""),
     }
 
 

@@ -9,6 +9,39 @@ from uuid import UUID, uuid4
 from ..persistence.layout import get_persistence_root
 
 
+DEFAULT_BASE_DIR = "/project/vcompath/storage/ywangrm/tmp/pathscientist"
+
+
+def _resolve_base_dir(
+    *,
+    base_dir: str = "",
+    workspace_dir: str = "",
+    conversation_persistence_dir: str = "",
+) -> Path:
+    """Resolve the session base dir without forcing tests into cluster storage."""
+    if base_dir:
+        return Path(base_dir).expanduser()
+    env_base = os.environ.get("PATHSCIENTIST_BASE_DIR", "")
+    if env_base:
+        return Path(env_base).expanduser()
+    if conversation_persistence_dir:
+        return Path(conversation_persistence_dir).expanduser()
+    if workspace_dir:
+        return Path(workspace_dir).expanduser().parent / ".pathscientist"
+    return Path(DEFAULT_BASE_DIR)
+
+
+def _mkdir_or_explain(path: Path, *, purpose: str) -> None:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Cannot create PathScientist {purpose} directory at {path}: {exc}. "
+            "Set PATHSCIENTIST_BASE_DIR=/tmp/pathscientist or pass --workspace "
+            "and --output to writable locations."
+        ) from exc
+
+
 @dataclass
 class PathScientistSession:
     """Unique session with isolated workspace, output, and conversation persistence."""
@@ -43,23 +76,24 @@ class PathScientistSession:
         else:
             conversation_id = uuid4()
 
-        base = Path(base_dir or os.environ.get(
-            "PATHSCIENTIST_BASE_DIR",
-            "/project/vcompath/storage/ywangrm/tmp/pathscientist",
-        ))
+        base = _resolve_base_dir(
+            base_dir=base_dir,
+            workspace_dir=workspace_dir,
+            conversation_persistence_dir=conversation_persistence_dir,
+        )
 
         if workspace_dir:
             ws = Path(workspace_dir)
         else:
             ws = base / f"session_{session_id}"
 
-        ws.mkdir(parents=True, exist_ok=True)
+        _mkdir_or_explain(ws, purpose="workspace")
 
         if output_dir:
             out = Path(output_dir)
         else:
             out = ws / "output"
-        out.mkdir(parents=True, exist_ok=True)
+        _mkdir_or_explain(out, purpose="output")
 
         # Conversation persistence root
         persistence_base = conversation_persistence_dir or str(base)

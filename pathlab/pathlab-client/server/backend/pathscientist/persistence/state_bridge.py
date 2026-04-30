@@ -50,5 +50,6 @@ def dump_iteration_state(iteration_state: IterationState) -> dict[str, Any]:
         "last_validated_path": iteration_state.last_validated_path,
         "last_quick_check_hash": iteration_state.last_quick_check_hash,
         "last_run_id": iteration_state.last_run_id,
+        "finalized_run_ids": iteration_state.finalized_run_ids,
         "history": iteration_state.history,
     }

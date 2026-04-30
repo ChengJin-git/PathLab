@@ -14,5 +14,12 @@ def get_persistence_root(base_dir: str | Path) -> Path:
     The SDK will create per-conversation subdirectories automatically.
     """
     root = Path(base_dir).expanduser().resolve() / "conversations"
-    root.mkdir(parents=True, exist_ok=True)
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Cannot create PathScientist conversation persistence directory at {root}: {exc}. "
+            "Set PATHSCIENTIST_BASE_DIR=/tmp/pathscientist or "
+            "PATHSCIENTIST_PERSISTENCE_DIR to a writable location."
+        ) from exc
     return root

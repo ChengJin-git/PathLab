@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -24,6 +25,7 @@ from ..runtime.workspace import Workspace
 from ..tools.metrics import MetricsTracker
 
 logger = logging.getLogger(__name__)
+DEFAULT_BASE_DIR = "/project/vcompath/storage/ywangrm/tmp/pathscientist"
 
 
 def _read_agent_state_from_disk(conversation_dir: Path) -> dict:
@@ -37,7 +39,13 @@ def _read_agent_state_from_disk(conversation_dir: Path) -> dict:
 
 def _rebuild_tracker(agent_state: dict, config: PathScientistConfig) -> MetricsTracker:
     """Rebuild MetricsTracker from persisted tracker_state."""
+    from ..orchestrator.metrics_utils import repair_tracker_state_payload
+
     tracker_data = agent_state.get("tracker_state", {})
+    tracker_data, _ = repair_tracker_state_payload(
+        tracker_data,
+        default_metric=config.primary_metric,
+    )
     primary_metric = tracker_data.get("primary_metric", config.primary_metric)
     tracker = MetricsTracker(primary_metric=primary_metric)
     tracker.best_value = tracker_data.get("best_value", 0.0)
@@ -59,8 +67,35 @@ def _rebuild_iteration_state(agent_state: dict, config: PathScientistConfig) -> 
     state.last_validated_path = iter_data.get("last_validated_path", "")
     state.last_quick_check_hash = iter_data.get("last_quick_check_hash", "")
     state.last_run_id = iter_data.get("last_run_id", "")
+    state.finalized_run_ids = iter_data.get("finalized_run_ids", [])
     state.history = iter_data.get("history", [])
     return state
+
+
+def _candidate_persistence_roots(config: PathScientistConfig) -> list[Path]:
+    """Return plausible persistence roots in priority order for resume."""
+    candidates: list[Path] = []
+
+    def add(base_dir: str | Path | None) -> None:
+        if not base_dir:
+            return
+        root = get_persistence_root(base_dir)
+        if root not in candidates:
+            candidates.append(root)
+
+    add(config.conversation_persistence_dir)
+
+    workspace_dir = config.workspace_dir
+    if workspace_dir:
+        workspace_path = Path(workspace_dir).expanduser().resolve()
+        if workspace_path.name.startswith("session_"):
+            add(workspace_path.parent)
+        add(workspace_path)
+
+    add(os.environ.get("PATHSCIENTIST_PERSISTENCE_DIR", ""))
+    add(os.environ.get("PATHSCIENTIST_BASE_DIR", DEFAULT_BASE_DIR))
+
+    return candidates
 
 
 def resume_conversation(
@@ -77,16 +112,24 @@ def resume_conversation(
     """
     from ..agent import create_agent
 
-    # Resolve persistence root
-    if config.conversation_persistence_dir:
-        persistence_root = get_persistence_root(config.conversation_persistence_dir)
-    else:
-        from ..persistence.layout import get_persistence_root as _get_root
-        base_dir = config.workspace_dir or "/project/vcompath/storage/ywangrm/tmp/pathscientist"
-        # Walk up to the base dir (workspace_dir might be base/session_xxx)
-        persistence_root = _get_root(Path(base_dir).parent if "session_" in str(base_dir) else base_dir)
+    # Resolve persistence root by probing plausible locations instead of
+    # assuming the workspace layout matches the persistence layout.
+    persistence_root = None
+    conversation_dir = None
+    searched_dirs: list[str] = []
+    for candidate_root in _candidate_persistence_roots(config):
+        candidate_dir = candidate_root / conversation_id.hex
+        searched_dirs.append(str(candidate_dir))
+        if (candidate_dir / "base_state.json").exists():
+            persistence_root = candidate_root
+            conversation_dir = candidate_dir
+            break
 
-    conversation_dir = persistence_root / conversation_id.hex
+    if persistence_root is None or conversation_dir is None:
+        raise FileNotFoundError(
+            "No base_state.json found for conversation "
+            f"{conversation_id} in any candidate directory: {', '.join(searched_dirs)}"
+        )
 
     # Read agent_state from disk before creating the conversation
     agent_state = _read_agent_state_from_disk(conversation_dir)
@@ -119,8 +162,9 @@ def resume_conversation(
         iteration_state=iteration_state,
     ))
 
-    # Rebuild the agent (same tools, same LLM config)
-    agent, _, _, _ = create_agent(config, research_question=session.research_question)
+    # Rebuild the agent, reusing the rebuilt session so tool params
+    # point to the same session_id as the registered SessionDeps.
+    agent, _, _, _ = create_agent(config, research_question=session.research_question, session=session)
 
     # Create conversation — OpenHands detects base_state.json and enters resume mode
     conversation = LocalConversation(
@@ -140,6 +184,17 @@ def resume_conversation(
     from ..runtime.session_registry import get_session
     deps = get_session(session_id)
     deps.conversation = conversation
+
+    # Repair persisted metric state when old sessions used stale 0.0 summaries.
+    from ..orchestrator.state_bridge import load_research_session_state
+    from ..persistence.state_bridge import dump_tracker_state
+
+    repaired_tracker_state = dump_tracker_state(tracker)
+    if agent_state.get("tracker_state", {}) != repaired_tracker_state:
+        update_agent_state(conversation, tracker_state=repaired_tracker_state)
+
+    # This read path also repairs stale run_history / best_metric_value payloads.
+    load_research_session_state(conversation)
 
     logger.info(
         f"Resumed conversation {conversation_id} "

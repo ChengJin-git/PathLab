@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import logging
 import os
+import queue
 import re
+import signal
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -264,6 +267,22 @@ class ApptainerSandbox:
     ) -> tuple[int, str, bool]:
         """Run command, kill early if a fatal pattern appears in the first 30s.
 
+        Wall-clock timeout enforcement (Plan-2026-04-28 P0 #1):
+        the previous implementation iterated ``for line in proc.stdout``,
+        which blocks indefinitely on a quiet child — the timeout check
+        only ran AFTER the next line arrived, so a long-running silent
+        training pass would blow past `timeout` by hours
+        (session_d162f805e1d7: 1800s requested, 12973s observed).
+
+        Fix:
+        - Spawn the child in its own process group (``start_new_session=True``)
+          so we can hard-kill the whole tree, including any subprocesses
+          the training script forked.
+        - Use ``select.poll()`` on stdout with a short interval so the
+          wall-clock check fires regardless of how chatty the child is.
+        - On wall-clock timeout, escalate SIGTERM → SIGKILL on the
+          process group.
+
         Returns (exit_code, stdout, early_failed).
         """
         log_lines: list[str] = []
@@ -277,31 +296,131 @@ class ApptainerSandbox:
                 text=True,
                 env=env,
                 bufsize=1,
+                start_new_session=True,  # new process group → killpg works
             )
+        except Exception as e:
+            logger.error(f"[sandbox] Failed to launch: {e}", exc_info=True)
+            return -1, f"{e}", False
+
+        pgid = os.getpgid(proc.pid)
+
+        def _kill_tree(sig: int) -> None:
             try:
-                for line in proc.stdout:
+                os.killpg(pgid, sig)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                # Fallback: at least try the parent.
+                try:
+                    proc.send_signal(sig)
+                except Exception:
+                    pass
+
+        # Reader thread + queue: bypasses TextIOWrapper's internal
+        # buffer (select/poll on the fd doesn't see buffered text;
+        # readline can sit on the buffer indefinitely while the kernel
+        # pipe has no new bytes). The thread does blocking readlines
+        # and feeds the main loop via a queue with a short timeout, so
+        # the wall-clock check fires regardless of how chatty the child
+        # is. ``queue.get(timeout=interval)`` is the responsive wait.
+        line_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _reader():
+            try:
+                for line in iter(proc.stdout.readline, ""):
+                    line_queue.put(line)
+            except Exception as e:
+                logger.debug(f"[sandbox] reader thread exited: {e}")
+            finally:
+                line_queue.put(None)  # sentinel: stdout EOF
+
+        reader_thread = threading.Thread(target=_reader, daemon=True)
+        reader_thread.start()
+
+        try:
+            while True:
+                elapsed = time.monotonic() - start_time
+                remaining = timeout - elapsed
+
+                if remaining <= 0:
+                    logger.warning(
+                        f"[sandbox] Wall-clock timeout after {elapsed:.0f}s "
+                        f"(budget {timeout:.0f}s); killing process group {pgid}"
+                    )
+                    _kill_tree(signal.SIGTERM)
+                    try:
+                        proc.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        _kill_tree(signal.SIGKILL)
+                        try:
+                            proc.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            pass
+                    break
+
+                # Pull at most one line per iteration with a bounded wait,
+                # so the wall-clock check fires within ~0.5s of expiry.
+                wait = min(0.5, max(0.05, remaining))
+                try:
+                    line = line_queue.get(timeout=wait)
+                except queue.Empty:
+                    line = ""
+
+                if line is None:
+                    # Reader saw EOF on stdout; child has exited or is
+                    # about to. Wait briefly for the exit, then drain.
+                    try:
+                        proc.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        pass
+                    return proc.returncode if proc.returncode is not None else -1, "".join(log_lines), False
+
+                if line:
                     log_lines.append(line)
-                    elapsed = time.monotonic() - start_time
                     if elapsed < _EARLY_FAIL_WINDOW:
                         match = _EARLY_FAIL_REGEX.search(line)
                         if match:
-                            early_failed = True
                             logger.warning(
                                 f"[sandbox] Early failure at {elapsed:.1f}s: {match.group(0)}"
                             )
-                            proc.kill()
-                            proc.wait(timeout=5)
+                            _kill_tree(signal.SIGTERM)
+                            try:
+                                proc.wait(timeout=5)
+                            except subprocess.TimeoutExpired:
+                                _kill_tree(signal.SIGKILL)
+                                try:
+                                    proc.wait(timeout=5)
+                                except subprocess.TimeoutExpired:
+                                    pass
+                            # Drain any lines the reader has already
+                            # queued so the agent sees the full
+                            # traceback below the kill marker.
+                            while True:
+                                try:
+                                    extra = line_queue.get_nowait()
+                                except queue.Empty:
+                                    break
+                                if extra is None:
+                                    break
+                                log_lines.append(extra)
                             return -1, "".join(log_lines), True
 
-                proc.wait(timeout=max(0, timeout - (time.monotonic() - start_time)))
-                return proc.returncode, "".join(log_lines), False
+                # Child exited and queue empty? Let the EOF sentinel
+                # handle the return; here we only short-circuit if the
+                # child has already been reaped AND the queue is empty.
+                if proc.poll() is not None and line_queue.empty():
+                    return proc.returncode, "".join(log_lines), False
 
-            except subprocess.TimeoutExpired:
-                logger.warning(f"[sandbox] Timeout after {timeout:.0f}s")
-                proc.kill()
-                proc.wait(timeout=5)
-                return -1, "".join(log_lines), False
+            return -1, "".join(log_lines), False
 
         except Exception as e:
-            logger.error(f"[sandbox] Execution error: {e}", exc_info=True)
-            return -1, "".join(log_lines) + f"\n{e}", False
+            logger.error(
+                f"[sandbox] Execution error: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            _kill_tree(signal.SIGKILL)
+            try:
+                proc.wait(timeout=5)
+            except Exception:
+                pass
+            return -1, "".join(log_lines) + f"\n[sandbox-error] {type(e).__name__}: {e}", False
