@@ -10,7 +10,7 @@
 - `models.py`：业务 ORM 模型
 - `init_db.py`：初始化与建表逻辑
 - `repositories/`：按业务拆分的数据访问对象
-- `migrate_unify_annotations.py`：标注相关迁移脚本
+- `migrate_task_taxonomy.py`：任务 taxonomy / data group 相关迁移脚本
 
 ## 当前 ORM 表现状
 
@@ -48,9 +48,12 @@
 - `role` / `nickname`
 - `avatar_path`
 - `password_sha256`
-- `session_nonce`
+- `username`
+- `session_nonce`（legacy schema 兼容字段）/ `session_nonces`（当前会话 nonce 集合）
 - `agreement_accepted_at` / `agreement_ip`
 - `notice_acknowledged_at`
+- `deactivated_by_maintenance` / `first_activated_at`
+- `notify_on_success` / `notify_on_failed` / `notify_on_cancelled`
 - `registration_email`：用户通过 `POST /auth/request-access` 申请访问时填写的教育邮箱，用于发送申请受理与账号激活通知邮件；管理员通过 `POST /auth/users` 直接创建的用户可以为空
 
 ## annotation_id 命名规范
@@ -73,7 +76,7 @@
 
 - 取值 `"imported_gt"`：标注来源于外部导入的 mask GT
 - 取值 `"user_label"`：标注来源于用户手绘或共享标注 finalize
-- 计算逻辑：`GET /datasets/{dataset_id}/labels` 端点（annotation.py）读取 effective annotation 记录并根据 `source` 字段判断
+- 计算逻辑：`GET /annotation/datasets/{dataset_id}/labels` 端点（annotation.py）读取 effective annotation 记录并根据 `source` 字段判断
 - `SegmentationAnnotation.to_dict()` 也会在单条记录序列化时输出此字段（供 WSI viewer GT overlay 使用）
 
 ## 与旧文档相比的关键变化
@@ -86,7 +89,7 @@
 
 ## Repository 现状
 
-`repositories/` 当前包含 17 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
+`repositories/` 当前按业务拆分仓储模块，并由 `repositories/__init__.py` 统一导出：
 
 - `DataGroupRepository`
 - `DatasetRepository`

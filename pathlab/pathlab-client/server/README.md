@@ -31,29 +31,10 @@ server/
 ├── requirements-test.txt   # 测试依赖（pytest、pytest-asyncio、httpx）
 ├── pytest.ini              # asyncio_mode = auto
 ├── main.spec               # PyInstaller 配置
-├── tests/                  # 后端单元测试（29 个测试文件）
+├── tests/                  # 后端单元测试（pytest）
 │   ├── conftest.py         # fixtures：auth mock、app factory、load_dotenv
 │   ├── helpers.py          # 测试工具函数
-│   ├── test_config.py      # Config 类测试（28）
-│   ├── test_settings.py    # /settings 路由测试（19）
-│   ├── test_queue_config.py # /queue 路由测试（15）
-│   ├── test_ai_models.py   # AI 模型 GPU 测试（54）
-│   ├── test_ai_extractors_pretrained.py  # HF 预训练模型测试（~216）
-│   ├── test_fm_segmentation_decoders.py  # 分割 decoder 结构测试
-│   ├── test_feature_cache_nowait.py      # 特征缓存非阻塞写入
-│   ├── test_gpu_control.py               # GPU 坏卡探测与控制
-│   ├── test_patching_stage.py            # 推理流水线 patching 阶段
-│   ├── test_task_queue_patching.py       # 任务队列 patching 操作
-│   ├── test_resume_tasks.py              # 中断任务恢复逻辑
-│   ├── test_training_routing.py          # 训练任务路由与调度
-│   ├── test_chat_continuation_helpers.py # AI 对话续接辅助
-│   ├── test_chat_conversation_title_extraction.py # 会话标题提取
-│   ├── test_permission_logic.py          # 权限判断核心逻辑
-│   ├── test_permission_policy_updates.py # 权限策略行为回归
-│   ├── test_permission_revocation_fixes.py # 权限撤销边界修复
-│   ├── test_permission_closure_regressions.py # 权限闭包回归
-│   ├── test_dataset_repository_namespacing.py # 数据集命名空间隔离
-│   └── test_batch_inference.py                # 批量推理任务类型、请求模型校验与推理流程回归
+│   └── test_*.py           # 路由 / 权限 / 任务 / 存储 / 结果 / AI 回归，完整清单以文件系统为准
 ├── gateway/                # 对外 API 网关
 ├── backend/
 │   ├── ai/                 # AI 服务与任务实现
@@ -116,39 +97,14 @@ python -m pytest server/tests/test_ai_extractors_pretrained.py -v
 pip install -r server/requirements-test.txt
 ```
 
-当前后端测试文件（29 个测试文件，含 5 个权限专项、4 个 AI 模型测试，以及 Gateway / 预处理 / 运行时专项回归）：
+当前后端测试按行为域组织，完整清单以 `server/tests/test_*.py` 为准，主要覆盖：
 
-| 文件 | 测试数 | 覆盖内容 |
-|------|--------|---------|
-| `tests/test_config.py` | 28 | Config 全局设置、任务超时、并发数、维护模式 |
-| `tests/test_settings.py` | 19 | GET/POST /settings 路由、check-vllm（在线/离线/超时/无模型）|
-| `tests/test_queue_config.py` | 15 | GET/POST /queue/config、GET /queue/{id}（running/pending/not found）|
-| `tests/test_ai_models.py` | 54 | GPU 环境、extractor/aggregator/classifier 注册与 forward pass |
-| `tests/test_ai_extractors_pretrained.py` | ~216 | 18 个 HuggingFace 预训练模型加载、forward 维度、transforms |
-| `tests/test_auth_dependencies.py` | — | URL token / Authorization header 鉴权依赖与 scoped session |
-| `tests/test_batch_inference.py` | — | 批量推理任务类型、请求模型校验与完整推理流程回归 |
-| `tests/test_fm_segmentation_decoders.py` | — | 分割模型 decoder 结构与输出维度验证 |
-| `tests/test_feature_cache_nowait.py` | — | 特征缓存非阻塞写入逻辑 |
-| `tests/test_gateway_app_setup.py` | — | 顶层 router 注册与静态资源挂载 |
-| `tests/test_gateway_cleanup.py` | — | 旧任务 / 过期权限清理提交逻辑 |
-| `tests/test_gateway_runtime_orchestration.py` | — | Gateway 启停序列、预热任务与 HTTP client 装配 |
-| `tests/test_gateway_startup.py` | — | AI / Preprocessing 健康探测等待逻辑 |
-| `tests/test_gpu_control.py` | — | GPU 坏卡探测与 CUDA_VISIBLE_DEVICES 控制 |
-| `tests/test_gpu_utils.py` | — | NVML 回退路径下的 GPU 数量与显存信息 |
-| `tests/test_patching_stage.py` | — | 推理流水线 patching 阶段逻辑 |
-| `tests/test_preprocessing_slide_access.py` | — | slide cache 命中与驱逐 |
-| `tests/test_task_queue_patching.py` | — | 任务队列 patching 操作 |
-| `tests/test_resume_tasks.py` | — | 中断任务恢复与重启逻辑 |
-| `tests/test_training_routing.py` | — | 训练任务路由与调度策略 |
-| `tests/test_training_recommendation_paths.py` | — | 内置训练推荐运行时目录布局 |
-| `tests/test_chat_continuation_helpers.py` | — | AI 对话续接辅助函数 |
-| `tests/test_chat_conversation_title_extraction.py` | — | 会话标题自动提取逻辑 |
-| `tests/test_coords_utils.py` | — | H5 坐标属性加载异常兜底 |
-| `tests/test_permission_logic.py` | — | 权限判断核心逻辑（数据集 / WSI 访问层次规则）|
-| `tests/test_permission_policy_updates.py` | — | 权限策略变更后的行为回归（GPU grant、shared annotation、个人草稿）|
-| `tests/test_permission_revocation_fixes.py` | — | 权限撤销边界修复验证（in-process revoke、GPU 路径、分析提交 403）|
-| `tests/test_permission_closure_regressions.py` | — | 权限闭包回归测试（CSV 上传路由 guest 可用性等）|
-| `tests/test_dataset_repository_namespacing.py` | — | 数据集仓储命名空间隔离 |
+- 配置与运行时：`test_config.py`、`test_settings.py`、`test_queue_config.py`、`test_gateway_*`、`test_gpu_*`
+- 认证与权限：`test_auth_*`、`test_user_activation_backfill.py`、`test_permission_*`
+- 任务 taxonomy 与调度：`test_task_taxonomy.py`、`test_*_task_taxonomy.py`、`test_training_*`、`test_resume_tasks.py`
+- 存储与数据一致性：`test_storage_*`、`test_uploads_boundary.py`、`test_dataset_repository_namespacing.py`
+- 结果、分析与推理：`test_ai_result_store*.py`、`test_*analysis*.py`、`test_batch_inference.py`、`test_patching_stage.py`
+- AI 模型 smoke：`test_ai_models.py`、`test_fm_segmentation_decoders.py`；`test_ai_extractors_pretrained.py` 需 GPU / HuggingFace token，单独运行
 
 **测试设计要点**
 

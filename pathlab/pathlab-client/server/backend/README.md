@@ -62,14 +62,14 @@ backend/
 
 - 用户模型在 `auth/models.py`
 - FastAPI Users 配置在 `auth/users.py`
-- 当前会话控制依赖 JWT 与用户 `nonce`
+- 当前会话控制依赖 JWT 与用户 `session_nonces`；旧 `session_nonce` 字段仅为 schema 兼容保留
 
 ### 数据库
 
 - ORM 模型：`database/models.py`
 - 仓储导出：`database/repositories/__init__.py`
 - 初始化：`database/init_db.py`
-- 当前已确认 ORM 表共 21 个，权限相关模型已统一为 `dataset_grants` 与 `permission_audit_logs`
+- 当前 ORM 表以 `database/models.py` 与 `auth/models.py` 的 `__tablename__` 声明为准，权限相关模型统一为 `dataset_grants` 与 `permission_audit_logs`
 
 ### Redis / 配置
 
