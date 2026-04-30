@@ -36,7 +36,7 @@ test/
 ├── helpers/              # 测试工具函数
 │   └── apiHelpers.ts     # ok() / errResp() / noContent() / blobResp() / createSSEStream()
 └── unit/
-    ├── api/              # API 客户端层测试（20 个文件）
+    ├── api/              # API 客户端层测试
     │   ├── client.test.ts
     │   ├── crypto.test.ts
     │   ├── auth.test.ts
@@ -57,32 +57,14 @@ test/
     │   ├── settings.test.ts
     │   ├── storage.test.ts
     │   └── trainingOptions.test.ts
-    ├── lib/              # 纯工具函数 / Hook 测试（12 个文件）
-    │   ├── avatarUrl.test.ts
-    │   ├── cache.test.ts
-    │   ├── utils.test.ts
-    │   ├── chatMessageParser.test.ts
-    │   ├── datasetPagination.test.ts
-    │   ├── listPageFileView.test.ts
-    │   ├── segmentationUploadUtils.test.ts
-    │   ├── externalValidationUtils.test.ts
-    │   ├── trainingSubmissionTracker.test.ts
-    │   ├── useAsyncAction.test.tsx
-    │   ├── useConfirmDialog.test.tsx
-    │   └── useDebounce.test.tsx
+    ├── lib/              # 纯工具函数 / Hook 测试
+    │   └── *.test.ts(x)
     ├── contexts/         # React Context 测试
     │   └── AuthContext.test.tsx
-    └── components/       # 组件测试（7 个文件）
-        ├── settings/
-        │   ├── PermissionCenterModal.test.tsx
-        │   ├── UsersTab.test.tsx
-        │   ├── CreateUserModal.test.tsx
-        │   ├── EditUserModal.test.tsx
-        │   └── storage/
-        │       └── BatchScanResults.test.tsx
-        └── ui/
-            ├── modal-shell.test.tsx
-            └── pagination-footer.test.tsx
+    ├── constants/        # 常量测试
+    ├── pages/            # 页面级测试
+    └── components/       # 组件测试
+        └── **/*.test.tsx
 ```
 
 ---
@@ -370,7 +352,7 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 **`getCurrentUser()`**
 
 - 无 token 时直接返回 `{ is_logged_in: false }`，不发网络请求
-- 有 token 时请求 `/auth/users/me`，返回用户信息
+- 有 token 时请求 `/auth/me`，返回用户信息
 
 **`updateCurrentUser()`**
 
@@ -622,26 +604,29 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 
 **用户 CRUD**
 
-- `fetchUsers()`：GET 用户列表
-- `fetchUserDetail()`：GET 单个用户
+- `listUsers()`：GET 用户列表
+- `listUsersPaged()`：分页 / 搜索用户列表
+- `getUserById()`：GET 单个用户
 - `createUser()`：POST 创建用户（含 role、password 等字段）
 - `updateUser()`：PATCH 更新用户信息
 - `deleteUser()`：DELETE
 
-**状态管理**
+**批量状态管理**
 
-- `setUserActiveStatus(userId, true/false)`：激活 / 停用用户账号
+- `batchActivateUsers(userIds)` / `batchDeactivateUsers(userIds)`：批量激活 / 停用用户账号
+- `batchDeleteUsers(userIds)`：批量删除用户
 
-**密码**
+**协议与维护**
 
-- `resetUserPassword(userId, newPassword)`：管理员重置用户密码
-
-**权限与维护**
-
-- `getMyDatasetGrants()`：获取当前用户的临时提权数据集 ID 列表
-- `getClientIP()`：获取客户端 IP（用于协议签署记录）
-- `getMaintenanceNotice()`：获取当前维护公告（含 `active`、`message`、`needs_acknowledgment`）
+- `acceptAgreement(ip?)`：当前用户接受协议
+- `revokeUserAgreement(userId)`：管理员撤销指定用户的协议接受状态
+- `getMaintenanceMode()` / `setMaintenanceMode(enabled)`：读取 / 更新维护模式
+- `getMaintenanceNotice()` / `setMaintenanceNotice(message)`：读取 / 更新维护公告
 - `acknowledgeNotice()`：标记用户已读维护公告
+
+**辅助**
+
+- `getClientIP()`：获取客户端 IP（用于协议签署记录）
 
 ---
 

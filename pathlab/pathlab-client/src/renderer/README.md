@@ -69,7 +69,7 @@ src/renderer/
 
 ## API 客户端现状
 
-`src/api/` 当前已经按业务拆分为 **21 个 TypeScript 模块文件**，包括：
+`src/api/` 当前按业务拆分为模块化 TypeScript 文件，实际清单以 `src/renderer/src/api/*.ts` 为准，核心业务模块包括：
 
 - `analysis`
 - `annotation`
