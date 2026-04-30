@@ -57,7 +57,7 @@ function parsePositiveHours(value: string): number | undefined {
 }
 
 function getUserDisplayName(user?: Partial<UserListItem> | null) {
-  return user?.nickname || user?.email || "-";
+  return user?.nickname || user?.username || user?.email || "-";
 }
 
 export function PermissionCenterModal({

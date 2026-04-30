@@ -23,8 +23,8 @@ function getRoleBadgeColor(role: string) {
   }
 }
 
-function getUserDisplayName(user?: Partial<{ nickname?: string; email?: string }> | null) {
-  return user?.nickname || user?.email || "-";
+function getUserDisplayName(user?: Partial<{ nickname?: string | null; username?: string | null; email?: string | null }> | null) {
+  return user?.nickname || user?.username || user?.email || "-";
 }
 
 export interface PermissionDatasetPanelProps {
@@ -521,12 +521,12 @@ export function PermissionDatasetPanel({
                         onCheckedChange={(checked) => onToggleGrantUser(user.id, checked)}
                       />
                       <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-gray-900">
-                          {getUserDisplayName(user)}
-                        </div>
-                        <div className="mt-1 truncate text-xs text-gray-500">
-                          {user.email}
-                        </div>
+                  <div className="truncate text-sm font-medium text-gray-900">
+                    {getUserDisplayName(user)}
+                  </div>
+                  <div className="mt-1 truncate text-xs text-gray-500">
+                    {user.username || user.email || "-"}
+                  </div>
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           <span
                             className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium ${getRoleBadgeColor(user.role)}`}

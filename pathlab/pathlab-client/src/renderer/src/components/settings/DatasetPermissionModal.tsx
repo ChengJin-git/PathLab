@@ -123,14 +123,14 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
     const query = userSearchQuery.trim().toLowerCase()
     return eligibleUsers
       .filter((user) => !validPermissionUserIds.has(user.id))
-      .filter((user) => !query || user.email.toLowerCase().includes(query) || (user.nickname || '').toLowerCase().includes(query))
-      .sort((a, b) => (a.nickname || a.email).localeCompare(b.nickname || b.email))
+              .filter((user) => !query || (user.username || '').toLowerCase().includes(query) || (user.nickname || '').toLowerCase().includes(query) || (user.email || '').toLowerCase().includes(query))
+                .sort((a, b) => (a.nickname || a.username || a.email || '').localeCompare(b.nickname || b.username || b.email || ''))
   }, [eligibleUsers, userSearchQuery, validPermissionUserIds])
   const sortedPermissions = useMemo(() => {
     return [...permissions].sort((a, b) => {
       if (a.is_valid !== b.is_valid) return a.is_valid ? -1 : 1
-      const aName = userMap.get(a.user_id)?.nickname || userMap.get(a.user_id)?.email || a.user_id
-      const bName = userMap.get(b.user_id)?.nickname || userMap.get(b.user_id)?.email || b.user_id
+                      const aName = userMap.get(a.user_id)?.nickname || userMap.get(a.user_id)?.username || userMap.get(a.user_id)?.email || a.user_id
+                      const bName = userMap.get(b.user_id)?.nickname || userMap.get(b.user_id)?.username || userMap.get(b.user_id)?.email || b.user_id
       return aName.localeCompare(bName)
     })
   }, [permissions, userMap])
@@ -193,7 +193,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
 
   const handleRevokePermission = (permission: DatasetGrant) => {
     const datasetName = datasetMap.get(permission.dataset_id)?.dataset_name || permission.dataset_id
-    const userName = userMap.get(permission.user_id)?.nickname || userMap.get(permission.user_id)?.email || permission.user_id
+                    const userName = userMap.get(permission.user_id)?.nickname || userMap.get(permission.user_id)?.username || userMap.get(permission.user_id)?.email || permission.user_id
 
     showConfirmDialog({
       title: t('settings.datasetPermissionModal.revokePermission'),
@@ -343,7 +343,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
                   <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
                     {sortedPermissions.map((permission) => {
                       const user = userMap.get(permission.user_id)
-                      const displayName = user?.nickname || user?.email || permission.user_id
+                      const displayName = user?.nickname || user?.username || user?.email || permission.user_id
                       return (
                         <div
                           key={permission.id}
@@ -352,6 +352,7 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
                           <div className="min-w-0 flex-1">
                             <div className="font-medium text-gray-900 truncate">{displayName}</div>
                             {user?.email && <div className="text-xs text-gray-500 mt-1 truncate">{user.email}</div>}
+                      {!user?.email && user?.username && <div className="text-xs text-gray-500 mt-1 truncate">{user.username}</div>}
                             <div className="flex flex-wrap items-center gap-2 mt-2">
                               {user && (
                                 <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getRoleBadgeColor(user.role)}`}>
@@ -429,8 +430,8 @@ export function DatasetGrantModal({ showConfirmDialog, closeConfirmDialog, onClo
                           onCheckedChange={(checked) => handleToggleUser(user.id, checked === true)}
                         />
                         <label htmlFor={`permission-user-${user.id}`} className="text-sm text-gray-700 cursor-pointer flex-1 min-w-0">
-                          <div className="font-medium truncate">{user.nickname || user.email}</div>
-                          <div className="text-xs text-gray-500 truncate mt-0.5">{user.email}</div>
+                          <div className="font-medium truncate">{user.nickname || user.username || user.email}</div>
+                          <div className="text-xs text-gray-500 truncate mt-0.5">{user.username || user.email}</div>
                           <div className="flex flex-wrap items-center gap-2 mt-2">
                             <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border ${getRoleBadgeColor(user.role)}`}>
                               {t(`settings.usersTab.role_${user.role}`)}
