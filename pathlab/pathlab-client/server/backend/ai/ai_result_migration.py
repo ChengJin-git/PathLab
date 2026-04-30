@@ -15,6 +15,10 @@ _RESULT_RE = re.compile(r"^train_(?P<task>.+?)(?:_(?P<fold>fold_\d+))?_result\.j
 _ARRAY_RE = re.compile(
     r"^train_(?P<task>.+?)(?:_(?P<fold>fold_\d+))?_(?P<artifact>attention_raw|attention|cam|pred_mask)\.npy$"
 )
+_EXTVAL_RESULT_RE = re.compile(r"^extval_(?P<task>.+?)_result\.json$")
+_EXTVAL_ARRAY_RE = re.compile(
+    r"^extval_(?P<task>.+?)_(?P<artifact>attention_raw|attention|cam|pred_mask)\.npy$"
+)
 
 
 def migrate_legacy_ai_results(
@@ -61,6 +65,7 @@ def migrate_legacy_ai_results(
             store.write_task_bundle(task_id, items=_load_array_payloads(entries))
             if validate and not store.validate_bundle(task_id):
                 raise RuntimeError(f"AI result bundle validation failed for task {task_id}")
+            _remove_extval_legacy_artifacts(entries)
             marker.write_text(
                 json.dumps({"schema_version": 1, "task_id": task_id}, sort_keys=True),
                 encoding="utf-8",
@@ -80,6 +85,7 @@ def migrate_legacy_ai_results(
 
 def _collect_legacy_tasks(legacy_root: Path) -> dict[str, list[dict[str, Any]]]:
     entries: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+    extval_aliases: dict[tuple[str, str], str] = {}
     if not legacy_root.exists():
         return {}
 
@@ -118,6 +124,55 @@ def _collect_legacy_tasks(legacy_root: Path) -> dict[str, list[dict[str, Any]]]:
         )
         entry.setdefault("array_paths", {})[artifact] = array_file
 
+    for result_file in legacy_root.rglob("extval_*_result.json"):
+        match = _EXTVAL_RESULT_RE.match(result_file.name)
+        if not match:
+            continue
+        try:
+            result = json.loads(result_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        parsed_task_id = match.group("task")
+        task_id = str(result.get("validation_task_id") or parsed_task_id)
+        wsi_id = str(result_file.parent.relative_to(legacy_root))
+        key = (task_id, wsi_id, None)
+        extval_aliases[(wsi_id, parsed_task_id)] = task_id
+        entry = entries.setdefault(
+            key,
+            {
+                "wsi_id": wsi_id,
+                "fold_key": None,
+                "arrays": {},
+                "legacy_extval_paths": [],
+            },
+        )
+        entry["result"] = result
+        entry.setdefault("legacy_extval_paths", []).append(result_file)
+
+    for array_file in legacy_root.rglob("extval_*.npy"):
+        match = _EXTVAL_ARRAY_RE.match(array_file.name)
+        if not match:
+            continue
+        parsed_task_id = match.group("task")
+        artifact = match.group("artifact")
+        if artifact not in ARRAY_ARTIFACTS:
+            continue
+        wsi_id = str(array_file.parent.relative_to(legacy_root))
+
+        canonical_task_id = extval_aliases.get((wsi_id, parsed_task_id), parsed_task_id)
+        canonical_key = (canonical_task_id, wsi_id, None)
+        entry = entries.setdefault(
+            canonical_key,
+            {
+                "wsi_id": wsi_id,
+                "fold_key": None,
+                "arrays": {},
+                "legacy_extval_paths": [],
+            },
+        )
+        entry.setdefault("array_paths", {})[artifact] = array_file
+        entry.setdefault("legacy_extval_paths", []).append(array_file)
+
     tasks: dict[str, list[dict[str, Any]]] = {}
     for (task_id, _wsi_id, _fold_key), entry in entries.items():
         if "result" not in entry:
@@ -127,10 +182,21 @@ def _collect_legacy_tasks(legacy_root: Path) -> dict[str, list[dict[str, Any]]]:
             "result": entry["result"],
             "array_paths": entry.get("array_paths", {}),
         }
+        if entry.get("legacy_extval_paths"):
+            clean_entry["legacy_extval_paths"] = entry["legacy_extval_paths"]
         if entry.get("fold_key"):
             clean_entry["fold_key"] = entry["fold_key"]
         tasks.setdefault(task_id, []).append(clean_entry)
     return tasks
+
+
+def _remove_extval_legacy_artifacts(entries: list[dict[str, Any]]) -> None:
+    for entry in entries:
+        for legacy_path in entry.get("legacy_extval_paths", []):
+            try:
+                legacy_path.unlink()
+            except OSError:
+                continue
 
 
 def _bundle_has_expected_artifacts(

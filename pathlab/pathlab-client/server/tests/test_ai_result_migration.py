@@ -126,3 +126,122 @@ def test_migration_repairs_marked_bundle_missing_folded_arrays(tmp_path):
         store.read_array(task_id, wsi_id, "attention", fold_key="fold_0"),
         np.array([0.1, 0.9], dtype=np.float32),
     )
+
+
+def _write_legacy_extval_case(
+    root,
+    *,
+    wsi_id="wsi-extval",
+    file_task_id="extval_abc123",
+    result_task_id=None,
+):
+    legacy_dir = root / "ai_results" / wsi_id
+    legacy_dir.mkdir(parents=True)
+    result_payload = {
+        "task_id": "train-parent",
+        "wsi_id": wsi_id,
+        "pred": "positive",
+        "validation_task_id": result_task_id if result_task_id is not None else file_task_id,
+        "validation_source": "external",
+        "task_type": "external_validation",
+        "aggregation_level": "case",
+        "is_kfold": False,
+        "num_folds": 1,
+        "case_id": "case-extval-1",
+    }
+    (legacy_dir / f"extval_{file_task_id}_result.json").write_text(
+        json.dumps(result_payload), encoding="utf-8"
+    )
+    np.save(legacy_dir / f"extval_{file_task_id}_cam.npy", np.array([1, 2], dtype=np.float32))
+    np.save(
+        legacy_dir / f"extval_{file_task_id}_pred_mask.npy",
+        np.array([[0, 1], [1, 0]], dtype=np.uint8),
+    )
+    np.save(
+        legacy_dir / f"extval_{file_task_id}_attention.npy",
+        np.array([0.2, 0.8], dtype=np.float32),
+    )
+    np.save(
+        legacy_dir / f"extval_{file_task_id}_attention_raw.npy",
+        np.array([0.3, 0.7], dtype=np.float32),
+    )
+    return legacy_dir, result_payload
+
+
+def test_extval_execute_migrates_bundle_by_validation_task_id(tmp_path):
+    legacy_dir, expected_result = _write_legacy_extval_case(
+        tmp_path,
+        wsi_id="wsi-extval",
+        file_task_id="parsed-task-id",
+        result_task_id="extval_abc123",
+    )
+    wsi_id = "wsi-extval"
+
+    summary = migrate_legacy_ai_results(tmp_path, execute=True, validate=True)
+
+    store = AIResultStore(tmp_path)
+    assert summary["tasks"]["extval_abc123"]["status"] == "migrated"
+    stored = store.read_result("extval_abc123", wsi_id)
+    for field in (
+        "validation_task_id",
+        "validation_source",
+        "task_type",
+        "aggregation_level",
+        "is_kfold",
+        "num_folds",
+        "case_id",
+    ):
+        assert stored[field] == expected_result[field]
+    np.testing.assert_allclose(
+        store.read_array("extval_abc123", wsi_id, "cam"),
+        np.array([1, 2], dtype=np.float32),
+    )
+    np.testing.assert_array_equal(
+        store.read_array("extval_abc123", wsi_id, "pred_mask"),
+        np.array([[0, 1], [1, 0]], dtype=np.uint8),
+    )
+    np.testing.assert_allclose(
+        store.read_array("extval_abc123", wsi_id, "attention"),
+        np.array([0.2, 0.8], dtype=np.float32),
+    )
+    np.testing.assert_allclose(
+        store.read_array("extval_abc123", wsi_id, "attention_raw"),
+        np.array([0.3, 0.7], dtype=np.float32),
+    )
+    assert not (legacy_dir / "extval_parsed-task-id_result.json").exists()
+    assert not (legacy_dir / "extval_parsed-task-id_cam.npy").exists()
+    assert not (legacy_dir / "extval_parsed-task-id_pred_mask.npy").exists()
+    assert not (legacy_dir / "extval_parsed-task-id_attention.npy").exists()
+    assert not (legacy_dir / "extval_parsed-task-id_attention_raw.npy").exists()
+
+
+def test_extval_dry_run_reports_without_loading_arrays_or_deleting_files(tmp_path, monkeypatch):
+    legacy_dir, _ = _write_legacy_extval_case(tmp_path)
+
+    def fail_np_load(path):
+        raise AssertionError(f"dry-run loaded extval array payload {path}")
+
+    monkeypatch.setattr("backend.ai.ai_result_migration.np.load", fail_np_load)
+
+    summary = migrate_legacy_ai_results(tmp_path, execute=False, validate=True)
+
+    assert summary["tasks"]["extval_abc123"]["valid_artifacts"] == 5
+    assert (legacy_dir / "extval_extval_abc123_result.json").exists()
+    assert (legacy_dir / "extval_extval_abc123_cam.npy").exists()
+    assert (legacy_dir / "extval_extval_abc123_pred_mask.npy").exists()
+    assert (legacy_dir / "extval_extval_abc123_attention.npy").exists()
+    assert (legacy_dir / "extval_extval_abc123_attention_raw.npy").exists()
+
+
+def test_extval_execute_is_idempotent_when_bundle_and_marker_exist(tmp_path):
+    _write_legacy_extval_case(tmp_path)
+
+    first = migrate_legacy_ai_results(tmp_path, execute=True, validate=True)
+    second = migrate_legacy_ai_results(tmp_path, execute=True, validate=True)
+
+    assert first["tasks"]["extval_abc123"]["status"] == "migrated"
+    # No backward compatibility fallback is required; second execute just must not fail.
+    assert second["tasks"] == {} or second["tasks"]["extval_abc123"]["status"] in {
+        "already_migrated",
+        "migrated",
+    }
