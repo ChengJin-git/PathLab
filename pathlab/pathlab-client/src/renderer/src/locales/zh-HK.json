@@ -1254,7 +1254,8 @@
       "training": "訓練特徵",
       "models": "訓練模型",
       "logs": "訓練日誌",
-      "wsiFiles": "原始檔案"
+      "wsiFiles": "原始檔案",
+      "ai_result_bundles": "AI 結果"
     },
     "orphanedFiles": {
       "title": "孤立檔案偵測",
@@ -1277,7 +1278,8 @@
       "featuresCache": "特徵快取",
       "aiResults": "AI 結果",
       "trainingDirs": "訓練目錄",
-      "logs": "日誌"
+      "logs": "日誌",
+      "ai_result_bundles": "AI 結果包"
     },
     "emptyDatasets": {
       "title": "空資料集清理",

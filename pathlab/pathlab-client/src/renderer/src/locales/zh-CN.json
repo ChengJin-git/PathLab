@@ -1254,7 +1254,8 @@
       "training": "训练特征",
       "models": "训练模型",
       "logs": "训练日志",
-      "wsiFiles": "原始文件"
+      "wsiFiles": "原始文件",
+      "ai_result_bundles": "AI 结果"
     },
     "orphanedFiles": {
       "title": "孤立文件检测",
@@ -1277,7 +1278,8 @@
       "featuresCache": "特征缓存",
       "aiResults": "AI 结果",
       "trainingDirs": "训练目录",
-      "logs": "日志"
+      "logs": "日志",
+      "ai_result_bundles": "AI 结果包"
     },
     "emptyDatasets": {
       "title": "空数据集清理",

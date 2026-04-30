@@ -1254,7 +1254,8 @@
       "training": "Training Features",
       "models": "Trained Models",
       "logs": "Training Logs",
-      "wsiFiles": "Original Files"
+      "wsiFiles": "Original Files",
+      "ai_result_bundles": "AI Results"
     },
     "orphanedFiles": {
       "title": "Orphaned Files Detection",
@@ -1277,7 +1278,8 @@
       "featuresCache": "Feature",
       "aiResults": "AI Results",
       "trainingDirs": "Training Directories",
-      "logs": "Logs"
+      "logs": "Logs",
+      "ai_result_bundles": "AI Result Bundles"
     },
     "emptyDatasets": {
       "title": "Empty Dataset Cleanup",

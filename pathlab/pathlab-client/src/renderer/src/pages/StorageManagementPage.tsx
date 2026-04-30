@@ -42,7 +42,8 @@ export default function StorageManagementPage() {
     training: t('storagePage.categories.training'),
     models: t('storagePage.categories.models'),
     logs: t('storagePage.categories.logs'),
-    wsi_files: t('storagePage.categories.wsiFiles')
+    wsi_files: t('storagePage.categories.wsiFiles'),
+    ai_result_bundles: t('storagePage.categories.ai_result_bundles')
   }
 
   const orphanedCategoryItems = [
@@ -122,7 +123,8 @@ export default function StorageManagementPage() {
       training: 'bg-pink-100 text-pink-800',
       models: 'bg-indigo-100 text-indigo-800',
       logs: 'bg-gray-100 text-gray-800',
-      wsi_files: 'bg-red-100 text-red-800'
+      wsi_files: 'bg-red-100 text-red-800',
+      ai_result_bundles: 'bg-orange-100 text-orange-800'
     }
     return colors[category] || 'bg-gray-100 text-gray-800'
   }
