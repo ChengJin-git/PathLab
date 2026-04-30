@@ -114,20 +114,20 @@ def is_educational_email(email: str) -> bool:
 
 async def _send_activation_email(user: "User") -> None:
     logger.info(
-        f"[activation_email] triggered for user={user.email!r} "
+        f"[activation_email] triggered for user={user.username!r} "
         f"reg_email={user.registration_email!r}"
     )
     if not user.registration_email:
         logger.info(
-            f"[activation_email] skipped: no registration_email for user={user.email!r}"
+            f"[activation_email] skipped: no registration_email for user={user.username!r}"
         )
         return
     await send_templated_email(
         template_key="account_activated",
         to_email=user.registration_email,
         context={
-            "display_name": user.nickname or user.email,
-            "username": user.email,
+            "display_name": user.nickname or user.username,
+            "username": user.username,
         },
         for_admin=False,
     )
@@ -140,8 +140,8 @@ async def _send_application_received_email(user: "User") -> None:
         template_key="new_user_registration_notice",
         to_email=user.registration_email,
         context={
-            "display_name": user.nickname or user.email,
-            "username": user.email,
+            "display_name": user.nickname or user.username,
+            "username": user.username,
             "registration_email": user.registration_email,
         },
         for_admin=False,
@@ -157,8 +157,8 @@ async def _send_admin_application_email(user: "User") -> None:
         template_key="admin_new_user_registration_notice",
         to_email=admin_notify_email,
         context={
-            "display_name": user.nickname or user.email,
-            "username": user.email,
+            "display_name": user.nickname or user.username,
+            "username": user.username,
             "registration_email": user.registration_email or "-",
         },
         for_admin=True,
@@ -246,7 +246,8 @@ async def register_user(
     import uuid as uuid_module
 
     # Check if username already exists
-    result = await db.execute(select(User).where(User.email == user_create.email))
+    username = user_create.username or ""
+    result = await db.execute(select(User).where(User.username == username))
     existing_user = result.scalar_one_or_none()
     if existing_user:
         raise HTTPException(
@@ -264,6 +265,7 @@ async def register_user(
     # Create user
     user = User(
         id=uuid_module.uuid4(),
+        username=username,
         email=user_create.email,
         hashed_password=hashed_password,
         password_sha256=password_sha256,  # For secure login
@@ -288,7 +290,7 @@ async def register_user(
             detail="REGISTER_USER_ALREADY_EXISTS",
         )
 
-    logger.info(f"New user registered: {user.email} (role={user.role})")
+    logger.info(f"New user registered: {user.username} (role={user.role})")
     return user
 
 
@@ -349,7 +351,7 @@ async def request_access(
         )
 
     # Check username uniqueness
-    result = await db.execute(select(User).where(User.email == username))
+    result = await db.execute(select(User).where(User.username == username))
     if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -363,7 +365,8 @@ async def request_access(
 
     user = User(
         id=uuid_module.uuid4(),
-        email=username,  # username stored in email field
+        username=username,
+        email=reg_email,
         hashed_password=hashed_password,
         password_sha256=password_sha256,
         is_active=False,  # inactive until admin approves
@@ -386,7 +389,7 @@ async def request_access(
         )
 
     logger.info(
-        f"Access request submitted: username={user.email}, "
+        f"Access request submitted: username={user.username}, "
         f"registration_email={user.registration_email}"
     )
     asyncio.create_task(_send_application_received_email(user))
@@ -459,7 +462,7 @@ async def secure_login(
         )
 
     # Find user by username
-    result = await db.execute(select(User).where(User.email == request.username))
+    result = await db.execute(select(User).where(User.username == request.username))
     user = result.scalar_one_or_none()
 
     if not user:
@@ -531,7 +534,7 @@ async def secure_login(
     jwt_strategy = get_jwt_strategy()
     token = await jwt_strategy.write_token(user)
 
-    logger.info(f"User {user.email} logged in securely (role={user.role})")
+    logger.info(f"User {user.username} logged in securely (role={user.role})")
 
     return {"access_token": token, "token_type": "bearer"}
 
@@ -553,7 +556,7 @@ async def list_users(
         select(User).offset(skip).limit(limit).order_by(User.created_at.desc())
     )
     users = result.scalars().all()
-    logger.info(f"Admin {admin.email} listed {len(users)} users")
+    logger.info(f"Admin {admin.username} listed {len(users)} users")
     return users
 
 
@@ -583,7 +586,7 @@ async def list_users_paged(
         pattern = f"%{normalized_search}%"
         filters.append(
             or_(
-                User.email.ilike(pattern),
+                User.username.ilike(pattern),
                 User.nickname.ilike(pattern),
             )
         )
@@ -609,7 +612,7 @@ async def list_users_paged(
     )
 
     logger.info(
-        f"Admin {admin.email} listed {len(users)} users "
+        f"Admin {admin.username} listed {len(users)} users "
         f"(paged, page={page}, page_size={page_size}, "
         f"search={normalized_search or None}, exclude_admin={exclude_admin})"
     )
@@ -690,7 +693,9 @@ async def update_user(
             user.hashed_password = password_helper.hash(password)
             # Also update SHA256 hash for secure login
             user.password_sha256 = hashlib.sha256(password.encode()).hexdigest()
-            logger.info(f"Admin {admin.email} changed password for user {user.email}")
+            logger.info(
+                f"Admin {admin.username} changed password for user {user.username}"
+            )
 
     # Update other fields
     for field, value in update_data.items():
@@ -710,7 +715,7 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
 
-    logger.info(f"Admin {admin.email} updated user {user.email}")
+    logger.info(f"Admin {admin.username} updated user {user.username}")
     if not was_active and user.is_active and is_first_activation:
         asyncio.create_task(_send_activation_email(user))
     return user
@@ -754,8 +759,8 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
 
-    logger.info(f"Admin {admin.email} deleted user {user.email}")
-    return {"success": True, "message": f"User {user.email} deleted"}
+    logger.info(f"Admin {admin.username} deleted user {user.username}")
+    return {"success": True, "message": f"User {user.username} deleted"}
 
 
 @router.post("/auth/accept-agreement", response_model=UserRead, tags=["Authentication"])
@@ -780,7 +785,7 @@ async def accept_agreement(
     await db.refresh(user)
 
     logger.info(
-        f"User {user.email} accepted the agreement from IP: {request.ip if request else 'unknown'}"
+        f"User {user.username} accepted the agreement from IP: {request.ip if request else 'unknown'}"
     )
     return user
 
@@ -818,7 +823,7 @@ async def revoke_user_agreement(
     await db.commit()
     await db.refresh(user)
 
-    logger.info(f"Admin {admin.email} revoked agreement for user {user.email}")
+    logger.info(f"Admin {admin.username} revoked agreement for user {user.username}")
     return user
 
 
@@ -858,7 +863,7 @@ async def batch_activate_users(
             updated += 1
 
     await db.commit()
-    logger.info(f"Admin {admin.email} batch activated {updated} users")
+    logger.info(f"Admin {admin.username} batch activated {updated} users")
     for _u in activated_users:
         asyncio.create_task(_send_activation_email(_u))
     return {"updated": updated}
@@ -892,7 +897,7 @@ async def batch_deactivate_users(
             updated += 1
 
     await db.commit()
-    logger.info(f"Admin {admin.email} batch deactivated {updated} users")
+    logger.info(f"Admin {admin.username} batch deactivated {updated} users")
     return {"updated": updated}
 
 
@@ -923,7 +928,7 @@ async def batch_delete_users(
             deleted += 1
 
     await db.commit()
-    logger.info(f"Admin {admin.email} batch deleted {deleted} users")
+    logger.info(f"Admin {admin.username} batch deleted {deleted} users")
     return {"deleted": deleted}
 
 
@@ -955,7 +960,7 @@ async def set_maintenance_mode(
     if request.enabled:
         if previous_enabled:
             logger.info(
-                f"Admin {admin.email} requested maintenance mode enable, but it is already enabled"
+                f"Admin {admin.username} requested maintenance mode enable, but it is already enabled"
             )
             return {"enabled": True, "affected_users": 0}
 
@@ -974,13 +979,13 @@ async def set_maintenance_mode(
         Config.set_maintenance_mode(True)
         await db.commit()
         logger.info(
-            f"Admin {admin.email} enabled maintenance mode, deactivated {affected_users} users"
+            f"Admin {admin.username} enabled maintenance mode, deactivated {affected_users} users"
         )
     else:
         if not previous_enabled:
             Config.set_maintenance_mode(False)
             logger.info(
-                f"Admin {admin.email} requested maintenance mode disable, but it is already disabled"
+                f"Admin {admin.username} requested maintenance mode disable, but it is already disabled"
             )
             return {"enabled": False, "affected_users": 0}
 
@@ -1001,7 +1006,7 @@ async def set_maintenance_mode(
         Config.set_maintenance_mode(False)
         await db.commit()
         logger.info(
-            f"Admin {admin.email} disabled maintenance mode, restored {affected_users} users"
+            f"Admin {admin.username} disabled maintenance mode, restored {affected_users} users"
         )
 
     return {"enabled": request.enabled, "affected_users": affected_users}
@@ -1076,7 +1081,7 @@ async def set_maintenance_notice(
     result = Config.set_maintenance_notice(request.message)
     if result:
         logger.info(
-            f"Admin {admin.email} set maintenance notice: {request.message[:50]}..."
+            f"Admin {admin.username} set maintenance notice: {request.message[:50]}..."
         )
         return {
             "active": True,
@@ -1084,7 +1089,7 @@ async def set_maintenance_notice(
             "updated_at": result["updated_at"],
         }
     else:
-        logger.info(f"Admin {admin.email} cleared maintenance notice")
+        logger.info(f"Admin {admin.username} cleared maintenance notice")
         return {"active": False, "message": None}
 
 
@@ -1104,7 +1109,7 @@ async def acknowledge_notice(
     user.notice_acknowledged_at = datetime.now(timezone.utc).replace(tzinfo=None)
     await db.commit()
     await db.refresh(user)
-    logger.info(f"User {user.email} acknowledged maintenance notice")
+    logger.info(f"User {user.username} acknowledged maintenance notice")
     if user.avatar_path:
         user.avatar_url = (
             f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
@@ -1131,7 +1136,7 @@ async def change_my_password(
         )
 
     if request.current_password_sha256 != user.password_sha256:
-        logger.warning(f"User {user.email} provided incorrect current password")
+        logger.warning(f"User {user.username} provided incorrect current password")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="CURRENT_PASSWORD_INCORRECT",
@@ -1149,7 +1154,7 @@ async def change_my_password(
             f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
         )
 
-    logger.info(f"User {user.email} changed their own password")
+    logger.info(f"User {user.username} changed their own password")
     return user
 
 
@@ -1177,13 +1182,7 @@ async def update_me(
     update_data = user_update.model_dump(exclude_unset=True)
 
     new_email = update_data.pop("email", None)
-    if new_email is not None and new_email != user.email:
-        result = await db.execute(select(User).where(User.email == new_email))
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="UPDATE_USER_EMAIL_ALREADY_EXISTS",
-            )
+    if new_email is not None:
         user.email = new_email
 
     new_password = update_data.pop("password", None)
@@ -1210,7 +1209,7 @@ async def update_me(
             f"/avatars/{user.avatar_path}?t={int(user.updated_at.timestamp())}"
         )
 
-    logger.info(f"User {user.email} updated their own profile")
+    logger.info(f"User {user.username} updated their own profile")
     return user
 
 
@@ -1262,7 +1261,7 @@ async def upload_avatar(
     # Populate avatar_url for response
     user.avatar_url = f"/avatars/{filename}?t={int(user.updated_at.timestamp())}"
 
-    logger.info(f"User {user.email} uploaded a new avatar")
+    logger.info(f"User {user.username} uploaded a new avatar")
     return user
 
 
@@ -1287,7 +1286,7 @@ async def delete_avatar(
         await db.commit()
         await db.refresh(user)
 
-    logger.info(f"User {user.email} deleted their avatar")
+    logger.info(f"User {user.username} deleted their avatar")
     return user
 
 
