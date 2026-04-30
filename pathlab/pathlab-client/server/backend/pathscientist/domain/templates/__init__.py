@@ -13,6 +13,7 @@ _TEMPLATES_DIR = Path(__file__).parent
 
 TEMPLATES = {
     "classification": "classification_template.py",
+    "patch_classification": "patch_classification_template.py",
     "survival": "survival_template.py",
 }
 
