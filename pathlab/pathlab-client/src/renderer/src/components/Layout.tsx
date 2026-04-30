@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { LogOut, Settings, Camera, Trash2, User as UserIcon, Menu, KeyRound, Mail } from 'lucide-react'
+import { LogOut, Settings, Camera, Trash2, Menu, KeyRound, Mail } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useToast } from '../contexts/ToastContext'
 import { Button } from './ui/button'
@@ -179,7 +179,7 @@ export default function Layout({ children }: LayoutProps) {
               <div className="relative flex items-center gap-2 sm:gap-3" ref={menuRef}>
                 <div className="flex flex-col items-end hidden md:flex">
                   <span className="text-sm font-medium text-slate-900 leading-none">
-                    {user?.nickname || user?.email?.split('@')[0] || 'User'}
+                    {user?.nickname || user?.username || 'User'}
                   </span>
                   <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">{user?.role}</span>
                 </div>
@@ -198,7 +198,7 @@ export default function Layout({ children }: LayoutProps) {
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center bg-primary-50 text-sm font-bold text-primary-700 transition-colors group-hover:bg-primary-100">
-                        {(user?.nickname || user?.email?.split('@')[0] || 'U').charAt(0).toUpperCase()}
+                        {(user?.nickname || user?.username || 'U').charAt(0).toUpperCase()}
                       </div>
                     )}
                   </button>
@@ -221,11 +221,11 @@ export default function Layout({ children }: LayoutProps) {
                       <div className="flex flex-col gap-0.5">
                         <div className="flex items-center gap-2">
                           <span className="truncate text-sm font-bold text-slate-900">
-                            {user?.nickname || 'User'}
+                            {user?.nickname || user?.username || 'User'}
                           </span>
                         </div>
                         <span className="mt-0.5 truncate text-[11px] leading-none text-slate-500 opacity-80">
-                          {user?.email || ''}
+                          {user?.email || (user?.nickname ? user?.username : '') || ''}
                         </span>
                       </div>
                     </div>

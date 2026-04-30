@@ -890,10 +890,12 @@
     "shellWorkspaceTitle": "Precision Workbench"
   },
   "setEmail": {
-    "title": "Set Email",
-    "currentEmail": "Current email:",
-    "newEmail": "New Email",
+    "title": "Set Contact Email",
+    "currentEmail": "Current contact email:",
+    "noEmailSet": "No contact email set.",
+    "newEmail": "New Contact Email",
     "emailPlaceholder": "user@example.com",
+    "emailHint": "This email is used for notifications and contact only, not as your username.",
     "submit": "Update Email",
     "submitting": "Updating...",
     "success": "Email updated successfully",
