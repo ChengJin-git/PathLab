@@ -37,7 +37,6 @@ _EXTRACTOR_LAZY_REGISTRY: Dict[str, Tuple[str, str]] = {
     "GPFM": (".gpfm_model", "GPFMExtractor"),
     "SmartCCS": (".smartccs_model", "SmartCCSExtractor"),
     "SmartCyto": (".smartcyto_model", "SmartCytoExtractor"),
-    "CytoFM": (".cytofm_model", "CytoFMExtractor"),
     "KRONOS": (".kronos_model", "KRONOSExtractor"),
 }
 
@@ -138,11 +137,6 @@ _EXTRACTOR_METADATA: Dict[str, Dict[str, Any]] = {
     "SmartCyto": {
         "name": "SmartCyto",
         "description": "DINOv3 ViT-B/16, 768-dim (HKUST Smart Lab), recommended for cytopathology",
-        "supports_spatial": True,
-    },
-    "CytoFM": {
-        "name": "CytoFM",
-        "description": "DINOv2 ViT-L/14, 1024-dim (HKUST Smart Lab), pure vision self-supervised, recommended for cytopathology",
         "supports_spatial": True,
     },
     "KRONOS": {

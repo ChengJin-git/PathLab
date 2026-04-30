@@ -712,7 +712,6 @@ _EXTRACTOR_CAM_CONFIG = {
     "patho_clip": {"type": "vit", "patch_size": 14},  # OpenCLIP ViT-L-14
     "GPFM": {"type": "vit", "patch_size": 14},  # DINOv2-based with patch_size=14
     "SmartCCS": {"type": "vit", "patch_size": 14},
-    "CytoFM": {"type": "vit", "patch_size": 14},
     "virchow": {
         "type": "vit",
         "patch_size": 14,

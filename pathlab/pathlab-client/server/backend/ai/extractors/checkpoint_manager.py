@@ -296,19 +296,6 @@ def smartcyto(hf_token: str) -> str:
     return str(local_ckpt_path)
 
 
-def cytofm(hf_token: str) -> str:
-    """Return the local path to the CytoFM model checkpoint."""
-    ckpt_filename = "vitl-16-cytofm-v1.pth"
-    local_dir = _get_ckpt_save_dir() / "CytoFM"
-    local_ckpt_path = local_dir / ckpt_filename
-    if not local_ckpt_path.exists():
-        raise FileNotFoundError(
-            f"CytoFM checkpoint not found at {local_ckpt_path}. "
-            f"Please place vitl-16-cytofm-v1.pth in {local_dir}."
-        )
-    return str(local_ckpt_path)
-
-
 def kronos(hf_token: str) -> str:
     """Download and return the local directory for the KRONOS model checkpoint."""
     local_dir = _get_ckpt_save_dir() / "KRONOS"
@@ -340,7 +327,6 @@ __supported_extractors = {
     "GPFM": gpfm,
     "SmartCCS": smartccs,
     "SmartCyto": smartcyto,
-    "CytoFM": cytofm,
     "KRONOS": kronos,
 }
 
