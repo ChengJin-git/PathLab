@@ -3,26 +3,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import SecretStr
-
 from openhands.sdk.agent.agent import Agent
 from openhands.sdk.context.agent_context import AgentContext
 from openhands.sdk.context.condenser import LLMSummarizingCondenser
-from openhands.sdk.llm import LLM
 from openhands.sdk.tool import Tool, register_tool
 
 # Import openhands.tools to register built-in tools (TerminalTool, FileEditorTool, etc.)
 from openhands.tools.terminal import TerminalTool
 from openhands.tools.file_editor import FileEditorTool
 
-from .config import (
-    PathScientistConfig,
-    resolve_llm_api_key,
-    resolve_llm_base_url,
-    resolve_required_llm_model,
-)
+from .config import PathScientistConfig
 from .context import build_environment_context
 from .knowledge import build_domain_skills
+from .llm_client import build_chat_llm
 from .runtime.session import PathScientistSession
 from .runtime.session_registry import SessionDeps, get_session, register_session
 from .runtime.workspace import Workspace
@@ -190,31 +183,29 @@ def create_agent(
         system_message_suffix=env_context,
     )
 
-    # Build LLM config
-    llm_kwargs = {}
-    llm_kwargs["model"] = resolve_required_llm_model(
-        config.llm_model,
+    # Build LLM clients through the shared resolver so explicit profiles (for
+    # example codex-relay) cover both the agent and the condenser.
+    log_kwargs = {
+        "log_completions": True,
+        "log_completions_folder": str(session.workspace_dir / "logs" / "completions"),
+    }
+    llm = build_chat_llm(
+        config,
         component="the PathScientist agent",
+        usage_id="agent",
+        temperature=config.llm_temperature,
+        **log_kwargs,
     )
 
-    api_key = resolve_llm_api_key(config.llm_api_key)
-    if api_key:
-        llm_kwargs["api_key"] = SecretStr(api_key)
-
-    base_url = resolve_llm_base_url(config.llm_base_url)
-    if base_url:
-        llm_kwargs["base_url"] = base_url
-
-    llm_kwargs["temperature"] = config.llm_temperature
-    llm_kwargs["usage_id"] = "agent"
-    llm_kwargs["log_completions"] = True
-    llm_kwargs["log_completions_folder"] = str(session.workspace_dir / "logs" / "completions")
-    llm = LLM(**llm_kwargs)
-
     # Build condenser
-    condenser_kwargs = {**llm_kwargs, "temperature": 0.0, "usage_id": "condenser"}
     condenser = LLMSummarizingCondenser(
-        llm=LLM(**condenser_kwargs),
+        llm=build_chat_llm(
+            config,
+            component="the PathScientist condenser",
+            usage_id="condenser",
+            temperature=0.0,
+            **log_kwargs,
+        ),
         max_size=120,
         keep_first=2,
     )
