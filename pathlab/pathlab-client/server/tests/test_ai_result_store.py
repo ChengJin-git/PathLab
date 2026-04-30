@@ -153,6 +153,44 @@ def test_bulk_write_saves_wsi_index_once(tmp_path, monkeypatch):
     assert store.list_results("task-101") == [f"wsi-{idx}" for idx in range(5)]
 
 
+def test_list_wsi_artifacts_uses_index_to_skip_unrelated_bundles(tmp_path, monkeypatch):
+    store = AIResultStore(tmp_path)
+    store.write_task_bundle(
+        "task-target",
+        items=[
+            {
+                "wsi_id": "wsi-target",
+                "result": {"pred": 1},
+                "arrays": {"attention": np.arange(4, dtype=np.float32)},
+            }
+        ],
+    )
+    store.write_task_bundle(
+        "task-unrelated",
+        items=[
+            {
+                "wsi_id": "wsi-other",
+                "result": {"pred": 2},
+                "arrays": {"attention": np.arange(4, dtype=np.float32)},
+            }
+        ],
+    )
+
+    visited_task_ids = []
+    original_list_task_wsi_artifacts = store.list_task_wsi_artifacts
+
+    def track_task_lookup(task_id, wsi_id):
+        visited_task_ids.append(task_id)
+        return original_list_task_wsi_artifacts(task_id, wsi_id)
+
+    monkeypatch.setattr(store, "list_task_wsi_artifacts", track_task_lookup)
+
+    artifacts = store.list_wsi_artifacts("wsi-target")
+
+    assert visited_task_ids == ["task-target"]
+    assert {item["artifact"] for item in artifacts} == {"result", "attention"}
+
+
 def test_array_artifacts_are_written_as_single_chunks(tmp_path):
     store = AIResultStore(tmp_path)
 

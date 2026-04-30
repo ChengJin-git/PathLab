@@ -252,8 +252,13 @@ class AIResultStore:
 
     def list_wsi_artifacts(self, wsi_id: str) -> list[dict[str, str]]:
         artifacts: list[dict[str, str]] = []
-        for bundle in sorted(self.bundle_dir.glob("*.zarr.zip")):
-            task_id = bundle.name.removesuffix(".zarr.zip")
+        index = self._load_index()
+        if not index:
+            index = cast(dict[str, list[str]], self.rebuild_wsi_index())
+        task_ids = sorted(
+            task_id for task_id, wsi_ids in index.items() if wsi_id in set(wsi_ids)
+        )
+        for task_id in task_ids:
             artifacts.extend(self.list_task_wsi_artifacts(task_id, wsi_id))
         return artifacts
 
@@ -262,29 +267,42 @@ class AIResultStore:
         bundle = self.bundle_path(task_id)
         if not bundle.exists():
             return artifacts
-        with self._finalized_bundle(task_id, strict=False) as root:
-            if root is None:
+        if self.staging_path(task_id).exists():
+            return artifacts
+        with zipfile.ZipFile(bundle, mode="r") as zf:
+            names = set(zf.namelist())
+            try:
+                root_attrs = cast(
+                    dict[str, object], json.loads(zf.read(".zattrs").decode("utf-8"))
+                )
+            except KeyError:
                 return artifacts
-            for artifact, group_name in (
-                (RESULT_ARTIFACT, "results"),
-                (ATTENTION_ARTIFACT, ATTENTION_ARTIFACT),
-                (ATTENTION_RAW_ARTIFACT, ATTENTION_RAW_ARTIFACT),
-                (CAM_ARTIFACT, CAM_ARTIFACT),
-                (PRED_MASK_ARTIFACT, PRED_MASK_ARTIFACT),
-            ):
-                group = self._open_group_path(root, group_name)
-                if group is None:
+            if not bool(root_attrs.get("finalized", False)):
+                return artifacts
+            for name in names:
+                parts = name.split("/")
+                if len(parts) != 3:
                     continue
-                for item_name in group.keys():
-                    item = group.get(item_name)
-                    attrs = getattr(item, "attrs", {})
-                    if attrs.get("wsi_id") != wsi_id:
-                        continue
-                    entry = {"task_id": task_id, "artifact": artifact}
-                    fold_key = attrs.get("fold_key")
-                    if fold_key:
-                        entry["fold_key"] = str(fold_key)
-                    artifacts.append(entry)
+                group_name, item_key, marker_name = parts
+                artifact = RESULT_ARTIFACT if group_name == "results" else group_name
+                if artifact not in ALL_ARTIFACTS:
+                    continue
+                expected_marker = ".zattrs" if artifact == RESULT_ARTIFACT else ".zarray"
+                if marker_name != expected_marker:
+                    continue
+                decoded = self._decode_item_key(item_key)
+                if decoded is None:
+                    continue
+                decoded_wsi_id, fold_key = decoded
+                if decoded_wsi_id != wsi_id:
+                    continue
+                entry = {"task_id": task_id, "artifact": artifact}
+                if fold_key:
+                    entry["fold_key"] = fold_key
+                artifacts.append(entry)
+        artifacts.sort(
+            key=lambda item: (str(item.get("artifact", "")), str(item.get("fold_key") or ""))
+        )
         return artifacts
 
     def task_artifact_presence_for_items(
@@ -579,6 +597,17 @@ class AIResultStore:
     def _item_key(self, wsi_id: str, fold_key: str | None = None) -> str:
         raw = f"{wsi_id}\0{fold_key or ''}"
         return base64.urlsafe_b64encode(raw.encode("utf-8")).decode("ascii").rstrip("=")
+
+    def _decode_item_key(self, item_key: str) -> tuple[str, str | None] | None:
+        padding = "=" * (-len(item_key) % 4)
+        try:
+            raw = base64.urlsafe_b64decode(f"{item_key}{padding}").decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+        if "\0" not in raw:
+            return None
+        wsi_id, fold_key = raw.split("\0", 1)
+        return wsi_id, fold_key or None
 
     def _load_index(self) -> dict[str, list[str]]:
         if not self.index_path.exists():
