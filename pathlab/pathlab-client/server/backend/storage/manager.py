@@ -14,7 +14,7 @@ import shutil
 import json
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple, Callable
+from typing import Dict, List, Optional, Any, Tuple, Callable, cast
 from datetime import datetime, timezone
 import logging
 
@@ -128,6 +128,27 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         for file_path in bundle_paths:
             if file_path.exists() and file_path.is_file():
                 yield file_path
+
+    def _remove_task_ai_result_bundle_metadata(self, task_id: str):
+        """Remove non-bundle task metadata created by AIResultStore."""
+        staging_dir = self.ai_result_bundles_dir / ".staging" / f"{task_id}.zarr"
+        if staging_dir.exists() and staging_dir.is_dir():
+            yield staging_dir
+
+        index_path = self.ai_result_bundles_dir / ".wsi_index.json"
+        if not index_path.exists() or not index_path.is_file():
+            return
+        try:
+            raw_index = cast(object, json.loads(index_path.read_text(encoding="utf-8")))
+            if isinstance(raw_index, dict) and task_id in raw_index:
+                index = cast(dict[str, object], raw_index)
+                index.pop(task_id, None)
+                index_path.write_text(
+                    json.dumps(index, ensure_ascii=False, sort_keys=True),
+                    encoding="utf-8",
+                )
+        except Exception as e:
+            logger.warning(f"Could not update AI result WSI index for {task_id}: {e}")
 
     def delete_wsi_files(
         self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard"
@@ -509,6 +530,19 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 failed.append((str(file_path), str(e)))
                 logger.error(
                     f"Failed to delete bundled task AI result file {file_path}: {e}"
+                )
+
+        for dir_path in self._remove_task_ai_result_bundle_metadata(task_id) or []:
+            try:
+                size = self._get_dir_size(dir_path)
+                shutil.rmtree(dir_path)
+                deleted_dirs.append(str(dir_path))
+                total_size += size
+                logger.info(f"Deleted bundled task AI result metadata: {dir_path}")
+            except Exception as e:
+                failed.append((str(dir_path), str(e)))
+                logger.error(
+                    f"Failed to delete bundled task AI result metadata {dir_path}: {e}"
                 )
 
         for file_path in self._iter_task_ai_result_files(task_id) or []:

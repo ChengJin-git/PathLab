@@ -1,4 +1,5 @@
 import numpy as np
+import json
 
 from backend.ai.result_store import AIResultStore
 from backend.storage.manager import StorageManager
@@ -34,14 +35,21 @@ def test_delete_training_task_files_removes_zarr_bundle_and_marker(tmp_path):
     )
     marker = tmp_path / "ai_results_bundles" / ".migration_task-101.json"
     marker.write_text("{}", encoding="utf-8")
+    staging = store.staging_path("task-101")
+    staging.mkdir(parents=True)
+    (staging / ".zattrs").write_text("{}", encoding="utf-8")
     manager = StorageManager(str(tmp_path))
 
     result = manager.delete_training_task_files("task-101")
 
     assert not store.bundle_path("task-101").exists()
     assert not marker.exists()
+    assert not staging.exists()
+    index = json.loads(store.index_path.read_text(encoding="utf-8"))
+    assert "task-101" not in index
     assert str(store.bundle_path("task-101")) in result["deleted_files"]
     assert str(marker) in result["deleted_files"]
+    assert str(staging) in result["deleted_dirs"]
 
 
 def test_storage_stats_include_ai_result_bundles(tmp_path):
