@@ -13,7 +13,7 @@ from ..common.config import Config
 
 _RESULT_RE = re.compile(r"^train_(?P<task>.+?)(?:_(?P<fold>fold_\d+))?_result\.json$")
 _ARRAY_RE = re.compile(
-    r"^train_(?P<task>.+?)_(?P<artifact>attention_raw|attention|cam|pred_mask)\.npy$"
+    r"^train_(?P<task>.+?)(?:_(?P<fold>fold_\d+))?_(?P<artifact>attention_raw|attention|cam|pred_mask)\.npy$"
 )
 
 
@@ -47,7 +47,12 @@ def migrate_legacy_ai_results(
             "migrated_wsi_count": len({entry["wsi_id"] for entry in entries}),
         }
         marker = _marker_path(root, task_id)
-        if execute and marker.exists() and store.validate_bundle(task_id):
+        if (
+            execute
+            and marker.exists()
+            and store.validate_bundle(task_id)
+            and _bundle_has_expected_artifacts(store, task_id, entries)
+        ):
             task_summary["status"] = "already_migrated"
             summary["tasks"][task_id] = task_summary
             rollback_bundles.append(str(store.bundle_path(task_id)))
@@ -101,12 +106,16 @@ def _collect_legacy_tasks(legacy_root: Path) -> dict[str, list[dict[str, Any]]]:
         if not match:
             continue
         task_id = match.group("task")
+        fold_key = match.group("fold")
         artifact = match.group("artifact")
         if artifact not in ARRAY_ARTIFACTS:
             continue
         wsi_id = str(array_file.parent.relative_to(legacy_root))
-        key = (task_id, wsi_id, None)
-        entry = entries.setdefault(key, {"wsi_id": wsi_id, "array_paths": {}})
+        key = (task_id, wsi_id, fold_key)
+        entry = entries.setdefault(
+            key,
+            {"wsi_id": wsi_id, "fold_key": fold_key, "array_paths": {}},
+        )
         entry.setdefault("array_paths", {})[artifact] = array_file
 
     tasks: dict[str, list[dict[str, Any]]] = {}
@@ -122,6 +131,35 @@ def _collect_legacy_tasks(legacy_root: Path) -> dict[str, list[dict[str, Any]]]:
             clean_entry["fold_key"] = entry["fold_key"]
         tasks.setdefault(task_id, []).append(clean_entry)
     return tasks
+
+
+def _bundle_has_expected_artifacts(
+    store: AIResultStore, task_id: str, entries: list[dict[str, Any]]
+) -> bool:
+    requested_items = [
+        (str(entry["wsi_id"]), str(entry["fold_key"]) if entry.get("fold_key") else None)
+        for entry in entries
+    ]
+    expected_artifacts = {"result"}
+    for entry in entries:
+        expected_artifacts.update(entry.get("array_paths", {}).keys())
+
+    presence = store.task_artifact_presence_for_items(
+        task_id,
+        items=requested_items,
+        artifacts=expected_artifacts,
+    )
+    for entry in entries:
+        item = (
+            str(entry["wsi_id"]),
+            str(entry["fold_key"]) if entry.get("fold_key") else None,
+        )
+        if item not in presence.get("result", set()):
+            return False
+        for artifact in entry.get("array_paths", {}):
+            if item not in presence.get(artifact, set()):
+                return False
+    return True
 
 
 def _load_array_payloads(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
