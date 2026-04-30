@@ -183,7 +183,7 @@ describe('fetchUserUsageStats (admin only)', () => {
       users: [
         {
           user_id: 'user_1',
-          email: 'doctor@hospital.com',
+          username: 'doctor_smith',
           nickname: 'Dr. Smith',
           role: 'pathologist',
           wsi_count: 200,
@@ -202,7 +202,7 @@ describe('fetchUserUsageStats (admin only)', () => {
     const [url] = mockFetch.mock.calls[0]
     expect(url).toContain('/stats/user-usage')
     expect(result.users).toHaveLength(1)
-    expect(result.users[0].email).toBe('doctor@hospital.com')
+    expect(result.users[0].username).toBe('doctor_smith')
     expect(result.users[0].wsi_count).toBe(200)
   })
 

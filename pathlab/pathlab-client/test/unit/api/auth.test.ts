@@ -199,22 +199,24 @@ describe('registerUser', () => {
   it('sends POST request to /auth/register with user data', async () => {
     mockFetch.mockResolvedValueOnce(ok(MOCK_USER, 201))
     const result = await registerUser({
-      email: 'newuser@test.com',
+      username: 'newuser',
       password: 'pass123',
       nickname: 'Newbie',
       role: 'guest',
+      email: 'newuser@test.com',
     })
     const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toContain('/auth/register')
     expect(opts?.method).toBe('POST')
     const body = JSON.parse(opts?.body as string)
+    expect(body.username).toBe('newuser')
     expect(body.email).toBe('newuser@test.com')
     expect(result).toMatchObject({ email: 'doctor@hospital.com' })
   })
 
-  it('throws ApiError when email already exists', async () => {
-    mockFetch.mockResolvedValueOnce(err({ detail: 'Email already exists' }, 409))
-    await expect(registerUser({ email: 'dup@test.com', password: 'pw' })).rejects.toMatchObject({
+  it('throws ApiError when username already exists', async () => {
+    mockFetch.mockResolvedValueOnce(err({ detail: 'Username already exists' }, 409))
+    await expect(registerUser({ username: 'dup', password: 'pw' })).rejects.toMatchObject({
       status: 409,
       code: 'CONFLICT',
     })

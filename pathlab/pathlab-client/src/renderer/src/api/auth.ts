@@ -106,7 +106,7 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
 }
 
 /**
- * Login with email and password using secure client-side hashing.
+ * Login with username and password using secure client-side hashing.
  *
  * Security features:
  * - Password is never transmitted in plaintext
