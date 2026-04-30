@@ -25,7 +25,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 当前直接注册的 router
 
-`main.py` 里当前直接注册了 **17 个顶层 router**：
+`app_setup.py` 里当前直接注册这些顶层 router：
 
 1. `auth`
 2. `stats`
@@ -57,9 +57,9 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 ## 路由目录现状
 
-`server/gateway/routes/` 当前包含 **49 个路由模块文件**（不含 `__init__.py`）。
+`server/gateway/routes/` 下包含顶层 router 与被其他 router 复用的支持模块。模块数量会随功能增长变化，实际清单以文件系统为准。
 
-除了上面 17 个顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
+除了上面顶层 router 外，目录里还有若干**被其他 router 复用的支持模块**，例如：
 
 - 推理实现：`inference_external_validation.py`、`inference_wsi_survival.py`、`inference_patch_segmentation.py`、`inference_patch_classification.py`、`inference_wsi_classification.py`（各推理路径的实现逻辑，由 `results` router 调用）、`inference_batch.py`（无标签数据集批量推理，由 GPU 任务队列以 `BATCH_INFERENCE` 类型调度）
 - 推理基础：`inference_base.py`（推理路径共享的基础逻辑）
@@ -80,7 +80,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 - 使用 FastAPI Users + JWT strategy
 - `/auth/jwt/login` 当前被禁用，实际登录入口为 `/auth/secure-login`
-- 维护用户 `nonce`，用于单设备会话控制
+- 维护用户 `session_nonces`，用于会话失效控制；旧 `session_nonce` 仅为 schema 兼容保留
 - 支持 `secure-login`、登出、资料更新、头像上传
 - 支持维护模式、维护公告确认、分页用户列表与批量用户启停删
 - 包含管理员批量启用 / 禁用 / 删除用户接口
@@ -92,14 +92,14 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/datasets/{dataset_id}/labels` | 获取数据集的有效标注（GT + 个人覆盖层合并），含 `label_annotation_source` 派生字段 |
-| `GET` | `/wsi/{wsi_id}/labels` | 获取单张 WSI 的个人标注草稿 |
-| `GET` | `/datasets/{dataset_id}/labels/summary` | 获取标注汇总统计，含 `label_annotation_source` 字段 |
-| `DELETE` | `/datasets/{dataset_id}/labels` | 删除数据集标注（活跃训练任务时拦截） |
-| `POST` | `/datasets/{dataset_id}/delete-by-labels` | 按 label 类别删除标注 |
+| `GET` | `/annotation/datasets/{dataset_id}/labels` | 获取数据集的有效标注（GT + 个人覆盖层合并），含 `annotation_source` 派生字段 |
+| `GET` | `/annotation/wsi/{wsi_id}/labels` | 获取单张 WSI 的个人标注草稿 |
+| `GET` | `/annotation/datasets/{dataset_id}/summary` | 获取标注汇总统计，含 `label_annotation_source` 字段 |
+| `DELETE` | `/annotation/datasets/{dataset_id}/labels` | 删除数据集标注（活跃训练任务时拦截） |
+| `POST` | `/annotation/datasets/{dataset_id}/delete-by-labels` | 按 label 类别删除标注 |
 | `POST` | `/annotation/extract` | 提取标注 ROI 到新数据集（触发 `promoted_to_training_reference` 审计） |
 
-注意：`/ground-truth` 路径已在 v1.0.5 之前的重构中改名为 `/labels`，旧路径不再有效。
+注意：annotation router 的公开路径都带 `/annotation` 前缀；旧 `/ground-truth` 路径已在 v1.0.5 之前的重构中改名为 `/labels`，旧路径不再有效。
 
 ## 存储路由补充说明
 

@@ -198,7 +198,7 @@ Test: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py:64`
 ## 6.5 Annotation source semantics
 - `annotation_source` is a **derived read-only field** computed at query time; it is never stored as a column.
 - Value is `"imported_gt"` when the effective annotation record was imported externally (mask GT import flow), `"user_label"` when it originated from user-drawn or finalized shared annotation.
-- Derivation logic lives in `GET /datasets/{dataset_id}/labels` summary endpoint: `pathlab/pathlab-client/server/gateway/routes/annotation.py:865`.
+- Derivation logic lives in `GET /annotation/datasets/{dataset_id}/labels` and `GET /annotation/datasets/{dataset_id}/summary`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:771`, `pathlab/pathlab-client/server/gateway/routes/annotation.py:816`.
 - `SegmentationAnnotation.to_dict()` also exposes `annotation_source` per-record for the WSI-viewer GT overlay: `pathlab/pathlab-client/server/backend/database/models.py`.
 - Frontend `AnnotationSource` type mirrors the two values: `pathlab/pathlab-client/src/renderer/src/api/annotation.ts`.
 
@@ -267,7 +267,7 @@ Code: `pathlab/pathlab-client/server/backend/database/repositories/annotation.py
 - Shared finalize rejects empty annotations unless `force=true`: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1466`.
 
 ## 9.4 Label deletion guard with active training
-- Label delete endpoint (`DELETE /datasets/{dataset_id}/labels`) blocks when active training tasks exist: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1829`.
+- Label delete endpoint (`DELETE /annotation/datasets/{dataset_id}/labels`) blocks when active training tasks exist: `pathlab/pathlab-client/server/gateway/routes/annotation.py:1831`.
 - Note: the guard is system-wide — any active training task (regardless of dataset) will block deletion.
 
 ## 9.5 Task access and analysis visibility boundary
