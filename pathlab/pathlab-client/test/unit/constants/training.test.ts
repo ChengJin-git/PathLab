@@ -47,11 +47,32 @@ describe('canonical training task taxonomy', () => {
     expect(getTaskFamily('unknown')).toBeNull()
   })
 
-  it('accepts canonical task ids without normalizing legacy families', () => {
-    expect(toCanonicalTaskType('patch_segmentation', 'wsi')).toBe('patch_segmentation')
-    expect(toCanonicalTaskType('classification', 'wsi')).toBeNull()
-    expect(toCanonicalTaskType('survival', 'patch')).toBeNull()
-    expect(toCanonicalTaskType('segmentation', 'wsi')).toBeNull()
+  it('accepts canonical task ids and normalizes supported legacy families', () => {
+    expect(toCanonicalTaskType('patch_segmentation', 'patch')).toBe('patch_segmentation')
+    expect(toCanonicalTaskType('wsi_classification', 'patch')).toBe('patch_classification')
+    expect(toCanonicalTaskType('classification', 'wsi')).toBe('wsi_classification')
+    expect(toCanonicalTaskType('classification', 'patch')).toBe('patch_classification')
+    expect(toCanonicalTaskType('survival', 'wsi')).toBe('wsi_survival')
+    expect(toCanonicalTaskType('segmentation', 'patch')).toBe('patch_segmentation')
     expect(toCanonicalTaskType('unknown', 'wsi')).toBeNull()
+    expect(toCanonicalTaskType('survival', 'patch')).toBeNull()
+    expect(toCanonicalTaskType('patch_segmentation', 'wsi')).toBeNull()
+    expect(toCanonicalTaskType('segmentation', 'wsi')).toBeNull()
+  })
+
+  it('normalizes legacy classification family to patch_classification when data_type is patch', () => {
+    expect(toCanonicalTaskType('classification', 'patch')).toBe('patch_classification')
+  })
+
+  it('normalizes legacy classification family to wsi_classification when data_type is wsi', () => {
+    expect(toCanonicalTaskType('classification', 'wsi')).toBe('wsi_classification')
+  })
+
+  it('normalizes legacy survival family to wsi_survival when data_type is wsi', () => {
+    expect(toCanonicalTaskType('survival', 'wsi')).toBe('wsi_survival')
+  })
+
+  it('normalizes legacy segmentation family to patch_segmentation when data_type is patch', () => {
+    expect(toCanonicalTaskType('segmentation', 'patch')).toBe('patch_segmentation')
   })
 })

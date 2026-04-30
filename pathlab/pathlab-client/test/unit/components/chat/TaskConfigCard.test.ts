@@ -24,6 +24,28 @@ describe('parseTaskConfig', () => {
     expect(parsed?.data_type).toBe('patch')
   })
 
+  it('normalizes legacy classification patch chat configs before submission', () => {
+    const parsed = parseTaskConfig(`
+      [TASK_CONFIG]
+      {"task_name":"Classify patches","task_type":"classification","data_type":"patch"}
+      [/TASK_CONFIG]
+    `)
+
+    expect(parsed?.task_type).toBe('patch_classification')
+    expect(parsed?.data_type).toBe('patch')
+  })
+
+  it('normalizes mismatched WSI classification patch chat configs before submission', () => {
+    const parsed = parseTaskConfig(`
+      [TASK_CONFIG]
+      {"task_name":"Classify patches","task_type":"wsi_classification","data_type":"patch"}
+      [/TASK_CONFIG]
+    `)
+
+    expect(parsed?.task_type).toBe('patch_classification')
+    expect(parsed?.data_type).toBe('patch')
+  })
+
   it('accepts canonical WSI survival chat configs', () => {
     const parsed = parseTaskConfig(`
       [TASK_CONFIG]
