@@ -1,5 +1,7 @@
 import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -37,9 +39,64 @@ class _AsyncContext:
         return False
 
 
+class _FakeRedis:
+    def __init__(self, records: dict[str, dict[str, str]]):
+        self._records = records
+
+    async def scan_iter(self, match: str):
+        _ = match
+        for key in self._records:
+            yield key
+
+    async def hgetall(self, key: str) -> dict[str, str]:
+        return self._records.get(key, {})
+
+
+class _FrozenDateTime(datetime):
+    now_value = datetime(2026, 4, 30, 12, 0, tzinfo=timezone.utc)
+
+    @classmethod
+    def now(cls, tz: Any = None):
+        if tz is None:
+            return cls.now_value.replace(tzinfo=None)
+        return cls.now_value.astimezone(tz)
+
+
 def _parse_sse_payload(event: str):
     assert event.startswith("data: ")
     return json.loads(event.removeprefix("data: ").strip())
+
+
+@pytest.mark.asyncio
+async def test_analysis_state_expires_recently_cancelled_tasks_like_other_terminal_states(monkeypatch):
+    from backend.ai.schemas.base import TaskStatus
+    from gateway.routes.analysis_state import AnalysisTaskState
+
+    now = datetime(2026, 4, 30, 12, 0, tzinfo=timezone.utc)
+    recent_finished = (now - timedelta(minutes=11)).isoformat()
+
+    state = AnalysisTaskState()
+    monkeypatch.setattr("gateway.routes.analysis_state.datetime", _FrozenDateTime)
+    _FrozenDateTime.now_value = now
+
+    redis = _FakeRedis({
+        "analysis:20260430_115900": {
+            "analysis_id": "20260430_115900",
+            "task_id": "task_1",
+            "user_id": "user_1",
+            "title": "",
+            "analysis_type": "internal",
+            "status": TaskStatus.CANCELLED.value,
+            "progress": "10",
+            "finished_at": recent_finished,
+        }
+    })
+    monkeypatch.setattr("gateway.routes.analysis_state.get_redis", lambda: redis)
+    monkeypatch.setattr("gateway.routes.analysis_state.make_key", lambda *parts: ":".join(parts))
+
+    tasks = await state.get_all(user_id="user_1", max_age_minutes=10)
+
+    assert tasks == []
 
 
 @pytest.mark.asyncio
