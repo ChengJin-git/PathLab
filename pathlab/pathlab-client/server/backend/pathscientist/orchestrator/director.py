@@ -31,6 +31,7 @@ class ResearchDirector:
         llm_model: str = "",
         llm_api_key: str = "",
         llm_base_url: str = "",
+        llm_config=None,
         literature_store=None,
         literature_retriever=None,
         rag_top_k: int = 3,
@@ -38,11 +39,15 @@ class ResearchDirector:
         sota_lookup=None,
         llm_parser=None,
         enable_acquisition: bool = False,
+        network_policy=None,  # NetworkPolicy | None — Phase 1 / Task 8
+        paper_cache=None,     # PaperCache | None — Phase 2 / Task 6
+        literature_service=None,  # LiteratureService | None — Phase 4 / Task 6
     ):
         self.auto_approve = auto_approve
         self.llm_model = llm_model
         self.llm_api_key = llm_api_key
         self.llm_base_url = llm_base_url
+        self.llm_config = llm_config
         self.literature_store = literature_store
         self.literature_retriever = literature_retriever
         self.rag_top_k = rag_top_k
@@ -50,6 +55,15 @@ class ResearchDirector:
         self.sota_lookup = sota_lookup
         self.llm_parser = llm_parser
         self.enable_acquisition = enable_acquisition
+        # Plan-2026-04-29 literature-acquisition Phase 1 / Task 8: forward
+        # the network policy to ground_objective so paper search / SOTA /
+        # RAG dense all gate on the same source of truth.
+        self.network_policy = network_policy
+        # Plan-2026-04-29 literature-acquisition Phase 2 / Task 6: optional
+        # session-scoped PaperCache forwarded into _retrieve_literature.
+        self.paper_cache = paper_cache
+        # Phase 4 / Task 6: unified LiteratureService for downstream consumers.
+        self.literature_service = literature_service
 
     def advance(self, state: ResearchSessionState) -> ResearchSessionState:
         """Advance the session to the next appropriate stage.
@@ -69,12 +83,16 @@ class ResearchDirector:
                     llm_model=self.llm_model,
                     llm_api_key=self.llm_api_key,
                     llm_base_url=self.llm_base_url,
+                    llm_config=self.llm_config,
                     literature_store=self.literature_store,
                     literature_retriever=self.literature_retriever,
                     rag_top_k=self.rag_top_k,
                     online_clients=self.online_clients,
                     sota_lookup=self.sota_lookup,
                     llm_parser=self.llm_parser,
+                    network_policy=self.network_policy,
+                    paper_cache=self.paper_cache,
+                    literature_service=self.literature_service,
                 )
                 # Copy grounding-discovered dataset hint and SOTA target
                 # payload onto state.objective. grounding.py itself stays

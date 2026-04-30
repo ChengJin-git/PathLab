@@ -121,11 +121,53 @@ def build_execution_brief(state: ResearchSessionState) -> str:
     if state.objective.dataset_hint:
         lines.append(f"Dataset hint: {state.objective.dataset_hint}")
 
+    # Plan T7: surface known dataset-path corrections (e.g.
+    # /project/compath -> /project/vcompath) so a typo in the user
+    # question doesn't burn iterations on a non-existent path. We only
+    # surface a correction when the alternative actually exists on disk.
+    try:
+        from ..runtime.path_aliases import find_path_corrections
+        corrections = find_path_corrections(state.objective.question)
+    except Exception:
+        corrections = []
+    if corrections:
+        lines.append("Resolved path hints:")
+        for original, corrected in corrections:
+            lines.append(f"  - {original} -> {corrected}")
+
     profile = (state.grounding or {}).get("task_profile") or state.task_profile or {}
     if profile:
         lines.append(
             f"Task profile: {profile.get('task_type', '?')} / {profile.get('asset_level', '?')}"
         )
+
+    sota_status = (state.grounding or {}).get("sota_lookup_status", "")
+    if sota_status:
+        lines.append(f"SOTA lookup: {sota_status}")
+
+    rag_status = (state.grounding or {}).get("rag_status", "")
+    if rag_status:
+        lines.append(f"RAG retrieval: {rag_status}")
+        rag_errors = []
+        if (state.grounding or {}).get("rag_dense_error"):
+            rag_errors.append(f"dense={state.grounding['rag_dense_error']}")
+        if (state.grounding or {}).get("rag_sparse_error"):
+            rag_errors.append(f"sparse={state.grounding['rag_sparse_error']}")
+        if (state.grounding or {}).get("rag_error"):
+            rag_errors.append(str(state.grounding["rag_error"]))
+        if rag_errors:
+            lines.append(f"  RAG note: {'; '.join(rag_errors)}")
+
+    online_status = (state.grounding or {}).get("online_literature_status", "")
+    if online_status:
+        provider = (state.grounding or {}).get("online_literature_provider", "")
+        count = (state.grounding or {}).get("online_literature_count", 0)
+        local_count = (state.grounding or {}).get("local_paper_count", 0)
+        detail = f"provider={provider}" if provider else "provider=none"
+        detail += f", online_count={count}, local_count={local_count}"
+        lines.append(f"Online literature: {online_status} ({detail})")
+        if (state.grounding or {}).get("online_literature_error"):
+            lines.append(f"  Online literature error: {state.grounding['online_literature_error']}")
 
     # Dataset acquisition surface (plan 2026-04-25 T7). When acquisition has
     # actually prepared a dataset, the agent needs to see the manifest path
@@ -151,8 +193,37 @@ def build_execution_brief(state: ResearchSessionState) -> str:
         if contract_lines:
             lines.append("Prepared contract:")
             lines.extend(f"  - {line}" for line in contract_lines)
-    elif state.acquisition_status in {"skipped_policy", "failed"} and state.acquisition_notes:
-        lines.append("")
+    # Plan-2026-04-30 dataset-discovery T9 + provider-repair Task 0/blocker #3:
+    # surface discovery + plan paths whenever they exist. For failed /
+    # skipped_policy outcomes, paths come BEFORE the failure-reason line so
+    # the agent reads "where to look" before "why it failed".
+    grounding = state.grounding or {}
+    discovery_path = grounding.get("dataset_discovery_path")
+    plan_path = grounding.get("dataset_acquisition_plan_path")
+    if discovery_path or plan_path:
+        # Only emit a blank line if the prepared/Selected dataset block above
+        # didn't already start one.
+        if not (state.acquisition_status == "prepared" and state.selected_dataset):
+            lines.append("")
+        if discovery_path:
+            lines.append(f"Dataset discovery: {discovery_path}")
+        if plan_path:
+            lines.append(f"Dataset acquisition plan: {plan_path}")
+
+    if state.acquisition_status in {"skipped_policy", "failed"} and state.acquisition_notes:
+        # No leading blank — discovery/plan lines already separated us.
+        if not (discovery_path or plan_path):
+            lines.append("")
+        # Plan-2026-04-30 dataset-provider-repair Task 8: when a candidate
+        # was actually picked, surface its identity so the agent sees
+        # *which* dataset got blocked, not just a status string.
+        if state.selected_dataset:
+            sel = state.selected_dataset
+            lines.append(
+                f"Selected dataset candidate: {sel.get('name', '?')} "
+                f"(provider: {sel.get('provider', '?')}, "
+                f"access: {sel.get('access', '?')})"
+            )
         lines.append(
             f"Dataset acquisition: {state.acquisition_status} "
             f"({state.acquisition_notes})"

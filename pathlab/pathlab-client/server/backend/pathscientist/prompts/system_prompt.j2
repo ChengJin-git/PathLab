@@ -134,6 +134,11 @@ Follow this error recovery process:
   explicitly asked you to commit an out-of-band experiment run.
   Using it yourself will mark the session's paper as not-ready and
   record a warning on the integrity report.
+- Do NOT delete `output/`, `.evidence/`, run directories, feature caches,
+  or model artifacts to make git clean after a ratchet failure. These are
+  runtime artifacts/evidence. Retry the ratchet after the platform excludes
+  generated artifacts, use `ratchet_revert` when the experiment failed, or
+  ask the user for help if git remains blocked.
 
 {% if skill_constraints %}
 ## Skill Constraints

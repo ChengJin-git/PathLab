@@ -22,6 +22,7 @@ from ..orchestrator.types import (
     STAGE_COMPLETED,
     STAGE_EXECUTION,
     STAGE_GROUNDING,
+    STAGE_PRE_EXECUTION_READY,
     STAGE_SYNTHESIS,
     ResearchObjective,
     ResearchSessionState,
@@ -30,6 +31,98 @@ from ..orchestrator.types import (
 from ..runtime.integrity import check_session_integrity
 
 logger = logging.getLogger(__name__)
+
+
+def _build_paper_registry(session):
+    """Plan-2026-04-29 literature-acquisition Phase 5 / Task 4:
+    session-scoped ``PaperRegistry`` persisted at
+    ``persistence_root/paper_registry.json``. Loads existing entries on
+    startup so multi-session ingestion is sticky.
+    """
+    try:
+        persist_root = getattr(session, "persistence_root", None)
+        if not persist_root or str(persist_root) in ("", "."):
+            logger.warning(
+                "PaperRegistry: session.persistence_root is unset (%r); "
+                "skipping registry",
+                persist_root,
+            )
+            return None
+        from ..literature.paper_registry import PaperRegistry
+        return PaperRegistry.load(Path(persist_root) / "paper_registry.json")
+    except Exception as e:
+        logger.warning("PaperRegistry construction failed: %s", e)
+        return None
+
+
+def _build_literature_service(
+    *,
+    literature_store,
+    online_clients,
+    sota_lookup,
+    literature_retriever,
+    paper_cache,
+    network_policy,
+    paper_registry=None,
+):
+    """Plan-2026-04-29 literature-acquisition Phase 4 / Task 6: build
+    the unified LiteratureService that wraps:
+    - LiteratureRetriever (paper-search + baselines, with PaperCache)
+    - HybridLiteratureRetriever (RAG passages, already constructed)
+    - SotaLookup (target metric)
+
+    Returns ``None`` when ``literature_store`` is missing — without a
+    store there's no useful paper-search facade. (Passages + SOTA could
+    still work, but consumers can fall back to direct refs in that
+    edge case.)
+    """
+    if literature_store is None:
+        return None
+    try:
+        from ..literature.retriever import LiteratureRetriever
+        from ..literature.service import LiteratureService
+        # The service-bound LiteratureRetriever shares cache + policy
+        # with grounding's _retrieve_literature path so cache hits land
+        # in the same JSON file.
+        paper_retriever = LiteratureRetriever(
+            store=literature_store,
+            api_clients=list(online_clients or []),
+            policy=network_policy,
+            paper_cache=paper_cache,
+        )
+        return LiteratureService(
+            literature_retriever=paper_retriever,
+            passage_retriever=literature_retriever,
+            sota_lookup=sota_lookup,
+            paper_registry=paper_registry,
+            network_policy=network_policy,
+        )
+    except Exception as e:
+        logger.warning("LiteratureService construction failed: %s", e)
+        return None
+
+
+def _build_paper_cache(session):
+    """Construct a session-scoped PaperCache at ``persistence_root/paper_cache.json``.
+
+    Plan-2026-04-29 literature-acquisition Phase 2 / Task 6: returns
+    ``None`` when the session has no usable persistence_root (mirrors
+    ``_build_sota_lookup`` behavior — never write at cwd).
+    """
+    try:
+        persist_root = getattr(session, "persistence_root", None)
+        if not persist_root or str(persist_root) in ("", "."):
+            logger.warning(
+                "PaperCache: session.persistence_root is unset (%r); "
+                "skipping paper cache",
+                persist_root,
+            )
+            return None
+        from ..literature.paper_cache import PaperCache
+        return PaperCache(Path(persist_root) / "paper_cache.json")
+    except Exception as e:
+        logger.warning("PaperCache construction failed: %s", e)
+        return None
 
 
 def _build_sota_lookup(session, config, literature_store) -> "SotaLookup | None":
@@ -59,14 +152,30 @@ def _build_sota_lookup(session, config, literature_store) -> "SotaLookup | None"
         extractor = None
         if not offline:
             try:
-                from ..literature.online_clients import create_online_client
-                online = create_online_client("openalex")
+                # Plan-2026-04-29 literature-acquisition Phase 1 / Task 3:
+                # share OpenAlex client per session so paper search and
+                # SOTA benchmark extraction don't double-instantiate.
+                from ..literature.online_clients import (
+                    get_or_create_online_client,
+                )
+                online = get_or_create_online_client(
+                    provider="openalex",
+                    timeout=int(getattr(config, "literature_online_timeout", 15) or 15),
+                    session_id=getattr(session, "session_id", "") or "",
+                )
             except Exception as e:
                 logger.warning("SotaLookup: openalex client init failed: %s", e)
             try:
-                from ..runtime.metric_parser import build_llm_metric_parser
+                # Plan-2026-04-29 P0-3: was wired to ``build_llm_metric_parser``,
+                # which has signature ``(text, primary_metric) -> dict`` —
+                # incompatible with BenchmarkExtractor's ``(prompt) -> str``
+                # contract. Result: every openalex+llm fallback raised
+                # "_parser() missing 1 required positional argument:
+                # 'primary_metric'" and the lookup collapsed to a clean
+                # ``miss``. Use the generic text caller.
+                from ..runtime.metric_parser import build_llm_text_caller
                 extractor = BenchmarkExtractor(
-                    llm_parser=build_llm_metric_parser(config),
+                    llm_parser=build_llm_text_caller(config),
                 )
             except Exception as e:
                 logger.warning("SotaLookup: LLM extractor init failed: %s", e)
@@ -77,6 +186,7 @@ def _build_sota_lookup(session, config, literature_store) -> "SotaLookup | None"
             online_client=online,
             llm_extractor=extractor,
             offline=offline,
+            refresh=bool(getattr(config, "refresh_sota", False)),
         )
     except Exception as e:
         logger.warning("SotaLookup construction failed: %s", e)
@@ -129,14 +239,21 @@ def _run_acquisition_stage(
         from pathlib import Path as _Path
 
         from ..dataset.acquisition import DatasetAcquisitionService
+        from ..dataset.acquisition_plan import (
+            acquisition_plan_path_for_workspace,
+        )
+        from ..dataset.discovery_extractor import extract_dataset_candidates
+        from ..dataset.discovery_registry import merge_curated_and_discovered
+        from ..dataset.discovery_store import (
+            discovery_path_for_workspace,
+            save_discovery_records,
+        )
         from ..dataset.normalizers import (
             MILClassificationNormalizer,
             PatchClassificationNormalizer,
         )
         from ..dataset.policy import AcquisitionPolicy
-        from ..dataset.providers.direct_http import DirectHTTPProvider
-        from ..dataset.providers.huggingface import HuggingFaceProvider
-        from ..dataset.providers.zenodo import ZenodoProvider
+        from ..dataset.providers import factory as _provider_factory
         from ..dataset.registry import DatasetRegistry
         from ..dataset.types import TaskProfile
 
@@ -145,24 +262,67 @@ def _run_acquisition_stage(
             / "dataset" / "seed_data" / "pathology_datasets.json"
         )
         cache_dir = getattr(config, "dataset_cache_dir", "") or ""
-        registry_path = (
-            _Path(cache_dir) / "datasets.json" if cache_dir else seed_path
+        # Plan-2026-04-30 dataset-discovery T7: even when a per-session
+        # cache dir is configured, the curated seed JSON stays read-only.
+        # We materialize a session-local merged registry into the workspace
+        # so curated + discovered records can coexist without touching
+        # ``dataset/seed_data/pathology_datasets.json``.
+        curated_registry = DatasetRegistry(
+            _Path(cache_dir) / "datasets.json" if cache_dir else seed_path,
         )
-        registry = DatasetRegistry(registry_path)
-        if not registry_path.exists():
-            registry.seed_from_json(seed_path)
+        if cache_dir and not (_Path(cache_dir) / "datasets.json").exists():
+            curated_registry.seed_from_json(seed_path)
+
+        profile = TaskProfile.from_dict(profile_dict)
+
+        # ---- Plan-2026-04-30 dataset-discovery T7: run extractor, persist,
+        # ---- merge with curated, hand the merged registry to acquisition.
+        workspace_root = _Path(session.workspace_dir)
+        discovery_path = discovery_path_for_workspace(workspace_root)
+        try:
+            discovered = extract_dataset_candidates(state.grounding or {}, profile)
+        except Exception as e:
+            logger.warning("dataset discovery extraction failed: %s", e)
+            discovered = []
+        try:
+            save_discovery_records(discovery_path, discovered)
+        except Exception as e:
+            logger.warning("dataset discovery persistence failed: %s", e)
+
+        try:
+            merged = merge_curated_and_discovered(
+                curated_registry.load(), discovered,
+            )
+        except Exception as e:
+            logger.warning("merge_curated_and_discovered failed: %s", e)
+            merged = curated_registry.load()
+
+        session_registry_path = workspace_root / ".dataset" / "session_registry.json"
+        session_registry = DatasetRegistry(session_registry_path)
+        try:
+            session_registry.save(merged)
+        except Exception as e:
+            logger.warning("session-local registry persist failed: %s", e)
+            session_registry = curated_registry  # fallback
+
+        # Surface paths for execution-brief consumers.
+        state.grounding["dataset_discovery_path"] = str(discovery_path)
+        state.grounding["dataset_acquisition_plan_path"] = str(
+            acquisition_plan_path_for_workspace(workspace_root)
+        )
+        # Plan-2026-04-30 dataset-provider-repair Task 0 / blocker #2:
+        # the merged session-local registry is the actual input the
+        # acquisition service sees — surface the path so reviewers can
+        # diff it against the curated seed.
+        state.grounding["dataset_session_registry_path"] = str(session_registry_path)
 
         cache_root = (
             _Path(cache_dir) if cache_dir
             else _Path(session.persistence_root) / "datasets"
         )
         service = DatasetAcquisitionService(
-            registry=registry,
-            providers={
-                "direct_http": DirectHTTPProvider(),
-                "zenodo": ZenodoProvider(),
-                "huggingface": HuggingFaceProvider(),
-            },
+            registry=session_registry,
+            providers=_provider_factory.build_default_providers(),
             normalizers=[
                 PatchClassificationNormalizer(),
                 MILClassificationNormalizer(),
@@ -181,8 +341,7 @@ def _run_acquisition_stage(
             ),
         )
 
-        profile = TaskProfile.from_dict(profile_dict)
-        result = service.acquire(profile, workspace_root=session.workspace_dir)
+        result = service.acquire(profile, workspace_root=workspace_root)
     except Exception as e:
         logger.warning("Acquisition service failed: %s", e)
         state.acquisition_status = "failed"
@@ -208,6 +367,42 @@ def _run_acquisition_stage(
             config.data_mounts = {}
         config.data_mounts.update(manifest_mounts)
 
+    return state
+
+
+def _stop_before_execution_enabled(config: PathScientistConfig) -> bool:
+    """Return whether this run should stop before sending work to the code agent."""
+    return bool(getattr(config, "stop_before_execution", False))
+
+
+def _persist_execution_brief(state: ResearchSessionState, session) -> str:
+    """Render and persist the exact brief that would be sent to the code agent."""
+    brief = build_execution_brief(state)
+    brief_dir = Path(session.workspace_dir) / ".pathscientist"
+    brief_dir.mkdir(parents=True, exist_ok=True)
+    brief_path = brief_dir / "execution_brief.md"
+    brief_path.write_text(brief, encoding="utf-8")
+    state.execution_brief = brief
+    state.execution_brief_path = str(brief_path)
+    state.grounding["execution_brief_path"] = str(brief_path)
+    return brief
+
+
+def _stop_before_execution(
+    state: ResearchSessionState,
+    session,
+    conversation,
+) -> ResearchSessionState:
+    """Persist pre-execution artifacts and stop before any agent execution turn."""
+    _persist_execution_brief(state, session)
+    state.stop_reason = "stop_before_execution"
+    if state.stage in {STAGE_EXECUTION, STAGE_ACQUISITION, STAGE_GROUNDING}:
+        state.advance(STAGE_PRE_EXECUTION_READY)
+    persist_research_session_state(conversation, state)
+    logger.info(
+        "Stop-before-execution requested; execution brief persisted at %s",
+        state.execution_brief_path,
+    )
     return state
 
 
@@ -513,14 +708,20 @@ def run_research_session(
         except Exception as e:
             logger.warning(f"RAG retriever unavailable: {e}")
 
-    # Initialize online literature clients (when enabled)
+    # Initialize online literature clients (when enabled).
+    # Plan-2026-04-29 literature-acquisition Phase 1 / Task 3: share the
+    # OpenAlex client with SOTA benchmark extraction via the session-scoped
+    # factory.
     online_clients: list = []
     if config.literature_online_enabled:
         try:
-            from ..literature.online_clients import create_online_client
-            client = create_online_client(
+            from ..literature.online_clients import (
+                get_or_create_online_client,
+            )
+            client = get_or_create_online_client(
                 provider=config.literature_online_provider,
                 timeout=config.literature_online_timeout,
+                session_id=getattr(session, "session_id", "") or "",
             )
             online_clients = [client]
             logger.info(f"Online literature search enabled: {config.literature_online_provider}")
@@ -537,17 +738,41 @@ def run_research_session(
 
     sota_lookup = _build_sota_lookup(session, config, literature_store)
 
+    # Plan-2026-04-29 literature-acquisition Phase 1 / Task 8: build a
+    # NetworkPolicy from legacy config flags and forward to director so
+    # ground_objective gates paper search / SOTA / RAG dense uniformly.
+    from ..runtime.network_policy import network_policy_from_config
+    network_policy = network_policy_from_config(config)
+    # Phase 2 / Task 6: session-scoped paper cache.
+    paper_cache = _build_paper_cache(session)
+    # Phase 5 / Task 4: session-scoped PaperRegistry for auto-ingest.
+    paper_registry = _build_paper_registry(session)
+    # Phase 4 / Task 6: unified LiteratureService.
+    literature_service = _build_literature_service(
+        literature_store=literature_store,
+        online_clients=online_clients,
+        sota_lookup=sota_lookup,
+        literature_retriever=literature_retriever,
+        paper_cache=paper_cache,
+        network_policy=network_policy,
+        paper_registry=paper_registry,
+    )
+
     director = ResearchDirector(
         auto_approve=auto_approve,
         llm_model=config.llm_model,
         llm_api_key=config.llm_api_key,
         llm_base_url=config.llm_base_url,
+        llm_config=config,
         literature_store=literature_store,
         literature_retriever=literature_retriever,
         rag_top_k=config.literature_rag_top_k,
         online_clients=online_clients,
         sota_lookup=sota_lookup,
         enable_acquisition=bool(getattr(config, "auto_acquire_data", False)),
+        network_policy=network_policy,
+        paper_cache=paper_cache,
+        literature_service=literature_service,
     )
 
     # Advance: intake -> grounding
@@ -575,6 +800,10 @@ def run_research_session(
         persist_research_session_state(conversation, state)
         state = director.advance(state)
         persist_research_session_state(conversation, state)
+
+    if state.stage == STAGE_EXECUTION and _stop_before_execution_enabled(config):
+        state = _stop_before_execution(state, session, conversation)
+        return state, session, conversation
 
     # Execution loop
     while state.stage == STAGE_EXECUTION:
@@ -770,14 +999,37 @@ def continue_research_session(
 
     sota_lookup = _build_sota_lookup(session, config, literature_store)
 
+    # Plan-2026-04-29 literature-acquisition Phase 1 / Task 8.
+    from ..runtime.network_policy import network_policy_from_config
+    network_policy = network_policy_from_config(config)
+    paper_cache = _build_paper_cache(session)
+    # Phase 5 / Task 4: load existing PaperRegistry from prior sessions.
+    paper_registry = _build_paper_registry(session)
+    # Phase 4 / Task 6 — service for continue path. ``literature_retriever``
+    # is None on resume (no RAG retriever rebuilt for continue); service
+    # still wraps paper search + SOTA.
+    literature_service = _build_literature_service(
+        literature_store=literature_store,
+        online_clients=[],
+        sota_lookup=sota_lookup,
+        literature_retriever=None,
+        paper_cache=paper_cache,
+        network_policy=network_policy,
+        paper_registry=paper_registry,
+    )
+
     director = ResearchDirector(
         auto_approve=auto_approve,
         llm_model=config.llm_model,
         llm_api_key=config.llm_api_key,
         llm_base_url=config.llm_base_url,
+        llm_config=config,
         literature_store=literature_store,
         sota_lookup=sota_lookup,
         enable_acquisition=bool(getattr(config, "auto_acquire_data", False)),
+        network_policy=network_policy,
+        paper_cache=paper_cache,
+        literature_service=literature_service,
     )
 
     # Advance from current stage (grounding with approval -> execution
@@ -797,6 +1049,10 @@ def continue_research_session(
         persist_research_session_state(conversation, state)
         state = director.advance(state)
         persist_research_session_state(conversation, state)
+
+    if state.stage == STAGE_EXECUTION and _stop_before_execution_enabled(config):
+        state = _stop_before_execution(state, session, conversation)
+        return state, session, conversation
 
     # Execution loop (same as run_research_session)
     workspace = get_session(session.session_id).workspace
@@ -956,6 +1212,7 @@ def _run_synthesis_stage(
             llm_model=config.llm_model,
             llm_api_key=config.llm_api_key,
             llm_base_url=config.llm_base_url,
+            config=config,
         )
         paper_draft_path = str(report_store.save_markdown(state.session_id, draft, "paper_draft.md"))
     except Exception as e:
@@ -985,7 +1242,12 @@ def _run_synthesis_stage(
             from ..synthesis.verification import verify_paper_draft
             from ..synthesis.critique import critique_paper_draft
 
-            verification = verify_paper_draft(report, draft)
+            # Plan-2026-04-28 P0 #2: at the paper_ready gate, require
+            # substantive content in addition to lineage. Bare-headings
+            # drafts (session_d162f805e1d7) must NOT pass.
+            verification = verify_paper_draft(
+                report, draft, enforce_substantive_content=True,
+            )
             critique = critique_paper_draft(report, draft)
 
             verification_path = str(report_store.save_verification(state.session_id, verification))

@@ -39,14 +39,63 @@ _KNOWN_DATASETS = [
 # Accept dataset names that appear inside filesystem paths ("/Data/CRC-MSI").
 _PATH_DATASET_RE = re.compile(r"/(?:data|Data|DATA|Dataset|datasets?)/([A-Z0-9][A-Z0-9\-_]{2,})", re.IGNORECASE)
 
+
+# Plan-2026-04-29 P1-5: natural-language semantic mappings. Pre-fix, the
+# prompt "predicting microsatellite instability from colorectal cancer
+# H&E pathology images" produced ``dataset_hint=""`` because the regex
+# only matched the literal "CRC-MSI" string. Now we map common
+# disease+target phrasings to canonical dataset names so SOTA lookup,
+# RAG, and acquisition can all use the same hint without the user
+# having to spell "CRC-MSI".
+#
+# Each rule requires ALL of its ``all_of`` patterns to match before
+# emitting the canonical dataset — keeps "MSI" alone (e.g. in a
+# protein-binding paper) from accidentally pinning to CRC-MSI.
+_SEMANTIC_DATASET_RULES: list[tuple[str, list[re.Pattern]]] = [
+    (
+        "CRC-MSI",
+        [
+            re.compile(
+                r"microsatellite\s+instability|\bMSI[-_]?H\b|"
+                r"(?<![A-Za-z])MSI(?![A-Za-z])",
+                re.IGNORECASE,
+            ),
+            re.compile(
+                r"\b(?:colorectal|colon|rectal|CRC)\b",
+                re.IGNORECASE,
+            ),
+        ],
+    ),
+]
+
+
+def _semantic_dataset(question: str) -> str:
+    for canonical, patterns in _SEMANTIC_DATASET_RULES:
+        if all(p.search(question) for p in patterns):
+            return canonical
+    return ""
+
+# Plan-2026-04-29 grounding-routing-repair Task 5: order matters now —
+# dict iteration order is insertion order in Python 3.7+, and the
+# matching loop in ``_regex_task_type`` short-circuits on the first hit.
+# Specific-task keywords (segmentation/survival/feature_extraction)
+# must be checked BEFORE classification, because mixed prompts like
+# "segment masks and report AUC/Dice" should classify as segmentation
+# even though they mention AUC.
 _TASK_KEYWORDS = {
-    "classification": ("classif", "auc", "msi", "subtype", "grade", "patch",
-                       "mil", "slide-level", "linear probe"),
-    "segmentation":   ("segment", "dice", "iou", "mask", "pixel"),
-    "survival":       ("survival", "c-index", "cindex", "concordance", "os",
-                       "risk strat"),
-    "feature_extraction": ("feature extract", "foundation model", "extractor",
-                           "embed", "encode"),
+    "segmentation": ("segment", "dice", "iou", "mask", "pixel"),
+    "survival":     ("survival", "c-index", "cindex", "concordance", "os",
+                     "risk strat"),
+    "feature_extraction": (
+        "feature extract", "feature extraction",
+        "extract features", "foundation model", "extractor",
+        "embed", "encode",
+    ),
+    "classification": (
+        "classif", "auc", "msi", "microsatellite",
+        "subtype", "grade", "patch", "mil",
+        "slide-level", "linear probe",
+    ),
 }
 
 
@@ -62,24 +111,37 @@ def _regex_dataset(question: str) -> str:
             if rgx.search(token):
                 return canonical
         return token.upper() if not token.isupper() else token
-    return ""
+    # Plan-2026-04-29 P1-5: semantic fallback — disease + prediction-target
+    # phrasings (e.g. "MSI in colorectal cancer") map to the canonical
+    # benchmark when no literal name appears.
+    return _semantic_dataset(question)
 
 
 def _regex_task_type(question: str, preferred_skill: str = "") -> str:
     text = (question + " " + preferred_skill).lower()
-    # Skill hint wins over keyword guessing (more reliable).
-    skill = preferred_skill.lower()
-    if "classification" in skill or "mil" in skill:
+    # Plan-2026-04-29 grounding-routing-repair Task 5: skill hint wins
+    # over keyword guessing, but use exact registered-skill names to map.
+    # An invalid preferred_skill containing "mil" no longer auto-classifies.
+    skill = preferred_skill.lower().strip()
+    if skill in {"patch_classification", "mil_classification"}:
         return "classification"
-    if "segment" in skill:
+    if skill == "patch_segmentation":
         return "segmentation"
-    if "survival" in skill:
+    if skill == "survival_analysis":
         return "survival"
-    if "feature_extraction" in skill or "feature-extraction" in skill:
+    if skill == "feature_extraction":
         return "feature_extraction"
+    # Plan-2026-04-29 P1-5 + Task 5: short keywords ("os" / "mil")
+    # require word boundaries — otherwise "pathology" matches survival
+    # and "familial" matches classification.
+    short_keywords = {"os", "mil"}
     for task, kws in _TASK_KEYWORDS.items():
-        if any(kw in text for kw in kws):
-            return task
+        for kw in kws:
+            if kw in short_keywords:
+                if re.search(rf"\b{re.escape(kw)}\b", text):
+                    return task
+            elif kw in text:
+                return task
     return ""
 
 

@@ -141,6 +141,8 @@ def load_research_session_state(
         paper_critique_path=payload.get("paper_critique_path", ""),
         paper_critique_issue_count=payload.get("paper_critique_issue_count", 0),
         paper_ready=payload.get("paper_ready", False),
+        execution_brief=payload.get("execution_brief", ""),
+        execution_brief_path=payload.get("execution_brief_path", ""),
         integrity_report=payload.get("integrity_report", {}) or {},
         # Back-compat for plan 2026-04-25 (T7): older states lack
         # acquisition fields. Default everything to empty / "none".

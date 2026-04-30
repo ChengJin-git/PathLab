@@ -9,6 +9,7 @@ STAGE_INTAKE = "intake"
 STAGE_GROUNDING = "grounding"
 STAGE_ACQUISITION = "acquisition"
 STAGE_EXECUTION = "execution"
+STAGE_PRE_EXECUTION_READY = "pre_execution_ready"
 STAGE_REVIEW = "review"
 STAGE_SYNTHESIS = "synthesis"
 STAGE_COMPLETED = "completed"
@@ -40,9 +41,10 @@ MAX_CONSECUTIVE_STALLS = MAX_NON_FINALIZED_TURNS
 
 ALLOWED_STAGE_TRANSITIONS: dict[str, set[str]] = {
     STAGE_INTAKE: {STAGE_GROUNDING},
-    STAGE_GROUNDING: {STAGE_EXECUTION, STAGE_ACQUISITION, STAGE_COMPLETED},
-    STAGE_ACQUISITION: {STAGE_EXECUTION, STAGE_COMPLETED},
-    STAGE_EXECUTION: {STAGE_REVIEW},
+    STAGE_GROUNDING: {STAGE_EXECUTION, STAGE_ACQUISITION, STAGE_PRE_EXECUTION_READY, STAGE_COMPLETED},
+    STAGE_ACQUISITION: {STAGE_EXECUTION, STAGE_PRE_EXECUTION_READY, STAGE_COMPLETED},
+    STAGE_EXECUTION: {STAGE_PRE_EXECUTION_READY, STAGE_REVIEW},
+    STAGE_PRE_EXECUTION_READY: {STAGE_EXECUTION, STAGE_COMPLETED},
     STAGE_REVIEW: {STAGE_EXECUTION, STAGE_SYNTHESIS},
     STAGE_SYNTHESIS: {STAGE_COMPLETED},
     STAGE_COMPLETED: set(),
@@ -107,6 +109,8 @@ class ResearchSessionState:
     paper_critique_path: str = ""
     paper_critique_issue_count: int = 0
     paper_ready: bool = False
+    execution_brief: str = ""
+    execution_brief_path: str = ""
     # IntegrityGuard report dumped by ``_run_integrity_check`` at session end.
     # Shape mirrors ``runtime.integrity.IntegrityReport.to_dict()`` —
     # ``{"passed", "fatal_count", "warning_count", "issues": [...]}``.

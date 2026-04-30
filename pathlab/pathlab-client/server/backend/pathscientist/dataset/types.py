@@ -7,7 +7,17 @@ from typing import Any
 
 @dataclass
 class TaskProfile:
-    """Normalized task descriptor for dataset matching."""
+    """Normalized task descriptor for dataset matching.
+
+    Plan-2026-04-29 P1-6: ``prediction_target`` and
+    ``required_label_keywords`` distinguish the prediction *target*
+    (e.g. microsatellite instability) from the task type
+    (patch_classification). Pre-fix, an MSI prompt with task_type=
+    patch_classification + organ=colorectal would gladly accept
+    NCT-CRC-HE-100K (a 9-class tissue dataset) because organ+task_type
+    matched. Now the scout requires label-semantics overlap when these
+    fields are set.
+    """
     task_type: str                           # "patch_classification" | "mil_classification" | "segmentation" | "survival_analysis" | "feature_extraction"
     asset_level: str                         # "patch" | "slide" | "region"
     input_modality: str                      # "patch_images" | "wsi" | "features" | "clinical_table"
@@ -16,6 +26,9 @@ class TaskProfile:
     dataset_keywords: list[str] = field(default_factory=list)
     requires_feature_extraction: bool = False
     preferred_skill: str = ""
+    # Plan-2026-04-29 P1-6 — prediction-target semantics.
+    prediction_target: str = ""              # canonical: "microsatellite_instability", "tumor_vs_normal", ...
+    required_label_keywords: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -31,6 +44,10 @@ class TaskProfile:
             dataset_keywords=list(d.get("dataset_keywords", []) or []),
             requires_feature_extraction=bool(d.get("requires_feature_extraction", False)),
             preferred_skill=d.get("preferred_skill", ""),
+            prediction_target=d.get("prediction_target", ""),
+            required_label_keywords=list(
+                d.get("required_label_keywords", []) or []
+            ),
         )
 
 
