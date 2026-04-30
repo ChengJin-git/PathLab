@@ -24,6 +24,7 @@ asyncpg>=0.30.0
 pillow>=12.1.0
 numpy==1.26.4
 opencv-python>=4.12.0
+zarr>=2.18,<3
 
 # WSI Processing
 git+https://github.com/MrPeterJin/Aslide.git@main#egg=Aslide
