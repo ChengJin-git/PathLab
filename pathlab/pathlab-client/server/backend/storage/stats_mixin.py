@@ -117,7 +117,6 @@ class StorageStatsMixin:
         directories = [
             ("coordinates", self.coords_dir),
             ("masks", self.masks_dir),
-            ("ai_results", self.ai_results_dir),
             ("ai_result_bundles", self.ai_result_bundles_dir),
             ("features_cache", self.uploads_dir / "features"),
             ("training", self.training_dir),
@@ -178,7 +177,6 @@ class StorageStatsMixin:
         directories = [
             ("coordinates", self.coords_dir),
             ("masks", self.masks_dir),
-            ("ai_results", self.ai_results_dir),
             ("ai_result_bundles", self.ai_result_bundles_dir),
             ("features_cache", self.uploads_dir / "features"),
             ("training", self.training_dir),

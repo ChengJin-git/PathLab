@@ -116,7 +116,7 @@ class StorageOrphanMixin:
         # Root directories that should never be deleted
         root_dirs = {
             self.coords_dir, self.masks_dir, self.features_dir,
-            self.ai_results_dir, self.ai_result_bundles_dir, self.training_dir, self.models_dir,
+            self.ai_result_bundles_dir, self.training_dir, self.models_dir,
             self.logs_dir, self.wsi_files_dir, self.metadata_dir,
             self.uploads_dir
         }
@@ -520,12 +520,6 @@ class StorageOrphanMixin:
                 "result_key": "orphaned_features_cache",
                 "directory": self.uploads_dir / "features",
                 "scanner": lambda d: self._scan_features_cache(d, existing_wsi_set, result)
-            },
-            {
-                "category": "ai_results",
-                "result_key": "orphaned_ai_results",
-                "directory": self.uploads_dir / "ai_results",
-                "scanner": lambda d: self._scan_ai_results(d, existing_wsi_set, existing_task_set, result)
             },
             {
                 "category": "ai_result_bundles",
