@@ -335,14 +335,15 @@ Gateway registers 17 top-level routers. The following are authenticated-user-onl
 
 ### 13.1 User Registration Flow
 
-Two public registration paths exist:
+Self-service registration and administrator account creation are intentionally separate:
 
 | Endpoint | Resulting state | Allowed roles | Notes |
 |---|---|---|---|
-| `POST /auth/register` | `is_active=True` (immediately usable) | `guest` only | Direct registration; `PUBLIC_REGISTRATION_ROLES = {"guest"}`: `backend/auth/schemas.py:16` |
-| `POST /auth/request-access` | `is_active=False` (admin must activate) | `guest`, `pathologist` | Self-service access request with educational email validation |
+| `POST /auth/register` | disabled (HTTP 410) | none | Public direct registration is blocked; use request-access instead |
+| `POST /auth/request-access` | `is_active=False` (admin must activate) | `guest` | Self-service access request with educational email validation |
+| `POST /auth/users` | `is_active=True` (immediately usable) | `admin`, `pathologist`, `guest` | Admin-only direct account creation; email is optional and no application emails are sent |
 
-Only admin can elevate a user to `pathologist` or `admin` role after creation (via `AdminUserUpdate`).
+Only admin can create or elevate a user to `pathologist` or `admin` role (via `POST /auth/users` or `AdminUserUpdate`).
 
 Default admin account: created on first run when no users exist (`backend/database/database.py:327`). Password is taken from `DEFAULT_ADMIN_PASSWORD` env var; if unset, a random password is generated and printed once to logs at `CRITICAL` level. There is no hardcoded fallback password.
 
