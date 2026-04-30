@@ -1,6 +1,8 @@
 from importlib import import_module
+from pathlib import Path
 
 import numpy as np
+import pytest
 
 AIResultStore = import_module("backend.ai.result_store").AIResultStore
 training_utils = import_module("backend.ai.tasks.training_utils")
@@ -135,3 +137,107 @@ def test_collect_missing_artifacts_rejects_legacy_only_train_artifacts(monkeypat
         "result_file",
         "attention_file",
     }
+
+
+def test_collect_missing_artifacts_uses_precomputed_bundle_presence(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class UnexpectedStoreOpen:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            raise AssertionError("resource validation should not open bundle per artifact")
+
+    monkeypatch.setattr(results_routes, "AIResultStore", UnexpectedStoreOpen)
+
+    missing_count, missing_artifacts = results_routes._collect_missing_ai_result_artifacts(
+        task_id="task-large",
+        task_type="classification",
+        data_type="patch",
+        wsi_id="wsi-fast",
+        extra_metadata={},
+        artifact_presence={"result": {("wsi-fast", None)}, "cam": {("wsi-fast", None)}},
+    )
+
+    assert missing_count == 0
+    assert missing_artifacts == []
+
+
+@pytest.mark.asyncio
+async def test_enrich_resources_keeps_existing_ai_results_when_artifacts_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    class FakeResult:
+        def __init__(self, value: object) -> None:
+            self.value = value
+
+        def first(self):
+            return self.value
+
+        def all(self):
+            return self.value
+
+    class FakeDb:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def execute(self, _query):
+            self.calls += 1
+            if self.calls == 1:
+                return FakeResult(("classification", "wsi"))
+            if self.calls == 2:
+                return FakeResult([])
+            return FakeResult(
+                [
+                    (
+                        "wsi-orphan",
+                        {
+                            "attention_shape": [4],
+                            "fold_key": "fold_0",
+                            "result_file": None,
+                            "attention_file": None,
+                        },
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(results_routes.Config, "get_uploads_dir", lambda: tmp_path)
+    monkeypatch.setattr(
+        results_routes,
+        "find_any_cached_coords_for_wsi",
+        lambda *_args, **_kwargs: None,
+    )
+
+    resources = await results_routes._enrich_single_task_resources(
+        "task-orphan",
+        FakeDb(),
+        {"has_ai_results": True, "ai_results_count": 1},
+    )
+
+    assert resources["has_ai_results"] is True
+    assert resources["has_complete_ai_results"] is False
+    assert resources["missing_ai_result_artifact_count"] == 3
+
+
+def test_task_artifact_presence_for_items_checks_requested_items_only(tmp_path: Path):
+    store = AIResultStore(tmp_path)
+    task_id = "task-requested-presence"
+
+    store.write_wsi_result(
+        task_id=task_id,
+        wsi_id="wsi-with-cam",
+        result={"task_id": task_id, "wsi_id": "wsi-with-cam"},
+        arrays={"cam": np.ones((2, 2), dtype=np.float32)},
+    )
+    store.write_wsi_result(
+        task_id=task_id,
+        wsi_id="wsi-result-only",
+        result={"task_id": task_id, "wsi_id": "wsi-result-only"},
+    )
+
+    presence = store.task_artifact_presence_for_items(
+        task_id,
+        items=[("wsi-with-cam", None), ("wsi-result-only", None), ("wsi-missing", None)],
+        artifacts={"result", "cam"},
+    )
+
+    assert presence["result"] == {("wsi-with-cam", None), ("wsi-result-only", None)}
+    assert presence["cam"] == {("wsi-with-cam", None)}

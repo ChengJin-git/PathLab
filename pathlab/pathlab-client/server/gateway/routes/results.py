@@ -64,7 +64,7 @@ from backend.auth.dependencies import (
 )
 from .access_control import assert_owner
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
-from backend.ai.result_store import AIResultStore
+from backend.ai.result_store import AIResultStore, IncompleteAIResultBundleError
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
@@ -282,8 +282,9 @@ def _artifact_exists_via_store(
     wsi_id: str,
     artifact_name: str,
     artifact_path: Path,
+    artifact_presence: Optional[Dict[str, set[tuple[str, Optional[str]]]]] = None,
+    fold_key: Optional[str] = None,
 ) -> bool:
-    store = AIResultStore(Config.get_uploads_dir())
     artifact_map = {
         "result_file": "result",
         "attention_file": "attention",
@@ -293,7 +294,12 @@ def _artifact_exists_via_store(
     store_artifact = artifact_map.get(artifact_name)
     if store_artifact is None:
         return artifact_path.exists()
-    return store.artifact_exists(task_id, wsi_id, store_artifact, strict=True)
+    if artifact_presence is not None:
+        return (wsi_id, fold_key) in artifact_presence.get(store_artifact, set())
+    store = AIResultStore(Config.get_uploads_dir())
+    return store.artifact_exists(
+        task_id, wsi_id, store_artifact, fold_key=fold_key, strict=True
+    )
 
 
 def _collect_missing_ai_result_artifacts(
@@ -303,15 +309,25 @@ def _collect_missing_ai_result_artifacts(
     wsi_id: str,
     extra_metadata: Optional[Dict[str, Any]],
     sample_limit: int = 10,
+    artifact_presence: Optional[Dict[str, set[tuple[str, Optional[str]]]]] = None,
 ) -> Tuple[int, List[Dict[str, Any]]]:
     metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+    fold_value = metadata.get("fold_key")
+    fold_key = str(fold_value) if fold_value is not None else None
     missing_artifacts: List[Dict[str, Any]] = []
     missing_count = 0
 
     for artifact_name, artifact_path in _required_ai_result_artifacts(
         task_id, task_type, data_type, wsi_id, metadata
     ):
-        if _artifact_exists_via_store(task_id, wsi_id, artifact_name, artifact_path):
+        if _artifact_exists_via_store(
+            task_id,
+            wsi_id,
+            artifact_name,
+            artifact_path,
+            artifact_presence=artifact_presence,
+            fold_key=fold_key,
+        ):
             continue
         missing_count += 1
         if len(missing_artifacts) < sample_limit:
@@ -437,6 +453,8 @@ async def _enrich_single_task_resources(
             "model_path": trained_model_rows[0][1],
             "config_path": trained_model_rows[0][2],
         }
+        resources["model_path"] = trained_model["model_path"]
+        resources["config_path"] = trained_model["config_path"]
 
     metrics_candidates = _candidate_metrics_paths(task_id, trained_model)
     metrics_file = next((path for path in metrics_candidates if path.exists()), None)
@@ -464,6 +482,36 @@ async def _enrich_single_task_resources(
 
     missing_artifacts: List[Dict[str, Any]] = []
     missing_count = 0
+    requested_items: list[tuple[str, Optional[str]]] = []
+    required_artifacts: set[str] = set()
+    artifact_name_map = {
+        "result_file": "result",
+        "attention_file": "attention",
+        "cam_file": "cam",
+        "pred_mask_file": "pred_mask",
+    }
+    for wsi_id, extra_metadata in ai_result_rows:
+        metadata = extra_metadata if isinstance(extra_metadata, dict) else {}
+        fold_value = metadata.get("fold_key")
+        requested_items.append((str(wsi_id), str(fold_value) if fold_value is not None else None))
+        for artifact_name, _artifact_path in _required_ai_result_artifacts(
+            task_id, task_type, data_type, wsi_id, metadata
+        ):
+            store_artifact = artifact_name_map.get(artifact_name)
+            if store_artifact:
+                required_artifacts.add(store_artifact)
+    try:
+        artifact_presence = AIResultStore(
+            Config.get_uploads_dir()
+        ).task_artifact_presence_for_items(
+            task_id,
+            items=requested_items,
+            artifacts=required_artifacts,
+        )
+    except (FileNotFoundError, IncompleteAIResultBundleError):
+        artifact_presence: Dict[str, set[tuple[str, Optional[str]]]] = {
+            artifact: set() for artifact in required_artifacts
+        }
     for wsi_id, extra_metadata in ai_result_rows:
         row_missing_count, row_missing_artifacts = _collect_missing_ai_result_artifacts(
             task_id=task_id,
@@ -472,6 +520,7 @@ async def _enrich_single_task_resources(
             wsi_id=wsi_id,
             extra_metadata=extra_metadata,
             sample_limit=max(0, 10 - len(missing_artifacts)),
+            artifact_presence=artifact_presence,
         )
         missing_count += row_missing_count
         if row_missing_artifacts:
@@ -480,8 +529,6 @@ async def _enrich_single_task_resources(
     resources["missing_ai_result_artifact_count"] = missing_count
     resources["missing_ai_result_artifacts"] = missing_artifacts
     resources["has_complete_ai_results"] = missing_count == 0
-    if missing_count > 0:
-        resources["has_ai_results"] = False
 
     return resources
 
@@ -932,7 +979,12 @@ async def _check_task_resources_batch(
 
     # Step 4: Query TrainedModel table for all tasks (covers all task types including segmentation)
     trained_model_query = (
-        select(TrainedModel.task_id, TrainedModel.model_id, TrainedModel.model_path)
+        select(
+            TrainedModel.task_id,
+            TrainedModel.model_id,
+            TrainedModel.model_path,
+            TrainedModel.config_path,
+        )
         .where(TrainedModel.task_id.in_(task_ids))
         .where(TrainedModel.is_active == True)
     )
@@ -941,7 +993,11 @@ async def _check_task_resources_batch(
     for row in trained_model_result.all():
         # Keep the first (most recent) model per task
         if row[0] not in trained_models_by_task:
-            trained_models_by_task[row[0]] = {"model_id": row[1], "model_path": row[2]}
+            trained_models_by_task[row[0]] = {
+                "model_id": row[1],
+                "model_path": row[2],
+                "config_path": row[3],
+            }
 
     # Step 4b: Check features and models for each task (file system, but minimal operations)
     models_dir = uploads_dir / "models"
@@ -1023,6 +1079,8 @@ async def _check_task_resources_batch(
             "has_features": has_features,
             "has_model": has_model,
             "model_id": model_id,
+            "model_path": trained_models_by_task.get(task_id, {}).get("model_path"),
+            "config_path": trained_models_by_task.get(task_id, {}).get("config_path"),
             "has_ai_results": has_ai_results,
             "ai_results_count": ai_results_count,
             "total_wsi_count": total_wsi_count,
