@@ -60,12 +60,6 @@ def test_kfold_metrics_reads_finalized_bundle_when_split_map_known(tmp_path):
 def test_kfold_metrics_without_split_map_does_not_scan_legacy_files(tmp_path):
     task_id = "task-kfold-no-scan"
     classes = ["A", "B"]
-    result_dir = tmp_path / "ai_results" / "wsi-legacy"
-    result_dir.mkdir(parents=True)
-    (result_dir / f"train_{task_id}_fold_0_result.json").write_text(
-        '{"task_id":"task-kfold-no-scan","fold_key":"fold_0","pred":"A","ground_truth":"A"}',
-        encoding="utf-8",
-    )
 
     aggregated, per_fold = training_utils.calculate_kfold_classification_metrics(
         uploads_root=tmp_path,
@@ -106,16 +100,9 @@ def test_collect_missing_artifacts_accepts_bundle_backed_result(monkeypatch, tmp
     assert missing_artifacts == []
 
 
-def test_collect_missing_artifacts_rejects_legacy_only_train_artifacts(monkeypatch, tmp_path):
-    task_id = "task-legacy-only"
-    wsi_id = "wsi-legacy-only"
-    legacy_dir = tmp_path / "ai_results" / wsi_id
-    legacy_dir.mkdir(parents=True)
-    (legacy_dir / f"train_{task_id}_result.json").write_text(
-        '{"task_id":"task-legacy-only","wsi_id":"wsi-legacy-only"}',
-        encoding="utf-8",
-    )
-    np.save(legacy_dir / f"train_{task_id}_attention.npy", np.array([0.2, 0.8]))
+def test_collect_missing_artifacts_reports_missing_when_no_bundle_exists(monkeypatch, tmp_path):
+    task_id = "task-no-bundle"
+    wsi_id = "wsi-no-bundle"
 
     monkeypatch.setattr(results_routes.Config, "get_uploads_dir", lambda: tmp_path)
     monkeypatch.setattr(

@@ -65,10 +65,7 @@ def test_save_extval_result_bundle_writes_task_level_bundle_without_legacy_files
         arrays[ATTENTION_RAW_ARTIFACT],
     )
 
-    legacy_result_json = (
-        uploads_dir / "ai_results" / wsi_id / f"extval_{task_id}_{RESULT_ARTIFACT}.json"
-    )
-    assert not legacy_result_json.exists()
+    assert not (uploads_dir / "ai_results").exists()
 
 
 def test_save_extval_result_bundle_does_not_filter_unsupported_artifacts(tmp_path):
