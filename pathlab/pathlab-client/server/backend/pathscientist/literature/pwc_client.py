@@ -22,8 +22,19 @@ logger = logging.getLogger(__name__)
 class PapersWithCodeClient:
     BASE_URL = "https://paperswithcode.com/api/v1"
 
-    def __init__(self, timeout: int = 15):
+    def __init__(self, timeout: int = 15, raise_on_error: bool = False):
         self._timeout = timeout
+        # Plan-2026-04-29 literature-acquisition Phase 1 / Task 4:
+        # raise_on_error=True propagates HTTP failures so fail-hard policy
+        # can abort the session instead of pretending PwC said "no match".
+        self._raise_on_error = raise_on_error
+        self.last_error = ""
+
+    def _record_error(self, label: str, exc: Exception) -> None:
+        self.last_error = f"{type(exc).__name__}: {str(exc)[:200]}"
+        logger.warning("PwC %s failed: %s", label, self.last_error)
+        if self._raise_on_error:
+            raise exc
 
     def find_dataset(self, name: str) -> str | None:
         try:
@@ -34,7 +45,7 @@ class PapersWithCodeClient:
             r.raise_for_status()
             results = (r.json() or {}).get("results", [])
         except Exception as e:
-            logger.warning("PwC find_dataset failed: %s", e)
+            self._record_error("find_dataset", e)
             return None
         for row in results:
             # Best match: exact (case-insensitive) name match.
@@ -52,7 +63,7 @@ class PapersWithCodeClient:
             r.raise_for_status()
             results = (r.json() or {}).get("results", [])
         except Exception as e:
-            logger.warning("PwC leaderboard failed: %s", e)
+            self._record_error("leaderboard", e)
             return []
 
         out: list[ExtractedBenchmark] = []

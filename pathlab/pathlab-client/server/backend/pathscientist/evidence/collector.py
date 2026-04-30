@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -188,30 +189,128 @@ class EvidenceCollector:
 
     def _scan_artifacts(self, run_dir: str) -> list[ArtifactRef]:
         """Scan run output directory for artifacts. Manifest only by default."""
-        artifacts = []
         abs_dir = self._resolve_path(run_dir)
         if not abs_dir.is_dir():
-            return artifacts
-
-        for f in abs_dir.rglob("*"):
-            if not f.is_file():
-                continue
-            artifact = self._build_artifact_ref(f, prefer_copy=True)
-            if artifact is not None:
-                artifacts.append(artifact)
-        return artifacts
+            return []
+        return self._collect_with_cache_summarization(
+            abs_dir, prefer_copy=True,
+        )
 
     def _scan_external_artifacts(self, directory: str) -> list[ArtifactRef]:
         """Scan an external directory (e.g. DATA_OUTPUT_DIR) for artifacts."""
-        artifacts = []
         abs_dir = self._resolve_path(directory)
         if not abs_dir.is_dir():
-            return artifacts
+            return []
+        return self._collect_with_cache_summarization(
+            abs_dir, prefer_copy=False,
+        )
 
+    # Plan-2026-04-29 P1 #5: feature-cache directories (50k+ .pt tensors)
+    # used to land as one ArtifactRef per file → 11.6MB record.json. Now
+    # we recognize cache-like subtrees and emit a single summary entry
+    # per subtree instead of one entry per file.
+    _CACHE_DIR_NAMES = frozenset({
+        "feature_cache",
+        "features_cache",
+        "cached_features",
+        "patch_features",
+        "patch_cache",
+    })
+    _CACHE_FILE_SUFFIXES = (".pt", ".npy")
+
+    def _is_cache_dir(self, path: Path) -> bool:
+        if not path.is_dir():
+            return False
+        if path.name in self._CACHE_DIR_NAMES:
+            return True
+        # Heuristic: a directory containing many .pt/.npy files counts
+        # as a cache even if its name isn't on the canonical list.
+        # Only check direct children to keep this O(top-level entries).
+        try:
+            tensor_count = 0
+            for child in path.iterdir():
+                if child.is_file() and child.suffix.lower() in self._CACHE_FILE_SUFFIXES:
+                    tensor_count += 1
+                    if tensor_count >= 20:
+                        return True
+        except OSError:
+            return False
+        return False
+
+    def _summarize_cache_dir(self, cache_dir: Path) -> ArtifactRef | None:
+        """Emit a single ArtifactRef summarizing a cache subtree."""
+        try:
+            files = [f for f in cache_dir.rglob("*") if f.is_file()]
+        except OSError:
+            return None
+        if not files:
+            return None
+        total_size = 0
+        for f in files:
+            try:
+                total_size += f.stat().st_size
+            except OSError:
+                continue
+        try:
+            rel = str(cache_dir.relative_to(self._workspace))
+        except ValueError:
+            rel = str(cache_dir)
+        return ArtifactRef(
+            name=f"{cache_dir.name}/ ({len(files)} files)",
+            path=rel,
+            size=total_size,
+            hash=f"cache_summary:n={len(files)}",
+            storage_mode="cache_summary",
+        )
+
+    def _collect_with_cache_summarization(
+        self, abs_dir: Path, *, prefer_copy: bool,
+    ) -> list[ArtifactRef]:
+        """Walk abs_dir, folding cache-like subtrees into single summary
+        entries instead of recursing into them."""
+        artifacts: list[ArtifactRef] = []
+        # First pass: identify cache subtrees so the file walk can skip
+        # them. Only the top-level cache directories are summarized; if a
+        # cache dir lives nested deeper, it'll be summarized at its own
+        # level (not at the run_dir level) to avoid double-counting.
+        cache_dirs: set[Path] = set()
+        try:
+            for child in abs_dir.iterdir():
+                if self._is_cache_dir(child):
+                    cache_dirs.add(child.resolve())
+                # Look one level deeper too (common: run_dir/output/feature_cache).
+                elif child.is_dir():
+                    try:
+                        for grandchild in child.iterdir():
+                            if self._is_cache_dir(grandchild):
+                                cache_dirs.add(grandchild.resolve())
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+
+        # Emit one summary per cache subtree.
+        for cache_dir in sorted(cache_dirs):
+            summary = self._summarize_cache_dir(cache_dir)
+            if summary is not None:
+                artifacts.append(summary)
+
+        # Walk the rest, skipping anything inside a recognized cache subtree.
         for f in abs_dir.rglob("*"):
             if not f.is_file():
                 continue
-            artifact = self._build_artifact_ref(f)
+            try:
+                resolved = f.resolve()
+            except OSError:
+                continue
+            in_cache = any(
+                str(resolved).startswith(str(cache_dir) + os.sep)
+                or resolved == cache_dir
+                for cache_dir in cache_dirs
+            )
+            if in_cache:
+                continue
+            artifact = self._build_artifact_ref(f, prefer_copy=prefer_copy)
             if artifact is not None:
                 artifacts.append(artifact)
         return artifacts

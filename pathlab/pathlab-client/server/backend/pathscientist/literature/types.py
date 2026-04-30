@@ -34,7 +34,14 @@ class BaselineEntry:
 
 @dataclass
 class PaperRecord:
-    """Structured representation of a scientific paper."""
+    """Structured representation of a scientific paper.
+
+    Plan-2026-04-29 literature-acquisition Phase 3 / Task 3:
+    ``canonical_id`` + ``aliases`` are the cross-provider identity
+    layer. ``paper_id`` stays as the LiteratureStore's primary key for
+    backwards-compatibility; ``canonical_id`` is auto-derived on
+    ``from_dict`` for legacy records (paper_id only, no canonical_id).
+    """
     paper_id: str
     title: str
     authors: list[str] = field(default_factory=list)
@@ -49,9 +56,12 @@ class PaperRecord:
     organ: str = ""
     task_type: str = ""
     tags: list[str] = field(default_factory=list)
+    # Phase 3 / Task 3 — additive cross-provider identity.
+    canonical_id: str = ""
+    aliases: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "paper_id": self.paper_id,
             "title": self.title,
             "authors": self.authors,
@@ -67,10 +77,37 @@ class PaperRecord:
             "task_type": self.task_type,
             "tags": self.tags,
         }
+        # Only emit canonical fields when populated so legacy JSON files
+        # don't grow noise from additive-default empties.
+        if self.canonical_id:
+            out["canonical_id"] = self.canonical_id
+        if self.aliases:
+            out["aliases"] = list(self.aliases)
+        return out
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PaperRecord:
         baselines = [BaselineEntry.from_dict(b) for b in data.get("baselines", [])]
+
+        # Phase 3 / Task 3: backfill canonical_id + aliases when absent.
+        explicit_canonical = data.get("canonical_id", "")
+        explicit_aliases = list(data.get("aliases", []) or [])
+        if explicit_canonical:
+            canonical_id = explicit_canonical
+            aliases = explicit_aliases
+        else:
+            # Derive from paper_id (+ optional doi/openalex_id/arxiv_id).
+            from .id_resolver import canonicalize_aliases
+            candidate_ids: list[str] = []
+            for key in ("doi", "openalex_id", "arxiv_id", "pmid", "s2_id"):
+                value = data.get(key, "")
+                if value:
+                    candidate_ids.append(str(value))
+            paper_id = data.get("paper_id", "")
+            if paper_id:
+                candidate_ids.append(str(paper_id))
+            canonical_id, aliases = canonicalize_aliases(candidate_ids)
+
         return cls(
             paper_id=data["paper_id"],
             title=data["title"],
@@ -86,6 +123,8 @@ class PaperRecord:
             organ=data.get("organ", ""),
             task_type=data.get("task_type", ""),
             tags=data.get("tags", []),
+            canonical_id=canonical_id,
+            aliases=aliases,
         )
 
 

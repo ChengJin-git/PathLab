@@ -86,3 +86,35 @@ class SotaCache:
             "target": target.to_dict() if target is not None else None,
         }
         self._save(data)
+
+    def get_metadata(self, dataset: str, task_type: str, metric: str) -> dict[str, Any] | None:
+        """Plan-2026-04-28 P1 #5: expose cache-row metadata so callers
+        (in particular ``SotaLookup`` log lines) can report
+        ``retrieved_at`` + remaining TTL when a hit fires.
+
+        Returns None when the row is absent or unparseable. Returns a
+        dict with keys ``retrieved_at``, ``age_sec``, ``ttl_sec``,
+        ``expires_in_sec``, ``is_negative`` otherwise. ``age_sec`` is
+        always non-negative; a negative ``expires_in_sec`` would
+        indicate the row has expired (the ``get()`` API treats that as
+        Miss, so callers logging metadata before get() may see this).
+        """
+        data = self._load()
+        row = data.get(self._key(dataset, task_type, metric))
+        if row is None:
+            return None
+        retrieved_at = row.get("retrieved_at", "")
+        try:
+            when = datetime.fromisoformat(retrieved_at.replace("Z", "+00:00"))
+        except Exception:
+            return None
+        is_negative = row.get("target") is None
+        ttl = self._neg_ttl if is_negative else self._ttl
+        age = datetime.now(timezone.utc) - when
+        return {
+            "retrieved_at": retrieved_at,
+            "age_sec": int(age.total_seconds()),
+            "ttl_sec": int(ttl.total_seconds()),
+            "expires_in_sec": int((ttl - age).total_seconds()),
+            "is_negative": is_negative,
+        }
