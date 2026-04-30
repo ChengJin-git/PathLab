@@ -149,6 +149,41 @@ class AdminUserUpdate(UserUpdate):
         return _validate_role(v, VALID_ROLES)
 
 
+class AdminUserCreate(BaseModel):
+    """Schema for administrator-created user accounts."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(description="Login username")
+    password: str = Field(description="User password")
+    nickname: Optional[str] = Field(default=None, description="Display name")
+    registration_email: Optional[str] = Field(
+        default=None, description="Optional registration or notification email"
+    )
+    role: str = Field(default="guest", description="User role: admin, pathologist, guest")
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        """Validate username is not empty and has reasonable length."""
+        return _normalize_username(v) or ""
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, v: str) -> str:
+        """Validate role is one of the allowed admin-managed values."""
+        return _validate_role(v, VALID_ROLES) or "guest"
+
+    @field_validator("registration_email")
+    @classmethod
+    def normalize_registration_email(cls, v: Optional[str]) -> Optional[str]:
+        """Normalize optional admin-provided notification email."""
+        if v is None:
+            return None
+        normalized = v.strip().lower()
+        return normalized or None
+
+
 class UserReadAdmin(UserRead):
     """Extended schema for admin to see more user details.
 

@@ -12,7 +12,8 @@ Endpoints:
 - POST /auth/jwt/login - DISABLED (blocked to prevent Turnstile bypass)
 - POST /auth/jwt/logout - Logout (client-side token removal)
 - POST /auth/secure-login - Secure login with client-side hashed password
-- POST /auth/register - Register new user
+- POST /auth/register - Disabled direct registration endpoint
+- POST /auth/users - Create user directly (admin only)
 - GET /auth/me - Get current user info
 - PATCH /auth/me - Update current user info
 - GET /auth/users - List all users (admin only)
@@ -41,11 +42,10 @@ from backend.auth import (
     current_active_user,
     User,
     UserRead,
-    UserCreate,
     UserUpdate,
     require_admin,
 )
-from backend.auth.schemas import UserReadAdmin, AdminUserUpdate
+from backend.auth.schemas import UserReadAdmin, AdminUserUpdate, AdminUserCreate
 from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
 from gateway.models import (
@@ -230,23 +230,33 @@ router.include_router(
 )
 
 
-# Custom register endpoint (replaces FastAPI-Users default to allow non-email usernames)
 @router.post("/auth/register", response_model=UserRead, tags=["Authentication"])
-async def register_user(
-    user_create: UserCreate,
+async def register_user():
+    """Direct public registration is disabled; use request-access instead."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="REGISTER_ENDPOINT_DISABLED_USE_REQUEST_ACCESS",
+    )
+
+
+@router.post("/auth/users", response_model=UserReadAdmin, tags=["User Management"])
+async def create_user(
+    user_create: AdminUserCreate,
+    admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Register a new non-admin user.
-
-    Unlike the default FastAPI-Users register, this allows non-email usernames.
-    Public registration cannot create admin or superuser accounts.
-    """
+    """Create an active user account (admin only)."""
     from fastapi_users.password import PasswordHelper
     import uuid as uuid_module
+    from datetime import datetime, timezone
 
-    # Check if username already exists
     username = user_create.username
+    if len(user_create.password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="REGISTER_PASSWORD_TOO_SHORT",
+        )
+
     result = await db.execute(select(User).where(User.username == username))
     existing_user = result.scalar_one_or_none()
     if existing_user:
@@ -255,30 +265,25 @@ async def register_user(
             detail="REGISTER_USER_ALREADY_EXISTS",
         )
 
-    # Hash password (bcrypt for storage, SHA256 for secure login)
     password_helper = PasswordHelper()
     hashed_password = password_helper.hash(user_create.password)
-
-    # Also store SHA256 hash for secure login verification
     password_sha256 = hashlib.sha256(user_create.password.encode()).hexdigest()
 
-    # Create user
     user = User(
         id=uuid_module.uuid4(),
         username=username,
-        email=user_create.email,
+        email=None,
         hashed_password=hashed_password,
-        password_sha256=password_sha256,  # For secure login
+        password_sha256=password_sha256,
         is_active=True,
         is_superuser=False,
-        is_verified=True,  # Auto-verify since we don't use email verification
-        role=user_create.role or "guest",
+        is_verified=True,
+        role=user_create.role,
         nickname=user_create.nickname,
         registration_email=user_create.registration_email,
+        first_activated_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
 
-    # Race-condition safe: catch IntegrityError if concurrent registration
-    # with same username passes the existence check above (PostgreSQL READ COMMITTED)
     try:
         db.add(user)
         await db.commit()
@@ -290,7 +295,9 @@ async def register_user(
             detail="REGISTER_USER_ALREADY_EXISTS",
         )
 
-    logger.info(f"New user registered: {user.username} (role={user.role})")
+    logger.info(
+        f"Admin {admin.username} created user {user.username} (role={user.role})"
+    )
     return user
 
 
