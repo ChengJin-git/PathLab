@@ -41,16 +41,16 @@ def test_independent_inference_request_requires_wsi_ids():
         IndependentInferenceRequest(model_id="model-1", wsi_ids=[])
 
 
-def test_independent_inference_uses_batch_inference_mode_helpers():
+def test_batch_inference_mode_helpers_use_one_unlabeled_mode():
     from gateway.routes.inference_external_validation import (
         _artifact_prefix_for_mode,
         _is_batch_inference_mode,
     )
 
     assert _is_batch_inference_mode("batch_inference") is True
-    assert _is_batch_inference_mode("independent_inference") is True
+    assert _is_batch_inference_mode("independent_inference") is False
     assert _is_batch_inference_mode("external_validation") is False
-    assert _artifact_prefix_for_mode("independent_inference") == "binfer"
+    assert _artifact_prefix_for_mode("batch_inference") == "binfer"
 
 
 def _mock_dataset(dataset_id: str, task_type: str, name: str = "Dataset") -> MagicMock:
@@ -344,7 +344,7 @@ async def test_independent_inference_submit_success():
             db=mock_db,
         )
 
-    assert result["task_id"].startswith("indinfer_")
+    assert result["task_id"].startswith("binfer_")
     assert result["status"] == "pending"
     assert result["total_wsi"] == 1
     created_task = mock_db.add.call_args.args[0]
@@ -352,7 +352,7 @@ async def test_independent_inference_submit_success():
     mock_queue.submit.assert_awaited_once()
     submit_kwargs = mock_queue.submit.await_args.kwargs
     assert submit_kwargs["wsi_ids"] == ["wsi-1"]
-    assert submit_kwargs["execution_mode"] == "independent_inference"
+    assert submit_kwargs["execution_mode"] == "batch_inference"
 
 
 @pytest.mark.asyncio
@@ -782,6 +782,120 @@ def _mock_batch_task(
     return task
 
 
+@pytest.mark.asyncio
+async def test_list_independent_inference_tasks_filters_selected_wsi_batch_tasks():
+    mock_task = _mock_batch_task()
+    mock_task.model_config = {
+        **mock_task.model_config,
+        "wsi_ids": ["wsi-1"],
+        "skipped": [],
+    }
+    task_without_selected_wsi = _mock_batch_task(task_id="binfer_dataset_1")
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_batch_inference_tasks",
+            new_callable=AsyncMock,
+            return_value=[mock_task, task_without_selected_wsi],
+        ) as mock_get_tasks,
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.count_batch_inference_tasks",
+            new_callable=AsyncMock,
+            return_value=2,
+        ) as mock_count_tasks,
+        patch(
+            "gateway.routes.results.get_progress",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        from gateway.routes.results import list_independent_inference_tasks
+
+        result = await list_independent_inference_tasks(
+            skip=0, limit=50, user=_make_user("admin"), db=AsyncMock()
+        )
+
+    assert result["total"] == 1
+    assert [item["task_id"] for item in result["items"]] == ["binfer_test_1"]
+    assert mock_get_tasks.await_args.kwargs["task_id_prefix"] == "binfer_"
+    assert mock_count_tasks.await_args.kwargs["task_id_prefix"] == "binfer_"
+
+
+@pytest.mark.asyncio
+async def test_list_independent_inference_tasks_scans_past_dataset_batch_tasks():
+    task_without_selected_wsi = _mock_batch_task(task_id="binfer_dataset_1")
+    selected_task = _mock_batch_task(task_id="binfer_selected_1")
+    selected_task.model_config = {
+        **selected_task.model_config,
+        "wsi_ids": ["wsi-1"],
+        "skipped": [],
+    }
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_batch_inference_tasks",
+            new_callable=AsyncMock,
+            side_effect=[[task_without_selected_wsi], [selected_task], []],
+        ) as mock_get_tasks,
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.count_batch_inference_tasks",
+            new_callable=AsyncMock,
+            return_value=2,
+        ),
+        patch(
+            "gateway.routes.results.get_progress",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        from gateway.routes.results import list_independent_inference_tasks
+
+        result = await list_independent_inference_tasks(
+            skip=0, limit=1, user=_make_user("admin"), db=AsyncMock()
+        )
+
+    assert result["total"] == 1
+    assert [item["task_id"] for item in result["items"]] == ["binfer_selected_1"]
+    assert [call.kwargs["skip"] for call in mock_get_tasks.await_args_list] == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_independent_inference_results_accept_selected_wsi_batch_task():
+    mock_task = _mock_batch_task()
+    mock_task.model_config = {
+        **mock_task.model_config,
+        "wsi_ids": ["wsi-1"],
+        "skipped": [],
+    }
+    with (
+        patch(
+            "gateway.routes.results.TrainingTaskRepository.get_by_id",
+            new_callable=AsyncMock,
+            return_value=mock_task,
+        ),
+        patch(
+            "gateway.routes.results.AIResultRepository.get_by_task_paginated",
+            new_callable=AsyncMock,
+            return_value=[_mock_ai_result("wsi-1")],
+        ),
+        patch(
+            "gateway.routes.results.AIResultRepository.count_by_task",
+            new_callable=AsyncMock,
+            return_value=1,
+        ),
+    ):
+        from gateway.routes.results import get_independent_inference_results
+
+        result = await get_independent_inference_results(
+            task_id="binfer_test_1",
+            skip=0,
+            limit=100,
+            user=_make_user("admin"),
+            db=AsyncMock(),
+        )
+
+    assert result["wsi_ids"] == ["wsi-1"]
+    assert result["total"] == 1
+
+
 def _mock_ai_result(wsi_id: str = "wsi-1", task_id: str = "binfer_test_1") -> MagicMock:
     from datetime import datetime, timezone
 
@@ -1066,7 +1180,7 @@ async def test_run_batch_inference_routes_to_wsi_classification():
         ),
     ],
 )
-async def test_run_batch_inference_threads_independent_mode_to_all_task_handlers(
+async def test_run_batch_inference_threads_selected_wsi_batch_mode_to_all_task_handlers(
     task_type, data_type, handler_path
 ):
     mock_task = MagicMock()
@@ -1112,18 +1226,18 @@ async def test_run_batch_inference_threads_independent_mode_to_all_task_handlers
         from gateway.routes.inference_batch import _run_batch_inference
 
         await _run_batch_inference(
-            task_id="indinfer-1",
+            task_id="binfer-1",
             model_task_id="mt-1",
             model_id="m-1",
             dataset_id="ds-1",
             assigned_device="cpu",
             wsi_ids=wsi_ids,
-            execution_mode="independent_inference",
+            execution_mode="batch_inference",
         )
 
     mock_handler.assert_awaited_once()
     call_kwargs = mock_handler.await_args.kwargs
-    assert call_kwargs["execution_mode"] == "independent_inference"
+    assert call_kwargs["execution_mode"] == "batch_inference"
     assert call_kwargs["wsi_ids"] == wsi_ids
 
 

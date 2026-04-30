@@ -78,7 +78,7 @@ def _save_extval_result_bundle(
 
 
 def _is_batch_inference_mode(execution_mode: str) -> bool:
-    return execution_mode in {"batch_inference", "independent_inference"}
+    return execution_mode == "batch_inference"
 
 
 def _artifact_prefix_for_mode(execution_mode: str) -> str:

@@ -143,6 +143,11 @@ def _is_independent_inference_task_id(task_id: object) -> bool:
     return isinstance(task_id, str) and task_id.startswith("indinfer_")
 
 
+def _has_selected_wsi_inference_config(task: object) -> bool:
+    model_config = getattr(task, "model_config", None)
+    return isinstance(model_config, dict) and bool(model_config.get("wsi_ids"))
+
+
 def _is_inference_only_task_id(task_id: object) -> bool:
     return _is_batch_inference_task_id(task_id) or _is_independent_inference_task_id(task_id)
 
@@ -1979,7 +1984,7 @@ async def start_independent_inference(
     if target_data_group is None:
         raise HTTPException(status_code=400, detail="No compatible data group found")
 
-    task_id = f"indinfer_{uuid_module.uuid4().hex[:16]}"
+    task_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
     task_name = f"{model_task.task_name} independent inference"[:200]
     independent_task = TrainingTask(
         task_id=task_id,
@@ -1999,7 +2004,8 @@ async def start_independent_inference(
             "skipped": skipped,
             "model_task_type": model_task_type,
             "model_data_type": model_data_type,
-            "execution_mode": "independent_inference",
+            "source": "selected_wsi",
+            "execution_mode": "batch_inference",
             "total_wsi": len(valid_ids),
             "processed_wsi": 0,
             "results_count": 0,
@@ -2018,7 +2024,7 @@ async def start_independent_inference(
         model_id=str(trained_model.model_id),
         dataset_id=target_dataset_id or "",
         wsi_ids=valid_ids,
-        execution_mode="independent_inference",
+        execution_mode="batch_inference",
     )
 
     return {
@@ -2065,7 +2071,11 @@ async def _require_independent_inference_task(
         raise HTTPException(
             status_code=404, detail=f"Independent inference task not found: {task_id}"
         )
-    if not _is_independent_inference_task_id(getattr(task, "task_id", None)):
+    task_id_value = getattr(task, "task_id", None)
+    if not (
+        _is_independent_inference_task_id(task_id_value)
+        or (_is_batch_inference_task_id(task_id_value) and _has_selected_wsi_inference_config(task))
+    ):
         raise HTTPException(
             status_code=404, detail=f"Task {task_id} is not an independent inference task"
         )
@@ -2136,19 +2146,34 @@ async def list_independent_inference_tasks(
     db: AsyncSession = Depends(get_db),
 ):
     user_id_filter = None if user.is_admin() else str(user.id)
-    tasks = await TrainingTaskRepository.get_batch_inference_tasks(
-        db, user_id=user_id_filter, skip=skip, limit=limit, task_id_prefix="indinfer_"
-    )
-    total = await TrainingTaskRepository.count_batch_inference_tasks(
-        db, user_id=user_id_filter, task_id_prefix="indinfer_"
+    total_batch_tasks = await TrainingTaskRepository.count_batch_inference_tasks(
+        db, user_id=user_id_filter, task_id_prefix="binfer_"
     )
     items = []
-    for t in tasks:
-        file_prog = await get_progress(_coerce_str(t.task_id))
-        item = _inference_task_item(t)
-        item["progress"] = file_prog if file_prog is not None else item["progress"]
-        items.append(item)
-    return {"items": items, "total": total}
+    selected_total = 0
+    page_size = max(1, limit)
+    scan_offset = 0
+    while scan_offset < total_batch_tasks:
+        tasks = await TrainingTaskRepository.get_batch_inference_tasks(
+            db,
+            user_id=user_id_filter,
+            skip=scan_offset,
+            limit=page_size,
+            task_id_prefix="binfer_",
+        )
+        if not tasks:
+            break
+        for t in tasks:
+            if not _has_selected_wsi_inference_config(t):
+                continue
+            if selected_total >= skip and len(items) < limit:
+                file_prog = await get_progress(_coerce_str(t.task_id))
+                item = _inference_task_item(t)
+                item["progress"] = file_prog if file_prog is not None else item["progress"]
+                items.append(item)
+            selected_total += 1
+        scan_offset += len(tasks)
+    return {"items": items, "total": selected_total}
 
 
 @router.get("/independent-inference/{task_id}/results")
