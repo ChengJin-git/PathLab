@@ -30,6 +30,7 @@ from backend.database.repositories import (
 )
 from backend.ai.extractors import get_extractor
 from backend.ai.aggregators import get_aggregator
+from backend.ai.result_store import AIResultStore, ATTENTION_ARTIFACT
 from backend.ai.tasks.wsi_classification.trainer import WSIClassificationTrainer
 from backend.ai.tasks.feature_cache import (
     find_cached_features,
@@ -50,10 +51,6 @@ from backend.ai.schemas.requests import (
 )
 from backend.common.config import Config
 from backend.common.gpu_utils import get_device_string
-from backend.preprocessing.heatmap_preview_cache import (
-    ensure_recommendation_preview_cache,
-)
-
 logger = logging.getLogger("inference_routes")
 
 
@@ -299,27 +296,13 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
             pred_idx = probs.argmax()
             pred_label = trained_classes[pred_idx]
 
-            # --- Step 5: Save Attention for Heatmap ---
-            attention_path = None
+            # --- Step 5: Save Bundle Artifacts ---
+            arrays = {}
             if attention is not None:
-                import numpy as np
-
-                # Save attention weights to file
-                ai_results_dir = uploads_dir / "ai_results" / wsi_id
-                ai_results_dir.mkdir(parents=True, exist_ok=True)
-                attention_file = ai_results_dir / f"{task_id}_attention.npy"
                 attention_np = attention.cpu().numpy()
-                np.save(attention_file, attention_np)
-                ensure_recommendation_preview_cache(
-                    wsi_id,
-                    attention_file,
-                    uploads_dir,
-                    wsi_path=wsi.wsi_path,
-                    file_size=wsi.file_size,
-                )
-                attention_path = str(attention_file)
+                arrays[ATTENTION_ARTIFACT] = attention_np
                 logger.info(
-                    f"Saved attention weights ({len(attention_np)} patches) to {attention_path}"
+                    f"Prepared attention weights ({len(attention_np)} patches) for bundled storage"
                 )
 
             # --- Step 6: Save Results ---
@@ -331,9 +314,15 @@ async def run_inference_pipeline(task_id: str, wsi_id: str, model_id: str, devic
                 "extra_metadata": {
                     "model_id": model_id,
                     "model_name": model_record.model_name,
-                    "attention_path": attention_path,
+                    "attention_path": None,
                 },
             }
+            AIResultStore(uploads_dir).write_wsi_result(
+                task_id=task_id,
+                wsi_id=wsi_id,
+                result=result_data,
+                arrays=arrays,
+            )
 
             # Save to AIResult
             await AIResultRepository.create(db, result_data)
@@ -487,24 +476,13 @@ async def run_inference_pipeline_sync(
     pred_idx = probs.argmax()
     pred_label = trained_classes[pred_idx]
 
-    # --- Step 5: Save Attention for Heatmap ---
-    attention_path = None
+    # --- Step 5: Save Bundle Artifacts ---
+    arrays = {}
     if attention is not None:
-        ai_results_dir = uploads_dir / "ai_results" / wsi_id
-        ai_results_dir.mkdir(parents=True, exist_ok=True)
-        attention_file = ai_results_dir / f"{task_id}_attention.npy"
         attention_np = attention.cpu().numpy()
-        np.save(attention_file, attention_np)
-        ensure_recommendation_preview_cache(
-            wsi_id,
-            attention_file,
-            uploads_dir,
-            wsi_path=wsi.wsi_path,
-            file_size=wsi.file_size,
-        )
-        attention_path = str(attention_file)
+        arrays[ATTENTION_ARTIFACT] = attention_np
         logger.info(
-            f"Saved attention weights ({len(attention_np)} patches) to {attention_path}"
+            f"Prepared attention weights ({len(attention_np)} patches) for bundled storage"
         )
 
     # --- Step 6: Save Results ---
@@ -516,9 +494,16 @@ async def run_inference_pipeline_sync(
         "extra_metadata": {
             "model_id": model_id,
             "model_name": model_record.model_name,
-            "attention_path": attention_path,
+            "attention_path": None,
         },
     }
+
+    AIResultStore(uploads_dir).write_wsi_result(
+        task_id=task_id,
+        wsi_id=wsi_id,
+        result=result_data,
+        arrays=arrays,
+    )
 
     await AIResultRepository.create(db, result_data)
     await AITaskRepository.update_status(
