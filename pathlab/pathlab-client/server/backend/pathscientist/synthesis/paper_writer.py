@@ -8,11 +8,68 @@ explicitly supports for that section.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+import re
+from typing import Callable
 
-from ..config import DEFAULT_LLM_MODEL, resolve_llm_api_key, resolve_llm_base_url, resolve_llm_model
+from ..config import PathScientistConfig
+from ..llm_client import (
+    build_chat_llm,
+    extract_text,
+    has_chat_llm_config,
+    invoke_chat_llm,
+    make_llm_config,
+)
 from .title_normalizer import normalize_title
 from .types import GroundedSectionInput, ResearchReport
+
+
+# Orphan-citation scrub regex. Matches bracketed numeric tokens like
+# ``[1]`` / ``[23]`` — the academic-citation boilerplate LLMs tack onto
+# prose even when prompted not to. Only the numeric form is stripped: we
+# deliberately leave non-numeric brackets alone (``[TODO]``, ``[smith2023]``,
+# ``[paper_id]``) because those are either real paper_id citations or
+# intentional editorial markers. If the captured digits are in
+# ``allowed_ids``, the bracket is preserved.
+_ORPHAN_BRACKET_RE = re.compile(r"\[(\d+)\]")
+
+
+def _strip_orphan_citation_brackets(text: str, allowed_ids: set[str]) -> str:
+    """Remove ``[N]``-style numeric citation markers that aren't in allowed_ids.
+
+    Motivated by Finding 5 of
+    docs/review/2026-04-22-pathscientist-latest-run-review.md: LLMs inject
+    ``[1]`` / ``[2]`` academic-citation placeholders into prose even when the
+    prompt tells them not to. Post-processing deterministically strips those
+    orphan markers so the published draft doesn't carry decorative citations
+    pointing at references that don't exist.
+
+    Preserved:
+        - ``[N]`` markers where ``N`` literally appears in ``allowed_ids``
+          (rare: only when the report numbers its references).
+        - Non-numeric brackets (``[smith2023]``, ``[TODO]``, ``[paper_id]``)
+          — those are handled by the verifier, not by this scrub.
+
+    Cleans leftover ``"  "`` double spaces and the `` .`` / `` ,`` patterns
+    that appear after a marker between a word and its trailing punctuation is
+    removed, so "... analyses [1]. More." becomes "... analyses. More."
+    """
+    if not text:
+        return text
+
+    def _replace(match: re.Match) -> str:
+        num = match.group(1)
+        if num in allowed_ids:
+            return match.group(0)  # keep allowed citation
+        return ""  # strip orphan
+
+    scrubbed = _ORPHAN_BRACKET_RE.sub(_replace, text)
+    # Clean up whitespace/punctuation artefacts left by stripped markers:
+    #   "word [1]."  -> "word ."  -> "word."
+    #   "word [1] ." -> "word  ." -> "word ."
+    #   "word [1]  more" -> "word   more" -> "word more"
+    scrubbed = re.sub(r" +([.,;:!?])", r"\1", scrubbed)
+    scrubbed = re.sub(r"[ \t]{2,}", " ", scrubbed)
+    return scrubbed
 
 
 def _report_h1(report: ResearchReport) -> str:
@@ -33,6 +90,7 @@ def build_paper_draft(
     llm_model: str = "",
     llm_api_key: str = "",
     llm_base_url: str = "",
+    config: PathScientistConfig | None = None,
 ) -> str:
     """Generate a paper-ready draft from a structured report.
 
@@ -54,14 +112,22 @@ def build_paper_draft(
         return f"{_report_h1(report)}\n\n" + "\n\n".join(sections_md)
 
     # Try LLM-based generation when config or env resolves to an LLM.
-    has_llm = bool(
-        resolve_llm_model(llm_model)
-        or resolve_llm_api_key(llm_api_key)
-        or resolve_llm_base_url(llm_base_url)
+    llm_config = make_llm_config(
+        config=config,
+        llm_model=llm_model,
+        llm_api_key=llm_api_key,
+        llm_base_url=llm_base_url,
     )
+    has_llm = has_chat_llm_config(llm_config)
     if has_llm:
         try:
-            return _llm_section_by_section_draft(report, llm_model, llm_api_key, llm_base_url)
+            return _llm_section_by_section_draft(
+                report,
+                llm_model,
+                llm_api_key,
+                llm_base_url,
+                config=llm_config,
+            )
         except Exception as e:
             logger.warning(f"LLM paper draft failed, using deterministic fallback: {e}")
 
@@ -182,6 +248,7 @@ def _llm_section_by_section_draft(
     llm_model: str,
     llm_api_key: str,
     llm_base_url: str,
+    config: PathScientistConfig | None = None,
 ) -> str:
     """Generate the paper draft one section at a time from grounded inputs.
 
@@ -197,7 +264,12 @@ def _llm_section_by_section_draft(
     if not inputs:
         return _deterministic_paper_draft(report)
 
-    llm = _build_section_writer_llm(llm_model, llm_api_key, llm_base_url)
+    llm = _build_section_writer_llm(
+        llm_model,
+        llm_api_key,
+        llm_base_url,
+        config=config,
+    )
 
     sections_md: list[str] = []
     for inp in inputs:
@@ -218,22 +290,35 @@ def _llm_section_writer(
     llm_model: str = "",
     llm_api_key: str = "",
     llm_base_url: str = "",
+    config: PathScientistConfig | None = None,
 ) -> str:
     """Write one section of the paper draft via LLM, bounded by the section input."""
     from openhands.sdk.llm import Message, TextContent
 
     if llm is None:
-        llm = _build_section_writer_llm(llm_model, llm_api_key, llm_base_url)
+        llm = _build_section_writer_llm(
+            llm_model,
+            llm_api_key,
+            llm_base_url,
+            config=config,
+        )
 
     prompt = _build_section_prompt(section_input)
-    response = llm.completion(
+    response = invoke_chat_llm(
+        llm,
         messages=[Message(role="user", content=[TextContent(text=prompt)])],
     )
-    text = response.message.content[0].text.strip()
+    text = extract_text(response).strip()
 
     expected_header = f"## {section_input.section_title}"
     if not text.lstrip().startswith(expected_header):
         text = f"{expected_header}\n\n{text}"
+
+    # Strip orphan ``[N]`` academic-citation boilerplate the LLM may have
+    # inserted despite the prompt's CITATION RULES. Allowed numeric ids
+    # (the rare case where the report numbers its references) are
+    # preserved. See ``_strip_orphan_citation_brackets`` docstring.
+    text = _strip_orphan_citation_brackets(text, set(section_input.allowed_paper_ids))
     return text
 
 
@@ -255,6 +340,15 @@ def _build_section_prompt(section_input: GroundedSectionInput) -> str:
         "- If REQUIRED_CAUTION_FLAGS are present, address them explicitly.",
         "- Prefer cautious wording when claim confidence is medium or low.",
         f"- Begin your output with '{f'## {si.section_title}'}' and write prose only.",
+        "",
+        "CITATION RULES:",
+        "- Do NOT add numeric citation markers like [1], [2], or [3] at the end"
+        " of sentences. This project does not use numbered citations.",
+        "- If you want to cite a source, use the EXACT paper_id string from"
+        " ALLOWED_PAPER_IDS, e.g. [smith2023] or [10.1038/s41591-024-12345].",
+        "- If ALLOWED_PAPER_IDS is empty, produce NO citation markers at all."
+        " Do not fall back to [1] / [2] / [ref] / [citation needed] style"
+        " placeholders — leave the sentence uncited instead.",
         "",
     ]
 
@@ -294,20 +388,18 @@ def _build_section_writer_llm(
     llm_model: str,
     llm_api_key: str,
     llm_base_url: str,
+    config: PathScientistConfig | None = None,
 ):
     """Construct the OpenHands LLM client used for section drafting."""
-    from pydantic import SecretStr
-    from openhands.sdk.llm import LLM
-
-    llm_kwargs: dict[str, Any] = {}
-    llm_kwargs["model"] = resolve_llm_model(llm_model, default=DEFAULT_LLM_MODEL)
-    api_key = resolve_llm_api_key(llm_api_key)
-    if api_key:
-        llm_kwargs["api_key"] = SecretStr(api_key)
-    base_url = resolve_llm_base_url(llm_base_url)
-    if base_url:
-        llm_kwargs["base_url"] = base_url
-    llm_kwargs["temperature"] = 0.3
-    llm_kwargs["usage_id"] = "paper_writer_section"
-
-    return LLM(**llm_kwargs)
+    llm_config = make_llm_config(
+        config=config,
+        llm_model=llm_model,
+        llm_api_key=llm_api_key,
+        llm_base_url=llm_base_url,
+    )
+    return build_chat_llm(
+        llm_config,
+        component="paper drafting",
+        usage_id="paper_writer_section",
+        temperature=0.3,
+    )

@@ -83,13 +83,70 @@ def _extract_references_section(draft: str) -> str:
 def verify_paper_draft(
     report: ResearchReport,
     draft: str,
+    enforce_substantive_content: bool = False,
 ) -> PaperDraftVerificationResult:
     """Verify a paper draft references only evidence from the report.
 
     Deterministic: regex extraction + set comparison, no LLM.
+
+    When ``enforce_substantive_content=True`` (set by the orchestrator
+    paper_ready determination per Plan-2026-04-28 P0 #2), additionally
+    fail an empty draft and fail drafts where required sections lack
+    substantive content (heading-only drafts no longer pass — repros
+    session_d162f805e1d7 where ``paper_ready=true`` was set on a
+    bare-headings draft).
     """
+    issues: list[DraftVerificationIssue] = []
+
+    # Empty / blank draft.
     if not draft.strip():
+        if enforce_substantive_content:
+            issues.append(DraftVerificationIssue(
+                section_name="paper_draft",
+                issue_type="empty_draft",
+                severity="error",
+                sentence="",
+                detail="Paper draft is empty.",
+            ))
+            return PaperDraftVerificationResult(
+                passed=False, issue_count=len(issues), issues=issues,
+            )
+        # Backward-compatible behavior: lineage-only mode treats empty as
+        # vacuously valid (nothing to verify against).
         return PaperDraftVerificationResult(passed=True)
+
+    if enforce_substantive_content:
+        _REQUIRED_SECTIONS = (
+            ("Abstract", ("abstract",)),
+            ("Methods", ("methods", "experimental setup", "method", "approach")),
+            ("Results", ("results", "result", "experiments")),
+            ("Limitations", ("limitations", "limitation", "discussion")),
+            ("Reproducibility", ("reproducibility", "reproduction", "implementation details")),
+        )
+        _MIN_SECTION_CHARS = 80   # ~one substantive sentence
+
+        section_map: dict[str, str] = {}
+        for _name, _body in _split_into_sections(draft):
+            section_map[_name.strip().lower()] = _body.strip()
+
+        for canonical_name, aliases in _REQUIRED_SECTIONS:
+            body = ""
+            for alias in aliases:
+                if alias in section_map:
+                    body = section_map[alias]
+                    break
+            if not body or len(body) < _MIN_SECTION_CHARS:
+                issues.append(DraftVerificationIssue(
+                    section_name=canonical_name.lower(),
+                    issue_type="empty_section" if not body else "stub_section",
+                    severity="error",
+                    sentence="",
+                    detail=(
+                        f"Required section '{canonical_name}' is "
+                        f"{'missing or empty' if not body else f'only {len(body)} chars (min {_MIN_SECTION_CHARS})'}. "
+                        f"A heading-only draft must not pass paper_ready."
+                    ),
+                ))
 
     # Build allowed sets from report
     allowed_run_ids: set[str] = {report.best_run_id}
@@ -142,7 +199,10 @@ def verify_paper_draft(
     # Split draft into sections for issue attribution
     sections = _split_into_sections(draft)
 
-    issues: list[DraftVerificationIssue] = []
+    # ``issues`` was already initialized above for substantive-content
+    # checks (Plan-2026-04-28 P0 #2); accumulate lineage issues into the
+    # same list so a draft that's both bare-headings AND has lineage
+    # problems reports both.
     unsupported_run_ids: list[str] = []
     unsupported_paper_ids: list[str] = []
     unsupported_metric_mentions: list[str] = []

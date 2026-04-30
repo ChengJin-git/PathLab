@@ -91,26 +91,54 @@ def build_synthesis_context(
 
     # Enrich with evidence if available
     if evidence_store:
-        from ..evidence.query import query_best_run, query_comparison_table, query_failures
+        from ..evidence.query import (
+            query_best_run, query_comparison_table, query_failures,
+            query_non_improving_runs,
+        )
 
         sid = state.session_id
-        best = None
+        # Plan T3: ResearchSessionState.best_run_id is canonical. When the
+        # state has a best but its evidence is missing (this happens when a
+        # later ratchet_revert wiped the untracked record — see Plan T2),
+        # do NOT fall back to query_best_run() — that would silently
+        # downgrade the report to whatever older run still has evidence on
+        # disk (session_a70dd3a564c1 reported auc=0.81 when the actual best
+        # was 0.8449). Instead, keep state's best and tag it with
+        # evidence_status='missing' so IntegrityGuard's fatal
+        # `evidence_run_missing` check stays correlated with the report.
         if state.best_run_id:
             try:
                 best = evidence_store.load(state.best_run_id)
             except Exception:
                 best = None
-        if best is None:
+            if best:
+                context["best_run"] = {
+                    "run_id": best.run_id,
+                    "primary_metric_value": best.primary_metric_value,
+                    "primary_metric_name": best.primary_metric_name,
+                    "git_commit": best.git_commit,
+                    "duration": best.duration,
+                    "code_diff_summary": best.git_diff[:200] if best.git_diff else "",
+                    "evidence_status": "present",
+                }
+            else:
+                # State best exists but evidence doesn't. Preserve state's
+                # best_run_id + best_metric_value (already populated above
+                # from state.run_history) and surface the integrity gap.
+                context["best_run"]["evidence_status"] = "missing"
+        else:
+            # No state best at all → fall back to evidence-only lookup.
             best = query_best_run(evidence_store, session_id=sid)
-        if best:
-            context["best_run"] = {
-                "run_id": best.run_id,
-                "primary_metric_value": best.primary_metric_value,
-                "primary_metric_name": best.primary_metric_name,
-                "git_commit": best.git_commit,
-                "duration": best.duration,
-                "code_diff_summary": best.git_diff[:200] if best.git_diff else "",
-            }
+            if best:
+                context["best_run"] = {
+                    "run_id": best.run_id,
+                    "primary_metric_value": best.primary_metric_value,
+                    "primary_metric_name": best.primary_metric_name,
+                    "git_commit": best.git_commit,
+                    "duration": best.duration,
+                    "code_diff_summary": best.git_diff[:200] if best.git_diff else "",
+                    "evidence_status": "present",
+                }
 
         # Key rows by (iteration, run_id) rather than run_id alone. A sticky
         # run_id bug (e.g. session_b14b074d2268 / 2026-04-20) can leave
@@ -137,6 +165,11 @@ def build_synthesis_context(
             key=lambda row: (row.get("iteration", 0), row.get("run_id", "")),
         )
         context["failures"] = query_failures(evidence_store, session_id=sid)
+        # Plan-2026-04-28 P2 #7: separate clean-exit metric regressions
+        # so the report doesn't lump them under "failures".
+        context["non_improving_runs"] = query_non_improving_runs(
+            evidence_store, session_id=sid,
+        )
 
     # Add citations
     if citation_tracker:
