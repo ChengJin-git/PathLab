@@ -80,6 +80,7 @@ from backend.ai.tasks.training_utils import (
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
     check_training_interruption,
+    save_ai_result_artifacts,
 )
 import logging
 
@@ -2418,9 +2419,8 @@ class WSIClassificationTrainer(BaseTrainer):
         - Probabilities (probs): probability distribution over classes
         - Attention weights: per-patch attention scores
 
-        Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
-        - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
+        Results are saved to the task-level AI result bundle, including result
+        metadata and attention arrays when available.
         """
         import concurrent.futures
         from functools import partial
@@ -2483,7 +2483,6 @@ class WSIClassificationTrainer(BaseTrainer):
         )
 
         model.eval()
-        ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, "forward_with_raw_attention")
         num_classes = len(classes)
 
@@ -2595,7 +2594,6 @@ class WSIClassificationTrainer(BaseTrainer):
                         )
 
                         for wid in slide_wsi_ids:
-                            wsi_result_dir = ai_results_root / wid
                             slide_attn = slide_attentions.get(wid)
                             slide_raw_attn = slide_raw_attentions.get(wid)
 
@@ -2638,23 +2636,9 @@ class WSIClassificationTrainer(BaseTrainer):
                                     result_data,
                                     slide_attn,
                                     slide_raw_attn,
-                                    wsi_result_dir,
                                 )
                             )
 
-                            # Prepare database record
-                            result_file = (
-                                wsi_result_dir
-                                / f"train_{task_id}{fold_suffix}_result.json"
-                            )
-                            attention_file_path = (
-                                str(
-                                    wsi_result_dir
-                                    / f"train_{task_id}{fold_suffix}_attention.npy"
-                                )
-                                if slide_attn is not None
-                                else None
-                            )
                             db_records.append(
                                 {
                                     "wsi_id": wid,
@@ -2670,8 +2654,8 @@ class WSIClassificationTrainer(BaseTrainer):
                                         "attention_type": attention_type,
                                         "attention_shape": attention_shape,
                                         "fold_key": fold_key,
-                                        "result_file": str(result_file),
-                                        "attention_file": attention_file_path,
+                                        "result_file": None,
+                                        "attention_file": None,
                                         "aggregation_level": "case",
                                     },
                                 }
@@ -2680,7 +2664,6 @@ class WSIClassificationTrainer(BaseTrainer):
                     else:
                         # Slide-level: original behavior
                         wsi_id = sample_id
-                        wsi_result_dir = ai_results_root / wsi_id
 
                         attention_shape = (
                             list(attention_np.shape)
@@ -2714,22 +2697,9 @@ class WSIClassificationTrainer(BaseTrainer):
                                 result_data,
                                 attention_np,
                                 raw_attention_np,
-                                wsi_result_dir,
                             )
                         )
 
-                        # Prepare database record
-                        result_file = (
-                            wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                        )
-                        attention_file_path = (
-                            str(
-                                wsi_result_dir
-                                / f"train_{task_id}{fold_suffix}_attention.npy"
-                            )
-                            if attention_np is not None
-                            else None
-                        )
                         db_records.append(
                             {
                                 "wsi_id": wsi_id,
@@ -2744,8 +2714,8 @@ class WSIClassificationTrainer(BaseTrainer):
                                     "attention_type": attention_type,
                                     "attention_shape": attention_shape,
                                     "fold_key": fold_key,
-                                    "result_file": str(result_file),
-                                    "attention_file": attention_file_path,
+                                    "result_file": None,
+                                    "attention_file": None,
                                 },
                             }
                         )
@@ -2819,27 +2789,22 @@ class WSIClassificationTrainer(BaseTrainer):
 
         def save_single_wsi_files(item, fold_suffix: str, task_id: str):
             """Synchronous function to save files for a single WSI."""
-            wsi_id, result_data, attention_np, raw_attention_np, wsi_result_dir = item
-            wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-            with open(result_file, "w", encoding="utf-8") as f:
-                json.dump(result_data, f, ensure_ascii=False)
-
+            wsi_id, result_data, attention_np, raw_attention_np = item
+            arrays = {}
             if attention_np is not None:
-                attention_file = (
-                    wsi_result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
-                )
-                np.save(attention_file, attention_np)
-                ensure_recommendation_preview_cache(
-                    wsi_id, attention_file, Config.get_uploads_dir()
-                )
+                arrays["attention"] = attention_np
 
             if raw_attention_np is not None:
-                raw_attention_file = (
-                    wsi_result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
-                )
-                np.save(raw_attention_file, raw_attention_np)
+                arrays["attention_raw"] = raw_attention_np
+
+            save_ai_result_artifacts(
+                Config.get_uploads_dir(),
+                task_id,
+                wsi_id,
+                result_data,
+                arrays=arrays or None,
+                fold_suffix=fold_suffix,
+            )
 
             return wsi_id
 

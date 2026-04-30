@@ -29,6 +29,7 @@ from sklearn.metrics import (
 import anyio
 
 from backend.common.config import Config
+from backend.ai.result_store import AIResultStore
 
 _scoped_db_logger = logging.getLogger("ai.scoped_db")
 
@@ -80,6 +81,25 @@ def interpolate_progress(
 
 # Keep backward-compatible alias
 _safe_update_progress = safe_update_progress
+
+
+def save_ai_result_artifacts(
+    uploads_root: Path,
+    task_id: str,
+    wsi_id: str,
+    result_data: dict[str, Any],
+    arrays: dict[str, np.ndarray[Any, Any]] | None = None,
+    fold_suffix: str = "",
+) -> Path | None:
+    """Persist one WSI/image AI result into the task-level bundle."""
+    fold_key = fold_suffix.removeprefix("_") if fold_suffix else None
+    return AIResultStore(uploads_root).write_wsi_result(
+        task_id=task_id,
+        wsi_id=wsi_id,
+        result=result_data,
+        arrays=arrays,
+        fold_key=fold_key,
+    )
 
 
 @asynccontextmanager
@@ -154,7 +174,7 @@ def calculate_kfold_classification_metrics(
         - Dict with fold_key as keys and {metric_name: value} as values (per-fold)
         Metrics include: precision, sensitivity (recall), specificity, f1, auc
     """
-    ai_results_root = uploads_root / "ai_results"
+    result_store = AIResultStore(uploads_root)
     n_classes = len(classes)
 
     # Per-fold metrics (for aggregated calculation)
@@ -179,62 +199,24 @@ def calculate_kfold_classification_metrics(
         if splits_map and fold_key in splits_map:
             wsi_ids = splits_map[fold_key]
             for wsi_id in wsi_ids:
-                result_file = (
-                    ai_results_root / wsi_id / f"train_{task_id}_{fold_key}_result.json"
-                )
-                if result_file.exists():
-                    try:
-                        with open(result_file, "r") as f:
-                            data = json.load(f)
-                            pred = data.get("pred")
-                            gt = data.get("ground_truth")
-                            probs = data.get("probs", {})
-                            if pred and gt:
-                                pred_idx = (
-                                    classes.index(pred) if pred in classes else -1
-                                )
-                                gt_idx = classes.index(gt) if gt in classes else -1
-                                if pred_idx >= 0 and gt_idx >= 0:
-                                    all_preds.append(pred_idx)
-                                    all_labels.append(gt_idx)
-                                    probs_arr = [probs.get(cls, 0.0) for cls in classes]
-                                    all_probs.append(probs_arr)
-                    except Exception:
-                        continue
-        # Slow path: scan directory (fallback for backward compatibility)
-        elif ai_results_root.exists():
-            for wsi_dir in ai_results_root.iterdir():
-                if wsi_dir.is_dir():
-                    result_file = wsi_dir / f"train_{task_id}_{fold_key}_result.json"
-                    if result_file.exists():
-                        try:
-                            with open(result_file, "r") as f:
-                                data = json.load(f)
-                                if (
-                                    data.get("task_id") == task_id
-                                    and data.get("fold_key") == fold_key
-                                ):
-                                    pred = data.get("pred")
-                                    gt = data.get("ground_truth")
-                                    probs = data.get("probs", {})
-                                    if pred and gt:
-                                        pred_idx = (
-                                            classes.index(pred)
-                                            if pred in classes
-                                            else -1
-                                        )
-                                        gt_idx = (
-                                            classes.index(gt) if gt in classes else -1
-                                        )
-                                        if pred_idx >= 0 and gt_idx >= 0:
-                                            all_preds.append(pred_idx)
-                                            all_labels.append(gt_idx)
-                                            probs_arr = [
-                                                probs.get(cls, 0.0) for cls in classes
-                                            ]
-                                            all_probs.append(probs_arr)
-                        except Exception:
-                            continue
+                try:
+                    data = result_store.read_result(
+                        task_id, wsi_id, fold_key=fold_key, strict=True
+                    )
+                    pred = data.get("pred")
+                    gt = data.get("ground_truth")
+                    probs = data.get("probs", {})
+                    if pred and gt:
+                        pred_idx = classes.index(pred) if pred in classes else -1
+                        gt_idx = classes.index(gt) if gt in classes else -1
+                        if pred_idx >= 0 and gt_idx >= 0:
+                            all_preds.append(pred_idx)
+                            all_labels.append(gt_idx)
+                            probs_arr = [probs.get(cls, 0.0) for cls in classes]
+                            all_probs.append(probs_arr)
+                except Exception:
+                    continue
+        # No filesystem scan fallback: migrated train artifacts must be read via result store.
 
         if not all_preds:
             continue

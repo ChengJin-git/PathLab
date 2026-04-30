@@ -52,7 +52,9 @@ from backend.ai.tasks.training_utils import (
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
     check_training_interruption,
+    save_ai_result_artifacts,
 )
+from backend.ai.result_store import AIResultStore
 from backend.database.repositories import (
     WSIRepository,
     TrainingTaskRepository,
@@ -1293,7 +1295,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             - Dict with metric names as keys and {"mean": float, "std": float} as values (aggregated)
             - Dict with fold_key as keys and {"integrated_brier_score": float} as values (per-fold)
         """
-        ai_results_root = self.uploads_root / "ai_results"
+        result_store = AIResultStore(self.uploads_root)
 
         # Per-fold metrics
         fold_ibs_scores = []
@@ -1339,40 +1341,16 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 if bin_edges is not None and fold_bin_edges is None:
                     fold_bin_edges = bin_edges
 
-            # Fast path: directly read files for known WSI IDs
-            if splits_map and fold_key in splits_map:
-                wsi_ids = splits_map[fold_key]
-                for wsi_id in wsi_ids:
-                    result_file = (
-                        ai_results_root
-                        / wsi_id
-                        / f"train_{task_id}_{fold_key}_result.json"
+            wsi_ids = splits_map.get(fold_key) if splits_map else result_store.list_results(task_id)
+            for wsi_id in wsi_ids:
+                try:
+                    data = result_store.read_result(
+                        task_id, wsi_id, fold_key=fold_key, strict=True
                     )
-                    if result_file.exists():
-                        try:
-                            with open(result_file, "r") as f:
-                                data = json.load(f)
-                                _append_fold_result(data)
-                        except Exception:
-                            continue
-            # Slow path: scan directory (fallback for backward compatibility)
-            elif ai_results_root.exists():
-                for wsi_dir in ai_results_root.iterdir():
-                    if wsi_dir.is_dir():
-                        result_file = (
-                            wsi_dir / f"train_{task_id}_{fold_key}_result.json"
-                        )
-                        if result_file.exists():
-                            try:
-                                with open(result_file, "r") as f:
-                                    data = json.load(f)
-                                    if (
-                                        data.get("task_id") == task_id
-                                        and data.get("fold_key") == fold_key
-                                    ):
-                                        _append_fold_result(data)
-                            except Exception:
-                                continue
+                except Exception:
+                    continue
+                if data.get("task_id") == task_id and data.get("fold_key") == fold_key:
+                    _append_fold_result(data)
 
             if len(all_risks) >= 2:
                 # Calculate IBS if we have survival probabilities and bin edges
@@ -2116,9 +2094,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         - Hazards and survival probabilities
         - Attention weights for heatmap visualization
 
-        Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
-        - uploads/ai_results/{wsi_id}/train_{task_id}_attention.npy (if attention available)
+        Results are saved to the task-level AI result bundle.
 
         Args:
             dataset: Dataset for loading features on-demand
@@ -2191,7 +2167,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
         )
 
         model.eval()
-        ai_results_root = self.uploads_root / "ai_results"
         has_raw_attention = hasattr(model, "forward_with_raw_attention")
 
         file_save_items = []  # For parallel file saving
@@ -2352,7 +2327,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 )
 
                 for wsi_id in slide_wsi_ids_list:
-                    wsi_result_dir = ai_results_root / wsi_id
                     slide_attn = slide_attentions.get(wsi_id)
                     slide_raw_attn = slide_raw_attentions.get(wsi_id)
 
@@ -2380,7 +2354,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
                     file_save_items.append(
                         (
-                            wsi_result_dir,
+                            None,
                             result_data,
                             slide_attn,
                             slide_raw_attn,
@@ -2389,17 +2363,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                         )
                     )
 
-                    result_file = (
-                        wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                    )
-                    attention_file_path = (
-                        str(
-                            wsi_result_dir
-                            / f"train_{task_id}{fold_suffix}_attention.npy"
-                        )
-                        if slide_attn is not None
-                        else None
-                    )
                     db_records.append(
                         {
                             "wsi_id": wsi_id,
@@ -2417,8 +2380,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                                 "event_time": wsi_event_time,
                                 "event_status": wsi_event_status,
                                 "bin_edges": bin_edges.tolist(),
-                                "result_file": str(result_file),
-                                "attention_file": attention_file_path,
+                                "result_file": None,
+                                "attention_file": None,
                                 "fold_key": fold_key,
                                 "aggregation_level": "case",
                             },
@@ -2428,7 +2391,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
             else:
                 # Slide-level: original behavior
                 wsi_id = sample_id
-                result_dir = ai_results_root / wsi_id
 
                 result_data = {
                     "wsi_id": wsi_id,
@@ -2448,7 +2410,7 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
 
                 file_save_items.append(
                     (
-                        result_dir,
+                        None,
                         result_data,
                         attention_np,
                         raw_attention_np,
@@ -2457,12 +2419,6 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                     )
                 )
 
-                result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                attention_file_path = (
-                    str(result_dir / f"train_{task_id}{fold_suffix}_attention.npy")
-                    if attention_np is not None
-                    else None
-                )
                 db_records.append(
                     {
                         "wsi_id": wsi_id,
@@ -2479,8 +2435,8 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                             "event_time": sample_time,
                             "event_status": sample_status,
                             "bin_edges": bin_edges.tolist(),
-                            "result_file": str(result_file),
-                            "attention_file": attention_file_path,
+                            "result_file": None,
+                            "attention_file": None,
                             "fold_key": fold_key,
                         },
                     }
@@ -2536,26 +2492,21 @@ class WSISurvivalTrainer(WSIClassificationTrainer):
                 fold_suffix,
                 task_id,
             ) = item
-            result_dir.mkdir(parents=True, exist_ok=True)
-
-            result_file = result_dir / f"train_{task_id}{fold_suffix}_result.json"
-            with open(result_file, "w") as f:
-                json.dump(result_data, f)
-
+            arrays = {}
             if attention_np is not None:
-                attention_file = (
-                    result_dir / f"train_{task_id}{fold_suffix}_attention.npy"
-                )
-                np.save(attention_file, attention_np)
-                ensure_recommendation_preview_cache(
-                    result_data["wsi_id"], attention_file, Config.get_uploads_dir()
-                )
+                arrays["attention"] = attention_np
 
             if raw_attention_np is not None:
-                raw_attention_file = (
-                    result_dir / f"train_{task_id}{fold_suffix}_attention_raw.npy"
-                )
-                np.save(raw_attention_file, raw_attention_np)
+                arrays["attention_raw"] = raw_attention_np
+
+            save_ai_result_artifacts(
+                Config.get_uploads_dir(),
+                task_id,
+                result_data["wsi_id"],
+                result_data,
+                arrays=arrays or None,
+                fold_suffix=fold_suffix,
+            )
 
             return result_data["wsi_id"]
 

@@ -73,6 +73,7 @@ from backend.ai.tasks.training_utils import (
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
     check_training_interruption,
+    save_ai_result_artifacts,
 )
 
 
@@ -1728,9 +1729,8 @@ class PatchClassificationTrainer(BaseTrainer):
         - Ground truth
         - CAM heatmap (attention-like visualization)
 
-        Results are saved to:
-        - uploads/ai_results/{wsi_id}/train_{task_id}_result.json
-        - uploads/ai_results/{wsi_id}/train_{task_id}_cam.npy (CAM heatmap)
+        Results are saved to the task-level AI result bundle, including result
+        metadata and CAM arrays when available.
 
         Args:
             fold_key: Optional fold identifier (e.g., "fold_0") for k-fold training.
@@ -1780,7 +1780,6 @@ class PatchClassificationTrainer(BaseTrainer):
         )
 
         model.eval()
-        ai_results_root = self.uploads_root / "ai_results"
         num_classes = len(classes)
 
         # Get transforms for inference using actual extractor resize rules
@@ -1872,12 +1871,6 @@ class PatchClassificationTrainer(BaseTrainer):
                     probs_dict = {cls: float(probs[i]) for i, cls in enumerate(classes)}
                     gt_label = classes[labels[wsi_id]]
 
-                    wsi_result_dir = ai_results_root / wsi_id
-                    cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
-                    result_file = (
-                        wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-                    )
-
                     result_data = {
                         "wsi_id": wsi_id,
                         "task_id": task_id,
@@ -1886,15 +1879,13 @@ class PatchClassificationTrainer(BaseTrainer):
                         "ground_truth": gt_label,
                         "correct": pred_label == gt_label,
                         "classes": classes,
-                        "cam_file": str(cam_file),
+                        "cam_file": None,
                         "cam_size": list(cam_size),
                     }
                     if fold_key:
                         result_data["fold_key"] = fold_key
 
-                    _file_save_items.append(
-                        (wsi_result_dir, result_data, cam_map, fold_suffix, task_id)
-                    )
+                    _file_save_items.append((result_data, cam_map, fold_suffix, task_id))
 
                     # Prepare database record
                     _db_records.append(
@@ -1908,10 +1899,10 @@ class PatchClassificationTrainer(BaseTrainer):
                                 "correct": pred_label == gt_label,
                                 "classes": classes,
                                 "task_type": "patch_classification",
-                                "cam_file": str(cam_file),
+                                "cam_file": None,
                                 "cam_size": list(cam_size),
                                 "fold_key": fold_key,
-                                "result_file": str(result_file),
+                                "result_file": None,
                             },
                         }
                     )
@@ -1981,17 +1972,15 @@ class PatchClassificationTrainer(BaseTrainer):
 
         def save_single_image_files(item):
             """Synchronous function to save files for a single image."""
-            wsi_result_dir, result_data, cam_map, fold_suffix, task_id = item
-            wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
-            # Save CAM heatmap
-            cam_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_cam.npy"
-            np.save(cam_file, cam_map)
-
-            # Save result JSON
-            result_file = wsi_result_dir / f"train_{task_id}{fold_suffix}_result.json"
-            with open(result_file, "w", encoding="utf-8") as f:
-                json.dump(result_data, f, ensure_ascii=False)
+            result_data, cam_map, fold_suffix, task_id = item
+            save_ai_result_artifacts(
+                Config.get_uploads_dir(),
+                task_id,
+                result_data["wsi_id"],
+                result_data,
+                arrays={"cam": cam_map},
+                fold_suffix=fold_suffix,
+            )
 
             return result_data["wsi_id"]
 
