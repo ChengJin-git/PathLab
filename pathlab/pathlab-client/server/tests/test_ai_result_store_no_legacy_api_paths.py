@@ -19,15 +19,10 @@ FORBIDDEN_PATTERNS = [
 ]
 
 ALLOWED_FILES = {
-    Path("backend/ai/ai_result_migration.py"),
-    Path("backend/ai/result_store.py"),
     Path("backend/ai/routes/inference.py"),
     Path("backend/ai/tasks/wsi_classification/trainer.py"),
     Path("backend/ai/tasks/wsi_survival/trainer.py"),
     Path("backend/ai/tasks/patch_classification/trainer.py"),
-    Path("backend/common/config.py"),
-    Path("backend/storage/manager.py"),
-    Path("backend/storage/orphan_mixin.py"),
     Path("gateway/routes/external_validation_analysis.py"),
     Path("gateway/routes/inference_external_validation.py"),
     Path("gateway/routes/results.py"),

@@ -17,7 +17,6 @@ from zarr.storage import ZipStore
 
 SCHEMA_VERSION = 1
 BUNDLE_DIR_NAME = "ai_results_bundles"
-LEGACY_DIR_NAME = "ai_results"
 
 RESULT_ARTIFACT = "result"
 ATTENTION_ARTIFACT = "attention"
@@ -46,11 +45,9 @@ class AIResultStore:
     def __init__(self, uploads_dir: Path):
         self.uploads_dir = Path(uploads_dir)
         self.bundle_dir = self.uploads_dir / BUNDLE_DIR_NAME
-        self.legacy_dir = self.uploads_dir / LEGACY_DIR_NAME
         self.staging_root = self.bundle_dir / ".staging"
         self.index_path = self.bundle_dir / ".wsi_index.json"
         self.bundle_dir.mkdir(parents=True, exist_ok=True)
-        self.legacy_dir.mkdir(parents=True, exist_ok=True)
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
     def bundle_path(self, task_id: str) -> Path:
@@ -58,28 +55,6 @@ class AIResultStore:
 
     def staging_path(self, task_id: str) -> Path:
         return self.staging_root / f"{task_id}.zarr"
-
-    def legacy_result_path(
-        self, task_id: str, wsi_id: str, fold_key: str | None = None
-    ) -> Path:
-        filename = (
-            f"train_{task_id}_{fold_key}_result.json"
-            if fold_key
-            else f"train_{task_id}_result.json"
-        )
-        return self.legacy_dir / wsi_id / filename
-
-    def legacy_array_path(
-        self, task_id: str, wsi_id: str, artifact: str, fold_key: str | None = None
-    ) -> Path:
-        if artifact not in ARRAY_ARTIFACTS:
-            raise ValueError(f"unsupported array artifact: {artifact}")
-        filename = (
-            f"train_{task_id}_{fold_key}_{artifact}.npy"
-            if fold_key
-            else f"train_{task_id}_{artifact}.npy"
-        )
-        return self.legacy_dir / wsi_id / filename
 
     def write_wsi_result(
         self,
@@ -218,9 +193,7 @@ class AIResultStore:
     ) -> dict[str, Any]:
         with self._finalized_bundle(task_id, strict=strict) as root:
             if root is None:
-                if strict:
-                    raise FileNotFoundError(self.bundle_path(task_id))
-                return self._read_legacy_result(task_id, wsi_id, fold_key)
+                raise FileNotFoundError(self.bundle_path(task_id))
 
             result_group = self._open_group_path(root, f"results/{self._item_key(wsi_id, fold_key)}")
             return cast(dict[str, Any], result_group.attrs["result_json"])
@@ -237,9 +210,7 @@ class AIResultStore:
             raise ValueError(f"unsupported array artifact: {artifact}")
         with self._finalized_bundle(task_id, strict=strict) as root:
             if root is None:
-                if strict:
-                    raise FileNotFoundError(self.bundle_path(task_id))
-                return np.load(self.legacy_array_path(task_id, wsi_id, artifact, fold_key))
+                raise FileNotFoundError(self.bundle_path(task_id))
             array_obj = self._open_array_path(root, f"{artifact}/{self._item_key(wsi_id, fold_key)}")
             return cast(NDArray[Any], np.asarray(array_obj))
 
@@ -351,30 +322,74 @@ class AIResultStore:
                 if artifact == RESULT_ARTIFACT:
                     return self._path_exists(root, f"results/{item_key}")
                 return self._path_exists(root, f"{artifact}/{item_key}")
-        if strict:
-            return False
-        if artifact == RESULT_ARTIFACT:
-            return self.legacy_result_path(task_id, wsi_id, fold_key).exists()
-        return self.legacy_array_path(task_id, wsi_id, artifact, fold_key).exists()
+        return False
 
     def delete_task(self, task_id: str) -> None:
         self.bundle_path(task_id).unlink(missing_ok=True)
         shutil.rmtree(self.staging_path(task_id), ignore_errors=True)
-        for wsi_dir in self.legacy_dir.iterdir() if self.legacy_dir.exists() else []:
-            if not wsi_dir.is_dir():
-                continue
-            for path in wsi_dir.glob(f"train_{task_id}*_result.json"):
-                path.unlink(missing_ok=True)
-            for artifact in ARRAY_ARTIFACTS:
-                (wsi_dir / f"train_{task_id}_{artifact}.npy").unlink(missing_ok=True)
         index = self._load_index()
         index.pop(task_id, None)
         self._save_index(index)
 
     def delete_wsi(self, wsi_id: str) -> None:
-        shutil.rmtree(self.legacy_dir / wsi_id, ignore_errors=True)
         for task_id in list(self._load_index()):
             self.rebuild_wsi_index(task_id)
+
+    def delete_wsi_result(self, task_id: str, wsi_id: str) -> dict[str, Any]:
+        with self._task_lock(task_id):
+            bundle = self.bundle_path(task_id)
+            if not bundle.exists():
+                return {"deleted": False, "removed_artifacts": [], "bundle_removed": False, "size_before": 0, "size_after": 0}
+
+            size_before = bundle.stat().st_size
+            self._hydrate_staging_from_bundle(task_id)
+            root = self._open_staging_group(task_id, overwrite=False)
+            removed_artifacts: list[str] = []
+            removed_any = False
+            remaining_wsi_ids = set(cast(list[str], root.attrs.get("wsi_ids", [])))
+
+            for artifact in ALL_ARTIFACTS:
+                group_name = "results" if artifact == RESULT_ARTIFACT else artifact
+                group = self._open_group_path(root, group_name)
+                if group is None:
+                    continue
+                for item_key in list(group.keys()):
+                    decoded = self._decode_item_key(str(item_key))
+                    if decoded is None or decoded[0] != wsi_id:
+                        continue
+                    del group[str(item_key)]
+                    removed_artifacts.append(artifact)
+                    removed_any = True
+
+            if not removed_any:
+                shutil.rmtree(self.staging_path(task_id), ignore_errors=True)
+                return {"deleted": False, "removed_artifacts": [], "bundle_removed": False, "size_before": size_before, "size_after": size_before}
+
+            remaining_wsi_ids.discard(wsi_id)
+            root.attrs["wsi_ids"] = sorted(remaining_wsi_ids)
+            if remaining_wsi_ids:
+                self._finalize_task_bundle(task_id)
+                size_after = bundle.stat().st_size
+                return {
+                    "deleted": True,
+                    "removed_artifacts": sorted(set(removed_artifacts)),
+                    "bundle_removed": False,
+                    "size_before": size_before,
+                    "size_after": size_after,
+                }
+
+            shutil.rmtree(self.staging_path(task_id), ignore_errors=True)
+            bundle.unlink(missing_ok=True)
+            index = self._load_index()
+            index.pop(task_id, None)
+            self._save_index(index)
+            return {
+                "deleted": True,
+                "removed_artifacts": sorted(set(removed_artifacts)),
+                "bundle_removed": True,
+                "size_before": size_before,
+                "size_after": 0,
+            }
 
     def bundle_stats(self, task_id: str) -> dict[str, Any]:
         bundle = self.bundle_path(task_id)
@@ -558,41 +573,14 @@ class AIResultStore:
         if update_index:
             self._update_index(task_id, merged)
 
-    def _read_legacy_result(
-        self, task_id: str, wsi_id: str, fold_key: str | None = None
-    ) -> dict[str, Any]:
-        path = self.legacy_result_path(task_id, wsi_id, fold_key)
-        if path.exists():
-            return json.loads(path.read_text(encoding="utf-8"))
-        fold_files = sorted(path.parent.glob(f"train_{task_id}_fold_*_result.json"))
-        if fold_files:
-            return json.loads(fold_files[0].read_text(encoding="utf-8"))
-        raise FileNotFoundError(path)
-
     def _list_task_wsi_ids(self, task_id: str) -> list[str]:
         with self._finalized_bundle(task_id, strict=False) as root:
             if root is not None:
                 return sorted(cast(list[str], root.attrs.get("wsi_ids", [])))
-        wsi_ids: list[str] = []
-        for wsi_dir in self.legacy_dir.iterdir() if self.legacy_dir.exists() else []:
-            if wsi_dir.is_dir() and (
-                (wsi_dir / f"train_{task_id}_result.json").exists()
-                or list(wsi_dir.glob(f"train_{task_id}_fold_*_result.json"))
-            ):
-                wsi_ids.append(wsi_dir.name)
-        return sorted(set(wsi_ids))
+        return []
 
     def _discover_task_ids(self) -> list[str]:
-        task_ids = [path.name.removesuffix(".zarr.zip") for path in self.bundle_dir.glob("*.zarr.zip")]
-        for wsi_dir in self.legacy_dir.iterdir() if self.legacy_dir.exists() else []:
-            if not wsi_dir.is_dir():
-                continue
-            for result_file in wsi_dir.glob("train_*_result.json"):
-                name = result_file.name.removeprefix("train_").removesuffix("_result.json")
-                if "_fold_" in name:
-                    name = name.split("_fold_", 1)[0]
-                task_ids.append(name)
-        return sorted(set(task_ids))
+        return sorted(path.name.removesuffix(".zarr.zip") for path in self.bundle_dir.glob("*.zarr.zip"))
 
     def _item_key(self, wsi_id: str, fold_key: str | None = None) -> str:
         raw = f"{wsi_id}\0{fold_key or ''}"
