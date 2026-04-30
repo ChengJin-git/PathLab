@@ -166,15 +166,18 @@ export function ShareAnnotationDialog({ open, onClose, datasetId }: ShareAnnotat
                       <div className="flex items-center gap-3 overflow-hidden">
                         <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 flex-shrink-0">
                           <span className="text-xs font-bold">
-                            {(user.nickname || user.email || '?').substring(0, 2).toUpperCase()}
+                            {(user.nickname || user.username || user.email || '?').substring(0, 2).toUpperCase()}
                           </span>
                         </div>
                         <div className="flex flex-col min-w-0">
                           <span className="text-sm font-medium text-gray-900 truncate">
-                            {user.nickname || user.email}
+                            {user.nickname || user.username || user.email}
                           </span>
                           {user.email && (
                             <span className="text-xs text-gray-500 truncate">{user.email}</span>
+                          )}
+                          {!user.email && user.username && (
+                            <span className="text-xs text-gray-500 truncate">{user.username}</span>
                           )}
                         </div>
                       </div>

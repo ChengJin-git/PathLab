@@ -606,7 +606,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                         </div>
                       )}
                     </td>
-                    <td className="py-3 px-2 sm:px-4 text-gray-900 text-xs sm:text-sm">{user.email}</td>
+                    <td className="py-3 px-2 sm:px-4 text-gray-900 text-xs sm:text-sm">{user.username}</td>
                     <td className="py-3 px-2 sm:px-4 text-gray-600 text-xs sm:text-sm hidden xs:table-cell sm:table-cell">{user.nickname || '-'}</td>
                     <td className="py-3 px-2 sm:px-4">
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap ${getRoleBadgeColor(user.role)}`}>
@@ -671,7 +671,7 @@ export function UsersTab({ showConfirmDialog, closeConfirmDialog, currentUserId 
                             <Edit className="w-4 h-4" />
                           </Button>
                         </Tooltip>
-                        {(!currentUserId || user.id !== currentUserId) && user.email !== 'admin' && (
+                        {(!currentUserId || user.id !== currentUserId) && user.username !== 'admin' && (
                           <Tooltip content={user.is_active ? t('settings.usersTab.deactivateUser') : t('settings.usersTab.activateUser')}>
                             <Button
                               variant="ghost"

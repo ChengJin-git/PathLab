@@ -22,8 +22,8 @@ function getRoleBadgeColor(role: string) {
   }
 }
 
-function getUserDisplayName(user?: Partial<{ nickname?: string; email?: string }> | null) {
-  return user?.nickname || user?.email || "-";
+function getUserDisplayName(user?: Partial<{ nickname?: string | null; username?: string | null; email?: string | null }> | null) {
+  return user?.nickname || user?.username || user?.email || "-";
 }
 
 export interface PermissionUserPanelProps {
@@ -177,7 +177,7 @@ export function PermissionUserPanel({
                       isSelected ? "text-gray-300" : "text-gray-500",
                     )}
                   >
-                    {user.email}
+                    {user.username || user.email || "-"}
                   </div>
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <span

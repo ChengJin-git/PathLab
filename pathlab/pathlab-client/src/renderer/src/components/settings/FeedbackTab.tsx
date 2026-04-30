@@ -253,7 +253,7 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                 <div key={u.user_id} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
                   <div className="flex items-center justify-between mb-3">
                     <div>
-                      <span className="font-medium text-gray-900 text-sm">{u.nickname || u.email}</span>
+                      <span className="font-medium text-gray-900 text-sm">{u.nickname || u.username || u.email}</span>
                       <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium uppercase bg-gray-100 text-gray-600">{u.role}</span>
                     </div>
                   </div>
@@ -308,8 +308,8 @@ export function FeedbackTab({ showConfirmDialog, closeConfirmDialog }: FeedbackT
                   <tbody className="divide-y divide-gray-100 bg-white">
                     {paginatedUsageData.map((u) => (
                       <tr key={u.user_id} className="hover:bg-gray-50/80 transition-colors">
-                        <td className="px-4 py-3 text-gray-900 font-medium text-sm truncate max-w-[200px]" title={u.email}>
-                          {u.nickname || u.email}
+                        <td className="px-4 py-3 text-gray-900 font-medium text-sm truncate max-w-[200px]" title={u.email || u.username}>
+                          {u.nickname || u.username || u.email}
                         </td>
                         <td className="px-4 py-3">
                           <span className="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide bg-gray-100 text-gray-600">{u.role}</span>
