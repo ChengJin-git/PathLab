@@ -17,6 +17,7 @@ from typing import Any, Callable, Dict, List, Optional, cast as type_cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.common.config import Config
+from backend.ai.result_store import AIResultStore, CAM_ARTIFACT, PRED_MASK_ARTIFACT
 from backend.database.repositories import WSIRepository
 
 from .analysis_utils import (
@@ -293,7 +294,7 @@ async def _run_inference_patch_segmentation(
         normalization_mean=norm_mean,
         normalization_std=norm_std,
     )
-    ai_results_root = uploads_dir / "ai_results"
+    result_store = AIResultStore(uploads_dir)
     results_saved = 0
     total_items = len(image_paths)
 
@@ -391,18 +392,12 @@ async def _run_inference_patch_segmentation(
                             recall_val,
                         )
 
-                    # Save prediction mask
-                    wsi_result_dir = ai_results_root / wsi_id
-                    wsi_result_dir.mkdir(parents=True, exist_ok=True)
-
                     # Keep segmentation artifacts streamed to disk during inference to avoid
                     # retaining many large masks/CAMs in memory. Store binary masks as uint8
                     # to reduce write volume without changing viewer semantics.
                     pred_mask = (
                         preds_binary.squeeze(0).to(dtype=torch.uint8).cpu().numpy()
                     )
-                    mask_file = wsi_result_dir / f"train_{task_id}_pred_mask.npy"
-                    np.save(mask_file, pred_mask)
 
                     # Extract Grad-CAM for segmentation model
                     try:
@@ -453,9 +448,6 @@ async def _run_inference_patch_segmentation(
                             (img_tensor.shape[2], img_tensor.shape[3]), dtype=np.float32
                         )
 
-                    cam_file = wsi_result_dir / f"train_{task_id}_cam.npy"
-                    np.save(cam_file, cam_map)
-
                     # Save result JSON
                     result_data = {
                         "wsi_id": wsi_id,
@@ -465,15 +457,21 @@ async def _run_inference_patch_segmentation(
                         "num_classes": num_classes,
                         "class_names": class_names,
                         "image_size": list(original_size),
-                        "pred_mask_file": str(mask_file),
-                        "cam_file": str(cam_file),
+                        "pred_mask_file": None,
+                        "cam_file": None,
                         "cam_size": list(cam_map.shape),
                         "has_ground_truth": has_gt,
                         "metrics": per_image_metrics,
                     }
-                    result_file = wsi_result_dir / f"train_{task_id}_result.json"
-                    with open(result_file, "w", encoding="utf-8") as f:
-                        json.dump(result_data, f, ensure_ascii=False, indent=2)
+                    result_store.write_wsi_result(
+                        task_id=task_id,
+                        wsi_id=wsi_id,
+                        result=result_data,
+                        arrays={
+                            PRED_MASK_ARTIFACT: pred_mask,
+                            CAM_ARTIFACT: cam_map,
+                        },
+                    )
 
                     all_results.append(
                         {
@@ -483,8 +481,8 @@ async def _run_inference_patch_segmentation(
                             "class_names": class_names,
                             "num_classes": num_classes,
                             "image_size": list(original_size),
-                            "pred_mask_file": str(mask_file),
-                            "result_file": str(result_file),
+                            "pred_mask_file": None,
+                            "result_file": None,
                         }
                     )
                     results_saved += 1
