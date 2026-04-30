@@ -12,7 +12,7 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 - React 前端源码位于 `pathlab/pathlab-client/src/renderer/src`
 - Python 统一入口位于 `pathlab/pathlab-client/server/main.py`
 - `server/main.py` 当前会拉起 3 个内部服务：`Gateway`、`Preprocessing`、`AI`
-- 前端单元测试位于 `pathlab/pathlab-client/test/`，当前使用 Vitest（`test` / `test:run` / `test:coverage`）
+- 前端单元测试位于 `pathlab/pathlab-client/test/`，当前使用 Vitest（`test` / `test:run` / `test:coverage`）；后端单元测试位于 `pathlab/pathlab-client/server/tests/`，当前使用 pytest
 - 固定端口部署、Nginx 与 systemd 模板位于 `pathlab/pathlab-client/deploy/`
 - `server/backend/` 当前按 `ai / annotation / auth / common / database / preprocessing / storage` 分层组织共享后端代码
 
@@ -28,7 +28,7 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 
 - 用户认证、JWT 会话控制、管理员用户管理
 - WSI 上传、列表、详情、缩略图 / DZI / 瓦片阅片
-- 训练任务、推理任务（含无标签数据集批量推理）、结果查看、热图与分割标注相关能力
+- 训练任务、推理任务（含无标签数据集批量推理与独立 WSI 推理）、结果查看、热图、分析与分割标注相关能力
 - AI 对话、会话持久化、PDF 缓存与语义检索辅助阅读
 - 存储统计、目录扫描、迁移、孤立文件 / 孤立记录清理
 - 浏览器模式 PWA 与 Electron 桌面模式双运行方式
@@ -48,6 +48,7 @@ pathlab/
     │   ├── gateway/         # 对外 API 网关
     │   └── backend/         # AI / annotation / auth / common / database / preprocessing / storage
     ├── test/                # 前端单元测试（Vitest）
+    ├── server/tests/        # 后端单元测试（pytest）
     ├── vitest.config.ts     # Vitest 配置
     └── deploy/              # 固定端口启动、热更新、Nginx、systemd 模板
 ```
