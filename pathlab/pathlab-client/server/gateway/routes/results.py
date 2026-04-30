@@ -2929,8 +2929,8 @@ async def get_task_analysis(
                 user_obj = row[0]
                 uid_str = str(user_obj.id)
                 user_map[uid_str] = (
-                    user_obj.nickname or user_obj.email
-                )  # nickname or email
+                    user_obj.nickname or user_obj.username
+                )  # nickname or username
 
         # Resolve submitted_by from user_id to display name
         for analysis in analyses:

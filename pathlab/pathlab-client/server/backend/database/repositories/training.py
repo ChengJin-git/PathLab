@@ -443,7 +443,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             from sqlalchemy import cast, String
 
             result = await db.execute(
-                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                select(TrainingTask, AuthUser.username, AuthUser.nickname)
                 .options(selectinload(TrainingTask.data_group))
                 .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
                 .where(TrainingTask.task_id == task_id)
@@ -453,12 +453,12 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
                 return None
 
             task = row[0]  # TrainingTask object
-            email = row[1]  # User.email (username)
+            username = row[1]  # User.username (account identity)
             nickname = row[2]  # User.nickname
 
             task_dict = task.to_dict()
-            # Use nickname if available, otherwise use email (username)
-            task_dict["username"] = nickname or email or None
+            # Use nickname if available, otherwise use username.
+            task_dict["username"] = nickname or username or None
             return task_dict
 
     @staticmethod
@@ -581,7 +581,7 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             from sqlalchemy import cast, String
 
             query = (
-                select(TrainingTask, AuthUser.email, AuthUser.nickname)
+                select(TrainingTask, AuthUser.username, AuthUser.nickname)
                 .options(selectinload(TrainingTask.data_group))
                 .outerjoin(AuthUser, TrainingTask.user_id == cast(AuthUser.id, String))
             )
@@ -603,12 +603,12 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             tasks_with_username = []
             for row in rows:
                 task = row[0]  # TrainingTask object
-                email = row[1]  # User.email (username)
+                username = row[1]  # User.username (account identity)
                 nickname = row[2]  # User.nickname
 
                 task_dict = task.to_dict()
-                # Use nickname if available, otherwise use email (username)
-                task_dict["username"] = nickname or email or None
+                # Use nickname if available, otherwise use username.
+                task_dict["username"] = nickname or username or None
                 tasks_with_username.append(task_dict)
 
             return tasks_with_username
