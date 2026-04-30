@@ -31,7 +31,7 @@ from backend.ai.survival import (
 from .analysis_utils import (
     _split_case_attention_to_slides_static,
 )
-from .inference_base import resolve_device, report_progress
+from .inference_base import resolve_checkpoint_paths, resolve_device, report_progress
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,9 @@ async def _run_inference_wsi_survival(
         raise HTTPException(status_code=400, detail="No features found for this task")
 
     # Load model
-    model_dir = uploads_dir / "models" / resources["model_id"]
-    ckpt_path = model_dir / "aggregator.pth"
-    config_path = model_dir / "config.json"
+    ckpt_path, config_path = resolve_checkpoint_paths(
+        resources, uploads_dir, "aggregator.pth"
+    )
 
     if not ckpt_path.exists():
         raise HTTPException(status_code=500, detail="Model checkpoint not found")

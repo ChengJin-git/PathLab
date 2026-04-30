@@ -22,7 +22,7 @@ from .analysis_utils import (
     _coerce_str,
     _coerce_str_list,
 )
-from .inference_base import resolve_device, report_progress
+from .inference_base import resolve_checkpoint_paths, resolve_device, report_progress
 
 logger = logging.getLogger(__name__)
 
@@ -66,9 +66,9 @@ async def _run_inference_patch_classification(
     uploads_dir = Config.get_uploads_dir()
 
     # Load model
-    model_dir = uploads_dir / "models" / resources["model_id"]
-    ckpt_path = model_dir / "linear_probe.pth"
-    config_path = model_dir / "config.json"
+    ckpt_path, config_path = resolve_checkpoint_paths(
+        resources, uploads_dir, "linear_probe.pth"
+    )
 
     if not ckpt_path.exists():
         raise HTTPException(
