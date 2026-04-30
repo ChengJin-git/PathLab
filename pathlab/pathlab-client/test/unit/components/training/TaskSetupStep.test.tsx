@@ -1,8 +1,9 @@
 import React from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { TaskSetupStep, TaskSetupStepProps } from '@renderer/components/training/TaskSetupStep'
+import { useTaskWizard } from '@renderer/lib/useTaskWizard'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
@@ -30,7 +31,42 @@ function renderTaskSetupStep(props: Partial<TaskSetupStepProps> = {}) {
   )
 }
 
+function TaskSetupStepWizardHarness() {
+  const wizard = useTaskWizard()
+
+  return (
+    <>
+      <TaskSetupStep
+        taskName="Test task"
+        setTaskName={wizard.setTaskName}
+        taskType={wizard.taskType}
+        setTaskType={wizard.setTaskType}
+        dataLevel={wizard.dataLevel}
+        setDataLevel={wizard.setDataLevel}
+        taskDescription="Test description"
+        setTaskDescription={wizard.setTaskDescription}
+        canProceed={wizard.canProceedStep1}
+        onNext={vi.fn()}
+      />
+      <output data-testid="wizard-task-type">{wizard.taskType}</output>
+      <output data-testid="wizard-data-level">{wizard.dataLevel}</output>
+    </>
+  )
+}
+
+function renderTaskSetupStepWithWizard() {
+  return render(
+    <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <TaskSetupStepWizardHarness />
+    </MemoryRouter>
+  )
+}
+
 describe('TaskSetupStep grouped task selection', () => {
+  beforeEach(() => {
+    sessionStorage.clear()
+  })
+
   it('renders grouped task choices by image level (patch and wsi)', () => {
     renderTaskSetupStep()
     expect(screen.getByText('training.taskSetup.patchLevel')).toBeInTheDocument()
@@ -111,6 +147,19 @@ describe('TaskSetupStep grouped task selection', () => {
 
     expect(setTaskType).toHaveBeenCalledWith('wsi_survival')
     expect(setDataLevel).toHaveBeenCalledWith('wsi')
+  })
+
+  it('keeps wsi survival selected when switching from patch-level task through the wizard state', () => {
+    sessionStorage.setItem('draft:wizard:taskType', JSON.stringify('patch_classification'))
+    sessionStorage.setItem('draft:wizard:dataLevel', JSON.stringify('patch'))
+    renderTaskSetupStepWithWizard()
+
+    const wsiGroup = screen.getByText('training.taskSetup.wsiLevel').closest('div')!
+    const wsiCards = wsiGroup.querySelectorAll('div[class*="relative"]')
+    fireEvent.click(wsiCards[1])
+
+    expect(screen.getByTestId('wizard-task-type')).toHaveTextContent('wsi_survival')
+    expect(screen.getByTestId('wizard-data-level')).toHaveTextContent('wsi')
   })
 
   it('marks the currently selected task as selected', () => {

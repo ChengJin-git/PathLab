@@ -140,8 +140,8 @@ export function TaskSetupStep({
                       key={option.value}
                       selected={taskType === option.value}
                       onClick={() => {
-                        setTaskType(option.value)
                         setDataLevel(metadata.dataType)
+                        setTaskType(option.value)
                       }}
                       title={title}
                       subtitle={subtitle}
@@ -167,8 +167,8 @@ export function TaskSetupStep({
                       key={option.value}
                       selected={taskType === option.value}
                       onClick={() => {
-                        setTaskType(option.value)
                         setDataLevel(metadata.dataType)
+                        setTaskType(option.value)
                       }}
                       title={title}
                       subtitle={subtitle}
