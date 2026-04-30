@@ -69,10 +69,17 @@ class AIResultStore:
         )
         return self.legacy_dir / wsi_id / filename
 
-    def legacy_array_path(self, task_id: str, wsi_id: str, artifact: str) -> Path:
+    def legacy_array_path(
+        self, task_id: str, wsi_id: str, artifact: str, fold_key: str | None = None
+    ) -> Path:
         if artifact not in ARRAY_ARTIFACTS:
             raise ValueError(f"unsupported array artifact: {artifact}")
-        return self.legacy_dir / wsi_id / f"train_{task_id}_{artifact}.npy"
+        filename = (
+            f"train_{task_id}_{fold_key}_{artifact}.npy"
+            if fold_key
+            else f"train_{task_id}_{artifact}.npy"
+        )
+        return self.legacy_dir / wsi_id / filename
 
     def write_wsi_result(
         self,
@@ -232,7 +239,7 @@ class AIResultStore:
             if root is None:
                 if strict:
                     raise FileNotFoundError(self.bundle_path(task_id))
-                return np.load(self.legacy_array_path(task_id, wsi_id, artifact))
+                return np.load(self.legacy_array_path(task_id, wsi_id, artifact, fold_key))
             array_obj = self._open_array_path(root, f"{artifact}/{self._item_key(wsi_id, fold_key)}")
             return cast(NDArray[Any], np.asarray(array_obj))
 
@@ -247,30 +254,68 @@ class AIResultStore:
         artifacts: list[dict[str, str]] = []
         for bundle in sorted(self.bundle_dir.glob("*.zarr.zip")):
             task_id = bundle.name.removesuffix(".zarr.zip")
-            with self._finalized_bundle(task_id, strict=False) as root:
-                if root is None:
-                    continue
-                for artifact, group_name in (
-                    (RESULT_ARTIFACT, "results"),
-                    (ATTENTION_ARTIFACT, ATTENTION_ARTIFACT),
-                    (ATTENTION_RAW_ARTIFACT, ATTENTION_RAW_ARTIFACT),
-                    (CAM_ARTIFACT, CAM_ARTIFACT),
-                    (PRED_MASK_ARTIFACT, PRED_MASK_ARTIFACT),
-                ):
-                    group = self._open_group_path(root, group_name)
-                    if group is None:
-                        continue
-                    for item_name in group.keys():
-                        item = group.get(item_name)
-                        attrs = getattr(item, "attrs", {})
-                        if attrs.get("wsi_id") != wsi_id:
-                            continue
-                        entry = {"task_id": task_id, "artifact": artifact}
-                        fold_key = attrs.get("fold_key")
-                        if fold_key:
-                            entry["fold_key"] = str(fold_key)
-                        artifacts.append(entry)
+            artifacts.extend(self.list_task_wsi_artifacts(task_id, wsi_id))
         return artifacts
+
+    def list_task_wsi_artifacts(self, task_id: str, wsi_id: str) -> list[dict[str, str]]:
+        artifacts: list[dict[str, str]] = []
+        bundle = self.bundle_path(task_id)
+        if not bundle.exists():
+            return artifacts
+        with self._finalized_bundle(task_id, strict=False) as root:
+            if root is None:
+                return artifacts
+            for artifact, group_name in (
+                (RESULT_ARTIFACT, "results"),
+                (ATTENTION_ARTIFACT, ATTENTION_ARTIFACT),
+                (ATTENTION_RAW_ARTIFACT, ATTENTION_RAW_ARTIFACT),
+                (CAM_ARTIFACT, CAM_ARTIFACT),
+                (PRED_MASK_ARTIFACT, PRED_MASK_ARTIFACT),
+            ):
+                group = self._open_group_path(root, group_name)
+                if group is None:
+                    continue
+                for item_name in group.keys():
+                    item = group.get(item_name)
+                    attrs = getattr(item, "attrs", {})
+                    if attrs.get("wsi_id") != wsi_id:
+                        continue
+                    entry = {"task_id": task_id, "artifact": artifact}
+                    fold_key = attrs.get("fold_key")
+                    if fold_key:
+                        entry["fold_key"] = str(fold_key)
+                    artifacts.append(entry)
+        return artifacts
+
+    def task_artifact_presence_for_items(
+        self,
+        task_id: str,
+        items: list[tuple[str, str | None]],
+        artifacts: set[str],
+    ) -> dict[str, set[tuple[str, str | None]]]:
+        presence: dict[str, set[tuple[str, str | None]]] = {
+            artifact: set() for artifact in artifacts
+        }
+        bundle = self.bundle_path(task_id)
+        if not bundle.exists():
+            raise FileNotFoundError(bundle)
+        if self.staging_path(task_id).exists():
+            raise IncompleteAIResultBundleError(task_id)
+        with zipfile.ZipFile(bundle, mode="r") as zf:
+            names = set(zf.namelist())
+            root_attrs = cast(
+                dict[str, object], json.loads(zf.read(".zattrs").decode("utf-8"))
+            )
+            if not bool(root_attrs.get("finalized", False)):
+                raise IncompleteAIResultBundleError(task_id)
+            for artifact in artifacts:
+                group_name = "results" if artifact == RESULT_ARTIFACT else artifact
+                marker_name = ".zattrs" if artifact == RESULT_ARTIFACT else ".zarray"
+                for wsi_id, fold_key in items:
+                    item_key = self._item_key(wsi_id, fold_key)
+                    if f"{group_name}/{item_key}/{marker_name}" in names:
+                        presence[artifact].add((wsi_id, fold_key))
+        return presence
 
     def artifact_exists(
         self,
@@ -292,7 +337,7 @@ class AIResultStore:
             return False
         if artifact == RESULT_ARTIFACT:
             return self.legacy_result_path(task_id, wsi_id, fold_key).exists()
-        return self.legacy_array_path(task_id, wsi_id, artifact).exists()
+        return self.legacy_array_path(task_id, wsi_id, artifact, fold_key).exists()
 
     def delete_task(self, task_id: str) -> None:
         self.bundle_path(task_id).unlink(missing_ok=True)

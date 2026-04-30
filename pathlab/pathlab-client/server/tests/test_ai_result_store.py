@@ -307,11 +307,20 @@ def test_legacy_fold_result_path_and_fallback(tmp_path):
     wsi_id = "wsi-fold"
     fold_payload = {"wsi_id": wsi_id, "task_id": task_id, "fold_key": "fold_0"}
     fold_path = store.legacy_result_path(task_id, wsi_id, fold_key="fold_0")
+    fold_array_path = store.legacy_array_path(
+        task_id, wsi_id, "attention", fold_key="fold_0"
+    )
     fold_path.parent.mkdir(parents=True, exist_ok=True)
     fold_path.write_text(json.dumps(fold_payload), encoding="utf-8")
+    np.save(fold_array_path, np.array([0.25, 0.75], dtype=np.float32))
 
     assert fold_path.name == f"train_{task_id}_fold_0_result.json"
+    assert fold_array_path.name == f"train_{task_id}_fold_0_attention.npy"
     assert store.read_result(task_id, wsi_id, fold_key="fold_0") == fold_payload
+    np.testing.assert_allclose(
+        store.read_array(task_id, wsi_id, "attention", fold_key="fold_0"),
+        np.array([0.25, 0.75], dtype=np.float32),
+    )
 
 
 def test_legacy_fixture_builder_deterministic(tmp_path):
