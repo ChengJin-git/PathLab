@@ -12,7 +12,8 @@ Key features:
 
 import os
 import logging
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable, Mapping
+from datetime import datetime
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from sqlalchemy import text
@@ -20,6 +21,75 @@ from backend.common.config import Config
 from .models import Base
 
 logger = logging.getLogger(__name__)
+
+
+def _plan_user_identity_cleanup(rows: Iterable[Mapping[str, object]]) -> dict[str, str]:
+    """Plan deterministic username repairs for blank/duplicate identities.
+
+    Input rows must provide id, username, created_at. The first row in
+    created_at NULLS FIRST + id order keeps its username in duplicate groups;
+    later rows are renamed with deterministic suffixes derived from their UUID.
+    """
+
+    def _id_hex(user_id: object) -> str:
+        return str(user_id).replace("-", "")
+
+    def _username(row: Mapping[str, object]) -> str:
+        raw_username = row.get("username")
+        if raw_username is None:
+            return ""
+        return str(raw_username).strip()
+
+    def _sort_key(row: Mapping[str, object]) -> tuple[bool, datetime, str]:
+        created_at = row.get("created_at")
+        sortable_created_at = created_at if isinstance(created_at, datetime) else datetime.min
+        return (created_at is not None, sortable_created_at, str(row["id"]))
+
+    sorted_rows = sorted(
+        rows,
+        key=_sort_key,
+    )
+
+    reserved_usernames = {
+        username
+        for row in sorted_rows
+        if (username := _username(row)) != ""
+    }
+    seen_usernames: set[str] = set()
+    updates: dict[str, str] = {}
+
+    for row in sorted_rows:
+        username = _username(row)
+        user_id = row["id"]
+        user_id_str = str(user_id)
+        user_id_hex = _id_hex(user_id)
+
+        if username:
+            if username not in seen_usernames:
+                seen_usernames.add(username)
+                continue
+            base = username
+            suffix_len = 8
+            while True:
+                candidate = f"{base}_{user_id_hex[:suffix_len]}"
+                if candidate not in reserved_usernames:
+                    reserved_usernames.add(candidate)
+                    updates[user_id_str] = candidate
+                    break
+                suffix_len += 4
+            continue
+
+        base = "user"
+        suffix_len = 12
+        while True:
+            candidate = f"{base}_{user_id_hex[:suffix_len]}"
+            if candidate not in reserved_usernames:
+                reserved_usernames.add(candidate)
+                updates[user_id_str] = candidate
+                break
+            suffix_len += 4
+
+    return updates
 
 
 def get_database_url() -> str:
@@ -239,37 +309,28 @@ async def init_db():
                     "(email IS NULL OR email = username)"
                 )
             )
-            await conn.execute(
-                text(
-                    "UPDATE users SET username = CONCAT('user_', SUBSTRING(REPLACE(id::text, '-', '') FROM 1 FOR 12)) "
-                    "WHERE username IS NULL OR LENGTH(TRIM(username)) = 0"
-                )
-            )
-            await conn.execute(
-                text(
-                    """
-                    WITH ranked AS (
-                        SELECT
-                            id,
-                            username,
-                            ROW_NUMBER() OVER (
-                                PARTITION BY username
-                                ORDER BY created_at NULLS FIRST, id
-                            ) AS rn
-                        FROM users
-                        WHERE username IS NOT NULL AND LENGTH(TRIM(username)) > 0
+            identity_rows = [
+                dict(row)
+                for row in (
+                    await conn.execute(
+                        text(
+                            "SELECT id, username, created_at FROM users "
+                            "ORDER BY created_at NULLS FIRST, id"
+                        )
                     )
-                    UPDATE users u
-                    SET username = CONCAT(
-                        r.username,
-                        '_',
-                        SUBSTRING(REPLACE(u.id::text, '-', '') FROM 1 FOR 8)
-                    )
-                    FROM ranked r
-                    WHERE u.id = r.id AND r.rn > 1
-                    """
                 )
-            )
+                .mappings()
+                .all()
+            ]
+            identity_updates = _plan_user_identity_cleanup(identity_rows)
+            for user_id, username in identity_updates.items():
+                await conn.execute(
+                    text(
+                        "UPDATE users SET username = :username "
+                        "WHERE id = :user_id"
+                    ),
+                    {"username": username, "user_id": user_id},
+                )
             await conn.execute(text("ALTER TABLE users ALTER COLUMN email DROP NOT NULL"))
             await conn.execute(
                 text(
@@ -329,7 +390,7 @@ async def init_db():
                     "ON users (username)"
                 )
             )
-            logger.info("users.username column ensured and identity backfill completed")
+            logger.info("users.username column ensured and account identity cleanup completed")
 
             await conn.execute(
                 text(
