@@ -82,6 +82,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         self.masks_dir = self.uploads_dir / "masks"
         self.features_dir = self.uploads_dir / "features"
         self.ai_results_dir = self.uploads_dir / "ai_results"
+        self.ai_result_bundles_dir = self.uploads_dir / "ai_results_bundles"
         self.training_dir = self.uploads_dir / "training"
         self.models_dir = self.uploads_dir / "models"
         self.logs_dir = self.uploads_dir / "logs"
@@ -117,6 +118,16 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                     if file_path.is_file() and file_path not in seen_paths:
                         seen_paths.add(file_path)
                         yield file_path
+
+    def _iter_task_ai_result_bundle_files(self, task_id: str):
+        """Yield task-scoped bundled AI result files and migration markers."""
+        bundle_paths = [
+            self.ai_result_bundles_dir / f"{task_id}.zarr.zip",
+            self.ai_result_bundles_dir / f".migration_{task_id}.json",
+        ]
+        for file_path in bundle_paths:
+            if file_path.exists() and file_path.is_file():
+                yield file_path
 
     def delete_wsi_files(
         self, wsi_id: str, wsi_path: Optional[str] = None, mode: str = "standard"
@@ -487,6 +498,19 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
 
         # 1. Delete task-scoped AI result files (internal inference or external validation)
         touched_ai_result_dirs = set()
+        for file_path in self._iter_task_ai_result_bundle_files(task_id) or []:
+            try:
+                size = file_path.stat().st_size
+                file_path.unlink()
+                deleted_files.append(str(file_path))
+                total_size += size
+                logger.info(f"Deleted bundled task AI result file: {file_path}")
+            except Exception as e:
+                failed.append((str(file_path), str(e)))
+                logger.error(
+                    f"Failed to delete bundled task AI result file {file_path}: {e}"
+                )
+
         for file_path in self._iter_task_ai_result_files(task_id) or []:
             try:
                 size = file_path.stat().st_size
@@ -808,9 +832,10 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
             analysis_log_dir = self.logs_dir / "analysis" / task_id
 
             info["ai_results"] = {
-                "path": str(self.ai_results_dir),
+                "path": str(self.ai_result_bundles_dir / f"{task_id}.zarr.zip"),
                 "size": 0,
-                "exists": self.ai_results_dir.exists(),
+                "exists": (self.ai_result_bundles_dir / f"{task_id}.zarr.zip").exists()
+                or self.ai_results_dir.exists(),
                 "file_count": 0,
                 "wsi_dir_count": 0,
             }
@@ -853,6 +878,12 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         ai_result_size = 0
         ai_result_count = 0
         ai_result_wsi_dirs = set()
+        bundle_path = self.ai_result_bundles_dir / f"{task_id}.zarr.zip"
+        ai_results_path = self.ai_results_dir
+        if bundle_path.exists() and bundle_path.is_file():
+            ai_result_size += bundle_path.stat().st_size
+            ai_result_count += 1
+            ai_results_path = bundle_path
         for file_path in self._iter_task_ai_result_files(task_id) or []:
             try:
                 ai_result_size += file_path.stat().st_size
@@ -862,7 +893,7 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
                 continue
 
         info["ai_results"] = {
-            "path": str(self.ai_results_dir),
+            "path": str(ai_results_path),
             "size": ai_result_size,
             "exists": ai_result_count > 0,
             "file_count": ai_result_count,
