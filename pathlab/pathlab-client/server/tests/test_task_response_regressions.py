@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import pytest
+from sqlalchemy import or_, select
 
 
 class _AsyncResult:
@@ -134,6 +135,18 @@ async def test_chat_context_stats_uses_labeled_data_group_columns():
 
     assert stats["datasets"][0]["data_type"] == "wsi"
     assert stats["datasets"][0]["group_task_type"] == "wsi_classification"
+
+
+def test_chat_context_stats_data_type_conditions_use_denormalized_column():
+    from backend.database.models import WSISlide
+    from backend.database.repositories.wsi import WSIRepository
+
+    is_wsi, is_patch = WSIRepository._build_file_level_data_type_conditions()
+    query = select(WSISlide.id).where(or_(is_wsi, is_patch))
+    compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
+
+    assert "wsi_slides.data_type" in compiled
+    assert "wsi_slides.wsi_path" not in compiled
 
 
 def _extval_task_dict():

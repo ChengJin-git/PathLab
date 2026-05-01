@@ -13,7 +13,7 @@ import re
 import time
 import uuid
 from importlib import import_module
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -173,6 +173,7 @@ MAX_MODELS_IN_CHAT_CONTEXT = 5
 # When a user's query is embedded and compared against cached model embeddings,
 # only the top-K matches are included — regardless of total model count.
 TOP_K_MODELS_IN_CHAT_CONTEXT = 5
+MAX_DATASETS_IN_CHAT_CONTEXT = 30
 DEFAULT_MODEL_SCAN_LIMIT = 100
 FILTERED_MODEL_SCAN_LIMIT = 5000
 MODEL_SCAN_BATCH_SIZE = 200
@@ -189,6 +190,44 @@ _FEATURE_SCAN_CACHE_TTL = 60.0
 _CompatCacheKey = tuple[str, str, str, str, str | None, tuple[str, ...], int]
 _compat_check_cache: dict[_CompatCacheKey, tuple[bool, float]] = {}
 _COMPAT_CACHE_TTL = 120.0
+
+
+def _log_chat_timing(
+    request_id: str,
+    stage: str,
+    started_at: float,
+    *,
+    now: float | None = None,
+    log_fn: Callable[[str], None] = logger.info,
+    **metadata: object,
+) -> None:
+    elapsed_ms = ((time.monotonic() if now is None else now) - started_at) * 1000
+    details = " ".join(
+        f"{key}={value}" for key, value in metadata.items() if value is not None
+    )
+    suffix = f" {details}" if details else ""
+    message = (
+        f"[ChatTiming] req={request_id} stage={stage} "
+        f"elapsed_ms={elapsed_ms:.1f}{suffix}"
+    )
+    log_fn(message)
+
+
+def _format_chat_dataset_list(
+    dataset_lines: list[str], *, limit: int = MAX_DATASETS_IN_CHAT_CONTEXT
+) -> str:
+    if not dataset_lines:
+        return "  None"
+    if limit <= 0 or len(dataset_lines) <= limit:
+        return "\n".join(dataset_lines)
+    omitted = len(dataset_lines) - limit
+    visible_lines = dataset_lines[:limit]
+    visible_lines.append(
+        f"  - ... {omitted} more dataset(s) omitted from prompt; "
+        "ask the user to narrow by dataset name, organ/source, task type, "
+        "or access type if needed."
+    )
+    return "\n".join(visible_lines)
 
 
 async def _get_available_extractors(features_root: Path, wsi_id: str) -> list[str]:
@@ -1429,6 +1468,7 @@ async def stream_ai_response(
     request: Request | None = None,
     disable_web_search: bool = False,
     conversation_mode: ConversationMode = ConversationMode.GENERAL_CHAT,
+    timing_request_id: str | None = None,
 ) -> AsyncIterator[str]:
     """
     Stream AI response using OpenAI-compatible API with Exa search support.
@@ -1448,7 +1488,11 @@ async def stream_ai_response(
         model: Model name (from global settings or env)
         request: FastAPI Request for disconnect detection (optional)
     """
+    request_id = timing_request_id or "unknown"
+    stream_started_at = time.monotonic()
+    stage_started_at = stream_started_at
     global_settings = Config.get_global_settings()
+    _log_chat_timing(request_id, "stream_config", stage_started_at)
 
     # Local vLLM settings
     local_vllm_enabled = global_settings.get("local_vllm_enabled", False)
@@ -1482,9 +1526,16 @@ async def stream_ai_response(
     use_local = False
     detected_model = None
     if local_vllm_enabled and local_vllm_base_url:
+        stage_started_at = time.monotonic()
         logger.info(f"Checking local vLLM server at {local_vllm_base_url}...")
         is_available, detected_model = await _check_local_vllm_available(
             local_vllm_base_url, local_vllm_api_key
+        )
+        _log_chat_timing(
+            request_id,
+            "local_vllm_probe",
+            stage_started_at,
+            available=is_available,
         )
         if is_available:
             use_local = True
@@ -1585,6 +1636,7 @@ After saving, return here and start chatting!"""
     _followup_reference_cards: list[str] = []
     _followup_pdf_urls = _collect_pdf_urls_from_contexts(messages)
     if _followup_pdf_urls:
+        stage_started_at = time.monotonic()
         _per_paper_pdf_content = {}
         _per_paper_source_ids = {}
         for idx, url in enumerate(_followup_pdf_urls, 1):
@@ -1608,6 +1660,13 @@ After saving, return here and start chatting!"""
                 f"[FollowUp] Pre-populated article_pdf_content from "
                 f"{len(_followup_pdf_urls)} cached PDF(s) for citation support"
             )
+        _log_chat_timing(
+            request_id,
+            "followup_pdf_prep",
+            stage_started_at,
+            pdfs=len(_followup_pdf_urls),
+            cached=len(_per_paper_pdf_content),
+        )
 
     # Track the URL currently being processed so we can clean up on cancel.
     _active_pdf_url: str | None = None
@@ -1632,6 +1691,8 @@ After saving, return here and start chatting!"""
             streamed_response = ""
             try:
                 response_truncated = False
+                iteration_started_at = time.monotonic()
+                first_chunk_logged = False
                 async for chunk in _stream_from_openai_compatible(
                     messages=current_messages,
                     base_url=effective_base_url,
@@ -1639,6 +1700,15 @@ After saving, return here and start chatting!"""
                     model=effective_model,
                     source_name=f"{provider_name} (streaming)",
                 ):
+                    if not first_chunk_logged:
+                        first_chunk_logged = True
+                        _log_chat_timing(
+                            request_id,
+                            "llm_first_chunk_streaming",
+                            iteration_started_at,
+                            iteration=iteration + 1,
+                            provider=provider_name,
+                        )
                     # _stream_from_openai_compatible yields SSE lines; forward them
                     if chunk == "data: [DONE]\n\n":
                         break  # we emit our own [DONE] below
@@ -1776,6 +1846,8 @@ After saving, return here and start chatting!"""
         iteration_response_truncated = False
 
         try:
+            iteration_started_at = time.monotonic()
+            first_chunk_logged = False
             async for chunk in _stream_from_openai_compatible(
                 messages=current_messages,
                 base_url=effective_base_url,
@@ -1783,6 +1855,15 @@ After saving, return here and start chatting!"""
                 model=effective_model,
                 source_name=provider_name,
             ):
+                if not first_chunk_logged:
+                    first_chunk_logged = True
+                    _log_chat_timing(
+                        request_id,
+                        "llm_first_chunk",
+                        iteration_started_at,
+                        iteration=iteration + 1,
+                        provider=provider_name,
+                    )
                 if chunk == "data: [DONE]\n\n":
                     break
 
@@ -2633,6 +2714,10 @@ async def chat_with_ai(
     - X-Language: Frontend i18n language code (e.g. en_US, zh_CN, zh_HK)
     - X-Timezone: IANA timezone string from the browser (e.g. Asia/Shanghai)
     """
+    chat_request_id = uuid.uuid4().hex[:8]
+    chat_started_at = time.monotonic()
+    stage_started_at = chat_started_at
+
     # Get AI configuration from request headers
     api_key = request.headers.get("X-OpenRouter-API-Key")
     base_url = request.headers.get("X-OpenRouter-Base-URL")
@@ -2650,6 +2735,12 @@ async def chat_with_ai(
 
     if req.conversation_id:
         await require_conversation_access(db, req.conversation_id, user)
+    _log_chat_timing(
+        chat_request_id,
+        "request_auth",
+        stage_started_at,
+        conversation=bool(req.conversation_id),
+    )
 
     # Resolve current datetime in the user's browser timezone (falls back to UTC).
     tz_header = request.headers.get("X-Timezone", "").strip()
@@ -2662,6 +2753,7 @@ async def chat_with_ai(
     temp_permissions = []
     elevated_dataset_ids = None
     if not user.is_admin():
+        stage_started_at = time.monotonic()
         temp_permissions = await DatasetGrantRepository.get_valid_by_user(
             db, str(user.id)
         )
@@ -2671,6 +2763,12 @@ async def chat_with_ai(
                 for perm in temp_permissions
                 if bool(perm.can_read) and perm.is_valid()
             ]
+        _log_chat_timing(
+            chat_request_id,
+            "permission_lookup",
+            stage_started_at,
+            grants=len(temp_permissions),
+        )
 
     latest_user_text = ""
     recent_user_texts: list[str] = []
@@ -2705,6 +2803,7 @@ async def chat_with_ai(
     _cached_models_list = "  None - user needs to train a model first"
     _cached_models_count = 0
     _cached_models_shown = 0
+    stage_started_at = time.monotonic()
     if user.is_admin():
         _ctx_cached = await get_cached_context_kwargs_admin()
     elif elevated_dataset_ids is None:
@@ -2712,6 +2811,13 @@ async def chat_with_ai(
 
     if _ctx_cached is not None and "other_public_datasets_count" not in _ctx_cached:
         _ctx_cached = None
+    _log_chat_timing(
+        chat_request_id,
+        "context_cache_read",
+        stage_started_at,
+        cache="hit" if _ctx_cached is not None else "miss",
+        semantic=use_semantic_model_ranking,
+    )
 
     if _ctx_cached is not None:
         _cached_models_count = _ctx_cached.get("trained_models_total", 0)
@@ -2727,10 +2833,17 @@ async def chat_with_ai(
                 if _pre_filtered:
                     _summaries_for_ranking = _pre_filtered
             if use_semantic_model_ranking:
+                stage_started_at = time.monotonic()
                 _cached_model_entries = await asyncio.to_thread(
                     _semantic_top_k_models,
                     semantic_query_text,
                     _summaries_for_ranking,
+                )
+                _log_chat_timing(
+                    chat_request_id,
+                    "semantic_rank_cached",
+                    stage_started_at,
+                    models=len(_summaries_for_ranking),
                 )
             else:
                 _cached_model_entries = _summaries_for_ranking[
@@ -2779,10 +2892,16 @@ async def chat_with_ai(
         temp_perms_list = "  None"
 
     if _ctx_cached is not None:
+        _cached_datasets_list = _ctx_cached.get("datasets_list", "  None")
+        _cached_dataset_lines = (
+            _cached_datasets_list.splitlines()
+            if isinstance(_cached_datasets_list, str)
+            else []
+        )
         user_data_context = format_user_data_context(
             wsi_count=_ctx_cached.get("wsi_count", 0),
             data_types_info=_ctx_cached.get("data_types_info", "None"),
-            datasets_list=_ctx_cached.get("datasets_list", "  None"),
+            datasets_list=_format_chat_dataset_list(_cached_dataset_lines),
             models_count=_cached_models_count,
             models_list=_cached_models_list,
             models_shown=_cached_models_shown,
@@ -2823,6 +2942,7 @@ async def chat_with_ai(
             async with async_session() as _s:
                 return await coro_factory(_s)
 
+        stage_started_at = time.monotonic()
         (
             _fb_stats,
             _fb_trained_models,
@@ -2857,6 +2977,13 @@ async def chat_with_ai(
             _with_new_session(
                 lambda s: AITaskRepository.get_status_counts(s, user_id=_uid)
             ),
+        )
+        _log_chat_timing(
+            chat_request_id,
+            "context_rebuild_core_queries",
+            stage_started_at,
+            models=len(_fb_trained_models),
+            elevated=bool(_eids),
         )
 
         _fb_wsi_count = _fb_stats.get("total_count", 0)
@@ -2932,13 +3059,12 @@ async def chat_with_ai(
             _fb_datasets_details.append(
                 f"  - {_d_name} (dataset_id={_d_id}): {_d_fc} files, type={_d_type}, source={_d_source}{_d_task_type_suffix}{_d_labels_suffix}{_d_survival_suffix}{_d_marker}{_d_split_suffix}{_d_unlabeled_suffix}"
             )
-        _fb_datasets_list = (
-            "\n".join(_fb_datasets_details) if _fb_datasets_details else "  None"
-        )
+        _fb_datasets_list = _format_chat_dataset_list(_fb_datasets_details)
 
         _fb_task_ids = list({str(m.task_id) for m in _fb_trained_models if m.task_id})
         _fb_task_meta: dict[str, tuple[str, str, str]] = {}
         if _fb_task_ids:
+            stage_started_at = time.monotonic()
             async with async_session() as _fb_db:
                 _fb_stmt = (
                     sa_select(TrainingTask)
@@ -2953,10 +3079,17 @@ async def chat_with_ai(
                         str((_fb_dg.data_type if _fb_dg else None) or "unknown"),
                         str(_fb_task.task_name or ""),
                     )
+            _log_chat_timing(
+                chat_request_id,
+                "context_rebuild_task_meta",
+                stage_started_at,
+                tasks=len(_fb_task_ids),
+            )
 
         _fb_source_dataset_ids: dict[str, str | None] = {}
         _fb_dataset_names: dict[str, str] = {}
         if _fb_task_ids:
+            stage_started_at = time.monotonic()
             async with async_session() as _fb_ds_db:
                 _fb_source_dataset_ids = (
                     await TrainingTaskRepository.get_source_dataset_ids_batch(
@@ -2975,6 +3108,12 @@ async def chat_with_ai(
                         for d in _fb_ds_list
                         if d.dataset_id is not None
                     }
+            _log_chat_timing(
+                chat_request_id,
+                "context_rebuild_dataset_meta",
+                stage_started_at,
+                datasets=len(_fb_dataset_names),
+            )
 
         _fb_model_summaries = []
         for _m in _fb_trained_models:
@@ -3003,6 +3142,7 @@ async def chat_with_ai(
 
         if _fb_model_summaries:
             try:
+                stage_started_at = time.monotonic()
                 module_name = ".".join(("gateway", "routes", "chat_pdf_vectorstore"))
                 _ctx_embed_texts = import_module(module_name)._embed_texts
 
@@ -3012,7 +3152,19 @@ async def chat_with_ai(
                 )
                 for _fb_i, _fb_s in enumerate(_fb_model_summaries):
                     _fb_s["embedding"] = _fb_vecs[_fb_i].tolist()
+                _log_chat_timing(
+                    chat_request_id,
+                    "context_rebuild_embeddings",
+                    stage_started_at,
+                    models=len(_fb_model_summaries),
+                )
             except Exception as _fb_emb_exc:
+                _log_chat_timing(
+                    chat_request_id,
+                    "context_rebuild_embeddings_failed",
+                    stage_started_at,
+                    models=len(_fb_model_summaries),
+                )
                 logger.warning(
                     f"[ChatCtxFallback] model embedding failed: {_fb_emb_exc}"
                 )
@@ -3028,10 +3180,17 @@ async def chat_with_ai(
                 if _fb_pre_filtered:
                     _fb_summaries_for_ranking = _fb_pre_filtered
             if use_semantic_model_ranking:
+                stage_started_at = time.monotonic()
                 _fb_models_list_entries = await asyncio.to_thread(
                     _semantic_top_k_models,
                     semantic_query_text,
                     _fb_summaries_for_ranking,
+                )
+                _log_chat_timing(
+                    chat_request_id,
+                    "semantic_rank_rebuilt",
+                    stage_started_at,
+                    models=len(_fb_summaries_for_ranking),
                 )
             else:
                 _fb_models_list_entries = _fb_summaries_for_ranking[
@@ -3121,9 +3280,15 @@ async def chat_with_ai(
             "inference_tasks_list": _fb_inference_list,
         }
         if user.is_admin():
+            stage_started_at = time.monotonic()
             await set_cached_context_kwargs_admin(_fb_cache_payload)
         elif elevated_dataset_ids is None:
+            stage_started_at = time.monotonic()
             await set_cached_context_kwargs(_ctx_cache_uid, _fb_cache_payload)
+        else:
+            stage_started_at = 0.0
+        if stage_started_at:
+            _log_chat_timing(chat_request_id, "context_cache_write", stage_started_at)
 
     # Log the user_data_context for debugging
     # logger.info(f"[Chat] User data context for agent:\n{user_data_context}")
@@ -3144,6 +3309,7 @@ async def chat_with_ai(
     # Add system prompt if not present
     messages = req.messages.copy()
     if not messages or messages[0].get("role") != "system":
+        stage_started_at = time.monotonic()
         # Load language-specific system prompt from template file
         base_system_prompt = get_chat_system_prompt(detected_lang)
 
@@ -3152,10 +3318,17 @@ async def chat_with_ai(
             "content": base_system_prompt + user_data_context,
         }
         messages.insert(0, system_prompt)
+        _log_chat_timing(
+            chat_request_id,
+            "system_prompt_build",
+            stage_started_at,
+            chars=len(system_prompt["content"]),
+        )
 
     if req.conversation_id and len(req.messages) > 0 and not req.regenerate_message_id:
         last_user_message = req.messages[-1]
         if last_user_message.get("role") == "user":
+            stage_started_at = time.monotonic()
             content = last_user_message.get("content", "")
             text_content = extract_text_from_content(content)
             images = _extract_images_from_content(content)
@@ -3168,6 +3341,7 @@ async def chat_with_ai(
                 message_data["extra_metadata"] = {"images": images}
             await ChatRepository.add_message(db, message_data)
             await db.commit()
+            _log_chat_timing(chat_request_id, "persist_user_message", stage_started_at)
 
     # ── BM25-enhanced PDF context for follow-up questions ────────────────────
     # Collect ALL [PDF_CONTEXT] blocks from conversation history, merge them
@@ -3185,8 +3359,15 @@ async def chat_with_ai(
                     break
 
     if user_query_for_bm25 and all_pdf_urls:
+        stage_started_at = time.monotonic()
         merged_ctx = await asyncio.to_thread(
             _build_merged_pdf_context, all_pdf_urls, user_query_for_bm25, detected_lang
+        )
+        _log_chat_timing(
+            chat_request_id,
+            "pdf_bm25_merge",
+            stage_started_at,
+            pdfs=len(all_pdf_urls),
         )
         merged_content = f"[PDF_CONTEXT]\n{merged_ctx}\n[/PDF_CONTEXT]"
 
@@ -3227,11 +3408,18 @@ async def chat_with_ai(
         looks_like_training_recommendation_query(latest_user_text)
         and not disable_web_search
     ):
+        stage_started_at = time.monotonic()
         training_recommendation_profile = detect_training_recommendation_profile(
             latest_user_text
         )
         bundled_ctx = await build_training_recommendation_evidence_context(
             latest_user_text, detected_lang
+        )
+        _log_chat_timing(
+            chat_request_id,
+            "training_evidence_context",
+            stage_started_at,
+            profile=training_recommendation_profile,
         )
 
         training_context_message = {
@@ -3269,6 +3457,7 @@ async def chat_with_ai(
         """
         full_response = ""
         saved_to_db = False  # Track whether we already persisted via [DONE]
+        first_stream_chunk_logged = False
         try:
             async for chunk in stream_ai_response(
                 messages,
@@ -3279,7 +3468,15 @@ async def chat_with_ai(
                 request,
                 disable_web_search=disable_web_search,
                 conversation_mode=conversation_mode,
+                timing_request_id=chat_request_id,
             ):
+                if not first_stream_chunk_logged:
+                    first_stream_chunk_logged = True
+                    _log_chat_timing(
+                        chat_request_id,
+                        "first_sse_chunk",
+                        chat_started_at,
+                    )
                 # Intercept pdf_context event: persist it as a hidden user message,
                 # and also forward the event so the frontend can mirror that hidden
                 # state locally for immediate follow-up questions.
@@ -3332,10 +3529,16 @@ async def chat_with_ai(
                                     )
                                     message_data["variant_group_id"] = group_id
                                     message_data["is_active_variant"] = True
+                                persist_started_at = time.monotonic()
                                 saved_message = await ChatRepository.add_message(
                                     db_session, message_data
                                 )
                                 await db_session.commit()
+                                _log_chat_timing(
+                                    chat_request_id,
+                                    "persist_assistant_message",
+                                    persist_started_at,
+                                )
                                 saved_to_db = True
                                 if saved_message:
                                     event_payload = {"message_id": saved_message.id}
@@ -3382,6 +3585,7 @@ async def chat_with_ai(
                 try:
                     async for db_session in get_db():
                         try:
+                            persist_started_at = time.monotonic()
                             message_data = {
                                 "conversation_id": req.conversation_id,
                                 "role": "assistant",
@@ -3389,6 +3593,11 @@ async def chat_with_ai(
                             }
                             await ChatRepository.add_message(db_session, message_data)
                             await db_session.commit()
+                            _log_chat_timing(
+                                chat_request_id,
+                                "persist_cancelled_message",
+                                persist_started_at,
+                            )
                             logger.info(
                                 f"Saved cancelled assistant response on stream interruption"
                             )
@@ -3399,4 +3608,5 @@ async def chat_with_ai(
                         f"Failed to save cancelled response on disconnect: {e}"
                     )
 
+    _log_chat_timing(chat_request_id, "pre_stream_total", chat_started_at)
     return make_sse_response(stream_with_persistence())

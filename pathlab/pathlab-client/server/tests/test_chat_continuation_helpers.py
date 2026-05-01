@@ -1,7 +1,41 @@
 from gateway.routes.chat import (
     _build_auto_continue_messages,
     _build_context_retry_messages,
+    _format_chat_dataset_list,
+    _log_chat_timing,
 )
+
+
+def test_log_chat_timing_includes_stage_elapsed_and_metadata():
+    messages = []
+
+    _log_chat_timing(
+        "abc123",
+        "context_cache",
+        1.0,
+        now=2.25,
+        log_fn=lambda msg: messages.append(msg),
+        cache="hit",
+        models=3,
+    )
+
+    assert messages == [
+        "[ChatTiming] req=abc123 stage=context_cache elapsed_ms=1250.0 cache=hit models=3"
+    ]
+
+
+def test_format_chat_dataset_list_caps_rendered_datasets():
+    dataset_lines = [f"  - Dataset {i}" for i in range(1, 5)]
+
+    rendered = _format_chat_dataset_list(dataset_lines, limit=2)
+
+    assert rendered == "\n".join(
+        [
+            "  - Dataset 1",
+            "  - Dataset 2",
+            "  - ... 2 more dataset(s) omitted from prompt; ask the user to narrow by dataset name, organ/source, task type, or access type if needed.",
+        ]
+    )
 
 
 def test_build_auto_continue_messages_appends_partial_response_and_prompt():

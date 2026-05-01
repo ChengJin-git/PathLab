@@ -129,21 +129,8 @@ class WSIRepository(BaseRepository[WSISlide]):
 
     @staticmethod
     def _build_file_level_data_type_conditions():
-        tif_path_filter = WSIRepository._build_path_extension_filter(TIF_EXTENSIONS)
-        is_wsi = or_(
-            WSIRepository._build_path_extension_filter(WSI_EXTENSIONS),
-            and_(tif_path_filter, WSISlide.file_size >= SIZE_THRESHOLD),
-        )
-        is_patch = or_(
-            WSIRepository._build_path_extension_filter(PATCH_EXTENSIONS),
-            and_(
-                tif_path_filter,
-                or_(
-                    WSISlide.file_size < SIZE_THRESHOLD,
-                    WSISlide.file_size.is_(None),
-                ),
-            ),
-        )
+        is_wsi = WSISlide.data_type == "wsi"
+        is_patch = WSISlide.data_type == "patch"
         return is_wsi, is_patch
 
     @staticmethod
