@@ -372,6 +372,21 @@ def _prepare_segmentation_training_dataset(
     return dataset_config, len(classes)
 
 
+async def _prepare_segmentation_training_dataset_async(
+    task_id: str,
+    wsis: List[Dict[str, Any]],
+    coco_payloads: List[dict[str, Any]],
+    splits_map: Dict[str, List[str]],
+) -> Tuple[Dict[str, Any], int]:
+    return await asyncio.to_thread(
+        _prepare_segmentation_training_dataset,
+        task_id,
+        wsis,
+        coco_payloads,
+        splits_map,
+    )
+
+
 async def _call_ai_service(
     logger_manager: "ScopedLogger",
     task_id: str,
@@ -884,8 +899,8 @@ async def run_training_pipeline(
                         preprocessing_config=preprocessing_config,
                     )
 
-                segmentation_dataset, num_classes = (
-                    _prepare_segmentation_training_dataset(
+                segmentation_dataset, num_classes = await (
+                    _prepare_segmentation_training_dataset_async(
                         task_id=task_id,
                         wsis=wsis,
                         coco_payloads=coco_payloads,
