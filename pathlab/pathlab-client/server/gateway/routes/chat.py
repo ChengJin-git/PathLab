@@ -213,6 +213,22 @@ def _log_chat_timing(
     log_fn(message)
 
 
+def _resolve_prompt_language_and_user_text(
+    messages: list[dict[str, Any]], ui_lang: str | None
+) -> tuple[str, str]:
+    """Resolve prompt language while always preserving the latest user text."""
+    last_user_text = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            last_user_text = extract_text_from_content(msg.get("content", ""))
+            break
+
+    if ui_lang:
+        return ui_lang, last_user_text
+
+    return detect_language(last_user_text), last_user_text
+
+
 def _format_chat_dataset_list(
     dataset_lines: list[str], *, limit: int = MAX_DATASETS_IN_CHAT_CONTEXT
 ) -> str:
@@ -3295,23 +3311,16 @@ async def chat_with_ai(
 
     # Determine language for system prompt.
     # Priority: explicit X-Language header (user's i18n setting) > content-based heuristic.
-    if ui_lang:
-        detected_lang = ui_lang
-    else:
-        # Fallback: infer from the last user message content
-        detected_lang = "en"
-        for msg in reversed(req.messages):
-            if msg.get("role") == "user":
-                user_text = extract_text_from_content(msg.get("content", ""))
-                detected_lang = detect_language(user_text)
-                break
+    detected_lang, last_user_text = _resolve_prompt_language_and_user_text(
+        req.messages, ui_lang
+    )
 
     # Add system prompt if not present
     messages = req.messages.copy()
     if not messages or messages[0].get("role") != "system":
         stage_started_at = time.monotonic()
         # Load language-specific system prompt from template file
-        base_system_prompt = get_chat_system_prompt(detected_lang)
+        base_system_prompt = get_chat_system_prompt(detected_lang, user_text=last_user_text)
 
         system_prompt = {
             "role": "system",

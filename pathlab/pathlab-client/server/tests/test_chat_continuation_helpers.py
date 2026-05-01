@@ -1,8 +1,11 @@
+# pyright: reportImplicitRelativeImport=false
+
 from gateway.routes.chat import (
     _build_auto_continue_messages,
     _build_context_retry_messages,
     _format_chat_dataset_list,
     _log_chat_timing,
+    _resolve_prompt_language_and_user_text,
 )
 
 
@@ -22,6 +25,15 @@ def test_log_chat_timing_includes_stage_elapsed_and_metadata():
     assert messages == [
         "[ChatTiming] req=abc123 stage=context_cache elapsed_ms=1250.0 cache=hit models=3"
     ]
+
+
+def test_resolve_prompt_language_keeps_user_text_with_explicit_ui_language():
+    messages = [{"role": "user", "content": "我想训练一个模型，该用哪个特征提取器？"}]
+
+    detected_lang, user_text = _resolve_prompt_language_and_user_text(messages, "zh_CN")
+
+    assert detected_lang == "zh_CN"
+    assert user_text == "我想训练一个模型，该用哪个特征提取器？"
 
 
 def test_format_chat_dataset_list_caps_rendered_datasets():

@@ -227,12 +227,100 @@ def _build_feature_extractor_reference(lang: str) -> str:
     return "".join(lines)
 
 
-def get_chat_system_prompt(lang: Optional[str] = None) -> str:
+# Multilingual trigger terms for when to include the feature extractor reference.
+# These cover English, Simplified Chinese, and Traditional Chinese.
+_FEATURE_EXTRACTOR_TRIGGER_TERMS = frozenset(
+    [
+        # English
+        "feature extractor",
+        "feature_extract",
+        "extractor",
+        "encoder",
+        "backbone",
+        "foundation model",
+        "fm ",
+        "aggregator",
+        "classifier",
+        "mil",
+        "abmil",
+        "transmil",
+        "clam",
+        "training",
+        "train ",
+        "recommend",
+        "architecture",
+        "component",
+        "seg_backbone",
+        "segmentation backbone",
+        "gpfm",
+        "uni",
+        "virchow",
+        "conch",
+        "plip",
+        "phikon",
+        "smartccs",
+        "smartcyto",
+        "mstar",
+        "h-optimus",
+        "patho_clip",
+        "openmidnight",
+        # Simplified Chinese
+        "特征提取器",
+        "特征提取",
+        "提取器",
+        "编码器",
+        "骨干网络",
+        "基础模型",
+        "聚合器",
+        "分类器",
+        "训练",
+        "推荐",
+        "架构",
+        "组件",
+        "分割骨干",
+        # Traditional Chinese
+        "特徵提取器",
+        "特徵提取",
+        "編碼器",
+        "骨幹網絡",
+        "基礎模型",
+        "聚合器",
+        "分類器",
+        "訓練",
+        "推薦",
+        "架構",
+        "組件",
+        "分割骨幹",
+    ]
+)
+
+
+def _should_include_feature_extractor_reference(user_text: Optional[str]) -> bool:
+    """Return True if the user's request warrants including the full feature
+    extractor reference section.
+
+    The reference is appended when the user is asking about feature extractors,
+    training recommendations, model architecture, encoders, MIL/aggregators/
+    classifiers, foundation models, or supported components.
+    """
+    if not user_text:
+        return False
+
+    lowered = user_text.lower()
+    return any(term in lowered for term in _FEATURE_EXTRACTOR_TRIGGER_TERMS)
+
+
+def get_chat_system_prompt(lang: Optional[str] = None, user_text: Optional[str] = None) -> str:
     """Get the full PathLab Agent system prompt for the given language.
 
     This concatenates the language-specific base prompt with an
     auto-generated **Feature Extractor Reference** section built from
     ``knowledge/chat/feature_extractors_meta.json``.
+
+    The reference is only included when *user_text* indicates the user is
+    asking about feature extractors, training, model architecture, or
+    supported components.  This keeps the default prompt lean and reduces
+    first-token latency for general conversation.
 
     If anything goes wrong when building the reference (missing file,
     JSON parse error, etc.), the function gracefully falls back to the
@@ -243,6 +331,9 @@ def get_chat_system_prompt(lang: Optional[str] = None) -> str:
         lang = _DEFAULT_LANG
 
     base_prompt = load_prompt(f"chat_system_prompt_{lang}")
+
+    if not _should_include_feature_extractor_reference(user_text):
+        return base_prompt
 
     try:
         fe_ref = _build_feature_extractor_reference(lang)
