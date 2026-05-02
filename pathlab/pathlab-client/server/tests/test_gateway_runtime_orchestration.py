@@ -129,10 +129,10 @@ async def test_initialize_gateway_runtime_runs_startup_sequence(monkeypatch):
     initialize_redis = AsyncMock()
     backfill_wsi_sources = AsyncMock()
     initialize_task_queue_runtime = AsyncMock(return_value={"has_cuda": True})
+    resume_interrupted_tasks = AsyncMock()
     cleanup_progress_files = AsyncMock()
     cleanup_pdf_cache_runtime = AsyncMock()
     log_bundled_training_readiness = AsyncMock()
-    resume_interrupted_tasks = AsyncMock()
     cleanup_old_tasks = AsyncMock()
     cleanup_expired_permissions = AsyncMock()
     start_background = MagicMock(return_value=(training_task, chat_task))
@@ -187,14 +187,14 @@ async def test_initialize_gateway_runtime_runs_startup_sequence(monkeypatch):
     apply_schema_migration.assert_awaited_once()
     initialize_redis.assert_awaited_once()
     backfill_wsi_sources.assert_awaited_once()
-    initialize_task_queue_runtime.assert_awaited_once()
     cleanup_progress_files.assert_awaited_once()
-    resume_interrupted_tasks.assert_awaited_once()
+    initialize_task_queue_runtime.assert_not_awaited()
+    resume_interrupted_tasks.assert_not_awaited()
     cleanup_old_tasks.assert_awaited_once()
     cleanup_expired_permissions.assert_awaited_once()
     cleanup_pdf_cache_runtime.assert_awaited_once()
     log_bundled_training_readiness.assert_awaited_once()
-    start_background.assert_called_once_with(has_cuda=True)
+    start_background.assert_called_once_with(has_cuda=False)
     initialize_runtime_clients.assert_awaited_once_with(app)
 
 
@@ -210,17 +210,21 @@ async def test_shutdown_gateway_runtime_runs_shutdown_sequence():
     close_db = AsyncMock()
     close_redis_connections = AsyncMock()
 
-    startup.cancel_background_task = cancel_background_task
-    startup.shutdown_runtime_clients = shutdown_runtime_clients
-    startup.shutdown_task_queue = shutdown_task_queue
-    startup.close_db = close_db
-    startup.close_redis_connections = close_redis_connections
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(startup, "cancel_background_task", cancel_background_task)
+    monkeypatch.setattr(startup, "shutdown_runtime_clients", shutdown_runtime_clients)
+    monkeypatch.setattr(startup, "shutdown_task_queue", shutdown_task_queue, raising=False)
+    monkeypatch.setattr(startup, "close_db", close_db)
+    monkeypatch.setattr(startup, "close_redis_connections", close_redis_connections)
 
-    await startup.shutdown_gateway_runtime(app, training_task, chat_task)
+    try:
+        await startup.shutdown_gateway_runtime(app, training_task, chat_task)
+    finally:
+        monkeypatch.undo()
 
     cancel_background_task.assert_any_await(training_task)
     cancel_background_task.assert_any_await(chat_task)
     shutdown_runtime_clients.assert_awaited_once_with(app)
-    shutdown_task_queue.assert_awaited_once()
+    shutdown_task_queue.assert_not_awaited()
     close_db.assert_awaited_once()
     close_redis_connections.assert_awaited_once()

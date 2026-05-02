@@ -2,20 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import suppress
-from importlib import import_module
-from types import SimpleNamespace
-from typing import Any
-
 import httpx
 from sqlalchemy import select, text
 
-from backend.ai.schemas.base import TaskStatus
 from backend.common.config import Config
 from backend.auth.models import User
 from backend.database import async_session, close_db, get_db, init_db
 from backend.database.repositories import (
     DatasetGrantRepository,
-    DatasetRepository,
     ExportTaskRepository,
     StorageTaskRepository,
     TrainingTaskRepository,
@@ -28,14 +22,12 @@ from .chat.context_cache import (
 )
 from .chat.context_builder import build_chat_context_for_user
 from .dependencies import AI_SERVICE_URL, PREPROCESSING_SERVICE_URL, logger
-from .pipeline import run_patching_then_submit, run_training_pipeline
 from .routes.asr import startup_prewarm_local_asr
 from .routes.chat_pdf_vectorstore import prewarm_embedding_model
 from .routes.chat_training_recommendation import (
     get_bundled_training_knowledge_status,
     prewarm_training_recommendation_sources,
 )
-from .task_queue import TaskType, get_task_queue, init_task_queue, shutdown_task_queue
 
 
 def _is_external_validation_task_id(task_id: object) -> bool:
@@ -140,48 +132,6 @@ async def backfill_wsi_sources() -> None:
             logger.info(f"✓ Backfilled WSI source for {backfilled} record(s)")
 
 
-async def initialize_task_queue_runtime() -> dict[str, Any]:
-    try:
-        from backend.common.gpu_utils import get_gpu_count, probe_all_gpu_health
-
-        gpu_count = get_gpu_count()
-    except ImportError:
-        logger.warning("Could not import gpu_utils, assuming 1 GPU")
-        gpu_count = 1
-        probe_all_gpu_health = None
-
-    gpu_health: dict[int, bool] = {}
-    if gpu_count > 0 and probe_all_gpu_health is not None:
-        gpu_health = probe_all_gpu_health()
-
-    healthy_gpu_count = (
-        sum(1 for ok in gpu_health.values() if ok) if gpu_health else gpu_count
-    )
-    bad_gpu_indices = [idx for idx, ok in gpu_health.items() if not ok]
-
-    max_concurrent = Config.get_max_concurrent(default=1)
-    logger.info(
-        f"Detected {gpu_count} GPU(s) ({healthy_gpu_count} healthy, {len(bad_gpu_indices)} bad), "
-        f"max_concurrent={max_concurrent} (bad GPUs excluded from scheduling)"
-    )
-
-    logger.info("Initializing task queue manager...")
-    await init_task_queue(max_concurrent=max_concurrent, gpu_count=gpu_count)
-    logger.info("✓ Task queue manager initialized")
-
-    if bad_gpu_indices:
-        task_queue = get_task_queue()
-        for bad_idx in bad_gpu_indices:
-            task_queue.mark_gpu_bad(bad_idx)
-        logger.warning(
-            f"Excluded {len(bad_gpu_indices)} unhealthy GPU(s) from scheduling: "
-            f"{['cuda:' + str(i) for i in bad_gpu_indices]}"
-        )
-
-    has_cuda = healthy_gpu_count > 0
-    return {"has_cuda": has_cuda}
-
-
 async def cleanup_progress_files() -> None:
     from backend.common.progress_store import cleanup_all_progress
 
@@ -223,19 +173,14 @@ async def initialize_gateway_runtime(
     await initialize_redis_connections()
     await backfill_wsi_sources()
 
-    queue_runtime = await initialize_task_queue_runtime()
-
     await cleanup_progress_files()
-    await resume_interrupted_tasks()
     await cleanup_old_tasks()
     await cleanup_expired_permissions()
     await cleanup_pdf_cache_runtime()
     await log_bundled_training_readiness()
 
     training_rag_prewarm_task, chat_context_prewarm_task = (
-        start_background_prewarm_tasks(
-            has_cuda=bool(queue_runtime.get("has_cuda", False))
-        )
+        start_background_prewarm_tasks(has_cuda=False)
     )
 
     await initialize_runtime_clients(app)
@@ -250,10 +195,6 @@ async def shutdown_gateway_runtime(
     await cancel_background_task(training_rag_prewarm_task)
     await cancel_background_task(chat_context_prewarm_task)
     await shutdown_runtime_clients(app)
-
-    logger.info("Shutting down task queue manager...")
-    await shutdown_task_queue()
-    logger.info("✓ Task queue manager stopped")
 
     logger.info("Closing database connections...")
     await close_db()
@@ -380,225 +321,4 @@ async def cleanup_expired_permissions() -> None:
 
 
 async def resume_interrupted_tasks() -> None:
-    async for db in get_db():
-        try:
-            interrupted_tasks = await TrainingTaskRepository.get_interrupted_tasks(db)
-
-            if not interrupted_tasks:
-                logger.info("No interrupted tasks to resume")
-                return
-
-            logger.info(f"Found {len(interrupted_tasks)} interrupted task(s) to resume")
-
-            services_ready = await wait_for_services_ready(timeout=60.0)
-            if not services_ready:
-                logger.error(
-                    "Cannot resume interrupted tasks: dependent services are not ready"
-                )
-                for task in interrupted_tasks:
-                    try:
-                        await TrainingTaskRepository.update_status(
-                            db,
-                            task.task_id,
-                            TaskStatus.FAILED,
-                            error_message="Failed to resume: dependent services not available after system restart",
-                        )
-                    except Exception as exc:
-                        logger.error(
-                            f"Failed to mark task {task.task_id} as failed: {exc}"
-                        )
-                await db.commit()
-                return
-
-            for task in interrupted_tasks:
-                try:
-                    already_resuming = task.status == TaskStatus.RESUMING
-
-                    if already_resuming:
-                        logger.info(
-                            f"Task {task.task_id} is already in 'resuming' state "
-                            f"(claimed by a previous restart but never started), re-submitting to queue"
-                        )
-                    else:
-                        claimed = await TrainingTaskRepository.try_claim_for_resume(
-                            db, task.task_id
-                        )
-                        await db.commit()
-
-                        if not claimed:
-                            logger.info(
-                                f"Task {task.task_id} already claimed by another instance, skipping"
-                            )
-                            continue
-
-                    data_type = task.data_group.data_type if task.data_group else "wsi"
-                    task_type = (
-                        task.data_group.task_type
-                        if task.data_group
-                        else "wsi_classification"
-                    )
-
-                    if _is_batch_inference_task_id(task.task_id):
-                        from gateway.routes.inference_batch import _run_batch_inference
-
-                        cfg = task.model_config or {}
-                        task_queue = get_task_queue()
-                        await task_queue.submit(
-                            task_id=task.task_id,
-                            task_type=TaskType.BATCH_INFERENCE,
-                            coro_func=_run_batch_inference,
-                            model_task_id=cfg.get("model_task_id", ""),
-                            model_id=cfg.get("model_id", ""),
-                            dataset_id=cfg.get("dataset_id", ""),
-                            wsi_ids=cfg.get("wsi_ids"),
-                        )
-                        logger.info(
-                            f"✓ Resumed batch inference task {task.task_id} (claimed by this instance)"
-                        )
-                        continue
-
-                    if _is_external_validation_task_id(task.task_id):
-                        external_validation_dataset_id = (task.model_config or {}).get(
-                            "dataset_id", ""
-                        )
-                        wsi_ids = (
-                            await DatasetRepository.get_wsi_ids(
-                                db, external_validation_dataset_id
-                            )
-                            if external_validation_dataset_id
-                            else []
-                        )
-                    else:
-                        wsi_ids = await TrainingTaskRepository.get_wsi_ids(
-                            db, task.task_id
-                        )
-
-                    if not wsi_ids:
-                        logger.warning(
-                            f"Task {task.task_id} has no associated WSI IDs, marking as failed"
-                        )
-                        await TrainingTaskRepository.update_status(
-                            db,
-                            task.task_id,
-                            TaskStatus.FAILED,
-                            error_message="No associated WSI IDs found during resume",
-                        )
-                        await db.commit()
-                        continue
-
-                    logger.info(f"Resuming task: {task.task_id} ({task.task_name})")
-                    logger.info(f"  - Status before interruption: {task.status}")
-                    logger.info(f"  - Progress before interruption: {task.progress}%")
-                    logger.info(f"  - WSI count: {len(wsi_ids)}")
-
-                    task_queue = get_task_queue()
-
-                    if _is_external_validation_task_id(task.task_id):
-                        from gateway.routes.results import _run_external_validation
-
-                        model_config = task.model_config or {}
-                        resolved_model_task_type = model_config.get("model_task_type")
-                        resolved_model_data_type = model_config.get("model_data_type")
-
-                        if not resolved_model_task_type or not resolved_model_data_type:
-                            source_task_id = model_config.get("model_task_id", "")
-                            if source_task_id:
-                                source_task = await TrainingTaskRepository.get_by_id(
-                                    db, source_task_id
-                                )
-                                if source_task and source_task.data_group:
-                                    if not resolved_model_task_type:
-                                        resolved_model_task_type = (
-                                            source_task.data_group.task_type
-                                        )
-                                    if not resolved_model_data_type:
-                                        resolved_model_data_type = (
-                                            source_task.data_group.data_type
-                                        )
-
-                        resolved_model_task_type = (
-                            resolved_model_task_type or "wsi_classification"
-                        )
-                        resolved_model_data_type = resolved_model_data_type or data_type
-
-                        external_validation_kwargs = {
-                            "model_task_id": model_config.get("model_task_id", ""),
-                            "model_id": model_config.get("model_id", ""),
-                            "model_classes": task.classes,
-                            "model_task_type": resolved_model_task_type,
-                            "model_data_type": resolved_model_data_type,
-                            "dataset_id": model_config.get("dataset_id", ""),
-                            "wsi_ids": wsi_ids,
-                        }
-                        await task_queue.submit(
-                            task_id=task.task_id,
-                            task_type=TaskType.EXTERNAL_VALIDATION,
-                            coro_func=_run_external_validation,
-                            **external_validation_kwargs,
-                        )
-                    else:
-                        pipeline_kwargs = {
-                            "data_type": data_type,
-                            "wsi_ids": wsi_ids,
-                            "preprocessing_config": task.preprocessing_config or {},
-                            "model_config": task.model_config or {},
-                            "huggingface_token": None,
-                            "training_task_type": task_type,
-                        }
-
-                        if data_type == "wsi" and task.status in (
-                            TaskStatus.EXTRACTING,
-                            TaskStatus.TRAINING,
-                        ):
-                            gpu_kwargs = {**pipeline_kwargs, "patching_complete": True}
-                            await task_queue.submit(
-                                task_id=task.task_id,
-                                task_type=TaskType.TRAINING,
-                                coro_func=run_training_pipeline,
-                                **gpu_kwargs,
-                            )
-                            logger.info(
-                                "  - Resumed at GPU stage (patching already done, "
-                                "submitting with patching_complete=True)"
-                            )
-                        elif data_type == "wsi":
-                            patching_coro = run_patching_then_submit(
-                                task.task_id, pipeline_kwargs
-                            )
-                            patching_task = asyncio.create_task(patching_coro)
-                            task_queue.register_patching_task(
-                                task.task_id, patching_task
-                            )
-                            logger.info(
-                                f"  - Resumed at patching stage (pre-queue, status was '{task.status}')"
-                            )
-                        else:
-                            await task_queue.submit(
-                                task_id=task.task_id,
-                                task_type=TaskType.TRAINING,
-                                coro_func=run_training_pipeline,
-                                **pipeline_kwargs,
-                            )
-                            logger.info(
-                                "  - Patch task resumed directly to GPU queue "
-                                "(data_type=patch, no patching stage)"
-                            )
-
-                    logger.info(
-                        f"✓ Task {task.task_id} queued for resume (claimed by this instance)"
-                    )
-                except Exception as exc:
-                    logger.error(f"Failed to resume task {task.task_id}: {exc}")
-                    try:
-                        await TrainingTaskRepository.update_status(
-                            db,
-                            task.task_id,
-                            TaskStatus.FAILED,
-                            error_message=f"Failed to resume after system restart: {str(exc)}",
-                        )
-                        await db.commit()
-                    except Exception as update_error:
-                        logger.error(f"Failed to update task status: {update_error}")
-
-        except Exception as exc:
-            logger.error(f"Failed to check for interrupted tasks: {exc}")
+    logger.info("Worker owns recovery; Gateway skipping heavy resume logic.")
