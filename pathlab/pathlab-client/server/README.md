@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI** 三个服务进程，并复用 `backend/` 下的共享模块。
+`server/` 是当前 Python sidecar 目录。它不是单一 FastAPI 应用，而是由 `main.py` 统一拉起 **Gateway / Preprocessing / AI / TaskWorker** 四个进程，并复用 `backend/` 下的共享模块。
 
 ## 当前启动方式
 
@@ -12,21 +12,21 @@
 - 作用：
   - 选择固定端口或动态端口
   - 设置服务发现环境变量
-  - 启动 3 个 uvicorn 进程
+  - 启动 Gateway / Preprocessing / AI 三个 uvicorn 进程，以及独立 TaskWorker 进程
   - 在退出时统一清理子进程
 
 ### 两种端口模式
 
 | 模式 | 端口 | 触发方式 |
 |------|------|----------|
-| 调试 / 固定端口 | Gateway `6100`、Preprocessing `6101`、AI `6102` | `PATHLAB_DEBUG=1` |
-| Electron / 动态端口 | 3 个服务自动分配可用端口 | 默认 sidecar 启动方式 |
+| 调试 / 固定端口 | Gateway `6100`、Preprocessing `6101`、AI `6102`；TaskWorker 无 HTTP 端口 | `PATHLAB_DEBUG=1` |
+| Electron / 动态端口 | 3 个 HTTP 服务自动分配可用端口，TaskWorker 作为无端口后台进程运行 | 默认 sidecar 启动方式 |
 
 ## 当前目录结构
 
 ```text
 server/
-├── main.py                 # 统一入口，负责拉起 3 个服务
+├── main.py                 # 统一入口，负责拉起 3 个 HTTP 服务和 TaskWorker
 ├── requirements.txt        # Python 依赖
 ├── requirements-test.txt   # 测试依赖（pytest、pytest-asyncio、httpx）
 ├── pytest.ini              # asyncio_mode = auto
@@ -48,13 +48,22 @@ server/
 └── dist/                   # 打包产物目录
 ```
 
-## 三个服务的职责
+## 服务职责
 
 | 服务 | 当前职责 |
 |------|----------|
 | Gateway | 认证、用户管理、WSI / 任务 / 结果 / 聊天 / 存储 / 设置等对外 API |
 | Preprocessing | WSI 基本信息、图像、缩略图、DZI、瓦片、热图辅助、ROI 提取与部分 COCO 标注导出逻辑 |
 | AI | 训练、推理、特征提取、聚合器 / 分类器注册与模型内部接口 |
+| TaskWorker | 独立消费 Redis 任务描述符，拥有 GPU 任务队列、取消订阅、运行时快照发布与训练恢复 |
+
+## 任务调度边界
+
+Gateway 只负责把训练、推理、分析和补丁类长任务序列化为 Redis 任务描述符，并通过 `/queue` 等接口读取 TaskWorker 发布的运行时状态。Gateway 不在自身生命周期中初始化或持有 GPU 任务队列，也不直接执行 Marker GPU 解析、训练恢复或其他长 GPU 任务。
+
+TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务，放入 processing 列表，执行完成后 ack；失败时按重试上限重新入队，达到上限后进入 DLQ。取消请求会先写入短 TTL 的 durable cancellation key，再发布 pub/sub 消息；TaskWorker 同时用 job lock 防止同一 job descriptor 被重复执行。启动恢复时，TaskWorker 会先把遗留在 processing 列表中的描述符救回 pending 队列，再执行持久化训练恢复。
+
+`/queue` 返回的运行时状态区分两类计数：GPU 队列内部的 `running_count` / `pending_count` / `queue_size`，以及 Redis 描述符队列的 `descriptor_pending_count` / `descriptor_processing_count` / `descriptor_dlq_count`。
 
 ## 运行依赖
 
@@ -70,8 +79,9 @@ server/
 ## 当前实现重点
 
 - `main.py` 中 Preprocessing 允许多 worker，并支持 `PREPROCESSING_MAX_REQUESTS`
-- `main.py` 通过 `multiprocessing.Process` 拉起 3 个 uvicorn 服务并统一清理子进程
-- Gateway 会在自身生命周期中初始化数据库、Redis、任务队列和若干启动期清理逻辑
+- `main.py` 通过 `multiprocessing.Process` 拉起 3 个 uvicorn 服务和 1 个 TaskWorker，并统一清理子进程
+- Gateway 会在自身生命周期中初始化数据库、Redis 和若干启动期清理逻辑
+- 任务队列初始化、GPU 探测与训练恢复由独立的 `TaskWorker` 进程负责，Gateway 通过 Redis 消费其发布的运行时快照与心跳
 - AI 与 Preprocessing 的内部服务地址通过环境变量注入给 Gateway
 - `main.spec` 用于将 sidecar 打包为独立可执行文件
 - `main.py` 会尊重预先设置的 `CUDA_VISIBLE_DEVICES`，否则在启动时自动探测坏卡并收缩可见 GPU 集合

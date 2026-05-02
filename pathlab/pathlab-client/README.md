@@ -2,7 +2,7 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-`pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar，以及固定端口部署所需的运维脚本。
+`pathlab-client/` 是当前主应用目录，包含 Electron 宿主、React 渲染层、Python sidecar（Gateway / Preprocessing / AI / TaskWorker），以及固定端口部署所需的运维脚本。
 
 ## 当前入口文件
 
@@ -57,7 +57,7 @@ pathlab-client/
 ### 1. Electron / 动态端口模式
 
 - 主进程启动 sidecar
-- `server/main.py` 自动选择可用端口
+- `server/main.py` 自动选择 Gateway / Preprocessing / AI 端口，并拉起无 HTTP 端口的 TaskWorker
 - Gateway 端口通过 stdout / preload / IPC 传给渲染层
 - 前端运行时据此更新 API 基址
 - 主进程当前还处理 `pathlab://` 深链登录回调，并向渲染层暴露文件 / 目录选择 IPC
@@ -75,7 +75,7 @@ pathlab-client/
 - `src/main/index.ts` 负责窗口生命周期、深链回调、权限请求，以及嵌入式 PostgreSQL / Redis 与 Python sidecar 的协同启停
 - `src/preload/index.ts` 暴露认证回调、后端端口发现、文件 / 目录选择 IPC
 - `src/main/services-manager.ts` 负责嵌入式 PostgreSQL / Redis 的端口选择、数据目录和启动探测
-- `src/main/sidecar-manager.ts` 将 `Gateway / Preprocessing / AI` 端口变化推送给渲染层，并在 Gateway `/health` 就绪后再向渲染层放行
+- `src/main/sidecar-manager.ts` 将 `Gateway / Preprocessing / AI` 端口变化推送给渲染层，并在 Gateway `/health` 就绪后再向渲染层放行；TaskWorker 作为 sidecar 后台进程运行但不暴露端口
 
 ### 前端
 
@@ -87,9 +87,10 @@ pathlab-client/
 
 ### 后端
 
-- Gateway 负责认证、公开 API、任务编排与静态资源挂载
+- Gateway 负责认证、公开 API、任务描述符入队 / 状态查询与静态资源挂载
 - Preprocessing 负责 WSI 信息、图像、缩略图、DZI、瓦片与部分热图辅助逻辑
 - AI 服务负责训练、推理与模型相关内部能力
+- TaskWorker 负责消费 Redis 任务描述符、持有 GPU 队列、执行长任务并发布运行时快照
 - PostgreSQL + Redis + `uploads/` 共同组成运行时状态层
 
 ## 当前已确认的实现事实

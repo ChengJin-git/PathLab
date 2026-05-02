@@ -11,10 +11,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
 - 启动时当前会执行：
   - 初始化数据库
   - 初始化 Redis
-  - 探测 GPU 数量并决定 `max_concurrent`
-  - 初始化任务队列
   - 清理旧的 progress 文件
-  - 恢复中断的训练任务
   - 清理过期完成任务
   - 清理过期 PDF 缓存
   - 异步预热训练推荐所需的 embedding 模型与内置知识源
@@ -22,6 +19,16 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
   - 注册所有顶层 router
   - 在存在前端构建产物时挂载静态资源
   - 始终挂载 `/avatars`
+
+> 注：GPU 探测、任务队列初始化与训练恢复当前由独立的 `TaskWorker` 进程负责；Gateway 通过 Redis 读取其发布的运行时快照与心跳，不再在 Gateway 生命周期内直接管理队列状态。
+
+## 任务边界与队列状态
+
+Gateway 对长任务只做描述符入队、取消请求发布和状态查询。`gateway.task_dispatch` 负责构造 Redis 任务描述符并写入 pending 队列；TaskWorker 负责 claim、执行、ack、失败重试和 DLQ 归档。这样 Gateway 进程重启不会拥有未完成 GPU 工作，也不会因本地队列状态丢失而影响已入队任务。
+
+可靠描述符队列使用三组 Redis list：pending、processing 和 DLQ。TaskWorker claim 时把描述符从 pending 移到 processing，成功后 ack 删除，失败后按上限重试，超过上限进入 DLQ。取消路径同时写 durable cancellation key 和 pub/sub 消息，TaskWorker 在执行前检查 cancellation key，并用 job lock 跳过重复 descriptor。
+
+`GET /queue` 优先读取 TaskWorker 发布的运行时快照。响应中 `running_count` / `pending_count` / `queue_size` 描述 TaskWorker 内部 GPU 队列，`descriptor_pending_count` / `descriptor_processing_count` / `descriptor_dlq_count` 描述 Redis 描述符队列健康状态。
 
 ## 当前直接注册的 router
 
