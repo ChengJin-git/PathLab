@@ -6,6 +6,7 @@ Handles WSI classification and other AI inference tasks
 import asyncio
 import os
 import uuid
+from typing import cast
 import httpx
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,9 +28,14 @@ from backend.auth.dependencies import (
 from .access_control import assert_owner
 from ..dependencies import logger, AI_SERVICE_URL
 from ..models import WSIClassifyRequest
-from ..task_queue import get_task_queue, TaskType
 from ..utils import require_no_active_batch_imports
 from gateway.chat.context_cache import invalidate_chat_context
+from gateway.task_dispatch import (
+    build_task_descriptor,
+    enqueue_task_descriptor,
+    is_worker_healthy,
+    JsonPayload,
+)
 
 router = APIRouter(prefix="/tasks", tags=["AI Inference"])
 
@@ -250,6 +256,9 @@ async def create_wsi_classification(
             )
         model_id = active_model.model_id
 
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
     # Create task ID and store in database
     task_id = f"inf_{uuid.uuid4().hex[:16]}"
 
@@ -265,22 +274,37 @@ async def create_wsi_classification(
     await AITaskRepository.create(db, task_data)
     await db.commit()
 
-    # Submit to task queue
-    task_queue = get_task_queue()
-    inference_kwargs = {
-        "task_id": task_id,
-        "wsi_id": req.wsi_id,
-        "model_id": model_id,
-    }
-    await task_queue.submit(
-        task_id=task_id,
-        task_type=TaskType.INFERENCE,
-        coro_func=run_inference_via_ai_service,
-        **inference_kwargs,
+    descriptor_payload = cast(
+        JsonPayload,
+        {
+            "task_id": task_id,
+            "wsi_id": req.wsi_id,
+            "model_id": model_id,
+        },
     )
+    descriptor = build_task_descriptor(
+        job_id=task_id,
+        job_kind="inference",
+        handler="inference.single",
+        payload=descriptor_payload,
+    )
+    try:
+        await enqueue_task_descriptor(descriptor)
+    except Exception as e:
+        detail = f"Failed to enqueue task descriptor: {e}"
+        logger.error(f"Failed to enqueue inference task {task_id}: {e}")
+        async with safe_session() as db_cleanup:
+            await AITaskRepository.update_status(
+                db_cleanup,
+                task_id,
+                TaskStatus.FAILED,
+                error_message=detail,
+            )
+            await db_cleanup.commit()
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
 
     await invalidate_chat_context(str(user.id))
-    logger.info(f"Inference task {task_id} submitted to queue")
+    logger.info(f"Inference task {task_id} descriptor enqueued")
 
     return {
         "task_id": task_id,
