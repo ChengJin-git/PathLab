@@ -9,6 +9,9 @@ _result_store_mod = import_module("backend.ai.result_store")
 AIResultStore = _result_store_mod.AIResultStore
 IncompleteAIResultBundleError = _result_store_mod.IncompleteAIResultBundleError
 ZipStore = _result_store_mod.ZipStore
+save_ai_result_artifacts = import_module(
+    "backend.ai.tasks.training_utils"
+).save_ai_result_artifacts
 
 
 def test_config_creates_ai_result_bundle_directory(tmp_path, monkeypatch):
@@ -212,10 +215,17 @@ def test_array_artifacts_are_written_as_single_chunks(tmp_path):
 
 def test_bulk_write_finalizes_directly_without_staging_tree(tmp_path):
     store = AIResultStore(tmp_path)
+    finalize_calls = 0
+
+    def track_finalize(task_id):
+        nonlocal finalize_calls
+        finalize_calls += 1
+        raise AssertionError("bulk task bundle must finalize once through direct ZipStore write")
 
     def fail_staging_group(*args, **kwargs):
         raise AssertionError("bulk task bundle should write directly to ZipStore")
 
+    store._finalize_task_bundle = track_finalize
     store._open_staging_group = fail_staging_group
 
     store.write_task_bundle(
@@ -232,6 +242,43 @@ def test_bulk_write_finalizes_directly_without_staging_tree(tmp_path):
 
     assert store.bundle_path("task-101").exists()
     assert not store.staging_path("task-101").exists()
+    assert finalize_calls == 0
+
+
+def test_training_artifact_helper_can_stage_without_finalizing(tmp_path, monkeypatch):
+    store = AIResultStore(tmp_path)
+    finalize_calls = 0
+    original_finalize = store._finalize_task_bundle
+
+    def track_finalize(task_id):
+        nonlocal finalize_calls
+        finalize_calls += 1
+        return original_finalize(task_id)
+
+    monkeypatch.setattr(store, "_finalize_task_bundle", track_finalize)
+    monkeypatch.setattr(
+        "backend.ai.tasks.training_utils.AIResultStore",
+        lambda uploads_root: store,
+    )
+
+    result_path = save_ai_result_artifacts(
+        tmp_path,
+        "task-staged-helper",
+        "wsi-a",
+        {"wsi_id": "wsi-a", "task_id": "task-staged-helper"},
+        finalize=False,
+        update_index=False,
+    )
+
+    assert result_path is None
+    assert store.staging_path("task-staged-helper").exists()
+    assert not store.bundle_path("task-staged-helper").exists()
+    assert finalize_calls == 0
+
+    store.write_task_bundle(task_id="task-staged-helper")
+
+    assert store.read_result("task-staged-helper", "wsi-a")["wsi_id"] == "wsi-a"
+    assert finalize_calls == 1
 
 
 def test_store_does_not_create_legacy_ai_results_directory(tmp_path):

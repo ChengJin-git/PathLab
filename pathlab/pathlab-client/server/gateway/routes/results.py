@@ -122,13 +122,62 @@ from .inference_external_validation import (
     _auto_trigger_external_validation_analysis,
 )
 from .inference_batch import _run_batch_inference
-from ..task_queue import get_task_queue, TaskType
+from gateway.task_dispatch import (
+    JsonPayload,
+    build_task_descriptor,
+    enqueue_task_descriptor,
+    is_worker_healthy,
+    publish_task_cancellation,
+)
 
 # Initialize storage manager
 storage_manager = StorageManager(str(Config.get_uploads_dir()))
 
 router = APIRouter(prefix="/results", tags=["AI Results"])
 logger = logging.getLogger(__name__)
+
+
+async def _fail_training_task_enqueue(task_id: str, detail: str) -> None:
+    async with safe_session() as db_cleanup:
+        await TrainingTaskRepository.update_status(
+            db_cleanup,
+            task_id,
+            TaskStatus.FAILED,
+            error_message=detail,
+        )
+        await db_cleanup.commit()
+
+
+async def _fail_analysis_enqueue(analysis_id: str, detail: str) -> None:
+    state = get_analysis_state()
+    try:
+        await state.set_failed(analysis_id, detail)
+    except Exception as err:
+        logger.warning(f"Failed to mark analysis {analysis_id} failed after enqueue error: {err}")
+
+
+async def _enqueue_descriptor_or_503(
+    *,
+    job_id: str,
+    job_kind: str,
+    handler: str,
+    payload: JsonPayload,
+    on_enqueue_failure: Optional[Callable[[str], Any]] = None,
+) -> None:
+    descriptor = build_task_descriptor(
+        job_id=job_id,
+        job_kind=job_kind,
+        handler=handler,
+        payload=payload,
+    )
+    try:
+        await enqueue_task_descriptor(descriptor)
+    except Exception as err:
+        detail = f"Failed to enqueue task descriptor: {err}"
+        logger.error(f"Failed to enqueue descriptor for {job_id}: {err}")
+        if on_enqueue_failure is not None:
+            await on_enqueue_failure(detail)
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
 
 
 def _is_external_validation_task_id(task_id: object) -> bool:
@@ -1829,6 +1878,9 @@ async def start_batch_inference(
             detail="Batch inference only supports unlabeled datasets. Please use external validation for labeled datasets.",
         )
 
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
     batch_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
     batch_task = TrainingTask(
         task_id=batch_id,
@@ -1856,14 +1908,21 @@ async def start_batch_inference(
     await db.flush()
     await db.commit()
 
-    task_queue = get_task_queue()
-    await task_queue.submit(
-        task_id=batch_id,
-        task_type=TaskType.BATCH_INFERENCE,
-        coro_func=_run_batch_inference,
-        model_task_id=req.model_task_id,
-        model_id=str(trained_model.model_id),
-        dataset_id=req.dataset_id,
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": batch_id,
+            "model_task_id": req.model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": req.dataset_id,
+        },
+    )
+    await _enqueue_descriptor_or_503(
+        job_id=batch_id,
+        job_kind="inference",
+        handler="inference.batch",
+        payload=descriptor_payload,
+        on_enqueue_failure=lambda detail: _fail_training_task_enqueue(batch_id, detail),
     )
 
     return {
@@ -1984,6 +2043,9 @@ async def start_independent_inference(
     if target_data_group is None:
         raise HTTPException(status_code=400, detail="No compatible data group found")
 
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
     task_id = f"binfer_{uuid_module.uuid4().hex[:16]}"
     task_name = f"{model_task.task_name} independent inference"[:200]
     independent_task = TrainingTask(
@@ -2015,16 +2077,23 @@ async def start_independent_inference(
     await db.flush()
     await db.commit()
 
-    task_queue = get_task_queue()
-    await task_queue.submit(
-        task_id=task_id,
-        task_type=TaskType.BATCH_INFERENCE,
-        coro_func=_run_batch_inference,
-        model_task_id=model_task_id,
-        model_id=str(trained_model.model_id),
-        dataset_id=target_dataset_id or "",
-        wsi_ids=valid_ids,
-        execution_mode="batch_inference",
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": task_id,
+            "model_task_id": model_task_id,
+            "model_id": str(trained_model.model_id),
+            "dataset_id": target_dataset_id or "",
+            "wsi_ids": valid_ids,
+            "execution_mode": "batch_inference",
+        },
+    )
+    await _enqueue_descriptor_or_503(
+        job_id=task_id,
+        job_kind="inference",
+        handler="inference.batch",
+        payload=descriptor_payload,
+        on_enqueue_failure=lambda detail: _fail_training_task_enqueue(task_id, detail),
     )
 
     return {
@@ -2385,7 +2454,6 @@ async def start_external_validation(
     Returns the task_id that can be used to track progress.
     """
     import uuid as uuid_module
-    from ..task_queue import get_task_queue, TaskType
 
     effective_task_owner_user_id = str(user.id)
 
@@ -2640,16 +2708,59 @@ async def start_external_validation(
                 f"  - Running analysis directly with bootstrap_ci={req.compute_bootstrap_ci}"
             )
 
-            # Run analysis directly on existing results
-            await _auto_trigger_external_validation_analysis(
-                task_id=existing_validation_id,
-                model_task_id=trained_model_task_id,
-                model_id=req.model_id,
-                dataset_id=req.dataset_id,
-                metrics=analysis_metrics,
-                charts=analysis_charts,
-                bootstrap_ci_metrics=bootstrap_ci_metrics,
-                submitted_by=str(user.id),
+            if not await is_worker_healthy():
+                raise HTTPException(status_code=503, detail="Task worker unavailable")
+
+            source_name = req.model_id
+            target_name = req.dataset_id
+            try:
+                model = await TrainedModelRepository.get_by_id(db, req.model_id)
+                if model:
+                    source_name = model.model_name or req.model_id
+                target_ds = await DatasetRepository.get_by_id(db, req.dataset_id)
+                if target_ds:
+                    target_name = target_ds.name or req.dataset_id
+            except Exception:
+                pass
+
+            analysis_id = (
+                datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_auto"
+            )
+            state = get_analysis_state()
+            await state.create(
+                analysis_id,
+                existing_validation_id,
+                str(user.id),
+                title=f"{source_name} → {target_name}",
+                analysis_type="external",
+                task_category=None,
+            )
+
+            analysis_payload = type_cast(
+                JsonPayload,
+                {
+                    "task_id": analysis_id,
+                    "runner_module": "gateway.routes.results",
+                    "runner_name": "run_analysis_pipeline",
+                    "runner_kwargs": {
+                        "task_id": analysis_id,
+                        "analysis_id": analysis_id,
+                        "training_task_id": existing_validation_id,
+                        "task_type_str": "external_validation",
+                        "metrics": analysis_metrics,
+                        "charts": analysis_charts,
+                        "description": "Auto-triggered after external validation inference",
+                        "bootstrap_ci_metrics": bootstrap_ci_metrics,
+                        "submitted_by": str(user.id),
+                    },
+                },
+            )
+            await _enqueue_descriptor_or_503(
+                job_id=analysis_id,
+                job_kind="analysis",
+                handler="analysis.task",
+                payload=analysis_payload,
+                on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
             )
 
             return {
@@ -2662,6 +2773,9 @@ async def start_external_validation(
 
     # Create validation task ID
     validation_id = f"extval_{uuid_module.uuid4().hex[:16]}"
+
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
 
     target_aggregation_level = (
         target_data_group.aggregation_level if target_data_group else "file"
@@ -2715,22 +2829,28 @@ async def start_external_validation(
     logger.info(f"  - WSI count: {len(wsi_ids)}")
     logger.info(f"  - Bootstrap CI: {req.compute_bootstrap_ci}")
 
-    # Submit to task queue for execution
-    task_queue = get_task_queue()
     pipeline_kwargs = {
-        "model_task_id": trained_model.task_id,
+        "model_task_id": trained_model_task_id,
         "model_id": req.model_id,
-        "model_classes": trained_model.classes,
+        "model_classes": _coerce_str_list(trained_model.classes),
         "model_task_type": model_task_type,  # Pass model's task type for survival vs classification handling
         "model_data_type": model_data_type,  # "wsi" or "patch"
         "dataset_id": req.dataset_id,
         "wsi_ids": wsi_ids,
     }
-    await task_queue.submit(
-        task_id=validation_id,
-        task_type=TaskType.EXTERNAL_VALIDATION,
-        coro_func=_run_external_validation,
-        **pipeline_kwargs,
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": validation_id,
+            **pipeline_kwargs,
+        },
+    )
+    await _enqueue_descriptor_or_503(
+        job_id=validation_id,
+        job_kind="external_validation",
+        handler="external_validation.run",
+        payload=descriptor_payload,
+        on_enqueue_failure=lambda detail: _fail_training_task_enqueue(validation_id, detail),
     )
 
     return {
@@ -2973,8 +3093,6 @@ async def run_task_analysis(
     Returns:
         Submission confirmation with analysis_id and status
     """
-    from gateway.task_queue import get_task_queue, TaskType
-
     task, task_dataset_id = await _get_task_with_access(
         task_id,
         user,
@@ -3095,6 +3213,10 @@ async def run_task_analysis(
         except Exception as _ar_err:
             logger.warning(f"Failed to persist AnalysisRun record: {_ar_err}")
 
+    if not await is_worker_healthy():
+        await _fail_analysis_enqueue(analysis_id, "Task worker unavailable")
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
+
     # Check if GPU inference is needed (AI results missing)
     # External validation does not need GPU check here as it handles its own inference flow
     needs_gpu = False
@@ -3120,46 +3242,52 @@ async def run_task_analysis(
             )
         needs_gpu = not resources["has_ai_results"]
 
-    task_queue = get_task_queue()
+    runner_kwargs = type_cast(
+        JsonPayload,
+        {
+            "task_id": analysis_id,
+            "analysis_id": analysis_id,
+            "training_task_id": task_id,
+            "task_type_str": task_type_str,
+            "metrics": request.metrics,
+            "charts": request.charts,
+            "description": request.description,
+            "bootstrap_ci_metrics": request.bootstrap_ci_metrics or [],
+            "submitted_by": str(user.id),
+        },
+    )
+    descriptor_payload = type_cast(
+        JsonPayload,
+        {
+            "task_id": analysis_id,
+            "runner_module": "gateway.routes.results",
+            "runner_name": "run_analysis_pipeline",
+            "runner_kwargs": runner_kwargs,
+        },
+    )
 
     if needs_gpu:
-        # GPU inference needed - submit to GPU queue for queuing
         await state.set_queued(analysis_id)
-        await task_queue.submit(
-            task_id=analysis_id,
-            task_type=TaskType.ANALYSIS,
-            coro_func=run_analysis_pipeline,
-            analysis_id=analysis_id,
-            training_task_id=task_id,
-            task_type_str=task_type_str,
-            metrics=request.metrics,
-            charts=request.charts,
-            description=request.description,
-            bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
-            submitted_by=str(user.id),
+        await _enqueue_descriptor_or_503(
+            job_id=analysis_id,
+            job_kind="analysis",
+            handler="analysis.task",
+            payload=descriptor_payload,
+            on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
         )
         logger.info(
             f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}"
         )
     else:
-        # No GPU needed - run directly without queuing
-        analysis_task = asyncio.create_task(
-            run_analysis_pipeline(
-                task_id=analysis_id,
-                analysis_id=analysis_id,
-                training_task_id=task_id,
-                task_type_str=task_type_str,
-                metrics=request.metrics,
-                charts=request.charts,
-                description=request.description,
-                bootstrap_ci_metrics=request.bootstrap_ci_metrics or [],
-                submitted_by=str(user.id),
-            )
+        await _enqueue_descriptor_or_503(
+            job_id=analysis_id,
+            job_kind="analysis",
+            handler="analysis.task",
+            payload=descriptor_payload,
+            on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
         )
-        # Register task for potential cancellation
-        state.register_task(analysis_id, analysis_task)
         logger.info(
-            f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}"
+            f"Analysis task enqueued (CPU-only): task_id={task_id}, analysis_id={analysis_id}"
         )
 
     # Return immediately with pending/queued status
@@ -3269,8 +3397,6 @@ async def get_quick_analysis(
 
     # If no analysis exists and run_if_missing is True, submit analysis task to queue
     if latest_summary is None and run_if_missing:
-        from gateway.task_queue import get_task_queue, TaskType
-
         await _require_task_gpu_permission(
             user,
             task,
@@ -3352,6 +3478,10 @@ async def get_quick_analysis(
             task_category=task_category,
         )
 
+        if not await is_worker_healthy():
+            await _fail_analysis_enqueue(analysis_id, "Task worker unavailable")
+            raise HTTPException(status_code=503, detail="Task worker unavailable")
+
         # Default metrics and charts based on task type
         is_survival_task = quick_task_type_str == "wsi_survival"
         is_seg_task = quick_task_type_str == "patch_segmentation"
@@ -3402,46 +3532,52 @@ async def get_quick_analysis(
             )
         needs_gpu = not resources["has_ai_results"]
 
-        task_queue = get_task_queue()
+        runner_kwargs = type_cast(
+            JsonPayload,
+            {
+                "task_id": analysis_id,
+                "analysis_id": analysis_id,
+                "training_task_id": task_id,
+                "task_type_str": quick_task_type_str,
+                "metrics": default_metrics,
+                "charts": default_charts,
+                "description": None,
+                "bootstrap_ci_metrics": ci_metrics_list,
+                "submitted_by": str(user.id),
+            },
+        )
+        descriptor_payload = type_cast(
+            JsonPayload,
+            {
+                "task_id": analysis_id,
+                "runner_module": "gateway.routes.results",
+                "runner_name": "run_analysis_pipeline",
+                "runner_kwargs": runner_kwargs,
+            },
+        )
 
         if needs_gpu:
-            # GPU inference needed - submit to GPU queue for queuing
             await state.set_queued(analysis_id)
-            await task_queue.submit(
-                task_id=analysis_id,
-                task_type=TaskType.ANALYSIS,
-                coro_func=run_analysis_pipeline,
-                analysis_id=analysis_id,
-                training_task_id=task_id,
-                task_type_str=quick_task_type_str,
-                metrics=default_metrics,
-                charts=default_charts,
-                description=None,
-                bootstrap_ci_metrics=ci_metrics_list,
-                submitted_by=str(user.id),
+            await _enqueue_descriptor_or_503(
+                job_id=analysis_id,
+                job_kind="analysis",
+                handler="analysis.task",
+                payload=descriptor_payload,
+                on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
             )
             logger.info(
                 f"Analysis task queued (needs GPU): task_id={task_id}, analysis_id={analysis_id}"
             )
         else:
-            # No GPU needed - run directly without queuing
-            analysis_task = asyncio.create_task(
-                run_analysis_pipeline(
-                    task_id=analysis_id,
-                    analysis_id=analysis_id,
-                    training_task_id=task_id,
-                    task_type_str=quick_task_type_str,
-                    metrics=default_metrics,
-                    charts=default_charts,
-                    description=None,
-                    bootstrap_ci_metrics=ci_metrics_list,
-                    submitted_by=str(user.id),
-                )
+            await _enqueue_descriptor_or_503(
+                job_id=analysis_id,
+                job_kind="analysis",
+                handler="analysis.task",
+                payload=descriptor_payload,
+                on_enqueue_failure=lambda detail: _fail_analysis_enqueue(analysis_id, detail),
             )
-            # Register task for potential cancellation
-            state.register_task(analysis_id, analysis_task)
             logger.info(
-                f"Analysis task started (CPU-only, no queue): task_id={task_id}, analysis_id={analysis_id}"
+                f"Analysis task enqueued (CPU-only): task_id={task_id}, analysis_id={analysis_id}"
             )
 
         # Return immediately with pending/queued status
@@ -3624,6 +3760,17 @@ async def delete_task_analysis(
                 raise
             except Exception:
                 pass
+
+    state = get_analysis_state()
+    analysis_task = await state.get(analysis_id)
+    if analysis_task and analysis_task.get("status") not in [
+        TaskStatus.COMPLETED,
+        TaskStatus.FAILED,
+        TaskStatus.CANCELLED,
+    ]:
+        await publish_task_cancellation(analysis_id)
+        await state.cancel_running_task(analysis_id)
+        await state.set_cancelled(analysis_id)
 
     try:
         await asyncio.to_thread(shutil.rmtree, analysis_dir)
