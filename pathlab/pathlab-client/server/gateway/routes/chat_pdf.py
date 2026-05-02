@@ -1627,55 +1627,33 @@ async def _parse_pdf_with_marker_best_effort(
     images_url_prefix: str | None,
     upgrade_url: str | None = None,
 ) -> ParsedPdfResult | None:
-    """Run Marker via GPU queue when possible.
-
-    Foreground parses may fall back to CPU. Background upgrades skip CPU fallback
-    so they do not consume the only foreground PDF parse slot under load.
-    """
+    ...
     skip_gpu_queue, routing_detail = _should_skip_marker_gpu_queue()
-    fallback_detail = (
-        "GPU Marker path unavailable or failed; retrying high-quality upgrade on CPU"
-    )
     logger.info(f"[Marker] Best-effort routing decision: {routing_detail}")
     marker_result: ParsedPdfResult | None = None
-    if not skip_gpu_queue:
-        try:
-            marker_result = await _parse_pdf_with_marker_via_gpu_queue(
-                pdf_bytes,
-                max_pages,
-                images_output_dir,
-                images_url_prefix,
-                upgrade_url=upgrade_url,
-            )
-        except MarkerGpuQueueTimeout as e:
-            fallback_detail = str(e)
-            marker_result = None
-    else:
-        fallback_detail = routing_detail
-        marker_result = await _parse_pdf_with_marker_direct_gpu_if_available(
-            pdf_bytes,
-            max_pages,
-            images_output_dir,
-            images_url_prefix,
-        )
+
+    gateway_boundary_detail = (
+        "Gateway process does not execute Marker on local GPU; "
+        "GPU parsing is reserved for TaskWorker-owned queue"
+    )
 
     if marker_result is None:
         if upgrade_url:
             _record_high_quality_upgrade_state(
                 upgrade_url,
                 PDF_UPGRADE_STATUS_SKIPPED,
-                f"{fallback_detail}; skipping CPU fallback for background upgrade to protect foreground PDF parsing capacity",
+                f"{gateway_boundary_detail}; skipping CPU fallback for background upgrade to protect foreground PDF parsing capacity",
                 high_quality_parse_pending=False,
                 high_quality_parse_ready=False,
             )
             return None
-        marker_result = await _parse_pdf_with_marker_on_cpu(
-            pdf_bytes,
-            max_pages,
-            images_output_dir,
-            images_url_prefix,
+        _record_high_quality_upgrade_state(
+            upgrade_url or "",
+            PDF_UPGRADE_STATUS_SKIPPED,
+            f"{gateway_boundary_detail}; foreground Marker parse skipped to protect foreground PDF parsing capacity",
+            high_quality_parse_pending=False,
+            high_quality_parse_ready=False,
         )
-    if marker_result is None:
         return None
     return marker_result
 
@@ -3980,12 +3958,20 @@ async def serve_pdf_image(
         raise HTTPException(status_code=400, detail="Invalid filename")
 
     image_path = get_pdf_image_path(url_hash, filename)
+    images_root = (get_pdf_cache_dir() / "images" / url_hash).resolve()
+    try:
+        resolved_image_path = image_path.resolve(strict=True)
+        resolved_image_path.relative_to(images_root)
+    except (FileNotFoundError, RuntimeError):
+        raise HTTPException(status_code=404, detail="Image not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid image path")
 
-    if not image_path.exists() or not image_path.is_file():
+    if not resolved_image_path.is_file():
         raise HTTPException(status_code=404, detail="Image not found")
 
-    content_type, _ = mimetypes.guess_type(str(image_path))
+    content_type, _ = mimetypes.guess_type(str(resolved_image_path))
     if content_type is None:
         content_type = "application/octet-stream"
 
-    return FileResponse(image_path, media_type=content_type)
+    return FileResponse(resolved_image_path, media_type=content_type)

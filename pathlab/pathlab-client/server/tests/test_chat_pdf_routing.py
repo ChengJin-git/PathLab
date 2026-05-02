@@ -2,6 +2,10 @@ import json
 import sys
 import types
 from datetime import datetime
+from typing import Any
+
+import pytest
+from fastapi import HTTPException
 
 from gateway.routes import chat_pdf
 
@@ -103,3 +107,126 @@ def test_get_cached_pdf_prefers_high_quality_marker_markdown(tmp_path, monkeypat
     _, _, cached_markdown, parse_method = cached
     assert cached_markdown == "high quality markdown"
     assert parse_method == chat_pdf.PDF_PARSE_METHOD_MARKER
+
+
+@pytest.mark.asyncio
+async def test_best_effort_foreground_skips_all_local_marker_paths(monkeypatch):
+    calls = {
+        "via_gpu_queue": False,
+        "direct_gpu": False,
+        "cpu": False,
+    }
+
+    async def _fake_via_gpu_queue(*args, **kwargs):
+        calls["via_gpu_queue"] = True
+        return None
+
+    async def _fake_direct_gpu(*args, **kwargs):
+        calls["direct_gpu"] = True
+        return None
+
+    async def _fake_cpu(*args, **kwargs):
+        calls["cpu"] = True
+        return chat_pdf.ParsedPdfResult(
+            markdown="cpu fallback",
+            parse_method=chat_pdf.PDF_PARSE_METHOD_MARKER,
+            page_count=1,
+            structured_content={},
+        )
+
+    monkeypatch.setattr(
+        chat_pdf, "_parse_pdf_with_marker_via_gpu_queue", _fake_via_gpu_queue
+    )
+    monkeypatch.setattr(
+        chat_pdf, "_parse_pdf_with_marker_direct_gpu_if_available", _fake_direct_gpu
+    )
+    monkeypatch.setattr(chat_pdf, "_parse_pdf_with_marker_on_cpu", _fake_cpu)
+
+    result = await chat_pdf._parse_pdf_with_marker_best_effort(
+        pdf_bytes=b"%PDF-1.4",
+        max_pages=0,
+        images_output_dir=None,
+        images_url_prefix=None,
+        upgrade_url=None,
+    )
+
+    assert not calls["via_gpu_queue"]
+    assert not calls["direct_gpu"]
+    assert not calls["cpu"]
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_best_effort_background_skips_all_local_paths_and_returns_none(monkeypatch):
+    calls = {
+        "via_gpu_queue": False,
+        "direct_gpu": False,
+        "cpu": False,
+    }
+    recorded_states: list[dict[str, Any]] = []
+
+    async def _fake_via_gpu_queue(*args, **kwargs):
+        calls["via_gpu_queue"] = True
+        return None
+
+    async def _fake_direct_gpu(*args, **kwargs):
+        calls["direct_gpu"] = True
+        return None
+
+    async def _fake_cpu(*args, **kwargs):
+        calls["cpu"] = True
+        return None
+
+    def _fake_record_state(url, status, detail, **extra):
+        recorded_states.append({"url": url, "status": status, "detail": detail, **extra})
+
+    monkeypatch.setattr(
+        chat_pdf, "_parse_pdf_with_marker_via_gpu_queue", _fake_via_gpu_queue
+    )
+    monkeypatch.setattr(
+        chat_pdf, "_parse_pdf_with_marker_direct_gpu_if_available", _fake_direct_gpu
+    )
+    monkeypatch.setattr(chat_pdf, "_parse_pdf_with_marker_on_cpu", _fake_cpu)
+    monkeypatch.setattr(chat_pdf, "_record_high_quality_upgrade_state", _fake_record_state)
+
+    result = await chat_pdf._parse_pdf_with_marker_best_effort(
+        pdf_bytes=b"%PDF-1.4",
+        max_pages=0,
+        images_output_dir=None,
+        images_url_prefix=None,
+        upgrade_url="https://example.com/paper.pdf",
+    )
+
+    assert not calls["via_gpu_queue"]
+    assert not calls["direct_gpu"]
+    assert not calls["cpu"]
+    assert result is None
+    assert any(
+        s["status"] == chat_pdf.PDF_UPGRADE_STATUS_SKIPPED
+        and "Gateway" in s["detail"]
+        for s in recorded_states
+    )
+
+
+@pytest.mark.asyncio
+async def test_serve_pdf_image_rejects_symlink_escape(tmp_path, monkeypatch):
+    url_hash = "abc123"
+    uploads_dir = tmp_path / "uploads"
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "secret.png"
+    outside_file.write_bytes(b"secret")
+
+    monkeypatch.setattr(
+        chat_pdf.Config, "get_uploads_dir", staticmethod(lambda: uploads_dir)
+    )
+    monkeypatch.setattr(chat_pdf, "_pdf_cache_dir", None)
+
+    image_dir = chat_pdf.get_pdf_cache_dir() / "images" / url_hash
+    image_dir.mkdir(parents=True)
+    (image_dir / "escape.png").symlink_to(outside_file)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await chat_pdf.serve_pdf_image(url_hash, "escape.png", user=object())
+
+    assert exc_info.value.status_code == 400
