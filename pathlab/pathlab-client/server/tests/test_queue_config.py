@@ -1,5 +1,6 @@
 import pytest
 import pytest_asyncio
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, AsyncMock
 from httpx import AsyncClient, ASGITransport
 
@@ -31,7 +32,7 @@ def _make_queue_stub(
     return queue
 
 
-def _make_queue_app_with_stub(user_stub, queue_stub) -> "FastAPI":
+def _make_queue_app_with_stub(user_stub, queue_stub):
     from fastapi import FastAPI
     from gateway.routes.queue import router as queue_router
     from backend.auth import current_active_user
@@ -55,10 +56,10 @@ def queue_stub():
 
 
 @pytest_asyncio.fixture
-async def client(admin, queue_stub, tmp_path):
-    app = _make_queue_app_with_stub(admin, queue_stub)
+async def client(admin, tmp_path):
+    app = _make_queue_app_with_stub(admin, MagicMock())
     with (
-        patch("gateway.routes.queue.get_task_queue", return_value=queue_stub),
+        patch("gateway.routes.queue.is_worker_healthy", new=AsyncMock(return_value=True)),
         patch(
             "backend.common.config.Config.STORAGE_CONFIG_FILE", str(tmp_path / "s.json")
         ),
@@ -83,7 +84,7 @@ class TestGetQueueConfig:
 
     async def test_max_concurrent_matches_queue(self, client, queue_stub):
         resp = await client.get("/queue/config")
-        assert resp.json()["max_concurrent"] == queue_stub.max_concurrent
+        assert resp.json()["max_concurrent"] == 4
 
     async def test_task_timeout_is_positive_integer(self, client):
         resp = await client.get("/queue/config")
@@ -111,14 +112,21 @@ class TestGetQueueStatus:
         resp = await client.get("/queue")
         assert resp.json()["is_running"] is True
 
-    async def test_queue_not_initialized_returns_503(self, admin, tmp_path):
+    async def test_worker_unhealthy_reports_not_running(self, admin, tmp_path):
         app = _make_queue_app_with_stub(admin, MagicMock())
-        with patch("gateway.routes.queue.get_task_queue", return_value=None):
+        with (
+            patch("gateway.routes.queue.is_worker_healthy", new=AsyncMock(return_value=False)),
+            patch(
+                "backend.common.config.Config.STORAGE_CONFIG_FILE",
+                str(tmp_path / "s.json"),
+            ),
+        ):
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as c:
                 resp = await c.get("/queue")
-        assert resp.status_code == 503
+        assert resp.status_code == 200
+        assert resp.json()["is_running"] is False
 
 
 @pytest.mark.asyncio
@@ -134,35 +142,37 @@ class TestUpdateQueueConfig:
     async def test_update_max_concurrent_multi_gpu(self, admin, tmp_path):
         multi_gpu_queue = _make_queue_stub(max_concurrent=1, gpu_count=4)
         app = _make_queue_app_with_stub(admin, multi_gpu_queue)
-        with (
-            patch("gateway.routes.queue.get_task_queue", return_value=multi_gpu_queue),
-            patch(
-                "backend.common.config.Config.STORAGE_CONFIG_FILE",
-                str(tmp_path / "s.json"),
-            ),
+        with patch(
+            "backend.common.config.Config.STORAGE_CONFIG_FILE",
+            str(tmp_path / "s.json"),
         ):
+            from backend.common.config import Config
+
+            Config.reset_runtime_cache_for_tests()
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as c:
                 resp = await c.post("/queue/config", json={"max_concurrent": 3})
         assert resp.status_code == 200
-        multi_gpu_queue.set_max_concurrent.assert_awaited_once_with(3)
+        assert resp.json()["config"]["max_concurrent"] == 3
+        multi_gpu_queue.set_max_concurrent.assert_not_awaited()
 
-    async def test_single_gpu_rejects_max_concurrent_change(self, admin, tmp_path):
+    async def test_max_concurrent_update_does_not_require_local_gpu_count(self, admin, tmp_path):
         single_gpu_queue = _make_queue_stub(max_concurrent=1, gpu_count=1)
         app = _make_queue_app_with_stub(admin, single_gpu_queue)
-        with (
-            patch("gateway.routes.queue.get_task_queue", return_value=single_gpu_queue),
-            patch(
-                "backend.common.config.Config.STORAGE_CONFIG_FILE",
-                str(tmp_path / "s.json"),
-            ),
+        with patch(
+            "backend.common.config.Config.STORAGE_CONFIG_FILE",
+            str(tmp_path / "s.json"),
         ):
+            from backend.common.config import Config
+
+            Config.reset_runtime_cache_for_tests()
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as c:
                 resp = await c.post("/queue/config", json={"max_concurrent": 2})
-        assert resp.status_code == 400
+        assert resp.status_code == 200
+        assert resp.json()["config"]["max_concurrent"] == 2
 
     async def test_empty_body_returns_400(self, client):
         resp = await client.post("/queue/config", json={})
@@ -171,13 +181,13 @@ class TestUpdateQueueConfig:
     async def test_update_both_fields_simultaneously(self, admin, tmp_path):
         multi_gpu_queue = _make_queue_stub(max_concurrent=1, gpu_count=2)
         app = _make_queue_app_with_stub(admin, multi_gpu_queue)
-        with (
-            patch("gateway.routes.queue.get_task_queue", return_value=multi_gpu_queue),
-            patch(
-                "backend.common.config.Config.STORAGE_CONFIG_FILE",
-                str(tmp_path / "s.json"),
-            ),
+        with patch(
+            "backend.common.config.Config.STORAGE_CONFIG_FILE",
+            str(tmp_path / "s.json"),
         ):
+            from backend.common.config import Config
+
+            Config.reset_runtime_cache_for_tests()
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as c:
@@ -194,15 +204,17 @@ class TestUpdateQueueConfig:
 class TestCheckTaskInQueue:
     async def test_task_is_running(self, admin, tmp_path):
         task_id = "task-running-001"
-        queue = _make_queue_stub(running_ids=[task_id])
-        app = _make_queue_app_with_stub(admin, queue)
+        app = _make_queue_app_with_stub(admin, MagicMock())
         with (
-            patch("gateway.routes.queue.get_task_queue", return_value=queue),
+            patch("gateway.routes.queue.get_analysis_state") as analysis_state_factory,
             patch(
-                "backend.common.config.Config.STORAGE_CONFIG_FILE",
-                str(tmp_path / "s.json"),
+                "gateway.routes.queue.AITaskRepository.get_by_id",
+                new=AsyncMock(return_value=SimpleNamespace(status="training")),
             ),
         ):
+            analysis_state = MagicMock()
+            analysis_state.get = AsyncMock(return_value=None)
+            analysis_state_factory.return_value = analysis_state
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as c:
@@ -213,15 +225,17 @@ class TestCheckTaskInQueue:
 
     async def test_task_is_pending(self, admin, tmp_path):
         task_id = "task-pending-002"
-        queue = _make_queue_stub(pending_ids=[task_id])
-        app = _make_queue_app_with_stub(admin, queue)
+        app = _make_queue_app_with_stub(admin, MagicMock())
         with (
-            patch("gateway.routes.queue.get_task_queue", return_value=queue),
+            patch("gateway.routes.queue.get_analysis_state") as analysis_state_factory,
             patch(
-                "backend.common.config.Config.STORAGE_CONFIG_FILE",
-                str(tmp_path / "s.json"),
+                "gateway.routes.queue.AITaskRepository.get_by_id",
+                new=AsyncMock(return_value=SimpleNamespace(status="queued")),
             ),
         ):
+            analysis_state = MagicMock()
+            analysis_state.get = AsyncMock(return_value=None)
+            analysis_state_factory.return_value = analysis_state
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as c:
@@ -231,15 +245,18 @@ class TestCheckTaskInQueue:
         assert data["status"] == "pending"
 
     async def test_task_not_found(self, admin, tmp_path):
-        queue = _make_queue_stub()
-        app = _make_queue_app_with_stub(admin, queue)
+        app = _make_queue_app_with_stub(admin, MagicMock())
         with (
-            patch("gateway.routes.queue.get_task_queue", return_value=queue),
+            patch("gateway.routes.queue.get_analysis_state") as analysis_state_factory,
+            patch("gateway.routes.queue.AITaskRepository.get_by_id", new=AsyncMock(return_value=None)),
             patch(
-                "backend.common.config.Config.STORAGE_CONFIG_FILE",
-                str(tmp_path / "s.json"),
+                "gateway.routes.queue.TrainingTaskRepository.get_by_id",
+                new=AsyncMock(return_value=None),
             ),
         ):
+            analysis_state = MagicMock()
+            analysis_state.get = AsyncMock(return_value=None)
+            analysis_state_factory.return_value = analysis_state
             async with AsyncClient(
                 transport=ASGITransport(app=app), base_url="http://test"
             ) as c:
