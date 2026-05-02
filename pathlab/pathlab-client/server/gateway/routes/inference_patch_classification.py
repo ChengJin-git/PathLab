@@ -221,6 +221,8 @@ async def _run_inference_patch_classification(
                     wsi_id=wsi_id,
                     result=result_data,
                     arrays={CAM_ARTIFACT: cam_map},
+                    finalize=False,
+                    update_index=False,
                 )
 
                 # Save to database
@@ -245,6 +247,9 @@ async def _run_inference_patch_classification(
             except Exception as e:
                 logger.warning(f"Failed to process {wsi_id}: {e}")
                 continue
+
+    if results_saved:
+        result_store.write_task_bundle(task_id=task_id)
 
     await db.commit()
     logger.info(

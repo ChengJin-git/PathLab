@@ -471,6 +471,8 @@ async def _run_inference_patch_segmentation(
                             PRED_MASK_ARTIFACT: pred_mask,
                             CAM_ARTIFACT: cam_map,
                         },
+                        finalize=False,
+                        update_index=False,
                     )
 
                     all_results.append(
@@ -491,6 +493,8 @@ async def _run_inference_patch_segmentation(
                     logger.warning(f"Failed to process {wsi_id}: {e}")
                     continue
 
+        if results_saved:
+            result_store.write_task_bundle(task_id=task_id)
         return all_results
 
     all_results = await asyncio.to_thread(_run_inference)
