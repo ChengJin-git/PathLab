@@ -303,8 +303,7 @@ async def test_independent_inference_submit_success():
     model_task = _mock_model_task("wsi_classification", "wsi")
     trained_model = _mock_trained_model()
     wsi = _mock_wsi("wsi-1")
-    mock_queue = MagicMock()
-    mock_queue.submit = AsyncMock()
+    mock_enqueue = AsyncMock()
 
     with (
         patch(
@@ -328,7 +327,9 @@ async def test_independent_inference_submit_success():
             new_callable=AsyncMock,
             return_value=0,
         ),
-        patch("gateway.routes.results.get_task_queue", return_value=mock_queue),
+        patch("gateway.routes.results.is_worker_healthy", new_callable=AsyncMock, return_value=True),
+        patch("gateway.routes.results.build_task_descriptor") as mock_build,
+        patch("gateway.routes.results.enqueue_task_descriptor", new=mock_enqueue),
     ):
         from gateway.routes.results import start_independent_inference
         from gateway.models import IndependentInferenceRequest
@@ -349,10 +350,11 @@ async def test_independent_inference_submit_success():
     assert result["total_wsi"] == 1
     created_task = mock_db.add.call_args.args[0]
     assert created_task.model_config["wsi_ids"] == ["wsi-1"]
-    mock_queue.submit.assert_awaited_once()
-    submit_kwargs = mock_queue.submit.await_args.kwargs
-    assert submit_kwargs["wsi_ids"] == ["wsi-1"]
-    assert submit_kwargs["execution_mode"] == "batch_inference"
+    mock_build.assert_called_once()
+    payload = mock_build.call_args.kwargs["payload"]
+    assert payload["wsi_ids"] == ["wsi-1"]
+    assert payload["execution_mode"] == "batch_inference"
+    mock_enqueue.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -361,8 +363,7 @@ async def test_independent_inference_submit_allows_elevated_dataset_access():
     trained_model = _mock_trained_model()
     wsi = _mock_wsi("wsi-1")
     wsi.user_id = "other-user"
-    mock_queue = MagicMock()
-    mock_queue.submit = AsyncMock()
+    mock_enqueue = AsyncMock()
 
     with (
         patch(
@@ -387,7 +388,9 @@ async def test_independent_inference_submit_allows_elevated_dataset_access():
             new_callable=AsyncMock,
             return_value=0,
         ),
-        patch("gateway.routes.results.get_task_queue", return_value=mock_queue),
+        patch("gateway.routes.results.is_worker_healthy", new_callable=AsyncMock, return_value=True),
+        patch("gateway.routes.results.build_task_descriptor"),
+        patch("gateway.routes.results.enqueue_task_descriptor", new=mock_enqueue),
     ):
         from gateway.routes.results import start_independent_inference
         from gateway.models import IndependentInferenceRequest
@@ -405,7 +408,7 @@ async def test_independent_inference_submit_allows_elevated_dataset_access():
 
     assert result["total_wsi"] == 1
     assert result["skipped"] == []
-    mock_queue.submit.assert_awaited_once()
+    mock_enqueue.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -463,8 +466,7 @@ async def test_independent_inference_submit_rejects_mixed_datasets():
     second = _mock_wsi("wsi-2", dataset_id="dataset-b")
     first.user_id = str(user.id)
     second.user_id = str(user.id)
-    mock_queue = MagicMock()
-    mock_queue.submit = AsyncMock()
+    mock_enqueue = AsyncMock()
 
     with (
         patch(
@@ -489,7 +491,9 @@ async def test_independent_inference_submit_rejects_mixed_datasets():
             new_callable=AsyncMock,
             return_value=0,
         ),
-        patch("gateway.routes.results.get_task_queue", return_value=mock_queue),
+        patch("gateway.routes.results.is_worker_healthy", new_callable=AsyncMock, return_value=True),
+        patch("gateway.routes.results.build_task_descriptor"),
+        patch("gateway.routes.results.enqueue_task_descriptor", new=mock_enqueue),
     ):
         from gateway.routes.results import start_independent_inference
         from gateway.models import IndependentInferenceRequest
@@ -509,7 +513,7 @@ async def test_independent_inference_submit_rejects_mixed_datasets():
     assert exc_info.value.status_code == 400
     assert exc_info.value.detail["message"] == "Select images from a single dataset"
     mock_db.add.assert_not_called()
-    mock_queue.submit.assert_not_awaited()
+    mock_enqueue.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -623,8 +627,7 @@ async def test_batch_inference_submit_success():
     target_dataset.is_public = False
     target_dataset.parent_dataset_id = None
 
-    mock_queue = MagicMock()
-    mock_queue.submit = AsyncMock()
+    mock_enqueue = AsyncMock()
 
     with (
         patch(
@@ -658,7 +661,9 @@ async def test_batch_inference_submit_success():
             new_callable=AsyncMock,
             return_value=0,
         ),
-        patch("gateway.routes.results.get_task_queue", return_value=mock_queue),
+        patch("gateway.routes.results.is_worker_healthy", new_callable=AsyncMock, return_value=True),
+        patch("gateway.routes.results.build_task_descriptor"),
+        patch("gateway.routes.results.enqueue_task_descriptor", new=mock_enqueue),
     ):
         from gateway.routes.results import start_batch_inference
         from gateway.models import BatchInferenceRequest
@@ -679,7 +684,7 @@ async def test_batch_inference_submit_success():
     assert result["status"] == "pending"
     created_task = mock_db.add.call_args.args[0]
     assert created_task.group_id == "targetgroup-1"
-    mock_queue.submit.assert_awaited_once()
+    mock_enqueue.assert_awaited_once()
 
 
 @pytest.mark.asyncio

@@ -90,6 +90,8 @@ def save_ai_result_artifacts(
     result_data: dict[str, Any],
     arrays: dict[str, np.ndarray[Any, Any]] | None = None,
     fold_suffix: str = "",
+    finalize: bool = True,
+    update_index: bool = True,
 ) -> Path | None:
     """Persist one WSI/image AI result into the task-level bundle."""
     fold_key = fold_suffix.removeprefix("_") if fold_suffix else None
@@ -99,7 +101,14 @@ def save_ai_result_artifacts(
         result=result_data,
         arrays=arrays,
         fold_key=fold_key,
+        finalize=finalize,
+        update_index=update_index,
     )
+
+
+def finalize_ai_result_artifacts(uploads_root: Path, task_id: str) -> Path:
+    """Finalize staged AI result artifacts for a training task."""
+    return AIResultStore(uploads_root).write_task_bundle(task_id=task_id)
 
 
 @asynccontextmanager

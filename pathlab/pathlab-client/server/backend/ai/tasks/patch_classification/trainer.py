@@ -74,6 +74,7 @@ from backend.ai.tasks.training_utils import (
     delete_resume_checkpoint,
     check_training_interruption,
     save_ai_result_artifacts,
+    finalize_ai_result_artifacts,
 )
 
 
@@ -1980,6 +1981,8 @@ class PatchClassificationTrainer(BaseTrainer):
                 result_data,
                 arrays={"cam": cam_map},
                 fold_suffix=fold_suffix,
+                finalize=False,
+                update_index=False,
             )
 
             return result_data["wsi_id"]
@@ -2033,6 +2036,8 @@ class PatchClassificationTrainer(BaseTrainer):
                 ]
                 await asyncio.gather(*tasks)
                 await asyncio.sleep(0)
+
+        finalize_ai_result_artifacts(Config.get_uploads_dir(), self.task_id)
 
         # Phase 3: Batch database insert
         await _safe_update_progress(
