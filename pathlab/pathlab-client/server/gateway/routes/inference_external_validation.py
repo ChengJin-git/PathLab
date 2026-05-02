@@ -66,6 +66,7 @@ def _save_extval_result_bundle(
     wsi_id: str,
     result_data: dict[str, Any],
     arrays: dict[str, Any] | None = None,
+    finalize: bool = True,
 ) -> None:
     """Persist external-validation artifacts into task-level Zarr bundle."""
     store = AIResultStore(uploads_dir)
@@ -74,6 +75,8 @@ def _save_extval_result_bundle(
         wsi_id=wsi_id,
         result=result_data,
         arrays=arrays or {},
+        finalize=finalize,
+        update_index=finalize,
     )
 
 
@@ -463,6 +466,7 @@ async def _run_external_validation_patch_segmentation(
                                 PRED_MASK_ARTIFACT: pred_mask,
                                 CAM_ARTIFACT: cam_map,
                             },
+                            finalize=False,
                         )
 
                         all_results.append(
@@ -519,6 +523,8 @@ async def _run_external_validation_patch_segmentation(
 
             if db_records:
                 await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+            if all_results:
+                AIResultStore(uploads_dir).write_task_bundle(task_id=task_id)
             await db.commit()
 
         await clear_progress(task_id)
@@ -859,6 +865,7 @@ async def _run_external_validation_patch_classification(
                             wsi_id=wsi_id,
                             result_data=result_data,
                             arrays={CAM_ARTIFACT: cam_map},
+                            finalize=False,
                         )
 
                         all_results.append(
@@ -909,6 +916,9 @@ async def _run_external_validation_patch_classification(
                     },
                 }
                 await AIResultRepository.create(db, db_result_data)
+            if all_results:
+                AIResultStore(uploads_dir).write_task_bundle(task_id=task_id)
+
             await db.commit()
 
         await clear_progress(task_id)
@@ -2116,6 +2126,7 @@ async def _run_external_validation(
                             wsi_id=wsi_id,
                             result_data=result_data,
                             arrays=arrays,
+                            finalize=False,
                         )
 
                         if is_survival:
@@ -2215,6 +2226,7 @@ async def _run_external_validation(
                     wsi_id=wsi_id,
                     result_data=enriched_result,
                     arrays={},
+                    finalize=False,
                 )
 
             for record in db_records:
@@ -2232,6 +2244,8 @@ async def _run_external_validation(
             logger.info(f"Saving {len(db_records)} results to database...")
             async with safe_session() as db:
                 await AIResultRepository.bulk_create(db, db_records, batch_size=100)
+                if results_saved:
+                    AIResultStore(uploads_dir).write_task_bundle(task_id=task_id)
                 await db.commit()
             logger.info(f"Saved {len(db_records)} results to database")
 

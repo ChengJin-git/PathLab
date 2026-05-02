@@ -286,6 +286,8 @@ async def _run_inference_wsi_classification(
                         wsi_id=wsi_id,
                         result=result_data,
                         arrays=arrays,
+                        finalize=False,
+                        update_index=False,
                     )
                     attention_file_path = None
 
@@ -382,6 +384,8 @@ async def _run_inference_wsi_classification(
                     wsi_id=wsi_id,
                     result=result_data,
                     arrays=arrays,
+                    finalize=False,
+                    update_index=False,
                 )
 
                 db_result_data = {
@@ -403,6 +407,9 @@ async def _run_inference_wsi_classification(
                 }
                 await AIResultRepository.create(db, db_result_data)
                 results_saved += 1
+
+    if results_saved:
+        result_store.write_task_bundle(task_id=task_id)
 
     await db.commit()
     logger.info(
