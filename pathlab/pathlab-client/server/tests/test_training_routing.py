@@ -275,7 +275,9 @@ async def test_create_training_task_normalizes_wsi_classification_for_canonical_
         patch("gateway.routes.training._validate_files_and_enqueue", new=AsyncMock()) as mock_preflight_enqueue,
         patch("gateway.routes.training.Config.get_global_settings", return_value={}),
         patch("gateway.routes.training.Config.get_uploads_dir", return_value=Path("/uploads")),
-        patch("gateway.routes.training.asyncio.create_task", side_effect=_close_background_coro),
+        patch("gateway.routes.training.is_worker_healthy", new=AsyncMock(return_value=True)),
+        patch("gateway.routes.training.build_task_descriptor", side_effect=training_module.build_task_descriptor) as mock_build_descriptor,
+        patch("gateway.routes.training.enqueue_task_descriptor", new=AsyncMock()) as mock_enqueue,
     ):
         result = await training_module.create_training_task(req=req, user=user)
 
@@ -285,12 +287,12 @@ async def test_create_training_task_normalizes_wsi_classification_for_canonical_
     create_task_data = create_args[1]
     get_or_create_await_args = mock_get_or_create.await_args
     assert get_or_create_await_args is not None
-    preflight_call_args = mock_preflight_enqueue.call_args
-    assert preflight_call_args is not None
+    build_call = mock_build_descriptor.call_args
+    assert build_call is not None
     assert create_task_data["task_type"] == "wsi_classification"
     assert get_or_create_await_args.kwargs["task_type"] == "wsi_classification"
     assert get_or_create_await_args.kwargs["aggregation_level"] == "case"
-    assert preflight_call_args.kwargs["pipeline_kwargs"]["training_task_type"] == "wsi_classification"
+    assert build_call.kwargs["payload"]["pipeline_kwargs"]["training_task_type"] == "wsi_classification"
     assert result["task_id"] == "train_taxonomy_legacy_match"
 
 
@@ -347,7 +349,9 @@ async def test_create_training_task_preserves_case_level_for_wsi_classification_
         patch("gateway.routes.training._validate_files_and_enqueue", new=AsyncMock()),
         patch("gateway.routes.training.Config.get_global_settings", return_value={}),
         patch("gateway.routes.training.Config.get_uploads_dir", return_value=Path("/uploads")),
-        patch("gateway.routes.training.asyncio.create_task", side_effect=_close_background_coro),
+        patch("gateway.routes.training.is_worker_healthy", new=AsyncMock(return_value=True)),
+        patch("gateway.routes.training.build_task_descriptor", side_effect=training_module.build_task_descriptor) as mock_build_descriptor,
+        patch("gateway.routes.training.enqueue_task_descriptor", new=AsyncMock()),
     ):
         await training_module.create_training_task(req=req, user=user)
 
@@ -466,6 +470,7 @@ async def test_create_training_task_rejects_when_resolved_data_group_task_type_c
         patch("gateway.routes.training.require_no_active_batch_imports", new=AsyncMock()),
         patch("gateway.routes.training.DatasetRepository.get_by_ids", new=AsyncMock(return_value=[dataset])),
         patch("gateway.routes.training.ensure_dataset_segmentation_contract", return_value=contract),
+        patch("gateway.routes.training.is_worker_healthy", new=AsyncMock(return_value=True)),
         patch("gateway.routes.training.DataGroupRepository.get_or_create", new=AsyncMock(return_value=SimpleNamespace(group_id="g_conflict", task_type="patch_classification", data_type="patch", aggregation_level="file"))),
         patch("gateway.routes.training.TrainingTaskRepository.create", new=AsyncMock()) as mock_create,
     ):

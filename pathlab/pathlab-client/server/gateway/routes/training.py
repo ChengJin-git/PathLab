@@ -6,7 +6,7 @@ Handles training task creation, monitoring, and deletion
 import asyncio
 import json
 import uuid
-from typing import Optional, Any
+from typing import Optional, Any, cast
 from fastapi import APIRouter, HTTPException, Depends, Query
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,13 @@ from gateway.chat.context_cache import invalidate_chat_context
 from gateway.training_preflight import (
     build_training_preflight_policy,
     check_training_inputs,
+)
+from gateway.task_dispatch import (
+    build_task_descriptor,
+    enqueue_task_descriptor,
+    is_worker_healthy,
+    JsonPayload,
+    publish_task_cancellation,
 )
 from backend.ai.task_taxonomy import normalize_task_type
 
@@ -373,6 +380,9 @@ async def create_training_task(
         # Use client-provided task_id (for fire-and-forget submission) or generate one
         task_id = req.task_id or f"train_{uuid.uuid4().hex[:16]}"
 
+        if not await is_worker_healthy():
+            raise HTTPException(status_code=503, detail="Task worker unavailable")
+
         # --- Session 2: Write - create task and WSI associations ---
         async with safe_session() as db:
             aggregation_level = expected_aggregation_level
@@ -462,14 +472,39 @@ async def create_training_task(
             "user_is_admin": user.is_admin(),
         }
 
-        asyncio.create_task(
-            _validate_files_and_enqueue(
-                task_id=task_id,
-                paths_to_check=paths_to_check,
-                uploads_dir=str(Config.get_uploads_dir()),
-                pipeline_kwargs=pipeline_kwargs,
-            )
+        descriptor_paths_to_check = [
+            [str(wsi_id), str(wsi_path), str(original_filename)]
+            for wsi_id, wsi_path, original_filename in paths_to_check
+        ]
+        descriptor_payload = cast(
+            JsonPayload,
+            {
+                "task_id": task_id,
+                "paths_to_check": descriptor_paths_to_check,
+                "uploads_dir": str(Config.get_uploads_dir()),
+                "pipeline_kwargs": pipeline_kwargs,
+            },
         )
+        descriptor = build_task_descriptor(
+            job_id=task_id,
+            job_kind="training",
+            handler="training.preflight",
+            payload=descriptor_payload,
+        )
+        try:
+            await enqueue_task_descriptor(descriptor)
+        except Exception as e:
+            detail = f"Failed to enqueue task descriptor: {e}"
+            logger.error(f"Failed to enqueue training task {task_id}: {e}")
+            async with safe_session() as db:
+                _ = await TrainingTaskRepository.update_status(
+                    db,
+                    task_id,
+                    TaskStatus.FAILED,
+                    error_message=detail,
+                )
+                await db.commit()
+            raise HTTPException(status_code=503, detail="Task worker unavailable")
         await invalidate_chat_context(effective_task_owner_user_id)
 
         result = task.to_dict()
@@ -821,19 +856,11 @@ async def delete_training_task(
             task.user_id, user, "You don't have permission to delete this task"
         )
 
-        # If task is still active, cancel it first in both gateway queue and AI service.
-        # This makes delete behave as "cancel then delete" for running/queued tasks.
-        if task.status in [
-            TaskStatus.PENDING,
-            TaskStatus.QUEUED,
-            TaskStatus.RESUMING,
-            TaskStatus.PATCHING,
-            TaskStatus.EXTRACTING,
-            TaskStatus.TRAINING,
-        ]:
-            queue = get_task_queue()
-            await queue.cancel_task(task_id)
-            await cancel_ai_service_training(task_id)
+        # Deletion must also stop late post-processing work. A task may already
+        # appear completed while visualization/artifact generation still holds
+        # an in-memory task object and writes task-scoped result bundles.
+        await publish_task_cancellation(task_id)
+        await cancel_ai_service_training(task_id)
 
         # Get all trained models for this task
         models = await TrainedModelRepository.get_by_task_id(db, task_id)
