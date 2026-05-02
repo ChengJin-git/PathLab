@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PIL import Image
+from fastapi import HTTPException
 
 Config = import_module("backend.common.config").Config
 safe_session = import_module("backend.database").safe_session
@@ -29,7 +30,19 @@ build_patch_classification_transform = (
 )
 resolve_patch_resize_size = _patch_resize.resolve_patch_resize_size
 
-from ..task_queue import TaskType, get_task_queue
+from ..task_dispatch import (
+    JsonPayload,
+    build_task_descriptor,
+    enqueue_task_descriptor,
+    is_worker_healthy,
+    publish_task_cancellation,
+)
+
+_redis_client = import_module("backend.common.redis_client")
+get_redis = _redis_client.get_redis
+make_key = _redis_client.make_key
+
+_SNAPSHOT_TTL_SECONDS = 3600
 
 
 def _utcnow_iso() -> str:
@@ -78,8 +91,23 @@ _TASK_LOCK = asyncio.Lock()
 
 
 async def get_chat_patch_task(task_id: str) -> Optional[ChatPatchTask]:
+    snapshot = await _get_task_snapshot(task_id)
     async with _TASK_LOCK:
-        return _TASKS.get(task_id)
+        local_task = _TASKS.get(task_id)
+
+    if snapshot is None:
+        return local_task
+
+    snapshot_task = _task_from_snapshot(snapshot)
+    if local_task is not None and not _is_snapshot_newer(
+        snapshot_task.updated_at, local_task.updated_at
+    ):
+        return local_task
+
+    async with _TASK_LOCK:
+        _TASKS[task_id] = snapshot_task
+        _CONVERSATION_INDEX.setdefault(snapshot_task.conversation_id, set()).add(task_id)
+    return snapshot_task
 
 
 async def create_chat_patch_task(
@@ -93,9 +121,8 @@ async def create_chat_patch_task(
     image_data_url: str,
     source: Optional[str] = None,
 ) -> Dict[str, Any]:
-    task_queue = get_task_queue()
-    if not task_queue:
-        raise RuntimeError("Task queue is not initialized")
+    if not await is_worker_healthy():
+        raise HTTPException(status_code=503, detail="Task worker unavailable")
 
     task_id = f"chat_patch_{uuid.uuid4().hex}"
     task_dir = (
@@ -120,19 +147,39 @@ async def create_chat_patch_task(
     async with _TASK_LOCK:
         _TASKS[task_id] = task
         _CONVERSATION_INDEX.setdefault(conversation_id, set()).add(task_id)
+    await _set_task_snapshot(task_id, _task_to_snapshot(task))
 
-    await task_queue.submit(task_id, TaskType.ANALYSIS, _run_chat_patch_task)
+    descriptor_payload = _build_chat_patch_descriptor_payload(task)
+    descriptor = build_task_descriptor(
+        job_id=task_id,
+        job_kind="chat",
+        handler="chat.patch_inference",
+        payload=descriptor_payload,
+    )
+    try:
+        await enqueue_task_descriptor(descriptor)
+    except Exception:
+        await _update_task(
+            task_id,
+            status="failed",
+            progress=100,
+            error="Failed to enqueue chat patch inference task",
+        )
+        await asyncio.to_thread(_cleanup_task_files, task)
+        raise HTTPException(
+            status_code=503,
+            detail="Failed to enqueue chat patch inference task",
+        )
+
     return task.to_public_dict()
 
 
 async def cleanup_conversation_chat_patch_tasks(conversation_id: str) -> None:
-    task_queue = get_task_queue()
     async with _TASK_LOCK:
         task_ids = list(_CONVERSATION_INDEX.get(conversation_id, set()))
 
     for task_id in task_ids:
-        if task_queue and task_queue.is_task_in_queue(task_id):
-            await task_queue.cancel_task(task_id)
+        await publish_task_cancellation(task_id)
 
     async with _TASK_LOCK:
         for task_id in task_ids:
@@ -146,7 +193,6 @@ async def cleanup_chat_patch_tasks_from_message(
     conversation_id: str,
     message_id: int,
 ) -> None:
-    task_queue = get_task_queue()
     async with _TASK_LOCK:
         task_ids = [
             task_id
@@ -155,8 +201,7 @@ async def cleanup_chat_patch_tasks_from_message(
         ]
 
     for task_id in task_ids:
-        if task_queue and task_queue.is_task_in_queue(task_id):
-            await task_queue.cancel_task(task_id)
+        await publish_task_cancellation(task_id)
 
     async with _TASK_LOCK:
         for task_id in task_ids:
@@ -174,8 +219,6 @@ async def cancel_chat_patch_tasks_for_message(
     conversation_id: str,
     message_id: int,
 ) -> list[Dict[str, Any]]:
-    """Cancel active chat patch tasks for one assistant message and return final task snapshots."""
-    task_queue = get_task_queue()
     async with _TASK_LOCK:
         task_ids = [
             task_id
@@ -196,8 +239,7 @@ async def cancel_chat_patch_tasks_for_message(
             snapshots.append(snapshot)
 
     for task_id in task_ids:
-        if task_queue and task_queue.is_task_in_queue(task_id):
-            await task_queue.cancel_task(task_id)
+        await publish_task_cancellation(task_id)
 
     async with _TASK_LOCK:
         for task_id in task_ids:
@@ -245,6 +287,7 @@ async def _run_chat_patch_task(
 
 
 async def _update_task(task_id: str, **changes: Any) -> None:
+    snapshot: dict[str, Any]
     async with _TASK_LOCK:
         task = _TASKS.get(task_id)
         if not task:
@@ -252,6 +295,110 @@ async def _update_task(task_id: str, **changes: Any) -> None:
         for key, value in changes.items():
             setattr(task, key, value)
         task.updated_at = _utcnow_iso()
+        snapshot = _task_to_snapshot(task)
+    await _set_task_snapshot(task_id, snapshot)
+
+
+def _task_to_snapshot(task: ChatPatchTask) -> dict[str, Any]:
+    return {
+        "task_id": task.task_id,
+        "conversation_id": task.conversation_id,
+        "message_id": task.message_id,
+        "user_id": task.user_id,
+        "inference_type": task.inference_type,
+        "model_id": task.model_id,
+        "model_name": task.model_name,
+        "image_path": task.image_path,
+        "source": task.source,
+        "status": task.status,
+        "progress": task.progress,
+        "result": task.result,
+        "error": task.error,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+    }
+
+
+def _task_from_snapshot(snapshot: Dict[str, Any]) -> ChatPatchTask:
+    return ChatPatchTask(
+        task_id=str(snapshot["task_id"]),
+        conversation_id=str(snapshot["conversation_id"]),
+        message_id=int(snapshot["message_id"]),
+        user_id=str(snapshot["user_id"]),
+        inference_type=str(snapshot["inference_type"]),
+        model_id=str(snapshot["model_id"]),
+        model_name=str(snapshot["model_name"]),
+        image_path=str(snapshot["image_path"]),
+        source=snapshot.get("source"),
+        status=str(snapshot.get("status") or "queued"),
+        progress=int(snapshot.get("progress") or 0),
+        result=snapshot.get("result"),
+        error=snapshot.get("error"),
+        created_at=str(snapshot.get("created_at") or _utcnow_iso()),
+        updated_at=str(snapshot.get("updated_at") or _utcnow_iso()),
+    )
+
+
+def _is_snapshot_newer(snapshot_updated_at: str, local_updated_at: str) -> bool:
+    return _parse_task_timestamp(snapshot_updated_at) > _parse_task_timestamp(
+        local_updated_at
+    )
+
+
+def _parse_task_timestamp(value: str) -> datetime:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _build_chat_patch_descriptor_payload(task: ChatPatchTask) -> JsonPayload:
+    payload: dict[str, Any] = {
+        "task_id": task.task_id,
+        "conversation_id": task.conversation_id,
+        "message_id": task.message_id,
+        "user_id": task.user_id,
+        "inference_type": task.inference_type,
+        "model_id": task.model_id,
+        "model_name": task.model_name,
+        "image_path": task.image_path,
+        "source": task.source,
+        "created_at": task.created_at,
+        "updated_at": task.updated_at,
+        "runner_module": "gateway.routes.chat_patch_inference",
+        "runner_name": "_run_chat_patch_task",
+        "runner_kwargs": {"task_id": task.task_id},
+    }
+    return payload
+
+
+async def _set_task_snapshot(task_id: str, snapshot: dict[str, Any]) -> None:
+    try:
+        r = get_redis()
+        key = make_key("chat_patch_task", task_id)
+        await r.set(key, json.dumps(snapshot), ex=_SNAPSHOT_TTL_SECONDS)
+    except Exception:
+        pass
+
+
+async def _get_task_snapshot(task_id: str) -> Optional[dict[str, Any]]:
+    try:
+        r = get_redis()
+        key = make_key("chat_patch_task", task_id)
+        raw = await r.get(key)
+    except Exception:
+        return None
+    if not raw:
+        return None
+    try:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
 
 
 def _persist_image_data_url(image_data_url: str, task_dir: Path) -> Path:
@@ -276,6 +423,11 @@ def _persist_image_data_url(image_data_url: str, task_dir: Path) -> Path:
 
 def _cleanup_task_files(task: ChatPatchTask) -> None:
     task_root = Path(task.image_path).parent
+    chat_patch_root = Config.get_uploads_dir() / "chat_patch_inference"
+    try:
+        task_root.resolve().relative_to(chat_patch_root.resolve())
+    except ValueError:
+        return
     if task_root.exists():
         shutil.rmtree(task_root, ignore_errors=True)
 
