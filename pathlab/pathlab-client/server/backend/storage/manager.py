@@ -110,18 +110,8 @@ class StorageManager(StorageStatsMixin, StorageOrphanMixin):
         if staging_dir.exists() and staging_dir.is_dir():
             yield staging_dir
 
-        index_path = self.ai_result_bundles_dir / ".wsi_index.json"
-        if not index_path.exists() or not index_path.is_file():
-            return
         try:
-            raw_index = cast(object, json.loads(index_path.read_text(encoding="utf-8")))
-            if isinstance(raw_index, dict) and task_id in raw_index:
-                index = cast(dict[str, object], raw_index)
-                index.pop(task_id, None)
-                index_path.write_text(
-                    json.dumps(index, ensure_ascii=False, sort_keys=True),
-                    encoding="utf-8",
-                )
+            AIResultStore(self.uploads_dir).delete_task(task_id)
         except Exception as e:
             logger.warning(f"Could not update AI result WSI index for {task_id}: {e}")
 
