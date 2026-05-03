@@ -1,4 +1,5 @@
 import base64
+import fcntl
 import json
 import threading
 import shutil
@@ -33,6 +34,7 @@ ARRAY_ARTIFACTS = {
 ALL_ARTIFACTS = {RESULT_ARTIFACT, *ARRAY_ARTIFACTS}
 _TASK_LOCKS: dict[str, threading.Lock] = {}
 _TASK_LOCKS_GUARD = threading.Lock()
+_INDEX_LOCK = threading.RLock()
 
 
 class IncompleteAIResultBundleError(RuntimeError):
@@ -47,6 +49,7 @@ class AIResultStore:
         self.bundle_dir = self.uploads_dir / BUNDLE_DIR_NAME
         self.staging_root = self.bundle_dir / ".staging"
         self.index_path = self.bundle_dir / ".wsi_index.json"
+        self.index_lock_path = self.bundle_dir / ".wsi_index.lock"
         self.bundle_dir.mkdir(parents=True, exist_ok=True)
         self.staging_root.mkdir(parents=True, exist_ok=True)
 
@@ -412,17 +415,18 @@ class AIResultStore:
             )
 
     def rebuild_wsi_index(self, task_id: str | None = None) -> list[str] | dict[str, list[str]]:
-        task_ids = [task_id] if task_id is not None else self._discover_task_ids()
-        index = self._load_index()
-        last_wsi_ids: list[str] = []
-        for current_task_id in task_ids:
-            if current_task_id is None:
-                continue
-            wsi_ids = self._list_task_wsi_ids(current_task_id)
-            index[current_task_id] = wsi_ids
-            last_wsi_ids = wsi_ids
-        self._save_index(index)
-        return last_wsi_ids if task_id is not None else index
+        with self._index_lock():
+            task_ids = [task_id] if task_id is not None else self._discover_task_ids()
+            index = self._load_index_unlocked(recover=True)
+            last_wsi_ids: list[str] = []
+            for current_task_id in task_ids:
+                if current_task_id is None:
+                    continue
+                wsi_ids = self._list_task_wsi_ids(current_task_id)
+                index[current_task_id] = wsi_ids
+                last_wsi_ids = wsi_ids
+            self._save_index_unlocked(index)
+            return last_wsi_ids if task_id is not None else index
 
     def _finalize_task_bundle(self, task_id: str) -> Path:
         staging = self.staging_path(task_id)
@@ -598,17 +602,65 @@ class AIResultStore:
         return wsi_id, fold_key or None
 
     def _load_index(self) -> dict[str, list[str]]:
+        with self._index_lock():
+            return self._load_index_unlocked(recover=True)
+
+    def _load_index_unlocked(self, *, recover: bool) -> dict[str, list[str]]:
         if not self.index_path.exists():
             return {}
-        return cast(dict[str, list[str]], json.loads(self.index_path.read_text(encoding="utf-8")))
+        try:
+            raw_index = json.loads(self.index_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            if not recover:
+                raise
+            index = self._rebuild_full_index_unlocked()
+            self._save_index_unlocked(index)
+            return index
+        if not isinstance(raw_index, dict):
+            return {}
+        return {
+            str(key): sorted({str(wsi_id) for wsi_id in value})
+            for key, value in raw_index.items()
+            if isinstance(value, list)
+        }
 
     def _save_index(self, data: dict[str, list[str]]) -> None:
+        with self._index_lock():
+            self._save_index_unlocked(data)
+
+    def _save_index_unlocked(self, data: dict[str, list[str]]) -> None:
         self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        self.index_path.write_text(
+        tmp_path = self.index_path.with_name(f"{self.index_path.name}.tmp")
+        tmp_path.write_text(
             json.dumps(data, ensure_ascii=False, sort_keys=True), encoding="utf-8"
         )
+        tmp_path.replace(self.index_path)
 
     def _update_index(self, task_id: str, wsi_ids: list[str]) -> None:
-        index = self._load_index()
-        index[task_id] = sorted(set(wsi_ids))
-        self._save_index(index)
+        with self._index_lock():
+            index = self._load_index_unlocked(recover=True)
+            index[task_id] = sorted(set(wsi_ids))
+            self._save_index_unlocked(index)
+
+    def _rebuild_full_index_unlocked(self) -> dict[str, list[str]]:
+        return {
+            current_task_id: self._list_task_wsi_ids_from_bundle(current_task_id)
+            for current_task_id in self._discover_task_ids()
+        }
+
+    def _list_task_wsi_ids_from_bundle(self, task_id: str) -> list[str]:
+        with self._finalized_bundle(task_id, strict=False) as root:
+            if root is not None:
+                return sorted(cast(list[str], root.attrs.get("wsi_ids", [])))
+        return []
+
+    @contextmanager
+    def _index_lock(self) -> Iterator[None]:
+        self.index_lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with _INDEX_LOCK:
+            with self.index_lock_path.open("a+") as lock_file:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)

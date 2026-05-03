@@ -1,3 +1,4 @@
+import json
 import zipfile
 from importlib import import_module
 
@@ -134,14 +135,14 @@ def test_default_finalized_writes_append_to_existing_task_bundle(tmp_path):
 def test_bulk_write_saves_wsi_index_once(tmp_path, monkeypatch):
     store = AIResultStore(tmp_path)
     save_calls = 0
-    original_save_index = store._save_index
+    original_save_index = store._save_index_unlocked
 
     def track_save_index(data):
         nonlocal save_calls
         save_calls += 1
         original_save_index(data)
 
-    monkeypatch.setattr(store, "_save_index", track_save_index)
+    monkeypatch.setattr(store, "_save_index_unlocked", track_save_index)
     items = [
         {"wsi_id": f"wsi-{idx}", "result": {"pred": idx}, "arrays": {}}
         for idx in range(5)
@@ -279,6 +280,32 @@ def test_training_artifact_helper_can_stage_without_finalizing(tmp_path, monkeyp
 
     assert store.read_result("task-staged-helper", "wsi-a")["wsi_id"] == "wsi-a"
     assert finalize_calls == 1
+
+
+def test_finalize_recovers_corrupt_wsi_index_without_failing_task(tmp_path):
+    store = AIResultStore(tmp_path)
+    store.write_task_bundle(
+        "task-existing",
+        items=[{"wsi_id": "wsi-existing", "result": {"ok": "existing"}}],
+    )
+    store.index_path.write_text(
+        store.index_path.read_text(encoding="utf-8") + '"patch-corrupt-tail"',
+        encoding="utf-8",
+    )
+
+    store.write_wsi_result(
+        "task-new",
+        "wsi-new",
+        {"wsi_id": "wsi-new", "task_id": "task-new"},
+        finalize=False,
+        update_index=False,
+    )
+
+    store.write_task_bundle(task_id="task-new")
+
+    rebuilt_index = json.loads(store.index_path.read_text(encoding="utf-8"))
+    assert rebuilt_index["task-existing"] == ["wsi-existing"]
+    assert rebuilt_index["task-new"] == ["wsi-new"]
 
 
 def test_store_does_not_create_legacy_ai_results_directory(tmp_path):
