@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from ..schemas import PaperConfig
+from ._clock import utc_now
 from .analysis import discover_analysis_runs
 from .dataset import SlideRecord, build_dataset_summary
 from .external_validation import build_external_validation_summary
@@ -143,8 +144,6 @@ async def collect_from_session(
     config: PaperConfig,
     uploads_dir: Path,
 ) -> CollectorBundle:
-    from backend.database.models import utc_now
-
     descriptors = descriptors_from_config(config)
     task_summaries = []
     dataset_summaries = []

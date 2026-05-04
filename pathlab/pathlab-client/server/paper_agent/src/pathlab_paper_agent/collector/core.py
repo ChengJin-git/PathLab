@@ -1,16 +1,24 @@
-"""Synchronous entrypoint for the deterministic collector stage."""
+"""Synchronous entrypoint for the deterministic collector stage.
+
+The collector package is intentionally importable without `backend.*` on
+sys.path. The DB code path (`collect_from_db`) lazily imports `backend.database`
+internally, so importing this module does NOT pull the PathLab server tree.
+This lets the collector be tested standalone (`pytest tests/test_collector.py`)
+without going through `pathlab_paper_agent.pipeline` (which calls
+`bootstrap.ensure_server_on_path()` as a side effect).
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import threading
 from pathlib import Path
 from typing import Awaitable, TypeVar
 
-from backend.database.models import utc_now
-
 from ..schemas import PaperConfig
+from ._clock import utc_now
 from .analysis import discover_analysis_runs
 from .dataset import build_dataset_summary
 from .db import collect_from_db
@@ -21,6 +29,8 @@ from .role_dispatcher import descriptors_from_config
 from .schemas import CollectorBundle, CollectorStatus, MissingEvidence
 from .split import build_split_summary
 from .task import missing_task_summary
+
+logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
