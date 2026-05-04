@@ -42,10 +42,18 @@ def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
     config = load_config(paths)
     for section in SECTION_ORDER:
         rel_path = f"drafts/sections/{section}.tex"
-        write_text(paths.sections_dir / f"{section}.tex", section_text(section, config))
+        write_text(paths.sections_dir / f"{section}.tex", _section_text(paths, section, config))
         register_artifact(
             manifest,
             rel_path,
             label=f"Section: {section.replace('_', ' ').title()}",
             content_type="text/x-tex",
         )
+
+
+def _section_text(paths: PaperRunPaths, section: str, config: PaperConfig) -> str:
+    if section in {"introduction", "related_work"}:
+        m8_draft = paths.intro_rw_draft_dir / f"{section}.tex"
+        if m8_draft.exists():
+            return m8_draft.read_text(encoding="utf-8")
+    return section_text(section, config)
