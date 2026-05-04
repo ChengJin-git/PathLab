@@ -48,7 +48,7 @@
 - **影响哪些 track**：Frontend artifact download / Phase 03 evidence tests。
 - **action 要求**：下载 API 继续禁止 `evidence/evidence_lock.private.json` 和
   `evidence/raw_collected/*`；新增 public summaries 必须经过 PHI scrubber。
-- **commit**: `TBD`
+- **commit**: `a87b3f83`
 
 ## 2026-05-04 m8a → sections stage 跨 §4 边界（intro_rw_draft hook）
 
