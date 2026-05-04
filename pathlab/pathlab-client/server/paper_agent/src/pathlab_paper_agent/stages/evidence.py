@@ -20,15 +20,6 @@ _TABLE_LABELS = {
     "table_4_ablation.tex": "Ablation table",
     "table_5_external_validation.tex": "External validation table",
 }
-_LOCKED_BLOCKS = (
-    "dataset_block.tex",
-    "method_block.tex",
-    "results_block.tex",
-    "metrics_macros.tex",
-    "evidence_gaps.tex",
-)
-
-
 def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
     config = load_config(paths)
     result = build_evidence_bundle(paths, config)
@@ -53,6 +44,9 @@ def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
 
     for name, text in result.locked_blocks.items():
         write_text(paths.locked_blocks_dir / name, text)
+    for template_id, blocks in result.locked_blocks_by_template.items():
+        for name, text in blocks.items():
+            write_text(paths.locked_blocks_dir / template_id / name, text)
 
     _register_artifacts(manifest, result)
 
@@ -98,7 +92,7 @@ def _register_artifacts(manifest: PaperManifest, result) -> None:
             label=_TABLE_LABELS.get(name, name),
             content_type="text/x-tex",
         )
-    for name in _LOCKED_BLOCKS:
+    for name in result.locked_blocks:
         register_artifact(
             manifest,
             f"locked_blocks/{name}",
@@ -107,3 +101,13 @@ def _register_artifacts(manifest: PaperManifest, result) -> None:
             label=f"Locked block: {name}",
             content_type="text/x-tex",
         )
+    for template_id, blocks in result.locked_blocks_by_template.items():
+        for name in blocks:
+            register_artifact(
+                manifest,
+                f"locked_blocks/{template_id}/{name}",
+                visibility="private_backend_only",
+                downloadable=False,
+                label=f"Locked block ({template_id}): {name}",
+                content_type="text/x-tex",
+            )

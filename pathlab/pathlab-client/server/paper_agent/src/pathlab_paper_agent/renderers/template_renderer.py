@@ -55,6 +55,21 @@ def _copy_template_assets(template: TemplateDefinition, final_dir: Path) -> None
         shutil.copy2(asset_path, final_dir / asset_path.name)
 
 
+def _copy_locked_blocks(paths: PaperRunPaths, template_id: str, final_dir: Path) -> None:
+    template_blocks = paths.locked_blocks_dir / template_id
+    destination = final_dir / "locked_blocks"
+    if template_blocks.is_dir():
+        copy_tree_contents(template_blocks, destination)
+        return
+
+    destination.mkdir(parents=True, exist_ok=True)
+    if not paths.locked_blocks_dir.exists():
+        return
+    for child in paths.locked_blocks_dir.iterdir():
+        if child.is_file():
+            shutil.copy2(child, destination / child.name)
+
+
 def _prepare_final_dir(final_dir: Path) -> None:
     if final_dir.exists():
         if not final_dir.is_dir():
@@ -90,7 +105,7 @@ def render_template(
         raise ValueError(f"Template {template_id} does not define section_order")
 
     copy_tree_contents(paths.sections_dir, final_dir / "sections")
-    copy_tree_contents(paths.locked_blocks_dir, final_dir / "locked_blocks")
+    _copy_locked_blocks(paths, template_id, final_dir)
     copy_tree_contents(paths.tables_dir, final_dir / "tables")
     copy_tree_contents(paths.figures_dir, final_dir / "figures")
     if paths.refs_bib.exists():
