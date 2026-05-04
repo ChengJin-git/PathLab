@@ -89,6 +89,21 @@ src/pathlab_paper_agent/stages/
 
 ## 4. 每条 track 的写入边界
 
+> **测试目录约定（所有 track 都要遵守）**：
+> 每条 track 的测试放在 `paper_agent/tests/<track_name>/`，不要往
+> `paper_agent/tests/` 根目录加 `test_*.py`。这避免 5 条 track 的测试文件名
+> / fixtures 互撞。约定：
+>
+> ```
+> paper_agent/tests/
+> ├── conftest.py          # ★ contract 文件，main 协调；track 不直接改
+> ├── collector/           # M2
+> ├── templates/           # M4
+> ├── figures/             # M6a
+> ├── citations/           # M8a
+> └── guards/              # M10a
+> ```
+
 ### M2 Collector agent
 
 工作目录：
@@ -102,7 +117,8 @@ cd /Users/wangyihui/code/PathLab-worktrees/m2-collector
 ```text
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/collector/
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/collecting.py
-pathlab/pathlab-client/server/paper_agent/tests/
+pathlab/pathlab-client/server/paper_agent/tests/collector/
+tests/paper_generation/fixtures/wsi_classification_minimal/   ← M2 还负责造 fixture
 ```
 
 不要主要改：`stages/literature.py`、`stages/rendering.py`、`stages/validating.py`。
@@ -113,6 +129,7 @@ pathlab/pathlab-client/server/paper_agent/tests/
 - 读 PathLab DB / uploads，收集 task、dataset、split、model、analysis、external validation、qualitative evidence。
 - 没有 analysis 时输出 missing evidence，不允许后续 agent 编造。
 - 继续产出 `inputs/source_tasks.json`、`inputs/source_analyses.json`、`inputs/idea.md`。
+- **造 fixture**：从一次真实 PathLab `wsi_classification` task 缩样到 30 条 WSI，存到 `tests/paper_generation/fixtures/wsi_classification_minimal/`。这件事**最早做最划算**——做 fixture 时会直接揭穿 collector schema 假设错的地方。
 
 ### M4 Templates agent
 
@@ -129,6 +146,7 @@ pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/templates/
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/renderers/
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/rendering.py
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/exporting.py
+pathlab/pathlab-client/server/paper_agent/tests/templates/
 pathlab/pathlab-client/docker/paper-latex/
 ```
 
@@ -152,7 +170,7 @@ cd /Users/wangyihui/code/PathLab-worktrees/m6a-figures
 ```text
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/plotting/
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/plotting.py
-pathlab/pathlab-client/server/paper_agent/tests/
+pathlab/pathlab-client/server/paper_agent/tests/figures/
 ```
 
 目标：
@@ -174,7 +192,7 @@ cd /Users/wangyihui/code/PathLab-worktrees/m8a-citations
 ```text
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/citations/
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/literature.py
-pathlab/pathlab-client/server/paper_agent/tests/
+pathlab/pathlab-client/server/paper_agent/tests/citations/
 ```
 
 目标：
@@ -198,7 +216,7 @@ cd /Users/wangyihui/code/PathLab-worktrees/m10a-guards
 ```text
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/validators/
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/validating.py
-pathlab/pathlab-client/server/paper_agent/tests/
+pathlab/pathlab-client/server/paper_agent/tests/guards/
 ```
 
 目标：
@@ -211,14 +229,44 @@ pathlab/pathlab-client/server/paper_agent/tests/
 
 ## 5. 所有 agent 都必须保留的 contract
 
-这些不要随便改，除非先同步所有分支：
+这些是 **contract 文件**：worktree 里**不要直接改**，必须先在 main 协调，
+登记到 `paper_agent/MIGRATIONS.md`，然后所有 worktree rebase 同步。
 
-- CLI：`pathlab-paper-agent run`、`run-stage`、`scaffold`、`serve`。
-- Dev service：`GET /health`、`POST /papers`、`GET /papers/{paper_id}`、`POST /papers/{paper_id}/stages/{stage}:run`。
-- TaskWorker 边界：生产仍然通过 subprocess 调 paper agent。
-- Artifact layout：`inputs/`、`evidence/`、`locked_blocks/`、`drafts/`、`figures/`、`citations/`、`validation/`、`final/`、`exports/`。
-- Private/public 边界：`evidence_lock.private.json`、raw prompts、raw responses、source mappings 不能进入前端下载和 export ZIP。
-- PaperOrchestra 5-agent 边界：PathLab 的 collector / PHI / evidence / guard 是外围增强，不要改散 5 个 agent 的职责。
+### 5.1 接口契约
+
+- **CLI**：`pathlab-paper-agent run`、`run-stage`、`scaffold`、`serve` —— 名称和参数。
+- **Dev service**：`GET /health`、`POST /papers`、`GET /papers/{paper_id}`、`POST /papers/{paper_id}/stages/{stage}:run` —— 路径和 schema。
+- **TaskWorker 边界**：生产通过 subprocess 调 paper agent；subprocess argv 和 stdout/stderr 协议不变。
+- **PaperOrchestra 5-agent 边界**：PathLab 的 collector / PHI / evidence / guard 是外围增强，不要改散 5 个 agent 的职责。
+
+### 5.2 文件契约（多 track 都读的源文件）
+
+以下文件被多条 track 读取，**改它们 = 改其他 track 的输入**：
+
+- **`src/pathlab_paper_agent/pipeline.py`** —— thin orchestrator，只做 stage dispatch + manifest 更新 + 错误处理。
+  - track 内允许的：在 stages/<自己>.py 加新返回字段。
+  - track 不允许的：改 dispatch 表、改 manifest 写入逻辑、把真实业务塞回 pipeline.py。
+  - 真要加新 stage / 改 dispatch 必须走 main 协调。
+- **`src/pathlab_paper_agent/schemas.py`** —— Pydantic models（PaperConfig / PaperManifest / PaperRunArtifact / PaperRunStage / TaskRole 等）。
+  - 允许：在 worktree 里**新增**字段（向后兼容）。
+  - 禁止：重命名字段、改字段类型、删字段、改 enum 值。这种改动必须走 main 协调。
+- **`tests/conftest.py`** —— 全局 fixture（`db_session` / `paper_run_paths` / `mock_evidence` 等）。
+  - 加新全局 fixture 必须走 main 协调。worktree 内的 fixture 放各自 `tests/<track_name>/conftest.py`。
+
+### 5.3 数据契约
+
+- **Artifact layout**：`inputs/`、`evidence/`、`locked_blocks/`、`drafts/`、`figures/`、`citations/`、`validation/`、`final/`、`exports/` —— 目录名和层级。
+- **Private/public 边界**：`evidence_lock.private.json`、raw prompts、raw responses、source mappings 不能进入前端下载和 export ZIP。
+- **`manifest.artifact_index`**：每个 artifact 的 status / visibility / downloadable / label / content_type 的 enum 值集合稳定；只允许新增 status 值，不允许改语义。
+
+### 5.4 Contract 改动流程
+
+如果你确实需要改上面任何一项：
+
+1. 不要在自己 worktree 直接动手。先在 main（或一个独立的 `paper/contract-<name>` 分支）改。
+2. 在 `paper_agent/MIGRATIONS.md` 加一条记录（日期、改了什么、为什么、影响哪些 track）。
+3. 主分支 commit + push 后，所有 worktree 跑 `git fetch && git rebase origin/<base>`。
+4. 每条受影响 track 在自己的 worktree 跑一次 `uv run pytest -q`，确认仍然绿。
 
 ## 6. 单阶段 smoke test
 
@@ -303,21 +351,19 @@ M10a：
 你在 /Users/wangyihui/code/PathLab-worktrees/m10a-guards 工作。只负责 M10a deterministic guards。主要写 validators/ 和 stages/validating.py。实现 metric/identifier/latex/citation guards，测试用 mock evidence 和 tex。不要接 LLM review/refinement。
 ```
 
-## 8. 合并顺序
+## 8. 合并顺序与 post-merge 回归
 
-建议按这个顺序往 `paper-agent-phase01` 合：
+### 8.1 推荐合并顺序
 
 ```text
-1. M2 Collector
-2. M4 Templates
-3. M8a Citations
+1. M2 Collector      ← 影响 M3 evidence schema，先合让下游有真 schema rebase
+2. M4 Templates      ← 影响 locked blocks 和 renderer
+3. M8a Citations     ← 与 M10a citation guard 有交集
 4. M10a Guards
-5. M6a Figures
+5. M6a Figures       ← 相对独立，可以后合
 ```
 
-原因：M2 会影响 M3 evidence schema；M4 会影响 locked blocks 和 renderer；M8a / M10a 之间有 citation coverage 交集；M6a 相对独立，可以后合。
-
-每次合并前在对应 worktree 跑：
+### 8.2 单条 track merge 前的本地 check
 
 ```bash
 cd /Users/wangyihui/code/PathLab-worktrees/<name>/pathlab/pathlab-client/server/paper_agent
@@ -325,7 +371,7 @@ uv run pytest -q
 uv run ruff check src tests
 ```
 
-合并回主分支：
+### 8.3 合并回主分支
 
 ```bash
 cd /Users/wangyihui/code/PathLab
@@ -333,9 +379,46 @@ git switch paper-agent-phase01
 git merge --no-ff paper/<branch-name>
 ```
 
-如果发生冲突，优先保护：
+`--no-ff` 让每条 track 的提交集合保留为一个 merge commit，方便 `git revert -m 1 <merge_sha>` 整组撤回。
 
-- `pipeline.py` 的 thin orchestrator 形态。
-- `manifest.json` schema / artifact visibility。
-- private evidence 不外泄。
-- CLI / dev service / TaskWorker subprocess contract。
+### 8.4 ★ Post-merge 回归扫荡（必须做）
+
+每条 track merge 进 main 后，**在合下一条 track 之前**：
+
+```bash
+# 一键脚本：对所有未合并 worktree rebase 并跑测试
+for w in m2-collector m4-templates m6a-figures m8a-citations m10a-guards; do
+  if [ -d "/Users/wangyihui/code/PathLab-worktrees/$w" ]; then
+    echo "=== $w ==="
+    cd "/Users/wangyihui/code/PathLab-worktrees/$w"
+    git fetch origin
+    git rebase origin/paper-agent-phase01 || { echo "rebase fail in $w"; break; }
+    cd pathlab/pathlab-client/server/paper_agent
+    uv run pytest -q || echo "PYTEST FAIL in $w"
+  fi
+done
+```
+
+任何一条 worktree 因为新合入的改动而 pytest 挂掉，**阻塞下一条 track 的 merge**，让 hat track 的 owner 先修。
+
+### 8.5 冲突保护优先级
+
+如果 merge 冲突，优先保护这些（按重要性）：
+
+1. private evidence 不外泄（§5.3）
+2. CLI / dev service / TaskWorker subprocess contract（§5.1）
+3. `schemas.py` 字段不被重命名/改类型（§5.2）
+4. `pipeline.py` thin orchestrator 形态（§5.2）
+5. `manifest.artifact_index` 的 status / visibility 枚举值不被改语义（§5.3）
+
+### 8.6 整组 rollback
+
+如果某条 track merge 进去后才发现下游问题（M2 之后才发现 schema 漏了字段、或 M10a 之后才发现 guard 误判合法 draft），用：
+
+```bash
+git revert -m 1 <merge_commit_sha>     # 整组回滚那条 track
+```
+
+然后：
+1. 在 `MIGRATIONS.md` 登记 rollback 原因
+2. 让 track owner 在自己 worktree 里修，重新走一遍 merge 流程
