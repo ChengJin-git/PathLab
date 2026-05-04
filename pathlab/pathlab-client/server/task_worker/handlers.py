@@ -10,6 +10,7 @@ from gateway.task_dispatch import TaskDescriptor
 from task_worker.jobs import analysis as analysis_jobs
 from task_worker.jobs import chat_patch as chat_patch_jobs
 from task_worker.jobs import inference as inference_jobs
+from task_worker.jobs import paper_generation as paper_generation_jobs
 from task_worker.jobs import training as training_jobs
 
 
@@ -179,6 +180,18 @@ async def handle_training_patch_then_run(descriptor: TaskDescriptor) -> None:
     get_task_queue().register_patching_task(task_id, patching_task)
 
 
+async def handle_paper_generation_run(descriptor: TaskDescriptor) -> None:
+    """Run paper generation directly in the descriptor worker.
+
+    Paper generation is CPU/LLM/LaTeX work, not a GPU task, so it must not be
+    submitted to TaskQueueManager (which waits for GPU VRAM even for analysis).
+    """
+    payload = descriptor.payload
+    paper_id = str(payload["paper_id"])
+    kwargs = {str(k): v for k, v in payload.items() if k != "paper_id"}
+    await paper_generation_jobs.run_paper_generation(paper_id, **kwargs)
+
+
 _register("training.preflight", handle_training_preflight)
 _register("training.run", handle_training_run)
 _register("training.patch_then_run", handle_training_patch_then_run)
@@ -187,3 +200,4 @@ _register("inference.batch", handle_inference_batch)
 _register("external_validation.run", handle_external_validation)
 _register("analysis.task", handle_analysis)
 _register("chat.patch_inference", handle_chat_patch_inference)
+_register("paper_generation.run", handle_paper_generation_run)

@@ -1307,3 +1307,68 @@ class PermissionAuditLog(Base):
             if self.created_at
             else None,
         }
+
+
+class PaperGenerationRun(TimestampMixin, Base):
+    """Paper generation run.
+
+    One row per `POST /papers` request. The on-disk artifacts live under
+    `uploads/paper_generation/{paper_id}/` (see
+    `gateway.paper_generation.storage`). DB only stores small status fields
+    used by the API list/detail views and the worker queue.
+
+    See `docs/plan/paper_generation_agent_design.md` §10 M1.
+    """
+
+    __tablename__ = "paper_generation_runs"
+
+    paper_id = Column(String(128), unique=True, nullable=False, index=True)
+
+    # Owner - links to users table (UUID stored as string)
+    user_id = Column(String(255), index=True, nullable=True)
+
+    # Display
+    title = Column(String(500))
+
+    # Lifecycle
+    status = Column(
+        String(20), nullable=False, index=True
+    )  # pending, running, completed, failed, cancelled
+    current_stage = Column(
+        String(40), nullable=False, default="created"
+    )  # see PaperRunStage in gateway/paper_generation/schemas.py
+    error_message = Column(Text)
+
+    # Inputs (denormalized snapshot; full request stored in config.json on disk)
+    config_json = Column(JSON)  # complete CreatePaperRequest body
+    source_task_ids = Column(JSON)  # list[str]; flattened for cheap GET filters
+    selected_templates = Column(JSON)  # list[str]; flattened for cheap GET filters
+
+    # Lifecycle timestamps (created_at / updated_at come from TimestampMixin)
+    started_at = Column(DateTime)
+    finished_at = Column(DateTime)
+
+    def to_dict(self):
+        return {
+            "paper_id": self.paper_id,
+            "user_id": self.user_id,
+            "title": self.title,
+            "status": self.status,
+            "current_stage": self.current_stage,
+            "error_message": self.error_message,
+            "config_json": self.config_json,
+            "source_task_ids": self.source_task_ids or [],
+            "selected_templates": self.selected_templates or [],
+            "created_at": self.created_at.isoformat() + "Z"
+            if self.created_at
+            else None,
+            "updated_at": self.updated_at.isoformat() + "Z"
+            if self.updated_at
+            else None,
+            "started_at": self.started_at.isoformat() + "Z"
+            if self.started_at
+            else None,
+            "finished_at": self.finished_at.isoformat() + "Z"
+            if self.finished_at
+            else None,
+        }

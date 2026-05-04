@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
 import { Button } from '../components/ui/button'
-import { Rocket, TrendingUp, FileText, ChevronRight, ArrowLeft } from 'lucide-react'
+import { Rocket, TrendingUp, FileText, ChevronRight, ArrowLeft, ScrollText } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { useAuth } from '../contexts/AuthContext'
 
@@ -45,6 +45,13 @@ export default function ToolsPage() {
             path: '/reports',
             color: 'text-emerald-500',
             comingSoon: true,
+        },
+        {
+            title: 'Paper Generator',
+            description: 'Generate manuscript drafts from completed PathLab experiments.',
+            icon: ScrollText,
+            path: '/papers',
+            color: 'text-sky-500',
         },
     ]
 

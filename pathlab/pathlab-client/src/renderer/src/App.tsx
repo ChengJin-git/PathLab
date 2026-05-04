@@ -15,6 +15,8 @@ import RegisterPage from './pages/UploadPage'
 import ResultsViewerPage from './pages/ResultsViewerPage'
 import ReportGeneratorPage from './pages/ReportGeneratorPage'
 import ToolsPage from './pages/ToolsPage'
+import PaperGenerationPage from './pages/PaperGenerationPage'
+import PaperRunDetailPage from './pages/PaperRunDetailPage'
 
 function NotFoundPage() {
   const { t } = useTranslation()
@@ -47,6 +49,8 @@ export default function App() {
       <Route path="/register" element={<ProtectedRoute><Layout><RegisterPage /></Layout></ProtectedRoute>} />
       <Route path="/results" element={<ProtectedRoute requireGpu><Layout><ResultsViewerPage /></Layout></ProtectedRoute>} />
       <Route path="/reports" element={<ProtectedRoute><Layout><ReportGeneratorPage /></Layout></ProtectedRoute>} />
+      <Route path="/papers" element={<ProtectedRoute><Layout><PaperGenerationPage /></Layout></ProtectedRoute>} />
+      <Route path="/papers/:paper_id" element={<ProtectedRoute><Layout><PaperRunDetailPage /></Layout></ProtectedRoute>} />
 
       {/* WSIViewerPage without Layout (full screen viewer) - Also protected */}
       <Route path="/wsi/:wsi_id" element={<ProtectedRoute><WSIViewerPage /></ProtectedRoute>} />
@@ -62,4 +66,3 @@ export default function App() {
     </Routes>
   )
 }
-

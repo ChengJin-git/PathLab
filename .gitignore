@@ -1,3 +1,6 @@
+# docs (generated, not tracked)
+docs/
+
 # git worktrees
 .worktrees/
 
@@ -33,10 +36,14 @@ MANIFEST
 
 # Virtual Environment
 venv/
+.venv/
 env/
 ENV/
 env.bak/
 venv.bak/
+
+# Note: uv.lock files are committed (paper-gen is an application/service,
+# not a library — teammates and CI need the same resolved versions).
 
 # IDEs
 .vscode/

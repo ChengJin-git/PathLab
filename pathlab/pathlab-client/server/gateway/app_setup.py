@@ -25,6 +25,7 @@ from .routes import (
     wsi_router,
     wsi_upload_router,
 )
+from .paper_generation.routes import router as paper_generation_router
 
 
 def get_renderer_dist_path() -> Path:
@@ -54,6 +55,7 @@ def include_api_routers(app: FastAPI) -> None:
     app.include_router(gpu_router)
     app.include_router(annotation_router)
     app.include_router(training_options_router)
+    app.include_router(paper_generation_router)
 
 
 def mount_static_routes(app: FastAPI, renderer_dist: Path | None = None) -> None:

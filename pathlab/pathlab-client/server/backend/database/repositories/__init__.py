@@ -26,6 +26,7 @@ from .annotation import (
 from .annotation_audit import AnnotationAuditLogRepository
 from .dataset_stats import DatasetStatsRepository
 from .dataset_grant import DatasetGrantRepository, PermissionAuditLogRepository
+from .paper_generation import PaperGenerationRunRepository
 from .utils import paginate_query, apply_user_filter
 from .base import BaseRepository
 
@@ -50,6 +51,7 @@ __all__ = [
     "DatasetStatsRepository",
     "DatasetGrantRepository",
     "PermissionAuditLogRepository",
+    "PaperGenerationRunRepository",
     "paginate_query",
     "apply_user_filter",
     "BaseRepository",
