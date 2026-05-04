@@ -1,0 +1,31 @@
+{
+  "template_id": "miccai",
+  "venue": "MICCAI",
+  "format_family": "LNCS",
+  "document_class": "llncs",
+  "bibliography_style": "splncs04",
+  "section_order": [
+    "abstract",
+    "introduction",
+    "related_work",
+    "methods",
+    "experiments",
+    "results",
+    "discussion",
+    "conclusion"
+  ],
+  "required_sections": [
+    "abstract",
+    "introduction",
+    "methods",
+    "results",
+    "discussion"
+  ],
+  "style_constraints": {
+    "double_blind": true,
+    "compact_methods": true,
+    "max_references": 30,
+    "figure_width": "0.95\\linewidth",
+    "official_template_package": "Springer LNCS LaTeX2e Proceedings Templates"
+  }
+}

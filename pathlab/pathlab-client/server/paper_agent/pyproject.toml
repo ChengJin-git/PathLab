@@ -50,3 +50,6 @@ build-backend = "hatchling.build"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+markers = [
+    "docker: requires local Docker daemon and pathlab/paper-latex image",
+]

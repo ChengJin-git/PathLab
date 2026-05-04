@@ -1,0 +1,21 @@
+\documentclass[pdflatex,sn-nature]{sn-jnl}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{hyperref}
+\title[{{ short_title }}]{ {{- title -}} }
+\author*[1]{\fnm{PathLab} \sur{Paper Agent}}
+\affil*[1]{\orgdiv{Research}, \orgname{PathLab}, \orgaddress{\country{International}}}
+\raggedbottom
+\begin{document}
+\maketitle
+{% for section in sections %}
+\input{sections/{{ section }}.tex}
+{% endfor %}
+\section*{Data availability}
+All paper-facing artifacts are generated from the scrubbed PathLab evidence bundle. Private evidence locks and PHI mappings are excluded from exports.
+{% if include_bibliography %}
+\bibliographystyle{ {{- style.bibliography_style -}} }
+\bibliography{refs}
+{% endif %}
+\end{document}
