@@ -1,0 +1,20 @@
+\documentclass[runningheads]{llncs}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\title{ {{- title -}} }
+\titlerunning{ {{- short_title -}} }
+\author{PathLab Paper Agent}
+\authorrunning{PathLab Paper Agent}
+\institute{Affiliation withheld for review}
+\begin{document}
+\maketitle
+{% for section in sections %}
+\input{sections/{{ section }}.tex}
+{% endfor %}
+{% if include_bibliography %}
+\bibliographystyle{ {{- style.bibliography_style -}} }
+\bibliography{refs}
+{% endif %}
+\end{document}

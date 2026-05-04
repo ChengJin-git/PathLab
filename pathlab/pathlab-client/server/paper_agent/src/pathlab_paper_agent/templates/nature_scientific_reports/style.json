@@ -1,0 +1,31 @@
+{
+  "template_id": "nature_scientific_reports",
+  "venue": "Nature Scientific Reports",
+  "format_family": "Nature",
+  "document_class": "sn-jnl",
+  "bibliography_style": "sn-nature",
+  "section_order": [
+    "abstract",
+    "introduction",
+    "related_work",
+    "results",
+    "discussion",
+    "methods",
+    "experiments",
+    "conclusion"
+  ],
+  "required_sections": [
+    "abstract",
+    "introduction",
+    "results",
+    "methods",
+    "discussion"
+  ],
+  "style_constraints": {
+    "double_blind": false,
+    "methods_after_discussion": true,
+    "requires_data_availability": true,
+    "figure_width": "0.85\\linewidth",
+    "official_template_package": "Springer Nature sn-article-template December 2024"
+  }
+}

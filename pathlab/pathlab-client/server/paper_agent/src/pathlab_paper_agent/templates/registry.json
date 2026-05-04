@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "miccai",
+      "name": "MICCAI / LNCS",
+      "directory": "miccai",
+      "main": "main.tex.j2",
+      "style": "style.json",
+      "assets": [
+        "llncs.cls",
+        "splncs04.bst"
+      ]
+    },
+    {
+      "id": "nature_scientific_reports",
+      "name": "Nature Scientific Reports",
+      "directory": "nature_scientific_reports",
+      "main": "main.tex.j2",
+      "style": "style.json",
+      "assets": [
+        "sn-jnl.cls",
+        "sn-nature.bst"
+      ]
+    }
+  ]
+}
