@@ -37,6 +37,14 @@
 
 <!-- 按时间倒序加新条目；最近的在最上 -->
 
+## 2026-05-04 m8a → sections stage 跨 §4 边界（intro_rw_draft hook）
+
+- **改了什么**：`stages/sections.py` 内部加 `_section_text(...)`，让 introduction / related_work 在生成时**优先**读取 `drafts/intro_rw_draft/{introduction,related_work}.tex`（M8a 起草），不存在时 fallback 到原来的 scaffold 文本。
+- **为什么**：M8a Literature Review Agent 的产物是 intro/RW 草稿；它必须能被下游 sections stage 读到。但 `stages/sections.py` 在 §4 写入边界里属于 M9 Section Writer 的领域，按规则 M8a 不应直接改。M9 worktree 还没启动 → 这是个非冲突的 forward hook。
+- **影响哪些 track**：M9 Section Writer（启动后第一次 rebase 会拿到这个 hook，需要在 prompt 设计里假设 intro_rw_draft 文件可能已存在）。其它 track 不受影响。
+- **action 要求**：M9 owner 启动 worktree 时阅读这条记录；如果 M9 想用别的方式接 intro_rw_draft，需先在 main 协调改回。
+- **commit**: `0020e4a7` (在 paper/m8a-citations 上)，merge 进 phase01 时 commit hash 会变。
+
 ## 2026-05-04 baseline — initial worktree contract frozen
 
 - **改了什么**：把 `pipeline.py` 拆成 thin orchestrator + `stages/*.py`；
