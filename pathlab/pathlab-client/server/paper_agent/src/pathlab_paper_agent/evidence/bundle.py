@@ -11,6 +11,7 @@ from typing import Any
 from gateway.paper_generation.schemas import PaperConfig
 from gateway.paper_generation.storage import PaperRunPaths
 
+from ..renderers.locked_block_renderer import LockedBlockRenderer
 from .phi import PhiScrubber
 
 _METRIC_NAME_RE = re.compile(
@@ -19,11 +20,6 @@ _METRIC_NAME_RE = re.compile(
     re.IGNORECASE,
 )
 _SAFE_KEY_RE = re.compile(r"[^A-Za-z0-9_.:-]+")
-_LATEX_CMD_SPLIT_RE = re.compile(r"[^A-Za-z]+")
-_DIGIT_WORDS = {
-    "0": "Zero", "1": "One", "2": "Two", "3": "Three", "4": "Four",
-    "5": "Five", "6": "Six", "7": "Seven", "8": "Eight", "9": "Nine",
-}
 
 
 @dataclass(frozen=True)
@@ -34,6 +30,7 @@ class EvidenceBuildResult:
     public_summaries: dict[str, dict[str, Any]]
     tables: dict[str, str]
     locked_blocks: dict[str, str]
+    locked_blocks_by_template: dict[str, dict[str, str]]
 
 
 def build_evidence_bundle(paths: PaperRunPaths, config: PaperConfig) -> EvidenceBuildResult:
@@ -99,16 +96,30 @@ def build_evidence_bundle(paths: PaperRunPaths, config: PaperConfig) -> Evidence
             "metrics": public_evidence["metrics"],
         },
     }
-    tables = _render_tables(datasets, splits, metrics, external_validation)
-    locked_blocks = _render_locked_blocks(datasets, models, metrics, missing_evidence)
+    rendered_by_template = {
+        template_id: LockedBlockRenderer(template_id=template_id).render(
+            datasets=datasets,
+            splits=splits,
+            models=models,
+            metrics=metrics,
+            external_validation=external_validation,
+            missing_evidence=missing_evidence,
+        )
+        for template_id in _selected_template_ids(config)
+    }
+    primary_rendered = rendered_by_template[_primary_template_id(config)]
     experimental_log = _render_experimental_log(config, private_lock, public_evidence)
     return EvidenceBuildResult(
         private_lock=private_lock,
         public_evidence=public_evidence,
         experimental_log=experimental_log,
         public_summaries=public_summaries,
-        tables=tables,
-        locked_blocks=locked_blocks,
+        tables=primary_rendered.tables,
+        locked_blocks=primary_rendered.locked_blocks,
+        locked_blocks_by_template={
+            template_id: rendered.locked_blocks
+            for template_id, rendered in rendered_by_template.items()
+        },
     )
 
 
@@ -147,20 +158,14 @@ def _safe_key(value: str) -> str:
     return cleaned or "item"
 
 
-def _latex_cmd_key(value: str) -> str:
-    # LaTeX \newcommand names must be letters only — digits, dots, and underscores
-    # in metric paths are illegal. Spell digits out, drop separators, CamelCase parts.
-    spelled = "".join(_DIGIT_WORDS.get(ch, ch) for ch in value)
-    parts = _LATEX_CMD_SPLIT_RE.split(spelled)
-    cleaned = "".join(part.capitalize() for part in parts if part)
-    return cleaned or "Item"
+def _primary_template_id(config: PaperConfig) -> str:
+    return _selected_template_ids(config)[0]
 
 
-def _fmt_count(value: Any) -> str:
-    try:
-        return str(int(value))
-    except (TypeError, ValueError):
-        return "0"
+def _selected_template_ids(config: PaperConfig) -> list[str]:
+    if not config.selected_templates:
+        return ["miccai"]
+    return [str(getattr(template, "value", template)) for template in config.selected_templates]
 
 
 def _fmt_metric(value: Any) -> str:
@@ -171,20 +176,6 @@ def _fmt_metric(value: Any) -> str:
     except (TypeError, ValueError):
         return str(value)
     return f"{number:.4f}".rstrip("0").rstrip(".")
-
-
-def _latex_escape(value: Any) -> str:
-    text = "" if value is None else str(value)
-    return (
-        text.replace("\\", r"\textbackslash{}")
-        .replace("&", r"\&")
-        .replace("%", r"\%")
-        .replace("$", r"\$")
-        .replace("#", r"\#")
-        .replace("_", r"\_")
-        .replace("{", r"\{")
-        .replace("}", r"\}")
-    )
 
 
 def _dataset_rows(raw: dict[str, Any], scrubber: PhiScrubber) -> list[dict[str, Any]]:
@@ -415,139 +406,3 @@ def _render_experimental_log(
         "PHI scrubber. Raw paths, case identifiers, and institution names remain only in "
         "`evidence_lock.private.json`.\n"
     )
-
-
-def _distribution_text(payload: Any) -> str:
-    if not isinstance(payload, dict) or not payload:
-        return "--"
-    return ", ".join(f"{key}: {value}" for key, value in sorted(payload.items()))
-
-
-def _tabular(rows: list[list[Any]], *, columns: str = "ll") -> str:
-    body = "\n".join(
-        " & ".join(_latex_escape(value) for value in row) + r" \\"
-        for row in rows
-    )
-    return (
-        f"\\begin{{tabular}}{{{columns}}}\n"
-        "\\toprule\n"
-        f"{body}\n"
-        "\\bottomrule\n"
-        "\\end{tabular}\n"
-    )
-
-
-def _render_tables(
-    datasets: list[dict[str, Any]],
-    splits: list[dict[str, Any]],
-    metrics: dict[str, dict[str, Any]],
-    external_validation: list[dict[str, Any]],
-) -> dict[str, str]:
-    dataset_rows = [["Dataset", "WSI", "Cases", "Labels"]]
-    dataset_rows.extend(
-        [
-            row.get("name") or row.get("dataset_id") or "dataset",
-            row.get("wsi_count", 0),
-            row.get("case_count", 0),
-            _distribution_text(row.get("label_distribution")),
-        ]
-        for row in datasets
-    )
-    if len(dataset_rows) == 1:
-        dataset_rows.append(["No cohort evidence", 0, 0, "--"])
-
-    metric_rows = [["Metric", "Value", "Task"]]
-    metric_rows.extend(
-        [item.get("name"), item.get("formatted"), item.get("task_id")]
-        for item in metrics.values()
-    )
-    if len(metric_rows) == 1:
-        metric_rows.append(["No locked metrics", "--", "--"])
-
-    split_rows = [["Split", "WSI", "Cases", "Labels"]]
-    split_rows.extend(
-        [
-            row.get("split"),
-            row.get("wsi_count", 0),
-            row.get("case_count", 0),
-            _distribution_text(row.get("label_distribution")),
-        ]
-        for row in splits
-    )
-    if len(split_rows) == 1:
-        split_rows.append(["No split evidence", 0, 0, "--"])
-
-    ext_rows = [["Task", "Status", "Total WSI"]]
-    ext_rows.extend(
-        [row.get("task_id"), row.get("status"), row.get("total_wsi") or "--"]
-        for row in external_validation
-    )
-    if len(ext_rows) == 1:
-        ext_rows.append(["No external validation", "--", "--"])
-
-    return {
-        "table_1_dataset.tex": _tabular(dataset_rows, columns="llll"),
-        "table_2_main_results.tex": _tabular(metric_rows, columns="lll"),
-        "table_3_per_class.tex": _tabular(split_rows, columns="llll"),
-        "table_4_ablation.tex": _tabular([["Ablation", "Status"], ["No ablation evidence", "--"]]),
-        "table_5_external_validation.tex": _tabular(ext_rows, columns="lll"),
-    }
-
-
-def _render_locked_blocks(
-    datasets: list[dict[str, Any]],
-    models: list[dict[str, Any]],
-    metrics: dict[str, dict[str, Any]],
-    missing_evidence: list[dict[str, Any]],
-) -> dict[str, str]:
-    total_wsi = sum(int(row.get("wsi_count") or 0) for row in datasets)
-    total_cases = sum(int(row.get("case_count") or 0) for row in datasets)
-    model_bits = []
-    for model in models:
-        desc = model.get("model_name") or model.get("model_id") or "model"
-        extractor = model.get("feature_extractor")
-        aggregator = model.get("aggregator")
-        if extractor or aggregator:
-            desc = f"{desc} ({extractor or 'feature extractor not recorded'}, {aggregator or 'aggregator not recorded'})"
-        model_bits.append(str(desc))
-    metric_bits = [f"{item.get('name')}: {item.get('formatted')}" for item in metrics.values()]
-    missing_note = (
-        f"{len(missing_evidence)} missing evidence item(s) remain."
-        if missing_evidence
-        else "No blocking missing evidence item was reported by the collector."
-    )
-    return {
-        "dataset_block.tex": (
-            "\\paragraph{Dataset.} "
-            f"The evidence lock contains {total_wsi} whole-slide image(s) from {total_cases} case(s).\n"
-        ),
-        "method_block.tex": (
-            "\\paragraph{Model.} "
-            + ("; ".join(_latex_escape(item) for item in model_bits) if model_bits else "No trained model evidence was available.")
-            + "\n"
-        ),
-        "results_block.tex": (
-            "\\paragraph{Results.} "
-            + ("; ".join(_latex_escape(item) for item in metric_bits) if metric_bits else "No locked analysis metrics were available.")
-            + "\n"
-        ),
-        "metrics_macros.tex": _render_metrics_macros(metrics),
-        "evidence_gaps.tex": "\\paragraph{Evidence gaps.} " + _latex_escape(missing_note) + "\n",
-    }
-
-
-def _render_metrics_macros(metrics: dict[str, dict[str, Any]]) -> str:
-    if not metrics:
-        return "% No metric macros are available.\n"
-    seen: set[str] = set()
-    lines: list[str] = []
-    for key, item in metrics.items():
-        base = _latex_cmd_key(key)
-        cmd = base
-        suffix = 0
-        while cmd in seen:
-            suffix += 1
-            cmd = f"{base}{chr(ord('A') + (suffix - 1) % 26)}"
-        seen.add(cmd)
-        lines.append(f"\\newcommand{{\\metric{cmd}}}{{{_latex_escape(item.get('formatted'))}}}")
-    return "\n".join(lines) + "\n"
