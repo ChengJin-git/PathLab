@@ -37,6 +37,19 @@
 
 <!-- 按时间倒序加新条目；最近的在最上 -->
 
+## 2026-05-04 phase03 public evidence download allowlist
+
+- **改了什么**：`gateway.paper_generation.storage._ALLOWED_EXACT` 新增
+  `evidence/dataset_summary.public.json`、`evidence/model_summary.public.json`、
+  `evidence/analysis_summary.public.json`，配合 Phase 03 evidence stage 输出可下载的
+  scrubbed public summaries。
+- **为什么**：Phase 03 把 private evidence lock 派生为多个 LLM/public-facing evidence
+  surfaces；这些文件不包含 private lock、raw paths、case identifiers 或 source mappings。
+- **影响哪些 track**：Frontend artifact download / Phase 03 evidence tests。
+- **action 要求**：下载 API 继续禁止 `evidence/evidence_lock.private.json` 和
+  `evidence/raw_collected/*`；新增 public summaries 必须经过 PHI scrubber。
+- **commit**: `TBD`
+
 ## 2026-05-04 m8a → sections stage 跨 §4 边界（intro_rw_draft hook）
 
 - **改了什么**：`stages/sections.py` 内部加 `_section_text(...)`，让 introduction / related_work 在生成时**优先**读取 `drafts/intro_rw_draft/{introduction,related_work}.tex`（M8a 起草），不存在时 fallback 到原来的 scaffold 文本。

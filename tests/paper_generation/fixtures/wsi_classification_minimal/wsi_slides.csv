@@ -1,0 +1,5 @@
+wsi_id,case_id,split,label,source
+SLIDE-0001,CASE-0001,train,tumor,Example Hospital
+SLIDE-0002,CASE-0002,train,normal,Example Hospital
+SLIDE-0003,CASE-0003,val,tumor,Example Hospital
+SLIDE-0004,CASE-0004,test,normal,Example Hospital

@@ -1,0 +1,6 @@
+[
+  {"wsi_id": "SLIDE-0001", "case_id": "CASE-0001", "y_true": "tumor", "y_pred": "tumor"},
+  {"wsi_id": "SLIDE-0002", "case_id": "CASE-0002", "y_true": "normal", "y_pred": "normal"},
+  {"wsi_id": "SLIDE-0003", "case_id": "CASE-0003", "y_true": "tumor", "y_pred": "tumor"},
+  {"wsi_id": "SLIDE-0004", "case_id": "CASE-0004", "y_true": "normal", "y_pred": "normal"}
+]
