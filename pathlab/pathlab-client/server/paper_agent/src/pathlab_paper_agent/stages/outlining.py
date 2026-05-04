@@ -1,56 +1,23 @@
-"""PaperOrchestra-style outline stage scaffold."""
+"""PaperOrchestra-style Outline Agent stage."""
 
 from __future__ import annotations
 
 from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
 from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
 
-from .common import SECTION_ORDER, load_config, register_artifact, write_json
+from ..agents import OutlineAgent, OutlineInputs
+from .common import load_config, register_artifact, write_json
 
 
-def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
+def run(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    *,
+    agent: OutlineAgent | None = None,
+) -> None:
     config = load_config(paths)
-    outline = {
-        "plotting_plan": [
-            {
-                "figure_id": "fig:overview",
-                "kind": "conceptual",
-                "source": "idea + method_block",
-                "design_objective": "Show the PathLab WSI-to-paper evidence workflow.",
-                "backend": "requires_user_revision",
-            }
-        ],
-        "macro_lit_search": [
-            "computational pathology whole slide image analysis",
-            "AI-assisted pathology clinical validation",
-        ],
-        "micro_lit_clusters": [
-            {
-                "cluster": "multiple instance learning for pathology",
-                "queries": [
-                    "attention multiple instance learning whole slide images",
-                    "computational pathology foundation models validation",
-                ],
-            }
-        ],
-        "section_plan": [
-            {"section": section.replace("_", " ").title(), "goal": "scaffold"}
-            for section in SECTION_ORDER
-        ],
-        "pathlab_extensions": {
-            "templates": [template.value for template in config.selected_templates],
-            "claim_plan": [],
-            "guard_requirements": [
-                "metric",
-                "claim",
-                "identifier",
-                "consistency",
-                "citation",
-                "latex",
-                "figure_table",
-            ],
-        },
-    }
+    outline_agent = agent or OutlineAgent()
+    outline = outline_agent.generate(OutlineInputs.from_paths(paths, config))
     write_json(paths.outline_json, outline)
     register_artifact(
         manifest,
