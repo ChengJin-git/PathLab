@@ -206,6 +206,17 @@ def test_nested_plot_spec_generator_takes_precedence_over_kind(tmp_path):
 @pytest.mark.asyncio
 async def test_plotting_stage_generates_empirical_manifest_entries(tmp_path):
     paper_id, paths = await create_dev_run(paper_id="paper_figures", uploads_dir=tmp_path)
+    data_ref = "evidence/plot_data/calibration_stage.json"
+    (paths.root / data_ref).parent.mkdir(parents=True, exist_ok=True)
+    (paths.root / data_ref).write_text(
+        json.dumps(
+            {
+                "confidence": [0.2, 0.4, 0.6, 0.8],
+                "accuracy": [0.18, 0.45, 0.61, 0.77],
+            }
+        ),
+        encoding="utf-8",
+    )
     paths.outline_json.write_text(
         json.dumps(
             {
@@ -221,10 +232,7 @@ async def test_plotting_stage_generates_empirical_manifest_entries(tmp_path):
                         "source": "mock_analysis_summary",
                         "plot_spec": {
                             "generator": "calibration_plot",
-                            "data": {
-                                "confidence": [0.2, 0.4, 0.6, 0.8],
-                                "accuracy": [0.18, 0.45, 0.61, 0.77],
-                            },
+                            "data_ref": data_ref,
                         },
                     },
                 ]

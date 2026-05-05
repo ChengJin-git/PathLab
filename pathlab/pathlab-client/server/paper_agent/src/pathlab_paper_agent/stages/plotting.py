@@ -1,115 +1,84 @@
-"""Deterministic plotting stage for empirical paper figures."""
+"""Plotting Agent stage for empirical and conceptual paper figures."""
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
 from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
 
-from ..plotting import generate_figure
-from .common import read_json, register_artifact, write_json
+from ..agents.plotting_agent import PlottingAgent, PlottingAgentResult
+from .common import register_artifact, write_json
+
+_CONTENT_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".pdf": "application/pdf",
+}
 
 
-def _default_plan() -> list[dict[str, Any]]:
-    return [
-        {
-            "figure_id": "fig:overview",
-            "kind": "conceptual",
-            "source": "scaffold",
-            "caption": "Overview figure placeholder; PaperBanana-style generation lands in M6c.",
-        }
-    ]
+def run(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    *,
+    agent: PlottingAgent | None = None,
+) -> None:
+    plotting_agent = agent or PlottingAgent()
+    result = plotting_agent.generate(paths)
+    write_json(paths.figures_manifest, result.figures_manifest)
+    _register_artifacts(paths, manifest, result)
+    if result.errors:
+        first = result.errors[0]
+        more = f" (+{len(result.errors) - 1} more)" if len(result.errors) > 1 else ""
+        raise RuntimeError(f"Empirical figure generation failed: {first}{more}")
 
 
-def _load_plotting_plan(paths: PaperRunPaths) -> list[dict[str, Any]]:
-    if not paths.outline_json.exists():
-        return _default_plan()
-    outline = read_json(paths.outline_json)
-    plan = outline.get("plotting_plan")
-    if not isinstance(plan, list) or not plan:
-        return _default_plan()
-    return [item for item in plan if isinstance(item, dict)] or _default_plan()
-
-
-def _conceptual_entry(spec: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "figure_id": str(spec.get("figure_id", "fig:overview")),
-        "path": spec.get("path"),
-        "status": str(spec.get("status", "requires_user_revision")),
-        "source": str(spec.get("source", "scaffold")),
-        "generator": str(spec.get("backend", "user_provided_or_paperbanana_m6c")),
-        "caption": str(
-            spec.get(
-                "caption",
-                "Conceptual overview figure requires user revision or M6c generation.",
-            )
-        ),
-    }
-
-
-def _pending_entry(spec: dict[str, Any], error: Exception) -> dict[str, Any]:
-    plot_spec = spec.get("plot_spec") if isinstance(spec.get("plot_spec"), dict) else {}
-    return {
-        "figure_id": str(spec.get("figure_id", "fig:empirical_pending")),
-        "path": None,
-        "status": "pending_generation",
-        "source": str(spec.get("source", "mock_or_evidence")),
-        "generator": str(
-            spec.get("generator")
-            or spec.get("plot_type")
-            or plot_spec.get("generator")
-            or plot_spec.get("plot_type")
-            or "unknown"
-        ),
-        "caption": str(spec.get("caption", "Empirical figure pending generation.")),
-        "error": str(error)[:1000],
-    }
-
-
-def _is_empirical(spec: dict[str, Any]) -> bool:
-    if str(spec.get("kind", "")).lower() == "empirical":
-        return True
-    plot_spec = spec.get("plot_spec") if isinstance(spec.get("plot_spec"), dict) else {}
-    return bool(
-        spec.get("generator")
-        or spec.get("plot_type")
-        or plot_spec.get("generator")
-        or plot_spec.get("plot_type")
-    )
-
-
-def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
-    entries: list[dict[str, Any]] = []
-    errors: list[str] = []
-    for spec in _load_plotting_plan(paths):
-        if not _is_empirical(spec):
-            entries.append(_conceptual_entry(spec))
-            continue
-        try:
-            result = generate_figure(paths.figures_dir, spec)
-        except Exception as exc:
-            entries.append(_pending_entry(spec, exc))
-            figure_id = str(spec.get("figure_id", "fig:empirical_pending"))
-            errors.append(f"{figure_id}: {exc}")
-            continue
-        entry = result.to_manifest_entry()
-        entries.append(entry)
-        register_artifact(
-            manifest,
-            result.path,
-            label=result.figure_id,
-            content_type=result.content_type,
-        )
-
-    write_json(paths.figures_manifest, {"figures": entries})
+def _register_artifacts(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    result: PlottingAgentResult,
+) -> None:
     register_artifact(
         manifest,
         "figures/manifest.json",
         label="Figures manifest",
         content_type="application/json",
     )
-    if errors:
-        first = errors[0]
-        more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
-        raise RuntimeError(f"Empirical figure generation failed: {first}{more}")
+    for output in result.generated_figures:
+        register_artifact(
+            manifest,
+            output.path,
+            label=output.figure_id,
+            content_type=output.content_type,
+        )
+    registered = {output.path for output in result.generated_figures}
+    for entry in result.figures_manifest.get("figures", []):
+        if not isinstance(entry, dict):
+            continue
+        rel_path = entry.get("path")
+        if not _is_registerable_user_figure(paths, rel_path) or rel_path in registered:
+            continue
+        register_artifact(
+            manifest,
+            str(rel_path),
+            label=str(entry.get("figure_id") or rel_path),
+            content_type=_content_type_for_path(str(rel_path)),
+        )
+
+
+def _is_registerable_user_figure(paths: PaperRunPaths, rel_path: Any) -> bool:
+    if not isinstance(rel_path, str) or not rel_path.startswith("figures/"):
+        return False
+    path = paths.root / rel_path
+    try:
+        path.resolve().relative_to(paths.figures_dir.resolve())
+    except ValueError:
+        return False
+    return path.is_file()
+
+
+def _content_type_for_path(rel_path: str) -> str:
+    suffix = Path(rel_path).suffix.lower()
+    return _CONTENT_TYPES.get(suffix, "application/octet-stream")
