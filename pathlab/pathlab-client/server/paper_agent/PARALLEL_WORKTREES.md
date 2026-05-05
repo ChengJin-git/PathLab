@@ -1,7 +1,7 @@
 # Paper Agent 并行 Worktree 执行计划
 
-> 当前基线 commit：`2c286e44 docs(paper): record refining stage commit hash in MIGRATIONS`  
-> 适用范围：Wave 1 + 2A + 2B + 3 + 4A 已落地后，进入 Wave 4B = M11 Refinement Loop（单条 track）。  
+> 当前基线 commit：`80b03acd Merge paper/m11-refinement into paper-agent-phase01`  
+> 适用范围：Wave 1 + 2A + 2B + 3 + 4A + 4B 已落地后，进入 Wave 4C = M12b Regenerate API（v1 主线最后一条）。  
 > 注意：`docs/` 目录在当前 repo 里是 ignored，worktree 里不一定能看到 docs；所以其他 agent **优先读本文件**。
 
 ## 0. 先读这个结论
@@ -15,26 +15,27 @@
 - Wave 3：M9 section writer + citation renderer
 - Wave 4A：M10b LLM-output guards + M12a ZIP export 硬化（含 review polish）
 - Wave 4A 后：refining stage 已经接进 pipeline dispatch（contract 占位），但 stage body 是 no-op，等 M11 填实
+- Wave 4B：M11 Refinement Loop（critic + revise + monotonic accept + 物理 snapshot/revert + ≤ 3 轮）
 
-**Wave 4B 现在开一条 track**（不并行）：
+**Wave 4C 现在开一条 track**（不并行，v1 主线收官）：
 
-- **M11 Refinement Loop** —— `agents/content_refinement_agent.py` + `stages/refining.py` 实体。AgentReview 风格 critic prompt（PathLab tuned 的 medical_accuracy / statistical_rigor / clinical_relevance / technical_novelty / presentation rubric），单调收敛接受准则（score 严格上升 OR 平局且子项无负退化），物理 snapshot 到 `drafts/snapshots/iter_{N}/`，物理 revert 回 `drafts/sections/`，最多 3 轮。Critic 调用 LLM，但 score 来自 M10a + M10b 的 GuardReport 加 critic 的 rubric 分数。
+- **M12b Section Regenerate API** —— 新增 `POST /papers/{paper_id}/sections/{section_name}/regenerate` endpoint。锁住其他 section 不变，单独重跑 M9 section_writing → M10 全部 6 条 guard → M11 refinement loop（带 namespacing 的 snapshot），结果落回 `drafts/sections/{section_name}.tex`。也可以加 CLI `pathlab-paper-agent regenerate --section <name>` 用于 smoke test。
 
-合完 M11 后下一步是 Wave 4C = M12b Regenerate API（依赖 M11 的 refinement loop entry）。
+合完 M12b → v1 主线全部 ship（剩 M6c PaperBanana 是 optional）。
 
 ## 1. 当前 worktree 现状
 
-### 1.1 Wave 4B active
+### 1.1 Wave 4C active
 
 | Track | Branch | Worktree | Agent 主要负责 |
 |---|---|---|---|
-| M11 Refinement Loop | `paper/m11-refinement` | `/Users/wangyihui/code/PathLab-worktrees/m11-refinement` | content_refinement_agent + stages/refining.py 真实 loop；critic LLM rubric + 单调收敛接受准则 + 物理 snapshot/revert + 最多 3 轮 |
+| M12b Section Regenerate API | `paper/m12b-regenerate` | `/Users/wangyihui/code/PathLab-worktrees/m12b-regenerate` | 新增 `POST /papers/{id}/sections/{name}/regenerate` 路由 + 单 section 重生协调器（M9 → M10 全 guard → M11 带 namespacing 的 snapshot） |
 
 起 worktree 命令（如果还没起）：
 
 ```bash
-git -C /Users/wangyihui/code/PathLab worktree add -b paper/m11-refinement \
-  /Users/wangyihui/code/PathLab-worktrees/m11-refinement paper-agent-phase01
+git -C /Users/wangyihui/code/PathLab worktree add -b paper/m12b-regenerate \
+  /Users/wangyihui/code/PathLab-worktrees/m12b-regenerate paper-agent-phase01
 ```
 
 ### 1.2 历史 worktree（已合并，已清）
@@ -53,6 +54,7 @@ git -C /Users/wangyihui/code/PathLab worktree add -b paper/m11-refinement \
 | M9 Section Writer | `paper/m9-sections` | `7cbb2f61` |
 | M10b Claim/Consistency Guards | `paper/m10b-guards` | `31436967` |
 | M12a ZIP Export 硬化 | `paper/m12a-export` | `2d592300` |
+| M11 Refinement Loop | `paper/m11-refinement` | `80b03acd` |
 
 ### 1.3 确认
 
@@ -63,7 +65,7 @@ git -C /Users/wangyihui/code/PathLab worktree list
 所有活跃 worktree 都应该基于同一条主线 commit；当前为：
 
 ```text
-2c286e44 docs(paper): record refining stage commit hash in MIGRATIONS
+80b03acd Merge paper/m11-refinement into paper-agent-phase01
 ```
 
 ## 2. 给其他 agent 的开工流程
@@ -111,7 +113,7 @@ src/pathlab_paper_agent/stages/
   literature.py      # M8 literature/citation           ← 已落地（M8a deterministic + M8b LLM 编排）
   sections.py        # M9 section writer                ← 已落地（M9）
   validating.py      # M10 guards                       ← 已落地（M10a + M10b）
-  refining.py        # M11 refinement loop              ← 已接 dispatch；scaffold no-op，M11 接手中
+  refining.py        # M11 refinement loop              ← 已落地（M11；M12b 调用同一 entry）
   rendering.py       # M4/M11 renderer entry point      ← 已落地（M4 + M5 per-template locked_blocks）
   exporting.py       # M11 bundle export entry point    ← 已落地（M4 ZIP export + M12a 硬化）
 ```
@@ -501,6 +503,49 @@ pathlab/pathlab-client/server/paper_agent/tests/refinement/                     
 
 不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract，**已在 main 协调好 refining 的 dispatch 占位**，不要再改）；`collector/` / `evidence/` / `citations/` / `validators/`；其他 `stages/*.py`；`renderers/`（按 M5 / M9 / M10a 现有 API 调）；`agents/` 其他 agent（不要改 outline / plotting / literature / section_writing）；`llm/`。
 
+### M12b Section Regenerate API (Wave 4C, v1 收官)
+
+工作目录：
+
+```bash
+cd /Users/wangyihui/code/PathLab-worktrees/m12b-regenerate
+```
+
+主要写：
+
+```text
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/regenerate.py     ← 新建：单 section 重生协调器
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/dev_server.py     ← 加新路由
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/cli.py            ← 加 regenerate 子命令（用于 smoke）
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/refining.py ← 扩 keyword arg snapshots_subdir
+pathlab/pathlab-client/server/paper_agent/tests/regenerate/                          ← 新建测试目录
+```
+
+目标：
+
+- **新增 endpoint** `POST /papers/{paper_id}/sections/{section_name}/regenerate`，沿 dev_server 既有的 `@app.post(...)` pattern 写。返回 `{paper_id, status, current_stage, regenerated_sections, refinement_log_summary}`。404 / 400 / 422 错误用 HTTPException 包。
+- **协调 flow**（在 `regenerate.py` 里实现 `regenerate_section(paper_id, section_name, *, uploads_dir=None) -> PaperManifest`）：
+  1. 校验 `section_name` 在 `outline.json.section_plan` 里 / 在 `_SECTION_ALIASES` 里（reuse M9 的 section_slug）
+  2. **快照锁定**：当前 `drafts/sections/*.tex` 全部 copy 到 `drafts/regenerate_runs/{run_id}/before/` —— `run_id` 用 ISO timestamp slug
+  3. 调 M9 `SectionWritingAgent.generate(...)` 拿到全套 sections，**只取 `result.sections[section_name]`** 写回 `drafts/sections/{section_name}.tex`，其它 section 文件不动
+  4. 跑 M10 全部 6 条 guard（用 `stages/validating.run` 或直接 `_run_guard_reports` helper）
+  5. 调 `stages/refining.run`，**snapshots 走 namespacing**：refining 把 snapshots 写到 `drafts/regenerate_runs/{run_id}/snapshots/iter_{N}/`，不污染原 `drafts/snapshots/`。**这要 M11 的 `run(...)` 暴露一个 `snapshots_subdir` keyword**（默认 `paths.snapshots_dir`，本路径下重生时传 namespaced 路径）—— 你来加这个 keyword arg。**保持原 M11 测试不变**（默认行为不变）。
+  6. 写 `drafts/regenerate_runs/{run_id}/log.json` 记录：section_name / before/after diff size / guard reports / refinement log。manifest `private_backend_only` 注册。
+- **A2 cite 契约保留**：M9 + M11 已经强制 selected_refs/required_cites 子集 + 占位符，M12b 直接复用，不要重新实现。
+- **CLI**：加 `pathlab-paper-agent regenerate --paper-id X --section results` 用于 smoke。沿现有 `cli.py` argparse pattern。
+- **MIGRATIONS.md 登记**：新 endpoint 是公开 surface 的 additive change（§5.1 dev service contract），落 commit 后补上 entry。
+- LLM 全部 mock，CI 不跑真实调用，沿 M7 / M11 的 `_NoNetworkLLM` pattern。
+
+测试要求（`tests/regenerate/`）：
+
+1. happy path —— 给 fixture 喂完一遍 sections，调 regenerate("results")，断言 `results.tex` 内容变了、其它 section 不变、`drafts/regenerate_runs/{run_id}/before/` 含原状。
+2. 锁定 —— regenerate("results") 跑完后，断言 `discussion.tex` / `methods.tex` / 等的 mtime 没动 OR 内容字节相等。
+3. snapshot namespacing —— 跑 regenerate 不影响 `drafts/snapshots/`（M11 原 run 留下的快照保持不变）。可以预先在 `paths.snapshots_dir / iter_1 / sections/foo.tex` 写一个文件，跑完 regenerate 后断言它还在。
+4. unknown section —— `regenerate("nonexistent")` raise ValueError；endpoint 返回 422。
+5. force reject —— mock LLM 让 revise 引入 raw `\cite{}` 或未知 metric，断言重生失败 + sections 恢复 + manifest 标 rejected。
+
+不要改：`schemas.py` / `pipeline.py` dispatch（**`PaperRunStage` 不需要新增**，regenerate 不是一个独立 stage 而是 endpoint 触发的子流程）；`tests/conftest.py`；`collector/` / `evidence/` / `citations/` / `validators/`；其他 `stages/*.py`（**只允许给 stages/refining.py 加新 keyword arg**，不要改既有行为）；`agents/`（按 M9 / M11 现有 API 调）；`llm/`；`renderers/`。M12a 的 zip_exporter 也不要碰（regenerate 不重新 export，让用户重跑 exporting stage）。
+
 ## 5. 所有 agent 都必须保留的 contract
 
 这些是 **contract 文件**：worktree 里**不要直接改**，必须先在 main 协调，
@@ -725,6 +770,22 @@ M11 Refinement Loop：
 主要写 agents/content_refinement_agent.py、stages/refining.py、prompts/refinement_critic_v1.txt、prompts/refinement_revise_v1.txt、tests/refinement/。不要改 schemas.py / pipeline.py / conftest.py（contract — main 已经协调好 refining dispatch 占位）；不要改 collector / evidence / citations / validators / renderers 的内部实现（按现有 API 调）；不要改 agents/ 其他 agent / llm/ / 其他 stages。tests/refinement/ 全部 mock LLM，沿用 M7 的 _NoNetworkLLM pattern + PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1 显式 opt-in；至少要有：score 上升接受、score 持平且无负退化接受、score 下降拒绝物理 revert、guard fail force reject 这四条 test。完成后跑 uv run pytest -q 和 uv run ruff check src tests。
 ```
 
+---
+
+**Wave 4C**：
+
+M12b Section Regenerate API：
+
+```text
+你在 /Users/wangyihui/code/PathLab-worktrees/m12b-regenerate 工作。只负责 M12b section-level regenerate API —— v1 主线最后一条 track。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M12b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M12 段（注意整体被拆成 M12a + M12b，你只做 M12b）+ §3.7 文件 allowlist，(4) M9 / M11 已合的实现（agents/section_writing_agent.py、stages/refining.py）—— 你直接复用它们的 API，不要重新实现。
+
+任务：(1) 起 src/pathlab_paper_agent/regenerate.py，导出 `regenerate_section(paper_id, section_name, *, uploads_dir=None) -> PaperManifest`：校验 section_name → 把当前 drafts/sections/* 全 copy 到 drafts/regenerate_runs/{run_id}/before/（run_id 用 ISO timestamp slug）→ 调 M9 SectionWritingAgent.generate(...) 取 result.sections[section_name]，**只**写回 drafts/sections/{section_name}.tex，其它 section 文件不动 → 跑 M10 全部 6 条 guard → 调 stages/refining.run，**snapshots 走 namespacing 到 drafts/regenerate_runs/{run_id}/snapshots/iter_{N}/**（不污染原 drafts/snapshots/）→ 写 drafts/regenerate_runs/{run_id}/log.json 并在 manifest 注册 private_backend_only。(2) 给 stages/refining.py 加 keyword arg `snapshots_subdir: Path | None = None`，默认 paths.snapshots_dir；把内部 `_snapshot_sections` 用这个 dir 即可。**保持原 M11 测试不变**（默认行为不变）。(3) dev_server.py 加新路由 `POST /papers/{paper_id}/sections/{section_name}/regenerate`，沿现有 @app.post 既有 pattern，404/400/422 用 HTTPException，返回 {paper_id, status, current_stage, regenerated_sections, refinement_log_summary}。(4) cli.py 加 `regenerate --paper-id X --section results` 子命令做 smoke。(5) MIGRATIONS.md 落 entry，因为新 endpoint 是 §5.1 dev service 公开 surface 的 additive change。
+
+测试 tests/regenerate/ 至少 5 条：happy path（results.tex 内容变了 + 其它 section 字节相等 + before/ 含原状）、锁定（其它 section mtime 不变）、snapshot namespacing（drafts/snapshots/iter_*/sections/foo.tex 预先放一个，跑完不被覆盖）、unknown section → ValueError + endpoint 422、force reject（mock LLM 让 revise 引入 raw \cite{} 或未知 metric → 重生失败 + sections 恢复 + manifest 标 rejected）。LLM 全部 mock，CI 不跑真实调用，沿 M7/M11 的 _NoNetworkLLM pattern + PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1 显式 opt-in。
+
+主要写 regenerate.py、dev_server.py（扩）、cli.py（扩）、stages/refining.py（**只加** keyword arg，不改既有行为）、tests/regenerate/、MIGRATIONS.md（登记 endpoint）。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / citations / validators / renderers / agents / llm / 其他 stages 的内部实现。完成后跑 uv run pytest -q 和 uv run ruff check src tests，并跑一次 endpoint smoke（可以用 fastapi TestClient）。
+```
+
 ## 8. 合并顺序与 post-merge 回归
 
 ### 8.1 推荐合并顺序
@@ -767,16 +828,16 @@ M11 Refinement Loop：
 2. M12a ZIP Export 硬化          ← 已合（commit 2d592300）
 ```
 
-**Wave 4B（当前）**：
+**Wave 4B（已完成）**：
 
 ```text
-1. M11 Refinement Loop          ← 单条 track；用 M10a + M10b 的 guard 当 score 输入
+1. M11 Refinement Loop          ← 已合（commit 80b03acd）
 ```
 
-**Wave 4C（M11 合后）**：
+**Wave 4C（当前，v1 主线收官）**：
 
 ```text
-M12b Section Regenerate API   ← 单条 track；POST /papers/{id}/sections/{name}/regenerate，重跑 guards + refinement
+1. M12b Section Regenerate API   ← 单条 track；POST /papers/{id}/sections/{name}/regenerate，重跑 M9 + 6 条 guard + M11（snapshot namespaced 到 drafts/regenerate_runs/{run_id}/）
 ```
 
 **Optional / 可滑出 v1**：
