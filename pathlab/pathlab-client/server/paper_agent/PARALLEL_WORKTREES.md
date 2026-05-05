@@ -1,7 +1,7 @@
 # Paper Agent 并行 Worktree 执行计划
 
-> 当前基线 commit：`7cbb2f61 Merge paper/m9-sections into paper-agent-phase01`  
-> 适用范围：Wave 1 + Wave 2A + Wave 2B + Wave 3 已落地后，进入 Wave 4A = M10b + M12a 并行。  
+> 当前基线 commit：`2c286e44 docs(paper): record refining stage commit hash in MIGRATIONS`  
+> 适用范围：Wave 1 + 2A + 2B + 3 + 4A 已落地后，进入 Wave 4B = M11 Refinement Loop（单条 track）。  
 > 注意：`docs/` 目录在当前 repo 里是 ignored，worktree 里不一定能看到 docs；所以其他 agent **优先读本文件**。
 
 ## 0. 先读这个结论
@@ -13,31 +13,28 @@
 - Wave 2A：M5 locked blocks renderer + M7 outline agent (含 LLM provider 模块)
 - Wave 2B：M6b plotting agent + M8b literature review agent
 - Wave 3：M9 section writer + citation renderer
+- Wave 4A：M10b LLM-output guards + M12a ZIP export 硬化（含 review polish）
+- Wave 4A 后：refining stage 已经接进 pipeline dispatch（contract 占位），但 stage body 是 no-op，等 M11 填实
 
-**Wave 4A 现在开两条并行 track**（互不依赖）：
+**Wave 4B 现在开一条 track**（不并行）：
 
-- **M10b LLM-output guards** —— `validators/{claim,consistency}_guard.py`，从 evidence_lock 派生 `has_external_validation` / `has_baseline` / `has_statistical_test` flag，比对正文里 "external validation" / "SOTA" / "significantly" 等关键词；纯确定性。
-- **M12a ZIP export 硬化** —— 扩 `renderers/zip_exporter.py`，做 dependency-closed bundle + 解压后 dry-run latexmk 验证；双模板 `final/{template}/main.pdf` 编译通过。**不依赖 M11 refinement loop**，纯 packaging。
+- **M11 Refinement Loop** —— `agents/content_refinement_agent.py` + `stages/refining.py` 实体。AgentReview 风格 critic prompt（PathLab tuned 的 medical_accuracy / statistical_rigor / clinical_relevance / technical_novelty / presentation rubric），单调收敛接受准则（score 严格上升 OR 平局且子项无负退化），物理 snapshot 到 `drafts/snapshots/iter_{N}/`，物理 revert 回 `drafts/sections/`，最多 3 轮。Critic 调用 LLM，但 score 来自 M10a + M10b 的 GuardReport 加 critic 的 rubric 分数。
 
-两条 track 写入零交集（validators/ vs renderers/exporting）；M11 在 M10b 合后启动；M12b regenerate API 在 M11 合后启动。
+合完 M11 后下一步是 Wave 4C = M12b Regenerate API（依赖 M11 的 refinement loop entry）。
 
 ## 1. 当前 worktree 现状
 
-### 1.1 Wave 4A active
+### 1.1 Wave 4B active
 
 | Track | Branch | Worktree | Agent 主要负责 |
 |---|---|---|---|
-| M10b Claim/Consistency Guards | `paper/m10b-guards` | `/Users/wangyihui/code/PathLab-worktrees/m10b-guards` | claim_guard + consistency_guard，与 evidence_lock 派生 flag 比对；接进 stages/validating.py |
-| M12a ZIP Export 硬化 | `paper/m12a-export` | `/Users/wangyihui/code/PathLab-worktrees/m12a-export` | zip_exporter dependency-closed 检查 + bundle 解压 dry-run latexmk + 双模板 main.pdf 编译；扩 stages/exporting.py |
+| M11 Refinement Loop | `paper/m11-refinement` | `/Users/wangyihui/code/PathLab-worktrees/m11-refinement` | content_refinement_agent + stages/refining.py 真实 loop；critic LLM rubric + 单调收敛接受准则 + 物理 snapshot/revert + 最多 3 轮 |
 
 起 worktree 命令（如果还没起）：
 
 ```bash
-git -C /Users/wangyihui/code/PathLab worktree add -b paper/m10b-guards \
-  /Users/wangyihui/code/PathLab-worktrees/m10b-guards paper-agent-phase01
-
-git -C /Users/wangyihui/code/PathLab worktree add -b paper/m12a-export \
-  /Users/wangyihui/code/PathLab-worktrees/m12a-export paper-agent-phase01
+git -C /Users/wangyihui/code/PathLab worktree add -b paper/m11-refinement \
+  /Users/wangyihui/code/PathLab-worktrees/m11-refinement paper-agent-phase01
 ```
 
 ### 1.2 历史 worktree（已合并，已清）
@@ -54,6 +51,8 @@ git -C /Users/wangyihui/code/PathLab worktree add -b paper/m12a-export \
 | M8b Literature Review | `paper/m8b-literature` | `db40f79c` |
 | M6b Plotting | `paper/m6b-plotting` | `6f7bc75f` |
 | M9 Section Writer | `paper/m9-sections` | `7cbb2f61` |
+| M10b Claim/Consistency Guards | `paper/m10b-guards` | `31436967` |
+| M12a ZIP Export 硬化 | `paper/m12a-export` | `2d592300` |
 
 ### 1.3 确认
 
@@ -64,7 +63,7 @@ git -C /Users/wangyihui/code/PathLab worktree list
 所有活跃 worktree 都应该基于同一条主线 commit；当前为：
 
 ```text
-7cbb2f61 Merge paper/m9-sections into paper-agent-phase01
+2c286e44 docs(paper): record refining stage commit hash in MIGRATIONS
 ```
 
 ## 2. 给其他 agent 的开工流程
@@ -111,9 +110,10 @@ src/pathlab_paper_agent/stages/
   plotting.py        # M6 plotting entry point          ← 已落地（M6a generators + M6b orchestration）
   literature.py      # M8 literature/citation           ← 已落地（M8a deterministic + M8b LLM 编排）
   sections.py        # M9 section writer                ← 已落地（M9）
-  validating.py      # M10 guards                       ← 已落地（M10a）；M10b 接入中
+  validating.py      # M10 guards                       ← 已落地（M10a + M10b）
+  refining.py        # M11 refinement loop              ← 已接 dispatch；scaffold no-op，M11 接手中
   rendering.py       # M4/M11 renderer entry point      ← 已落地（M4 + M5 per-template locked_blocks）
-  exporting.py       # M11 bundle export entry point    ← 已落地（M4 ZIP export）；M12a 硬化中
+  exporting.py       # M11 bundle export entry point    ← 已落地（M4 ZIP export + M12a 硬化）
 ```
 
 并行开发原则：
@@ -469,6 +469,38 @@ pathlab/pathlab-client/server/paper_agent/tests/exporting/                      
 
 不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract）；`collector/` / `evidence/` / `citations/` / `validators/`；其他 `stages/*.py`；`agents/` / `llm/`；M4 的 `renderers/template_renderer.py` / `renderers/latex_compiler.py` 内部实现（按现有 API 调）；M5 的 `renderers/locked_block_renderer.py`。**M11 territory（refinement_loop）和 M12b territory（regenerate API）严格不动**，留给后续 wave。
 
+### M11 Refinement Loop (Wave 4B)
+
+工作目录：
+
+```bash
+cd /Users/wangyihui/code/PathLab-worktrees/m11-refinement
+```
+
+主要写：
+
+```text
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/agents/content_refinement_agent.py
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/refining.py        ← 替掉 no-op scaffold
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/prompts/refinement_critic_v1.txt
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/prompts/refinement_revise_v1.txt
+pathlab/pathlab-client/server/paper_agent/tests/refinement/                                  ← 新建测试目录
+```
+
+目标：
+
+- **Critic LLM 调用** 用 PaperOrchestra App. F.5 风格的 rubric，PathLab tuned：`medical_accuracy` / `statistical_rigor` / `clinical_relevance` / `technical_novelty` / `presentation`，每项 0-5 整数 + 一句话理由 + overall 总分。
+- **Revise LLM 调用** 给出当前 sections + critic 反馈，让 LLM 重写需要修的章节。**保留 M9 的占位符约束**：metric 必须 `{{m:...}}`，引用必须 `[CITE:paperId]`。**保留 M9 A2 cite 契约**。重写后跑 M9 的 `citation_renderer` + M10a 的 `metric_renderer` 收尾。
+- **物理 snapshot**：每次接受重写，先把 `drafts/sections/*.tex` copy 到 `drafts/snapshots/iter_{N}/sections/` 再 overwrite。`paths.snapshots_dir` 已经在 `PaperRunPaths` 里。
+- **物理 revert**：score 退步或 critic 维度有负向退化时，**不接受**新版 → 把 `iter_{N-1}` 的内容 copy 回 `drafts/sections/` （即 revert）。manifest 标 `refining/iter_{N}/status: rejected`。
+- **单调收敛接受准则**（设计文档 §10 M11）：score 严格上升 → 接受；score 平局 → 每个子项不能负退化才接受；score 下降 → 拒绝。
+- **最多 3 轮**。第 3 轮无论结果都停。
+- **score 来源是 hybrid**：M10a + M10b 的 GuardReport（每条 fail → 总分扣分；critical 严重的扣得多）+ critic LLM 的 5 个 rubric 分。critic 不能凭空给高分覆盖 guard fail —— 任何 guard fail 直接 force reject 该轮重写。
+- **最终产出**：`drafts/sections/*.tex`（最优一轮的内容）+ `drafts/snapshots/iter_*/`（每轮快照）+ `validation/refinement_log.json`（每轮 score / 接受/拒绝原因）。
+- LLM 全部 mock，CI 不跑真实调用，沿 M7 的 `_NoNetworkLLM` pattern + `PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1` 显式 opt-in。
+
+不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract，**已在 main 协调好 refining 的 dispatch 占位**，不要再改）；`collector/` / `evidence/` / `citations/` / `validators/`；其他 `stages/*.py`；`renderers/`（按 M5 / M9 / M10a 现有 API 调）；`agents/` 其他 agent（不要改 outline / plotting / literature / section_writing）；`llm/`。
+
 ## 5. 所有 agent 都必须保留的 contract
 
 这些是 **contract 文件**：worktree 里**不要直接改**，必须先在 main 协调，
@@ -679,6 +711,20 @@ M12a ZIP Export 硬化：
 主要写 renderers/zip_exporter.py、renderers/bundle_validator.py、stages/exporting.py、tests/exporting/。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / citations / validators / agents / llm / 其他 stages；不要改 M4 的 renderers/template_renderer.py / renderers/latex_compiler.py 内部实现（按现有 API 调）；不要改 M5 的 renderers/locked_block_renderer.py。**M11 territory（agents/refinement_agent.py 等）和 M12b territory（POST regenerate 路由）严格不动**。完成后跑 uv run pytest -q 和 uv run ruff check src tests。不接 LLM —— 纯 packaging + 编译验证。
 ```
 
+---
+
+**Wave 4B**：
+
+M11 Refinement Loop：
+
+```text
+你在 /Users/wangyihui/code/PathLab-worktrees/m11-refinement 工作。只负责 M11 Refinement Loop。这是 v1 主线倒数第二条 LLM track —— critic-driven 多轮重写循环。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M11 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md（特别是 2026-05-05 refining stage scaffold 那条 —— pipeline dispatch 已经接好，你只填 stage body），(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M11 段 + §10 + §11 设计误区里"refinement loop 不能无限循环改到好"那条，(4) PaperOrchestra App. F.5。
+
+任务：(1) 起 src/pathlab_paper_agent/agents/content_refinement_agent.py。一轮里两次 LLM 调用：critic（5 个 PathLab tuned rubric 维度，每项 0-5 整数 + 一句话理由 + overall）→ revise（拿 critic 反馈重写需要修的章节）。revise 必须保留 M9 的占位符约束（{{m:...}} + [CITE:paperId]）和 A2 cite 契约（不能删 required_cites，不能加 selected_refs 之外）。(2) 替掉 stages/refining.py 的 no-op scaffold，跑 ≤ 3 轮 critic→revise→guards→accept/revert 循环。(3) **物理 snapshot**：每次接受重写前先 copy drafts/sections/* 到 drafts/snapshots/iter_{N}/sections/。(4) **物理 revert**：拒绝时把上一轮 snapshot copy 回 drafts/sections/。(5) **单调收敛**：score 严格上升 → 接受；平局 → 每个子项不能负退化才接受；下降 → 拒绝。(6) **score 是 hybrid**：M10a + M10b 的 GuardReport（fail 直接 force reject 该轮）+ critic 的 5 维 rubric 总分。(7) revise 后跑 M9 的 citation_renderer + M10a 的 metric_renderer 收尾。(8) 写 validation/refinement_log.json 记录每轮 score / 接受/拒绝原因 + iter snapshot 清单。
+
+主要写 agents/content_refinement_agent.py、stages/refining.py、prompts/refinement_critic_v1.txt、prompts/refinement_revise_v1.txt、tests/refinement/。不要改 schemas.py / pipeline.py / conftest.py（contract — main 已经协调好 refining dispatch 占位）；不要改 collector / evidence / citations / validators / renderers 的内部实现（按现有 API 调）；不要改 agents/ 其他 agent / llm/ / 其他 stages。tests/refinement/ 全部 mock LLM，沿用 M7 的 _NoNetworkLLM pattern + PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1 显式 opt-in；至少要有：score 上升接受、score 持平且无负退化接受、score 下降拒绝物理 revert、guard fail force reject 这四条 test。完成后跑 uv run pytest -q 和 uv run ruff check src tests。
+```
+
 ## 8. 合并顺序与 post-merge 回归
 
 ### 8.1 推荐合并顺序
@@ -714,22 +760,20 @@ M12a ZIP Export 硬化：
 1. M9 Section Writer         ← 已合（commit 7cbb2f61）
 ```
 
-**Wave 4A（当前）**：
+**Wave 4A（已完成）**：
 
 ```text
-1. M10b Claim/Consistency Guards ← 关键词 + evidence_lock 派生 flag 比对，纯确定性
-2. M12a ZIP Export 硬化          ← dependency-closed bundle + dry-run latexmk + 双模板 main.pdf
+1. M10b Claim/Consistency Guards ← 已合（commit 31436967）
+2. M12a ZIP Export 硬化          ← 已合（commit 2d592300）
 ```
 
-两条 track 写入零交集（validators/ vs renderers/exporting）；输入零交集；可同时跑。**M10b 略优先**——它阻塞 M11 和 M12b，先合解锁的下游更多。M12a 不阻塞任何下游（M12b 才阻塞），但跑得慢一些（docker latexmk 集成）。
-
-**Wave 4B（M10b 合后）**：
+**Wave 4B（当前）**：
 
 ```text
-M11 Refinement Loop          ← 单条 track；用 M10a + M10b 的 guard 当 score 输入
+1. M11 Refinement Loop          ← 单条 track；用 M10a + M10b 的 guard 当 score 输入
 ```
 
-**Wave 4C（M11 + M12a 合后）**：
+**Wave 4C（M11 合后）**：
 
 ```text
 M12b Section Regenerate API   ← 单条 track；POST /papers/{id}/sections/{name}/regenerate，重跑 guards + refinement
