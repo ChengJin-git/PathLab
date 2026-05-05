@@ -214,7 +214,6 @@ async def test_literature_stage_uses_manual_candidates_without_network(tmp_path)
     required = json.loads((paths.citations_dir / "required_cites.json").read_text())
     coverage = json.loads((paths.citations_dir / "coverage_report.json").read_text())
     intro_text = (paths.intro_rw_draft_dir / "introduction.tex").read_text()
-    section_intro_text = (paths.sections_dir / "introduction.tex").read_text()
 
     assert manifest.current_stage.value == "literature_review"
     assert len(selected["items"]) == 2
@@ -224,10 +223,10 @@ async def test_literature_stage_uses_manual_candidates_without_network(tmp_path)
     assert coverage["orphan_cites"] == []
     assert coverage["coverage"] == 1.0
     assert "\\cite{" in intro_text
-    assert "\\cite{" in section_intro_text
-    assert "\\section{Introduction}" in section_intro_text
     assert "@article" in paths.refs_bib.read_text()
     assert manifest.artifact_index["citations/selected_refs.json"]["visibility"] == "private_backend_only"
 
     run_stage(paper_id, "section_writing", uploads_dir=tmp_path)
-    assert "\\cite{" in (paths.sections_dir / "introduction.tex").read_text()
+    section_intro_text = (paths.sections_dir / "introduction.tex").read_text()
+    assert "\\cite{" in section_intro_text
+    assert "\\section{Introduction}" in section_intro_text
