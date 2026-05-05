@@ -93,11 +93,13 @@ def run(
     agent: ContentRefinementAgent | None = None,
     max_iterations: int = _MAX_ITERATIONS,
     guard_runner: GuardRunner | None = None,
+    snapshots_subdir: Path | None = None,
 ) -> None:
     """Run at most three critic -> revise -> guards refinement iterations."""
     refinement_agent = agent or ContentRefinementAgent()
     iterations = max(0, min(max_iterations, _MAX_ITERATIONS))
     run_guards = guard_runner or _run_guard_reports
+    snapshot_root = snapshots_subdir or paths.snapshots_dir
 
     initial_reports = run_guards(paths)
     _write_guard_reports(paths, manifest, initial_reports)
@@ -127,7 +129,7 @@ def run(
             validation_reports=[report.to_dict() for report in initial_reports],
             iteration=iteration,
         )
-        snapshot_dir = _snapshot_sections(paths, iteration)
+        snapshot_dir = _snapshot_sections(paths, iteration, snapshot_root)
         iteration_log: dict[str, Any] = {
             "iteration": iteration,
             "snapshot": _rel_to_run(paths, snapshot_dir),
@@ -280,8 +282,8 @@ def _warnings_markdown(reports: Sequence[GuardReport]) -> str:
     return "\n".join(lines)
 
 
-def _snapshot_sections(paths: PaperRunPaths, iteration: int) -> Path:
-    snapshot_dir = paths.snapshots_dir / f"iter_{iteration}" / "sections"
+def _snapshot_sections(paths: PaperRunPaths, iteration: int, snapshot_root: Path) -> Path:
+    snapshot_dir = snapshot_root / f"iter_{iteration}" / "sections"
     if snapshot_dir.exists():
         shutil.rmtree(snapshot_dir)
     snapshot_dir.mkdir(parents=True, exist_ok=True)

@@ -9,6 +9,7 @@ from typing import Optional
 
 from .bootstrap import configure_uploads_dir
 from .pipeline import complete_run, create_dev_run, run_stage
+from .regenerate import latest_regenerate_log_summary, regenerate_section
 
 
 def _add_common_runtime_args(parser: argparse.ArgumentParser) -> None:
@@ -37,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=6200)
     _add_common_runtime_args(serve)
+
+    regenerate = sub.add_parser("regenerate", help="Regenerate one paper section without rewriting other sections.")
+    regenerate.add_argument("--paper-id", required=True)
+    regenerate.add_argument("--section", required=True)
+    _add_common_runtime_args(regenerate)
 
     return parser
 
@@ -69,6 +75,16 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.command == "run":
         manifest = complete_run(args.paper_id, uploads_dir=uploads_dir, config_path=args.config)
         print(f"{manifest.paper_id}: {manifest.current_stage.value} ({manifest.status.value})")
+        return 0
+
+    if args.command == "regenerate":
+        manifest = regenerate_section(args.paper_id, args.section, uploads_dir=uploads_dir)
+        summary = latest_regenerate_log_summary(args.paper_id, uploads_dir=uploads_dir)
+        regenerated = ",".join(summary.get("regenerated_sections", [])) or "none"
+        print(
+            f"{manifest.paper_id}: regenerate {args.section} -> {regenerated} "
+            f"({manifest.current_stage.value}/{manifest.status.value})"
+        )
         return 0
 
     if args.command == "serve":
