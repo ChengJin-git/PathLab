@@ -37,6 +37,20 @@
 
 <!-- 按时间倒序加新条目；最近的在最上 -->
 
+## 2026-05-05 M12b section regenerate endpoint
+
+- **改了什么**：dev service 新增
+  `POST /papers/{paper_id}/sections/{section_name}/regenerate`；CLI 新增
+  `pathlab-paper-agent regenerate --paper-id X --section Y` smoke 入口。新增
+  private artifact `drafts/regenerate_runs/{run_id}/log.json` 记录单 section
+  regenerate 结果；该 artifact 默认 `private_backend_only` 且不可下载。
+- **为什么**：M12b 需要用户只重生一个 section，锁住其它
+  `drafts/sections/*.tex`，并复用 M9/M10/M11 flow 进行 guard + refinement。
+- **影响哪些 track**：M12b；前端/Dev service 客户端可选择接入新 endpoint。
+- **action 要求**：客户端把 422 视为未知 section，把 400 视为重生/guard/refinement
+  拒绝；不要把 `drafts/regenerate_runs/*` 加入公开下载 allowlist。
+- **commit**: `pending`
+
 ## 2026-05-05 refining stage scaffold + dispatch wiring
 
 - **改了什么**：新建 `src/pathlab_paper_agent/stages/refining.py`（no-op 占位），

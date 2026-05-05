@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 
 from .bootstrap import configure_uploads_dir
 from .pipeline import create_dev_run, load_manifest, manifest_artifacts, run_stage, summarize_manifest
+from .regenerate import MissingSectionDraftError, UnknownSectionError, latest_regenerate_log_summary, regenerate_section
 from .schemas import CreatePaperRequest, PaperRunCreateResponse, PaperRunDetail
 from .storage import PaperRunPaths, is_path_allowed_for_download, safe_resolve, validate_paper_id
 
@@ -69,6 +70,29 @@ def create_app(*, uploads_dir: Optional[str | Path] = None) -> FastAPI:
             "paper_id": paper_id,
             "status": manifest.status.value,
             "current_stage": manifest.current_stage.value,
+        }
+
+    @app.post("/papers/{paper_id}/sections/{section_name}/regenerate")
+    async def regenerate_paper_section(paper_id: str, section_name: str) -> dict:
+        try:
+            manifest = regenerate_section(paper_id, section_name, uploads_dir=uploads_dir)
+            summary = latest_regenerate_log_summary(paper_id, uploads_dir=uploads_dir)
+        except MissingSectionDraftError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+        except UnknownSectionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {
+            "paper_id": paper_id,
+            "status": manifest.status.value,
+            "current_stage": manifest.current_stage.value,
+            "regenerated_sections": summary.get("regenerated_sections", []),
+            "refinement_log_summary": summary.get("refinement_log_summary", {}),
         }
 
     @app.get("/papers/{paper_id}/files")
