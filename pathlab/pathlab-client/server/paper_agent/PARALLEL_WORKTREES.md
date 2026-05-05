@@ -1,7 +1,7 @@
 # Paper Agent 并行 Worktree 执行计划
 
-> 当前基线 commit：`6f7bc75f Merge paper/m6b-plotting into paper-agent-phase01`  
-> 适用范围：Phase 01 scaffold + Wave 1 + Wave 2A + Wave 2B 已落地后，进入 Wave 3 = M9 Section Writer。  
+> 当前基线 commit：`7cbb2f61 Merge paper/m9-sections into paper-agent-phase01`  
+> 适用范围：Wave 1 + Wave 2A + Wave 2B + Wave 3 已落地后，进入 Wave 4A = M10b + M12a 并行。  
 > 注意：`docs/` 目录在当前 repo 里是 ignored，worktree 里不一定能看到 docs；所以其他 agent **优先读本文件**。
 
 ## 0. 先读这个结论
@@ -12,24 +12,32 @@
 - 跟在 Wave 1 后补做：M3 PHI scrub + evidence bundle
 - Wave 2A：M5 locked blocks renderer + M7 outline agent (含 LLM provider 模块)
 - Wave 2B：M6b plotting agent + M8b literature review agent
+- Wave 3：M9 section writer + citation renderer
 
-**Wave 3 = M9 Section Writer**（不并行，单条 track）：
+**Wave 4A 现在开两条并行 track**（互不依赖）：
 
-设计上 M9 是一次多模态 LLM 调用，把 outline + figures + refs.bib + intro_rw_draft + locked_blocks 编排成完整 `drafts/sections/*.tex`。它依赖 Wave 2A/2B 全部交付物，没法和其它 milestone 并行。M9 合完后才能开 M10b（claim/consistency guards）和 M11（refinement loop）。
+- **M10b LLM-output guards** —— `validators/{claim,consistency}_guard.py`，从 evidence_lock 派生 `has_external_validation` / `has_baseline` / `has_statistical_test` flag，比对正文里 "external validation" / "SOTA" / "significantly" 等关键词；纯确定性。
+- **M12a ZIP export 硬化** —— 扩 `renderers/zip_exporter.py`，做 dependency-closed bundle + 解压后 dry-run latexmk 验证；双模板 `final/{template}/main.pdf` 编译通过。**不依赖 M11 refinement loop**，纯 packaging。
+
+两条 track 写入零交集（validators/ vs renderers/exporting）；M11 在 M10b 合后启动；M12b regenerate API 在 M11 合后启动。
 
 ## 1. 当前 worktree 现状
 
-### 1.1 Wave 3 active
+### 1.1 Wave 4A active
 
 | Track | Branch | Worktree | Agent 主要负责 |
 |---|---|---|---|
-| M9 Section Writer | `paper/m9-sections` | `/Users/wangyihui/code/PathLab-worktrees/m9-sections` | 一次多模态 LLM 调用产出 `drafts/sections/*.tex`；引入 `[CITE:paperId]` + `{{m:...}}` 占位符；新建 `renderers/citation_renderer.py`；接入已有 metric_renderer 流水线；A2 引用契约（不能删 required_cites，不能加 selected_refs 之外的引用） |
+| M10b Claim/Consistency Guards | `paper/m10b-guards` | `/Users/wangyihui/code/PathLab-worktrees/m10b-guards` | claim_guard + consistency_guard，与 evidence_lock 派生 flag 比对；接进 stages/validating.py |
+| M12a ZIP Export 硬化 | `paper/m12a-export` | `/Users/wangyihui/code/PathLab-worktrees/m12a-export` | zip_exporter dependency-closed 检查 + bundle 解压 dry-run latexmk + 双模板 main.pdf 编译；扩 stages/exporting.py |
 
 起 worktree 命令（如果还没起）：
 
 ```bash
-git -C /Users/wangyihui/code/PathLab worktree add -b paper/m9-sections \
-  /Users/wangyihui/code/PathLab-worktrees/m9-sections paper-agent-phase01
+git -C /Users/wangyihui/code/PathLab worktree add -b paper/m10b-guards \
+  /Users/wangyihui/code/PathLab-worktrees/m10b-guards paper-agent-phase01
+
+git -C /Users/wangyihui/code/PathLab worktree add -b paper/m12a-export \
+  /Users/wangyihui/code/PathLab-worktrees/m12a-export paper-agent-phase01
 ```
 
 ### 1.2 历史 worktree（已合并，已清）
@@ -45,6 +53,7 @@ git -C /Users/wangyihui/code/PathLab worktree add -b paper/m9-sections \
 | M7 Outline Agent | `paper/m7-outline` | `1a9593b2` |
 | M8b Literature Review | `paper/m8b-literature` | `db40f79c` |
 | M6b Plotting | `paper/m6b-plotting` | `6f7bc75f` |
+| M9 Section Writer | `paper/m9-sections` | `7cbb2f61` |
 
 ### 1.3 确认
 
@@ -55,7 +64,7 @@ git -C /Users/wangyihui/code/PathLab worktree list
 所有活跃 worktree 都应该基于同一条主线 commit；当前为：
 
 ```text
-6f7bc75f Merge paper/m6b-plotting into paper-agent-phase01
+7cbb2f61 Merge paper/m9-sections into paper-agent-phase01
 ```
 
 ## 2. 给其他 agent 的开工流程
@@ -101,10 +110,10 @@ src/pathlab_paper_agent/stages/
   outlining.py       # M7 outline agent entry point     ← 已落地（M7）
   plotting.py        # M6 plotting entry point          ← 已落地（M6a generators + M6b orchestration）
   literature.py      # M8 literature/citation           ← 已落地（M8a deterministic + M8b LLM 编排）
-  sections.py        # M9 section writer                ← scaffold + intro_rw_draft hook；M9 接手中
-  validating.py      # M10 guards                       ← 已落地（M10a deterministic guards）
+  sections.py        # M9 section writer                ← 已落地（M9）
+  validating.py      # M10 guards                       ← 已落地（M10a）；M10b 接入中
   rendering.py       # M4/M11 renderer entry point      ← 已落地（M4 + M5 per-template locked_blocks）
-  exporting.py       # M11 bundle export entry point    ← 已落地（M4 ZIP export）
+  exporting.py       # M11 bundle export entry point    ← 已落地（M4 ZIP export）；M12a 硬化中
 ```
 
 并行开发原则：
@@ -407,6 +416,59 @@ pathlab/pathlab-client/server/paper_agent/tests/sections/
 
 不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract）；`collector/` / `evidence/` / `citations/` 内部实现；`agents/{outline_agent,plotting_agent,literature_review_agent}.py`；`llm/`；其他 `stages/*.py`；`renderers/{template_renderer,latex_compiler,zip_exporter,locked_block_renderer}.py`（只许新建 `citation_renderer.py`）；`validators/`（M10a 已落地，guard 跑在 stages/validating.py）。**`stages/sections.py` 现有的 intro_rw_draft 优先逻辑**保留语义（intro/related_work 优先读 M8b 的草稿），M9 只是把它整合进新的 agent flow。
 
+### M10b Claim/Consistency Guards (Wave 4A)
+
+工作目录：
+
+```bash
+cd /Users/wangyihui/code/PathLab-worktrees/m10b-guards
+```
+
+主要写：
+
+```text
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/validators/claim_guard.py
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/validators/consistency_guard.py
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/validating.py     ← 接入新 guard 的 dispatch
+pathlab/pathlab-client/server/paper_agent/tests/guards/                                    ← 与 M10a 共用目录，新文件 test_m10b_*.py
+```
+
+目标：
+
+- **claim_guard**：扫 `drafts/sections/*.tex`，检测 keyword 集合（`external validation` / `independent cohort` / `generalization to`；`outperforms` / `state-of-the-art` / `SOTA` / `significantly` / `statistically significant`；`real world deployment` 等）。从 `evidence_lock.private.json` **派生** flag —— `has_external_validation = bool(evidence_lock["external_validation"])`、`has_baseline = any(model.role == "baseline" for model in source_tasks)`、`has_statistical_test = any("ci_" in metric_key or "p_value" in metric_key for metric_key in evidence_lock["metrics"])`。当正文有 keyword 但 evidence 不支持时 hard fail；GuardReport 报 fail + 列出具体 section + keyword + 缺什么 evidence。
+- **consistency_guard**：检测段落串扰 —— test section 段落里出现写明 "validation" / "val" 上下文的数字、external section 段落里出现写明 internal cohort 的数字。实现可以走 metric_renderer 反向：先把 evidence_lock 的 metric 按 task / split 索引；再扫每个 section 的 `\metricXxx` macro 引用，看是否落在该 section 应该引用的 task/split 子集里。
+- 输出沿 M10a 的格式：每条 guard 写 `validation/<guard>.json` + 汇总 `validation/warnings.md`。
+- 不接 LLM —— 这两个 guard 是确定性的关键词检测 + evidence_lock cross-reference。
+
+不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract）；`collector/` / `evidence/` / `citations/` / `renderers/` / `agents/` / `llm/`；其他 `stages/*.py`；M10a 已交的 `validators/{metric,identifier,latex,citation,common}_guard.py`、`validators/common.py`（沿用 `GuardReport` / `tex_files_under` / `rel_to_run` 等 helper）。
+
+### M12a ZIP Export 硬化 (Wave 4A)
+
+工作目录：
+
+```bash
+cd /Users/wangyihui/code/PathLab-worktrees/m12a-export
+```
+
+主要写：
+
+```text
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/renderers/zip_exporter.py    ← 扩，不重写
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/renderers/bundle_validator.py ← 新建
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/exporting.py          ← 扩
+pathlab/pathlab-client/server/paper_agent/tests/exporting/                                     ← 新建（M12a 自己的测试目录）
+```
+
+目标：
+
+- **dependency-closed bundle**：每个 template 各打一个 ZIP，含 `main.tex`、`refs.bib`（M8b）、所有 `.cls` / `.bst`（M4 模板下）、`figures/*.{pdf,png}`（M6b ready 的）、`locked_blocks/*.tex`（M3+M5）、`tables/*.tex`、`README.md`。**不能含**任何 `evidence_lock.private.json` / `raw_collected/` / `intro_rw_draft/`（保 §5.3 数据契约）。
+- **post-extract dry-run latexmk**：bundle 打完后解压到临时目录 → 进 `pathlab/pathlab-client/docker/paper-latex/` container（M4 已建）跑 `latexmk -dvi=0 -ps=0 -pdf -interaction=nonstopmode`。返回码非零 → bundle 标 `downloadable=False`，错误日志摘要写进 `validation/warnings.md`。
+- **双模板 main.pdf 编译**：MICCAI 和 Nature SR 的 `final/{template}/main.pdf` 都得编译成功。M4 已有 `latex_compiler.py`，调它即可。
+- 测试用 fixture：`tests/paper_generation/fixtures/wsi_classification_minimal/` 喂完一遍 evidence/locked_blocks/figures/sections，跑 export stage，断言 ZIP 内容树 + dry-run 通过 + main.pdf 出文件。
+- 没有 LLM —— 纯 packaging + 编译验证。
+
+不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract）；`collector/` / `evidence/` / `citations/` / `validators/`；其他 `stages/*.py`；`agents/` / `llm/`；M4 的 `renderers/template_renderer.py` / `renderers/latex_compiler.py` 内部实现（按现有 API 调）；M5 的 `renderers/locked_block_renderer.py`。**M11 territory（refinement_loop）和 M12b territory（regenerate API）严格不动**，留给后续 wave。
+
 ## 5. 所有 agent 都必须保留的 contract
 
 这些是 **contract 文件**：worktree 里**不要直接改**，必须先在 main 协调，
@@ -593,6 +655,30 @@ M9 Section Writing Agent：
 主要写 agents/section_writing_agent.py、stages/sections.py、renderers/citation_renderer.py、prompts/section_writing_v1.txt、tests/sections/。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / citations / validators / 其他 stages / agents 里其他 agent / llm/ / renderers 里其他 renderer。tests/sections/ 全部 mock LLM，CI 不跑真实调用，沿用 M7 的 _NoNetworkLLM pattern + PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1 显式 opt-in。完成后跑 uv run pytest -q 和 uv run ruff check src tests。
 ```
 
+---
+
+**Wave 4A**：
+
+M10b Claim/Consistency Guards：
+
+```text
+你在 /Users/wangyihui/code/PathLab-worktrees/m10b-guards 工作。只负责 M10b LLM-output guards。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M10b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M10b 段、§11 设计误区列表（claim guard 那条）。
+
+任务：(1) 起 src/pathlab_paper_agent/validators/claim_guard.py。扫 drafts/sections/*.tex，检测 keyword（external validation / independent cohort / generalization to / outperforms / state-of-the-art / SOTA / significantly / statistically significant / real world deployment 等）。从 evidence_lock.private.json **派生** has_external_validation / has_baseline / has_statistical_test 三个 flag（不要让 M3 加新字段，从已有结构派生：has_external_validation = bool(evidence_lock["external_validation"])，has_baseline = 任一 source_task role=="baseline"，has_statistical_test = metrics 含 ci_/p_value）。当正文有 keyword 但 evidence 不支持时 hard fail。(2) 起 src/pathlab_paper_agent/validators/consistency_guard.py，检测段落串扰（test 段出现 val/external 数字、external 段出现 internal 数字）。可走 metric_renderer 反向：把 evidence_lock 的 metric 按 task/split 索引，扫每个 section 的 \metricXxx macro，看是否落在该 section 应引用的 task/split 子集里。(3) 接进 stages/validating.py，在 M10a 4 个 guard 之后跑 claim 和 consistency。每条 guard 写 validation/<guard>.json + 汇总 validation/warnings.md（沿 M10a 现有格式）。
+
+主要写 validators/claim_guard.py、validators/consistency_guard.py、stages/validating.py、tests/guards/test_m10b_*.py。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / citations / renderers / agents / llm / 其他 stages；不要改 M10a 已交的 validators/{metric,identifier,latex,citation,common}_guard.py 内部实现（沿用 GuardReport / tex_files_under / rel_to_run 等 helper）。完成后跑 uv run pytest -q 和 uv run ruff check src tests。不接 LLM —— 这两个 guard 是确定性的关键词检测 + evidence_lock cross-reference。
+```
+
+M12a ZIP Export 硬化：
+
+```text
+你在 /Users/wangyihui/code/PathLab-worktrees/m12a-export 工作。只负责 M12a ZIP export 硬化（dependency-closed bundle + dry-run latexmk + 双模板 main.pdf 编译）。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M12a 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M12 段、§3.7 文件 allowlist、§5.3 私有/公开数据契约。**注意 M12 整体被拆成 M12a 和 M12b**：你只做 M12a（packaging + 编译验证），不要碰 regenerate API（那是 M12b，要等 M11 refinement_loop）。
+
+任务：(1) 扩 src/pathlab_paper_agent/renderers/zip_exporter.py，每个模板各打一个 dependency-closed ZIP，含 main.tex / refs.bib / 全部 .cls .bst（M4 模板下）/ figures/*.{pdf,png}（M6b ready 的）/ locked_blocks/*.tex（M3+M5）/ tables/*.tex / README.md。**禁止**含 evidence_lock.private.json / raw_collected/ / intro_rw_draft/（保数据契约）。(2) 新建 src/pathlab_paper_agent/renderers/bundle_validator.py：bundle 打完后解压到临时目录，进 pathlab/pathlab-client/docker/paper-latex/ container（M4 已建）跑 latexmk -dvi=0 -ps=0 -pdf -interaction=nonstopmode。返回码非零 → bundle 标 downloadable=False，错误日志摘要写进 validation/warnings.md。(3) 双模板 final/{template}/main.pdf 编译成功（调 M4 已有的 latex_compiler.py）。(4) 扩 stages/exporting.py，在 M4 已有 export 流程后挂上 dependency-closure 检查 + dry-run validate + manifest 标记 downloadable。(5) 测试用 fixture wsi_classification_minimal/，端到端跑 export，断言 ZIP 内容树 + dry-run 通过 + main.pdf 出文件 + 不含 private 资料。
+
+主要写 renderers/zip_exporter.py、renderers/bundle_validator.py、stages/exporting.py、tests/exporting/。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / citations / validators / agents / llm / 其他 stages；不要改 M4 的 renderers/template_renderer.py / renderers/latex_compiler.py 内部实现（按现有 API 调）；不要改 M5 的 renderers/locked_block_renderer.py。**M11 territory（agents/refinement_agent.py 等）和 M12b territory（POST regenerate 路由）严格不动**。完成后跑 uv run pytest -q 和 uv run ruff check src tests。不接 LLM —— 纯 packaging + 编译验证。
+```
+
 ## 8. 合并顺序与 post-merge 回归
 
 ### 8.1 推荐合并顺序
@@ -622,18 +708,37 @@ M9 Section Writing Agent：
 2. M6b Plotting Agent        ← 已合（commit 6f7bc75f）
 ```
 
-**Wave 3（当前）**：
+**Wave 3（已完成）**：
 
 ```text
-1. M9 Section Writer         ← 单条 track，依赖 Wave 2A/2B 全部产物
+1. M9 Section Writer         ← 已合（commit 7cbb2f61）
 ```
 
-M9 不并行 —— 它是 v1 主线最重的一条 LLM track，需要把 outline / figures / refs / intro_rw_draft / locked_blocks 全部装配进一次多模态调用。M9 合后才能开 Wave 4。
-
-**Wave 4（M9 合后）**：
+**Wave 4A（当前）**：
 
 ```text
-M10b LLM-output guards → M11 Refinement Loop → M12 Regenerate + ZIP
+1. M10b Claim/Consistency Guards ← 关键词 + evidence_lock 派生 flag 比对，纯确定性
+2. M12a ZIP Export 硬化          ← dependency-closed bundle + dry-run latexmk + 双模板 main.pdf
+```
+
+两条 track 写入零交集（validators/ vs renderers/exporting）；输入零交集；可同时跑。**M10b 略优先**——它阻塞 M11 和 M12b，先合解锁的下游更多。M12a 不阻塞任何下游（M12b 才阻塞），但跑得慢一些（docker latexmk 集成）。
+
+**Wave 4B（M10b 合后）**：
+
+```text
+M11 Refinement Loop          ← 单条 track；用 M10a + M10b 的 guard 当 score 输入
+```
+
+**Wave 4C（M11 + M12a 合后）**：
+
+```text
+M12b Section Regenerate API   ← 单条 track；POST /papers/{id}/sections/{name}/regenerate，重跑 guards + refinement
+```
+
+**Optional / 可滑出 v1**：
+
+```text
+M6c PaperBanana adapter       ← 完全独立，任何时候插队都行；如果 v1 deadline 紧就留到 v1.1
 ```
 
 ### 8.2 单条 track merge 前的本地 check
