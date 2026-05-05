@@ -12,6 +12,8 @@ from pathlab_paper_agent.validators import (
     run_latex_guard,
     run_metric_guard,
 )
+from pathlab_paper_agent.validators.claim_guard import run as run_claim_guard
+from pathlab_paper_agent.validators.consistency_guard import run as run_consistency_guard
 
 from .common import register_artifact, write_json, write_text
 
@@ -20,7 +22,7 @@ def _warnings_markdown(reports: list[GuardReport]) -> str:
     lines = ["# Validation Warnings", ""]
     failed = [report for report in reports if report.status == "fail"]
     if not failed:
-        lines.append("All deterministic M10a guards passed.")
+        lines.append("All deterministic M10 guards passed.")
         lines.append("")
     for report in reports:
         lines.append(f"## {report.guard}: {report.status}")
@@ -51,6 +53,8 @@ def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
         run_identifier_guard(paths),
         run_latex_guard(paths),
         run_citation_guard(paths),
+        run_claim_guard(paths),
+        run_consistency_guard(paths),
     ]
 
     report_paths = {
@@ -58,6 +62,8 @@ def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
         "identifier_guard": "validation/identifier_guard.json",
         "latex_guard": "validation/latex_guard.json",
         "citation_guard": "validation/citation_guard.json",
+        "claim_guard": "validation/claim_guard.json",
+        "consistency_guard": "validation/consistency_guard.json",
     }
     for report in reports:
         rel_path = report_paths[report.guard]
