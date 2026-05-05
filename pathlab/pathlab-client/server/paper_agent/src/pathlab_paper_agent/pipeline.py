@@ -36,6 +36,7 @@ from .stages import (  # noqa: E402
     run_literature_review,
     run_outlining,
     run_plotting,
+    run_refining,
     run_rendering,
     run_section_writing,
     run_validating,
@@ -50,6 +51,7 @@ _STAGE_ORDER: tuple[PaperRunStage, ...] = (
     PaperRunStage.literature_review,
     PaperRunStage.section_writing,
     PaperRunStage.validating,
+    PaperRunStage.refining,
     PaperRunStage.rendering,
     PaperRunStage.exporting,
 )
@@ -203,6 +205,8 @@ def _execute_stage(paths: PaperRunPaths, manifest: PaperManifest, stage: PaperRu
         run_section_writing(paths, manifest)
     elif stage == PaperRunStage.validating:
         run_validating(paths, manifest)
+    elif stage == PaperRunStage.refining:
+        run_refining(paths, manifest)
     elif stage == PaperRunStage.rendering:
         run_rendering(paths, manifest)
     elif stage == PaperRunStage.exporting:

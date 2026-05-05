@@ -37,6 +37,22 @@
 
 <!-- 按时间倒序加新条目；最近的在最上 -->
 
+## 2026-05-05 refining stage scaffold + dispatch wiring
+
+- **改了什么**：新建 `src/pathlab_paper_agent/stages/refining.py`（no-op 占位），
+  `stages/__init__.py` 导出 `run_refining`，`pipeline.py` 在 `_STAGE_ORDER`
+  里把 `PaperRunStage.refining` 插在 `validating` 和 `rendering` 之间，并在
+  `_execute_stage` 加分支。`schemas.PaperRunStage.refining` 早已存在，无需改。
+- **为什么**：M11 Refinement Loop 是 v1 主线倒数第二条 track，需要 pipeline
+  在 LLM-output guard（M10b）跑完后挂上一个 critic-driven 重写循环，最终再
+  进 rendering / exporting。先把 contract 占位放进 main，让 M11 worktree 只填
+  agent 本体而不动 pipeline contract。
+- **影响哪些 track**：M11（要把 stages/refining.py 替成真实 loop），M12b（之后
+  regenerate API 重跑 guards + refinement，要复用本 stage 的 entry）。
+- **action 要求**：M11 worktree 启动前 rebase 到本 commit；不要再改 pipeline
+  dispatch 或 schemas enum。stages/refining.py 本体由 M11 owner 全权改写。
+- **commit**: `TBD`
+
 ## 2026-05-04 phase03 public evidence download allowlist
 
 - **改了什么**：`gateway.paper_generation.storage._ALLOWED_EXACT` 新增
