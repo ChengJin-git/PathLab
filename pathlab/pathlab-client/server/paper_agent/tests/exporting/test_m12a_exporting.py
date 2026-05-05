@@ -340,3 +340,52 @@ async def test_export_excludes_figures_when_manifest_is_missing(
         names = set(archive.namelist())
     assert "figures/fig_ready.png" not in names
     assert "figures/fig_pending.png" not in names
+
+
+@pytest.mark.asyncio
+async def test_export_reports_missing_dependencies_when_section_inputs_missing_locked_block(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pathlab_paper_agent.renderers.zip_exporter import export_bundle
+
+    paper_id, paths = await create_dev_run(paper_id="paper_m12a_missing_dep", uploads_dir=tmp_path)
+    _seed_fixture_inputs(paths)
+    # Section references a locked block that does not exist in final/
+    (paths.sections_dir / "results.tex").write_text(
+        "\\section{Results}\n\\input{locked_blocks/missing_results_block.tex}\n",
+        encoding="utf-8",
+    )
+    run_stage(paper_id, "rendering", uploads_dir=tmp_path)
+    config = paths.config
+    config_payload = json.loads(config.read_text(encoding="utf-8"))
+    from pathlab_paper_agent.schemas import PaperConfig
+
+    paper_config = PaperConfig.model_validate(config_payload)
+
+    bundle_path = paths.exports_dir / "miccai_bundle_dep.zip"
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    result = export_bundle(
+        paths.final_for_template("miccai"),
+        bundle_path,
+        paper_config,
+        "miccai",
+    )
+
+    assert result.dependency_closed is False
+    assert "locked_blocks/missing_results_block.tex" in result.missing_dependencies
+
+
+def test_bundle_validator_rejects_zip_with_path_traversal_member(tmp_path) -> None:
+    from pathlab_paper_agent.renderers.bundle_validator import validate_bundle
+
+    bundle = tmp_path / "evil.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("main.tex", "\\documentclass{article}\\begin{document}ok\\end{document}")
+        archive.writestr("../escape.tex", "private")
+
+    result = validate_bundle(bundle)
+
+    assert result.status == "failed"
+    assert result.downloadable is False
+    assert "Unsafe ZIP member path" in result.summary or "escapes extraction root" in result.summary

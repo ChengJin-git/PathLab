@@ -34,7 +34,6 @@ _PUBLIC_ROOT_FILES = {
     "main.pdf",
     "main.compile_summary.txt",
     "refs.bib",
-    "style.json",
 }
 _PUBLIC_SUBDIR_PREFIXES = (
     "figures/",
@@ -184,8 +183,6 @@ def _strip_latex_comments(text: str) -> str:
                 break
             chars.append(char)
             escaped = char == "\\" and not escaped
-            if char != "\\":
-                escaped = False
         stripped_lines.append("".join(chars))
     return "\n".join(stripped_lines)
 

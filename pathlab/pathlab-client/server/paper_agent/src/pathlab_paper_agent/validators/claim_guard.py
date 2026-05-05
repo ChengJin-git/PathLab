@@ -22,8 +22,31 @@ class ClaimPattern:
     code: str
     missing_flag: str
     missing_label: str
+    negation_regex: re.Pattern[str] | None = None
 
 
+_NEGATION_PREFIX = (
+    r"\b(?:no|without|lacking|lack(?:s|ed)?|not|did\s+not|does\s+not|"
+    r"fail(?:ed|s)?\s+to|do(?:es)?\s+not\s+(?:reach|achieve|attain))\b"
+)
+_NEGATED_EXTERNAL_RE = re.compile(
+    _NEGATION_PREFIX
+    + r"[^.]{0,80}\b(?:external\s+validation|independent\s+cohort|real[-\s]+world\s+deployment|"
+    r"generaliz(?:ation|ability)\s+to|generalis(?:ation|ability)\s+to)\b",
+    re.IGNORECASE,
+)
+_NEGATED_BASELINE_RE = re.compile(
+    _NEGATION_PREFIX
+    + r"[^.]{0,80}\b(?:outperform(?:s|ed|ing)?|better\s+than|superior\s+to|"
+    r"state[-\s]+of[-\s]+the[-\s]+art|sota)\b",
+    re.IGNORECASE,
+)
+_NEGATED_STATISTICAL_RE = re.compile(
+    _NEGATION_PREFIX
+    + r"[^.]{0,80}\b(?:statistically\s+significant|significant\s+difference|significantly|"
+    r"p\s*[<=>]\s*0?\.\d+)\b",
+    re.IGNORECASE,
+)
 _CLAIM_PATTERNS = (
     ClaimPattern(
         re.compile(
@@ -34,6 +57,7 @@ _CLAIM_PATTERNS = (
         "unsupported_external_validation_claim",
         "has_external_validation",
         "external_validation evidence",
+        _NEGATED_EXTERNAL_RE,
     ),
     ClaimPattern(
         re.compile(
@@ -44,6 +68,7 @@ _CLAIM_PATTERNS = (
         "unsupported_baseline_comparison_claim",
         "has_baseline",
         "baseline source task",
+        _NEGATED_BASELINE_RE,
     ),
     ClaimPattern(
         re.compile(
@@ -53,12 +78,8 @@ _CLAIM_PATTERNS = (
         "unsupported_statistical_significance_claim",
         "has_statistical_test",
         "statistical-test metric such as ci_ or p_value",
+        _NEGATED_STATISTICAL_RE,
     ),
-)
-_NEGATED_EXTERNAL_RE = re.compile(
-    r"\b(?:no|without|lacking|lack(?:s|ed)?|not|did\s+not|does\s+not)\b[^.]{0,80}"
-    r"\b(?:external\s+validation|independent\s+cohort|real[-\s]+world\s+deployment)\b",
-    re.IGNORECASE,
 )
 
 
@@ -95,7 +116,7 @@ def _scan_file(path: Path, paths: PaperRunPaths, flags: Mapping[str, bool], repo
         if flags.get(pattern.missing_flag):
             continue
         for match in pattern.regex.finditer(text):
-            if _is_negated_external_claim(text, match):
+            if _is_negated_claim(text, match, pattern):
                 continue
             keyword = " ".join(match.group(0).split())
             report.error(
@@ -142,12 +163,12 @@ def _flatten_text(values: Iterable[Any]) -> list[str]:
     return flattened
 
 
-def _is_negated_external_claim(text: str, match: re.Match[str]) -> bool:
-    if not match.re.pattern.startswith("\\b(?:external"):
+def _is_negated_claim(text: str, match: re.Match[str], pattern: ClaimPattern) -> bool:
+    if pattern.negation_regex is None:
         return False
     start = max(0, match.start() - 100)
     end = min(len(text), match.end() + 20)
-    return bool(_NEGATED_EXTERNAL_RE.search(text[start:end]))
+    return bool(pattern.negation_regex.search(text[start:end]))
 
 
 def _strip_latex_comments(text: str) -> str:

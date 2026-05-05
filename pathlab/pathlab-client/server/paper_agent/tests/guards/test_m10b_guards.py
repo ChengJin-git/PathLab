@@ -96,6 +96,25 @@ async def test_claim_guard_does_not_flag_negated_external_evidence_statement(tmp
 
 
 @pytest.mark.asyncio
+async def test_claim_guard_does_not_flag_negated_baseline_or_statistical_statements(tmp_path):
+    _paper_id, paths = await create_dev_run(paper_id="paper_m10b_claim_negated_other", uploads_dir=tmp_path)
+    paths.ensure_dirs()
+    paths.evidence_lock_private.write_text(
+        json.dumps({"source_tasks": [{"role": "main"}], "external_validation": [], "metrics": {}}),
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "limitations.tex").write_text(
+        "The model did not outperform the prior baseline.\n\n"
+        "Differences across folds were not statistically significant.\n",
+        encoding="utf-8",
+    )
+
+    report = run_claim_guard(paths)
+
+    assert report.status == "pass"
+
+
+@pytest.mark.asyncio
 async def test_consistency_guard_flags_val_metric_in_test_paragraph(tmp_path):
     _paper_id, paths = await create_dev_run(paper_id="paper_m10b_consistency_val_in_test", uploads_dir=tmp_path)
     paths.ensure_dirs()

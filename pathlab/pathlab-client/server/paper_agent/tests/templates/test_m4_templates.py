@@ -93,10 +93,11 @@ async def test_export_bundle_is_dependency_closed_and_public_only(tmp_path) -> N
     assert "main.tex" in names
     assert "llncs.cls" in names
     assert "splncs04.bst" in names
-    assert "style.json" in names
     assert "sections/abstract.tex" in names
     assert "locked_blocks/method_block.tex" in names
     assert "tables/table_1_dataset.tex" in names
+    # style.json is PathLab template metadata, not part of the submission bundle.
+    assert "style.json" not in names
     assert "evidence/evidence_lock.private.json" not in names
     assert "inputs/source_tasks.json" not in names
     assert "source_mappings.json" not in names

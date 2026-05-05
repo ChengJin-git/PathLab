@@ -44,7 +44,7 @@ def latex_cmd_key(value: str) -> str:
     return cleaned or "Item"
 
 
-def _letters_suffix(index: int) -> str:
+def letters_suffix(index: int) -> str:
     """Return A, B, ..., Z, AA, AB... using letters only."""
     if index <= 0:
         raise ValueError("suffix index must be positive")
@@ -286,7 +286,7 @@ class LockedBlockRenderer:
             suffix = 0
             while cmd in seen:
                 suffix += 1
-                cmd = f"{base}{_letters_suffix(suffix)}"
+                cmd = f"{base}{letters_suffix(suffix)}"
             seen.add(cmd)
             macro_lines.append(f"\\newcommand{{\\metric{cmd}}}{{{latex_escape(item.get('formatted'))}}}")
         return self._render("metrics_macros.tex.j2", macro_lines=macro_lines)

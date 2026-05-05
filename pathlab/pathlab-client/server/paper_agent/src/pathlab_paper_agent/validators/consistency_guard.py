@@ -11,7 +11,7 @@ from typing import Any
 
 from gateway.paper_generation.storage import PaperRunPaths
 
-from ..renderers.locked_block_renderer import latex_cmd_key
+from ..renderers.locked_block_renderer import latex_cmd_key, letters_suffix
 from .common import GuardReport, rel_to_run, tex_files_under
 from .metric_guard import load_evidence_lock, metric_entries
 
@@ -87,7 +87,7 @@ def _build_metric_references(evidence_lock: Mapping[str, Any]) -> list[MetricRef
         suffix = 0
         while cmd in seen:
             suffix += 1
-            cmd = f"{base}{_letters_suffix(suffix)}"
+            cmd = f"{base}{letters_suffix(suffix)}"
         seen.add(cmd)
         split = _classify_split(key, entry)
         scope = "external" if split == "external" or _role(entry) == "external_validation" else "internal"
@@ -346,18 +346,6 @@ def _strip_decimal(text: str) -> str:
         return text
     stripped = text.rstrip("0").rstrip(".")
     return stripped or "0"
-
-
-def _letters_suffix(index: int) -> str:
-    if index <= 0:
-        raise ValueError("suffix index must be positive")
-    chars: list[str] = []
-    value = index
-    while value:
-        value -= 1
-        chars.append(chr(ord("A") + value % 26))
-        value //= 26
-    return "".join(reversed(chars))
 
 
 def _paragraphs(text: str) -> list[str]:
