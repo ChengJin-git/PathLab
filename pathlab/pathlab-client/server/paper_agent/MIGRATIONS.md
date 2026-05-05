@@ -49,7 +49,7 @@
 - **影响哪些 track**：M12b；前端/Dev service 客户端可选择接入新 endpoint。
 - **action 要求**：客户端把 422 视为未知 section，把 400 视为重生/guard/refinement
   拒绝；不要把 `drafts/regenerate_runs/*` 加入公开下载 allowlist。
-- **commit**: `pending`
+- **commit**: `0c9a600d`
 
 ## 2026-05-05 refining stage scaffold + dispatch wiring
 
