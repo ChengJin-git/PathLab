@@ -51,7 +51,7 @@
   regenerate API 重跑 guards + refinement，要复用本 stage 的 entry）。
 - **action 要求**：M11 worktree 启动前 rebase 到本 commit；不要再改 pipeline
   dispatch 或 schemas enum。stages/refining.py 本体由 M11 owner 全权改写。
-- **commit**: `TBD`
+- **commit**: `799114dc`
 
 ## 2026-05-04 phase03 public evidence download allowlist
 
