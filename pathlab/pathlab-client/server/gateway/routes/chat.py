@@ -229,6 +229,43 @@ def _resolve_prompt_language_and_user_text(
     return detect_language(last_user_text), last_user_text
 
 
+def _filter_datasets_by_query(
+    dataset_lines: list[str], query_text: str
+) -> list[str]:
+    if not query_text or not dataset_lines:
+        return []
+    query_lower = query_text.lower()
+    matched: list[str] = []
+    for line in dataset_lines:
+        id_match = re.search(r"dataset_id=([^\s:)]+)", line)
+        if not id_match:
+            continue
+        dataset_id = id_match.group(1).lower()
+        name_match = re.match(r"\s+-\s+(.+?)\s+\(dataset_id=", line)
+        display_name = (name_match.group(1) if name_match else "").lower()
+        if (
+            query_lower in dataset_id
+            or dataset_id in query_lower
+            or (display_name and query_lower in display_name)
+            or (display_name and display_name in query_lower)
+        ):
+            matched.append(line)
+    return matched
+
+
+def _prioritize_dataset_lines_for_query(
+    dataset_lines: list[str], query_text: str
+) -> list[str]:
+    matched_lines = _filter_datasets_by_query(dataset_lines, query_text)
+    if not matched_lines:
+        return dataset_lines
+    return matched_lines + [line for line in dataset_lines if line not in matched_lines]
+
+
+def _is_truncated_dataset_context(datasets_list: object) -> bool:
+    return isinstance(datasets_list, str) and "omitted from prompt" in datasets_list
+
+
 def _format_chat_dataset_list(
     dataset_lines: list[str], *, limit: int = MAX_DATASETS_IN_CHAT_CONTEXT
 ) -> str:
@@ -240,7 +277,8 @@ def _format_chat_dataset_list(
     visible_lines = dataset_lines[:limit]
     visible_lines.append(
         f"  - ... {omitted} more dataset(s) omitted from prompt; "
-        "ask the user to narrow by dataset name, organ/source, task type, "
+        "do NOT assume omitted datasets are unavailable. "
+        "Ask the user to narrow by dataset name, organ/source, task type, "
         "or access type if needed."
     )
     return "\n".join(visible_lines)
@@ -2827,6 +2865,10 @@ async def chat_with_ai(
 
     if _ctx_cached is not None and "other_public_datasets_count" not in _ctx_cached:
         _ctx_cached = None
+    if _ctx_cached is not None and _is_truncated_dataset_context(
+        _ctx_cached.get("datasets_list")
+    ):
+        _ctx_cached = None
     _log_chat_timing(
         chat_request_id,
         "context_cache_read",
@@ -2914,10 +2956,13 @@ async def chat_with_ai(
             if isinstance(_cached_datasets_list, str)
             else []
         )
+        _prioritized_cached = _prioritize_dataset_lines_for_query(
+            _cached_dataset_lines, latest_user_text
+        )
         user_data_context = format_user_data_context(
             wsi_count=_ctx_cached.get("wsi_count", 0),
             data_types_info=_ctx_cached.get("data_types_info", "None"),
-            datasets_list=_format_chat_dataset_list(_cached_dataset_lines),
+            datasets_list=_format_chat_dataset_list(_prioritized_cached),
             models_count=_cached_models_count,
             models_list=_cached_models_list,
             models_shown=_cached_models_shown,
@@ -3075,7 +3120,13 @@ async def chat_with_ai(
             _fb_datasets_details.append(
                 f"  - {_d_name} (dataset_id={_d_id}): {_d_fc} files, type={_d_type}, source={_d_source}{_d_task_type_suffix}{_d_labels_suffix}{_d_survival_suffix}{_d_marker}{_d_split_suffix}{_d_unlabeled_suffix}"
             )
-        _fb_datasets_list = _format_chat_dataset_list(_fb_datasets_details)
+        _prioritized_fb = _prioritize_dataset_lines_for_query(
+            _fb_datasets_details, latest_user_text
+        )
+        _fb_datasets_list = _format_chat_dataset_list(_prioritized_fb)
+        _fb_datasets_list_for_cache = (
+            "\n".join(_fb_datasets_details) if _fb_datasets_details else "  None"
+        )
 
         _fb_task_ids = list({str(m.task_id) for m in _fb_trained_models if m.task_id})
         _fb_task_meta: dict[str, tuple[str, str, str]] = {}
@@ -3278,7 +3329,7 @@ async def chat_with_ai(
         _fb_cache_payload = {
             "wsi_count": _fb_wsi_count,
             "data_types_info": _fb_data_types_info,
-            "datasets_list": _fb_datasets_list,
+            "datasets_list": _fb_datasets_list_for_cache,
             "own_public_datasets_count": _fb_own_public,
             "own_private_datasets_count": _fb_own_private,
             "elevated_datasets_count": _fb_elevated,
