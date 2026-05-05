@@ -13,15 +13,8 @@ from pathlab_paper_agent.validators.identifier_guard import run as run_identifie
 from pathlab_paper_agent.validators.metric_guard import run as run_metric_guard
 
 
-def _repo_root() -> Path:
-    for parent in Path(__file__).resolve().parents:
-        if (parent / "tests" / "paper_generation" / "fixtures").exists():
-            return parent
-    raise RuntimeError("Could not locate repository fixture root.")
-
-
 def _fixture_dir() -> Path:
-    return _repo_root() / "tests" / "paper_generation" / "fixtures" / "wsi_classification_minimal"
+    return Path(__file__).resolve().parents[1] / "fixtures" / "wsi_classification_minimal"
 
 
 def _load_json(path: Path):

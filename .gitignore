@@ -48,6 +48,9 @@ venv.bak/
 # IDEs
 .vscode/
 .idea/
+.agents/
+.claude/
+skills-lock.json
 *.swp
 *.swo
 *~
@@ -96,3 +99,6 @@ temp/
 
 .worktrees
 .swarm
+
+# pytest --basetemp output for the paper-agent end-to-end smoke
+pathlab/pathlab-client/server/paper_agent/tests/integration/.smoke_runs/
