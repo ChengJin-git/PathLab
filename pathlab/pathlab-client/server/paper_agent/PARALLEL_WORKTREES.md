@@ -1,7 +1,7 @@
 # Paper Agent 并行 Worktree 执行计划
 
-> 当前基线 commit：`1a9593b2 Merge paper/m7-outline into paper-agent-phase01`  
-> 适用范围：Phase 01 scaffold + Wave 1 + Wave 2A 已落地后，多 agent 并行实现 paper generation backend 后续 milestone。  
+> 当前基线 commit：`6f7bc75f Merge paper/m6b-plotting into paper-agent-phase01`  
+> 适用范围：Phase 01 scaffold + Wave 1 + Wave 2A + Wave 2B 已落地后，进入 Wave 3 = M9 Section Writer。  
 > 注意：`docs/` 目录在当前 repo 里是 ignored，worktree 里不一定能看到 docs；所以其他 agent **优先读本文件**。
 
 ## 0. 先读这个结论
@@ -11,31 +11,25 @@
 - Wave 1：M2 collector / M4 templates / M6a figures / M8a citations / M10a guards
 - 跟在 Wave 1 后补做：M3 PHI scrub + evidence bundle
 - Wave 2A：M5 locked blocks renderer + M7 outline agent (含 LLM provider 模块)
+- Wave 2B：M6b plotting agent + M8b literature review agent
 
-**Wave 2B 现在开两条并行 track**（都依赖 M7 outline，已可启动）：
+**Wave 3 = M9 Section Writer**（不并行，单条 track）：
 
-- **M6b Plotting Agent** —— 读 `drafts/outline.json` 的 `plotting_plan`，编排 M6a 的 generators 出图；每张图的 caption 由短 LLM 调用生成。
-- **M8b Literature Review Agent** —— 读 outline 的 `macro_lit_search` / `micro_lit_clusters`，跑 M8a S2/PubMed chain，再用 LLM 起草 `drafts/intro_rw_draft/{introduction,related_work}.tex`。
-
-两条 track 都建在 `agents/`（M7 已经建立）下，写入文件零交集，可同时跑。合完 Wave 2B 后下一步就是 M9 Section Writer。
+设计上 M9 是一次多模态 LLM 调用，把 outline + figures + refs.bib + intro_rw_draft + locked_blocks 编排成完整 `drafts/sections/*.tex`。它依赖 Wave 2A/2B 全部交付物，没法和其它 milestone 并行。M9 合完后才能开 M10b（claim/consistency guards）和 M11（refinement loop）。
 
 ## 1. 当前 worktree 现状
 
-### 1.1 Wave 2B active
+### 1.1 Wave 3 active
 
 | Track | Branch | Worktree | Agent 主要负责 |
 |---|---|---|---|
-| M6b Plotting | `paper/m6b-plotting` | `/Users/wangyihui/code/PathLab-worktrees/m6b-plotting` | 读 `outline.plotting_plan` 编排 M6a generators；为每张图调短 LLM 写 caption；写 `figures/manifest.json` 终态（status / source / generator / caption） |
-| M8b Literature Review | `paper/m8b-literature` | `/Users/wangyihui/code/PathLab-worktrees/m8b-literature` | 用 LLM 把 outline.macro/micro_lit 展开成查询 → M8a S2/PubMed chain → ref_selector → bib_generator → LLM 起草 intro_rw_draft |
+| M9 Section Writer | `paper/m9-sections` | `/Users/wangyihui/code/PathLab-worktrees/m9-sections` | 一次多模态 LLM 调用产出 `drafts/sections/*.tex`；引入 `[CITE:paperId]` + `{{m:...}}` 占位符；新建 `renderers/citation_renderer.py`；接入已有 metric_renderer 流水线；A2 引用契约（不能删 required_cites，不能加 selected_refs 之外的引用） |
 
 起 worktree 命令（如果还没起）：
 
 ```bash
-git -C /Users/wangyihui/code/PathLab worktree add -b paper/m6b-plotting \
-  /Users/wangyihui/code/PathLab-worktrees/m6b-plotting   paper-agent-phase01
-
-git -C /Users/wangyihui/code/PathLab worktree add -b paper/m8b-literature \
-  /Users/wangyihui/code/PathLab-worktrees/m8b-literature paper-agent-phase01
+git -C /Users/wangyihui/code/PathLab worktree add -b paper/m9-sections \
+  /Users/wangyihui/code/PathLab-worktrees/m9-sections paper-agent-phase01
 ```
 
 ### 1.2 历史 worktree（已合并，已清）
@@ -49,16 +43,8 @@ git -C /Users/wangyihui/code/PathLab worktree add -b paper/m8b-literature \
 | M10a Guards | `paper/m10a-guards` | `736163fd` |
 | M5 Locked Blocks | `paper/m5-locked-blocks` | `e5da8319` |
 | M7 Outline Agent | `paper/m7-outline` | `1a9593b2` |
-
-如果某条 worktree 还没清，命令同 Wave 1 时的写法：
-
-```bash
-cd /Users/wangyihui/code/PathLab
-for w in m5-locked-blocks m7-outline; do
-  git worktree remove --force "/Users/wangyihui/code/PathLab-worktrees/$w" 2>/dev/null
-  git branch -D "paper/$w" 2>/dev/null
-done
-```
+| M8b Literature Review | `paper/m8b-literature` | `db40f79c` |
+| M6b Plotting | `paper/m6b-plotting` | `6f7bc75f` |
 
 ### 1.3 确认
 
@@ -69,7 +55,7 @@ git -C /Users/wangyihui/code/PathLab worktree list
 所有活跃 worktree 都应该基于同一条主线 commit；当前为：
 
 ```text
-1a9593b2 Merge paper/m7-outline into paper-agent-phase01
+6f7bc75f Merge paper/m6b-plotting into paper-agent-phase01
 ```
 
 ## 2. 给其他 agent 的开工流程
@@ -113,9 +99,9 @@ src/pathlab_paper_agent/stages/
   collecting.py      # M2 collector entry point        ← 已落地（M2）
   evidence.py        # M3 PHI scrub + evidence lock     ← 已落地（M3 + M5 locked-block delegation）
   outlining.py       # M7 outline agent entry point     ← 已落地（M7）
-  plotting.py        # M6 plotting entry point          ← M6a generators 已落地；M6b orchestration WIP
-  literature.py      # M8 literature/citation           ← M8a 已落地；M8b LLM 编排 WIP
-  sections.py        # M9 section writer                ← scaffold + intro_rw_draft hook
+  plotting.py        # M6 plotting entry point          ← 已落地（M6a generators + M6b orchestration）
+  literature.py      # M8 literature/citation           ← 已落地（M8a deterministic + M8b LLM 编排）
+  sections.py        # M9 section writer                ← scaffold + intro_rw_draft hook；M9 接手中
   validating.py      # M10 guards                       ← 已落地（M10a deterministic guards）
   rendering.py       # M4/M11 renderer entry point      ← 已落地（M4 + M5 per-template locked_blocks）
   exporting.py       # M11 bundle export entry point    ← 已落地（M4 ZIP export）
@@ -389,6 +375,38 @@ pathlab/pathlab-client/server/paper_agent/tests/literature/
 
 不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract）；`collector/` / `evidence/` / `validators/` / `renderers/`；其他 `stages/*.py`（含 `sections.py` 现有的 intro_rw_draft hook）；`citations/*.py` 的内部实现（按现有 API 当 library 用，需要新功能就先在 main 协调）。`agents/outline_agent.py` 也不要改。
 
+### M9 Section Writing Agent (Wave 3, 终稿正文)
+
+工作目录：
+
+```bash
+cd /Users/wangyihui/code/PathLab-worktrees/m9-sections
+```
+
+主要写：
+
+```text
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/agents/section_writing_agent.py
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/sections.py            ← 替掉 scaffold + intro_rw_draft hook
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/renderers/citation_renderer.py ← 新建
+pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/prompts/section_writing_v1.txt
+pathlab/pathlab-client/server/paper_agent/tests/sections/
+```
+
+目标：
+
+- **一次多模态 LLM 调用**装配整篇 sections。输入：`drafts/outline.json`（M7）+ `drafts/intro_rw_draft/{introduction,related_work}.tex`（M8b）+ `figures/manifest.json`（M6b）+ `citations/{refs.bib,selected_refs.json,required_cites.json}`（M8b）+ `locked_blocks/*.tex`（M3+M5）+ 可选 `tables/*.tex`。
+- **强制占位符**：metric → `{{m:metric_key}}`，引用 → `[CITE:paperId]`。LLM **不能**直接写数字，**不能**直接 `\cite{}`。
+- **A2 引用契约**（设计 §10.M9）：可以润色 M8b 起的 intro_rw_draft 文风；但不能删掉 `required_cites.json` 里的任何 paperId，也不能引用 `selected_refs.json` 之外的 paperId。
+- 输出全套 `drafts/sections/*.tex`（含 introduction / related_work 终稿 / methods / experiments / results / discussion / conclusion / abstract — 由 outline 的 section_plan 决定具体集合）。
+- 跑完 LLM 后接两个 renderer：`renderers/metric_renderer.py`（M10a 已交，把 `{{m:...}}` 替成 evidence_lock 数字）+ 新建 `renderers/citation_renderer.py`（把 `[CITE:paperId]` 替成 `\cite{paperId}`）。两个 renderer 都是确定性，不接 LLM。
+- 合规：M10a deterministic guards（metric / identifier / latex / citation）必须 100% 通过。
+- prompt 来源：PaperOrchestra App. F.4（按 PathLab 场景改写）。
+- LLM client mock 用 M7 同样 pattern：`_NoNetworkSectionWritingLLMClient` + `PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1` 显式 opt-in。CI 不跑真实 LLM。
+- Exit criterion (§13.1)：fixture → 完整 sections/*.tex；M10a 全过；section_constraints.json 断言（占位符数量、`\input{locked_blocks/...}` 数量、`\cite{}` 数量等）。
+
+不要改：`schemas.py` / `pipeline.py` dispatch / `tests/conftest.py`（contract）；`collector/` / `evidence/` / `citations/` 内部实现；`agents/{outline_agent,plotting_agent,literature_review_agent}.py`；`llm/`；其他 `stages/*.py`；`renderers/{template_renderer,latex_compiler,zip_exporter,locked_block_renderer}.py`（只许新建 `citation_renderer.py`）；`validators/`（M10a 已落地，guard 跑在 stages/validating.py）。**`stages/sections.py` 现有的 intro_rw_draft 优先逻辑**保留语义（intro/related_work 优先读 M8b 的草稿），M9 只是把它整合进新的 agent flow。
+
 ## 5. 所有 agent 都必须保留的 contract
 
 这些是 **contract 文件**：worktree 里**不要直接改**，必须先在 main 协调，
@@ -561,6 +579,20 @@ M8b Literature Review Agent：
 主要写 agents/literature_review_agent.py、stages/literature.py、prompts/lit_search_v1.txt、prompts/intro_rw_draft_v1.txt、tests/literature/。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / validators / renderers / 其他 stages（含 sections.py）；不要改 citations/ 内部实现（按现有 API 当 library 用，需要新功能就先在 main 协调）；不要改 agents/outline_agent.py 或 llm/。tests/literature/ 全部 mock LLM + S2 + PubMed，CI 不跑真实外网调用。完成后跑 uv run pytest -q 和 uv run ruff check src tests。
 ```
 
+---
+
+**Wave 3**：
+
+M9 Section Writing Agent：
+
+```text
+你在 /Users/wangyihui/code/PathLab-worktrees/m9-sections 工作。只负责 M9 Section Writing Agent。这是 v1 主线最重的一条 LLM track —— 一次多模态 LLM 调用装配整篇正文。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M9 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M9 段、§5.5.1 placeholder rendering、§13.1 section_constraints.json 断言，(4) PaperOrchestra App. F.4。
+
+任务：(1) 起 src/pathlab_paper_agent/agents/section_writing_agent.py，单次多模态 LLM 调用装配整篇 sections。输入：drafts/outline.json + drafts/intro_rw_draft/{introduction,related_work}.tex（M8b）+ figures/manifest.json（M6b）+ citations/{refs.bib,selected_refs.json,required_cites.json}（M8b）+ locked_blocks/*.tex（M3+M5）。(2) **强制占位符语法**：metric → {{m:metric_key}}，引用 → [CITE:paperId]。LLM 不能直接写数字、不能直接 \cite{}。(3) **A2 引用契约**：可润色 intro_rw_draft 文风，但不能删 required_cites.json 里任何 paperId，不能新增 selected_refs.json 之外的 paperId。(4) 接两个 renderer 收尾：renderers/metric_renderer.py（M10a 已交，{{m:...}} → evidence_lock 数字）+ 新建 renderers/citation_renderer.py（[CITE:paperId] → \cite{paperId}）。(5) 替掉 stages/sections.py 现有的 scaffold + intro_rw_draft hook，走 agent flow（intro/RW 优先读 M8b draft 这条语义保留）。(6) M10a deterministic guards（metric / identifier / latex / citation）必须 100% 通过。
+
+主要写 agents/section_writing_agent.py、stages/sections.py、renderers/citation_renderer.py、prompts/section_writing_v1.txt、tests/sections/。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / citations / validators / 其他 stages / agents 里其他 agent / llm/ / renderers 里其他 renderer。tests/sections/ 全部 mock LLM，CI 不跑真实调用，沿用 M7 的 _NoNetworkLLM pattern + PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1 显式 opt-in。完成后跑 uv run pytest -q 和 uv run ruff check src tests。
+```
+
 ## 8. 合并顺序与 post-merge 回归
 
 ### 8.1 推荐合并顺序
@@ -576,26 +608,32 @@ M8b Literature Review Agent：
 6. M3 PHI + Evidence ← 已合（commit a87b3f83，phase01 内补做）
 ```
 
-**Wave 2A（当前）**：
+**Wave 2A（已完成）**：
 
 ```text
 1. M5 Locked Blocks Renderer ← 已合（commit e5da8319）
 2. M7 Outline Agent          ← 已合（commit 1a9593b2）
 ```
 
-**Wave 2B（当前）**：
+**Wave 2B（已完成）**：
 
 ```text
-1. M6b Plotting Agent        ← 读 outline.plotting_plan 编排 M6a generators
-2. M8b Literature Review     ← 读 outline.macro_lit_search/micro_lit_clusters，调 M8a chain
+1. M8b Literature Review     ← 已合（commit db40f79c，先合给 M9 早早解锁）
+2. M6b Plotting Agent        ← 已合（commit 6f7bc75f）
 ```
 
-两条 track 写入零交集，可以同时跑；merge 顺序只是给下游的 unblock 节奏建议，谁先完成谁先 merge 也行。**M8b 略优先**——它写的 `intro_rw_draft/*.tex` 是 M9 Section Writer 的直接输入，早合 M9 早能动手。
-
-**Wave 3（M6b + M8b 合后）**：
+**Wave 3（当前）**：
 
 ```text
-M9 Section Writer → M10b LLM-output guards → M11 Refinement Loop → M12 Regenerate + ZIP
+1. M9 Section Writer         ← 单条 track，依赖 Wave 2A/2B 全部产物
+```
+
+M9 不并行 —— 它是 v1 主线最重的一条 LLM track，需要把 outline / figures / refs / intro_rw_draft / locked_blocks 全部装配进一次多模态调用。M9 合后才能开 Wave 4。
+
+**Wave 4（M9 合后）**：
+
+```text
+M10b LLM-output guards → M11 Refinement Loop → M12 Regenerate + ZIP
 ```
 
 ### 8.2 单条 track merge 前的本地 check
