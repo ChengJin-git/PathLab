@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -17,6 +16,7 @@ ensure_server_on_path()
 
 from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
 
+from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
 from ..llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
 from ..plotting import generate_figure  # noqa: E402
@@ -514,10 +514,7 @@ def _default_llm_client() -> LLMClient:
     return OpenAICompatibleLLMClient()
 
 
-def _ci_should_disable_network_llm() -> bool:
-    if os.environ.get("PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS") == "1":
-        return False
-    return "PYTEST_CURRENT_TEST" in os.environ
+_ci_should_disable_network_llm = _common.ci_should_disable_network_llm
 
 
 class _NoNetworkPlottingLLMClient:
@@ -544,13 +541,4 @@ class _NoNetworkPlottingLLMClient:
         )
 
 
-def _payload_from_caption_prompt(prompt: str) -> dict[str, Any]:
-    marker = "Input payload:"
-    if marker not in prompt:
-        return {}
-    raw = prompt.split(marker, 1)[1].strip()
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+_payload_from_caption_prompt = _common.payload_from_prompt

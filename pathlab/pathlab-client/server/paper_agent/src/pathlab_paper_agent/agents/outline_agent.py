@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -18,6 +17,7 @@ from ..bootstrap import ensure_server_on_path
 
 ensure_server_on_path()
 
+from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
 from ..llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
 from ..templates import get_template  # noqa: E402
@@ -334,17 +334,7 @@ def _default_llm_client() -> LLMClient:
     return OpenAICompatibleLLMClient()
 
 
-def _ci_should_disable_network_llm() -> bool:
-    """Default to the no-network fixture whenever pytest is running.
-
-    Network calls during tests must be opted into explicitly via
-    ``PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS=1`` so a developer who exports
-    ``PAPER_GEN_LLM_BASE_URL`` for smoke testing cannot accidentally let pytest
-    reach a real provider.
-    """
-    if os.environ.get("PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS") == "1":
-        return False
-    return "PYTEST_CURRENT_TEST" in os.environ
+_ci_should_disable_network_llm = _common.ci_should_disable_network_llm
 
 
 class _NoNetworkOutlineLLMClient:
@@ -368,16 +358,7 @@ class _NoNetworkOutlineLLMClient:
         )
 
 
-def _payload_from_prompt(prompt: str) -> dict[str, Any]:
-    marker = "Input payload:"
-    if marker not in prompt:
-        return {}
-    raw = prompt.split(marker, 1)[1].strip()
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+_payload_from_prompt = _common.payload_from_prompt
 
 
 def _deterministic_outline_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -501,16 +482,10 @@ def _default_locked_block_inputs(section: Any) -> list[str]:
 
 
 def _decode_first_json_object(text: str) -> Any:
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-        try:
-            value, _end = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        return value
-    raise OutlineAgentError("Outline LLM response did not contain a JSON object")
+    value = _common.decode_first_json_object(text)
+    if value is None:
+        raise OutlineAgentError("Outline LLM response did not contain a JSON object")
+    return value
 
 
 def _read_text_or_default(path: Path, default: str) -> str:

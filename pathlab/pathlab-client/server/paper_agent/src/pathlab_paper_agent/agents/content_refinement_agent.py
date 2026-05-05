@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
@@ -17,6 +16,7 @@ ensure_server_on_path()
 
 from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
 
+from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
 from ..llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
 from ..renderers.citation_renderer import (  # noqa: E402
@@ -547,16 +547,10 @@ def _parse_json_object(text: str, *, error_label: str) -> dict[str, Any]:
 
 
 def _decode_first_json_object(text: str) -> Any:
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-        try:
-            value, _end = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        return value
-    raise ContentRefinementAgentError("LLM response did not contain a JSON object")
+    value = _common.decode_first_json_object(text)
+    if value is None:
+        raise ContentRefinementAgentError("LLM response did not contain a JSON object")
+    return value
 
 
 def _score_int(value: Any) -> int:
@@ -653,21 +647,8 @@ def _read_text_or_default(path: Path, default: str) -> str:
     return default
 
 
-def _response_text(response: LLMResponse | Any) -> str:
-    raw_content = response.content if isinstance(response, LLMResponse) else getattr(response, "content", response)
-    return raw_content if isinstance(raw_content, str) else str(raw_content)
-
-
-def _payload_from_prompt(prompt: str) -> dict[str, Any]:
-    marker = "Input payload:"
-    if marker not in prompt:
-        return {}
-    raw = prompt.split(marker, 1)[1].strip()
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+_response_text = _common.response_text
+_payload_from_prompt = _common.payload_from_prompt
 
 
 def _json_dumps(payload: Mapping[str, Any]) -> str:
@@ -886,7 +867,4 @@ def _default_llm_client() -> LLMClient:
     return OpenAICompatibleLLMClient()
 
 
-def _ci_should_disable_network_llm() -> bool:
-    if os.environ.get("PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS") == "1":
-        return False
-    return "PYTEST_CURRENT_TEST" in os.environ
+_ci_should_disable_network_llm = _common.ci_should_disable_network_llm

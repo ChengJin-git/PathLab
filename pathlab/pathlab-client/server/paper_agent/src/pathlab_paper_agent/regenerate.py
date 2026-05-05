@@ -293,6 +293,7 @@ def _write_regenerate_log(
         "section_name": section_name,
         "status": status,
         "regenerated_sections": [section_name] if status == "accepted" else [],
+        "non_target_revisions_discarded": _non_target_revisions_discarded(refinement_log, section_name),
         "before_dir": _rel_to_run(paths, before_dir),
         "snapshots_dir": _rel_to_run(paths, snapshots_dir),
         "after_path": _rel_to_run(paths, paths.sections_dir / f"{section_name}.tex"),
@@ -362,6 +363,35 @@ def _refinement_summary(refinement_log: dict[str, Any]) -> dict[str, Any]:
         "iteration_count": len(refinement_log.get("iterations", [])),
         "initial_score": refinement_log.get("initial_score", {}),
     }
+
+
+def _non_target_revisions_discarded(refinement_log: dict[str, Any], target_section: str) -> list[str]:
+    """Return non-target sections that refinement claimed to revise.
+
+    M12b restores every section other than the target after refinement runs,
+    so any section the M11 loop edited besides the target is silently dropped
+    from disk. Surface those names in the regenerate log so audits can
+    explain the divergence between refinement_log claims and disk content.
+    """
+    if not isinstance(refinement_log, dict):
+        return []
+    accepted = refinement_log.get("accepted_iterations") or []
+    if not isinstance(accepted, list):
+        return []
+    iterations = refinement_log.get("iterations") or []
+    if not isinstance(iterations, list):
+        return []
+    discarded: set[str] = set()
+    for iteration in iterations:
+        if not isinstance(iteration, dict):
+            continue
+        if iteration.get("iteration") not in accepted:
+            continue
+        revision = iteration.get("revision") if isinstance(iteration.get("revision"), dict) else {}
+        for section in revision.get("changed_sections") or []:
+            if isinstance(section, str) and section and section != target_section:
+                discarded.add(section)
+    return sorted(discarded)
 
 
 def _diff_size(before: str, after: str) -> int:

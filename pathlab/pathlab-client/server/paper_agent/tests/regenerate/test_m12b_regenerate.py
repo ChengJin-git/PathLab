@@ -194,7 +194,13 @@ def _patch_accepting_refinement(monkeypatch: pytest.MonkeyPatch) -> None:
             {
                 "final_status": "accepted",
                 "accepted_iterations": [1],
-                "iterations": [{"iteration": 1, "accepted": True}],
+                "iterations": [
+                    {
+                        "iteration": 1,
+                        "accepted": True,
+                        "revision": {"changed_sections": ["discussion", "results"]},
+                    }
+                ],
                 "initial_score": {"total": 15},
             },
         )
@@ -424,3 +430,23 @@ async def test_endpoint_smoke_returns_regenerated_section_summary(
     assert payload["paper_id"] == paths.paper_id
     assert payload["regenerated_sections"] == ["results"]
     assert payload["refinement_log_summary"]["final_status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_regenerate_log_records_non_target_revisions_discarded(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Refinement claims it changed both results and discussion, but M12b restores
+    # discussion from the before snapshot. The regenerate log must surface that
+    # discrepancy so audits can explain why disk does not match the refinement_log.
+    paths = await _setup_run(tmp_path, "paper_regenerate_audit_field")
+    _patch_section_agent(monkeypatch, _candidate_sections(paths))
+    _patch_accepting_refinement(monkeypatch)
+
+    regenerate_section(paths.paper_id, "results", uploads_dir=tmp_path)
+
+    log = _latest_log(paths)
+    assert log["status"] == "accepted"
+    assert log["regenerated_sections"] == ["results"]
+    assert log["non_target_revisions_discarded"] == ["discussion"]

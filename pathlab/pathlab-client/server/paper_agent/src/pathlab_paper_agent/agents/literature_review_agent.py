@@ -28,6 +28,7 @@ from ..citations import (  # noqa: E402
     select_references,
     verify_candidates,
 )
+from . import _common  # noqa: E402
 from ..citations.coverage_gate import extract_cite_keys  # noqa: E402
 from ..citations.pubmed import PubMedClient  # noqa: E402
 from ..citations.semantic_scholar import SemanticScholarClient  # noqa: E402
@@ -587,21 +588,13 @@ def _parse_json_object(text: str, *, label: str) -> dict[str, Any]:
 
 
 def _decode_first_json_object(text: str, *, label: str) -> Any:
-    decoder = json.JSONDecoder()
-    for index, char in enumerate(text):
-        if char != "{":
-            continue
-        try:
-            value, _end = decoder.raw_decode(text[index:])
-        except json.JSONDecodeError:
-            continue
-        return value
-    raise LiteratureReviewAgentError(f"{label} did not contain a JSON object")
+    value = _common.decode_first_json_object(text)
+    if value is None:
+        raise LiteratureReviewAgentError(f"{label} did not contain a JSON object")
+    return value
 
 
-def _response_text(response: Any) -> str:
-    raw_content = response.content if isinstance(response, LLMResponse) else getattr(response, "content", response)
-    return raw_content if isinstance(raw_content, str) else str(raw_content)
+_response_text = _common.response_text
 
 
 def _render_prompt(template: str, payload: Mapping[str, Any]) -> str:
@@ -609,16 +602,7 @@ def _render_prompt(template: str, payload: Mapping[str, Any]) -> str:
     return template.replace("{{INPUT_PAYLOAD_JSON}}", payload_json)
 
 
-def _payload_from_prompt(prompt: str) -> dict[str, Any]:
-    marker = "Input payload:"
-    if marker not in prompt:
-        return {}
-    raw = prompt.split(marker, 1)[1].strip()
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
-    return value if isinstance(value, dict) else {}
+_payload_from_prompt = _common.payload_from_prompt
 
 
 def _deterministic_query_response(payload: Mapping[str, Any]) -> dict[str, Any]:
