@@ -1,0 +1,560 @@
+[
+  {
+    "wsi_id": "crc_msi_wsi_0251",
+    "case_id": "crc_msi_case_0251",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0252",
+    "case_id": "crc_msi_case_0252",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0253",
+    "case_id": "crc_msi_case_0253",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0254",
+    "case_id": "crc_msi_case_0254",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0255",
+    "case_id": "crc_msi_case_0255",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0256",
+    "case_id": "crc_msi_case_0256",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0257",
+    "case_id": "crc_msi_case_0257",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0258",
+    "case_id": "crc_msi_case_0258",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0259",
+    "case_id": "crc_msi_case_0259",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0260",
+    "case_id": "crc_msi_case_0260",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0261",
+    "case_id": "crc_msi_case_0261",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0262",
+    "case_id": "crc_msi_case_0262",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0263",
+    "case_id": "crc_msi_case_0263",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0264",
+    "case_id": "crc_msi_case_0264",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0265",
+    "case_id": "crc_msi_case_0265",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSI",
+    "prob_msi": 0.78,
+    "prob_mss": 0.22
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0266",
+    "case_id": "crc_msi_case_0266",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSS",
+    "prob_msi": 0.42,
+    "prob_mss": 0.58
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0267",
+    "case_id": "crc_msi_case_0267",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSS",
+    "prob_msi": 0.42,
+    "prob_mss": 0.58
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0268",
+    "case_id": "crc_msi_case_0268",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSS",
+    "prob_msi": 0.42,
+    "prob_mss": 0.58
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0269",
+    "case_id": "crc_msi_case_0269",
+    "split": "test",
+    "y_true": "MSI",
+    "y_pred": "MSS",
+    "prob_msi": 0.42,
+    "prob_mss": 0.58
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0270",
+    "case_id": "crc_msi_case_0270",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0271",
+    "case_id": "crc_msi_case_0271",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0272",
+    "case_id": "crc_msi_case_0272",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0273",
+    "case_id": "crc_msi_case_0273",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0274",
+    "case_id": "crc_msi_case_0274",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0275",
+    "case_id": "crc_msi_case_0275",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0276",
+    "case_id": "crc_msi_case_0276",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0277",
+    "case_id": "crc_msi_case_0277",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0278",
+    "case_id": "crc_msi_case_0278",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0279",
+    "case_id": "crc_msi_case_0279",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0280",
+    "case_id": "crc_msi_case_0280",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0281",
+    "case_id": "crc_msi_case_0281",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0282",
+    "case_id": "crc_msi_case_0282",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0283",
+    "case_id": "crc_msi_case_0283",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0284",
+    "case_id": "crc_msi_case_0284",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0285",
+    "case_id": "crc_msi_case_0285",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0286",
+    "case_id": "crc_msi_case_0286",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0287",
+    "case_id": "crc_msi_case_0287",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0288",
+    "case_id": "crc_msi_case_0288",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0289",
+    "case_id": "crc_msi_case_0289",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0290",
+    "case_id": "crc_msi_case_0290",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0291",
+    "case_id": "crc_msi_case_0291",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0292",
+    "case_id": "crc_msi_case_0292",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0293",
+    "case_id": "crc_msi_case_0293",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0294",
+    "case_id": "crc_msi_case_0294",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0295",
+    "case_id": "crc_msi_case_0295",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0296",
+    "case_id": "crc_msi_case_0296",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0297",
+    "case_id": "crc_msi_case_0297",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0298",
+    "case_id": "crc_msi_case_0298",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0299",
+    "case_id": "crc_msi_case_0299",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0300",
+    "case_id": "crc_msi_case_0300",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0301",
+    "case_id": "crc_msi_case_0301",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0302",
+    "case_id": "crc_msi_case_0302",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0303",
+    "case_id": "crc_msi_case_0303",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0304",
+    "case_id": "crc_msi_case_0304",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0305",
+    "case_id": "crc_msi_case_0305",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0306",
+    "case_id": "crc_msi_case_0306",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0307",
+    "case_id": "crc_msi_case_0307",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0308",
+    "case_id": "crc_msi_case_0308",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0309",
+    "case_id": "crc_msi_case_0309",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSS",
+    "prob_msi": 0.18,
+    "prob_mss": 0.82
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0310",
+    "case_id": "crc_msi_case_0310",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSI",
+    "prob_msi": 0.63,
+    "prob_mss": 0.37
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0311",
+    "case_id": "crc_msi_case_0311",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSI",
+    "prob_msi": 0.63,
+    "prob_mss": 0.37
+  },
+  {
+    "wsi_id": "crc_msi_wsi_0312",
+    "case_id": "crc_msi_case_0312",
+    "split": "test",
+    "y_true": "MSS",
+    "y_pred": "MSI",
+    "prob_msi": 0.63,
+    "prob_mss": 0.37
+  }
+]

@@ -14,7 +14,7 @@ from ..bootstrap import ensure_server_on_path
 
 ensure_server_on_path()
 
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
@@ -220,6 +220,7 @@ class SectionWritingAgent:
         _assert_no_raw_cites(normalized)
         _assert_no_raw_metric_values(normalized)
         used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
+        normalized = _repair_missing_locked_block_inputs(normalized, inputs)
         _assert_locked_block_contract(normalized, inputs)
         _assert_figure_table_contract(normalized, inputs)
         rendered = _render_sections(normalized, inputs)
@@ -379,6 +380,10 @@ def _prompt_payload(inputs: SectionWritingInputs) -> dict[str, Any]:
     selected_keys = sorted(_ref_keys(inputs.selected_refs))
     required_keys = sorted(_ref_keys(inputs.required_cites))
     metrics = _metric_placeholder_catalog(inputs.evidence_lock)
+    primary_template = _primary_template_style(inputs.template_styles)
+    section_guidelines = primary_template.get("section_guidelines")
+    if not isinstance(section_guidelines, Mapping):
+        section_guidelines = {}
     return {
         "paper_title": inputs.title,
         "language": inputs.language,
@@ -386,10 +391,15 @@ def _prompt_payload(inputs: SectionWritingInputs) -> dict[str, Any]:
         "idea_md": inputs.idea,
         "experimental_log_md": inputs.experimental_log,
         "template_styles": list(inputs.template_styles),
+        "generation_template_id": primary_template.get("template_id"),
+        "primary_template_style": primary_template,
+        "section_guidelines": dict(section_guidelines),
         "section_contract": {
             "required_section_slugs": required_section_slugs(inputs),
             "write_destination": "drafts/sections",
             "intro_rw_draft_is_input_only": True,
+            "generation_template_id": primary_template.get("template_id"),
+            "single_template_run": len(inputs.template_styles) == 1,
             "metric_placeholder_syntax": "{{m:metric_key}}",
             "allowed_metric_keys": [item["key"] for item in metrics],
             "citation_placeholder_syntax": "[CITE:paperId]",
@@ -466,22 +476,54 @@ def _assert_citation_contract(
 
 
 def _assert_locked_block_contract(sections: Mapping[str, str], inputs: SectionWritingInputs) -> None:
+    section_plan_requirements = _locked_block_requirements(inputs)
+    for slug, paths in section_plan_requirements.items():
+        if slug not in sections:
+            continue
+        text = sections[slug]
+        missing = [path for path in sorted(paths) if _input_command(path) not in text]
+        if missing:
+            missing_paths = ", ".join(missing)
+            raise SectionWritingAgentError(f"Section {slug} is missing locked block input(s): {missing_paths}")
+
+
+def _repair_missing_locked_block_inputs(
+    sections: Mapping[str, str],
+    inputs: SectionWritingInputs,
+) -> dict[str, str]:
+    """Deterministically insert required evidence blocks when an LLM omits them."""
+    repaired = dict(sections)
+    for slug, paths in _locked_block_requirements(inputs).items():
+        text = repaired.get(slug)
+        if not text:
+            continue
+        missing = [path for path in sorted(paths) if _input_command(path) not in text]
+        if missing:
+            repaired[slug] = _insert_inputs_after_heading(text, missing)
+    return repaired
+
+
+def _locked_block_requirements(inputs: SectionWritingInputs) -> dict[str, set[str]]:
     available = {item["path"] for item in inputs.locked_blocks if item.get("path")}
     if not available:
-        return
+        return {}
     section_plan_requirements = _locked_block_requirements_from_outline(inputs.outline)
     for slug, defaults in _DEFAULT_LOCKED_BLOCKS_BY_SECTION.items():
         for path in defaults:
             if path in available:
                 section_plan_requirements.setdefault(slug, set()).add(path)
-    for slug, paths in section_plan_requirements.items():
-        if slug not in sections:
-            continue
-        text = sections[slug]
-        missing = [path for path in sorted(paths) if path in available and _input_command(path) not in text]
-        if missing:
-            missing_paths = ", ".join(missing)
-            raise SectionWritingAgentError(f"Section {slug} is missing locked block input(s): {missing_paths}")
+    return {
+        slug: {path for path in paths if path in available}
+        for slug, paths in section_plan_requirements.items()
+    }
+
+
+def _insert_inputs_after_heading(text: str, paths: Sequence[str]) -> str:
+    input_text = "".join(f"{_input_command(path)}\n" for path in paths)
+    lines = text.splitlines(keepends=True)
+    if lines and re.match(r"^\s*\\section\*?\{", lines[0]):
+        return "".join([lines[0], input_text, *lines[1:]])
+    return input_text + text
 
 
 def _assert_figure_table_contract(sections: Mapping[str, str], inputs: SectionWritingInputs) -> None:
@@ -683,8 +725,6 @@ def _deterministic_sections_payload(payload: Mapping[str, Any]) -> dict[str, str
             inputs = _existing_inputs(
                 [
                     "locked_blocks/dataset_block.tex",
-                    "locked_blocks/results_block.tex",
-                    "locked_blocks/metrics_macros.tex",
                 ],
                 available_blocks,
             )
@@ -896,7 +936,10 @@ def _read_json_object_or_default(path: Path, default: dict[str, Any]) -> dict[st
 
 
 def _template_styles(config: Any) -> list[dict[str, Any]]:
-    selected = getattr(config, "selected_templates", []) or []
+    if isinstance(config, Mapping):
+        selected = config.get("selected_templates", []) or []
+    else:
+        selected = getattr(config, "selected_templates", []) or []
     if not selected:
         selected = ["miccai"]
     styles: list[dict[str, Any]] = []
@@ -904,6 +947,12 @@ def _template_styles(config: Any) -> list[dict[str, Any]]:
         template_id = str(getattr(template, "value", template))
         styles.append(dict(get_template(template_id).style))
     return styles
+
+
+def _primary_template_style(styles: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    if not styles:
+        return {}
+    return dict(styles[0])
 
 
 def _append_unique(items: list[str], item: str) -> None:

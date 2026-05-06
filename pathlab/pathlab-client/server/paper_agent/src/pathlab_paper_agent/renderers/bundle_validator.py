@@ -115,8 +115,6 @@ def _run_latexmk(
         "--entrypoint",
         "latexmk",
         image,
-        "-dvi=0",
-        "-ps=0",
         "-pdf",
         "-interaction=nonstopmode",
         "-file-line-error",

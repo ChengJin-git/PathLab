@@ -1,0 +1,16 @@
+{
+  "title": "CRC MSI Prediction from H&E Whole-Slide Images",
+  "paper_type": "research_paper",
+  "language": "en",
+  "source_tasks": [
+    {
+      "task_id": "crc_msi_abmil_fixture",
+      "role": "main"
+    }
+  ],
+  "selected_templates": [
+    "miccai"
+  ],
+  "include_external_validation": true,
+  "user_idea": "# Paper Intent\n\n[TOPIC_CONTEXT]\n{\n  \"disease\": \"colorectal cancer\",\n  \"clinical_endpoint\": \"microsatellite instability status\",\n  \"prediction_target\": \"MSI vs MSS\",\n  \"modality\": \"H&E whole-slide images\",\n  \"task_type\": \"wsi_classification\",\n  \"method_family\": \"attention-based multiple instance learning\",\n  \"classes\": [\"MSI\", \"MSS\"],\n  \"confidence\": \"high\",\n  \"sources\": [\"pre_training_chat_summary\", \"synthetic_crc_msi_fixture\"]\n}\n[/TOPIC_CONTEXT]\n\n## User Goal From Pre-training Chat\nThe user wanted to train a PathLab WSI classification model for colorectal cancer MSI status prediction from H&E whole-slide images and then generate a research-paper draft around the completed experiment.\n\n## Writing Scope\n- Emphasize computational pathology, MSI/MSS classification, WSI-level prediction, and attention-based MIL.\n- Use PathLab locked evidence for cohort size, label distribution, split design, model configuration, metrics, and validation claims.\n- Frame the experiment as an internal validation fixture unless external validation evidence is added.\n\n## Unconfirmed / Avoid\n- Do not claim multi-center, prospective, or external validation.\n- Do not claim clinical deployment readiness.\n- Do not claim survival or treatment-response prediction; the endpoint is MSI status classification.\n"
+}

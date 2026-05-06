@@ -14,6 +14,7 @@ from pathlab_paper_agent.citations import (
     select_references,
     verify_candidates,
 )
+from pathlab_paper_agent.citations.openalex import OpenAlexClient
 from pathlab_paper_agent.citations.pubmed import PubMedClient
 from pathlab_paper_agent.citations.semantic_scholar import SemanticScholarClient
 from pathlab_paper_agent.pipeline import create_dev_run, run_stage
@@ -174,6 +175,58 @@ def test_pubmed_client_parses_search_and_summary_results() -> None:
     assert results[0].doi == "10.3/pubmed"
     assert results[0].year == 2021
     assert results[0].url == "https://pubmed.ncbi.nlm.nih.gov/111/"
+
+
+def test_openalex_client_parses_works_search_results() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/works")
+        assert request.url.params["search"] == "wsi mil"
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "id": "https://openalex.org/W123",
+                        "doi": "https://doi.org/10.4/openalex",
+                        "display_name": "OpenAlex WSI MIL",
+                        "publication_year": 2023,
+                        "authorships": [{"author": {"display_name": "Open Author"}}],
+                        "primary_location": {
+                            "landing_page_url": "https://example.test/oa",
+                            "source": {"display_name": "Open Journal"},
+                        },
+                        "ids": {
+                            "openalex": "https://openalex.org/W123",
+                            "pmid": "https://pubmed.ncbi.nlm.nih.gov/222/",
+                        },
+                        "cited_by_count": 9,
+                        "abstract_inverted_index": {
+                            "OpenAlex": [0],
+                            "abstract": [1],
+                            "works": [2],
+                        },
+                    }
+                ]
+            },
+        )
+
+    client = OpenAlexClient(
+        api_key="oa_test",
+        mailto="paper@example.test",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        results = client.search("wsi mil", cluster="mil")
+    finally:
+        client.close()
+
+    assert len(results) == 1
+    assert results[0].source == "openalex"
+    assert results[0].openalex_id == "https://openalex.org/W123"
+    assert results[0].doi == "10.4/openalex"
+    assert results[0].pmid == "222"
+    assert results[0].venue == "Open Journal"
+    assert results[0].abstract == "OpenAlex abstract works"
 
 
 @pytest.mark.asyncio

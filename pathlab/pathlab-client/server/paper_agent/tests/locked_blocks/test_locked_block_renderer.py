@@ -167,6 +167,7 @@ async def test_fixture_locked_blocks_are_byte_identical_to_golden(tmp_path) -> N
     request = CreatePaperRequest(
         title="Fixture Locked Blocks Paper",
         source_tasks=[SourceTaskRef(task_id="wsi_cls_fixture")],
+        selected_templates=[TemplateId.miccai, TemplateId.nature_scientific_reports],
     )
     paper_id, paths = await create_dev_run(request, paper_id="paper_m5_fixture", uploads_dir=tmp_path)
     _write_fixture_raw_collected(paths)
@@ -309,6 +310,7 @@ async def test_rendering_stage_copies_template_specific_locked_blocks(tmp_path) 
     request = CreatePaperRequest(
         title="Fixture Template Specific Blocks Paper",
         source_tasks=[SourceTaskRef(task_id="wsi_cls_fixture")],
+        selected_templates=[TemplateId.miccai, TemplateId.nature_scientific_reports],
     )
     paper_id, paths = await create_dev_run(request, paper_id="paper_m5_rendering", uploads_dir=tmp_path)
     _write_fixture_raw_collected(paths)

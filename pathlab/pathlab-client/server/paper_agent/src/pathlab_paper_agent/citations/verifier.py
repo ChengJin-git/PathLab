@@ -93,6 +93,8 @@ def _dedup_keys(candidate: CitationCandidate) -> set[str]:
     keys = {f"title:{normalize_title(candidate.title)}"}
     if candidate.s2_paper_id:
         keys.add(f"s2:{candidate.s2_paper_id}")
+    if candidate.openalex_id:
+        keys.add(f"openalex:{candidate.openalex_id}")
     if candidate.doi:
         keys.add(f"doi:{candidate.doi.casefold()}")
     if candidate.pmid:

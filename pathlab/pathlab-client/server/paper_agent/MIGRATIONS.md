@@ -69,7 +69,7 @@
 
 ## 2026-05-04 phase03 public evidence download allowlist
 
-- **改了什么**：`gateway.paper_generation.storage._ALLOWED_EXACT` 新增
+- **改了什么**：`pathlab_paper_agent.storage._ALLOWED_EXACT` 新增
   `evidence/dataset_summary.public.json`、`evidence/model_summary.public.json`、
   `evidence/analysis_summary.public.json`，配合 Phase 03 evidence stage 输出可下载的
   scrubbed public summaries。

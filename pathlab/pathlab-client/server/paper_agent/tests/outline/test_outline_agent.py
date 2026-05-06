@@ -10,6 +10,7 @@ from pathlab_paper_agent.agents.outline_agent import OutlineAgentError, parse_ou
 from pathlab_paper_agent.llm import LLMConfig, LLMConfigurationError, LLMMessage, LLMResponse
 from pathlab_paper_agent.llm.client import OpenAICompatibleLLMClient
 from pathlab_paper_agent.pipeline import create_dev_run
+from pathlab_paper_agent.schemas import OutlineDocument
 from pathlab_paper_agent.stages.outlining import run as run_outlining
 
 
@@ -149,6 +150,7 @@ async def test_outlining_stage_writes_llm_output_and_manifest(tmp_path) -> None:
     run_outlining(paths, paper_manifest, agent=agent)
 
     outline = json.loads(paths.outline_json.read_text(encoding="utf-8"))
+    OutlineDocument.model_validate(outline)
     assert outline["plotting_plan"][0]["design_objective"] == "stage mock marker"
     assert outline["section_plan"][0]["goal"] != "scaffold"
     assert paper_manifest.artifact_index["drafts/outline.json"]["visibility"] == "public"
@@ -231,6 +233,22 @@ def test_reasoning_model_streams_and_aggregates_sse() -> None:
 
     assert response.content == '{"ok":true}'
     assert seen_payloads[0]["stream"] is True
+    assert seen_payloads[0]["reasoning_effort"] == "xhigh"
+
+
+def test_default_llm_config_uses_gpt55_xhigh(monkeypatch) -> None:
+    monkeypatch.delenv("PAPER_GEN_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("PAPER_GEN_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("PAPER_GEN_LLM_MODEL", raising=False)
+    monkeypatch.delenv("PAPER_GEN_LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("PAPER_GEN_VLLM_MODEL", raising=False)
+    monkeypatch.delenv("PAPER_GEN_VLLM_REASONING_EFFORT", raising=False)
+
+    config = LLMConfig.from_env()
+
+    assert config.model == "gpt-5.5"
+    assert config.reasoning_effort == "xhigh"
+    assert config.timeout_s == 300.0
 
 
 def test_transient_timeout_is_retried_once_before_failing() -> None:
@@ -259,6 +277,7 @@ def test_transient_timeout_is_retried_once_before_failing() -> None:
 
     assert response.content == "retried ok"
     assert len(seen_payloads) == 2
+    assert "reasoning_effort" not in seen_payloads[0]
 
 
 def test_two_transient_timeouts_trigger_fallback_when_available() -> None:

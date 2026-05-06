@@ -23,6 +23,14 @@ async def test_create_dev_run_and_run_stage(tmp_path):
     data = json.loads(paths.manifest.read_text(encoding="utf-8"))
     assert data["current_stage"] == "collecting"
     assert data["artifact_index"]["inputs/source_tasks.json"]["visibility"] == "private_backend_only"
+    stage_entry = data["stage_log"][-1]
+    assert stage_entry["stage"] == "collecting"
+    assert stage_entry["status"] == "completed"
+    assert stage_entry["started_at"]
+    assert stage_entry["finished_at"]
+    assert stage_entry["ts"] == stage_entry["finished_at"]
+    assert isinstance(stage_entry["duration_ms"], int)
+    assert stage_entry["duration_ms"] >= 0
 
 
 @pytest.mark.asyncio
@@ -39,9 +47,8 @@ async def test_complete_run_writes_scaffold_artifacts_and_exports(tmp_path):
     assert paths.outline_json.is_file()
     assert (paths.sections_dir / "methods.tex").is_file()
     assert (paths.final_for_template("miccai") / "main.tex").is_file()
-    assert (paths.final_for_template("nature_scientific_reports") / "main.tex").is_file()
     assert (paths.exports_dir / "miccai_bundle.zip").is_file()
-    assert (paths.exports_dir / "nature_scientific_reports_bundle.zip").is_file()
+    assert not (paths.exports_dir / "nature_scientific_reports_bundle.zip").exists()
 
     artifact_index = json.loads(paths.manifest.read_text(encoding="utf-8"))["artifact_index"]
     assert artifact_index["evidence/evidence_public.json"]["visibility"] == "public"

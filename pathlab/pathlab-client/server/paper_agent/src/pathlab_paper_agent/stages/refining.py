@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from pathlab_paper_agent.agents.content_refinement_agent import (
     RUBRIC_DIMENSIONS,

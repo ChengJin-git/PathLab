@@ -1,0 +1,33 @@
+{
+  "task_id": "crc_msi_abmil_fixture",
+  "task_name": "CRC MSI WSI Classification",
+  "task_description": "Synthetic fixture: predict MSI versus MSS status from colorectal cancer H&E whole-slide images using attention MIL.",
+  "task_type": "wsi_classification",
+  "data_type": "wsi",
+  "aggregation_level": "case",
+  "status": "completed",
+  "classes": [
+    "MSI",
+    "MSS"
+  ],
+  "source_organ": "colorectal",
+  "preprocessing_config": {
+    "feature_extractor": "conch_v1",
+    "level": 0,
+    "feature_batch_size": 128,
+    "use_gpu": true,
+    "sthresh": 8,
+    "mthresh": 7,
+    "close": 4,
+    "use_otsu": false
+  },
+  "model_config": {
+    "aggregator": "attention_mil",
+    "learning_rate": 0.0002,
+    "epochs": 80,
+    "optimizer": "adamw",
+    "batch_size": 1,
+    "auto_balance": true,
+    "early_stopping_patience": 12
+  }
+}

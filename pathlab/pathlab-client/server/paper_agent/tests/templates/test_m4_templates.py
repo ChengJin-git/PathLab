@@ -8,6 +8,7 @@ import pytest
 
 from pathlab_paper_agent.pipeline import create_dev_run, run_stage
 from pathlab_paper_agent.renderers.latex_compiler import compile_with_docker
+from pathlab_paper_agent.schemas import CreatePaperRequest, SourceTaskRef, TemplateId
 from pathlab_paper_agent.templates import get_template, list_templates
 
 _THROUGH_RENDERING = (
@@ -36,12 +37,22 @@ def test_template_registry_loads_two_venue_styles() -> None:
     assert set(templates) == {"miccai", "nature_scientific_reports"}
     assert templates["miccai"].style["format_family"] == "LNCS"
     assert templates["nature_scientific_reports"].style["style_constraints"]["requires_data_availability"] is True
+    for template in templates.values():
+        guidelines = template.style["section_guidelines"]
+        assert isinstance(guidelines, dict)
+        assert "abstract" in guidelines
+        assert "must_include" in guidelines["abstract"]
+        assert "metrics_policy" in guidelines["abstract"]
     assert get_template("miccai").main_template.name == "main.tex.j2"
 
 
 @pytest.mark.asyncio
 async def test_rendering_stage_writes_venue_specific_latex_assets(tmp_path) -> None:
-    paper_id, paths = await create_dev_run(paper_id="paper_m4_render", uploads_dir=tmp_path)
+    request = CreatePaperRequest(
+        source_tasks=[SourceTaskRef(task_id="paper_dev_source")],
+        selected_templates=[TemplateId.miccai, TemplateId.nature_scientific_reports],
+    )
+    paper_id, paths = await create_dev_run(request, paper_id="paper_m4_render", uploads_dir=tmp_path)
     _run_stages(paper_id, _THROUGH_RENDERING, tmp_path)
 
     miccai = paths.final_for_template("miccai")
@@ -50,11 +61,16 @@ async def test_rendering_stage_writes_venue_specific_latex_assets(tmp_path) -> N
     assert (miccai / "llncs.cls").is_file()
     assert (miccai / "style.json").is_file()
     assert (nature / "main.tex").is_file()
-    assert (nature / "sn-jnl.cls").is_file()
+    assert (nature / "wlscirep.cls").is_file()
+    assert (nature / "naturemag.bst").is_file()
     assert (nature / "style.json").is_file()
     assert "\\documentclass[runningheads]{llncs}" in (miccai / "main.tex").read_text(encoding="utf-8")
-    assert "\\documentclass[pdflatex,sn-nature]{sn-jnl}" in (nature / "main.tex").read_text(encoding="utf-8")
-    assert "Data availability" in (nature / "main.tex").read_text(encoding="utf-8")
+    nature_main = (nature / "main.tex").read_text(encoding="utf-8")
+    assert "\\documentclass[fleqn,10pt]{wlscirep}" in nature_main
+    assert nature_main.index("\\input{sections/abstract.tex}") < nature_main.index("\\begin{document}")
+    assert "\\flushbottom" in nature_main
+    assert "Data availability" in nature_main
+    assert "\\section*{Introduction}" in (nature / "sections" / "introduction.tex").read_text(encoding="utf-8")
 
     artifact_index = json.loads(paths.manifest.read_text(encoding="utf-8"))["artifact_index"]
     assert "final/miccai/style.json" in artifact_index
@@ -79,7 +95,11 @@ async def test_rendering_stage_writes_venue_specific_latex_assets(tmp_path) -> N
 
 @pytest.mark.asyncio
 async def test_export_bundle_is_dependency_closed_and_public_only(tmp_path) -> None:
-    paper_id, paths = await create_dev_run(paper_id="paper_m4_export", uploads_dir=tmp_path)
+    request = CreatePaperRequest(
+        source_tasks=[SourceTaskRef(task_id="paper_dev_source")],
+        selected_templates=[TemplateId.miccai, TemplateId.nature_scientific_reports],
+    )
+    paper_id, paths = await create_dev_run(request, paper_id="paper_m4_export", uploads_dir=tmp_path)
     _run_stages(paper_id, _THROUGH_RENDERING, tmp_path)
 
     miccai = paths.final_for_template("miccai")
@@ -106,8 +126,8 @@ async def test_export_bundle_is_dependency_closed_and_public_only(tmp_path) -> N
 
     with zipfile.ZipFile(paths.exports_dir / "nature_scientific_reports_bundle.zip") as archive:
         nature_names = set(archive.namelist())
-    assert "sn-jnl.cls" in nature_names
-    assert "sn-nature.bst" in nature_names
+    assert "wlscirep.cls" in nature_names
+    assert "naturemag.bst" in nature_names
 
 
 @pytest.mark.docker
@@ -117,7 +137,11 @@ async def test_export_bundle_is_dependency_closed_and_public_only(tmp_path) -> N
 )
 @pytest.mark.asyncio
 async def test_rendered_templates_compile_with_docker_when_enabled(tmp_path) -> None:
-    paper_id, paths = await create_dev_run(paper_id="paper_m4_pdf", uploads_dir=tmp_path)
+    request = CreatePaperRequest(
+        source_tasks=[SourceTaskRef(task_id="paper_dev_source")],
+        selected_templates=[TemplateId.miccai, TemplateId.nature_scientific_reports],
+    )
+    paper_id, paths = await create_dev_run(request, paper_id="paper_m4_pdf", uploads_dir=tmp_path)
     _run_stages(paper_id, _THROUGH_RENDERING, tmp_path)
 
     miccai_result = compile_with_docker(paths.root, "miccai")

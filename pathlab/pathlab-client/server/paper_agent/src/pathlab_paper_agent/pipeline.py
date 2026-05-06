@@ -16,8 +16,7 @@ from .bootstrap import configure_uploads_dir, ensure_server_on_path
 ensure_server_on_path()
 
 from backend.database.models import utc_now  # noqa: E402
-from gateway.paper_generation.pipeline import initialize_paper_run  # noqa: E402
-from gateway.paper_generation.schemas import (  # noqa: E402
+from pathlab_paper_agent.schemas import (  # noqa: E402
     CreatePaperRequest,
     PaperConfig,
     PaperManifest,
@@ -27,7 +26,7 @@ from gateway.paper_generation.schemas import (  # noqa: E402
     PaperRunSummary,
     SourceTaskRef,
 )
-from gateway.paper_generation.storage import PaperRunPaths, validate_paper_id  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths, validate_paper_id  # noqa: E402
 
 from .stages import (  # noqa: E402
     run_building_evidence,
@@ -41,6 +40,7 @@ from .stages import (  # noqa: E402
     run_section_writing,
     run_validating,
 )
+from .scaffold import initialize_paper_run  # noqa: E402,F401
 from .stages.common import artifact, read_json, write_json  # noqa: E402
 
 _STAGE_ORDER: tuple[PaperRunStage, ...] = (
@@ -164,7 +164,11 @@ def _initialize_paper_run_sync(config: PaperConfig) -> PaperRunPaths:
         stage_log=[
             {
                 "stage": PaperRunStage.created.value,
+                "status": "completed",
                 "ts": now.isoformat(),
+                "started_at": now.isoformat(),
+                "finished_at": now.isoformat(),
+                "duration_ms": 0,
                 "message": "Paper run scaffold created from config.",
             }
         ],
@@ -247,40 +251,52 @@ def run_stage(
 
     manifest = load_manifest(paper_id)
     paths = PaperRunPaths.for_paper(paper_id)
-    now = utc_now()
+    started_at = utc_now()
 
     try:
         manifest.status = PaperRunStatus.running
         manifest.current_stage = stage_enum
-        manifest.updated_at = now
+        manifest.updated_at = started_at
         _execute_stage(paths, manifest, stage_enum)
+        finished_at = utc_now()
         if stage_enum == PaperRunStage.completed:
             manifest.status = PaperRunStatus.completed
-            manifest.finished_at = now
+            manifest.finished_at = finished_at
         elif stage_enum == PaperRunStage.failed:
             manifest.status = PaperRunStatus.failed
-            manifest.finished_at = now
+            manifest.finished_at = finished_at
         elif stage_enum == PaperRunStage.cancelled:
             manifest.status = PaperRunStatus.cancelled
-            manifest.finished_at = now
+            manifest.finished_at = finished_at
+        duration_ms = max(0, int((finished_at - started_at).total_seconds() * 1000))
         manifest.stage_log.append(
             {
                 "stage": stage_enum.value,
-                "ts": now.isoformat(),
-                "message": message or f"Standalone scaffold stage {stage_enum.value} completed.",
+                "status": "completed",
+                "ts": finished_at.isoformat(),
+                "started_at": started_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
+                "duration_ms": duration_ms,
+                "message": message or f"Stage {stage_enum.value} completed.",
             }
         )
     except Exception as exc:
         failed_at = utc_now()
+        duration_ms = max(0, int((failed_at - started_at).total_seconds() * 1000))
         manifest.status = PaperRunStatus.failed
         manifest.current_stage = PaperRunStage.failed
         manifest.error_message = str(exc)[:4000]
         manifest.finished_at = failed_at
         manifest.stage_log.append(
             {
-                "stage": PaperRunStage.failed.value,
+                "stage": stage_enum.value,
+                "status": "failed",
                 "ts": failed_at.isoformat(),
+                "started_at": started_at.isoformat(),
+                "finished_at": failed_at.isoformat(),
+                "duration_ms": duration_ms,
                 "message": f"Stage {stage_enum.value} failed: {exc}",
+                "error_message": str(exc)[:4000],
             }
         )
         save_manifest(manifest)

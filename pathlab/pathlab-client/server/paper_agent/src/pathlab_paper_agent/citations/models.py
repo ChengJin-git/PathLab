@@ -36,6 +36,7 @@ class CitationCandidate:
     doi: Optional[str] = None
     pmid: Optional[str] = None
     s2_paper_id: Optional[str] = None
+    openalex_id: Optional[str] = None
     url: Optional[str] = None
     citation_count: int = 0
     query: Optional[str] = None
@@ -70,6 +71,7 @@ class CitationCandidate:
             doi=data.get("doi") or data.get("DOI"),
             pmid=str(data["pmid"]) if data.get("pmid") else None,
             s2_paper_id=data.get("s2_paper_id") or data.get("paperId"),
+            openalex_id=data.get("openalex_id") or data.get("openalexId"),
             url=data.get("url"),
             citation_count=parsed_citations,
             query=data.get("query"),
@@ -89,6 +91,7 @@ class CitationCandidate:
             "doi": self.doi,
             "pmid": self.pmid,
             "s2_paper_id": self.s2_paper_id,
+            "openalex_id": self.openalex_id,
             "url": self.url,
             "citation_count": self.citation_count,
             "query": self.query,
@@ -101,6 +104,8 @@ class CitationCandidate:
     def dedup_key(self) -> str:
         if self.s2_paper_id:
             return f"s2:{self.s2_paper_id}"
+        if self.openalex_id:
+            return f"openalex:{self.openalex_id}"
         if self.doi:
             return f"doi:{self.doi.casefold()}"
         if self.pmid:
@@ -120,6 +125,7 @@ class CitationReference:
     doi: Optional[str] = None
     pmid: Optional[str] = None
     s2_paper_id: Optional[str] = None
+    openalex_id: Optional[str] = None
     url: Optional[str] = None
     source: str = "manual"
     cluster: Optional[str] = None
@@ -141,6 +147,7 @@ class CitationReference:
             doi=candidate.doi,
             pmid=candidate.pmid,
             s2_paper_id=candidate.s2_paper_id,
+            openalex_id=candidate.openalex_id,
             url=candidate.url,
             source=candidate.source,
             cluster=candidate.cluster,
@@ -166,6 +173,7 @@ class CitationReference:
             doi=data.get("doi"),
             pmid=data.get("pmid"),
             s2_paper_id=data.get("s2_paper_id"),
+            openalex_id=data.get("openalex_id"),
             url=data.get("url"),
             source=str(data.get("source") or "manual"),
             cluster=data.get("cluster"),
@@ -185,6 +193,7 @@ class CitationReference:
             "doi": self.doi,
             "pmid": self.pmid,
             "s2_paper_id": self.s2_paper_id,
+            "openalex_id": self.openalex_id,
             "url": self.url,
             "source": self.source,
             "cluster": self.cluster,

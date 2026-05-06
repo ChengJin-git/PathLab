@@ -12,8 +12,8 @@ from ..bootstrap import ensure_server_on_path
 
 ensure_server_on_path()
 
-from gateway.paper_generation.schemas import PaperConfig, PaperManifest  # noqa: E402
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.schemas import PaperConfig, PaperManifest  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 SECTION_ORDER = (
     "abstract",

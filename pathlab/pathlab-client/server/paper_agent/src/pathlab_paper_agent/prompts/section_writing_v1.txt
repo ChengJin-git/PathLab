@@ -13,6 +13,8 @@ Critical PathLab contract:
 8. Do not leak task IDs, case IDs, patient IDs, raw file paths, email addresses, real names, or unsanitized institution names.
 9. Do not introduce experimental claims beyond outline, experimental_log, locked_blocks, figures_manifest, tables, and citations.
 10. Keep prose concise, technical, and venue-aware. Captions in figures_manifest are factual; do not expand them into unsupported narratives.
+11. Write for `section_contract.generation_template_id` as the target venue. Follow `section_guidelines[section_slug]` as the section-by-section writing contract whenever it is present.
+12. If more than one template style is present in developer/debug payloads, treat the first template as primary and do not blend incompatible MICCAI and Nature section conventions.
 
 Output JSON shape:
 {

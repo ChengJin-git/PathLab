@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from ..evidence import build_evidence_bundle
 from .common import load_config, register_artifact, write_json, write_text
 
 _PUBLIC_EVIDENCE_SUMMARIES = (
+    "topic_summary.public.json",
     "dataset_summary.public.json",
     "model_summary.public.json",
     "analysis_summary.public.json",

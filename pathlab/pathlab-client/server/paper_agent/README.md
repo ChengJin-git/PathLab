@@ -2,6 +2,22 @@
 
 Standalone development runtime for the PathLab paper-generation pipeline.
 
+## Layout
+
+```text
+paper_agent/
+├── docs/                      # design plans, phase plans, PaperOrchestra notes
+├── src/pathlab_paper_agent/    # agent implementation, API, schemas, storage
+├── tests/                     # agent + gateway-interface tests
+├── pyproject.toml             # the only uv project for paper generation
+└── uv.lock
+```
+
+Gateway and TaskWorker keep only thin compatibility bridges at
+`server/gateway/paper_generation/` and `server/task_worker/jobs/paper_generation.py`
+so the front-end `/papers` API and worker handler names remain stable. New
+paper-agent code should live in this folder.
+
 ## Setup
 
 ```bash

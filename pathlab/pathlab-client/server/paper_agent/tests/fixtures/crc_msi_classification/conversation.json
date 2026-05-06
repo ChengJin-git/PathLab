@@ -1,0 +1,34 @@
+{
+  "conversation_id": "conv_crc_msi_fixture",
+  "title": "CRC MSI WSI Classification Planning",
+  "messages": [
+    {
+      "role": "user",
+      "content": "I finished curating a colorectal cancer H&E WSI dataset. I want to train a model to classify MSI versus MSS status. Can PathLab help me set this up as a WSI classification task?"
+    },
+    {
+      "role": "assistant",
+      "content": "Yes. Since the endpoint is MSI/MSS at the case level and the input is H&E whole-slide images, I recommend a WSI classification task with patient-level stratified train/validation/test splits."
+    },
+    {
+      "role": "user",
+      "content": "The dataset has 312 WSIs: 96 MSI and 216 MSS. Please use an attention MIL model and a pathology foundation-model feature extractor."
+    },
+    {
+      "role": "assistant",
+      "content": "I will configure a WSI classification task using CONCH-style features, attention MIL aggregation, class balancing, and early stopping. The paper topic should be colorectal cancer microsatellite instability prediction from H&E WSIs."
+    },
+    {
+      "role": "assistant",
+      "content": "[TASK_CONFIG]\n{\n  \"task_id\": \"crc_msi_abmil_fixture\",\n  \"task_name\": \"CRC MSI WSI Classification\",\n  \"task_type\": \"wsi_classification\",\n  \"data_type\": \"wsi\",\n  \"dataset_id\": \"crc_msi_dataset_fixture\",\n  \"classes\": [\n    \"MSI\",\n    \"MSS\"\n  ],\n  \"model\": {\n    \"aggregator\": \"attention_mil\",\n    \"feature_extractor\": \"conch_v1\",\n    \"learning_rate\": 0.0002,\n    \"epochs\": 80,\n    \"optimizer\": \"adamw\",\n    \"batch_size\": 1,\n    \"auto_balance\": true\n  },\n  \"split_config\": {\n    \"strategy\": \"random\",\n    \"ratios\": {\n      \"train\": 0.6,\n      \"val\": 0.2,\n      \"test\": 0.2\n    },\n    \"stratified\": true,\n    \"seed\": 42\n  },\n  \"submitted_task_id\": \"crc_msi_abmil_fixture\"\n}\n[/TASK_CONFIG]"
+    },
+    {
+      "role": "user",
+      "content": "Good. After it finishes, I want the paper to focus on CRC MSI prediction, related work on computational pathology MSI prediction, WSI MIL, and evidence-locked reporting."
+    },
+    {
+      "role": "assistant",
+      "content": "Understood. I will keep the manuscript topic as CRC MSI prediction from H&E WSIs and avoid claims about external validation or clinical readiness unless those results are provided."
+    }
+  ]
+}

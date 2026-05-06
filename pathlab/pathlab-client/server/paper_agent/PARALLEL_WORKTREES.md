@@ -88,8 +88,8 @@ uv run ruff check src tests
 如果需要读总设计文档，主目录里有：
 
 ```text
-/Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md
-/Users/wangyihui/code/PathLab/docs/plan/paper_generation_phases/parallel_worktree_plan.md
+/Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md
+/Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_phases/parallel_worktree_plan.md
 ```
 
 但这些 docs 是 ignored 文件，其他 worktree 里可能不存在；工程操作以本文件为准。
@@ -187,7 +187,7 @@ pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/renderers/
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/rendering.py
 pathlab/pathlab-client/server/paper_agent/src/pathlab_paper_agent/stages/exporting.py
 pathlab/pathlab-client/server/paper_agent/tests/templates/
-pathlab/pathlab-client/docker/paper-latex/
+pathlab/pathlab-client/server/paper_agent/docker/paper-latex/
 ```
 
 目标：
@@ -464,7 +464,7 @@ pathlab/pathlab-client/server/paper_agent/tests/exporting/                      
 目标：
 
 - **dependency-closed bundle**：每个 template 各打一个 ZIP，含 `main.tex`、`refs.bib`（M8b）、所有 `.cls` / `.bst`（M4 模板下）、`figures/*.{pdf,png}`（M6b ready 的）、`locked_blocks/*.tex`（M3+M5）、`tables/*.tex`、`README.md`。**不能含**任何 `evidence_lock.private.json` / `raw_collected/` / `intro_rw_draft/`（保 §5.3 数据契约）。
-- **post-extract dry-run latexmk**：bundle 打完后解压到临时目录 → 进 `pathlab/pathlab-client/docker/paper-latex/` container（M4 已建）跑 `latexmk -dvi=0 -ps=0 -pdf -interaction=nonstopmode`。返回码非零 → bundle 标 `downloadable=False`，错误日志摘要写进 `validation/warnings.md`。
+- **post-extract dry-run latexmk**：bundle 打完后解压到临时目录 → 进 `pathlab/pathlab-client/server/paper_agent/docker/paper-latex/` container（M4 已建）跑 `latexmk -dvi=0 -ps=0 -pdf -interaction=nonstopmode`。返回码非零 → bundle 标 `downloadable=False`，错误日志摘要写进 `validation/warnings.md`。
 - **双模板 main.pdf 编译**：MICCAI 和 Nature SR 的 `final/{template}/main.pdf` 都得编译成功。M4 已有 `latex_compiler.py`，调它即可。
 - 测试用 fixture：`tests/paper_generation/fixtures/wsi_classification_minimal/` 喂完一遍 evidence/locked_blocks/figures/sections，跑 export stage，断言 ZIP 内容树 + dry-run 通过 + main.pdf 出文件。
 - 没有 LLM —— 纯 packaging + 编译验证。
@@ -649,7 +649,7 @@ M2：
 M4：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m4-templates 工作。只负责 M4 Templates / Renderer / LaTeX export。先读 pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md。主要写 templates/、renderers/、stages/rendering.py、stages/exporting.py、docker/paper-latex/。不要改 collector/citations/validators。实现后跑 paper_agent tests、ruff，并做一个 run-stage rendering/exporting smoke。
+你在 /Users/wangyihui/code/PathLab-worktrees/m4-templates 工作。只负责 M4 Templates / Renderer / LaTeX export。先读 pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md。主要写 templates/、renderers/、stages/rendering.py、stages/exporting.py、pathlab/pathlab-client/server/paper_agent/docker/paper-latex/。不要改 collector/citations/validators。实现后跑 paper_agent tests、ruff，并做一个 run-stage rendering/exporting smoke。
 ```
 
 M6a：
@@ -677,7 +677,7 @@ M10a：
 M5 Locked Blocks Renderer：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m5-locked-blocks 工作。只负责 M5 deterministic locked blocks renderer。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M5 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md（特别是 2026-05-04 phase03 那条），(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M5 段。
+你在 /Users/wangyihui/code/PathLab-worktrees/m5-locked-blocks 工作。只负责 M5 deterministic locked blocks renderer。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M5 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md（特别是 2026-05-04 phase03 那条），(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M5 段。
 
 任务：把 M3 内嵌在 evidence/bundle.py 的 _render_locked_blocks / _render_metrics_macros / _render_tables 三段搬到新建的 renderers/locked_block_renderer.py，做成 Jinja2 模板化的 LockedBlockRenderer。模板感知 MICCAI vs Nature SR（M5 只挑模板，section 顺序由 M9 处理）。建 byte-identical golden fixture 在 tests/paper_generation/fixtures/wsi_classification_minimal/golden/deterministic/locked_blocks/。**保留** M3 review 修过的 \\newcommand letters-only 不变量。
 
@@ -687,7 +687,7 @@ M5 Locked Blocks Renderer：
 M7 Outline Agent（第一条 LLM track）：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m7-outline 工作。只负责 M7 Outline Agent。这是 paper-agent 第一条 LLM track，LLM provider 模块由你来建。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M7 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M7 段、§5.4.8 prompt 模板、§13.1 outline_schema.json 断言，(4) PaperOrchestra App. F.1（项目 docs/research/ 下 paper_generation_research.md 有摘要）。
+你在 /Users/wangyihui/code/PathLab-worktrees/m7-outline 工作。只负责 M7 Outline Agent。这是 paper-agent 第一条 LLM track，LLM provider 模块由你来建。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M7 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M7 段、§5.4.8 prompt 模板、§13.1 outline_schema.json 断言，(4) PaperOrchestra App. F.1（项目 pathlab/pathlab-client/server/paper_agent/docs/research/ 下 paper_generation_research.md 有摘要）。
 
 任务：(1) 起 LLM provider 模块 src/pathlab_paper_agent/llm/，httpx 客户端 + 三档 env override（PAPER_GEN_LLM_BASE_URL / _API_KEY / _MODEL → vLLM 内网 → OpenRouter 兜底），reasoning 模型必须 stream + 聚合 SSE。(2) 起 agents/ 目录 + agents/outline_agent.py，单次 LLM 调用，输入 experimental_log + idea + style.json + figures/manifest.json，输出 drafts/outline.json（PaperOrchestra App. F.1 schema：plotting_plan / macro_lit_search / micro_lit_clusters / section_plan + PathLab pathlab_extensions）。(3) **PHI 双保险**：装配 prompt 前过 PhiScrubber，任何 raw_paths / case_id / 机构名 hard fail。(4) 替掉 stages/outlining.py 现在的 hardcoded scaffold。
 
@@ -701,7 +701,7 @@ M7 Outline Agent（第一条 LLM track）：
 M6b Plotting Agent：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m6b-plotting 工作。只负责 M6b Plotting Agent（M6a 的 orchestration 层）。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M6b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M6b 段、§5.4.6 plotting prompt 模板、§13.1 figures_manifest.json 断言。
+你在 /Users/wangyihui/code/PathLab-worktrees/m6b-plotting 工作。只负责 M6b Plotting Agent（M6a 的 orchestration 层）。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M6b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M6b 段、§5.4.6 plotting prompt 模板、§13.1 figures_manifest.json 断言。
 
 任务：(1) 起 src/pathlab_paper_agent/agents/plotting_agent.py（agents/ 已经在 M7 建好），读 drafts/outline.json 的 plotting_plan，按 backend 字段派遣：deterministic_plotting → 调 plotting/ 下对应 M6a generator 出 figures/<id>.{pdf,png}；paperbanana → fallback 到 requires_user_revision（M6c 暂未实装，主流水线不阻塞）；user_revision → manifest 标 status=user_provided。(2) 每张图调一次短 LLM 写 caption（不要长篇叙事），prompt 在 prompts/plotting_caption_v1.txt。(3) 写最终 figures/manifest.json：figure_id / status / source / generator / kind / caption。(4) 替掉 stages/plotting.py 现在的 scaffold，走 agent flow。
 
@@ -711,7 +711,7 @@ M6b Plotting Agent：
 M8b Literature Review Agent：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m8b-literature 工作。只负责 M8b Literature Review Agent。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M8b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md（特别是 2026-05-04 m8a→sections 那条 forward hook），(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M8b 段、§5.4.7 literature prompt 模板、§13.1 citation_constraints.json 断言，(4) PaperOrchestra App. F.3。
+你在 /Users/wangyihui/code/PathLab-worktrees/m8b-literature 工作。只负责 M8b Literature Review Agent。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M8b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md（特别是 2026-05-04 m8a→sections 那条 forward hook），(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M8b 段、§5.4.7 literature prompt 模板、§13.1 citation_constraints.json 断言，(4) PaperOrchestra App. F.3。
 
 任务：(1) 起 src/pathlab_paper_agent/agents/literature_review_agent.py。(2) 读 drafts/outline.json 的 macro_lit_search + micro_lit_clusters，第 1 次 LLM 调用把每条展开成具体 S2/PubMed 查询。(3) 把 M8a 的 citations/ 模块当 library 调（semantic_scholar / pubmed / verifier / ref_selector / bib_generator / coverage_gate / orphan_cite_gate），10 路并发搜索 + 串行 verify + selected_refs/required_cites 选定 + refs.bib 生成 + coverage_report.json（≥ 90% 不达标 hard fail）。(4) 第 2 次 LLM 调用用 selected_refs 起草 drafts/intro_rw_draft/{introduction,related_work}.tex，每篇引用必须出现在 selected_refs.json 内。M8a 已经把 stages/sections.py 接成 intro_rw_draft → sections 的 forward hook（见 MIGRATIONS）；M8b 只填内容，不动 hook。(5) 替掉 stages/literature.py 现在的 M8a 占位，走 agent flow。
 
@@ -725,7 +725,7 @@ M8b Literature Review Agent：
 M9 Section Writing Agent：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m9-sections 工作。只负责 M9 Section Writing Agent。这是 v1 主线最重的一条 LLM track —— 一次多模态 LLM 调用装配整篇正文。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M9 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M9 段、§5.5.1 placeholder rendering、§13.1 section_constraints.json 断言，(4) PaperOrchestra App. F.4。
+你在 /Users/wangyihui/code/PathLab-worktrees/m9-sections 工作。只负责 M9 Section Writing Agent。这是 v1 主线最重的一条 LLM track —— 一次多模态 LLM 调用装配整篇正文。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M9 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M9 段、§5.5.1 placeholder rendering、§13.1 section_constraints.json 断言，(4) PaperOrchestra App. F.4。
 
 任务：(1) 起 src/pathlab_paper_agent/agents/section_writing_agent.py，单次多模态 LLM 调用装配整篇 sections。输入：drafts/outline.json + drafts/intro_rw_draft/{introduction,related_work}.tex（M8b）+ figures/manifest.json（M6b）+ citations/{refs.bib,selected_refs.json,required_cites.json}（M8b）+ locked_blocks/*.tex（M3+M5）。(2) **强制占位符语法**：metric → {{m:metric_key}}，引用 → [CITE:paperId]。LLM 不能直接写数字、不能直接 \cite{}。(3) **A2 引用契约**：可润色 intro_rw_draft 文风，但不能删 required_cites.json 里任何 paperId，不能新增 selected_refs.json 之外的 paperId。(4) 接两个 renderer 收尾：renderers/metric_renderer.py（M10a 已交，{{m:...}} → evidence_lock 数字）+ 新建 renderers/citation_renderer.py（[CITE:paperId] → \cite{paperId}）。(5) 替掉 stages/sections.py 现有的 scaffold + intro_rw_draft hook，走 agent flow（intro/RW 优先读 M8b draft 这条语义保留）。(6) M10a deterministic guards（metric / identifier / latex / citation）必须 100% 通过。
 
@@ -739,7 +739,7 @@ M9 Section Writing Agent：
 M10b Claim/Consistency Guards：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m10b-guards 工作。只负责 M10b LLM-output guards。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M10b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M10b 段、§11 设计误区列表（claim guard 那条）。
+你在 /Users/wangyihui/code/PathLab-worktrees/m10b-guards 工作。只负责 M10b LLM-output guards。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M10b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M10b 段、§11 设计误区列表（claim guard 那条）。
 
 任务：(1) 起 src/pathlab_paper_agent/validators/claim_guard.py。扫 drafts/sections/*.tex，检测 keyword（external validation / independent cohort / generalization to / outperforms / state-of-the-art / SOTA / significantly / statistically significant / real world deployment 等）。从 evidence_lock.private.json **派生** has_external_validation / has_baseline / has_statistical_test 三个 flag（不要让 M3 加新字段，从已有结构派生：has_external_validation = bool(evidence_lock["external_validation"])，has_baseline = 任一 source_task role=="baseline"，has_statistical_test = metrics 含 ci_/p_value）。当正文有 keyword 但 evidence 不支持时 hard fail。(2) 起 src/pathlab_paper_agent/validators/consistency_guard.py，检测段落串扰（test 段出现 val/external 数字、external 段出现 internal 数字）。可走 metric_renderer 反向：把 evidence_lock 的 metric 按 task/split 索引，扫每个 section 的 \metricXxx macro，看是否落在该 section 应引用的 task/split 子集里。(3) 接进 stages/validating.py，在 M10a 4 个 guard 之后跑 claim 和 consistency。每条 guard 写 validation/<guard>.json + 汇总 validation/warnings.md（沿 M10a 现有格式）。
 
@@ -749,9 +749,9 @@ M10b Claim/Consistency Guards：
 M12a ZIP Export 硬化：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m12a-export 工作。只负责 M12a ZIP export 硬化（dependency-closed bundle + dry-run latexmk + 双模板 main.pdf 编译）。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M12a 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M12 段、§3.7 文件 allowlist、§5.3 私有/公开数据契约。**注意 M12 整体被拆成 M12a 和 M12b**：你只做 M12a（packaging + 编译验证），不要碰 regenerate API（那是 M12b，要等 M11 refinement_loop）。
+你在 /Users/wangyihui/code/PathLab-worktrees/m12a-export 工作。只负责 M12a ZIP export 硬化（dependency-closed bundle + dry-run latexmk + 双模板 main.pdf 编译）。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M12a 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M12 段、§3.7 文件 allowlist、§5.3 私有/公开数据契约。**注意 M12 整体被拆成 M12a 和 M12b**：你只做 M12a（packaging + 编译验证），不要碰 regenerate API（那是 M12b，要等 M11 refinement_loop）。
 
-任务：(1) 扩 src/pathlab_paper_agent/renderers/zip_exporter.py，每个模板各打一个 dependency-closed ZIP，含 main.tex / refs.bib / 全部 .cls .bst（M4 模板下）/ figures/*.{pdf,png}（M6b ready 的）/ locked_blocks/*.tex（M3+M5）/ tables/*.tex / README.md。**禁止**含 evidence_lock.private.json / raw_collected/ / intro_rw_draft/（保数据契约）。(2) 新建 src/pathlab_paper_agent/renderers/bundle_validator.py：bundle 打完后解压到临时目录，进 pathlab/pathlab-client/docker/paper-latex/ container（M4 已建）跑 latexmk -dvi=0 -ps=0 -pdf -interaction=nonstopmode。返回码非零 → bundle 标 downloadable=False，错误日志摘要写进 validation/warnings.md。(3) 双模板 final/{template}/main.pdf 编译成功（调 M4 已有的 latex_compiler.py）。(4) 扩 stages/exporting.py，在 M4 已有 export 流程后挂上 dependency-closure 检查 + dry-run validate + manifest 标记 downloadable。(5) 测试用 fixture wsi_classification_minimal/，端到端跑 export，断言 ZIP 内容树 + dry-run 通过 + main.pdf 出文件 + 不含 private 资料。
+任务：(1) 扩 src/pathlab_paper_agent/renderers/zip_exporter.py，每个模板各打一个 dependency-closed ZIP，含 main.tex / refs.bib / 全部 .cls .bst（M4 模板下）/ figures/*.{pdf,png}（M6b ready 的）/ locked_blocks/*.tex（M3+M5）/ tables/*.tex / README.md。**禁止**含 evidence_lock.private.json / raw_collected/ / intro_rw_draft/（保数据契约）。(2) 新建 src/pathlab_paper_agent/renderers/bundle_validator.py：bundle 打完后解压到临时目录，进 pathlab/pathlab-client/server/paper_agent/docker/paper-latex/ container（M4 已建）跑 latexmk -dvi=0 -ps=0 -pdf -interaction=nonstopmode。返回码非零 → bundle 标 downloadable=False，错误日志摘要写进 validation/warnings.md。(3) 双模板 final/{template}/main.pdf 编译成功（调 M4 已有的 latex_compiler.py）。(4) 扩 stages/exporting.py，在 M4 已有 export 流程后挂上 dependency-closure 检查 + dry-run validate + manifest 标记 downloadable。(5) 测试用 fixture wsi_classification_minimal/，端到端跑 export，断言 ZIP 内容树 + dry-run 通过 + main.pdf 出文件 + 不含 private 资料。
 
 主要写 renderers/zip_exporter.py、renderers/bundle_validator.py、stages/exporting.py、tests/exporting/。不要改 schemas.py / pipeline.py / conftest.py / collector / evidence / citations / validators / agents / llm / 其他 stages；不要改 M4 的 renderers/template_renderer.py / renderers/latex_compiler.py 内部实现（按现有 API 调）；不要改 M5 的 renderers/locked_block_renderer.py。**M11 territory（agents/refinement_agent.py 等）和 M12b territory（POST regenerate 路由）严格不动**。完成后跑 uv run pytest -q 和 uv run ruff check src tests。不接 LLM —— 纯 packaging + 编译验证。
 ```
@@ -763,7 +763,7 @@ M12a ZIP Export 硬化：
 M11 Refinement Loop：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m11-refinement 工作。只负责 M11 Refinement Loop。这是 v1 主线倒数第二条 LLM track —— critic-driven 多轮重写循环。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M11 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md（特别是 2026-05-05 refining stage scaffold 那条 —— pipeline dispatch 已经接好，你只填 stage body），(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M11 段 + §10 + §11 设计误区里"refinement loop 不能无限循环改到好"那条，(4) PaperOrchestra App. F.5。
+你在 /Users/wangyihui/code/PathLab-worktrees/m11-refinement 工作。只负责 M11 Refinement Loop。这是 v1 主线倒数第二条 LLM track —— critic-driven 多轮重写循环。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M11 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md（特别是 2026-05-05 refining stage scaffold 那条 —— pipeline dispatch 已经接好，你只填 stage body），(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M11 段 + §10 + §11 设计误区里"refinement loop 不能无限循环改到好"那条，(4) PaperOrchestra App. F.5。
 
 任务：(1) 起 src/pathlab_paper_agent/agents/content_refinement_agent.py。一轮里两次 LLM 调用：critic（5 个 PathLab tuned rubric 维度，每项 0-5 整数 + 一句话理由 + overall）→ revise（拿 critic 反馈重写需要修的章节）。revise 必须保留 M9 的占位符约束（{{m:...}} + [CITE:paperId]）和 A2 cite 契约（不能删 required_cites，不能加 selected_refs 之外）。(2) 替掉 stages/refining.py 的 no-op scaffold，跑 ≤ 3 轮 critic→revise→guards→accept/revert 循环。(3) **物理 snapshot**：每次接受重写前先 copy drafts/sections/* 到 drafts/snapshots/iter_{N}/sections/。(4) **物理 revert**：拒绝时把上一轮 snapshot copy 回 drafts/sections/。(5) **单调收敛**：score 严格上升 → 接受；平局 → 每个子项不能负退化才接受；下降 → 拒绝。(6) **score 是 hybrid**：M10a + M10b 的 GuardReport（fail 直接 force reject 该轮）+ critic 的 5 维 rubric 总分。(7) revise 后跑 M9 的 citation_renderer + M10a 的 metric_renderer 收尾。(8) 写 validation/refinement_log.json 记录每轮 score / 接受/拒绝原因 + iter snapshot 清单。
 
@@ -777,7 +777,7 @@ M11 Refinement Loop：
 M12b Section Regenerate API：
 
 ```text
-你在 /Users/wangyihui/code/PathLab-worktrees/m12b-regenerate 工作。只负责 M12b section-level regenerate API —— v1 主线最后一条 track。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M12b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/docs/plan/paper_generation_agent_design.md 的 M12 段（注意整体被拆成 M12a + M12b，你只做 M12b）+ §3.7 文件 allowlist，(4) M9 / M11 已合的实现（agents/section_writing_agent.py、stages/refining.py）—— 你直接复用它们的 API，不要重新实现。
+你在 /Users/wangyihui/code/PathLab-worktrees/m12b-regenerate 工作。只负责 M12b section-level regenerate API —— v1 主线最后一条 track。先按顺序读：(1) pathlab/pathlab-client/server/paper_agent/PARALLEL_WORKTREES.md（§4 M12b 边界 + §5 contract），(2) pathlab/pathlab-client/server/paper_agent/MIGRATIONS.md，(3) /Users/wangyihui/code/PathLab/pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md 的 M12 段（注意整体被拆成 M12a + M12b，你只做 M12b）+ §3.7 文件 allowlist，(4) M9 / M11 已合的实现（agents/section_writing_agent.py、stages/refining.py）—— 你直接复用它们的 API，不要重新实现。
 
 任务：(1) 起 src/pathlab_paper_agent/regenerate.py，导出 `regenerate_section(paper_id, section_name, *, uploads_dir=None) -> PaperManifest`：校验 section_name → 把当前 drafts/sections/* 全 copy 到 drafts/regenerate_runs/{run_id}/before/（run_id 用 ISO timestamp slug）→ 调 M9 SectionWritingAgent.generate(...) 取 result.sections[section_name]，**只**写回 drafts/sections/{section_name}.tex，其它 section 文件不动 → 跑 M10 全部 6 条 guard → 调 stages/refining.run，**snapshots 走 namespacing 到 drafts/regenerate_runs/{run_id}/snapshots/iter_{N}/**（不污染原 drafts/snapshots/）→ 写 drafts/regenerate_runs/{run_id}/log.json 并在 manifest 注册 private_backend_only。(2) 给 stages/refining.py 加 keyword arg `snapshots_subdir: Path | None = None`，默认 paths.snapshots_dir；把内部 `_snapshot_sections` 用这个 dir 即可。**保持原 M11 测试不变**（默认行为不变）。(3) dev_server.py 加新路由 `POST /papers/{paper_id}/sections/{section_name}/regenerate`，沿现有 @app.post 既有 pattern，404/400/422 用 HTTPException，返回 {paper_id, status, current_stage, regenerated_sections, refinement_log_summary}。(4) cli.py 加 `regenerate --paper-id X --section results` 子命令做 smoke。(5) MIGRATIONS.md 落 entry，因为新 endpoint 是 §5.1 dev service 公开 surface 的 additive change。
 

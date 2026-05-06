@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterable
 
-from gateway.paper_generation.schemas import PaperConfig
+from pathlab_paper_agent.schemas import PaperConfig
 
 from ..templates import get_template
 

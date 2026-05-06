@@ -471,7 +471,9 @@ def _default_locked_block_inputs(section: Any) -> list[str]:
             "locked_blocks/method_block.tex",
             "locked_blocks/evidence_gaps.tex",
         ]
-    if normalized in {"experiments", "results"}:
+    if normalized in {"experiments", "experimental_setup", "experimental_design", "evaluation"}:
+        return ["locked_blocks/dataset_block.tex"]
+    if normalized in {"results"}:
         return [
             "locked_blocks/results_block.tex",
             "locked_blocks/metrics_macros.tex",

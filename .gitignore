@@ -1,5 +1,5 @@
-# docs (generated, not tracked)
-docs/
+# root docs (generated, not tracked)
+/docs/
 
 # git worktrees
 .worktrees/
