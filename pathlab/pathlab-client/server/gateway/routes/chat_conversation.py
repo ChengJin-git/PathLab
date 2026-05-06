@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import json
 import httpx
 from importlib import import_module
 from typing import Protocol
@@ -44,6 +45,7 @@ def _build_title_generation_payload(
     payload: dict[str, object] = {
         "model": model,
         "messages": [{"role": "user", "content": title_prompt}],
+        "stream": True,
         # Keep enough output room in case a provider still emits reasoning or extra text.
         "max_tokens": 512,
         "temperature": 0.3,
@@ -106,6 +108,30 @@ def _extract_title_response_text(message: dict[str, object]) -> str:
     return extract_text_from_content(message.get("content")).strip()
 
 
+def _extract_title_stream_response_text(response_text: str) -> str:
+    chunks: list[str] = []
+    for line in response_text.splitlines():
+        if not line.startswith("data: "):
+            continue
+        data = line[6:].strip()
+        if data == "[DONE]":
+            break
+        try:
+            parsed = json.loads(data)
+        except json.JSONDecodeError:
+            continue
+        choices = parsed.get("choices")
+        if not isinstance(choices, list) or not choices:
+            continue
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            continue
+        delta = choice.get("delta")
+        if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+            chunks.append(delta["content"])
+    return "".join(chunks).strip()
+
+
 def _get_title_source_message(conversation) -> str | None:
     """Pick the first user message that should drive title generation.
 
@@ -151,7 +177,7 @@ from .chat_patch_inference import (
     cleanup_chat_patch_tasks_from_message,
 )
 from .chat_model_selector import extract_text_from_content
-from .chat_llm_client import _check_local_vllm_available
+from .chat_llm_client import _check_local_vllm_available, _raise_for_status_with_detail
 
 router = APIRouter(tags=["Chat & Conversations"])
 
@@ -400,10 +426,8 @@ async def generate_conversation_title(
                 headers=headers,
                 json=payload,
             )
-            resp.raise_for_status()
-            data = resp.json()
-            message = data.get("choices", [{}])[0].get("message", {})
-            raw_content = _extract_title_response_text(message)
+            await _raise_for_status_with_detail(resp)
+            raw_content = _extract_title_stream_response_text(resp.text)
             title = raw_content.strip().strip('"').strip("'")
     except Exception as e:
         logger.warning(
