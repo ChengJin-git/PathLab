@@ -53,6 +53,10 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     PaperSection,
     PaperSectionListResponse,
     PaperSectionRegenerateResponse,
+    GuardIssueSummary,
+    GuardResultSummary,
+    RefinementSummary,
+    ValidationSummary,
 )
 from pathlab_paper_agent.regenerate import (  # noqa: E402
     MissingSectionDraftError,
@@ -82,6 +86,17 @@ _SECTION_ORDER = {
     "discussion": 6,
     "conclusion": 7,
 }
+_VALIDATION_GUARD_REPORT_PATHS = {
+    "metric_guard": "validation/metric_guard.json",
+    "identifier_guard": "validation/identifier_guard.json",
+    "latex_guard": "validation/latex_guard.json",
+    "citation_guard": "validation/citation_guard.json",
+    "claim_guard": "validation/claim_guard.json",
+    "consistency_guard": "validation/consistency_guard.json",
+}
+_VALIDATION_WARNINGS_PATH = "validation/warnings.md"
+_REFINEMENT_LOG_PATH = "validation/refinement_log.json"
+_MAX_SAMPLE_ISSUES = 3
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +159,103 @@ def _public_artifacts(manifest: Optional[PaperManifest]) -> list[PaperRunArtifac
         ):
             artifacts.append(artifact)
     return artifacts
+
+
+def _load_json_file(path) -> dict:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("paper_generation: failed to read JSON %s: %s", path, exc)
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _guard_result_summary(paths: PaperRunPaths, guard: str, rel_path: str) -> GuardResultSummary | None:
+    report = _load_json_file(paths.root / rel_path)
+    if not report:
+        return None
+    raw_issues = report.get("issues") if isinstance(report.get("issues"), list) else []
+    issues = [issue for issue in raw_issues if isinstance(issue, dict)]
+    error_count = sum(1 for issue in issues if str(issue.get("severity") or "error") == "error")
+    warning_count = sum(1 for issue in issues if str(issue.get("severity") or "") == "warning")
+    sample_issues: list[GuardIssueSummary] = []
+    for issue in issues[:_MAX_SAMPLE_ISSUES]:
+        sample_issues.append(
+            GuardIssueSummary(
+                code=str(issue.get("code") or "unknown"),
+                message=str(issue.get("message") or ""),
+                severity=str(issue.get("severity") or "error"),
+                path=issue.get("path") if isinstance(issue.get("path"), str) else None,
+                context=issue.get("context") if isinstance(issue.get("context"), str) else None,
+            )
+        )
+    return GuardResultSummary(
+        guard=str(report.get("guard") or guard),
+        status=str(report.get("status") or ("fail" if error_count else "pass")),
+        issue_count=len(issues),
+        error_count=error_count,
+        warning_count=warning_count,
+        path=rel_path,
+        sample_issues=sample_issues,
+    )
+
+
+def _score_total(score: object) -> float | None:
+    if not isinstance(score, dict):
+        return None
+    value = score.get("total")
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _refinement_summary(paths: PaperRunPaths) -> RefinementSummary | None:
+    payload = _load_json_file(paths.root / _REFINEMENT_LOG_PATH)
+    if not payload:
+        return None
+    iterations = payload.get("iterations") if isinstance(payload.get("iterations"), list) else []
+    score_candidates = [
+        item.get("score")
+        for item in iterations
+        if isinstance(item, dict) and isinstance(item.get("score"), dict)
+    ]
+    final_score = score_candidates[-1] if score_candidates else payload.get("initial_score")
+    accepted = payload.get("accepted_iterations") if isinstance(payload.get("accepted_iterations"), list) else []
+    accepted_iterations = []
+    for item in accepted:
+        try:
+            accepted_iterations.append(int(item))
+        except (TypeError, ValueError):
+            continue
+    return RefinementSummary(
+        final_status=payload.get("final_status") if isinstance(payload.get("final_status"), str) else None,
+        max_iterations=payload.get("max_iterations") if isinstance(payload.get("max_iterations"), int) else None,
+        accepted_iterations=accepted_iterations,
+        iteration_count=len(iterations),
+        initial_score=payload.get("initial_score") if isinstance(payload.get("initial_score"), dict) else None,
+        final_score=final_score if isinstance(final_score, dict) else None,
+        log_path=_REFINEMENT_LOG_PATH,
+    )
+
+
+def _validation_summary(paths: PaperRunPaths) -> ValidationSummary:
+    guards = [
+        summary
+        for guard, rel_path in _VALIDATION_GUARD_REPORT_PATHS.items()
+        if (summary := _guard_result_summary(paths, guard, rel_path)) is not None
+    ]
+    refinement = _refinement_summary(paths)
+    hybrid_score = _score_total(refinement.final_score) if refinement is not None else None
+    warnings_path = _VALIDATION_WARNINGS_PATH if (paths.root / _VALIDATION_WARNINGS_PATH).is_file() else None
+    return ValidationSummary(
+        m10_guards=guards,
+        refinement=refinement,
+        hybrid_score=hybrid_score,
+        warnings_md_path=warnings_path,
+    )
 
 
 def _is_registered_public_artifact(
@@ -358,12 +470,13 @@ async def get_paper_run(
 ) -> PaperRunDetail:
     row = await _load_or_404(db, paper_id, user)
     summary = _row_to_summary(row)
-    manifest = _load_manifest(PaperRunPaths.for_paper(paper_id))
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
     return PaperRunDetail(
         **summary.model_dump(),
         artifacts=_public_artifacts(manifest),
         stage_log=manifest.stage_log if manifest is not None else [],
-        validation_summary=None,
+        validation_summary=_validation_summary(paths),
     )
 
 # ---------------------------------------------------------------------------

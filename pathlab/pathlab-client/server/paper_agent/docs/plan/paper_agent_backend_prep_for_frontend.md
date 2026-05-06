@@ -1,8 +1,8 @@
 # Backend Prep Plan — Before Frontend Work Starts
 
 > 创建日期：2026-05-06
-> 最后更新：2026-05-06（更新 §10：发现 1.5 / 1.6 已通过 tests/gateway_interface/ 落地；Wave 0 实际完成 2/4）
-> 状态：proposal
+> 最后更新：2026-05-06
+> 状态：in_progress
 > 配套文档：paper_agent_frontend_design.md
 
 This plan lists the backend work that should land before the frontend paper
@@ -39,7 +39,7 @@ Current API surface:
 |---|---|---|
 | `POST /papers` | shipped | DB row + scaffold + worker enqueue best-effort |
 | `GET /papers` | shipped | paginated and scoped to caller |
-| `GET /papers/{id}` | shipped | summary + artifacts + stage log; `validation_summary` still `None` |
+| `GET /papers/{id}` | shipped | summary + public artifacts + structured stage log + validation summary |
 | `GET /papers/{id}/sections` | shipped | editable section list with hash + mtime |
 | `POST /papers/{id}/sections/{name}/regenerate` | shipped | synchronous in-process regenerate |
 | `DELETE /papers/{id}` | shipped | DB + filesystem deletion |
@@ -61,14 +61,35 @@ Current public template policy:
 
 Current known frontend-facing gaps:
 
-- `GET /papers/{id}.validation_summary` is not populated.
-- `stage_log` has only loose `{stage, ts, message}` entries and no duration.
-- `artifact_index` and `stage_log` are loose dicts rather than typed contract
-  models.
-- Outline and figures manifests do not yet have exported public Pydantic
-  schemas for frontend type generation.
+- Phase 1 read-only contract hardening has been implemented in the
+  `paper/backend-prep-frontend` worktree: validation summaries, structured stage
+  timings, artifact/stage summary models, outline/figure schemas, and `/files`
+  contract tests.
+- Phase 0 PDF/export verification still requires a Docker-enabled representative
+  smoke run.
 - Regenerate is synchronous.
 - Outline approve/pause/resume, per-stage rerun, and cancel are not implemented.
+
+### 2.1 Implementation progress in `paper/backend-prep-frontend`
+
+Completed in this worktree:
+
+- `GET /papers/{id}` now aggregates `validation/*_guard.json`,
+  `validation/warnings.md`, and `validation/refinement_log.json` into a public
+  `validation_summary`.
+- `stage_log` entries now include `status`, `started_at`, `finished_at`,
+  `duration_ms`, and `error_message` on failures while keeping `ts` for
+  compatibility.
+- Public Pydantic models now cover artifact index entries, stage-log entries,
+  validation summaries, `drafts/outline.json`, and `figures/manifest.json`.
+- Outlining and plotting stages validate their public JSON outputs against the
+  exported schemas before writing artifacts.
+- `/files` route tests cover the frontend-visible surfaces:
+  `drafts/outline.json`, `figures/manifest.json`, `validation/warnings.md`,
+  `final/{template}/main.pdf`, and `exports/{template}_bundle.zip`, plus
+  private/unregistered artifact denial.
+- Single-template public API behavior remains enforced: `miccai` OR
+  `nature_scientific_reports`, not both.
 
 ---
 
@@ -84,7 +105,51 @@ issues are already addressed in the current codebase:
 
 Remaining Phase 0 work is therefore verification:
 
+### 0.0 Verification run — 2026-05-06
+
+Status: passed in `paper/backend-prep-frontend`.
+
+Command:
+
+```bash
+PATHLAB_PAPER_AGENT_COMPILE_LATEX=1 \
+PATHLAB_PAPER_AGENT_RUN_DOCKER_TESTS=1 \
+uv run pytest \
+  tests/integration/test_pipeline_e2e_smoke.py \
+  tests/templates/test_m4_templates.py::test_rendered_templates_compile_with_docker_when_enabled \
+  -s -q --basetemp=tests/integration/.phase0_smoke_runs
+```
+
+Result:
+
+- Docker image `pathlab/paper-latex:latest` was available and the hello-world
+  compile returned `OK`.
+- Pytest smoke status: `2 passed`.
+- Representative run: `smoke_v1`.
+- `final/miccai/main.pdf`: compiled, return code `0`, 2 pages, 150406 bytes.
+- `final/nature_scientific_reports/main.pdf`: compiled, return code `0`,
+  2 pages, 63679 bytes.
+- PDF text extraction via Ghostscript found a non-empty References section for
+  both templates and no unresolved `[?]` / `??` citation markers.
+- `main.log` grep found no undefined citation/reference warnings for either
+  template.
+- Direct bundle validation passed for both
+  `exports/miccai_bundle.zip` and
+  `exports/nature_scientific_reports_bundle.zip`
+  (`status=passed`, `returncode=0`, `downloadable=True`).
+- ZIP privacy check found no private evidence/input/debug artifacts such as
+  `evidence_lock.private.json`, `inputs/source_tasks.json`,
+  `source_mappings.json`, `phi_mapping.json`, `raw_collected`, snapshots, or
+  validation guard internals.
+
+Remaining warning class:
+
+- Only LaTeX layout warnings from long fixture URLs remain
+  (`Overfull/Underfull \hbox`); these do not block compile/export correctness.
+
 ### 0.1 Verify resolved citations in compiled PDFs
+
+Implementation status: done in the 2026-05-06 smoke run.
 
 - Run a Docker-enabled compile/export smoke test on a representative paper run.
 - Confirm generated PDFs do not show unresolved `[?]` citations.
@@ -98,6 +163,8 @@ Remaining Phase 0 work is therefore verification:
 - Estimate: 0.5 day.
 
 ### 0.2 Verify downloadable export bundles
+
+Implementation status: done in the 2026-05-06 smoke run.
 
 - Run bundle validation on `exports/{template}_bundle.zip`.
 - Confirm bundle contains public dependencies and excludes private evidence.
@@ -118,7 +185,9 @@ hardened first.
 
 ### 1.1 Populate `validation_summary` in `GET /papers/{id}`
 
-Current state:
+Implementation status: done in `paper/backend-prep-frontend`.
+
+Previous gap:
 
 - `GET /papers/{id}` always returns `validation_summary=None`.
 - Validation data exists on disk, not in `manifest.validation_summary`.
@@ -181,7 +250,9 @@ Estimate: 1 day.
 
 ### 1.2 Add structured stage timings
 
-Current state:
+Implementation status: done in `paper/backend-prep-frontend`.
+
+Previous gap:
 
 - `stage_log` entries are loose dicts: `{stage, ts, message}`.
 - The timestamp is captured before stage execution, so it cannot represent a
@@ -229,7 +300,9 @@ Estimate: 0.5-1 day.
 
 ### 1.3 Define the manifest/artifact contract
 
-Current state:
+Implementation status: done in `paper/backend-prep-frontend`.
+
+Previous gap:
 
 - `PaperManifest.artifact_index` is `dict[str, Any]`.
 - Stage log entries are loose dicts.
@@ -260,7 +333,9 @@ Estimate: 1 day.
 
 ### 1.4 Define Outline and Figure manifest schemas
 
-Current state:
+Implementation status: done in `paper/backend-prep-frontend`.
+
+Previous gap:
 
 - `drafts/outline.json` and `figures/manifest.json` have implicit schemas inside
   their writing agents.
@@ -289,7 +364,9 @@ Estimate: 1 day.
 
 ### 1.5 Audit `/files` allowlist and manifest registration
 
-Current state:
+Implementation status: done in `paper/backend-prep-frontend`.
+
+Previous gap:
 
 - The allowlist already includes the main frontend surfaces:
   - `drafts/outline.json`
@@ -314,6 +391,8 @@ Acceptance:
 Estimate: 0.5 day.
 
 ### 1.6 Confirm single-template frontend contract
+
+Implementation status: done in current backend tests.
 
 Decision:
 
@@ -516,9 +595,10 @@ Do not change these contracts for the frontend rewrite:
 If one of these appears to block frontend work, pause and redesign rather than
 mutating the contract ad hoc.
 
+## 9. Historical multi-agent execution plan
+
 ---
 
-## 9. Multi-agent execution
 
 ### 9.0 Pre-Phase 0 — ownership transfer (already landed in working tree)
 
@@ -642,10 +722,9 @@ To compress the calendar:
 
 ---
 
-## 10. Progress checklist (mirror of §3-§5 status)
+## 10. Historical progress checklist (mirror of §3-§5 status)
 
-Source-of-truth for "is the prep plan done yet?" — update this table as
-PRs merge, not when work begins.
+Historical checklist kept for handoff context. The current status is summarized in §2.1 and §3.
 
 | Item | Status | Evidence (file:line or commit) | Notes |
 |---|---|---|---|

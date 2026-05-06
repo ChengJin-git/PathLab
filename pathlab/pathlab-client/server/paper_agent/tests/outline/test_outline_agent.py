@@ -10,6 +10,7 @@ from pathlab_paper_agent.agents.outline_agent import OutlineAgentError, parse_ou
 from pathlab_paper_agent.llm import LLMConfig, LLMConfigurationError, LLMMessage, LLMResponse
 from pathlab_paper_agent.llm.client import OpenAICompatibleLLMClient
 from pathlab_paper_agent.pipeline import create_dev_run
+from pathlab_paper_agent.schemas import OutlineDocument
 from pathlab_paper_agent.stages.outlining import run as run_outlining
 
 
@@ -149,6 +150,7 @@ async def test_outlining_stage_writes_llm_output_and_manifest(tmp_path) -> None:
     run_outlining(paths, paper_manifest, agent=agent)
 
     outline = json.loads(paths.outline_json.read_text(encoding="utf-8"))
+    OutlineDocument.model_validate(outline)
     assert outline["plotting_plan"][0]["design_objective"] == "stage mock marker"
     assert outline["section_plan"][0]["goal"] != "scaffold"
     assert paper_manifest.artifact_index["drafts/outline.json"]["visibility"] == "public"

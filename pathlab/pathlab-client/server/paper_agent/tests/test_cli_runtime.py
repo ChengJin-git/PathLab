@@ -23,6 +23,14 @@ async def test_create_dev_run_and_run_stage(tmp_path):
     data = json.loads(paths.manifest.read_text(encoding="utf-8"))
     assert data["current_stage"] == "collecting"
     assert data["artifact_index"]["inputs/source_tasks.json"]["visibility"] == "private_backend_only"
+    stage_entry = data["stage_log"][-1]
+    assert stage_entry["stage"] == "collecting"
+    assert stage_entry["status"] == "completed"
+    assert stage_entry["started_at"]
+    assert stage_entry["finished_at"]
+    assert stage_entry["ts"] == stage_entry["finished_at"]
+    assert isinstance(stage_entry["duration_ms"], int)
+    assert stage_entry["duration_ms"] >= 0
 
 
 @pytest.mark.asyncio

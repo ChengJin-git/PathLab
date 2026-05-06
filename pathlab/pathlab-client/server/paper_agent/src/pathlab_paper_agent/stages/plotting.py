@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
+from pathlab_paper_agent.schemas import FigureManifest, PaperManifest  # noqa: E402
 from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from ..agents.plotting_agent import PlottingAgent, PlottingAgentResult
@@ -33,6 +33,7 @@ def run(
     plotting_agent = agent or PlottingAgent()
     prepared_charts = prepare_pathlab_chart_passthroughs(paths)
     result = plotting_agent.generate(paths)
+    FigureManifest.model_validate(result.figures_manifest)
     write_json(paths.figures_manifest, result.figures_manifest)
     _register_artifacts(paths, manifest, result, prepared_charts)
     if result.errors:

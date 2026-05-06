@@ -5,21 +5,50 @@ from __future__ import annotations
 import hashlib
 import json
 
+import pytest
+
 from pathlab_paper_agent.storage import PaperRunPaths
 
 
-def _register_public_section(paths: PaperRunPaths, section_name: str, text: str) -> None:
-    target = paths.sections_dir / f"{section_name}.tex"
-    target.write_text(text, encoding="utf-8")
+def _register_artifact(
+    paths: PaperRunPaths,
+    rel_path: str,
+    content: str | bytes,
+    *,
+    status: str = "ready",
+    visibility: str = "public",
+    downloadable: bool = True,
+    label: str | None = None,
+    content_type: str | None = None,
+) -> None:
+    target = paths.root / rel_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, bytes):
+        target.write_bytes(content)
+    else:
+        target.write_text(content, encoding="utf-8")
     manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
-    manifest["artifact_index"][f"drafts/sections/{section_name}.tex"] = {
-        "status": "ready",
-        "visibility": "public",
-        "downloadable": True,
-        "label": f"Section: {section_name.replace('_', ' ').title()}",
-        "content_type": "text/x-tex",
+    artifact = {
+        "status": status,
+        "visibility": visibility,
+        "downloadable": downloadable,
     }
+    if label is not None:
+        artifact["label"] = label
+    if content_type is not None:
+        artifact["content_type"] = content_type
+    manifest["artifact_index"][rel_path] = artifact
     paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+
+
+def _register_public_section(paths: PaperRunPaths, section_name: str, text: str) -> None:
+    _register_artifact(
+        paths,
+        f"drafts/sections/{section_name}.tex",
+        text,
+        label=f"Section: {section_name.replace('_', ' ').title()}",
+        content_type="text/x-tex",
+    )
 
 
 def test_post_papers_creates_run(client) -> None:
@@ -122,6 +151,98 @@ def test_get_paper_returns_summary(client) -> None:
     assert body["paper_id"] == paper_id
     assert body["title"] == "Detail"
     assert body["selected_templates"] == ["nature_scientific_reports"]
+    assert body["validation_summary"] == {
+        "m10_guards": [],
+        "refinement": None,
+        "hybrid_score": None,
+        "warnings_md_path": None,
+    }
+    assert body["stage_log"][0]["status"] == "completed"
+    assert body["stage_log"][0]["duration_ms"] == 0
+
+
+def test_get_paper_returns_validation_summary_from_reports(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Validation summary",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    paths.validation_dir.mkdir(parents=True, exist_ok=True)
+    (paths.validation_dir / "metric_guard.json").write_text(
+        json.dumps(
+            {
+                "guard": "metric_guard",
+                "status": "fail",
+                "issues": [
+                    {
+                        "code": "raw_metric",
+                        "message": "Raw metric found.",
+                        "severity": "error",
+                        "path": "drafts/sections/results.tex",
+                    },
+                    {
+                        "code": "rounding",
+                        "message": "Rounded value detected.",
+                        "severity": "warning",
+                    },
+                ],
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (paths.validation_dir / "citation_guard.json").write_text(
+        json.dumps(
+            {
+                "guard": "citation_guard",
+                "status": "pass",
+                "issues": [],
+                "metadata": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (paths.validation_dir / "warnings.md").write_text("# Validation Warnings\n", encoding="utf-8")
+    (paths.validation_dir / "refinement_log.json").write_text(
+        json.dumps(
+            {
+                "max_iterations": 3,
+                "initial_score": {"total": 10, "rubric_total": 10},
+                "iterations": [
+                    {
+                        "iteration": 1,
+                        "score": {"total": 17, "rubric_total": 17},
+                        "accepted": True,
+                    }
+                ],
+                "accepted_iterations": [1],
+                "final_status": "accepted",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.get(f"/papers/{paper_id}")
+
+    assert response.status_code == 200, response.text
+    summary = response.json()["validation_summary"]
+    assert summary["warnings_md_path"] == "validation/warnings.md"
+    assert summary["hybrid_score"] == 17.0
+    assert summary["refinement"]["final_status"] == "accepted"
+    assert summary["refinement"]["iteration_count"] == 1
+    assert summary["refinement"]["accepted_iterations"] == [1]
+    by_guard = {item["guard"]: item for item in summary["m10_guards"]}
+    assert by_guard["metric_guard"]["status"] == "fail"
+    assert by_guard["metric_guard"]["issue_count"] == 2
+    assert by_guard["metric_guard"]["error_count"] == 1
+    assert by_guard["metric_guard"]["warning_count"] == 1
+    assert by_guard["metric_guard"]["sample_issues"][0]["code"] == "raw_metric"
+    assert by_guard["citation_guard"]["status"] == "pass"
 
 
 def test_get_paper_404_when_missing(client) -> None:
@@ -240,6 +361,118 @@ def test_get_files_returns_manifest(client) -> None:
     assert response.status_code == 200, response.text
     body = response.json()
     assert body["paper_id"] == paper_id
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "content", "content_type"),
+    [
+        ("drafts/outline.json", b'{"plotting_plan":[]}', "application/json"),
+        ("figures/manifest.json", b'{"figures":[]}', "application/json"),
+        ("validation/warnings.md", b"# Validation Warnings\n", "text/markdown"),
+        ("final/miccai/main.pdf", b"%PDF-1.4\n", "application/pdf"),
+        ("exports/miccai_bundle.zip", b"PK\x03\x04", "application/zip"),
+    ],
+)
+def test_get_files_returns_frontend_public_surfaces_when_registered(
+    client,
+    rel_path: str,
+    content: bytes,
+    content_type: str,
+) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    _register_artifact(
+        paths,
+        rel_path,
+        content,
+        label=rel_path,
+        content_type=content_type,
+    )
+
+    response = client.get(f"/papers/{paper_id}/files", params={"path": rel_path})
+
+    assert response.status_code == 200, response.text
+    assert response.content == content
+
+
+def test_get_files_blocks_unregistered_allowlisted_file(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    target = paths.figures_dir / "unregistered.png"
+    target.write_bytes(b"PNG")
+
+    response = client.get(
+        f"/papers/{paper_id}/files",
+        params={"path": "figures/unregistered.png"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_get_files_blocks_private_manifest_entry_under_allowed_prefix(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    _register_artifact(
+        paths,
+        "figures/private_diagnostic.png",
+        b"PNG",
+        visibility="private_backend_only",
+        downloadable=False,
+        content_type="image/png",
+    )
+
+    response = client.get(
+        f"/papers/{paper_id}/files",
+        params={"path": "figures/private_diagnostic.png"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_get_files_blocks_guard_json_even_if_manifest_marks_public(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    paths = PaperRunPaths.for_paper(paper_id)
+    _register_artifact(
+        paths,
+        "validation/metric_guard.json",
+        b'{"guard":"metric_guard","issues":[]}',
+        content_type="application/json",
+    )
+
+    response = client.get(
+        f"/papers/{paper_id}/files",
+        params={"path": "validation/metric_guard.json"},
+    )
+
+    assert response.status_code == 403
 
 
 def test_get_files_blocks_evidence_lock_private(client) -> None:

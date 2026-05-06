@@ -84,6 +84,11 @@ Completed:
   - `OPENALEX_API_KEY`
   - `OPENALEX_MAILTO`
 - A dedicated LaTeX Docker image layout exists under `docker/paper-latex/`.
+- Docker-backed PDF/export smoke verification passed on 2026-05-06:
+  - `pathlab/paper-latex:latest` hello-world compile passed;
+  - MICCAI and Nature Scientific Reports PDFs compiled with return code `0`;
+  - bundle dry-run validation passed for both templates;
+  - extracted PDF text contained References with no unresolved citation markers.
 
 ---
 
@@ -144,7 +149,7 @@ Completed API surface:
 |---|---|
 | `POST /papers` | create DB row, scaffold run, enqueue worker best-effort |
 | `GET /papers` | paginated run list scoped to caller |
-| `GET /papers/{id}` | run detail with artifacts and stage log |
+| `GET /papers/{id}` | run detail with artifacts, structured stage log, and validation summary |
 | `GET /papers/{id}/sections` | public editable section list with hash/mtime |
 | `POST /papers/{id}/sections/{name}/regenerate` | synchronous section regeneration |
 | `DELETE /papers/{id}` | delete DB row and filesystem run |
@@ -157,6 +162,10 @@ Completed integration points:
 - TaskWorker compatibility is preserved through
   `server/task_worker/jobs/paper_generation.py`.
 - New implementation code lives in `server/paper_agent/src/pathlab_paper_agent`.
+- Frontend contract schemas are exported for public artifacts, stage logs,
+  validation summaries, `drafts/outline.json`, and `figures/manifest.json`.
+- `/files` requires both allowlist membership and public/downloadable manifest
+  registration before serving frontend-visible artifacts.
 
 Current template policy:
 

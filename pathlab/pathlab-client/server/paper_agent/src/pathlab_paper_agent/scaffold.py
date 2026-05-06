@@ -68,7 +68,11 @@ async def initialize_paper_run(
         stage_log=[
             {
                 "stage": PaperRunStage.created.value,
+                "status": "completed",
                 "ts": now.isoformat(),
+                "started_at": now.isoformat(),
+                "finished_at": now.isoformat(),
+                "duration_ms": 0,
                 "message": "Paper run scaffold created.",
             }
         ],

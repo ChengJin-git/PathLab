@@ -10,7 +10,7 @@ from PIL import Image
 from pathlab_paper_agent.agents.plotting_agent import PlottingAgent
 from pathlab_paper_agent.llm import LLMResponse
 from pathlab_paper_agent.pipeline import create_dev_run
-from pathlab_paper_agent.schemas import PaperManifest
+from pathlab_paper_agent.schemas import FigureManifest, PaperManifest
 from pathlab_paper_agent.stages.plotting import run as run_plotting
 
 
@@ -169,6 +169,7 @@ async def test_plotting_stage_reuses_pathlab_chart_paths_without_redrawing(tmp_p
     run_plotting(paths, manifest, agent=PlottingAgent(MockCaptionLLM()))
 
     payload = json.loads(paths.figures_manifest.read_text(encoding="utf-8"))
+    FigureManifest.model_validate(payload)
     entries = {entry["figure_id"]: entry for entry in payload["figures"]}
     entry = entries["fig:pathlab_roc_curve"]
     final_path = paths.root / entry["path"]

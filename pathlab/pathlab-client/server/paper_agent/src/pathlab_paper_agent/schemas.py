@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TemplateId(str, Enum):
@@ -115,12 +115,164 @@ class PaperRunArtifact(BaseModel):
     content_type: Optional[str] = None
 
 
+class PaperArtifactIndexEntry(BaseModel):
+    """Manifest artifact_index entry without the path key."""
+
+    status: str = "ready"
+    visibility: str = "public"
+    downloadable: bool = True
+    label: Optional[str] = None
+    content_type: Optional[str] = None
+    stale: bool = False
+
+
+class OutlinePlottingPlanItem(BaseModel):
+    """Public schema for one `drafts/outline.json` plotting plan item."""
+
+    model_config = ConfigDict(extra="allow")
+
+    figure_id: str
+    kind: str
+    source: str
+    design_objective: str
+    backend: str
+    plot_spec: dict[str, Any] = Field(default_factory=dict)
+
+
+class OutlineMicroLitCluster(BaseModel):
+    """Public schema for focused literature-search clusters in an outline."""
+
+    model_config = ConfigDict(extra="allow")
+
+    cluster: str
+    queries: list[str] = Field(min_length=1)
+
+
+class OutlineSectionPlanItem(BaseModel):
+    """Public schema for one planned manuscript section."""
+
+    model_config = ConfigDict(extra="allow")
+
+    section: str
+    goal: str
+    evidence_inputs: list[str] = Field(default_factory=list)
+    citation_hints: list[str] = Field(default_factory=list)
+    locked_block_inputs: list[str] = Field(default_factory=list)
+
+
+class OutlinePathLabExtensions(BaseModel):
+    """PathLab-specific outline metadata used by downstream agents."""
+
+    model_config = ConfigDict(extra="allow")
+
+    templates: list[str] = Field(default_factory=list)
+    claim_plan: list[dict[str, Any]] = Field(default_factory=list)
+    table_plan: list[dict[str, Any]] = Field(default_factory=list)
+    guard_requirements: list[str] = Field(default_factory=list)
+    template_styles: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class OutlineDocument(BaseModel):
+    """Frontend-facing schema for `drafts/outline.json`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    plotting_plan: list[OutlinePlottingPlanItem]
+    macro_lit_search: list[str]
+    micro_lit_clusters: list[OutlineMicroLitCluster]
+    section_plan: list[OutlineSectionPlanItem]
+    pathlab_extensions: OutlinePathLabExtensions
+
+
+class FigureManifestItem(BaseModel):
+    """Frontend-facing schema for one figure entry in `figures/manifest.json`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    figure_id: str
+    path: Optional[str] = None
+    status: str
+    source: Optional[str] = None
+    generator: Optional[str] = None
+    caption: Optional[str] = None
+    content_type: Optional[str] = None
+    kind: Optional[str] = None
+    backend: Optional[str] = None
+    error: Optional[str] = None
+
+
+class FigureManifest(BaseModel):
+    """Frontend-facing schema for `figures/manifest.json`."""
+
+    model_config = ConfigDict(extra="allow")
+
+    figures: list[FigureManifestItem] = Field(default_factory=list)
+
+
+class PaperStageLogEntry(BaseModel):
+    """Frontend-facing stage log entry with backwards-compatible fields."""
+
+    model_config = ConfigDict(extra="allow")
+
+    stage: str
+    status: str = "completed"
+    ts: Optional[datetime] = None
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    message: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+class GuardIssueSummary(BaseModel):
+    """Public-safe preview of one guard issue."""
+
+    code: str
+    message: str
+    severity: str = "error"
+    path: Optional[str] = None
+    context: Optional[str] = None
+
+
+class GuardResultSummary(BaseModel):
+    """Compact validation guard status for the frontend."""
+
+    guard: str
+    status: str = "not_run"
+    issue_count: int = 0
+    error_count: int = 0
+    warning_count: int = 0
+    path: Optional[str] = None
+    sample_issues: list[GuardIssueSummary] = Field(default_factory=list)
+
+
+class RefinementSummary(BaseModel):
+    """Compact M11 refinement-loop status."""
+
+    final_status: Optional[str] = None
+    max_iterations: Optional[int] = None
+    accepted_iterations: list[int] = Field(default_factory=list)
+    iteration_count: int = 0
+    initial_score: Optional[dict[str, Any]] = None
+    final_score: Optional[dict[str, Any]] = None
+    log_path: Optional[str] = None
+
+
+class ValidationSummary(BaseModel):
+    """Aggregated validation/refinement state returned by GET /papers/{id}."""
+
+    m10_guards: list[GuardResultSummary] = Field(default_factory=list)
+    refinement: Optional[RefinementSummary] = None
+    hybrid_score: Optional[float] = None
+    warnings_md_path: Optional[str] = None
+
+
 class PaperRunDetail(PaperRunSummary):
     """Detailed run view returned by GET /papers/{id}."""
 
     artifacts: list[PaperRunArtifact] = Field(default_factory=list)
-    stage_log: list[dict[str, Any]] = Field(default_factory=list)
-    validation_summary: Optional[dict[str, Any]] = None
+    stage_log: list[PaperStageLogEntry] = Field(default_factory=list)
+    validation_summary: ValidationSummary = Field(default_factory=ValidationSummary)
 
 
 class PaperRunCreateResponse(BaseModel):
