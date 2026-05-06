@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pathlab_paper_agent.bootstrap import ensure_server_on_path
@@ -52,9 +52,11 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     PaperRunSummary,
     PaperSection,
     PaperSectionListResponse,
+    PaperSectionRegenerateAcceptedResponse,
     PaperSectionRegenerateResponse,
     GuardIssueSummary,
     GuardResultSummary,
+    RegenerateSectionRequest,
     RefinementSummary,
     ValidationSummary,
 )
@@ -62,6 +64,8 @@ from pathlab_paper_agent.regenerate import (  # noqa: E402
     MissingSectionDraftError,
     UnknownSectionError,
     latest_regenerate_log_summary,
+    mark_regenerate_job_failed,
+    register_regenerate_job_queued,
     regenerate_section,
 )
 from pathlab_paper_agent.scaffold import initialize_paper_run  # noqa: E402
@@ -476,6 +480,7 @@ async def get_paper_run(
         **summary.model_dump(),
         artifacts=_public_artifacts(manifest),
         stage_log=manifest.stage_log if manifest is not None else [],
+        regenerate_jobs=manifest.regenerate_jobs if manifest is not None else [],
         validation_summary=_validation_summary(paths),
     )
 
@@ -501,34 +506,99 @@ async def get_paper_sections(
 
 @router.post(
     "/{paper_id}/sections/{section_name}/regenerate",
-    response_model=PaperSectionRegenerateResponse,
+    response_model=PaperSectionRegenerateAcceptedResponse,
+    status_code=202,
+    responses={200: {"model": PaperSectionRegenerateResponse}},
 )
 async def regenerate_paper_section(
     paper_id: str,
     section_name: str,
+    body: RegenerateSectionRequest | None = None,
+    sync: bool = Query(False),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
-) -> PaperSectionRegenerateResponse:
+) -> PaperSectionRegenerateAcceptedResponse | JSONResponse:
     await _load_or_404(db, paper_id, user)
+    request = body or RegenerateSectionRequest()
+    if sync:
+        # TODO(deprecate 2026-06-05): remove ?sync=true compatibility path after one release.
+        try:
+            manifest = regenerate_section(
+                paper_id,
+                section_name,
+                target_paragraph=request.target_paragraph,
+                user_note=request.user_note,
+                target_section=request.target_section,
+            )
+            summary = latest_regenerate_log_summary(paper_id)
+        except MissingSectionDraftError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+        except UnknownSectionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        legacy = PaperSectionRegenerateResponse(
+            paper_id=paper_id,
+            status=manifest.status,
+            current_stage=manifest.current_stage,
+            regenerated_sections=summary.get("regenerated_sections", []),
+            refinement_log_summary=summary.get("refinement_log_summary", {}),
+        )
+        return JSONResponse(status_code=200, content=legacy.model_dump(mode="json"))
+
+    regen_id = str(uuid.uuid4())
+    enqueued_at = datetime.now(UTC)
     try:
-        manifest = regenerate_section(paper_id, section_name)
-        summary = latest_regenerate_log_summary(paper_id)
-    except MissingSectionDraftError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        register_regenerate_job_queued(
+            paper_id,
+            regen_id,
+            section_name,
+            enqueued_at=enqueued_at,
+        )
+        from gateway.task_dispatch import build_task_descriptor, enqueue_task_descriptor
+
+        descriptor = build_task_descriptor(
+            job_id=regen_id,
+            job_kind="paper_generation",
+            handler="paper_generation.regenerate_section",
+            payload={
+                "paper_id": paper_id,
+                "regen_id": regen_id,
+                "section_name": section_name,
+                "target_paragraph": request.target_paragraph,
+                "user_note": request.user_note,
+                "target_section": request.target_section,
+            },
+        )
+        await enqueue_task_descriptor(descriptor)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
-    except UnknownSectionError as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    return PaperSectionRegenerateResponse(
+    except Exception as exc:
+        logger.warning(
+            "paper_generation: failed to enqueue regenerate job %s for %s: %s",
+            regen_id,
+            paper_id,
+            exc,
+        )
+        try:
+            mark_regenerate_job_failed(paper_id, regen_id, str(exc))
+        except Exception:
+            logger.exception(
+                "paper_generation: failed to mark regenerate job %s as failed",
+                regen_id,
+            )
+        raise HTTPException(status_code=503, detail=f"Failed to enqueue regenerate job: {exc}")
+
+    return PaperSectionRegenerateAcceptedResponse(
         paper_id=paper_id,
-        status=manifest.status,
-        current_stage=manifest.current_stage,
-        regenerated_sections=summary.get("regenerated_sections", []),
-        refinement_log_summary=summary.get("refinement_log_summary", {}),
+        regen_id=regen_id,
+        enqueued_at=enqueued_at,
     )
 
 

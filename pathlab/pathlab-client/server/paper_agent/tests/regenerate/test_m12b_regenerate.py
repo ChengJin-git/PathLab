@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import json
 import shutil
+import time
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from pathlab_paper_agent import regenerate as regenerate_mod
 from pathlab_paper_agent.agents.content_refinement_agent import ContentRefinementAgent, RUBRIC_DIMENSIONS
+from pathlab_paper_agent.agents.section_writing_agent import SectionWritingAgent as RealSectionWritingAgent
 from pathlab_paper_agent.agents.section_writing_agent import SectionWritingResult
 from pathlab_paper_agent.dev_server import create_app
 from pathlab_paper_agent.llm import LLMResponse
 from pathlab_paper_agent.pipeline import create_dev_run
-from pathlab_paper_agent.regenerate import regenerate_section
+from pathlab_paper_agent.regenerate import register_regenerate_job_queued, regenerate_section
 from pathlab_paper_agent.schemas import CreatePaperRequest, SourceTaskRef
 from pathlab_paper_agent.stages.common import register_artifact, write_json
 
@@ -216,6 +221,54 @@ def _patch_accepting_refinement(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(regenerate_mod, "run_refining", fake_run_refining)
 
 
+def _patch_noop_validation_and_refinement(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(regenerate_mod, "run_validating", lambda paths, manifest: None)
+
+    def fake_run_refining(paths, manifest, *, agent=None, max_iterations=3, guard_runner=None, snapshots_subdir=None):
+        del agent, max_iterations, guard_runner
+        if snapshots_subdir is not None:
+            (snapshots_subdir / "iter_1" / "sections").mkdir(parents=True, exist_ok=True)
+        write_json(
+            paths.validation_dir / "refinement_log.json",
+            {
+                "final_status": "accepted",
+                "accepted_iterations": [],
+                "iterations": [],
+                "initial_score": {"total": 15},
+            },
+        )
+
+    monkeypatch.setattr(regenerate_mod, "run_refining", fake_run_refining)
+
+
+def _official_api_client(paths, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    from backend.auth import current_active_user
+    from backend.database import get_db
+    from pathlab_paper_agent.api import routes as api_routes
+
+    user = SimpleNamespace(id="user_1", role="admin", is_superuser=True)
+    app = FastAPI()
+    app.include_router(api_routes.router)
+
+    async def _override_db():
+        yield object()
+
+    async def _fake_get_by_id(cls, db, paper_id: str):
+        del cls, db
+        if paper_id != paths.paper_id:
+            return None
+        return SimpleNamespace(paper_id=paper_id, user_id=str(user.id))
+
+    app.dependency_overrides[current_active_user] = lambda: user
+    app.dependency_overrides[get_db] = _override_db
+    monkeypatch.setattr(
+        api_routes.PaperGenerationRunRepository,
+        "get_by_id",
+        classmethod(_fake_get_by_id),
+    )
+    return TestClient(app)
+
+
 def _latest_log(paths) -> dict:
     logs = sorted((paths.drafts_dir / "regenerate_runs").glob("*/log.json"))
     assert logs
@@ -299,7 +352,7 @@ async def test_unknown_section_raises_value_error_and_endpoint_returns_422(tmp_p
         regenerate_section(paths.paper_id, "nonexistent", uploads_dir=tmp_path)
 
     client = TestClient(create_app(uploads_dir=tmp_path))
-    response = client.post(f"/papers/{paths.paper_id}/sections/nonexistent/regenerate")
+    response = client.post(f"/papers/{paths.paper_id}/sections/nonexistent/regenerate?sync=true")
     assert response.status_code == 422
     assert "Unknown section" in response.json()["detail"]
 
@@ -407,7 +460,7 @@ async def test_endpoint_distinguishes_missing_section_draft_from_missing_paper(t
     (paths.sections_dir / "results.tex").unlink()
     client = TestClient(create_app(uploads_dir=tmp_path))
 
-    response = client.post(f"/papers/{paths.paper_id}/sections/results/regenerate")
+    response = client.post(f"/papers/{paths.paper_id}/sections/results/regenerate?sync=true")
 
     assert response.status_code == 404
     assert "section draft missing" in response.json()["detail"]
@@ -423,13 +476,179 @@ async def test_endpoint_smoke_returns_regenerated_section_summary(
     _patch_accepting_refinement(monkeypatch)
     client = TestClient(create_app(uploads_dir=tmp_path))
 
-    response = client.post(f"/papers/{paths.paper_id}/sections/results/regenerate")
+    response = client.post(f"/papers/{paths.paper_id}/sections/results/regenerate?sync=true")
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["paper_id"] == paths.paper_id
     assert payload["regenerated_sections"] == ["results"]
     assert payload["refinement_log_summary"]["final_status"] == "accepted"
+
+
+@pytest.mark.asyncio
+async def test_post_returns_202_immediately(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gateway import task_dispatch
+
+    paths = await _setup_run(tmp_path, "paper_regenerate_async_post")
+    enqueued = []
+
+    async def fake_enqueue(descriptor):
+        enqueued.append(descriptor)
+
+    monkeypatch.setattr(task_dispatch, "enqueue_task_descriptor", fake_enqueue)
+    client = _official_api_client(paths, monkeypatch)
+
+    started = time.perf_counter()
+    response = client.post(
+        f"/papers/{paths.paper_id}/sections/results/regenerate",
+        json={"target_paragraph": 2, "user_note": "make it more concise"},
+    )
+    elapsed = time.perf_counter() - started
+
+    assert response.status_code == 202, response.text
+    assert elapsed < 0.5
+    payload = response.json()
+    assert payload["paper_id"] == paths.paper_id
+    assert payload["regen_id"]
+    assert payload["enqueued_at"]
+    assert len(enqueued) == 1
+    descriptor = enqueued[0]
+    assert descriptor.handler == "paper_generation.regenerate_section"
+    assert descriptor.payload["regen_id"] == payload["regen_id"]
+    assert descriptor.payload["target_paragraph"] == 2
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest["regenerate_jobs"] == [
+        {
+            "regen_id": payload["regen_id"],
+            "section_name": "results",
+            "status": "queued",
+            "enqueued_at": manifest["regenerate_jobs"][0]["enqueued_at"],
+            "finished_at": None,
+            "error_message": None,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_worker_handler_processes_regen(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from task_worker.jobs import paper_generation as paper_generation_jobs
+
+    paths = await _setup_run(tmp_path, "paper_regenerate_worker")
+    regen_id = "regen_worker"
+    register_regenerate_job_queued(
+        paths.paper_id,
+        regen_id,
+        "results",
+        enqueued_at=datetime.now(UTC),
+        uploads_dir=tmp_path,
+    )
+    _patch_section_agent(monkeypatch, _candidate_sections(paths))
+    _patch_accepting_refinement(monkeypatch)
+
+    await paper_generation_jobs.regenerate_section(
+        paths.paper_id,
+        regen_id,
+        "results",
+        uploads_dir=tmp_path,
+    )
+
+    assert "Refined regenerated results" in (paths.sections_dir / "results.tex").read_text(encoding="utf-8")
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest["regenerate_jobs"][0]["status"] == "completed"
+    assert manifest["regenerate_jobs"][0]["finished_at"]
+    assert manifest["regenerate_jobs"][0]["error_message"] is None
+    assert _latest_log(paths)["regen_id"] == regen_id
+
+
+@pytest.mark.asyncio
+async def test_target_paragraph_only_modifies_indexed_paragraph(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_target_paragraph")
+    paragraphs = [f"Paragraph {idx}" for idx in range(5)]
+    original_text = "\n\n".join(paragraphs) + "\n"
+    (paths.sections_dir / "results.tex").write_text(original_text, encoding="utf-8")
+    _patch_section_agent(monkeypatch, {"results": "REPLACED"})
+    _patch_noop_validation_and_refinement(monkeypatch)
+
+    regenerate_section(
+        paths.paper_id,
+        "results",
+        uploads_dir=tmp_path,
+        target_paragraph=2,
+    )
+
+    updated = (paths.sections_dir / "results.tex").read_text(encoding="utf-8").rstrip("\n")
+    updated_paragraphs = updated.split("\n\n")
+    assert updated_paragraphs == ["Paragraph 0", "Paragraph 1", "REPLACED", "Paragraph 3", "Paragraph 4"]
+
+
+@pytest.mark.asyncio
+async def test_user_note_threaded_to_prompt(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_user_note")
+    note = "make this paragraph more causal and less hype"
+    captured: dict[str, str] = {}
+
+    class CapturingSectionAgent:
+        def generate(self, inputs) -> SectionWritingResult:
+            captured["prompt"] = RealSectionWritingAgent(
+                llm_client=object(),
+                prompt_template="{{INPUT_PAYLOAD_JSON}}"
+            ).build_prompt(inputs)
+            return SectionWritingResult(
+                sections={"results": "\\section{Results}\nPrompt capture candidate.\n"},
+                raw_sections={"results": "\\section{Results}\nPrompt capture candidate.\n"},
+                used_citations=(),
+            )
+
+    monkeypatch.setattr(regenerate_mod, "SectionWritingAgent", CapturingSectionAgent)
+    _patch_noop_validation_and_refinement(monkeypatch)
+
+    regenerate_section(
+        paths.paper_id,
+        "results",
+        uploads_dir=tmp_path,
+        user_note=note,
+    )
+
+    assert note in captured["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_sync_query_param_keeps_old_behavior(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_sync_query")
+    _patch_section_agent(monkeypatch, _candidate_sections(paths))
+    _patch_accepting_refinement(monkeypatch)
+    client = _official_api_client(paths, monkeypatch)
+
+    response = client.post(f"/papers/{paths.paper_id}/sections/results/regenerate?sync=true")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "paper_id": paths.paper_id,
+        "status": "pending",
+        "current_stage": "created",
+        "regenerated_sections": ["results"],
+        "refinement_log_summary": {
+            "final_status": "accepted",
+            "accepted_iterations": [1],
+            "iteration_count": 1,
+            "initial_score": {"total": 15},
+        },
+    }
 
 
 @pytest.mark.asyncio

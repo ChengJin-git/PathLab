@@ -272,6 +272,7 @@ class PaperRunDetail(PaperRunSummary):
 
     artifacts: list[PaperRunArtifact] = Field(default_factory=list)
     stage_log: list[PaperStageLogEntry] = Field(default_factory=list)
+    regenerate_jobs: list[dict[str, Any]] = Field(default_factory=list)
     validation_summary: ValidationSummary = Field(default_factory=ValidationSummary)
 
 
@@ -299,6 +300,18 @@ class PaperSection(BaseModel):
 
 class PaperSectionListResponse(BaseModel):
     sections: list[PaperSection] = Field(default_factory=list)
+
+
+class RegenerateSectionRequest(BaseModel):
+    target_paragraph: int | None = Field(default=None, ge=0)
+    user_note: str | None = None
+    target_section: str | None = None
+
+
+class PaperSectionRegenerateAcceptedResponse(BaseModel):
+    paper_id: str
+    regen_id: str
+    enqueued_at: datetime
 
 
 class PaperSectionRegenerateResponse(BaseModel):
@@ -335,6 +348,7 @@ class PaperManifest(BaseModel):
     current_stage: PaperRunStage
     stage_log: list[dict[str, Any]] = Field(default_factory=list)
     artifact_index: dict[str, Any] = Field(default_factory=dict)
+    regenerate_jobs: list[dict[str, Any]] = Field(default_factory=list)
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime

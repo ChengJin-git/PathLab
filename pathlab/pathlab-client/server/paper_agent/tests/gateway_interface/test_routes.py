@@ -280,11 +280,11 @@ def test_get_paper_sections_returns_registered_public_section_text(client) -> No
     ]
 
 
-def test_post_regenerate_section_official_route_returns_summary(
+def test_post_regenerate_section_official_route_returns_202(
     client,
     monkeypatch,
 ) -> None:
-    from pathlab_paper_agent.api import routes as api_routes
+    from gateway import task_dispatch
 
     create = client.post(
         "/papers",
@@ -296,34 +296,51 @@ def test_post_regenerate_section_official_route_returns_summary(
     )
     paper_id = create.json()["paper_id"]
     paths = PaperRunPaths.for_paper(paper_id)
+    enqueued = []
 
-    def fake_regenerate(paper_id_arg: str, section_name_arg: str):
-        assert paper_id_arg == paper_id
-        assert section_name_arg == "results"
-        manifest = api_routes._load_manifest(paths)
-        assert manifest is not None
-        return manifest
+    async def fake_enqueue(descriptor):
+        enqueued.append(descriptor)
 
-    monkeypatch.setattr(api_routes, "regenerate_section", fake_regenerate)
-    monkeypatch.setattr(
-        api_routes,
-        "latest_regenerate_log_summary",
-        lambda paper_id_arg: {
-            "regenerated_sections": ["results"],
-            "refinement_log_summary": {"final_status": "accepted"},
-        },
+    monkeypatch.setattr(task_dispatch, "enqueue_task_descriptor", fake_enqueue)
+
+    response = client.post(
+        f"/papers/{paper_id}/sections/results/regenerate",
+        json={"target_paragraph": 1, "user_note": "tighten the claim"},
     )
 
-    response = client.post(f"/papers/{paper_id}/sections/results/regenerate")
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["paper_id"] == paper_id
+    assert body["regen_id"]
+    assert body["enqueued_at"]
+    assert len(enqueued) == 1
+    assert enqueued[0].handler == "paper_generation.regenerate_section"
+    assert enqueued[0].payload["target_paragraph"] == 1
+    assert enqueued[0].payload["user_note"] == "tighten the claim"
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert manifest["regenerate_jobs"][0]["regen_id"] == body["regen_id"]
+    assert manifest["regenerate_jobs"][0]["status"] == "queued"
+    detail = client.get(f"/papers/{paper_id}").json()
+    assert detail["regenerate_jobs"][0]["regen_id"] == body["regen_id"]
 
-    assert response.status_code == 200, response.text
-    assert response.json() == {
-        "paper_id": paper_id,
-        "status": "pending",
-        "current_stage": "created",
-        "regenerated_sections": ["results"],
-        "refinement_log_summary": {"final_status": "accepted"},
-    }
+
+def test_post_regenerate_section_validates_body(client) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Regenerate validation",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+
+    response = client.post(
+        f"/papers/{paper_id}/sections/results/regenerate",
+        json={"target_paragraph": -1},
+    )
+
+    assert response.status_code == 422
 
 
 def test_delete_paper_removes_db_and_disk(client) -> None:

@@ -192,6 +192,27 @@ async def handle_paper_generation_run(descriptor: TaskDescriptor) -> None:
     await paper_generation_jobs.run_paper_generation(paper_id, **kwargs)
 
 
+async def handle_paper_generation_regenerate_section(descriptor: TaskDescriptor) -> None:
+    """Run section regenerate directly in the descriptor worker."""
+    payload = descriptor.payload
+    await paper_generation_jobs.regenerate_section(
+        paper_id=str(payload["paper_id"]),
+        regen_id=str(payload["regen_id"]),
+        section_name=str(payload["section_name"]),
+        target_paragraph=(
+            int(payload["target_paragraph"])
+            if payload.get("target_paragraph") is not None
+            else None
+        ),
+        user_note=str(payload["user_note"]) if payload.get("user_note") is not None else None,
+        target_section=(
+            str(payload["target_section"])
+            if payload.get("target_section") is not None
+            else None
+        ),
+    )
+
+
 _register("training.preflight", handle_training_preflight)
 _register("training.run", handle_training_run)
 _register("training.patch_then_run", handle_training_patch_then_run)
@@ -201,3 +222,4 @@ _register("external_validation.run", handle_external_validation)
 _register("analysis.task", handle_analysis)
 _register("chat.patch_inference", handle_chat_patch_inference)
 _register("paper_generation.run", handle_paper_generation_run)
+_register("paper_generation.regenerate_section", handle_paper_generation_regenerate_section)
