@@ -20,9 +20,10 @@ import { RegenerateProgressBar } from './RegenerateProgressBar'
 
 export interface SelectionInfo {
   text: string
-  paragraphIndex: number
-  charStart: number
-  charEnd: number
+  source?: 'source' | 'pdf'
+  paragraphIndex?: number
+  charStart?: number
+  charEnd?: number
 }
 
 interface RegenerateSelectionPanelProps {
@@ -93,8 +94,10 @@ export function RegenerateSelectionPanel({
   const [regenId, setRegenId] = useState<string | null>(null)
   const [rejectError, setRejectError] = useState<unknown>(null)
   const selectionSignature = selection
-    ? `${sectionName}:${selection.charStart}:${selection.charEnd}:${selection.text.length}`
+    ? `${sectionName}:${selection.source ?? 'source'}:${selection.charStart ?? 'pdf'}:${selection.charEnd ?? 'pdf'}:${selection.text.length}:${selection.text.slice(0, 120)}`
     : 'none'
+  const isPdfSelection =
+    selection?.source === 'pdf' || selection?.charStart === undefined || selection?.charEnd === undefined
 
   const jobQuery = useQuery({
     queryKey: ['paper-regenerate-job', paperId, regenId],
@@ -257,17 +260,30 @@ export function RegenerateSelectionPanel({
           <>
             <div className="space-y-2">
               <div className="flex flex-wrap items-center gap-2 text-xs">
-                <Badge variant="outline" className="bg-sky-50 text-sky-700">
-                  paragraph {selection.paragraphIndex}
-                </Badge>
+                {isPdfSelection ? (
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700">
+                    from PDF
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-sky-50 text-sky-700">
+                    paragraph {selection.paragraphIndex}
+                  </Badge>
+                )}
                 <span className="text-slate-400">{selection.text.length} chars</span>
-                <span className="text-slate-300">
-                  {selection.charStart}-{selection.charEnd}
-                </span>
+                {!isPdfSelection ? (
+                  <span className="text-slate-300">
+                    {selection.charStart}-{selection.charEnd}
+                  </span>
+                ) : null}
               </div>
               <div className="max-h-32 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/70 p-3 text-xs italic leading-5 text-slate-600">
                 "{previewSelection(selection.text)}"
               </div>
+              {isPdfSelection ? (
+                <div className="rounded-xl border border-amber-100 bg-amber-50/80 p-2 text-xs leading-5 text-amber-800">
+                  PDF selection: the backend will resolve the exact paragraph and character span before regenerating.
+                </div>
+              ) : null}
               <p className="text-xs leading-5 text-slate-500">{helperCopy}</p>
             </div>
 

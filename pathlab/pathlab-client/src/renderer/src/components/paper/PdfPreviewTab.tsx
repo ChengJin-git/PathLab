@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { BookOpen, Download, FileCode2, Loader2 } from 'lucide-react'
+import { BookOpen, Download, FileCode2, Loader2, MousePointer2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
   downloadPaperExport,
@@ -11,14 +11,18 @@ import {
   type PaperSectionListResponse,
   type PaperRunDetail,
 } from '../../api/papers'
+import { normalizeForMatch, pdfMatchSection } from '../../lib/pdfSectionMatch'
 import { Button } from '../ui/button'
 import { Card, CardContent } from '../ui/card'
 import { SECTION_ORDER, labelForSection } from './SectionsTab'
+
+const PdfViewer = lazy(() => import('./PdfViewer').then((module) => ({ default: module.PdfViewer })))
 
 interface PdfPreviewTabProps {
   paperId: string
   run: PaperRunDetail
   pdfRefreshKey: number
+  onSelectionDetected: (payload: { sectionName: string; text: string }) => void
 }
 
 function cacheBustedUrl(url: string, key: number): string {
@@ -26,13 +30,18 @@ function cacheBustedUrl(url: string, key: number): string {
   return `${url}${separator}v=${key}`
 }
 
-export function PdfPreviewTab({ paperId, run, pdfRefreshKey }: PdfPreviewTabProps) {
+export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onSelectionDetected }: PdfPreviewTabProps) {
   const [, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [sourceSection, setSourceSection] = useState<string>('abstract')
+  const [selectionMessage, setSelectionMessage] = useState<{
+    tone: 'info' | 'warning' | 'success'
+    text: string
+  } | null>(null)
   const template = run.selected_templates[0] ?? 'miccai'
   const pdfPath = `final/${template}/main.pdf`
   const bundlePath = `exports/${template}_bundle.zip`
+  const pdfUrl = cacheBustedUrl(getPaperFileUrl(paperId, pdfPath), pdfRefreshKey)
 
   const sectionsCacheQuery = useQuery({
     queryKey: ['paper-sections', paperId],
@@ -84,6 +93,51 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey }: PdfPreviewTabProp
       next.set('section', sourceSection)
       return next
     })
+  }
+
+  const handlePdfSelection = async (text: string) => {
+    const normalized = normalizeForMatch(text)
+    if (normalized.length < 20) {
+      setSelectionMessage({ tone: 'warning', text: 'Select at least ~20 characters in the PDF.' })
+      return
+    }
+
+    try {
+      const cached = queryClient.getQueryData<PaperSectionListResponse>(['paper-sections', paperId])
+      const sectionsResponse = cached ?? (await getPaperSections(paperId))
+      if (!cached) {
+        queryClient.setQueryData(['paper-sections', paperId], sectionsResponse)
+      }
+      const sections = sectionsResponse.sections ?? []
+      const match = pdfMatchSection(text, sections)
+
+      if (!match) {
+        setSelectionMessage({
+          tone: 'warning',
+          text: "Couldn't match this selection to a source section. Use Edit in source to pick manually.",
+        })
+        return
+      }
+      if (match.ambiguous) {
+        setSelectionMessage({
+          tone: 'warning',
+          text: 'Selection matches multiple sections; try a longer span.',
+        })
+        return
+      }
+
+      setSourceSection(match.section_name)
+      setSelectionMessage({
+        tone: 'success',
+        text: `Matched ${labelForSection(match.section_name)} (${Math.round(match.confidence * 100)}%). Opening regenerate panel...`,
+      })
+      onSelectionDetected({ sectionName: match.section_name, text })
+    } catch (error) {
+      setSelectionMessage({
+        tone: 'warning',
+        text: error instanceof Error ? error.message : String(error),
+      })
+    }
   }
 
   if (pdfQuery.isLoading) {
@@ -153,7 +207,11 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey }: PdfPreviewTabProp
             onClick={() => downloadMutation.mutate()}
             disabled={downloadMutation.isPending}
           >
-            {downloadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            {downloadMutation.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
             Download bundle
           </Button>
         </div>
@@ -164,13 +222,33 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey }: PdfPreviewTabProp
           {bundlePath})
         </div>
       ) : null}
+      <div
+        className={[
+          'flex items-start gap-2 rounded-2xl border p-3 text-sm',
+          selectionMessage?.tone === 'warning'
+            ? 'border-amber-200 bg-amber-50 text-amber-800'
+            : selectionMessage?.tone === 'success'
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+              : 'border-sky-100 bg-sky-50 text-sky-800',
+        ].join(' ')}
+      >
+        <MousePointer2 className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          {selectionMessage?.text ??
+            'Select text directly in the PDF to regenerate it. If matching is uncertain, use Edit in source as the manual fallback.'}
+        </div>
+      </div>
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner">
-        <iframe
-          key={pdfRefreshKey}
-          title="Paper PDF preview"
-          src={cacheBustedUrl(getPaperFileUrl(paperId, pdfPath), pdfRefreshKey)}
-          className="h-[72vh] w-full bg-white"
-        />
+        <Suspense
+          fallback={
+            <div className="flex h-[72vh] items-center justify-center bg-white text-sm text-slate-500">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Loading PDF text layer...
+            </div>
+          }
+        >
+          <PdfViewer pdfUrl={pdfUrl} refreshKey={pdfRefreshKey} onSelectionChange={handlePdfSelection} />
+        </Suspense>
       </div>
     </div>
   )

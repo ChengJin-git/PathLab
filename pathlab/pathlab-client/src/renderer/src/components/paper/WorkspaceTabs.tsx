@@ -29,6 +29,9 @@ interface WorkspaceTabsProps {
   onValueChange: (value: WorkspaceTabValue) => void
   pdfRefreshKey: number
   onPdfRefreshNeeded: () => void
+  pdfSelection?: { sectionName: string; text: string } | null
+  onPdfSelectionDetected: (payload: { sectionName: string; text: string }) => void
+  onPdfSelectionConsumed: () => void
 }
 
 interface TabDefinition {
@@ -63,6 +66,9 @@ export function WorkspaceTabs({
   onValueChange,
   pdfRefreshKey,
   onPdfRefreshNeeded,
+  pdfSelection,
+  onPdfSelectionDetected,
+  onPdfSelectionConsumed,
 }: WorkspaceTabsProps) {
   const templateId = run.selected_templates[0]
 
@@ -102,7 +108,13 @@ export function WorkspaceTabs({
         <OutlineTab paperId={paperId} />
       </Tabs.Content>
       <Tabs.Content value="sections" className="p-4 focus:outline-none sm:p-5">
-        <SectionsTab paperId={paperId} templateId={templateId} onPdfRefreshNeeded={onPdfRefreshNeeded} />
+        <SectionsTab
+          paperId={paperId}
+          templateId={templateId}
+          onPdfRefreshNeeded={onPdfRefreshNeeded}
+          externalSelection={pdfSelection}
+          onExternalSelectionConsumed={onPdfSelectionConsumed}
+        />
       </Tabs.Content>
       <Tabs.Content value="figures" className="p-4 focus:outline-none sm:p-5">
         <FiguresTab paperId={paperId} />
@@ -117,7 +129,12 @@ export function WorkspaceTabs({
         <ValidationTab paperId={paperId} validationSummary={run.validation_summary ?? null} />
       </Tabs.Content>
       <Tabs.Content value="pdf" className="p-4 focus:outline-none sm:p-5">
-        <PdfPreviewTab paperId={paperId} run={run} pdfRefreshKey={pdfRefreshKey} />
+        <PdfPreviewTab
+          paperId={paperId}
+          run={run}
+          pdfRefreshKey={pdfRefreshKey}
+          onSelectionDetected={onPdfSelectionDetected}
+        />
       </Tabs.Content>
     </Tabs.Root>
   )
