@@ -1,9 +1,19 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
-import { BookOpen, Download, Loader2 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
+import { BookOpen, Download, FileCode2, Loader2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
-import { downloadPaperExport, getPaperFileBlob, getPaperFileUrl, type PaperRunDetail } from '../../api/papers'
+import {
+  downloadPaperExport,
+  getPaperFileBlob,
+  getPaperFileUrl,
+  getPaperSections,
+  type PaperSectionListResponse,
+  type PaperRunDetail,
+} from '../../api/papers'
 import { Button } from '../ui/button'
 import { Card, CardContent } from '../ui/card'
+import { SECTION_ORDER, labelForSection } from './SectionsTab'
 
 interface PdfPreviewTabProps {
   paperId: string
@@ -17,9 +27,37 @@ function cacheBustedUrl(url: string, key: number): string {
 }
 
 export function PdfPreviewTab({ paperId, run, pdfRefreshKey }: PdfPreviewTabProps) {
+  const [, setSearchParams] = useSearchParams()
+  const queryClient = useQueryClient()
+  const [sourceSection, setSourceSection] = useState<string>('abstract')
   const template = run.selected_templates[0] ?? 'miccai'
   const pdfPath = `final/${template}/main.pdf`
   const bundlePath = `exports/${template}_bundle.zip`
+
+  const sectionsCacheQuery = useQuery({
+    queryKey: ['paper-sections', paperId],
+    queryFn: () => getPaperSections(paperId),
+    enabled: false,
+    initialData: () => queryClient.getQueryData<PaperSectionListResponse>(['paper-sections', paperId]),
+  })
+
+  const generatedSectionNames = useMemo(
+    () => new Set((sectionsCacheQuery.data?.sections ?? []).map((section) => section.section_name)),
+    [sectionsCacheQuery.data?.sections],
+  )
+  const firstGeneratedSection = useMemo(
+    () => SECTION_ORDER.find((section) => generatedSectionNames.has(section)) ?? 'abstract',
+    [generatedSectionNames],
+  )
+  const sectionOptions = useMemo(
+    () =>
+      SECTION_ORDER.map((section) => ({
+        value: section,
+        label: labelForSection(section),
+        generated: generatedSectionNames.has(section),
+      })),
+    [generatedSectionNames],
+  )
 
   const pdfQuery = useQuery({
     queryKey: ['paper-file', paperId, pdfPath, 'exists', pdfRefreshKey],
@@ -32,6 +70,21 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey }: PdfPreviewTabProp
   })
 
   const isMissing = pdfQuery.error instanceof ApiError && pdfQuery.error.isNotFound()
+
+  useEffect(() => {
+    setSourceSection((current) =>
+      generatedSectionNames.size > 0 && !generatedSectionNames.has(current) ? firstGeneratedSection : current,
+    )
+  }, [firstGeneratedSection, generatedSectionNames])
+
+  const handleEditInSource = () => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', 'sections')
+      next.set('section', sourceSection)
+      return next
+    })
+  }
 
   if (pdfQuery.isLoading) {
     return (
@@ -72,16 +125,38 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey }: PdfPreviewTabProp
             Template: {template}. Source: {pdfPath}
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={() => downloadMutation.mutate()}
-          disabled={downloadMutation.isPending}
-        >
-          {downloadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-          Download bundle
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-sm font-medium text-slate-600">
+            <span>Edit in source:</span>
+            <select
+              value={sourceSection}
+              onChange={(event) => setSourceSection(event.target.value)}
+              className="h-9 rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-800 shadow-sm transition focus:border-sky-300 focus:outline-none focus:ring-4 focus:ring-sky-500/20"
+              aria-label="Section to edit in source"
+            >
+              {sectionOptions.map((section) => (
+                <option key={section.value} value={section.value}>
+                  {section.label}
+                  {section.generated ? '' : ' (not generated)'}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button variant="secondary" size="sm" className="gap-2" onClick={handleEditInSource}>
+            <FileCode2 className="h-4 w-4" />
+            Edit in source
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-2"
+            onClick={() => downloadMutation.mutate()}
+            disabled={downloadMutation.isPending}
+          >
+            {downloadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+            Download bundle
+          </Button>
+        </div>
       </div>
       {downloadMutation.error ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
