@@ -7,7 +7,65 @@ import json
 
 import pytest
 
+from backend.database.repositories.paper_generation import PaperGenerationRunRepository
+from pathlab_paper_agent.schemas import PaperRunStage, PaperRunStatus
 from pathlab_paper_agent.storage import PaperRunPaths
+
+
+def _valid_outline() -> dict:
+    return {
+        "plotting_plan": [
+            {
+                "figure_id": "fig:main",
+                "kind": "empirical",
+                "source": "experimental_log",
+                "design_objective": "Summarize the primary finding.",
+                "backend": "deterministic_plotting",
+                "plot_spec": {"generator": "summary"},
+            }
+        ],
+        "macro_lit_search": ["computational pathology validation"],
+        "micro_lit_clusters": [
+            {
+                "cluster": "weakly supervised WSI",
+                "queries": ["multiple instance learning whole slide images"],
+            }
+        ],
+        "section_plan": [
+            {
+                "section": "Methods",
+                "goal": "Describe the cohort, model, and evaluation.",
+                "evidence_inputs": ["evidence_public"],
+                "citation_hints": ["whole slide image classification"],
+                "locked_block_inputs": ["locked_blocks/method_block.tex"],
+            }
+        ],
+        "pathlab_extensions": {
+            "templates": ["miccai"],
+            "claim_plan": [{"claim": "Primary endpoint improved."}],
+            "table_plan": [],
+            "guard_requirements": ["metric", "identifier"],
+            "template_styles": [{"template_id": "miccai"}],
+        },
+    }
+
+
+async def _mark_awaiting_outline(db_session, paper_id: str) -> None:
+    await PaperGenerationRunRepository.update(
+        db_session,
+        paper_id,
+        status=PaperRunStatus.awaiting_outline_approval.value,
+        current_stage=PaperRunStage.outlining.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db_session.commit()
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    manifest["status"] = PaperRunStatus.awaiting_outline_approval.value
+    manifest["current_stage"] = PaperRunStage.outlining.value
+    manifest["finished_at"] = None
+    paths.manifest.write_text(json.dumps(manifest), encoding="utf-8")
 
 
 def _register_artifact(
@@ -159,6 +217,130 @@ def test_get_paper_returns_summary(client) -> None:
     }
     assert body["stage_log"][0]["status"] == "completed"
     assert body["stage_log"][0]["duration_ms"] == 0
+
+
+@pytest.mark.asyncio
+async def test_put_outline_save_only_response_shape(client, db_session, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "paper_dev_source"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    await _mark_awaiting_outline(db_session, paper_id)
+
+    async def _unexpected_enqueue(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("save-only outline edit must not enqueue Job B")
+
+    monkeypatch.setattr(api_routes, "_enqueue_paper_generation_job", _unexpected_enqueue)
+    outline = _valid_outline()
+    outline["section_plan"][0]["goal"] = "Updated goal from the user."
+    response = client.put(
+        f"/papers/{paper_id}/outline",
+        json={"outline": outline, "approve": False},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "paper_id": paper_id,
+        "approved": False,
+        "current_stage": "outlining",
+    }
+    saved = json.loads(PaperRunPaths.for_paper(paper_id).outline_json.read_text())
+    assert saved["section_plan"][0]["goal"] == "Updated goal from the user."
+    detail = client.get(f"/papers/{paper_id}").json()
+    assert detail["status"] == "awaiting_outline_approval"
+    assert detail["current_stage"] == "outlining"
+
+
+@pytest.mark.asyncio
+async def test_put_outline_approve_enqueues_job_b_and_logs(client, db_session, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "paper_dev_source"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    await _mark_awaiting_outline(db_session, paper_id)
+
+    enqueued: list[tuple[str, str]] = []
+
+    async def _capture_enqueue(paper_id_arg: str, handler: str):
+        enqueued.append((paper_id_arg, handler))
+        return {"paper_id": paper_id_arg, "handler": handler}
+
+    monkeypatch.setattr(api_routes, "_enqueue_paper_generation_job", _capture_enqueue)
+    response = client.put(
+        f"/papers/{paper_id}/outline",
+        json={"outline": _valid_outline(), "approve": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "paper_id": paper_id,
+        "approved": True,
+        "current_stage": "plotting",
+    }
+    assert enqueued == [(paper_id, "paper_generation.run_after_outline")]
+    detail = client.get(f"/papers/{paper_id}").json()
+    assert detail["status"] == "running"
+    assert detail["current_stage"] == "plotting"
+    assert detail["stage_log"][-1]["status"] == "approved"
+    assert detail["stage_log"][-1]["message"] == "Outline approved by user."
+
+
+@pytest.mark.asyncio
+async def test_put_outline_invalid_body_returns_422(client, db_session) -> None:
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "paper_dev_source"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    await _mark_awaiting_outline(db_session, paper_id)
+
+    response = client.put(
+        f"/papers/{paper_id}/outline",
+        json={"outline": {"plotting_plan": []}, "approve": False},
+    )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_put_outline_forbidden_for_non_owner(
+    client,
+    test_app,
+    db_session,
+    other_user,
+) -> None:
+    from backend.auth import current_active_user
+
+    create = client.post(
+        "/papers",
+        json={
+            "source_tasks": [{"task_id": "paper_dev_source"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    await _mark_awaiting_outline(db_session, paper_id)
+    test_app.dependency_overrides[current_active_user] = lambda: other_user
+
+    response = client.put(
+        f"/papers/{paper_id}/outline",
+        json={"outline": _valid_outline(), "approve": False},
+    )
+
+    assert response.status_code == 403
 
 
 def test_get_paper_returns_validation_summary_from_reports(client) -> None:

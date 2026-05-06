@@ -43,6 +43,7 @@ def test_status_and_current_stage_indexed_for_filters() -> None:
     status_col = PaperGenerationRun.__table__.columns["status"]
     assert status_col.index is True
     assert status_col.nullable is False
+    assert status_col.type.length >= len("awaiting_outline_approval")
 
 
 def test_to_dict_includes_all_status_fields() -> None:

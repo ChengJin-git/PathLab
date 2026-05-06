@@ -29,3 +29,19 @@ async def regenerate_section(paper_id: str, **kwargs: Any) -> None:
     from pathlab_paper_agent.integrations.task_worker import regenerate_section as _run
 
     await _run(paper_id, **kwargs)
+
+
+async def run_until_outline(paper_id: str, **kwargs: Any) -> None:
+    """Run Job A: stop after producing drafts/outline.json."""
+    _ensure_paper_agent_src_on_path()
+    from pathlab_paper_agent.integrations.task_worker import run_until_outline as _run
+
+    await _run(paper_id, **kwargs)
+
+
+async def run_after_outline(paper_id: str, **kwargs: Any) -> None:
+    """Run Job B: resume after the approved outline."""
+    _ensure_paper_agent_src_on_path()
+    from pathlab_paper_agent.integrations.task_worker import run_after_outline as _run
+
+    await _run(paper_id, **kwargs)

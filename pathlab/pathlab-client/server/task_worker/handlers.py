@@ -180,23 +180,36 @@ async def handle_training_patch_then_run(descriptor: TaskDescriptor) -> None:
     get_task_queue().register_patching_task(task_id, patching_task)
 
 
+def _paper_generation_payload(descriptor: TaskDescriptor) -> tuple[str, dict[str, object]]:
+    payload = descriptor.payload
+    paper_id = str(payload["paper_id"])
+    kwargs = {str(k): v for k, v in payload.items() if k != "paper_id"}
+    return paper_id, kwargs
+
+
 async def handle_paper_generation_run(descriptor: TaskDescriptor) -> None:
     """Run paper generation directly in the descriptor worker.
 
     Paper generation is CPU/LLM/LaTeX work, not a GPU task, so it must not be
     submitted to TaskQueueManager (which waits for GPU VRAM even for analysis).
     """
-    payload = descriptor.payload
-    paper_id = str(payload["paper_id"])
-    kwargs = {str(k): v for k, v in payload.items() if k != "paper_id"}
+    paper_id, kwargs = _paper_generation_payload(descriptor)
     await paper_generation_jobs.run_paper_generation(paper_id, **kwargs)
 
 
 async def handle_paper_generation_regenerate_section(descriptor: TaskDescriptor) -> None:
-    payload = descriptor.payload
-    paper_id = str(payload["paper_id"])
-    kwargs = {str(k): v for k, v in payload.items() if k != "paper_id"}
+    paper_id, kwargs = _paper_generation_payload(descriptor)
     await paper_generation_jobs.regenerate_section(paper_id, **kwargs)
+
+
+async def handle_paper_generation_run_until_outline(descriptor: TaskDescriptor) -> None:
+    paper_id, kwargs = _paper_generation_payload(descriptor)
+    await paper_generation_jobs.run_until_outline(paper_id, **kwargs)
+
+
+async def handle_paper_generation_run_after_outline(descriptor: TaskDescriptor) -> None:
+    paper_id, kwargs = _paper_generation_payload(descriptor)
+    await paper_generation_jobs.run_after_outline(paper_id, **kwargs)
 
 
 _register("training.preflight", handle_training_preflight)
@@ -209,3 +222,5 @@ _register("analysis.task", handle_analysis)
 _register("chat.patch_inference", handle_chat_patch_inference)
 _register("paper_generation.run", handle_paper_generation_run)
 _register("paper_generation.regenerate_section", handle_paper_generation_regenerate_section)
+_register("paper_generation.run_until_outline", handle_paper_generation_run_until_outline)
+_register("paper_generation.run_after_outline", handle_paper_generation_run_after_outline)

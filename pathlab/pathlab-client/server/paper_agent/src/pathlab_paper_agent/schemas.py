@@ -62,6 +62,7 @@ class CreatePaperRequest(BaseModel):
 class PaperRunStatus(str, Enum):
     pending = "pending"
     running = "running"
+    awaiting_outline_approval = "awaiting_outline_approval"
     completed = "completed"
     failed = "failed"
     cancelled = "cancelled"
@@ -182,6 +183,13 @@ class OutlineDocument(BaseModel):
     micro_lit_clusters: list[OutlineMicroLitCluster]
     section_plan: list[OutlineSectionPlanItem]
     pathlab_extensions: OutlinePathLabExtensions
+
+
+class OutlineApprovalRequest(BaseModel):
+    """PUT /papers/{paper_id}/outline body."""
+
+    outline: OutlineDocument
+    approve: bool
 
 
 class FigureManifestItem(BaseModel):
