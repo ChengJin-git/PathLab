@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { FileCode2, Loader2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { getPaperSections, type PaperSection, type TemplateId } from '../../api/papers'
@@ -13,7 +14,7 @@ interface SectionsTabProps {
   onPdfRefreshNeeded: () => void
 }
 
-const SECTION_ORDER = [
+export const SECTION_ORDER = [
   'abstract',
   'introduction',
   'related_work',
@@ -24,7 +25,7 @@ const SECTION_ORDER = [
   'conclusion',
 ] as const
 
-function labelForSection(section: string): string {
+export function labelForSection(section: string): string {
   return section
     .split('_')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
@@ -53,9 +54,11 @@ function textOffsetWithin(root: HTMLElement, target: Node, nodeOffset: number): 
 }
 
 export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: SectionsTabProps) {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [selectedSection, setSelectedSection] = useState<string>('abstract')
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const sourceRef = useRef<HTMLPreElement>(null)
+  const sectionParam = searchParams.get('section')
 
   const sectionsQuery = useQuery({
     queryKey: ['paper-sections', paperId],
@@ -74,10 +77,25 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
   const selected = sectionsByName.get(selectedSection)
   const isMissing = sectionsQuery.error instanceof ApiError && sectionsQuery.error.isNotFound()
 
+  useEffect(() => {
+    if (sectionParam && (SECTION_ORDER as readonly string[]).includes(sectionParam)) {
+      setSelectedSection(sectionParam)
+    }
+  }, [sectionParam])
+
   // Clear pending selection when user switches section.
   useEffect(() => {
     setSelection(null)
   }, [selectedSection])
+
+  const handleSelectSection = (section: string) => {
+    setSelectedSection(section)
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.set('section', section)
+      return next
+    })
+  }
 
   const handleMouseUp = () => {
     if (!selected || !sourceRef.current) return
@@ -140,7 +158,7 @@ export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: Section
               <button
                 key={section}
                 type="button"
-                onClick={() => setSelectedSection(section)}
+                onClick={() => handleSelectSection(section)}
                 className={cn(
                   'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition',
                   selectedRow
