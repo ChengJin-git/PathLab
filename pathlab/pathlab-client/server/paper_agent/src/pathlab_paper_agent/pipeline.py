@@ -57,6 +57,22 @@ _STAGE_ORDER: tuple[PaperRunStage, ...] = (
     PaperRunStage.exporting,
 )
 
+_STAGES_UNTIL_OUTLINE: tuple[PaperRunStage, ...] = (
+    PaperRunStage.collecting,
+    PaperRunStage.building_evidence,
+    PaperRunStage.outlining,
+)
+
+_STAGES_AFTER_OUTLINE: tuple[PaperRunStage, ...] = (
+    PaperRunStage.plotting,
+    PaperRunStage.literature_review,
+    PaperRunStage.section_writing,
+    PaperRunStage.validating,
+    PaperRunStage.refining,
+    PaperRunStage.rendering,
+    PaperRunStage.exporting,
+)
+
 
 # ---------------------------------------------------------------------------
 # Manifest helpers
@@ -363,9 +379,93 @@ def complete_run(
     *,
     uploads_dir: Optional[str | Path] = None,
     config_path: Optional[str | Path] = None,
+    bypass_approval: bool = False,
+) -> PaperManifest:
+    """Run the interactive pipeline up to the outline approval gate.
+
+    Set ``bypass_approval=True`` or ``PATHLAB_PAPER_AGENT_NO_APPROVAL_GATE=1``
+    for non-interactive smoke tests that must keep the pre-gate full run.
+    """
+    if bypass_approval or os.environ.get("PATHLAB_PAPER_AGENT_NO_APPROVAL_GATE") == "1":
+        return complete_run_full(
+            paper_id,
+            uploads_dir=uploads_dir,
+            config_path=config_path,
+        )
+    return run_until_outline(
+        paper_id,
+        uploads_dir=uploads_dir,
+        config_path=config_path,
+    )
+
+
+def complete_run_full(
+    paper_id: str,
+    *,
+    uploads_dir: Optional[str | Path] = None,
+    config_path: Optional[str | Path] = None,
 ) -> PaperManifest:
     """Run all deterministic scaffold stages and mark the paper completed."""
     for stage in _STAGE_ORDER:
+        run_stage(
+            paper_id,
+            stage,
+            uploads_dir=uploads_dir,
+            config_path=config_path,
+        )
+    return run_stage(
+        paper_id,
+        PaperRunStage.completed,
+        uploads_dir=uploads_dir,
+        config_path=config_path,
+        message="Standalone paper-agent scaffold completed.",
+    )
+
+
+def run_until_outline(
+    paper_id: str,
+    *,
+    uploads_dir: Optional[str | Path] = None,
+    config_path: Optional[str | Path] = None,
+) -> PaperManifest:
+    """Run Job A: collect evidence and produce an editable outline."""
+    for stage in _STAGES_UNTIL_OUTLINE:
+        run_stage(
+            paper_id,
+            stage,
+            uploads_dir=uploads_dir,
+            config_path=config_path,
+        )
+
+    manifest = load_manifest(paper_id, uploads_dir=uploads_dir)
+    now = utc_now()
+    manifest.status = PaperRunStatus.awaiting_outline_approval
+    manifest.current_stage = PaperRunStage.outlining
+    manifest.error_message = None
+    manifest.finished_at = None
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.outlining.value,
+            "status": PaperRunStatus.awaiting_outline_approval.value,
+            "ts": now.isoformat(),
+            "started_at": now.isoformat(),
+            "finished_at": now.isoformat(),
+            "duration_ms": 0,
+            "message": "Outline generated; awaiting user approval.",
+        }
+    )
+    save_manifest(manifest, uploads_dir=uploads_dir)
+    return manifest
+
+
+def run_after_outline(
+    paper_id: str,
+    *,
+    uploads_dir: Optional[str | Path] = None,
+    config_path: Optional[str | Path] = None,
+) -> PaperManifest:
+    """Run Job B: continue after the user-approved outline."""
+    for stage in _STAGES_AFTER_OUTLINE:
         run_stage(
             paper_id,
             stage,

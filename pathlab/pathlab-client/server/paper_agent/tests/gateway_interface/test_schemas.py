@@ -9,6 +9,7 @@ from pathlab_paper_agent.schemas import (
     CreatePaperRequest,
     FigureManifest,
     GuardResultSummary,
+    OutlineApprovalRequest,
     OutlineDocument,
     PaperConfig,
     PaperManifest,
@@ -45,6 +46,10 @@ def test_paper_run_stage_includes_pipeline_stages() -> None:
         "cancelled",
     }
     assert expected.issubset({s.value for s in PaperRunStage})
+
+
+def test_paper_run_status_includes_outline_approval_gate() -> None:
+    assert PaperRunStatus.awaiting_outline_approval.value == "awaiting_outline_approval"
 
 
 def test_create_paper_request_defaults_to_miccai_template() -> None:
@@ -176,50 +181,51 @@ def test_frontend_contract_summary_models_accept_current_shapes() -> None:
 
 
 def test_outline_document_schema_accepts_current_agent_output_shape() -> None:
-    outline = OutlineDocument.model_validate(
-        {
-            "plotting_plan": [
-                {
-                    "figure_id": "fig:main_results",
-                    "kind": "empirical",
-                    "source": "experimental_log",
-                    "design_objective": "summarize locked performance evidence",
-                    "backend": "deterministic_plotting",
-                    "plot_spec": {
-                        "generator": "per_fold_roc",
-                        "data_ref": "evidence/plot_data/main_roc.json",
-                    },
-                }
-            ],
-            "macro_lit_search": ["whole slide image computational pathology validation"],
-            "micro_lit_clusters": [
-                {
-                    "cluster": "multiple instance learning for WSI",
-                    "queries": ["attention MIL whole slide images"],
-                }
-            ],
-            "section_plan": [
-                {
-                    "section": "Methods",
-                    "goal": "explain the model and cohort without private identifiers",
-                    "evidence_inputs": ["evidence_public"],
-                    "citation_hints": ["weakly supervised WSI"],
-                    "locked_block_inputs": ["locked_blocks/method_block.tex"],
-                }
-            ],
-            "pathlab_extensions": {
-                "templates": ["miccai"],
-                "claim_plan": [{"claim": "locked evidence supports the main result"}],
-                "table_plan": [],
-                "guard_requirements": ["metric", "identifier"],
-                "template_styles": [{"template_id": "miccai"}],
-            },
-            "input_summary": {"template_ids": ["miccai"]},
-        }
-    )
+    payload = {
+        "plotting_plan": [
+            {
+                "figure_id": "fig:main_results",
+                "kind": "empirical",
+                "source": "experimental_log",
+                "design_objective": "summarize locked performance evidence",
+                "backend": "deterministic_plotting",
+                "plot_spec": {
+                    "generator": "per_fold_roc",
+                    "data_ref": "evidence/plot_data/main_roc.json",
+                },
+            }
+        ],
+        "macro_lit_search": ["whole slide image computational pathology validation"],
+        "micro_lit_clusters": [
+            {
+                "cluster": "multiple instance learning for WSI",
+                "queries": ["attention MIL whole slide images"],
+            }
+        ],
+        "section_plan": [
+            {
+                "section": "Methods",
+                "goal": "explain the model and cohort without private identifiers",
+                "evidence_inputs": ["evidence_public"],
+                "citation_hints": ["weakly supervised WSI"],
+                "locked_block_inputs": ["locked_blocks/method_block.tex"],
+            }
+        ],
+        "pathlab_extensions": {
+            "templates": ["miccai"],
+            "claim_plan": [{"claim": "locked evidence supports the main result"}],
+            "table_plan": [],
+            "guard_requirements": ["metric", "identifier"],
+            "template_styles": [{"template_id": "miccai"}],
+        },
+        "input_summary": {"template_ids": ["miccai"]},
+    }
+    outline = OutlineDocument.model_validate(payload)
+    request = OutlineApprovalRequest(outline=outline, approve=True)
 
     assert outline.plotting_plan[0].figure_id == "fig:main_results"
     assert outline.pathlab_extensions.templates == ["miccai"]
+    assert request.approve is True
 
 
 def test_figure_manifest_schema_accepts_generated_and_revision_items() -> None:

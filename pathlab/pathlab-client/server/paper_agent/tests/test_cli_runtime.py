@@ -37,7 +37,7 @@ async def test_create_dev_run_and_run_stage(tmp_path):
 async def test_complete_run_writes_scaffold_artifacts_and_exports(tmp_path):
     paper_id, paths = await create_dev_run(paper_id="paper_full", uploads_dir=tmp_path)
 
-    manifest = complete_run(paper_id, uploads_dir=tmp_path)
+    manifest = complete_run(paper_id, uploads_dir=tmp_path, bypass_approval=True)
 
     assert manifest.status.value == "completed"
     assert manifest.current_stage.value == "completed"

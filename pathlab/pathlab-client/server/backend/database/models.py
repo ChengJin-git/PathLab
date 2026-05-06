@@ -1332,8 +1332,8 @@ class PaperGenerationRun(TimestampMixin, Base):
 
     # Lifecycle
     status = Column(
-        String(20), nullable=False, index=True
-    )  # pending, running, completed, failed, cancelled
+        String(32), nullable=False, index=True
+    )  # pending, running, awaiting_outline_approval, completed, failed, cancelled
     current_stage = Column(
         String(40), nullable=False, default="created"
     )  # see PaperRunStage in pathlab_paper_agent/schemas.py

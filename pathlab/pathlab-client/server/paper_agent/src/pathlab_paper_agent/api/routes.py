@@ -41,6 +41,7 @@ from backend.database.repositories import PaperGenerationRunRepository  # noqa: 
 
 from pathlab_paper_agent.schemas import (  # noqa: E402
     CreatePaperRequest,
+    OutlineApprovalRequest,
     PaperConfig,
     PaperManifest,
     PaperRunArtifact,
@@ -97,6 +98,8 @@ _VALIDATION_GUARD_REPORT_PATHS = {
 _VALIDATION_WARNINGS_PATH = "validation/warnings.md"
 _REFINEMENT_LOG_PATH = "validation/refinement_log.json"
 _MAX_SAMPLE_ISSUES = 3
+_RUN_UNTIL_OUTLINE_HANDLER = "paper_generation.run_until_outline"
+_RUN_AFTER_OUTLINE_HANDLER = "paper_generation.run_after_outline"
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +139,27 @@ def _load_manifest(paths: PaperRunPaths) -> Optional[PaperManifest]:
             exc,
         )
         return None
+
+
+def _save_manifest(paths: PaperRunPaths, manifest: PaperManifest) -> None:
+    manifest.updated_at = datetime.now(UTC)
+    paths.manifest.write_text(
+        json.dumps(manifest.model_dump(mode="json"), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+async def _enqueue_paper_generation_job(paper_id: str, handler: str):
+    from gateway.task_dispatch import build_task_descriptor, enqueue_task_descriptor
+
+    descriptor = build_task_descriptor(
+        job_id=paper_id,
+        job_kind="paper_generation",
+        handler=handler,
+        payload={"paper_id": paper_id},
+    )
+    await enqueue_task_descriptor(descriptor)
+    return descriptor
 
 
 def _artifact_from_index(rel_path: str, raw) -> PaperRunArtifact:
@@ -393,22 +417,14 @@ async def create_paper_run(
             status_code=500, detail=f"Failed to scaffold paper run: {exc}"
         )
 
-    # 3. M2+ will enqueue worker here. M1 stops at scaffold.
+    # 3. Enqueue the pre-approval worker job. It pauses after outlining.
     enqueued = False
     try:
-        from gateway.task_dispatch import build_task_descriptor, enqueue_task_descriptor
-
-        descriptor = build_task_descriptor(
-            job_id=paper_id,
-            job_kind="paper_generation",
-            handler="paper_generation.run",
-            payload={"paper_id": paper_id},
-        )
-        await enqueue_task_descriptor(descriptor)
+        await _enqueue_paper_generation_job(paper_id, _RUN_UNTIL_OUTLINE_HANDLER)
         enqueued = True
-        logger.info("paper_generation: enqueued run %s", paper_id)
+        logger.info("paper_generation: enqueued outline-gated run %s", paper_id)
     except Exception as exc:
-        # Keep M1 robust in local/dev setups that do not have Redis running yet.
+        # Keep local/dev setups robust when Redis is not running yet.
         logger.warning(
             "paper_generation: created %s but could not enqueue worker descriptor: %s",
             paper_id,
@@ -478,6 +494,121 @@ async def get_paper_run(
         stage_log=manifest.stage_log if manifest is not None else [],
         validation_summary=_validation_summary(paths),
     )
+
+
+# ---------------------------------------------------------------------------
+# PUT /papers/{paper_id}/outline — save/approve editable outline
+# ---------------------------------------------------------------------------
+
+@router.put("/{paper_id}/outline")
+async def update_paper_outline(
+    paper_id: str,
+    body: OutlineApprovalRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, object]:
+    row = await _load_or_404(db, paper_id, user)
+    if row.status != PaperRunStatus.awaiting_outline_approval.value:
+        raise HTTPException(
+            status_code=422,
+            detail=f"outline cannot be edited at status {row.status}",
+        )
+
+    paths = PaperRunPaths.for_paper(paper_id)
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        raise HTTPException(
+            status_code=500,
+            detail=f"manifest.json not found for paper {paper_id}",
+        )
+
+    paths.outline_json.parent.mkdir(parents=True, exist_ok=True)
+    paths.outline_json.write_text(
+        json.dumps(body.outline.model_dump(mode="json"), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    if not body.approve:
+        manifest.status = PaperRunStatus.awaiting_outline_approval
+        manifest.current_stage = PaperRunStage.outlining
+        manifest.error_message = None
+        _save_manifest(paths, manifest)
+        await PaperGenerationRunRepository.update(
+            db,
+            paper_id,
+            status=PaperRunStatus.awaiting_outline_approval.value,
+            current_stage=PaperRunStage.outlining.value,
+            error_message=None,
+            finished_at=None,
+        )
+        await db.commit()
+        return {
+            "paper_id": paper_id,
+            "approved": False,
+            "current_stage": PaperRunStage.outlining.value,
+        }
+
+    now = datetime.now(UTC)
+    manifest.status = PaperRunStatus.running
+    manifest.current_stage = PaperRunStage.plotting
+    manifest.error_message = None
+    manifest.finished_at = None
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.outlining.value,
+            "status": "approved",
+            "ts": now.isoformat(),
+            "started_at": now.isoformat(),
+            "finished_at": now.isoformat(),
+            "duration_ms": 0,
+            "message": "Outline approved by user.",
+        }
+    )
+    _save_manifest(paths, manifest)
+    await PaperGenerationRunRepository.update(
+        db,
+        paper_id,
+        status=PaperRunStatus.running.value,
+        current_stage=PaperRunStage.plotting.value,
+        error_message=None,
+        finished_at=None,
+    )
+    await db.commit()
+
+    try:
+        await _enqueue_paper_generation_job(paper_id, _RUN_AFTER_OUTLINE_HANDLER)
+    except Exception as exc:
+        logger.exception("paper_generation: failed to enqueue post-outline job for %s", paper_id)
+        if (
+            manifest.stage_log
+            and manifest.stage_log[-1].get("status") == "approved"
+            and manifest.stage_log[-1].get("message") == "Outline approved by user."
+        ):
+            manifest.stage_log.pop()
+        manifest.status = PaperRunStatus.awaiting_outline_approval
+        manifest.current_stage = PaperRunStage.outlining
+        manifest.error_message = f"post-outline enqueue failed: {exc}"
+        _save_manifest(paths, manifest)
+        await PaperGenerationRunRepository.update(
+            db,
+            paper_id,
+            status=PaperRunStatus.awaiting_outline_approval.value,
+            current_stage=PaperRunStage.outlining.value,
+            error_message=manifest.error_message,
+            finished_at=None,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to enqueue post-outline paper job: {exc}",
+        ) from exc
+
+    return {
+        "paper_id": paper_id,
+        "approved": True,
+        "current_stage": PaperRunStage.plotting.value,
+    }
+
 
 # ---------------------------------------------------------------------------
 # GET /papers/{paper_id}/sections — editable public section text
