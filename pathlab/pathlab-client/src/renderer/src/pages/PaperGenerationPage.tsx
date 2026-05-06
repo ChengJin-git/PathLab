@@ -1,21 +1,51 @@
-import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, FileText, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card'
+import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
-import { createPaperRun, listPaperRuns, type CreatePaperRunRequest } from '../api/papers'
+import { listPaperRuns, type PaperRunSummary } from '../api/papers'
+import { formatDateTime } from '../lib/utils'
 
 const ACTIVE_STATUSES = new Set(['pending', 'running'])
 
+function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'completed') return 'secondary'
+  if (status === 'failed' || status === 'cancelled') return 'destructive'
+  if (status === 'running') return 'default'
+  return 'outline'
+}
+
+function RunRow({ run, onOpen }: { run: PaperRunSummary; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      className="group w-full rounded-2xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 font-semibold text-slate-950">
+            <FileText className="h-4 w-4 shrink-0 text-slate-400 transition group-hover:text-slate-700" />
+            <span className="truncate">{run.title || run.paper_id}</span>
+          </div>
+          <div className="mt-1 text-sm text-slate-500">{run.paper_id}</div>
+        </div>
+        <Badge variant={statusVariant(run.status)}>{run.status}</Badge>
+      </div>
+      <div className="mt-4 grid gap-2 text-sm text-slate-600 sm:grid-cols-3">
+        <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">Stage</span><br />{run.current_stage}</div>
+        <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">Template</span><br />{run.selected_templates.join(', ') || '-'}</div>
+        <div className="rounded-xl bg-slate-50 px-3 py-2"><span className="text-slate-400">Created</span><br />{formatDateTime(run.created_at)}</div>
+      </div>
+      <div className="mt-3 text-xs text-slate-400">{run.source_task_ids.join(', ') || 'No source task IDs recorded'}</div>
+    </button>
+  )
+}
+
 export default function PaperGenerationPage() {
   const navigate = useNavigate()
-  const qc = useQueryClient()
-  const [title, setTitle] = useState('')
-  const [taskId, setTaskId] = useState('')
-  const [idea, setIdea] = useState('')
-
   const runsQuery = useQuery({
     queryKey: ['paper-runs'],
     queryFn: () => listPaperRuns({ limit: 50 }),
@@ -25,120 +55,55 @@ export default function PaperGenerationPage() {
     },
   })
 
-  const createMutation = useMutation({
-    mutationFn: (request: CreatePaperRunRequest) => createPaperRun(request),
-    onSuccess: (created) => {
-      void qc.invalidateQueries({ queryKey: ['paper-runs'] })
-      navigate(`/papers/${created.paper_id}`)
-    },
-  })
-
-  const handleCreate = () => {
-    const trimmedTaskId = taskId.trim()
-    if (!trimmedTaskId) return
-    createMutation.mutate({
-      title: title.trim() || null,
-      source_tasks: [{ task_id: trimmedTaskId, role: 'main' }],
-      selected_templates: ['miccai', 'nature_scientific_reports'],
-      include_external_validation: true,
-      user_idea: idea.trim() || null,
-    })
-  }
-
   return (
-    <div className="w-full py-4 sm:py-8 px-4 sm:px-6 max-w-7xl mx-auto flex flex-col gap-6">
-      <PageHeader title="Paper Generator" description="Create and monitor PathLab paper-generation runs.">
-        <Button variant="outline" size="sm" onClick={() => navigate('/tools')} className="gap-2">
-          <ArrowLeft className="w-4 h-4" />
-          Tools
-        </Button>
-      </PageHeader>
-
-      <div className="grid grid-cols-1 lg:grid-cols-[420px_1fr] gap-6">
-        <Card className="border-gray-200 rounded-2xl shadow-sm">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <Plus className="w-5 h-5 text-emerald-600" />
-              New paper run
-            </CardTitle>
-            <CardDescription>Phase 01 creates the run scaffold and worker descriptor.</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <label className="block space-y-1.5">
-              <span className="text-sm font-semibold text-gray-700">Title</span>
-              <input
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Optional manuscript title"
-                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-semibold text-gray-700">Main task ID</span>
-              <input
-                value={taskId}
-                onChange={(event) => setTaskId(event.target.value)}
-                placeholder="training task id"
-                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-              />
-            </label>
-            <label className="block space-y-1.5">
-              <span className="text-sm font-semibold text-gray-700">Idea / notes</span>
-              <textarea
-                value={idea}
-                onChange={(event) => setIdea(event.target.value)}
-                rows={5}
-                placeholder="Optional user idea for the future agents"
-                className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-              />
-            </label>
-            {createMutation.error ? (
-              <div className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">
-                {createMutation.error instanceof Error ? createMutation.error.message : String(createMutation.error)}
-              </div>
-            ) : null}
-            <Button onClick={handleCreate} disabled={!taskId.trim() || createMutation.isPending} className="w-full gap-2">
-              {createMutation.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}
-              Create paper run
+    <div className="w-full px-4 py-4 sm:px-6 sm:py-8">
+      <div className="mx-auto flex max-w-7xl flex-col gap-6">
+        <PageHeader title="Paper runs" description="List-only view for PathLab paper-generation workspaces.">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => navigate('/tools')} className="gap-2">
+              <ArrowLeft className="h-4 w-4" />
+              Tools
             </Button>
-          </CardContent>
-        </Card>
-
-        <Card className="border-gray-200 rounded-2xl shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <div>
-              <CardTitle className="text-xl">Runs</CardTitle>
-              <CardDescription>Polling every 2s while a run is active.</CardDescription>
-            </div>
             <Button variant="outline" size="sm" onClick={() => runsQuery.refetch()} className="gap-2">
-              <RefreshCw className="w-4 h-4" />
+              <RefreshCw className="h-4 w-4" />
               Refresh
             </Button>
+            <Button size="sm" onClick={() => navigate('/papers/new')} className="gap-2">
+              <Plus className="h-4 w-4" />
+              New paper
+            </Button>
+          </div>
+        </PageHeader>
+
+        <Card className="border-slate-200 bg-white/95 shadow-sm">
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+            <div>
+              <CardTitle>Workspace index</CardTitle>
+              <CardDescription>Polling every 2s while any run is pending or running.</CardDescription>
+            </div>
+            <Badge variant="outline">{runsQuery.data?.total ?? 0} total</Badge>
           </CardHeader>
           <CardContent>
             {runsQuery.isLoading ? (
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <Loader2 className="w-4 h-4 animate-spin" /> Loading runs...
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading runs...
+              </div>
+            ) : runsQuery.error ? (
+              <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                {runsQuery.error instanceof Error ? runsQuery.error.message : String(runsQuery.error)}
               </div>
             ) : runsQuery.data?.items.length ? (
               <div className="space-y-3">
-                {runsQuery.data.items.map((run) => (
-                  <button
-                    key={run.paper_id}
-                    onClick={() => navigate(`/papers/${run.paper_id}`)}
-                    className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-left transition hover:border-primary-200 hover:bg-primary-50/40"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="font-semibold text-gray-900">{run.title || run.paper_id}</div>
-                      <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700">{run.status}</span>
-                    </div>
-                    <div className="mt-1 text-sm text-gray-500">{run.current_stage} · {run.source_task_ids.join(', ') || 'no task'}</div>
-                  </button>
-                ))}
+                {runsQuery.data.items.map((run) => <RunRow key={run.paper_id} run={run} onOpen={() => navigate(`/papers/${run.paper_id}`)} />)}
               </div>
             ) : (
-              <div className="rounded-xl border border-dashed border-gray-200 p-8 text-center text-sm text-gray-500">
-                No paper runs yet.
+              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/70 p-10 text-center">
+                <FileText className="mx-auto h-9 w-9 text-slate-300" />
+                <div className="mt-3 font-semibold text-slate-800">No paper runs yet</div>
+                <p className="mt-1 text-sm text-slate-500">Create a run to start the read-only workspace.</p>
+                <Button className="mt-4 gap-2" onClick={() => navigate('/papers/new')}>
+                  <Plus className="h-4 w-4" /> New paper
+                </Button>
               </div>
             )}
           </CardContent>
