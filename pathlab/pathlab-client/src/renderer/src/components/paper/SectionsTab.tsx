@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { FileCode2, Loader2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import { getPaperSections, type PaperSection } from '../../api/papers'
 import { cn } from '../../lib/utils'
 import { Card, CardContent } from '../ui/card'
+import { RegenerateSelectionPanel, type SelectionInfo } from './RegenerateSelectionPanel'
 
 interface SectionsTabProps {
   paperId: string
@@ -28,8 +29,19 @@ function labelForSection(section: string): string {
     .join(' ')
 }
 
+function paragraphIndexAt(text: string, offset: number): number {
+  // Match the backend's paragraph splitter (regenerate.py:_paragraph_spans):
+  // paragraphs are separated by blank lines.
+  const before = text.slice(0, offset)
+  const matches = before.match(/\n[ \t]*\n/g)
+  return matches ? matches.length : 0
+}
+
 export function SectionsTab({ paperId }: SectionsTabProps) {
   const [selectedSection, setSelectedSection] = useState<string>('abstract')
+  const [selection, setSelection] = useState<SelectionInfo | null>(null)
+  const sourceRef = useRef<HTMLPreElement>(null)
+
   const sectionsQuery = useQuery({
     queryKey: ['paper-sections', paperId],
     queryFn: () => getPaperSections(paperId),
@@ -47,8 +59,44 @@ export function SectionsTab({ paperId }: SectionsTabProps) {
   const selected = sectionsByName.get(selectedSection)
   const isMissing = sectionsQuery.error instanceof ApiError && sectionsQuery.error.isNotFound()
 
+  // Clear pending selection when user switches section.
+  useEffect(() => {
+    setSelection(null)
+  }, [selectedSection])
+
+  const handleMouseUp = () => {
+    if (!selected || !sourceRef.current) return
+    const win = window.getSelection()
+    if (!win || win.rangeCount === 0 || win.isCollapsed) return
+    const range = win.getRangeAt(0)
+    if (!sourceRef.current.contains(range.commonAncestorContainer)) return
+    const text = win.toString()
+    if (!text || !text.trim()) return
+
+    // Compute character offset of selection start within the section text by
+    // walking pre-order through the pre's text nodes.
+    let offset = 0
+    let found = false
+    const walker = document.createTreeWalker(sourceRef.current, NodeFilter.SHOW_TEXT)
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text
+      if (node === range.startContainer) {
+        offset += range.startOffset
+        found = true
+        break
+      }
+      offset += node.length
+    }
+    if (!found) offset = 0
+    setSelection({ text, paragraphIndex: paragraphIndexAt(selected.text, offset) })
+  }
+
   if (sectionsQuery.isLoading) {
-    return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading sections...</div>
+    return (
+      <div className="flex items-center gap-2 text-sm text-slate-500">
+        <Loader2 className="h-4 w-4 animate-spin" /> Loading sections...
+      </div>
+    )
   }
 
   if (isMissing || sectionsQuery.data?.sections?.length === 0) {
@@ -64,11 +112,15 @@ export function SectionsTab({ paperId }: SectionsTabProps) {
   }
 
   if (sectionsQuery.error) {
-    return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{sectionsQuery.error instanceof Error ? sectionsQuery.error.message : String(sectionsQuery.error)}</div>
+    return (
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+        {sectionsQuery.error instanceof Error ? sectionsQuery.error.message : String(sectionsQuery.error)}
+      </div>
+    )
   }
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[220px_minmax(0,1fr)]">
+    <div className="grid gap-4 xl:grid-cols-[200px_minmax(0,1fr)_320px] lg:grid-cols-[200px_minmax(0,1fr)]">
       <nav className="rounded-2xl border border-slate-200 bg-slate-50/70 p-2">
         <div className="px-2 pb-2 text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">8 sections</div>
         <div className="space-y-1">
@@ -104,10 +156,27 @@ export function SectionsTab({ paperId }: SectionsTabProps) {
           </span>
         </div>
         {selected ? (
-          <pre className="max-h-[68vh] overflow-auto p-4 text-xs leading-6 text-slate-100 sm:text-sm"><code>{selected.text}</code></pre>
+          <pre
+            ref={sourceRef}
+            onMouseUp={handleMouseUp}
+            className="max-h-[68vh] overflow-auto p-4 text-xs leading-6 text-slate-100 selection:bg-violet-400/40 selection:text-white sm:text-sm"
+          >
+            <code>{selected.text}</code>
+          </pre>
         ) : (
           <div className="p-8 text-center text-sm text-slate-400">This section is not present in drafts/sections yet.</div>
         )}
+      </div>
+
+      <div className="lg:col-span-2 xl:col-span-1">
+        <RegenerateSelectionPanel
+          sectionName={selectedSection}
+          selection={selection}
+          onClear={() => {
+            setSelection(null)
+            window.getSelection()?.removeAllRanges()
+          }}
+        />
       </div>
     </div>
   )

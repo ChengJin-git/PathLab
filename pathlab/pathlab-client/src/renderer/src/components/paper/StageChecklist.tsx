@@ -1,6 +1,5 @@
-import { CheckCircle2, Circle, FileJson, FileText, Image, Loader2, ShieldCheck, Table2, XCircle } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '../ui/card'
+import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
+import { Fragment } from 'react'
 import { cn } from '../../lib/utils'
 import type { PaperRunDetail, PaperRunStage, PaperStageLogEntry } from '../../api/papers'
 
@@ -15,21 +14,21 @@ type RowState = 'completed' | 'running' | 'failed' | 'pending'
 interface StageRowDefinition {
   id: string
   label: string
+  short: string
   stages: PaperRunStage[]
   tab: string
-  icon: LucideIcon
 }
 
 const STAGE_ROWS: StageRowDefinition[] = [
-  { id: 'collecting', label: 'Collect evidence', stages: ['collecting'], tab: 'tables', icon: Table2 },
-  { id: 'building_evidence', label: 'Lock tables', stages: ['building_evidence'], tab: 'tables', icon: Table2 },
-  { id: 'outlining', label: 'Outline', stages: ['outlining'], tab: 'outline', icon: FileJson },
-  { id: 'plotting', label: 'Figures', stages: ['plotting'], tab: 'figures', icon: Image },
-  { id: 'literature_review', label: 'Citations', stages: ['literature_review'], tab: 'citations', icon: FileText },
-  { id: 'section_writing', label: 'Sections', stages: ['section_writing'], tab: 'sections', icon: FileText },
-  { id: 'validating', label: 'Validation', stages: ['validating'], tab: 'validation', icon: ShieldCheck },
-  { id: 'refining', label: 'Refinement', stages: ['refining'], tab: 'sections', icon: FileText },
-  { id: 'rendering_exporting', label: 'PDF export', stages: ['rendering', 'exporting'], tab: 'pdf', icon: FileText },
+  { id: 'collecting', label: 'Collect evidence', short: 'Collect', stages: ['collecting'], tab: 'tables' },
+  { id: 'building_evidence', label: 'Lock tables', short: 'Tables', stages: ['building_evidence'], tab: 'tables' },
+  { id: 'outlining', label: 'Outline', short: 'Outline', stages: ['outlining'], tab: 'outline' },
+  { id: 'plotting', label: 'Figures', short: 'Figures', stages: ['plotting'], tab: 'figures' },
+  { id: 'literature_review', label: 'Citations', short: 'Cites', stages: ['literature_review'], tab: 'citations' },
+  { id: 'section_writing', label: 'Sections', short: 'Sections', stages: ['section_writing'], tab: 'sections' },
+  { id: 'validating', label: 'Validation', short: 'Validate', stages: ['validating'], tab: 'validation' },
+  { id: 'refining', label: 'Refinement', short: 'Refine', stages: ['refining'], tab: 'sections' },
+  { id: 'rendering_exporting', label: 'PDF export', short: 'PDF', stages: ['rendering', 'exporting'], tab: 'pdf' },
 ]
 
 const ACTIVE_RUN_STATUSES = new Set(['pending', 'running'])
@@ -65,83 +64,97 @@ function formatDuration(ms: number | null | undefined): string {
 }
 
 function statusIcon(state: RowState) {
-  if (state === 'completed') return <CheckCircle2 className="h-4 w-4" />
-  if (state === 'running') return <Loader2 className="h-4 w-4 animate-spin" />
-  if (state === 'failed') return <XCircle className="h-4 w-4" />
-  return <Circle className="h-4 w-4" />
+  if (state === 'completed') return <CheckCircle2 className="h-3.5 w-3.5" />
+  if (state === 'running') return <Loader2 className="h-3.5 w-3.5 animate-spin" />
+  if (state === 'failed') return <XCircle className="h-3.5 w-3.5" />
+  return <Circle className="h-3.5 w-3.5" />
 }
 
-function stateClass(state: RowState): string {
+function pillClass(state: RowState, selected: boolean): string {
+  if (selected) return 'border-slate-900 bg-slate-900 text-white shadow-sm'
   switch (state) {
     case 'completed':
-      return 'border-emerald-200 bg-emerald-50/80 text-emerald-700'
+      return 'border-emerald-200 bg-emerald-50 text-emerald-700'
     case 'running':
-      return 'border-sky-200 bg-sky-50/80 text-sky-700'
+      return 'border-sky-200 bg-sky-50 text-sky-700'
     case 'failed':
-      return 'border-red-200 bg-red-50/80 text-red-700'
+      return 'border-red-200 bg-red-50 text-red-700'
     default:
       return 'border-slate-200 bg-white text-slate-400'
   }
 }
 
+function connectorClass(prevState: RowState): string {
+  switch (prevState) {
+    case 'completed':
+      return 'bg-emerald-300'
+    case 'running':
+      return 'bg-sky-200'
+    case 'failed':
+      return 'bg-red-200'
+    default:
+      return 'bg-slate-200'
+  }
+}
+
 export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistProps) {
   const logs = run.stage_log ?? []
+  const states = STAGE_ROWS.map((row, index) => stateForRow(run, row, index, latestForRow(logs, row)))
+  const totalMs = logs.reduce<number>((sum, entry) => sum + (entry.duration_ms ?? 0), 0)
+  const totalLabel = totalMs > 0 ? formatDuration(totalMs) : ''
 
   return (
-    <Card className="overflow-hidden border-slate-200 bg-white/90 shadow-sm">
-      <CardHeader className="border-b border-slate-100 pb-4">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">todo.md</div>
-            <CardTitle className="text-lg">Stage checklist</CardTitle>
-          </div>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-600">
-            {run.current_stage}
-          </span>
-        </div>
-      </CardHeader>
-      <CardContent className="p-3">
-        <div className="space-y-2">
-          {STAGE_ROWS.map((row, index) => {
-            const Icon = row.icon
+    <div className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2.5 shadow-sm">
+      <div className="flex items-center gap-3">
+        <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.2em] text-slate-400">
+          Pipeline
+        </span>
+        <div className="flex flex-1 items-center gap-1 overflow-x-auto pb-0.5">
+          {STAGE_ROWS.map((row, i) => {
+            const state = states[i]
             const latest = latestForRow(logs, row)
-            const state = stateForRow(run, row, index, latest)
             const duration = formatDuration(latest?.duration_ms)
             const selected = activeTab === row.tab
+            const tip = [
+              row.label,
+              duration ? `· ${duration}` : '',
+              latest?.message ? `— ${latest.message}` : '',
+            ]
+              .filter(Boolean)
+              .join(' ')
             return (
-              <button
-                key={row.id}
-                type="button"
-                onClick={() => onSelectTab(row.tab)}
-                className={cn(
-                  'group w-full rounded-2xl border px-3 py-3 text-left transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-sm',
-                  selected ? 'border-slate-900 bg-slate-950 text-white shadow-sm' : 'border-slate-100 bg-slate-50/60 text-slate-700'
-                )}
-              >
-                <div className="flex items-start gap-3">
-                  <span className={cn('mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-full border', selected ? 'border-white/20 bg-white/10 text-white' : stateClass(state))}>
-                    {statusIcon(state)}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-2">
-                      <span className="flex min-w-0 items-center gap-2 font-semibold">
-                        <Icon className="h-3.5 w-3.5 shrink-0 opacity-70" />
-                        <span className="truncate">{row.label}</span>
-                      </span>
-                      <span className={cn('shrink-0 text-[11px] font-semibold uppercase tracking-[0.14em]', selected ? 'text-white/70' : 'text-slate-400')}>
-                        {duration || state}
-                      </span>
+              <Fragment key={row.id}>
+                {i > 0 ? (
+                  <div className={cn('h-0.5 w-3 shrink-0 rounded-full sm:w-5', connectorClass(states[i - 1]))} />
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => onSelectTab(row.tab)}
+                  title={tip}
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold transition hover:-translate-y-0.5 hover:shadow-sm',
+                    pillClass(state, selected)
+                  )}
+                >
+                  {statusIcon(state)}
+                  <span>{row.short}</span>
+                  {duration ? (
+                    <span className={cn('text-[10px] font-medium tabular-nums', selected ? 'text-white/70' : 'text-slate-400')}>
+                      {duration}
                     </span>
-                    <span className={cn('mt-1 line-clamp-2 block text-xs leading-5', selected ? 'text-white/70' : 'text-slate-500')}>
-                      {latest?.error_message || latest?.message || 'Waiting for this artifact.'}
-                    </span>
-                  </span>
-                </div>
-              </button>
+                  ) : null}
+                </button>
+              </Fragment>
             )
           })}
         </div>
-      </CardContent>
-    </Card>
+        <div className="shrink-0 flex items-center gap-2 text-xs">
+          {totalLabel ? <span className="font-semibold text-slate-600 tabular-nums">{totalLabel}</span> : null}
+          <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-semibold text-slate-600">
+            {run.current_stage}
+          </span>
+        </div>
+      </div>
+    </div>
   )
 }

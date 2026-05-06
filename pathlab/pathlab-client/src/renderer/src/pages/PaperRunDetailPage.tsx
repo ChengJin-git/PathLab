@@ -1,14 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { Button } from '../components/ui/button'
 import { Card, CardContent } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { PageHeader } from '../components/PageHeader'
-import { RunWorkspaceLayout } from '../components/paper/RunWorkspaceLayout'
 import { StageChecklist } from '../components/paper/StageChecklist'
 import { WorkspaceTabs, coerceWorkspaceTab, type WorkspaceTabValue } from '../components/paper/WorkspaceTabs'
-import { RightSidePanel } from '../components/paper/RightSidePanel'
+import { DeleteRunButton } from '../components/paper/DeleteRunButton'
 import { getPaperRun } from '../api/papers'
 
 const ACTIVE_STATUSES = new Set(['pending', 'running'])
@@ -25,6 +24,7 @@ export default function PaperRunDetailPage() {
   const { paper_id: paperId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const activeTab = coerceWorkspaceTab(searchParams.get('tab'))
+
 
   const runQuery = useQuery({
     queryKey: ['paper-run', paperId],
@@ -43,13 +43,28 @@ export default function PaperRunDetailPage() {
   }
 
   const run = runQuery.data
+  const sourceTaskIds = run?.source_task_ids ?? []
 
   return (
-    <div className="w-full px-4 py-4 sm:px-6 sm:py-8">
-      <div className="mx-auto flex max-w-[1800px] flex-col gap-6">
-        <PageHeader title={run?.title || paperId || 'Paper run'} description="Three-column PathLab paper workspace. Read-only v1.5 surface.">
-          <div className="flex flex-wrap gap-2">
+    <div className="w-full px-3 py-4 sm:px-4 lg:px-6 sm:py-6">
+      <div className="flex w-full flex-col gap-5">
+        <PageHeader title={run?.title || paperId || 'Paper run'} description="PathLab paper workspace. Read-only v1.5 surface.">
+          <div className="flex flex-wrap items-center gap-2">
             {run ? <Badge variant={statusBadgeVariant(run.status)}>{run.status}</Badge> : null}
+            {sourceTaskIds.length ? (
+              <div className="flex flex-wrap items-center gap-1">
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Tasks</span>
+                {sourceTaskIds.map((taskId) => (
+                  <Link
+                    key={taskId}
+                    to={`/task/${encodeURIComponent(taskId)}`}
+                    className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-0.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:bg-white"
+                  >
+                    {taskId}
+                  </Link>
+                ))}
+              </div>
+            ) : null}
             <Button variant="outline" size="sm" onClick={() => navigate('/papers')} className="gap-2">
               <ArrowLeft className="h-4 w-4" />
               Runs
@@ -58,6 +73,7 @@ export default function PaperRunDetailPage() {
               <RefreshCw className="h-4 w-4" />
               Refresh
             </Button>
+            {paperId ? <DeleteRunButton paperId={paperId} onDeleted={() => navigate('/papers')} /> : null}
           </div>
         </PageHeader>
 
@@ -74,11 +90,10 @@ export default function PaperRunDetailPage() {
             </CardContent>
           </Card>
         ) : run && paperId ? (
-          <RunWorkspaceLayout
-            left={<StageChecklist run={run} activeTab={activeTab} onSelectTab={setActiveTab} />}
-            main={<WorkspaceTabs paperId={paperId} run={run} value={activeTab} onValueChange={setActiveTab} />}
-            right={<RightSidePanel run={run} onDeleted={() => navigate('/papers')} />}
-          />
+          <div className="flex flex-col gap-4">
+            <StageChecklist run={run} activeTab={activeTab} onSelectTab={setActiveTab} />
+            <WorkspaceTabs paperId={paperId} run={run} value={activeTab} onValueChange={setActiveTab} />
+          </div>
         ) : null}
       </div>
     </div>
