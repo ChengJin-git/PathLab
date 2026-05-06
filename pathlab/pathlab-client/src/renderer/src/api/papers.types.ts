@@ -44,6 +44,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/papers/{paper_id}/outline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Paper Outline */
+        put: operations["update_paper_outline_papers__paper_id__outline_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/papers/{paper_id}/sections": {
         parameters: {
             query?: never;
@@ -72,6 +89,57 @@ export interface paths {
         put?: never;
         /** Regenerate Paper Section */
         post: operations["regenerate_paper_section_papers__paper_id__sections__section_name__regenerate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/regen/{regen_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Regenerate Job Status */
+        get: operations["get_regenerate_job_status_papers__paper_id__regen__regen_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/regen/{regen_id}:reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject Regenerate Job */
+        post: operations["reject_regenerate_job_papers__paper_id__regen__regen_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/regen/{regen_id}:cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Regenerate Job */
+        post: operations["cancel_regenerate_job_papers__paper_id__regen__regen_id__cancel_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -151,6 +219,22 @@ export interface components {
              */
             user_idea?: string | null;
         };
+        /** DiffSummary */
+        DiffSummary: {
+            /** Chars Added */
+            chars_added: number;
+            /** Chars Removed */
+            chars_removed: number;
+            /** Paragraphs Changed */
+            paragraphs_changed?: number[];
+            /** Sentences Changed */
+            sentences_changed?: number[];
+            /**
+             * Preview Unified
+             * @default
+             */
+            preview_unified: string;
+        };
         /**
          * GuardIssueSummary
          * @description Public-safe preview of one guard issue.
@@ -206,6 +290,108 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /**
+         * OutlineApprovalRequest
+         * @description PUT /papers/{paper_id}/outline body.
+         */
+        OutlineApprovalRequest: {
+            outline: components["schemas"]["OutlineDocument"];
+            /** Approve */
+            approve: boolean;
+        };
+        /**
+         * OutlineDocument
+         * @description Frontend-facing schema for `drafts/outline.json`.
+         */
+        OutlineDocument: {
+            /** Plotting Plan */
+            plotting_plan: components["schemas"]["OutlinePlottingPlanItem"][];
+            /** Macro Lit Search */
+            macro_lit_search: string[];
+            /** Micro Lit Clusters */
+            micro_lit_clusters: components["schemas"]["OutlineMicroLitCluster"][];
+            /** Section Plan */
+            section_plan: components["schemas"]["OutlineSectionPlanItem"][];
+            pathlab_extensions: components["schemas"]["OutlinePathLabExtensions"];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * OutlineMicroLitCluster
+         * @description Public schema for focused literature-search clusters in an outline.
+         */
+        OutlineMicroLitCluster: {
+            /** Cluster */
+            cluster: string;
+            /** Queries */
+            queries: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * OutlinePathLabExtensions
+         * @description PathLab-specific outline metadata used by downstream agents.
+         */
+        OutlinePathLabExtensions: {
+            /** Templates */
+            templates?: string[];
+            /** Claim Plan */
+            claim_plan?: {
+                [key: string]: unknown;
+            }[];
+            /** Table Plan */
+            table_plan?: {
+                [key: string]: unknown;
+            }[];
+            /** Guard Requirements */
+            guard_requirements?: string[];
+            /** Template Styles */
+            template_styles?: {
+                [key: string]: unknown;
+            }[];
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * OutlinePlottingPlanItem
+         * @description Public schema for one `drafts/outline.json` plotting plan item.
+         */
+        OutlinePlottingPlanItem: {
+            /** Figure Id */
+            figure_id: string;
+            /** Kind */
+            kind: string;
+            /** Source */
+            source: string;
+            /** Design Objective */
+            design_objective: string;
+            /** Backend */
+            backend: string;
+            /** Plot Spec */
+            plot_spec?: {
+                [key: string]: unknown;
+            };
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * OutlineSectionPlanItem
+         * @description Public schema for one planned manuscript section.
+         */
+        OutlineSectionPlanItem: {
+            /** Section */
+            section: string;
+            /** Goal */
+            goal: string;
+            /** Evidence Inputs */
+            evidence_inputs?: string[];
+            /** Citation Hints */
+            citation_hints?: string[];
+            /** Locked Block Inputs */
+            locked_block_inputs?: string[];
+        } & {
+            [key: string]: unknown;
         };
         /**
          * PaperRunArtifact
@@ -296,7 +482,7 @@ export interface components {
          * PaperRunStatus
          * @enum {string}
          */
-        PaperRunStatus: "pending" | "running" | "completed" | "failed" | "cancelled";
+        PaperRunStatus: "pending" | "running" | "awaiting_outline_approval" | "completed" | "failed" | "cancelled";
         /**
          * PaperRunSummary
          * @description Returned by GET /papers and GET /papers/{id}.
@@ -347,19 +533,6 @@ export interface components {
         PaperSectionListResponse: {
             /** Sections */
             sections?: components["schemas"]["PaperSection"][];
-        };
-        /** PaperSectionRegenerateResponse */
-        PaperSectionRegenerateResponse: {
-            /** Paper Id */
-            paper_id: string;
-            status: components["schemas"]["PaperRunStatus"];
-            current_stage: components["schemas"]["PaperRunStage"];
-            /** Regenerated Sections */
-            regenerated_sections?: string[];
-            /** Refinement Log Summary */
-            refinement_log_summary?: {
-                [key: string]: unknown;
-            };
         };
         /**
          * PaperStageLogEntry
@@ -415,6 +588,162 @@ export interface components {
             /** Log Path */
             log_path?: string | null;
         };
+        /** RegenerateJobEntry */
+        RegenerateJobEntry: {
+            /** Regen Id */
+            regen_id: string;
+            /**
+             * Mode
+             * @default section
+             * @enum {string}
+             */
+            mode: "section" | "paragraph" | "selection";
+            /** Section Name */
+            section_name: string;
+            /** Target Paragraph */
+            target_paragraph?: number | null;
+            /** Target Sentence */
+            target_sentence?: number | null;
+            /** Selected Text */
+            selected_text?: string | null;
+            /** Source Hash */
+            source_hash?: string | null;
+            /** User Note */
+            user_note?: string | null;
+            template_id?: components["schemas"]["TemplateId"] | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "queued" | "running" | "completed" | "failed" | "rejected" | "cancelled" | "cancelling";
+            /**
+             * Enqueued At
+             * Format: date-time
+             */
+            enqueued_at: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Finished At */
+            finished_at?: string | null;
+            /** Rejected At */
+            rejected_at?: string | null;
+            /** Rejection Reason */
+            rejection_reason?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            locator?: components["schemas"]["SelectionLocatorResult"] | null;
+            /** Replacement Text Preview */
+            replacement_text_preview?: string | null;
+            /** Before Path */
+            before_path?: string | null;
+            /** After Path */
+            after_path?: string | null;
+            diff_summary?: components["schemas"]["DiffSummary"] | null;
+            /** Guard Summary */
+            guard_summary?: components["schemas"]["GuardResultSummary"][];
+            /** Refinement Summary */
+            refinement_summary?: {
+                [key: string]: unknown;
+            } | null;
+            /** Final Pdf Path */
+            final_pdf_path?: string | null;
+            /** Export Bundle Path */
+            export_bundle_path?: string | null;
+            progress?: components["schemas"]["RegenerateProgress"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RegenerateProgress */
+        RegenerateProgress: {
+            /**
+             * Step
+             * @enum {string}
+             */
+            step: "queued" | "locating" | "drafting" | "guarding" | "refining" | "compiling" | "finalizing";
+            /** Detail */
+            detail?: string | null;
+            /** Percent */
+            percent?: number | null;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** RegenerateRejectRequest */
+        RegenerateRejectRequest: {
+            /** Reason */
+            reason?: string | null;
+            template_id?: components["schemas"]["TemplateId"] | null;
+        };
+        /** RegenerateRejectResponse */
+        RegenerateRejectResponse: {
+            /** Regen Id */
+            regen_id: string;
+            /**
+             * Status
+             * @constant
+             */
+            status: "rejected";
+            /** Restored Sections */
+            restored_sections?: string[];
+            /** Final Pdf Path */
+            final_pdf_path?: string | null;
+        };
+        /** RegenerateSectionRequest */
+        RegenerateSectionRequest: {
+            /**
+             * Mode
+             * @default section
+             * @enum {string}
+             */
+            mode: "section" | "paragraph" | "selection";
+            /** Target Section */
+            target_section?: string | null;
+            /** Target Paragraph */
+            target_paragraph?: number | null;
+            /** Target Sentence */
+            target_sentence?: number | null;
+            /** Selected Text */
+            selected_text?: string | null;
+            /** Source Hash */
+            source_hash?: string | null;
+            /** Char Start */
+            char_start?: number | null;
+            /** Char End */
+            char_end?: number | null;
+            /** User Note */
+            user_note?: string | null;
+            template_id?: components["schemas"]["TemplateId"] | null;
+        };
+        /** SelectionLocatorResult */
+        SelectionLocatorResult: {
+            /** Section Name */
+            section_name: string;
+            /** Paragraph Index */
+            paragraph_index: number;
+            /** Sentence Index */
+            sentence_index?: number | null;
+            /** Char Start */
+            char_start: number;
+            /** Char End */
+            char_end: number;
+            /** Matched Source Text */
+            matched_source_text: string;
+            /** Normalized Selected Text */
+            normalized_selected_text: string;
+            /** Normalized Source Text */
+            normalized_source_text: string;
+            /** Confidence */
+            confidence: number;
+            /**
+             * Ambiguous
+             * @default false
+             */
+            ambiguous: boolean;
+        };
         /** SourceTaskRef */
         SourceTaskRef: {
             /** Task Id */
@@ -462,91 +791,6 @@ export interface components {
             hybrid_score?: number | null;
             /** Warnings Md Path */
             warnings_md_path?: string | null;
-        };
-        /**
-         * OutlineMicroLitCluster
-         * @description Public schema for focused literature-search clusters in an outline.
-         */
-        OutlineMicroLitCluster: {
-            /** Cluster */
-            cluster: string;
-            /** Queries */
-            queries: string[];
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * OutlinePathLabExtensions
-         * @description PathLab-specific outline metadata used by downstream agents.
-         */
-        OutlinePathLabExtensions: {
-            /** Templates */
-            templates?: string[];
-            /** Claim Plan */
-            claim_plan?: Record<string, never>[];
-            /** Table Plan */
-            table_plan?: Record<string, never>[];
-            /** Guard Requirements */
-            guard_requirements?: string[];
-            /** Template Styles */
-            template_styles?: Record<string, never>[];
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * OutlinePlottingPlanItem
-         * @description Public schema for one `drafts/outline.json` plotting plan item.
-         */
-        OutlinePlottingPlanItem: {
-            /** Figure Id */
-            figure_id: string;
-            /** Kind */
-            kind: string;
-            /** Source */
-            source: string;
-            /** Design Objective */
-            design_objective: string;
-            /** Backend */
-            backend: string;
-            /** Plot Spec */
-            plot_spec?: Record<string, never>;
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * OutlineSectionPlanItem
-         * @description Public schema for one planned manuscript section.
-         */
-        OutlineSectionPlanItem: {
-            /** Section */
-            section: string;
-            /** Goal */
-            goal: string;
-            /** Evidence Inputs */
-            evidence_inputs?: string[];
-            /** Citation Hints */
-            citation_hints?: string[];
-            /** Locked Block Inputs */
-            locked_block_inputs?: string[];
-        } & {
-            [key: string]: unknown;
-        };
-        /**
-         * OutlineDocument
-         * @description Frontend-facing schema for `drafts/outline.json`.
-         */
-        OutlineDocument: {
-            /** Plotting Plan */
-            plotting_plan: components["schemas"]["OutlinePlottingPlanItem"][];
-            /** Macro Lit Search */
-            macro_lit_search: string[];
-            /** Micro Lit Clusters */
-            micro_lit_clusters: components["schemas"]["OutlineMicroLitCluster"][];
-            /** Section Plan */
-            section_plan: components["schemas"]["OutlineSectionPlanItem"][];
-            pathlab_extensions: components["schemas"]["OutlinePathLabExtensions"];
-        } & {
-            [key: string]: unknown;
         };
         /**
          * FigureManifestItem
@@ -748,6 +992,43 @@ export interface operations {
             };
         };
     };
+    update_paper_outline_papers__paper_id__outline_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OutlineApprovalRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_paper_sections_papers__paper_id__sections_get: {
         parameters: {
             query?: never;
@@ -781,11 +1062,49 @@ export interface operations {
     };
     regenerate_paper_section_papers__paper_id__sections__section_name__regenerate_post: {
         parameters: {
-            query?: never;
+            query?: {
+                sync?: boolean;
+            };
             header?: never;
             path: {
                 paper_id: string;
                 section_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RegenerateSectionRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_regenerate_job_status_papers__paper_id__regen__regen_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+                regen_id: string;
             };
             cookie?: never;
         };
@@ -797,7 +1116,77 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PaperSectionRegenerateResponse"];
+                    "application/json": components["schemas"]["RegenerateJobEntry"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_regenerate_job_papers__paper_id__regen__regen_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+                regen_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RegenerateRejectRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegenerateRejectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_regenerate_job_papers__paper_id__regen__regen_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+                regen_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
                 };
             };
             /** @description Validation Error */
