@@ -39,9 +39,8 @@ async def test_complete_run_writes_scaffold_artifacts_and_exports(tmp_path):
     assert paths.outline_json.is_file()
     assert (paths.sections_dir / "methods.tex").is_file()
     assert (paths.final_for_template("miccai") / "main.tex").is_file()
-    assert (paths.final_for_template("nature_scientific_reports") / "main.tex").is_file()
     assert (paths.exports_dir / "miccai_bundle.zip").is_file()
-    assert (paths.exports_dir / "nature_scientific_reports_bundle.zip").is_file()
+    assert not (paths.exports_dir / "nature_scientific_reports_bundle.zip").exists()
 
     artifact_index = json.loads(paths.manifest.read_text(encoding="utf-8"))["artifact_index"]
     assert artifact_index["evidence/evidence_public.json"]["visibility"] == "public"

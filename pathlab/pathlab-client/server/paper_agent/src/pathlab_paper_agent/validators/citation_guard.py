@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from gateway.paper_generation.storage import PaperRunPaths
+from pathlab_paper_agent.storage import PaperRunPaths
 
 from .common import GuardReport, rel_to_run, tex_files_under
 

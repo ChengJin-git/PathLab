@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from ..agents import OutlineAgent, OutlineInputs
 from .common import load_config, register_artifact, write_json

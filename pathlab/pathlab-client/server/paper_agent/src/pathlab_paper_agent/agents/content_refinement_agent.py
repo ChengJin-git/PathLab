@@ -14,7 +14,7 @@ from ..bootstrap import ensure_server_on_path
 
 ensure_server_on_path()
 
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402

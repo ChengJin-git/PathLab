@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
-from gateway.paper_generation.storage import PaperRunPaths
+from pathlab_paper_agent.storage import PaperRunPaths
 
 
 @dataclass

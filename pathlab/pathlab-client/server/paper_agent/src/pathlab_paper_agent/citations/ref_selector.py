@@ -75,6 +75,8 @@ def _make_unique_key(candidate: CitationCandidate, used: set[str]) -> str:
         author = "s2"
     elif candidate.pmid:
         author = "pmid"
+    elif candidate.openalex_id:
+        author = "openalex"
     year = str(candidate.year or "nd")
     title_words = "_".join(normalize_title(candidate.title).split()[:3])
     base = stable_key(f"{author}{year}_{title_words}")

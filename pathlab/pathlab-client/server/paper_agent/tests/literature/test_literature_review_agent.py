@@ -74,6 +74,16 @@ class MockSearchProvider:
         self.calls.append(("pubmed", query, limit, cluster))
         return [_candidate(query, "pubmed", cluster, "PubMed Author")]
 
+    def search_openalex(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        cluster: str | None = None,
+    ) -> list[CitationCandidate]:
+        self.calls.append(("openalex", query, limit, cluster))
+        return [_candidate(query, "openalex", cluster, "OpenAlex Author")]
+
     def close(self) -> None:
         self.closed = True
 
@@ -99,6 +109,16 @@ class EmptySearchProvider(MockSearchProvider):
         self.calls.append(("pubmed", query, limit, cluster))
         return []
 
+    def search_openalex(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        cluster: str | None = None,
+    ) -> list[CitationCandidate]:
+        self.calls.append(("openalex", query, limit, cluster))
+        return []
+
 
 def _candidate(query: str, source: str, cluster: str | None, author: str) -> CitationCandidate:
     slug = query.lower().replace(" ", "-")[:32]
@@ -114,6 +134,7 @@ def _candidate(query: str, source: str, cluster: str | None, author: str) -> Cit
         doi=f"10.1234/{slug}" if source == "pubmed" else None,
         pmid=f"pmid-{slug}" if source == "pubmed" else None,
         s2_paper_id=f"s2-{slug}" if source == "semantic_scholar" else None,
+        openalex_id=f"https://openalex.org/W{slug}" if source == "openalex" else None,
         url=f"https://example.test/{slug}",
         citation_count=5,
         query=query,
@@ -167,6 +188,20 @@ def _search_response() -> dict:
     }
 
 
+def _search_all_response() -> dict:
+    return {
+        "queries": [
+            {
+                "query": "whole slide image computational pathology",
+                "cluster": "macro",
+                "source": "all",
+                "origin": "macro_lit_search",
+                "limit": 10,
+            }
+        ]
+    }
+
+
 def _payload_from_prompt(prompt: str) -> dict:
     return json.loads(prompt.split("Input payload:", 1)[1].strip())
 
@@ -216,6 +251,22 @@ def test_literature_agent_expands_queries_searches_and_drafts_with_mocks() -> No
     assert result.coverage_report["selected_coverage"] == 1.0
     assert "@article" in result.bibtex
     assert "\\section{Introduction}" in result.draft.introduction_tex
+
+
+def test_literature_agent_routes_all_queries_to_openalex_too() -> None:
+    search = MockSearchProvider()
+    llm = MockLLM([_search_all_response(), _draft_all_selected])
+    agent = LiteratureReviewAgent(llm, search_provider=search)
+
+    result = agent.generate(_inputs())
+
+    assert [call[0] for call in search.calls] == ["semantic_scholar", "pubmed", "openalex"]
+    assert {ref.source for ref in result.selection.selected_refs} == {
+        "semantic_scholar",
+        "pubmed",
+        "openalex",
+    }
+    assert result.coverage_report["status"] == "pass"
 
 
 @pytest.mark.asyncio

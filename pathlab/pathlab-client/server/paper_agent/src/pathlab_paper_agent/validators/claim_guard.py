@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gateway.paper_generation.storage import PaperRunPaths
+from pathlab_paper_agent.storage import PaperRunPaths
 
 from .common import GuardReport, rel_to_run, tex_files_under
 from .metric_guard import load_evidence_lock, metric_entries
@@ -29,8 +29,9 @@ _NEGATION_PREFIX = (
     r"\b(?:no|without|lacking|lack(?:s|ed)?|not|did\s+not|does\s+not|"
     r"fail(?:ed|s)?\s+to|do(?:es)?\s+not\s+(?:reach|achieve|attain))\b"
 )
+_ABSENCE_PREFIX = r"\b(?:absence|lack|missing|unavailability)\s+of\b"
 _NEGATED_EXTERNAL_RE = re.compile(
-    _NEGATION_PREFIX
+    r"(?:" + _NEGATION_PREFIX + "|" + _ABSENCE_PREFIX + r")"
     + r"[^.]{0,80}\b(?:external\s+validation|independent\s+cohort|real[-\s]+world\s+deployment|"
     r"generaliz(?:ation|ability)\s+to|generalis(?:ation|ability)\s+to)\b",
     re.IGNORECASE,
@@ -116,6 +117,8 @@ def _scan_file(path: Path, paths: PaperRunPaths, flags: Mapping[str, bool], repo
         if flags.get(pattern.missing_flag):
             continue
         for match in pattern.regex.finditer(text):
+            if _is_latex_sectioning_match(text, match):
+                continue
             if _is_negated_claim(text, match, pattern):
                 continue
             keyword = " ".join(match.group(0).split())
@@ -169,6 +172,14 @@ def _is_negated_claim(text: str, match: re.Match[str], pattern: ClaimPattern) ->
     start = max(0, match.start() - 100)
     end = min(len(text), match.end() + 20)
     return bool(pattern.negation_regex.search(text[start:end]))
+
+
+def _is_latex_sectioning_match(text: str, match: re.Match[str]) -> bool:
+    """Ignore section/paragraph labels; they are headings, not evidence claims."""
+    line_start = text.rfind("\n", 0, match.start()) + 1
+    before = text[line_start : match.start()]
+    after = text[match.end() : text.find("\n", match.end()) if "\n" in text[match.end() :] else len(text)]
+    return bool(re.search(r"\\(?:sub)*section\*?\{[^{}]*$|\\paragraph\{[^{}]*$", before) and "}" in after)
 
 
 def _strip_latex_comments(text: str) -> str:

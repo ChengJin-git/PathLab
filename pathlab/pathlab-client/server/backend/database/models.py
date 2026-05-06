@@ -1314,10 +1314,10 @@ class PaperGenerationRun(TimestampMixin, Base):
 
     One row per `POST /papers` request. The on-disk artifacts live under
     `uploads/paper_generation/{paper_id}/` (see
-    `gateway.paper_generation.storage`). DB only stores small status fields
+    `pathlab_paper_agent.storage`). DB only stores small status fields
     used by the API list/detail views and the worker queue.
 
-    See `docs/plan/paper_generation_agent_design.md` §10 M1.
+    See `pathlab/pathlab-client/server/paper_agent/docs/plan/paper_generation_agent_design.md` §10 M1.
     """
 
     __tablename__ = "paper_generation_runs"
@@ -1336,7 +1336,7 @@ class PaperGenerationRun(TimestampMixin, Base):
     )  # pending, running, completed, failed, cancelled
     current_stage = Column(
         String(40), nullable=False, default="created"
-    )  # see PaperRunStage in gateway/paper_generation/schemas.py
+    )  # see PaperRunStage in pathlab_paper_agent/schemas.py
     error_message = Column(Text)
 
     # Inputs (denormalized snapshot; full request stored in config.json on disk)

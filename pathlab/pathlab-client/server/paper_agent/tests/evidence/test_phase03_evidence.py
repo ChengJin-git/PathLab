@@ -138,9 +138,22 @@ def _write_fixture_raw_collected(paths) -> None:
     (raw_dir / "collector_bundle.json").write_text(json.dumps(collector_bundle), encoding="utf-8")
 
 
+def _rewrite_fixture_as_crc_msi(paths) -> None:
+    raw_path = paths.evidence_dir / "raw_collected" / "collector_bundle.json"
+    bundle = _load_json(raw_path)
+    bundle["task_summaries"][0]["task_name"] = "CRC MSI WSI Classification"
+    bundle["task_summaries"][0]["classes"] = ["MSI", "MSS"]
+    cohort = bundle["dataset_summaries"][0]["datasets"][0]
+    cohort["name"] = "CRC MSI cohort"
+    cohort["source_organ"] = "colorectal"
+    cohort["label_distribution"] = {"MSI": 2, "MSS": 2}
+    bundle["model_summaries"][0]["models"][0]["classes"] = ["MSI", "MSS"]
+    raw_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+
 @pytest.mark.asyncio
 async def test_phase03_builds_scrubbed_evidence_and_tables_from_fixture(tmp_path) -> None:
-    from gateway.paper_generation.storage import is_path_allowed_for_download
+    from pathlab_paper_agent.storage import is_path_allowed_for_download
 
     request = CreatePaperRequest(
         title="Fixture Evidence Paper",
@@ -189,3 +202,51 @@ async def test_phase03_builds_scrubbed_evidence_and_tables_from_fixture(tmp_path
     assert run_identifier_guard(paths).status == "pass"
     assert is_path_allowed_for_download("evidence/dataset_summary.public.json") is True
     assert is_path_allowed_for_download("evidence/evidence_lock.private.json") is False
+
+
+@pytest.mark.asyncio
+async def test_phase03_promotes_user_idea_topic_context_into_public_evidence(tmp_path) -> None:
+    user_idea = """
+# Paper Intent
+
+[TOPIC_CONTEXT]
+{
+  "disease": "colorectal cancer",
+  "clinical_endpoint": "microsatellite instability status",
+  "prediction_target": "MSI vs MSS",
+  "modality": "H&E whole-slide images",
+  "task_type": "wsi_classification",
+  "method_family": "multiple instance learning",
+  "classes": ["MSI", "MSS"],
+  "confidence": "high",
+  "sources": ["pre_training_chat_summary"]
+}
+[/TOPIC_CONTEXT]
+""".strip()
+    request = CreatePaperRequest(
+        title="CRC MSI Prediction from H&E Whole-Slide Images",
+        source_tasks=[SourceTaskRef(task_id="wsi_cls_fixture")],
+        user_idea=user_idea,
+    )
+    paper_id, paths = await create_dev_run(request, paper_id="paper_phase03_topic", uploads_dir=tmp_path)
+    _write_fixture_raw_collected(paths)
+    _rewrite_fixture_as_crc_msi(paths)
+
+    manifest = run_stage(paper_id, "building_evidence", uploads_dir=tmp_path)
+
+    private_lock = _load_json(paths.evidence_lock_private)
+    public_evidence = _load_json(paths.evidence_public)
+    topic_summary = _load_json(paths.evidence_dir / "topic_summary.public.json")
+    experimental_log = paths.experimental_log.read_text(encoding="utf-8")
+
+    assert public_evidence["topic"]["disease"] == "colorectal cancer"
+    assert public_evidence["topic"]["clinical_endpoint"] == "microsatellite instability status"
+    assert public_evidence["topic"]["prediction_target"] == "MSI vs MSS"
+    assert public_evidence["topic"]["classes"] == ["MSI", "MSS"]
+    assert public_evidence["topic"]["needs_confirmation"] is False
+    assert "pre_training_chat_summary" in public_evidence["topic"]["sources"]
+    assert private_lock["topic"] == public_evidence["topic"]
+    assert topic_summary["topic"] == public_evidence["topic"]
+    assert "Clinical endpoint: microsatellite instability status" in experimental_log
+    assert "Topic confidence: high" in experimental_log
+    assert manifest.artifact_index["evidence/topic_summary.public.json"]["visibility"] == "public"

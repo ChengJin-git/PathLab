@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from ..renderers.latex_compiler import maybe_compile_with_docker
 from ..renderers.template_renderer import render_template

@@ -30,6 +30,7 @@ from ..citations import (  # noqa: E402
 )
 from . import _common  # noqa: E402
 from ..citations.coverage_gate import extract_cite_keys  # noqa: E402
+from ..citations.openalex import OpenAlexClient  # noqa: E402
 from ..citations.pubmed import PubMedClient  # noqa: E402
 from ..citations.semantic_scholar import SemanticScholarClient  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
@@ -158,6 +159,15 @@ class CitationSearchProvider(Protocol):
     ) -> list[CitationCandidate]:
         """Return PubMed candidates for one query."""
 
+    def search_openalex(
+        self,
+        query: str,
+        *,
+        limit: int = _DEFAULT_SEARCH_LIMIT,
+        cluster: str | None = None,
+    ) -> list[CitationCandidate]:
+        """Return OpenAlex candidates for one query."""
+
     def close(self) -> None:
         """Release any underlying clients."""
 
@@ -170,6 +180,10 @@ class ProductionCitationSearchProvider:
         self._pubmed = PubMedClient(
             api_key=os.environ.get("PUBMED_API_KEY"),
             email=os.environ.get("PUBMED_EMAIL"),
+        )
+        self._openalex = OpenAlexClient(
+            api_key=os.environ.get("OPENALEX_API_KEY"),
+            mailto=os.environ.get("OPENALEX_MAILTO") or os.environ.get("OPENALEX_EMAIL"),
         )
 
     def search_semantic_scholar(
@@ -190,9 +204,19 @@ class ProductionCitationSearchProvider:
     ) -> list[CitationCandidate]:
         return self._pubmed.search(query, limit=limit, cluster=cluster)
 
+    def search_openalex(
+        self,
+        query: str,
+        *,
+        limit: int = _DEFAULT_SEARCH_LIMIT,
+        cluster: str | None = None,
+    ) -> list[CitationCandidate]:
+        return self._openalex.search(query, limit=limit, cluster=cluster)
+
     def close(self) -> None:
         self._s2.close()
         self._pubmed.close()
+        self._openalex.close()
 
 
 class LiteratureReviewAgent:
@@ -278,6 +302,7 @@ class LiteratureReviewAgent:
                 "external validation",
                 "histopathology deep learning",
             ],
+            "search_sources": ["semantic_scholar", "pubmed", "openalex"],
         }
         _assert_no_private_identifiers(payload, context="literature search prompt payload")
         prompt = _render_prompt(self.lit_search_prompt, payload)
@@ -311,7 +336,15 @@ class LiteratureReviewAgent:
                     futures[future] = (query, source)
             candidates: list[CitationCandidate] = []
             for future in as_completed(futures):
-                candidates.extend(future.result())
+                _query, _source = futures[future]
+                try:
+                    candidates.extend(future.result())
+                except Exception:
+                    # Public literature APIs frequently rate-limit or time out.
+                    # Keep the review moving when other backends can still
+                    # provide verified references; the empty-selection gate
+                    # below remains the hard failure if every source fails.
+                    continue
         return candidates
 
     def draft_intro_related_work(
@@ -404,6 +437,12 @@ class LiteratureReviewAgent:
                 limit=query.limit,
                 cluster=query.cluster,
             )
+        if source == "openalex":
+            return self.search_provider.search_openalex(
+                query.query,
+                limit=query.limit,
+                cluster=query.cluster,
+            )
         raise LiteratureReviewAgentError(f"Unknown search source: {source}")
 
 
@@ -454,6 +493,16 @@ class _NoNetworkCitationSearchProvider:
     ) -> list[CitationCandidate]:
         del limit
         return [_fixture_candidate(query, source="pubmed", cluster=cluster)]
+
+    def search_openalex(
+        self,
+        query: str,
+        *,
+        limit: int = _DEFAULT_SEARCH_LIMIT,
+        cluster: str | None = None,
+    ) -> list[CitationCandidate]:
+        del limit
+        return [_fixture_candidate(query, source="openalex", cluster=cluster)]
 
     def close(self) -> None:
         return None
@@ -614,7 +663,7 @@ def _deterministic_query_response(payload: Mapping[str, Any]) -> dict[str, Any]:
             {
                 "query": _one_sentence_query(str(query)),
                 "cluster": "macro",
-                "source": "both",
+                "source": "all",
                 "origin": "macro_lit_search",
                 "limit": _DEFAULT_SEARCH_LIMIT,
             }
@@ -628,7 +677,7 @@ def _deterministic_query_response(payload: Mapping[str, Any]) -> dict[str, Any]:
                 {
                     "query": _one_sentence_query(str(query)),
                     "cluster": cluster_name,
-                    "source": "both",
+                    "source": "all",
                     "origin": "micro_lit_clusters",
                     "limit": _DEFAULT_SEARCH_LIMIT,
                 }
@@ -638,7 +687,7 @@ def _deterministic_query_response(payload: Mapping[str, Any]) -> dict[str, Any]:
             {
                 "query": "computational pathology whole slide image clinical validation",
                 "cluster": "macro",
-                "source": "both",
+                "source": "all",
                 "origin": "fallback",
                 "limit": _DEFAULT_SEARCH_LIMIT,
             }
@@ -714,6 +763,7 @@ def _fixture_candidate(query: str, *, source: str, cluster: str | None) -> Citat
         doi=f"10.0000/{normalized_id.lower()}" if source == "pubmed" else None,
         pmid=normalized_id[:30] if source == "pubmed" else None,
         s2_paper_id=normalized_id[:40] if source == "semantic_scholar" else None,
+        openalex_id=f"https://openalex.org/{normalized_id[:32]}" if source == "openalex" else None,
         url=f"https://example.test/{normalized_id}",
         citation_count=10,
         query=query,
@@ -723,6 +773,8 @@ def _fixture_candidate(query: str, *, source: str, cluster: str | None) -> Citat
 
 def _sources_for_query(source: str) -> tuple[str, ...]:
     normalized = _normalize_source(source)
+    if normalized == "all":
+        return ("semantic_scholar", "pubmed", "openalex")
     if normalized == "both":
         return ("semantic_scholar", "pubmed")
     return (normalized,)
@@ -734,9 +786,13 @@ def _normalize_source(source: str) -> str:
         return "semantic_scholar"
     if normalized in {"pubmed", "pmid", "ncbi"}:
         return "pubmed"
-    if normalized in {"both", "all", "s2_pubmed", "semantic_scholar_pubmed"}:
+    if normalized in {"openalex", "open_alex", "alex"}:
+        return "openalex"
+    if normalized in {"all", "s2_pubmed_openalex", "semantic_scholar_pubmed_openalex"}:
+        return "all"
+    if normalized in {"both", "s2_pubmed", "semantic_scholar_pubmed"}:
         return "both"
-    return "both"
+    return "all"
 
 
 def _one_sentence_query(value: str) -> str:
@@ -778,7 +834,10 @@ def _template_style_from_outline_or_config(outline: Mapping[str, Any], config: A
     style = outline.get("template_style")
     if isinstance(style, Mapping):
         return dict(style)
-    selected_templates = getattr(config, "selected_templates", []) or []
+    if isinstance(config, Mapping):
+        selected_templates = config.get("selected_templates", []) or []
+    else:
+        selected_templates = getattr(config, "selected_templates", []) or []
     if selected_templates:
         template_id = str(getattr(selected_templates[0], "value", selected_templates[0]))
         return dict(get_template(template_id).style)

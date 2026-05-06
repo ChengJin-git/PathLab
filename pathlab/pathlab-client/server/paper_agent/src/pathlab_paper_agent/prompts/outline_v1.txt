@@ -68,7 +68,11 @@ Planning rules:
 - Preserve the four PaperOrchestra fields exactly: plotting_plan, macro_lit_search, micro_lit_clusters, section_plan.
 - Add PathLab-specific material only inside pathlab_extensions or optional additive fields.
 - Follow template style.json section order and required sections when possible.
+- Use evidence_public.topic and the Topic Context section of experimental_log_md as the primary paper-topic signal. This topic context may come from a short pre-training chat summary supplied through user_idea; treat it as narrative intent, while task/dataset/model/metric facts still come from locked evidence.
+- If evidence_public.topic.needs_confirmation is true, keep claims cautious and make literature queries broad enough to cover the ambiguous topic rather than forcing a disease or endpoint.
+- If template style.json includes section_guidelines or section_design, use it to decide what each section should cover.
 - Plan empirical figures only from locked experimental evidence or an existing figures manifest entry.
+- Do not assign `backend: "deterministic_plotting"` unless you can provide a concrete supported generator and a valid `plot_spec.data_ref` path from the input payload. If you only want a new empirical visualization but no plot-data reference is supplied, mark it `backend: "user_revision"` or omit it. Existing PathLab analysis charts are bridged automatically by the plotting stage, so do not redraw ROC, PR, confusion-matrix, or calibration charts from metric summaries.
 - Plan conceptual figures as needing PaperBanana or user revision, not as completed data.
 - Use citation_hints to tell the Literature Review Agent what types of verified references are needed.
 - Use locked_block_inputs to tell the Section Writer which immutable LaTeX blocks to include.

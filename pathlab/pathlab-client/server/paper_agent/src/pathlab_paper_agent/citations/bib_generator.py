@@ -45,6 +45,8 @@ def _entry(ref: CitationReference) -> str:
         fields.append(("pmid", ref.pmid))
     if ref.s2_paper_id:
         fields.append(("s2paperid", ref.s2_paper_id))
+    if ref.openalex_id:
+        fields.append(("openalexid", ref.openalex_id))
     if ref.url:
         fields.append(("url", ref.url))
     rendered = ",\n".join(

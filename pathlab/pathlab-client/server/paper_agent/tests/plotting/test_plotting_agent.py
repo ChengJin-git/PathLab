@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
+from PIL import Image
 
 from pathlab_paper_agent.agents.plotting_agent import PlottingAgent
 from pathlab_paper_agent.llm import LLMResponse
@@ -54,6 +57,37 @@ def _write_plot_data(paths, name: str = "calibration_agent.json") -> str:
         encoding="utf-8",
     )
     return rel_path
+
+
+def _write_pathlab_analysis_chart(paths, tmp_path, chart_kind: str = "roc_curve") -> str:
+    analysis_dir = tmp_path / "logs" / "analysis" / "task-main" / "20260101_010101"
+    analysis_dir.mkdir(parents=True, exist_ok=True)
+    chart_path = analysis_dir / f"{chart_kind}.png"
+    Image.new("RGB", (64, 64), "blue").save(chart_path)
+    raw_dir = paths.evidence_dir / "raw_collected"
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    (raw_dir / "analysis_summary.json").write_text(
+        json.dumps(
+            {
+                "items": [
+                    {
+                        "task_id": "task-main",
+                        "role": "main",
+                        "selected_analysis_id": "20260101_010101",
+                        "analyses": [
+                            {
+                                "analysis_id": "20260101_010101",
+                                "analysis_dir": str(analysis_dir),
+                                "chart_paths": {chart_kind: str(chart_path)},
+                            }
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return str(chart_path)
 
 
 def _payload_from_prompt(prompt: str) -> dict:
@@ -123,6 +157,95 @@ async def test_plotting_agent_dispatches_plan_and_captions_every_item(tmp_path) 
     ]
     assert all(call["temperature"] == 0.1 for call in llm.calls)
     assert all(call["response_format"] is None for call in llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_plotting_stage_reuses_pathlab_chart_paths_without_redrawing(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_plotting_reuse_chart", uploads_dir=tmp_path)
+    source_chart = _write_pathlab_analysis_chart(paths, tmp_path, "roc_curve")
+    paths.outline_json.write_text(json.dumps({"plotting_plan": []}), encoding="utf-8")
+    manifest = PaperManifest.model_validate(json.loads(paths.manifest.read_text(encoding="utf-8")))
+
+    run_plotting(paths, manifest, agent=PlottingAgent(MockCaptionLLM()))
+
+    payload = json.loads(paths.figures_manifest.read_text(encoding="utf-8"))
+    entries = {entry["figure_id"]: entry for entry in payload["figures"]}
+    entry = entries["fig:pathlab_roc_curve"]
+    final_path = paths.root / entry["path"]
+    staged_source = paths.root / "figures/source_charts/chart_01_roc_curve.png"
+    data_ref = paths.root / "evidence/plot_data/pathlab_chart_01_roc_curve.json"
+    assert entry["status"] == "ready"
+    assert entry["generator"] == "chart_passthrough"
+    assert entry["path"] == "figures/fig_pathlab_roc_curve.png"
+    assert final_path.read_bytes() == staged_source.read_bytes() == Path(source_chart).read_bytes()
+    assert json.loads(data_ref.read_text(encoding="utf-8"))["source_path"] == (
+        "figures/source_charts/chart_01_roc_curve.png"
+    )
+    assert source_chart not in paths.figures_manifest.read_text(encoding="utf-8")
+    bridge_artifact = manifest.artifact_index["evidence/plot_data/pathlab_charts_manifest.json"]
+    assert bridge_artifact["visibility"] == "private_backend_only"
+    assert bridge_artifact["downloadable"] is False
+
+
+@pytest.mark.asyncio
+async def test_pathlab_chart_replaces_matching_outline_generator(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_plotting_replace_chart", uploads_dir=tmp_path)
+    _write_pathlab_analysis_chart(paths, tmp_path, "roc_curve")
+    paths.outline_json.write_text(
+        json.dumps(
+            {
+                "plotting_plan": [
+                    {
+                        "figure_id": "fig:main_roc",
+                        "kind": "empirical",
+                        "backend": "deterministic_plotting",
+                        "plot_spec": {
+                            "generator": "per_fold_roc",
+                            "data_ref": "evidence/plot_data/missing_roc.json",
+                        },
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = PaperManifest.model_validate(json.loads(paths.manifest.read_text(encoding="utf-8")))
+
+    run_plotting(paths, manifest, agent=PlottingAgent(MockCaptionLLM()))
+
+    payload = json.loads(paths.figures_manifest.read_text(encoding="utf-8"))
+    assert payload["figures"][0]["figure_id"] == "fig:main_roc"
+    assert payload["figures"][0]["status"] == "ready"
+    assert payload["figures"][0]["generator"] == "chart_passthrough"
+    assert payload["figures"][0]["path"] == "figures/fig_main_roc.png"
+    assert (paths.figures_dir / "fig_main_roc.png").is_file()
+
+
+@pytest.mark.asyncio
+async def test_crc_msi_fixture_charts_are_reused_from_raw_collected(tmp_path) -> None:
+    fixture_dir = Path(__file__).parents[1] / "fixtures" / "crc_msi_classification"
+    _paper_id, paths = await create_dev_run(paper_id="paper_plotting_crc_msi_fixture", uploads_dir=tmp_path)
+    shutil.copytree(
+        fixture_dir / "raw_collected",
+        paths.evidence_dir / "raw_collected",
+        dirs_exist_ok=True,
+    )
+    paths.outline_json.write_text(json.dumps({"plotting_plan": []}), encoding="utf-8")
+    manifest = PaperManifest.model_validate(json.loads(paths.manifest.read_text(encoding="utf-8")))
+
+    run_plotting(paths, manifest, agent=PlottingAgent(MockCaptionLLM()))
+
+    payload = json.loads(paths.figures_manifest.read_text(encoding="utf-8"))
+    entries = {entry["figure_id"]: entry for entry in payload["figures"]}
+    for figure_id in (
+        "fig:pathlab_roc_curve",
+        "fig:pathlab_pr_curve",
+        "fig:pathlab_confusion_matrix",
+        "fig:pathlab_calibration",
+    ):
+        assert entries[figure_id]["status"] == "ready"
+        assert entries[figure_id]["generator"] == "chart_passthrough"
+        assert (paths.root / entries[figure_id]["path"]).is_file()
 
 
 @pytest.mark.asyncio

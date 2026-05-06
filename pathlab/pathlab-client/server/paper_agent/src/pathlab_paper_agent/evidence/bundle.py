@@ -8,11 +8,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from gateway.paper_generation.schemas import PaperConfig
-from gateway.paper_generation.storage import PaperRunPaths
+from pathlab_paper_agent.schemas import PaperConfig
+from pathlab_paper_agent.storage import PaperRunPaths
 
 from ..renderers.locked_block_renderer import LockedBlockRenderer
 from .phi import PhiScrubber
+from .topic import build_topic_context, topic_lines
 
 _METRIC_NAME_RE = re.compile(
     r"(?:acc|accuracy|auc|auroc|f1|precision|recall|sensitivity|specificity|"
@@ -35,8 +36,10 @@ class EvidenceBuildResult:
 
 def build_evidence_bundle(paths: PaperRunPaths, config: PaperConfig) -> EvidenceBuildResult:
     raw = _load_raw_collected(paths)
+    idea_text = _load_idea_text(paths, config)
     scrubber = PhiScrubber()
     scrubber.observe(raw)
+    scrubber.observe(idea_text)
 
     datasets = _dataset_rows(raw, scrubber)
     splits = _split_rows(raw, scrubber)
@@ -45,6 +48,14 @@ def build_evidence_bundle(paths: PaperRunPaths, config: PaperConfig) -> Evidence
     external_validation = _external_validation_rows(raw, scrubber)
     missing_evidence = _missing_evidence(raw, scrubber)
     metrics = _metric_entries(raw, scrubber)
+    topic = build_topic_context(
+        raw=raw,
+        datasets=datasets,
+        models=models,
+        config=config,
+        idea_text=idea_text,
+        scrubber=scrubber,
+    )
 
     private_lock = {
         "version": 1,
@@ -64,6 +75,7 @@ def build_evidence_bundle(paths: PaperRunPaths, config: PaperConfig) -> Evidence
         "analyses": analyses,
         "external_validation": external_validation,
         "missing_evidence": missing_evidence,
+        "topic": topic,
         "phi_mapping": scrubber.mapping(),
         "private_identifiers": scrubber.private_identifiers(),
         "raw_paths": sorted(scrubber.raw_paths),
@@ -87,8 +99,10 @@ def build_evidence_bundle(paths: PaperRunPaths, config: PaperConfig) -> Evidence
         "metrics": [_public_metric(key, item) for key, item in metrics.items()],
         "external_validation": external_validation,
         "missing_evidence": missing_evidence,
+        "topic": topic,
     }
     public_summaries = {
+        "topic_summary.public.json": {"topic": public_evidence["topic"]},
         "dataset_summary.public.json": {"items": public_evidence["datasets"]},
         "model_summary.public.json": {"items": public_evidence["models"]},
         "analysis_summary.public.json": {
@@ -148,6 +162,12 @@ def _load_raw_collected(paths: PaperRunPaths) -> dict[str, Any]:
     }
 
 
+def _load_idea_text(paths: PaperRunPaths, config: PaperConfig) -> str:
+    if paths.idea.exists():
+        return paths.idea.read_text(encoding="utf-8")
+    return (config.user_idea or "").strip()
+
+
 def _as_items(raw: dict[str, Any], key: str) -> list[dict[str, Any]]:
     items = raw.get(key) or []
     return [item for item in items if isinstance(item, dict)]
@@ -194,6 +214,7 @@ def _dataset_rows(raw: dict[str, Any], scrubber: PhiScrubber) -> list[dict[str, 
                     "task_type": cohort.get("task_type"),
                     "data_type": cohort.get("data_type"),
                     "aggregation_level": cohort.get("aggregation_level"),
+                    "source_organ": scrubber.scrub(cohort.get("source_organ")),
                     "wsi_count": int(cohort.get("wsi_count") or 0),
                     "case_count": int(cohort.get("case_count") or 0),
                     "label_distribution": scrubber.scrub(cohort.get("label_distribution") or {}),
@@ -389,6 +410,7 @@ def _render_experimental_log(
         dataset_lines = ["- No dataset cohort evidence was available."]
     if not metric_lines:
         metric_lines = ["- No locked analysis metrics were available."]
+    topic_section = "\n".join(topic_lines(public_evidence.get("topic")))
     missing_count = len(private_lock.get("missing_evidence") or [])
     return (
         "# Experimental Log\n\n"
@@ -397,6 +419,9 @@ def _render_experimental_log(
         f"- Title: {config.title or 'Untitled PathLab paper'}\n"
         f"- Collector status: {private_lock['collector']['status']}\n"
         f"- Missing evidence items: {missing_count}\n\n"
+        "## Topic Context\n\n"
+        + topic_section
+        + "\n\n"
         "## Cohorts\n\n"
         + "\n".join(dataset_lines)
         + "\n\n## Locked Metrics\n\n"

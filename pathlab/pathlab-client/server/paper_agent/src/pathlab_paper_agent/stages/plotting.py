@@ -5,10 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from ..agents.plotting_agent import PlottingAgent, PlottingAgentResult
+from ..plotting.pathlab_charts import (
+    CHARTS_MANIFEST_REL_PATH,
+    PathLabChartPreparation,
+    prepare_pathlab_chart_passthroughs,
+)
 from .common import register_artifact, write_json
 
 _CONTENT_TYPES = {
@@ -26,9 +31,10 @@ def run(
     agent: PlottingAgent | None = None,
 ) -> None:
     plotting_agent = agent or PlottingAgent()
+    prepared_charts = prepare_pathlab_chart_passthroughs(paths)
     result = plotting_agent.generate(paths)
     write_json(paths.figures_manifest, result.figures_manifest)
-    _register_artifacts(paths, manifest, result)
+    _register_artifacts(paths, manifest, result, prepared_charts)
     if result.errors:
         first = result.errors[0]
         more = f" (+{len(result.errors) - 1} more)" if len(result.errors) > 1 else ""
@@ -39,6 +45,7 @@ def _register_artifacts(
     paths: PaperRunPaths,
     manifest: PaperManifest,
     result: PlottingAgentResult,
+    prepared_charts: PathLabChartPreparation,
 ) -> None:
     register_artifact(
         manifest,
@@ -52,6 +59,15 @@ def _register_artifacts(
             output.path,
             label=output.figure_id,
             content_type=output.content_type,
+        )
+    if prepared_charts.charts:
+        register_artifact(
+            manifest,
+            CHARTS_MANIFEST_REL_PATH,
+            visibility="private_backend_only",
+            downloadable=False,
+            label="PathLab source chart bridge",
+            content_type="application/json",
         )
     registered = {output.path for output in result.generated_figures}
     for entry in result.figures_manifest.get("figures", []):

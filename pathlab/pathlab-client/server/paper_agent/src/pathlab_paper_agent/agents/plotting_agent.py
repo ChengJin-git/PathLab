@@ -14,12 +14,16 @@ from ..bootstrap import ensure_server_on_path
 
 ensure_server_on_path()
 
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
 from ..llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
 from ..plotting import generate_figure  # noqa: E402
+from ..plotting.pathlab_charts import (  # noqa: E402
+    load_pathlab_chart_plotting_plan,
+    merge_plotting_plan_with_pathlab_charts,
+)
 from ..plotting.types import FigureOutput  # noqa: E402
 from ..plotting.utils import slugify  # noqa: E402
 
@@ -158,8 +162,9 @@ class PlottingAgent:
 
 
 def _load_plotting_plan(paths: PaperRunPaths) -> list[dict[str, Any]]:
+    chart_plan = load_pathlab_chart_plotting_plan(paths)
     if not paths.outline_json.exists():
-        return list(_DEFAULT_PLAN)
+        return merge_plotting_plan_with_pathlab_charts(_DEFAULT_PLAN, chart_plan)
     try:
         outline = json.loads(paths.outline_json.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
@@ -168,9 +173,9 @@ def _load_plotting_plan(paths: PaperRunPaths) -> list[dict[str, Any]]:
         raise PlottingAgentError("drafts/outline.json must contain a JSON object")
     plan = outline.get("plotting_plan")
     if not isinstance(plan, list) or not plan:
-        return list(_DEFAULT_PLAN)
+        return merge_plotting_plan_with_pathlab_charts(_DEFAULT_PLAN, chart_plan)
     items = [item for item in plan if isinstance(item, dict)]
-    return items or list(_DEFAULT_PLAN)
+    return merge_plotting_plan_with_pathlab_charts(items or _DEFAULT_PLAN, chart_plan)
 
 
 def _normalize_plan_item(raw_item: Mapping[str, Any], index: int) -> dict[str, Any]:
@@ -202,7 +207,13 @@ def _has_generator(spec: Mapping[str, Any]) -> bool:
 def _is_deterministic_plot(spec: Mapping[str, Any]) -> bool:
     backend = _backend(spec)
     if backend == "deterministic_plotting":
-        return True
+        plot_spec = spec.get("plot_spec") if isinstance(spec.get("plot_spec"), Mapping) else {}
+        has_data_ref = bool(plot_spec.get("data_ref") or plot_spec.get("data_path") or spec.get("data_ref"))
+        has_inline_data = "data" in spec or "data" in plot_spec
+        # LLM outlines sometimes mark desired empirical panels as
+        # deterministic_plotting before a concrete generator/data_ref exists.
+        # Treat those as user-revision placeholders instead of failing the run.
+        return _has_generator(spec) or has_data_ref or has_inline_data
     if backend in {"paperbanana", "user_revision"}:
         return False
     return str(spec.get("kind", "")).lower() == "empirical" and _has_generator(spec)

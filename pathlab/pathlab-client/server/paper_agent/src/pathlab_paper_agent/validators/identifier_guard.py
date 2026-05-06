@@ -6,7 +6,7 @@ import json
 import re
 from typing import Any, Iterable
 
-from gateway.paper_generation.storage import PaperRunPaths
+from pathlab_paper_agent.storage import PaperRunPaths
 
 from .common import GuardReport, paper_text_files, rel_to_run
 

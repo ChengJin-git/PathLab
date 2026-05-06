@@ -8,6 +8,7 @@ while later milestones replace scaffold content with real collectors/agents.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Optional
 
@@ -16,8 +17,7 @@ from .bootstrap import configure_uploads_dir, ensure_server_on_path
 ensure_server_on_path()
 
 from backend.database.models import utc_now  # noqa: E402
-from gateway.paper_generation.pipeline import initialize_paper_run  # noqa: E402
-from gateway.paper_generation.schemas import (  # noqa: E402
+from pathlab_paper_agent.schemas import (  # noqa: E402
     CreatePaperRequest,
     PaperConfig,
     PaperManifest,
@@ -27,7 +27,7 @@ from gateway.paper_generation.schemas import (  # noqa: E402
     PaperRunSummary,
     SourceTaskRef,
 )
-from gateway.paper_generation.storage import PaperRunPaths, validate_paper_id  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths, validate_paper_id  # noqa: E402
 
 from .stages import (  # noqa: E402
     run_building_evidence,
@@ -41,6 +41,7 @@ from .stages import (  # noqa: E402
     run_section_writing,
     run_validating,
 )
+from .scaffold import initialize_paper_run  # noqa: E402,F401
 from .stages.common import artifact, read_json, write_json  # noqa: E402
 
 _STAGE_ORDER: tuple[PaperRunStage, ...] = (
@@ -217,6 +218,55 @@ def _execute_stage(paths: PaperRunPaths, manifest: PaperManifest, stage: PaperRu
         raise ValueError(f"Stage {stage.value!r} is not executable in the standalone scaffold")
 
 
+def _assert_not_fixture_completion(paths: PaperRunPaths) -> None:
+    """Prevent no-network/scaffold writing artifacts from being reported as final."""
+    if os.environ.get("PAPER_GEN_ALLOW_FIXTURE_COMPLETION") == "1":
+        return
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+
+    markers: list[str] = []
+    outline = _read_json_default(paths.outline_json)
+    if isinstance(outline, dict):
+        extensions = outline.get("pathlab_extensions")
+        if isinstance(extensions, dict) and extensions.get("llm_mode") == "ci_no_network_fixture":
+            markers.append("drafts/outline.json: ci_no_network_fixture")
+
+    coverage = _read_json_default(paths.citations_dir / "coverage_report.json")
+    if isinstance(coverage, dict) and str(coverage.get("mode", "")).startswith("ci_no_network"):
+        markers.append("citations/coverage_report.json: ci_no_network mode")
+
+    refinement_log = paths.validation_dir / "refinement_log.json"
+    if refinement_log.exists() and "No-network fixture" in refinement_log.read_text(encoding="utf-8"):
+        markers.append("validation/refinement_log.json: no-network critic")
+
+    scaffold_phrases = (
+        "PathLab produces a manuscript draft",
+        "The prose in this section frames",
+        "PathLab assembles the final manuscript around deterministic artifacts",
+    )
+    for section_path in sorted(paths.sections_dir.glob("*.tex")):
+        text = section_path.read_text(encoding="utf-8")
+        if any(phrase in text for phrase in scaffold_phrases):
+            markers.append(f"drafts/sections/{section_path.name}: scaffold prose")
+            break
+
+    if markers:
+        marker_text = "; ".join(markers)
+        raise RuntimeError(
+            "Refusing to mark paper run completed because fixture/scaffold writing artifacts "
+            f"were detected: {marker_text}. Set PAPER_GEN_ALLOW_FIXTURE_COMPLETION=1 only for "
+            "explicit scaffold-only development runs."
+        )
+
+
+def _read_json_default(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    value = read_json(path)
+    return value if isinstance(value, dict) else {}
+
+
 # ---------------------------------------------------------------------------
 # Public stage API
 # ---------------------------------------------------------------------------
@@ -254,7 +304,9 @@ def run_stage(
         manifest.current_stage = stage_enum
         manifest.updated_at = now
         _execute_stage(paths, manifest, stage_enum)
+        manifest.error_message = None
         if stage_enum == PaperRunStage.completed:
+            _assert_not_fixture_completion(paths)
             manifest.status = PaperRunStatus.completed
             manifest.finished_at = now
         elif stage_enum == PaperRunStage.failed:

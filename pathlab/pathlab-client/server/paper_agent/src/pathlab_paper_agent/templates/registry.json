@@ -19,8 +19,8 @@
       "main": "main.tex.j2",
       "style": "style.json",
       "assets": [
-        "sn-jnl.cls",
-        "sn-nature.bst"
+        "wlscirep.cls",
+        "naturemag.bst"
       ]
     }
   ]

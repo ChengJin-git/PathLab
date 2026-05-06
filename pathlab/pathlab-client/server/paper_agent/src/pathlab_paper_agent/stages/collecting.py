@@ -8,8 +8,8 @@ public/private evidence-lock construction.
 from __future__ import annotations
 
 from backend.common.config import Config  # noqa: E402
-from gateway.paper_generation.schemas import PaperManifest  # noqa: E402
-from gateway.paper_generation.storage import PaperRunPaths  # noqa: E402
+from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
+from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from ..collector import collect_pathlab_evidence
 from .common import load_config, register_artifact, write_json, write_text

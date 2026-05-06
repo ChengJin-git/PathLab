@@ -1,20 +1,42 @@
-\documentclass[pdflatex,sn-nature]{sn-jnl}
-\usepackage{booktabs}
-\usepackage{graphicx}
-\usepackage{amsmath,amssymb,amsfonts}
-\usepackage{hyperref}
-\title[{{ short_title }}]{ {{- title -}} }
-\author*[1]{\fnm{PathLab} \sur{Paper Agent}}
-\affil*[1]{\orgdiv{Research}, \orgname{PathLab}, \orgaddress{\country{International}}}
-\raggedbottom
+\documentclass[fleqn,10pt]{wlscirep}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+
+\title{ {{- title -}} }
+
+\author[1,*]{PathLab Paper Agent}
+\affil[1]{PathLab Research}
+\affil[*]{Correspondence and requests for materials should be addressed to the corresponding author.}
+
+%\keywords{computational pathology, reproducibility, evidence-locked drafting}
+
+{% if abstract_section %}
+\input{sections/{{ abstract_section }}.tex}
+{% endif %}
 \begin{document}
+
+\flushbottom
 \maketitle
-{% for section in sections %}
+\thispagestyle{empty}
+
+{% for section in body_sections %}
 \input{sections/{{ section }}.tex}
 {% endfor %}
+
 \section*{Data availability}
 All paper-facing artifacts are generated from the scrubbed PathLab evidence bundle. Private evidence locks and PHI mappings are excluded from exports.
+
 {% if include_bibliography %}
 \bibliography{refs}
 {% endif %}
+
+\section*{Acknowledgements (not compulsory)}
+Acknowledgements should be brief and can be completed by the authors before submission.
+
+\section*{Author contributions statement}
+Author contribution details should be completed by the authors before submission.
+
+\section*{Additional information}
+The authors declare no competing interests unless stated otherwise in the final submission metadata.
+
 \end{document}

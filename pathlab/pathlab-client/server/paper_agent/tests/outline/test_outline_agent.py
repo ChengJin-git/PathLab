@@ -231,6 +231,22 @@ def test_reasoning_model_streams_and_aggregates_sse() -> None:
 
     assert response.content == '{"ok":true}'
     assert seen_payloads[0]["stream"] is True
+    assert seen_payloads[0]["reasoning_effort"] == "xhigh"
+
+
+def test_default_llm_config_uses_gpt55_xhigh(monkeypatch) -> None:
+    monkeypatch.delenv("PAPER_GEN_LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("PAPER_GEN_LLM_API_KEY", raising=False)
+    monkeypatch.delenv("PAPER_GEN_LLM_MODEL", raising=False)
+    monkeypatch.delenv("PAPER_GEN_LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("PAPER_GEN_VLLM_MODEL", raising=False)
+    monkeypatch.delenv("PAPER_GEN_VLLM_REASONING_EFFORT", raising=False)
+
+    config = LLMConfig.from_env()
+
+    assert config.model == "gpt-5.5"
+    assert config.reasoning_effort == "xhigh"
+    assert config.timeout_s == 300.0
 
 
 def test_transient_timeout_is_retried_once_before_failing() -> None:
@@ -259,6 +275,7 @@ def test_transient_timeout_is_retried_once_before_failing() -> None:
 
     assert response.content == "retried ok"
     assert len(seen_payloads) == 2
+    assert "reasoning_effort" not in seen_payloads[0]
 
 
 def test_two_transient_timeouts_trigger_fallback_when_available() -> None:

@@ -1,0 +1,45 @@
+{
+  "metrics": {
+    "test_accuracy": 0.8871,
+    "test_auc": 0.9413,
+    "balanced_accuracy": 0.8621,
+    "macro_f1": 0.8504,
+    "weighted_f1": 0.8896,
+    "test_loss": 0.3178
+  },
+  "per_class": {
+    "msi_recall_sensitivity": 0.7895,
+    "msi_precision": 0.8333,
+    "msi_f1": 0.8108,
+    "mss_recall_specificity": 0.9302,
+    "mss_precision": 0.9091,
+    "mss_f1": 0.9195
+  },
+  "confusion_matrix": {
+    "labels": [
+      "MSI",
+      "MSS"
+    ],
+    "matrix": [
+      [
+        15,
+        4
+      ],
+      [
+        3,
+        40
+      ]
+    ],
+    "rows_are_true_labels": true
+  },
+  "operating_point": {
+    "threshold_for_msi": 0.5,
+    "selection": "validation_youden_index_then_fixed_on_test"
+  },
+  "chart_paths": {
+    "roc_curve": "charts/roc_curve.png",
+    "pr_curve": "charts/pr_curve.png",
+    "confusion_matrix": "charts/confusion_matrix.png",
+    "calibration": "charts/calibration.png"
+  }
+}

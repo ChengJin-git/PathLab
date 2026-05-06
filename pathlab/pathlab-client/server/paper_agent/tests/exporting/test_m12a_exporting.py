@@ -11,7 +11,7 @@ import pytest
 from pathlab_paper_agent.pipeline import create_dev_run, run_stage
 from pathlab_paper_agent.renderers.bundle_validator import BundleValidationResult
 from pathlab_paper_agent.renderers.latex_compiler import CompileResult
-from pathlab_paper_agent.schemas import CreatePaperRequest, SourceTaskRef
+from pathlab_paper_agent.schemas import CreatePaperRequest, SourceTaskRef, TemplateId
 from pathlab_paper_agent.stages import exporting as exporting_stage
 
 _SECTION_NAMES = (
@@ -35,6 +35,14 @@ _PNG_BYTES = (
 
 def _fixture_dir() -> Path:
     return Path(__file__).resolve().parents[1] / "fixtures" / "wsi_classification_minimal"
+
+
+def _both_template_request(title: str = "Fixture M12a Export Paper") -> CreatePaperRequest:
+    return CreatePaperRequest(
+        title=title,
+        source_tasks=[SourceTaskRef(task_id="wsi_cls_fixture")],
+        selected_templates=[TemplateId.miccai, TemplateId.nature_scientific_reports],
+    )
 
 
 def _seed_fixture_inputs(paths) -> None:
@@ -147,11 +155,11 @@ async def test_export_stage_builds_downloadable_closed_bundles_from_fixture(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    request = CreatePaperRequest(
-        title="Fixture M12a Export Paper",
-        source_tasks=[SourceTaskRef(task_id="wsi_cls_fixture")],
+    paper_id, paths = await create_dev_run(
+        _both_template_request(),
+        paper_id="paper_m12a_export",
+        uploads_dir=tmp_path,
     )
-    paper_id, paths = await create_dev_run(request, paper_id="paper_m12a_export", uploads_dir=tmp_path)
     _seed_fixture_inputs(paths)
     run_stage(paper_id, "rendering", uploads_dir=tmp_path)
     _add_private_files_to_final(paths)
@@ -200,8 +208,8 @@ async def test_export_stage_builds_downloadable_closed_bundles_from_fixture(
 
     with zipfile.ZipFile(paths.exports_dir / "nature_scientific_reports_bundle.zip") as archive:
         nature_names = set(archive.namelist())
-    assert "sn-jnl.cls" in nature_names
-    assert "sn-nature.bst" in nature_names
+    assert "wlscirep.cls" in nature_names
+    assert "naturemag.bst" in nature_names
 
 
 @pytest.mark.asyncio
@@ -209,7 +217,11 @@ async def test_export_stage_marks_bundle_not_downloadable_when_dry_run_fails(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    paper_id, paths = await create_dev_run(paper_id="paper_m12a_export_fail", uploads_dir=tmp_path)
+    paper_id, paths = await create_dev_run(
+        _both_template_request(),
+        paper_id="paper_m12a_export_fail",
+        uploads_dir=tmp_path,
+    )
     _seed_fixture_inputs(paths)
     run_stage(paper_id, "rendering", uploads_dir=tmp_path)
     _mock_successful_compile(monkeypatch)
@@ -246,8 +258,8 @@ def test_bundle_validator_runs_latexmk_inside_extracted_zip(tmp_path, monkeypatc
     def fake_run(cmd, **kwargs):
         assert "--entrypoint" in cmd
         assert "latexmk" in cmd
-        assert "-dvi=0" in cmd
-        assert "-ps=0" in cmd
+        assert "-dvi=0" not in cmd
+        assert "-ps=0" not in cmd
         assert "-pdf" in cmd
         assert "-interaction=nonstopmode" in cmd
         assert kwargs["check"] is False
@@ -275,7 +287,11 @@ async def test_export_stage_clears_stale_m12a_warnings_after_success(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    paper_id, paths = await create_dev_run(paper_id="paper_m12a_warning_clear", uploads_dir=tmp_path)
+    paper_id, paths = await create_dev_run(
+        _both_template_request(),
+        paper_id="paper_m12a_warning_clear",
+        uploads_dir=tmp_path,
+    )
     _seed_fixture_inputs(paths)
     run_stage(paper_id, "rendering", uploads_dir=tmp_path)
     _mock_successful_compile(monkeypatch)

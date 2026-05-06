@@ -221,7 +221,12 @@ class LockedBlockRenderer:
                     f"{aggregator or 'aggregator not recorded'})"
                 )
             model_bits.append(str(desc))
-        metric_bits = [f"{item.get('name')}: {item.get('formatted')}" for item in metrics.values()]
+        metric_summary = (
+            f"{len(metrics)} locked analysis metric(s) were available; exact values are rendered "
+            "through approved metric macros and result tables."
+            if metrics
+            else "No locked analysis metrics were available."
+        )
         external_bits = []
         for row in external_validation:
             task = row.get("label") or row.get("task_id") or "external validation"
@@ -255,11 +260,7 @@ class LockedBlockRenderer:
             ),
             "results_block.tex": self._render(
                 "results_block.tex.j2",
-                metric_text=(
-                    "; ".join(latex_escape(item) for item in metric_bits)
-                    if metric_bits
-                    else "No locked analysis metrics were available."
-                ),
+                metric_summary=latex_escape(metric_summary),
             ),
             "metrics_macros.tex": self.render_metrics_macros(metrics),
             "external_block.tex": self._render(

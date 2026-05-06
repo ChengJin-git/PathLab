@@ -6,6 +6,7 @@ import json
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 import httpx
@@ -15,6 +16,8 @@ _ENV_OVERRIDE = {
     "api_key": "PAPER_GEN_LLM_API_KEY",
     "model": "PAPER_GEN_LLM_MODEL",
 }
+_ENV_REASONING_EFFORT = "PAPER_GEN_LLM_REASONING_EFFORT"
+_ENV_TIMEOUT_S = "PAPER_GEN_LLM_TIMEOUT_S"
 # httpx errors that are likely transient (network blip, temporary timeout). One
 # retry buys resilience against single packet loss without masking real outages.
 _TRANSIENT_HTTP_ERRORS = (
@@ -25,8 +28,11 @@ _TRANSIENT_HTTP_ERRORS = (
 _MAX_TRANSIENT_RETRIES = 1
 _DEFAULT_VLLM_BASE_URL = "http://pathlab-vllm:8000/v1"
 _DEFAULT_VLLM_MODEL = "gpt-5.5"
+_DEFAULT_REASONING_EFFORT = "xhigh"
+_DEFAULT_TIMEOUT_S = 300.0
 _DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 _DEFAULT_OPENROUTER_MODEL = "openai/gpt-5.5"
+_LOCAL_ENV_LOADED = False
 
 
 class LLMConfigurationError(RuntimeError):
@@ -80,7 +86,8 @@ class LLMConfig:
     api_key: str
     model: str
     provider: str
-    timeout_s: float = 120.0
+    reasoning_effort: str | None = _DEFAULT_REASONING_EFFORT
+    timeout_s: float = _DEFAULT_TIMEOUT_S
 
     @classmethod
     def from_env(cls) -> "LLMConfig":
@@ -91,6 +98,7 @@ class LLMConfig:
         2. Internal vLLM-compatible endpoint.
         3. OpenRouter is configured as a runtime fallback when a key exists.
         """
+        _load_local_env_once()
         override = {key: os.environ.get(env_name) for key, env_name in _ENV_OVERRIDE.items()}
         if any(override.values()):
             missing = [env_name for key, env_name in _ENV_OVERRIDE.items() if not override[key]]
@@ -104,6 +112,8 @@ class LLMConfig:
                 api_key=str(override["api_key"]),
                 model=str(override["model"]),
                 provider="env_override",
+                reasoning_effort=_reasoning_effort_from_env(_ENV_REASONING_EFFORT),
+                timeout_s=_timeout_from_env(_ENV_TIMEOUT_S),
             )
 
         return cls(
@@ -111,11 +121,14 @@ class LLMConfig:
             api_key=os.environ.get("PAPER_GEN_VLLM_API_KEY", "EMPTY"),
             model=os.environ.get("PAPER_GEN_VLLM_MODEL", _DEFAULT_VLLM_MODEL),
             provider="vllm_internal",
+            reasoning_effort=_reasoning_effort_from_env("PAPER_GEN_VLLM_REASONING_EFFORT"),
+            timeout_s=_timeout_from_env("PAPER_GEN_VLLM_TIMEOUT_S"),
         )
 
     @classmethod
     def openrouter_from_env(cls) -> "LLMConfig | None":
         """Return an OpenRouter fallback config when an API key is available."""
+        _load_local_env_once()
         api_key = os.environ.get("PAPER_GEN_OPENROUTER_API_KEY") or os.environ.get("OPENROUTER_API_KEY")
         if not api_key:
             return None
@@ -127,11 +140,17 @@ class LLMConfig:
             api_key=api_key,
             model=os.environ.get("PAPER_GEN_OPENROUTER_MODEL", _DEFAULT_OPENROUTER_MODEL),
             provider="openrouter",
+            reasoning_effort=_reasoning_effort_from_env("PAPER_GEN_OPENROUTER_REASONING_EFFORT"),
+            timeout_s=_timeout_from_env("PAPER_GEN_OPENROUTER_TIMEOUT_S"),
         )
 
     @property
     def requires_streaming(self) -> bool:
         return _requires_streaming_model(self.model)
+
+    @property
+    def supports_reasoning_effort(self) -> bool:
+        return _supports_reasoning_effort(self.model)
 
 
 def _requires_streaming_model(model: str) -> bool:
@@ -142,6 +161,51 @@ def _requires_streaming_model(model: str) -> bool:
         or normalized.startswith(("o1", "o3", "o4"))
         or "reasoning" in normalized
     )
+
+
+def _supports_reasoning_effort(model: str) -> bool:
+    return _requires_streaming_model(model)
+
+
+def _reasoning_effort_from_env(env_name: str) -> str | None:
+    value = (
+        os.environ.get(env_name)
+        or os.environ.get(_ENV_REASONING_EFFORT)
+        or _DEFAULT_REASONING_EFFORT
+    )
+    cleaned = value.strip().lower()
+    if cleaned in {"", "none", "off", "false", "0"}:
+        return None
+    return cleaned
+
+
+def _timeout_from_env(env_name: str) -> float:
+    value = os.environ.get(env_name) or os.environ.get(_ENV_TIMEOUT_S)
+    if value is None or not value.strip():
+        return _DEFAULT_TIMEOUT_S
+    try:
+        timeout_s = float(value)
+    except ValueError as exc:
+        raise LLMConfigurationError(f"{env_name} must be a numeric timeout in seconds") from exc
+    if timeout_s <= 0:
+        raise LLMConfigurationError(f"{env_name} must be positive")
+    return timeout_s
+
+
+def _load_local_env_once() -> None:
+    """Load paper_agent/.env for local CLI/dev-server runs without shell sourcing."""
+    global _LOCAL_ENV_LOADED
+    if _LOCAL_ENV_LOADED:
+        return
+    _LOCAL_ENV_LOADED = True
+    env_path = Path(__file__).resolve().parents[3] / ".env"
+    if not env_path.exists():
+        return
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(env_path, override=False)
 
 
 class OpenAICompatibleLLMClient:
@@ -213,6 +277,8 @@ class OpenAICompatibleLLMClient:
             "temperature": temperature,
             "stream": stream,
         }
+        if config.reasoning_effort and config.supports_reasoning_effort:
+            payload["reasoning_effort"] = config.reasoning_effort
         if response_format is not None:
             payload["response_format"] = dict(response_format)
 

@@ -15,7 +15,7 @@ from pathlab_paper_agent.agents.section_writing_agent import (
 from pathlab_paper_agent.llm import LLMResponse
 from pathlab_paper_agent.pipeline import create_dev_run
 from pathlab_paper_agent.renderers.citation_renderer import CitationRenderError, render_citation_placeholders
-from pathlab_paper_agent.schemas import PaperManifest
+from pathlab_paper_agent.schemas import CreatePaperRequest, PaperManifest, SourceTaskRef, TemplateId
 from pathlab_paper_agent.stages.sections import run as run_sections
 from pathlab_paper_agent.validators.citation_guard import run as run_citation_guard
 from pathlab_paper_agent.validators.identifier_guard import run as run_identifier_guard
@@ -226,6 +226,11 @@ async def test_section_agent_prompt_contains_all_m9_inputs_and_normalizes_intro_
     assert payload["figures_manifest"]["figures"][0]["figure_id"] == "fig:main"
     assert "@article{ABMIL2021" in payload["citations"]["refs_bib"]
     assert payload["section_contract"]["required_cite_keys"] == ["CLINVAL2022"]
+    assert payload["generation_template_id"] == "miccai"
+    assert payload["section_contract"]["generation_template_id"] == "miccai"
+    assert payload["section_contract"]["single_template_run"] is True
+    assert "abstract" in payload["section_guidelines"]
+    assert "must_include" in payload["section_guidelines"]["abstract"]
     assert "main.metrics.test_accuracy" in payload["section_contract"]["allowed_metric_keys"]
     prompt_text = llm.calls[0]["messages"][1].content
     assert "task_secret_123" not in prompt_text
@@ -235,6 +240,24 @@ async def test_section_agent_prompt_contains_all_m9_inputs_and_normalizes_intro_
         "locked_blocks/dataset_block.tex",
         "locked_blocks/results_block.tex",
     }
+
+
+@pytest.mark.asyncio
+async def test_section_agent_prompt_uses_user_selected_nature_guidelines(tmp_path) -> None:
+    request = CreatePaperRequest(
+        source_tasks=[SourceTaskRef(task_id="paper_dev_source")],
+        selected_templates=[TemplateId.nature_scientific_reports],
+    )
+    _paper_id, paths = await create_dev_run(request, paper_id="paper_sections_nature_prompt", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+
+    inputs = SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
+    prompt = SectionWritingAgent(MockLLM(_sections_payload())).build_prompt(inputs)
+    payload = _payload_from_prompt(prompt)
+
+    assert payload["generation_template_id"] == "nature_scientific_reports"
+    assert payload["primary_template_style"]["venue"] == "Nature Scientific Reports"
+    assert payload["section_guidelines"]["results"]["purpose"].startswith("Present findings before Methods")
 
 
 @pytest.mark.asyncio
@@ -251,6 +274,20 @@ async def test_section_agent_renders_metric_and_citation_placeholders(tmp_path) 
     assert "0.9123" in result.sections["abstract"]
     assert "{{m:" not in "\n".join(result.sections.values())
     assert "[CITE:" not in "\n".join(result.sections.values())
+
+
+@pytest.mark.asyncio
+async def test_section_agent_repairs_missing_required_locked_block_inputs(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_repair_locked_block", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    payload = _sections_payload()
+    payload["sections"]["experiments"] = "\\section{Experimental Setup}\nThe cohort is described from locked evidence.\n"
+
+    result = SectionWritingAgent(MockLLM(payload)).generate(
+        SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
+    )
+
+    assert "\\input{locked_blocks/dataset_block.tex}" in result.sections["experiments"]
 
 
 @pytest.mark.asyncio
