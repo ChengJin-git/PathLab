@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from pathlab_paper_agent.bootstrap import ensure_server_on_path
@@ -50,9 +50,14 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     PaperRunStage,
     PaperRunStatus,
     PaperRunSummary,
+    PaperSectionRegenerateAcceptedResponse,
     PaperSection,
     PaperSectionListResponse,
     PaperSectionRegenerateResponse,
+    RegenerateJobEntry,
+    RegenerateRejectRequest,
+    RegenerateRejectResponse,
+    RegenerateSectionRequest,
     GuardIssueSummary,
     GuardResultSummary,
     RefinementSummary,
@@ -60,8 +65,14 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
 )
 from pathlab_paper_agent.regenerate import (  # noqa: E402
     MissingSectionDraftError,
+    RegenerateJobNotFoundError,
+    RegenerateStateError,
+    SelectionLocatorError,
     UnknownSectionError,
+    cancel_regenerate,
+    get_regenerate_job,
     latest_regenerate_log_summary,
+    reject_regenerate,
     regenerate_section,
 )
 from pathlab_paper_agent.scaffold import initialize_paper_run  # noqa: E402
@@ -136,6 +147,37 @@ def _load_manifest(paths: PaperRunPaths) -> Optional[PaperManifest]:
             exc,
         )
         return None
+
+
+def _save_manifest(paths: PaperRunPaths, manifest: PaperManifest) -> None:
+    manifest.updated_at = datetime.now(UTC)
+    paths.manifest.write_text(
+        json.dumps(manifest.model_dump(mode="json"), indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+
+async def _enqueue_regenerate_descriptor(
+    *,
+    paper_id: str,
+    regen_id: str,
+    section_name: str,
+    body: RegenerateSectionRequest,
+) -> None:
+    from gateway.task_dispatch import build_task_descriptor, enqueue_task_descriptor
+
+    descriptor = build_task_descriptor(
+        job_id=regen_id,
+        job_kind="paper_generation",
+        handler="paper_generation.regenerate_section",
+        payload={
+            "paper_id": paper_id,
+            "regen_id": regen_id,
+            "section_name": section_name,
+            **body.model_dump(mode="json", exclude_none=True),
+        },
+    )
+    await enqueue_task_descriptor(descriptor)
 
 
 def _artifact_from_index(rel_path: str, raw) -> PaperRunArtifact:
@@ -501,18 +543,94 @@ async def get_paper_sections(
 
 @router.post(
     "/{paper_id}/sections/{section_name}/regenerate",
-    response_model=PaperSectionRegenerateResponse,
+    response_model=None,
 )
 async def regenerate_paper_section(
     paper_id: str,
     section_name: str,
+    body: RegenerateSectionRequest | None = None,
+    sync: bool = Query(False),
     user: User = Depends(current_active_user),
     db: AsyncSession = Depends(get_db),
-) -> PaperSectionRegenerateResponse:
+) -> PaperSectionRegenerateResponse | JSONResponse:
     await _load_or_404(db, paper_id, user)
+    request = body or RegenerateSectionRequest()
+    # TODO(deprecate 2026-06-05): keep sync=true for one frontend transition window.
+    if not sync:
+        paths = PaperRunPaths.for_paper(paper_id)
+        manifest = _load_manifest(paths)
+        if manifest is None:
+            raise HTTPException(status_code=404, detail=f"Paper {paper_id} not found")
+        regen_id = f"reg_{uuid.uuid4().hex[:12]}"
+        enqueued_at = datetime.now(UTC)
+        manifest.regenerate_jobs.append(
+            {
+                "regen_id": regen_id,
+                "mode": request.mode,
+                "section_name": request.target_section or section_name,
+                "target_paragraph": request.target_paragraph,
+                "target_sentence": request.target_sentence,
+                "selected_text": request.selected_text,
+                "source_hash": request.source_hash,
+                "user_note": request.user_note,
+                "template_id": request.template_id.value if request.template_id else None,
+                "status": "queued",
+                "enqueued_at": enqueued_at.isoformat(),
+                "error_code": None,
+                "error_message": None,
+                "progress": {
+                    "step": "queued",
+                    "detail": "Regenerate job queued.",
+                    "percent": 0,
+                    "updated_at": enqueued_at.isoformat(),
+                },
+            }
+        )
+        _save_manifest(paths, manifest)
+        try:
+            await _enqueue_regenerate_descriptor(
+                paper_id=paper_id,
+                regen_id=regen_id,
+                section_name=section_name,
+                body=request,
+            )
+        except Exception as exc:
+            manifest = _load_manifest(paths) or manifest
+            for entry in manifest.regenerate_jobs:
+                if entry.get("regen_id") == regen_id:
+                    entry["status"] = "failed"
+                    entry["finished_at"] = datetime.now(UTC).isoformat()
+                    entry["error_code"] = "enqueue_failed"
+                    entry["error_message"] = str(exc)
+                    break
+            _save_manifest(paths, manifest)
+            raise HTTPException(status_code=503, detail=f"Failed to enqueue regenerate job: {exc}") from exc
+        accepted = PaperSectionRegenerateAcceptedResponse(
+            paper_id=paper_id,
+            regen_id=regen_id,
+            enqueued_at=enqueued_at,
+        )
+        return JSONResponse(status_code=202, content=accepted.model_dump(mode="json"))
+
     try:
-        manifest = regenerate_section(paper_id, section_name)
+        manifest = regenerate_section(
+            paper_id,
+            section_name,
+            regen_id=f"reg_{uuid.uuid4().hex[:12]}",
+            mode=request.mode,
+            target_section=request.target_section,
+            target_paragraph=request.target_paragraph,
+            target_sentence=request.target_sentence,
+            selected_text=request.selected_text,
+            source_hash=request.source_hash,
+            char_start=request.char_start,
+            char_end=request.char_end,
+            user_note=request.user_note,
+            template_id=request.template_id,
+        )
         summary = latest_regenerate_log_summary(paper_id)
+    except SelectionLocatorError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail())
     except MissingSectionDraftError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except FileNotFoundError:
@@ -527,9 +645,63 @@ async def regenerate_paper_section(
         paper_id=paper_id,
         status=manifest.status,
         current_stage=manifest.current_stage,
+        regen_id=summary.get("regen_id"),
         regenerated_sections=summary.get("regenerated_sections", []),
         refinement_log_summary=summary.get("refinement_log_summary", {}),
     )
+
+
+@router.get("/{paper_id}/regen/{regen_id}", response_model=RegenerateJobEntry)
+async def get_regenerate_job_status(
+    paper_id: str,
+    regen_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> RegenerateJobEntry:
+    await _load_or_404(db, paper_id, user)
+    try:
+        return get_regenerate_job(paper_id, regen_id)
+    except RegenerateJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+
+
+@router.post("/{paper_id}/regen/{regen_id}:reject", response_model=RegenerateRejectResponse)
+async def reject_regenerate_job(
+    paper_id: str,
+    regen_id: str,
+    body: RegenerateRejectRequest | None = None,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> RegenerateRejectResponse:
+    await _load_or_404(db, paper_id, user)
+    try:
+        _manifest, payload = reject_regenerate(
+            paper_id,
+            regen_id,
+            reason=(body.reason if body else None),
+            template_id=(body.template_id if body else None),
+        )
+    except RegenerateJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RegenerateStateError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail())
+    return RegenerateRejectResponse.model_validate(payload)
+
+
+@router.post("/{paper_id}/regen/{regen_id}:cancel")
+async def cancel_regenerate_job(
+    paper_id: str,
+    regen_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, str]:
+    await _load_or_404(db, paper_id, user)
+    try:
+        return cancel_regenerate(paper_id, regen_id)
+    except RegenerateJobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except RegenerateStateError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail())
 
 
 # ---------------------------------------------------------------------------

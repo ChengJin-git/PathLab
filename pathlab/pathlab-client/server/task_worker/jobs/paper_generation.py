@@ -21,3 +21,11 @@ async def run_paper_generation(paper_id: str, **kwargs: Any) -> None:
     from pathlab_paper_agent.integrations.task_worker import run_paper_generation as _run
 
     await _run(paper_id, **kwargs)
+
+
+async def regenerate_section(paper_id: str, **kwargs: Any) -> None:
+    """Run a section/paragraph/selection regenerate job."""
+    _ensure_paper_agent_src_on_path()
+    from pathlab_paper_agent.integrations.task_worker import regenerate_section as _run
+
+    await _run(paper_id, **kwargs)

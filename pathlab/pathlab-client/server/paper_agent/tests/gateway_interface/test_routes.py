@@ -297,9 +297,10 @@ def test_post_regenerate_section_official_route_returns_summary(
     paper_id = create.json()["paper_id"]
     paths = PaperRunPaths.for_paper(paper_id)
 
-    def fake_regenerate(paper_id_arg: str, section_name_arg: str):
+    def fake_regenerate(paper_id_arg: str, section_name_arg: str, **kwargs):
         assert paper_id_arg == paper_id
         assert section_name_arg == "results"
+        assert kwargs["mode"] == "section"
         manifest = api_routes._load_manifest(paths)
         assert manifest is not None
         return manifest
@@ -309,21 +310,139 @@ def test_post_regenerate_section_official_route_returns_summary(
         api_routes,
         "latest_regenerate_log_summary",
         lambda paper_id_arg: {
+            "regen_id": "reg_sync",
             "regenerated_sections": ["results"],
             "refinement_log_summary": {"final_status": "accepted"},
         },
     )
 
-    response = client.post(f"/papers/{paper_id}/sections/results/regenerate")
+    response = client.post(f"/papers/{paper_id}/sections/results/regenerate?sync=true")
 
     assert response.status_code == 200, response.text
     assert response.json() == {
         "paper_id": paper_id,
         "status": "pending",
         "current_stage": "created",
+        "regen_id": "reg_sync",
         "regenerated_sections": ["results"],
         "refinement_log_summary": {"final_status": "accepted"},
     }
+
+
+def test_post_regenerate_async_returns_202_and_manifest_job(client, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+
+    captured = []
+
+    async def fake_enqueue(**kwargs):
+        captured.append(kwargs)
+
+    monkeypatch.setattr(api_routes, "_enqueue_regenerate_descriptor", fake_enqueue)
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Regenerate async",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+
+    response = client.post(
+        f"/papers/{paper_id}/sections/results/regenerate",
+        json={
+            "mode": "selection",
+            "selected_text": "A sufficiently long selected sentence from the PDF.",
+            "source_hash": "abc",
+            "target_paragraph": 0,
+            "user_note": "Make it cautious.",
+            "template_id": "miccai",
+        },
+    )
+
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["paper_id"] == paper_id
+    assert body["regen_id"].startswith("reg_")
+    assert captured[0]["paper_id"] == paper_id
+    assert captured[0]["section_name"] == "results"
+    manifest = json.loads(PaperRunPaths.for_paper(paper_id).manifest.read_text(encoding="utf-8"))
+    job = manifest["regenerate_jobs"][-1]
+    assert job["regen_id"] == body["regen_id"]
+    assert job["status"] == "queued"
+    assert job["mode"] == "selection"
+
+
+def test_get_and_cancel_regenerate_job_routes(client, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+
+    async def fake_enqueue(**kwargs):
+        del kwargs
+
+    monkeypatch.setattr(api_routes, "_enqueue_regenerate_descriptor", fake_enqueue)
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Regenerate poll",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+    accepted = client.post(f"/papers/{paper_id}/sections/results/regenerate", json={}).json()
+    regen_id = accepted["regen_id"]
+
+    get_response = client.get(f"/papers/{paper_id}/regen/{regen_id}")
+    assert get_response.status_code == 200, get_response.text
+    assert get_response.json()["regen_id"] == regen_id
+    assert get_response.json()["status"] == "queued"
+
+    cancel_response = client.post(f"/papers/{paper_id}/regen/{regen_id}:cancel")
+    assert cancel_response.status_code == 200, cancel_response.text
+    assert cancel_response.json() == {"regen_id": regen_id, "status": "cancelled"}
+
+
+def test_reject_regenerate_job_route(client, monkeypatch) -> None:
+    from pathlab_paper_agent.api import routes as api_routes
+
+    captured = {}
+
+    def fake_reject(paper_id_arg: str, regen_id_arg: str, **kwargs):
+        captured.update({"paper_id": paper_id_arg, "regen_id": regen_id_arg, **kwargs})
+        return None, {
+            "regen_id": regen_id_arg,
+            "status": "rejected",
+            "restored_sections": ["results"],
+            "final_pdf_path": "final/miccai/main.pdf",
+        }
+
+    monkeypatch.setattr(api_routes, "reject_regenerate", fake_reject)
+    create = client.post(
+        "/papers",
+        json={
+            "title": "Regenerate reject",
+            "source_tasks": [{"task_id": "tsk_x"}],
+            "selected_templates": ["miccai"],
+        },
+    )
+    paper_id = create.json()["paper_id"]
+
+    response = client.post(
+        f"/papers/{paper_id}/regen/reg_reject:reject",
+        json={"reason": "Keep the previous wording.", "template_id": "miccai"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "regen_id": "reg_reject",
+        "status": "rejected",
+        "restored_sections": ["results"],
+        "final_pdf_path": "final/miccai/main.pdf",
+    }
+    assert captured["paper_id"] == paper_id
+    assert captured["regen_id"] == "reg_reject"
+    assert captured["reason"] == "Keep the previous wording."
+    assert captured["template_id"].value == "miccai"
 
 
 def test_delete_paper_removes_db_and_disk(client) -> None:

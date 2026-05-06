@@ -1,5 +1,6 @@
 # root docs (generated, not tracked)
 /docs/
+pathlab/pathlab-client/server/paper_agent/docs/
 
 # git worktrees
 .worktrees/

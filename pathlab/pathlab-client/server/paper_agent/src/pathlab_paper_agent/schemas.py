@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -301,12 +301,120 @@ class PaperSectionListResponse(BaseModel):
     sections: list[PaperSection] = Field(default_factory=list)
 
 
+class SelectionLocatorResult(BaseModel):
+    section_name: str
+    paragraph_index: int
+    sentence_index: Optional[int] = None
+    char_start: int
+    char_end: int
+    matched_source_text: str
+    normalized_selected_text: str
+    normalized_source_text: str
+    confidence: float
+    ambiguous: bool = False
+
+
+class DiffSummary(BaseModel):
+    chars_added: int
+    chars_removed: int
+    paragraphs_changed: list[int] = Field(default_factory=list)
+    sentences_changed: list[int] = Field(default_factory=list)
+    preview_unified: str = ""
+
+
+class RegenerateProgress(BaseModel):
+    step: Literal[
+        "queued",
+        "locating",
+        "drafting",
+        "guarding",
+        "refining",
+        "compiling",
+        "finalizing",
+    ]
+    detail: Optional[str] = None
+    percent: Optional[int] = Field(default=None, ge=0, le=100)
+    updated_at: datetime
+
+
+class RegenerateJobEntry(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    regen_id: str
+    mode: Literal["section", "paragraph", "selection"] = "section"
+    section_name: str
+    target_paragraph: Optional[int] = None
+    target_sentence: Optional[int] = None
+    selected_text: Optional[str] = None
+    source_hash: Optional[str] = None
+    user_note: Optional[str] = None
+    template_id: Optional[TemplateId] = None
+    status: Literal[
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "rejected",
+        "cancelled",
+        "cancelling",
+    ]
+    enqueued_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+    rejected_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    locator: Optional[SelectionLocatorResult] = None
+    replacement_text_preview: Optional[str] = None
+    before_path: Optional[str] = None
+    after_path: Optional[str] = None
+    diff_summary: Optional[DiffSummary] = None
+    guard_summary: list[GuardResultSummary] = Field(default_factory=list)
+    refinement_summary: Optional[dict[str, Any]] = None
+    final_pdf_path: Optional[str] = None
+    export_bundle_path: Optional[str] = None
+    progress: Optional[RegenerateProgress] = None
+
+
+class RegenerateSectionRequest(BaseModel):
+    mode: Literal["section", "paragraph", "selection"] = "section"
+    target_section: Optional[str] = None
+    target_paragraph: Optional[int] = Field(default=None, ge=0)
+    target_sentence: Optional[int] = Field(default=None, ge=0)
+    selected_text: Optional[str] = None
+    source_hash: Optional[str] = None
+    char_start: Optional[int] = Field(default=None, ge=0)
+    char_end: Optional[int] = Field(default=None, ge=0)
+    user_note: Optional[str] = None
+    template_id: Optional[TemplateId] = None
+
+
+class PaperSectionRegenerateAcceptedResponse(BaseModel):
+    paper_id: str
+    regen_id: str
+    enqueued_at: datetime
+
+
 class PaperSectionRegenerateResponse(BaseModel):
     paper_id: str
     status: PaperRunStatus
     current_stage: PaperRunStage
+    regen_id: Optional[str] = None
     regenerated_sections: list[str] = Field(default_factory=list)
     refinement_log_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class RegenerateRejectRequest(BaseModel):
+    reason: Optional[str] = None
+    template_id: Optional[TemplateId] = None
+
+
+class RegenerateRejectResponse(BaseModel):
+    regen_id: str
+    status: Literal["rejected"]
+    restored_sections: list[str] = Field(default_factory=list)
+    final_pdf_path: Optional[str] = None
 
 
 class PaperConfig(BaseModel):
@@ -335,6 +443,7 @@ class PaperManifest(BaseModel):
     current_stage: PaperRunStage
     stage_log: list[dict[str, Any]] = Field(default_factory=list)
     artifact_index: dict[str, Any] = Field(default_factory=dict)
+    regenerate_jobs: list[dict[str, Any]] = Field(default_factory=list)
     error_message: Optional[str] = None
     created_at: datetime
     updated_at: datetime

@@ -207,6 +207,10 @@ _ALLOWED_PREFIXES = (
     "exports/",
 )
 
+_REGEN_SNAPSHOT_PATTERN = re.compile(
+    r"^drafts/regenerate_runs/[A-Za-z0-9_.:-]+/(?:before|after)/[A-Za-z0-9_-]+\.tex$"
+)
+
 
 def is_path_allowed_for_download(rel_path: str) -> bool:
     """§3.7 allowlist check.
@@ -216,6 +220,8 @@ def is_path_allowed_for_download(rel_path: str) -> bool:
     relative path falls under public surfaces.
     """
     if rel_path in _ALLOWED_EXACT:
+        return True
+    if _REGEN_SNAPSHOT_PATTERN.fullmatch(rel_path):
         return True
     return any(rel_path.startswith(p) for p in _ALLOWED_PREFIXES)
 

@@ -12,9 +12,10 @@ from pathlab_paper_agent.agents.content_refinement_agent import ContentRefinemen
 from pathlab_paper_agent.agents.section_writing_agent import SectionWritingResult
 from pathlab_paper_agent.dev_server import create_app
 from pathlab_paper_agent.llm import LLMResponse
-from pathlab_paper_agent.pipeline import create_dev_run
-from pathlab_paper_agent.regenerate import regenerate_section
+from pathlab_paper_agent.pipeline import create_dev_run, load_manifest, save_manifest
+from pathlab_paper_agent.regenerate import cancel_regenerate, get_regenerate_job, reject_regenerate, regenerate_section
 from pathlab_paper_agent.schemas import CreatePaperRequest, SourceTaskRef
+from pathlab_paper_agent.selection_locator import SelectionLocatorError, section_content_hash
 from pathlab_paper_agent.stages.common import register_artifact, write_json
 
 _SECTION_ORDER = (
@@ -59,6 +60,18 @@ class MockRefinementLLM:
             model="mock-refinement",
             provider="mock",
         )
+
+
+class StubSelectionRewriteAgent:
+    def __init__(self, replacement: str) -> None:
+        self.replacement = replacement
+        self.inputs = None
+
+    def rewrite(self, inputs):
+        from pathlab_paper_agent.agents.selection_rewrite_agent import SelectionRewriteResult
+
+        self.inputs = inputs
+        return SelectionRewriteResult(replacement_text=self.replacement, rationale="test replacement")
 
 
 def _critic(score: int = 3) -> dict:
@@ -450,3 +463,192 @@ async def test_regenerate_log_records_non_target_revisions_discarded(
     assert log["status"] == "accepted"
     assert log["regenerated_sections"] == ["results"]
     assert log["non_target_revisions_discarded"] == ["discussion"]
+
+
+@pytest.mark.asyncio
+async def test_selection_mode_only_modifies_selected_span_and_records_diff(tmp_path) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_selection")
+    before = _section_bytes(paths)
+    original_results = (
+        "\\section{Results}\n"
+        "Opening context remains unchanged.\n\n"
+        "Original results report the test set metric 0.9123.\n\n"
+        "Closing interpretation remains unchanged.\n"
+    )
+    (paths.sections_dir / "results.tex").write_text(original_results, encoding="utf-8")
+    rewrite_agent = StubSelectionRewriteAgent("The test-set result is described cautiously using locked evidence.")
+
+    manifest = regenerate_section(
+        paths.paper_id,
+        "results",
+        uploads_dir=tmp_path,
+        regen_id="reg_selection",
+        mode="selection",
+        selected_text="Original results report the test set metric 0.9123.",
+        source_hash=section_content_hash(original_results),
+        user_note="Make it more cautious.",
+        rewrite_agent=rewrite_agent,
+    )
+
+    after_text = (paths.sections_dir / "results.tex").read_text(encoding="utf-8")
+    assert "Opening context remains unchanged." in after_text
+    assert "Closing interpretation remains unchanged." in after_text
+    assert "The test-set result is described cautiously" in after_text
+    for name, payload in before.items():
+        if name != "results.tex":
+            assert (paths.sections_dir / name).read_bytes() == payload
+    job = get_regenerate_job(paths.paper_id, "reg_selection", uploads_dir=tmp_path)
+    assert job.status == "completed"
+    assert job.mode == "selection"
+    assert job.locator is not None
+    assert job.before_path == "drafts/regenerate_runs/reg_selection/before/results.tex"
+    assert job.after_path == "drafts/regenerate_runs/reg_selection/after/results.tex"
+    assert job.diff_summary is not None
+    assert job.diff_summary.paragraphs_changed == [1]
+    assert job.export_bundle_path == "exports/miccai_bundle.zip"
+    assert manifest.artifact_index[job.before_path]["visibility"] == "public"
+    assert rewrite_agent.inputs.user_note == "Make it more cautious."
+
+
+@pytest.mark.asyncio
+async def test_paragraph_mode_preserves_non_target_paragraphs_byte_for_byte(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_paragraph")
+    original_results = (
+        "\\section{Results}\n"
+        "Paragraph zero remains exactly the same.\n\n"
+        "Paragraph one is the only paragraph to replace.\n\n"
+        "Paragraph two remains exactly the same.\n"
+    )
+    candidate_results = (
+        "\\section{Results}\n"
+        "Paragraph zero from the candidate must be ignored.\n\n"
+        "Replacement paragraph one uses cautious language.\n\n"
+        "Paragraph two from the candidate must be ignored.\n"
+    )
+    (paths.sections_dir / "results.tex").write_text(original_results, encoding="utf-8")
+    candidate = _candidate_sections(paths)
+    candidate["results"] = candidate_results
+    _patch_section_agent(monkeypatch, candidate)
+
+    def fake_run_refining(paths_arg, manifest, *, agent=None, max_iterations=3, guard_runner=None, snapshots_subdir=None):
+        del manifest, agent, max_iterations, guard_runner
+        assert snapshots_subdir is not None
+        write_json(
+            paths_arg.validation_dir / "refinement_log.json",
+            {"final_status": "accepted", "accepted_iterations": [], "iterations": [], "initial_score": {}},
+        )
+
+    monkeypatch.setattr(regenerate_mod, "run_refining", fake_run_refining)
+
+    regenerate_section(
+        paths.paper_id,
+        "results",
+        uploads_dir=tmp_path,
+        regen_id="reg_paragraph",
+        mode="paragraph",
+        target_paragraph=1,
+        user_note="Only rewrite paragraph one.",
+    )
+
+    paragraphs = (paths.sections_dir / "results.tex").read_text(encoding="utf-8").split("\n\n")
+    assert paragraphs[0] == "\\section{Results}\nParagraph zero remains exactly the same."
+    assert paragraphs[1] == "Replacement paragraph one uses cautious language."
+    assert paragraphs[2] == "Paragraph two remains exactly the same.\n"
+
+
+@pytest.mark.asyncio
+async def test_selection_stale_hash_fails_without_modifying_section(tmp_path) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_selection_stale")
+    before = _section_bytes(paths)
+
+    with pytest.raises(SelectionLocatorError) as exc_info:
+        regenerate_section(
+            paths.paper_id,
+            "results",
+            uploads_dir=tmp_path,
+            regen_id="reg_stale",
+            mode="selection",
+            selected_text="Original results report the test set metric 0.9123.",
+            source_hash="sha256:stale",
+            rewrite_agent=StubSelectionRewriteAgent("replacement"),
+        )
+
+    assert exc_info.value.code == "stale_selection"
+    assert _section_bytes(paths) == before
+    job = get_regenerate_job(paths.paper_id, "reg_stale", uploads_dir=tmp_path)
+    assert job.status == "failed"
+    assert job.error_code == "stale_selection"
+
+
+@pytest.mark.asyncio
+async def test_reject_regenerate_restores_before_snapshot(tmp_path) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_reject")
+    before_results = (paths.sections_dir / "results.tex").read_text(encoding="utf-8")
+    rewrite_agent = StubSelectionRewriteAgent("The result is now phrased conservatively.")
+
+    regenerate_section(
+        paths.paper_id,
+        "results",
+        uploads_dir=tmp_path,
+        regen_id="reg_reject_me",
+        mode="selection",
+        selected_text="Original results report the test set metric 0.9123.",
+        source_hash=section_content_hash(before_results),
+        rewrite_agent=rewrite_agent,
+    )
+    assert (paths.sections_dir / "results.tex").read_text(encoding="utf-8") != before_results
+
+    _manifest, response = reject_regenerate(
+        paths.paper_id,
+        "reg_reject_me",
+        uploads_dir=tmp_path,
+        reason="User preferred the previous wording.",
+    )
+
+    assert response["status"] == "rejected"
+    assert response["restored_sections"] == ["results"]
+    assert (paths.sections_dir / "results.tex").read_text(encoding="utf-8") == before_results
+    job = get_regenerate_job(paths.paper_id, "reg_reject_me", uploads_dir=tmp_path)
+    assert job.status == "rejected"
+    assert job.rejection_reason == "User preferred the previous wording."
+
+
+@pytest.mark.asyncio
+async def test_cancelled_queued_regenerate_is_noop_when_worker_arrives(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = await _setup_run(tmp_path, "paper_regenerate_queued_cancel")
+    before = _section_bytes(paths)
+    manifest = load_manifest(paths.paper_id, uploads_dir=tmp_path)
+    manifest.regenerate_jobs.append(
+        {
+            "regen_id": "reg_cancel_before_start",
+            "mode": "section",
+            "section_name": "results",
+            "status": "queued",
+            "enqueued_at": manifest.created_at.isoformat(),
+        }
+    )
+    save_manifest(manifest, uploads_dir=tmp_path)
+    cancel_response = cancel_regenerate(paths.paper_id, "reg_cancel_before_start", uploads_dir=tmp_path)
+    assert cancel_response == {"regen_id": "reg_cancel_before_start", "status": "cancelled"}
+
+    monkeypatch.setattr(
+        regenerate_mod,
+        "SectionWritingAgent",
+        lambda: pytest.fail("cancelled queued regenerate should not call the section writer"),
+    )
+    regenerate_section(
+        paths.paper_id,
+        "results",
+        uploads_dir=tmp_path,
+        regen_id="reg_cancel_before_start",
+    )
+
+    assert _section_bytes(paths) == before
+    job = get_regenerate_job(paths.paper_id, "reg_cancel_before_start", uploads_dir=tmp_path)
+    assert job.status == "cancelled"

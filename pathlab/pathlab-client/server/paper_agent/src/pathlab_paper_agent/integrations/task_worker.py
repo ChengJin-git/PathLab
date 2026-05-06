@@ -82,3 +82,27 @@ async def run_paper_generation(paper_id: str, **kwargs: Any) -> None:
         await db.commit()
 
     raise RuntimeError(message)
+
+
+async def regenerate_section(paper_id: str, **kwargs: Any) -> None:
+    """Run one regenerate job in the descriptor worker process."""
+    from backend.common.config import Config
+    from pathlab_paper_agent.regenerate import regenerate_section as _regenerate
+
+    uploads_dir = Path(str(kwargs.pop("uploads_dir", Config.get_uploads_dir()))).resolve()
+    _regenerate(
+        paper_id,
+        str(kwargs.pop("section_name")),
+        uploads_dir=uploads_dir,
+        regen_id=str(kwargs.pop("regen_id")),
+        mode=str(kwargs.pop("mode", "section")),
+        target_section=kwargs.pop("target_section", None),
+        target_paragraph=kwargs.pop("target_paragraph", None),
+        target_sentence=kwargs.pop("target_sentence", None),
+        selected_text=kwargs.pop("selected_text", None),
+        source_hash=kwargs.pop("source_hash", None),
+        char_start=kwargs.pop("char_start", None),
+        char_end=kwargs.pop("char_end", None),
+        user_note=kwargs.pop("user_note", None),
+        template_id=kwargs.pop("template_id", None),
+    )
