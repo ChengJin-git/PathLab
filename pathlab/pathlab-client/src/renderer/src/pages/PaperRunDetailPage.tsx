@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
@@ -23,8 +24,8 @@ export default function PaperRunDetailPage() {
   const navigate = useNavigate()
   const { paper_id: paperId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
+  const [pdfRefreshKey, setPdfRefreshKey] = useState(0)
   const activeTab = coerceWorkspaceTab(searchParams.get('tab'))
-
 
   const runQuery = useQuery({
     queryKey: ['paper-run', paperId],
@@ -42,13 +43,20 @@ export default function PaperRunDetailPage() {
     setSearchParams(next)
   }
 
+  const bumpPdfRefreshKey = () => {
+    setPdfRefreshKey((key) => key + 1)
+  }
+
   const run = runQuery.data
   const sourceTaskIds = run?.source_task_ids ?? []
 
   return (
     <div className="w-full px-3 py-4 sm:px-4 lg:px-6 sm:py-6">
       <div className="flex w-full flex-col gap-5">
-        <PageHeader title={run?.title || paperId || 'Paper run'} description="PathLab paper workspace. Read-only v1.5 surface.">
+        <PageHeader
+          title={run?.title || paperId || 'Paper run'}
+          description="PathLab paper workspace. Read-only v1.5 surface."
+        >
           <div className="flex flex-wrap items-center gap-2">
             {run ? <Badge variant={statusBadgeVariant(run.status)}>{run.status}</Badge> : null}
             {sourceTaskIds.length ? (
@@ -92,7 +100,14 @@ export default function PaperRunDetailPage() {
         ) : run && paperId ? (
           <div className="flex flex-col gap-4">
             <StageChecklist run={run} activeTab={activeTab} onSelectTab={setActiveTab} />
-            <WorkspaceTabs paperId={paperId} run={run} value={activeTab} onValueChange={setActiveTab} />
+            <WorkspaceTabs
+              paperId={paperId}
+              run={run}
+              value={activeTab}
+              onValueChange={setActiveTab}
+              pdfRefreshKey={pdfRefreshKey}
+              onPdfRefreshNeeded={bumpPdfRefreshKey}
+            />
           </div>
         ) : null}
       </div>

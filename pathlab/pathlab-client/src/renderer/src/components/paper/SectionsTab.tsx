@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { FileCode2, Loader2 } from 'lucide-react'
 import { ApiError } from '../../api/client'
-import { getPaperSections, type PaperSection } from '../../api/papers'
+import { getPaperSections, type PaperSection, type TemplateId } from '../../api/papers'
 import { cn } from '../../lib/utils'
 import { Card, CardContent } from '../ui/card'
 import { RegenerateSelectionPanel, type SelectionInfo } from './RegenerateSelectionPanel'
 
 interface SectionsTabProps {
   paperId: string
+  templateId?: TemplateId
+  onPdfRefreshNeeded: () => void
 }
 
 const SECTION_ORDER = [
@@ -37,7 +39,20 @@ function paragraphIndexAt(text: string, offset: number): number {
   return matches ? matches.length : 0
 }
 
-export function SectionsTab({ paperId }: SectionsTabProps) {
+function textOffsetWithin(root: HTMLElement, target: Node, nodeOffset: number): number | null {
+  let offset = 0
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  while (walker.nextNode()) {
+    const node = walker.currentNode as Text
+    if (node === target) {
+      return offset + nodeOffset
+    }
+    offset += node.length
+  }
+  return null
+}
+
+export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: SectionsTabProps) {
   const [selectedSection, setSelectedSection] = useState<string>('abstract')
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
   const sourceRef = useRef<HTMLPreElement>(null)
@@ -73,22 +88,16 @@ export function SectionsTab({ paperId }: SectionsTabProps) {
     const text = win.toString()
     if (!text || !text.trim()) return
 
-    // Compute character offset of selection start within the section text by
+    // Compute character offsets within the section text by
     // walking pre-order through the pre's text nodes.
-    let offset = 0
-    let found = false
-    const walker = document.createTreeWalker(sourceRef.current, NodeFilter.SHOW_TEXT)
-    while (walker.nextNode()) {
-      const node = walker.currentNode as Text
-      if (node === range.startContainer) {
-        offset += range.startOffset
-        found = true
-        break
-      }
-      offset += node.length
-    }
-    if (!found) offset = 0
-    setSelection({ text, paragraphIndex: paragraphIndexAt(selected.text, offset) })
+    const charStart = textOffsetWithin(sourceRef.current, range.startContainer, range.startOffset) ?? 0
+    const charEnd = textOffsetWithin(sourceRef.current, range.endContainer, range.endOffset) ?? charStart + text.length
+    setSelection({
+      text,
+      paragraphIndex: paragraphIndexAt(selected.text, charStart),
+      charStart,
+      charEnd,
+    })
   }
 
   if (sectionsQuery.isLoading) {
@@ -134,7 +143,9 @@ export function SectionsTab({ paperId }: SectionsTabProps) {
                 onClick={() => setSelectedSection(section)}
                 className={cn(
                   'flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-sm transition',
-                  selectedRow ? 'bg-slate-950 text-white shadow-sm' : 'text-slate-600 hover:bg-white hover:text-slate-950'
+                  selectedRow
+                    ? 'bg-slate-950 text-white shadow-sm'
+                    : 'text-slate-600 hover:bg-white hover:text-slate-950',
                 )}
               >
                 <span>{labelForSection(section)}</span>
@@ -164,14 +175,19 @@ export function SectionsTab({ paperId }: SectionsTabProps) {
             <code>{selected.text}</code>
           </pre>
         ) : (
-          <div className="p-8 text-center text-sm text-slate-400">This section is not present in drafts/sections yet.</div>
+          <div className="p-8 text-center text-sm text-slate-400">
+            This section is not present in drafts/sections yet.
+          </div>
         )}
       </div>
 
       <div className="lg:col-span-2 xl:col-span-1">
         <RegenerateSelectionPanel
+          paperId={paperId}
           sectionName={selectedSection}
+          templateId={templateId}
           selection={selection}
+          onPdfRefreshNeeded={onPdfRefreshNeeded}
           onClear={() => {
             setSelection(null)
             window.getSelection()?.removeAllRanges()

@@ -11,7 +11,15 @@ import { SectionsTab } from './SectionsTab'
 import { TablesTab } from './TablesTab'
 import { ValidationTab } from './ValidationTab'
 
-export const WORKSPACE_TAB_VALUES = ['outline', 'sections', 'figures', 'tables', 'citations', 'validation', 'pdf'] as const
+export const WORKSPACE_TAB_VALUES = [
+  'outline',
+  'sections',
+  'figures',
+  'tables',
+  'citations',
+  'validation',
+  'pdf',
+] as const
 export type WorkspaceTabValue = (typeof WORKSPACE_TAB_VALUES)[number]
 
 interface WorkspaceTabsProps {
@@ -19,6 +27,8 @@ interface WorkspaceTabsProps {
   run: PaperRunDetail
   value: WorkspaceTabValue
   onValueChange: (value: WorkspaceTabValue) => void
+  pdfRefreshKey: number
+  onPdfRefreshNeeded: () => void
 }
 
 interface TabDefinition {
@@ -46,7 +56,16 @@ export function coerceWorkspaceTab(value: string | null | undefined): WorkspaceT
   return value && isWorkspaceTabValue(value) ? value : 'outline'
 }
 
-export function WorkspaceTabs({ paperId, run, value, onValueChange }: WorkspaceTabsProps) {
+export function WorkspaceTabs({
+  paperId,
+  run,
+  value,
+  onValueChange,
+  pdfRefreshKey,
+  onPdfRefreshNeeded,
+}: WorkspaceTabsProps) {
+  const templateId = run.selected_templates[0]
+
   return (
     <Tabs.Root
       value={value}
@@ -56,7 +75,10 @@ export function WorkspaceTabs({ paperId, run, value, onValueChange }: WorkspaceT
       className="overflow-hidden rounded-[1.75rem] border border-slate-200 bg-white shadow-sm"
     >
       <div className="border-b border-slate-100 bg-[radial-gradient(circle_at_top_left,_rgba(14,165,233,0.12),_transparent_34%),linear-gradient(180deg,_#ffffff,_#f8fafc)] p-2">
-        <Tabs.List className="flex gap-1 overflow-x-auto rounded-[1.25rem] bg-white/70 p-1 shadow-inner shadow-slate-200/60" aria-label="Paper workspace tabs">
+        <Tabs.List
+          className="flex gap-1 overflow-x-auto rounded-[1.25rem] bg-white/70 p-1 shadow-inner shadow-slate-200/60"
+          aria-label="Paper workspace tabs"
+        >
           {TABS.map((tab) => {
             const Icon = tab.icon
             return (
@@ -65,7 +87,7 @@ export function WorkspaceTabs({ paperId, run, value, onValueChange }: WorkspaceT
                 value={tab.value}
                 className={cn(
                   'inline-flex shrink-0 items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold text-slate-500 transition data-[state=active]:bg-slate-950 data-[state=active]:text-white data-[state=active]:shadow-sm sm:text-sm',
-                  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-500/20'
+                  'focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-sky-500/20',
                 )}
               >
                 <Icon className="h-4 w-4" />
@@ -80,7 +102,7 @@ export function WorkspaceTabs({ paperId, run, value, onValueChange }: WorkspaceT
         <OutlineTab paperId={paperId} />
       </Tabs.Content>
       <Tabs.Content value="sections" className="p-4 focus:outline-none sm:p-5">
-        <SectionsTab paperId={paperId} />
+        <SectionsTab paperId={paperId} templateId={templateId} onPdfRefreshNeeded={onPdfRefreshNeeded} />
       </Tabs.Content>
       <Tabs.Content value="figures" className="p-4 focus:outline-none sm:p-5">
         <FiguresTab paperId={paperId} />
@@ -95,7 +117,7 @@ export function WorkspaceTabs({ paperId, run, value, onValueChange }: WorkspaceT
         <ValidationTab paperId={paperId} validationSummary={run.validation_summary ?? null} />
       </Tabs.Content>
       <Tabs.Content value="pdf" className="p-4 focus:outline-none sm:p-5">
-        <PdfPreviewTab paperId={paperId} run={run} />
+        <PdfPreviewTab paperId={paperId} run={run} pdfRefreshKey={pdfRefreshKey} />
       </Tabs.Content>
     </Tabs.Root>
   )
