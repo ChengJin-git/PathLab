@@ -1,8 +1,8 @@
 # Backend Prep Plan — Before Frontend Work Starts
 
 > 创建日期：2026-05-06
-> 最后更新：2026-05-06
-> 状态：in_progress
+> 最后更新：2026-05-06（合并 paper/backend-prep-frontend 后：Phase 0 + Phase 1 全部 ✅；§10 重写为当前快照）
+> 状态：in_progress (Phase 2 待开)
 > 配套文档：paper_agent_frontend_design.md
 
 This plan lists the backend work that should land before the frontend paper
@@ -722,24 +722,28 @@ To compress the calendar:
 
 ---
 
-## 10. Historical progress checklist (mirror of §3-§5 status)
+## 10. Progress checklist
 
-Historical checklist kept for handoff context. The current status is summarized in §2.1 and §3.
+Source-of-truth for "is the prep plan done yet?" — update this table as PRs
+merge.
 
-| Item | Status | Evidence (file:line or commit) | Notes |
+| Item | Status | Evidence (file:line or commit / branch) | Notes |
 |---|---|---|---|
-| Pre-Phase 0 ownership transfer | 🟢 done (uncommitted) | `gateway/paper_generation/routes.py` reduced to 16-line proxy; `paper_agent/api/routes.py` owns router; new `tests/gateway_interface/` regression suite (~55+ tests) | Not yet committed; bundles refactor + tests in one stack |
-| 0.1 Verify resolved citations | 🔲 pending | — | Needs Docker-enabled smoke run; can fork from Wave 0 |
-| 0.2 Verify downloadable bundles | 🔲 pending | — | Should reuse `BundleValidationResult` |
-| 1.1 Populate `validation_summary` | 🔲 pending | `api/routes.py:366` still `validation_summary=None` | Wave 2; depends on Wave 1 schema |
-| 1.2 Stage timestamps | 🔲 pending | `pipeline.py` writes only run-level `finished_at`; per-stage `started_at` / `duration_ms` absent | Wave 2; depends on Wave 1 `PaperStageLogEntry` |
-| 1.3 Manifest/artifact contract | 🔲 pending | `PaperManifest.artifact_index: dict[str, Any]` still loose | Wave 1 contract owner |
-| 1.4 Outline + Figure schemas | 🔲 pending | No `OutlineDocument` / `FigureManifest` exported | Wave 1 contract owner |
-| 1.5 Allowlist audit | 🟢 done | `tests/gateway_interface/test_storage.py:test_allowlist_decisions` parametrized over 16 ALLOW + 9 DENY cases, including PHI / inputs/idea.md / drafts/intro_rw_draft / drafts/snapshots / validation guard JSONs | — |
-| 1.6 Single-template policy | 🟢 done | `api/routes.py:238-242` rejects `len != 1`; `tests/gateway_interface/test_routes.py:test_post_papers_rejects_empty_templates` (400) and `:test_post_papers_rejects_multiple_templates` (400 + "exactly one" detail) | — |
-| 2.1 Outline approve gate | 🔲 pending | — | Critical path; split jobs design |
+| Pre-Phase 0 ownership transfer | 🟢 done | `gateway/paper_generation/routes.py` reduced to 16-line proxy; `paper_agent/api/routes.py` owns router; new `tests/gateway_interface/` regression suite (~55+ tests) | Bundled with Phase 1 work in `paper/backend-prep-frontend` |
+| 0.0 Docker compile + bundle smoke | 🟢 done | §3 §0.0 verification run 2026-05-06; `paper/backend-prep-frontend`; both PDFs compiled, no `[?]` markers, no PHI in bundles | Covers 0.1 + 0.2 in one run |
+| 0.1 Verify resolved citations | 🟢 done | §3 §0.0 | Subsumed by 0.0 |
+| 0.2 Verify downloadable bundles | 🟢 done | §3 §0.0 | Subsumed by 0.0 |
+| 1.1 Populate `validation_summary` | 🟢 done | `paper/backend-prep-frontend`; `GET /papers/{id}` aggregates `validation/*_guard.json` + `warnings.md` + `refinement_log.json` | §2.1 |
+| 1.2 Stage timestamps | 🟢 done | `paper/backend-prep-frontend`; entries carry `status` / `started_at` / `finished_at` / `duration_ms` / `error_message`; `ts` kept for compat | §2.1 |
+| 1.3 Manifest/artifact contract | 🟢 done | `paper/backend-prep-frontend`; typed Pydantic models for artifact index + stage log + validation summary | §2.1 |
+| 1.4 Outline + Figure schemas | 🟢 done | `paper/backend-prep-frontend`; `OutlineDocument` + `FigureManifest` exported and validated by writing stages | §2.1 |
+| 1.5 Allowlist audit | 🟢 done | `tests/gateway_interface/test_storage.py:test_allowlist_decisions` (16 ALLOW + 9 DENY parametrized) + `/files` route tests over outline/figures/warnings/PDF/bundle | — |
+| 1.6 Single-template policy | 🟢 done | `api/routes.py:238-242` rejects `len != 1`; `test_post_papers_rejects_empty_templates` + `test_post_papers_rejects_multiple_templates` | — |
+| 2.1 Outline approve gate | 🔲 pending | — | Critical path; split jobs design (§5 §2.1) |
 | 2.2 Async regenerate | 🔲 pending | `regenerate_paper_section` runs synchronously | Worker handler `paper_generation.regenerate_section` to be added |
 | 2.3 Per-stage rerun | 🔲 pending | — | New endpoint + worker handler |
 | 2.4 Cancel | 🔲 pending | — | Depends on cooperative cancel primitive |
 
-Wave 0 status: **2/4 done** (1.5, 1.6). Remaining: 0.1, 0.2 verification smoke tests.
+**Phase 0 + Phase 1 全部完成（已通过 `paper/backend-prep-frontend` 合并到 `paper-agent-v1`）。**
+**Phase 2 全部 pending。**
+**前端 v1.5 read-only 工作面所需的契约已稳定；可立即 fork 前端 worktree。**
