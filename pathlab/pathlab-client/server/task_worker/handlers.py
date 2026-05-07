@@ -129,6 +129,7 @@ async def handle_analysis(descriptor: TaskDescriptor) -> None:
     module_name = str(payload["runner_module"])
     runner_name = str(payload["runner_name"])
     runner_kwargs = _runner_kwargs(payload.get("runner_kwargs"))
+    _ = runner_kwargs.pop("task_id", None)
     fn = analysis_jobs.run_analysis_pipeline(module_name, runner_name)
     await get_task_queue().submit(
         task_id=task_id,

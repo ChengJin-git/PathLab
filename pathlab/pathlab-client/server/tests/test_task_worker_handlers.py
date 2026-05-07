@@ -293,6 +293,44 @@ async def test_analysis_submits_to_queue(mock_queue, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_analysis_allows_runner_kwargs_to_include_task_id(mock_queue, monkeypatch):
+    from task_worker.handlers import handle_analysis
+    from gateway.task_dispatch import build_task_descriptor
+
+    async def fake_runner(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(
+        "task_worker.jobs.analysis.run_analysis_pipeline",
+        lambda _module_name, _runner_name: fake_runner,
+    )
+
+    descriptor = build_task_descriptor(
+        job_id="analysis-1",
+        job_kind="analysis",
+        handler="analysis.task",
+        payload={
+            "task_id": "analysis-1",
+            "runner_module": "gateway.routes.results",
+            "runner_name": "run_analysis_pipeline",
+            "runner_kwargs": {
+                "task_id": "analysis-1",
+                "analysis_id": "analysis-1",
+                "training_task_id": "train-1",
+            },
+        },
+    )
+
+    await handle_analysis(descriptor)
+
+    mock_queue.submit.assert_awaited_once()
+    call_kwargs = mock_queue.submit.await_args.kwargs
+    assert call_kwargs["task_id"] == "analysis-1"
+    assert call_kwargs["analysis_id"] == "analysis-1"
+    assert call_kwargs["training_task_id"] == "train-1"
+
+
+@pytest.mark.asyncio
 async def test_analysis_rejects_unauthorized_runner(mock_queue):
     from task_worker.handlers import handle_analysis
     from gateway.task_dispatch import build_task_descriptor
