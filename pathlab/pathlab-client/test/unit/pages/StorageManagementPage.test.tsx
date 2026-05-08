@@ -10,6 +10,15 @@ const LOCALES = [
 ]
 
 describe('StorageManagementPage i18n completeness', () => {
+  it('has ai_result_bundles in settings.storage labels for all locales', () => {
+    for (const { name, data } of LOCALES) {
+      expect(
+        (data as any).settings?.storage?.labelAIResultBundles,
+        `Missing labelAIResultBundles in ${name} settings.storage`
+      ).toBeDefined()
+    }
+  })
+
   it('has ai_result_bundles in storagePage.categories for all locales', () => {
     for (const { name, data } of LOCALES) {
       expect(

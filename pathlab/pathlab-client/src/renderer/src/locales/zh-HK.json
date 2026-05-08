@@ -794,6 +794,7 @@
       "labelCoordinates": "座標",
       "labelMasks": "遮罩",
       "labelAIResults": "AI 結果",
+      "labelAIResultBundles": "AI 結果",
       "labelFeature": "特徵",
       "labelTrainingData": "訓練資料",
       "labelModels": "模型",

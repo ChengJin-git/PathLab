@@ -794,6 +794,7 @@
       "labelCoordinates": "坐标",
       "labelMasks": "掩膜",
       "labelAIResults": "AI 结果",
+      "labelAIResultBundles": "AI 结果",
       "labelFeature": "特征",
       "labelTrainingData": "训练数据",
       "labelModels": "模型",

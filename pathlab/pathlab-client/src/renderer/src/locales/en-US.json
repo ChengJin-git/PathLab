@@ -794,6 +794,7 @@
       "labelCoordinates": "Coordinates",
       "labelMasks": "Masks",
       "labelAIResults": "AI Results",
+      "labelAIResultBundles": "AI Results",
       "labelFeature": "Feature",
       "labelTrainingData": "Training Data",
       "labelModels": "Models",
