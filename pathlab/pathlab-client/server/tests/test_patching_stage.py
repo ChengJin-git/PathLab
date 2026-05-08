@@ -1,8 +1,61 @@
 import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
+from pathlib import Path
+from importlib import import_module
 
-from backend.ai.schemas.base import TaskStatus
+TaskStatus = import_module("backend.ai.schemas.base").TaskStatus
+
+
+@pytest.mark.asyncio
+async def test_compute_patches_passes_use_otsu_to_segmenter_once():
+    """compute_patches should not pass duplicate use_otsu kwargs to TissueSegmenter."""
+    compute_patches = import_module("backend.preprocessing.main").compute_patches
+
+    mock_segmenter = MagicMock()
+    mock_segmenter.segment_tissue.return_value = (["contour"], [])
+    segmenter_cls = MagicMock(return_value=mock_segmenter)
+    slide = MagicMock(filepath="/tmp/test.svs")
+
+    with (
+        patch("backend.preprocessing.main.get_slide", new_callable=AsyncMock) as get_slide,
+        patch("backend.preprocessing.main.TissueSegmenter", segmenter_cls),
+        patch(
+            "backend.preprocessing.main.get_or_compute_coordinates",
+            return_value=([(1, 2)], Path("/tmp/test.h5")),
+        ),
+        patch("backend.preprocessing.main._force_release_memory"),
+        patch("backend.preprocessing.main.evict_slide"),
+    ):
+        get_slide.return_value = slide
+
+        response = await compute_patches(
+            "wsi_1",
+            level=0,
+            force_recompute=True,
+            seg_level=-1,
+            sthresh=8,
+            mthresh=7,
+            close=4,
+            use_otsu=False,
+            contour_fn="four_pt",
+            use_padding=True,
+            a_t=5,
+            a_h=16,
+            max_n_holes=8,
+            save_mask=False,
+            db=MagicMock(),
+        )
+
+    assert response.status_code == 200
+    segmenter_cls.assert_called_once_with(
+        sthresh=8,
+        mthresh=7,
+        close=4,
+        use_otsu=False,
+        seg_level=-1,
+        filter_params={"a_t": 5, "a_h": 16, "max_n_holes": 8},
+    )
 
 
 @pytest.mark.asyncio
@@ -32,7 +85,7 @@ async def test_run_patching_stage_processes_all_wsis():
             return_value=MagicMock(status=TaskStatus.PATCHING)
         )
 
-        from gateway.pipeline import run_patching_stage
+        run_patching_stage = import_module("gateway.pipeline").run_patching_stage
 
         await run_patching_stage(task_id, wsi_ids, preprocessing_config)
 
@@ -64,7 +117,7 @@ async def test_run_patching_stage_stops_on_cancelled_status():
             return_value=MagicMock(status=TaskStatus.CANCELLED)
         )
 
-        from gateway.pipeline import run_patching_stage
+        run_patching_stage = import_module("gateway.pipeline").run_patching_stage
 
         with pytest.raises(asyncio.CancelledError):
             await run_patching_stage(task_id, wsi_ids, preprocessing_config)
@@ -88,7 +141,7 @@ async def test_run_patching_stage_empty_wsi_ids_returns_early():
         mock_logger.session.return_value.__aexit__ = AsyncMock(return_value=False)
         mock_repo.update_status = AsyncMock()
 
-        from gateway.pipeline import run_patching_stage
+        run_patching_stage = import_module("gateway.pipeline").run_patching_stage
 
         await run_patching_stage("task_empty", [], {})
 
@@ -118,7 +171,7 @@ async def test_run_patching_stage_single_wsi_progress_reaches_33():
             return_value=MagicMock(status=TaskStatus.PATCHING)
         )
 
-        from gateway.pipeline import run_patching_stage
+        run_patching_stage = import_module("gateway.pipeline").run_patching_stage
 
         await run_patching_stage("task_single", ["wsi_only"], {})
 
@@ -164,7 +217,9 @@ async def test_run_patching_then_submit_happy_path():
         ctx.__aexit__ = AsyncMock(return_value=False)
         mock_safe_session.return_value = ctx
 
-        from gateway.pipeline import run_patching_then_submit
+        run_patching_then_submit = import_module(
+            "gateway.pipeline"
+        ).run_patching_then_submit
 
         await run_patching_then_submit(task_id, pipeline_kwargs)
 
@@ -204,7 +259,9 @@ async def test_run_patching_then_submit_cancellation():
         ctx.__aexit__ = AsyncMock(return_value=False)
         mock_safe_session.return_value = ctx
 
-        from gateway.pipeline import run_patching_then_submit
+        run_patching_then_submit = import_module(
+            "gateway.pipeline"
+        ).run_patching_then_submit
 
         with pytest.raises(asyncio.CancelledError):
             await run_patching_then_submit(task_id, pipeline_kwargs)

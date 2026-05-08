@@ -585,7 +585,7 @@ async def compute_patches(
 
     try:
         # Prepare segmentation parameters
-        seg_params = {
+        seg_params: dict[str, Any] = {
             "sthresh": sthresh,
             "mthresh": mthresh,
             "close": close,
@@ -651,7 +651,6 @@ async def compute_patches(
             **seg_params,
             seg_level=seg_level,
             filter_params=filter_params,
-            use_otsu=bool(seg_params.get("use_otsu", False)),
         )
         tissue_contours, hole_contours = await asyncio.to_thread(
             segmenter.segment_tissue, slide
