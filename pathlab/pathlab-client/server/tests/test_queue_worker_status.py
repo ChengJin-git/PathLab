@@ -73,6 +73,7 @@ async def test_queue_status_uses_worker_runtime_snapshot_without_local_queue():
     fake_snapshot = {
         "is_running": True,
         "max_concurrent": 3,
+        "gpu_count": 6,
         "task_timeout": 300,
         "running_count": 2,
         "pending_count": 1,
@@ -107,6 +108,7 @@ async def test_queue_status_uses_worker_runtime_snapshot_without_local_queue():
     data = resp.json()
     assert data["is_running"] is True
     assert data["max_concurrent"] == 3
+    assert data["gpu_count"] == 6
     assert data["task_timeout"] == 300
     assert data["running_count"] == 2
     assert data["pending_count"] == 1
@@ -147,6 +149,7 @@ async def test_queue_status_falls_back_to_heartbeat_when_snapshot_missing():
     assert resp.status_code == 200
     data = resp.json()
     assert data["is_running"] is True
+    assert data["gpu_count"] == 0
     assert data["running_count"] == 0
     assert data["pending_count"] == 0
     assert data["descriptor_processing_count"] == 0
@@ -205,6 +208,7 @@ async def test_queue_status_ignores_stale_snapshot():
     assert resp.status_code == 200
     data = resp.json()
     assert data["is_running"] is True
+    assert data["gpu_count"] == 0
     assert data["running_count"] == 0
     assert data["pending_count"] == 0
     assert data["queue_size"] == 0

@@ -52,6 +52,7 @@ async def get_queue_status(user: User = Depends(require_admin)):
     Returns:
         {
             "max_concurrent": int,       # Maximum concurrent tasks allowed
+            "gpu_count": int,            # Number of GPUs available to the worker
             "running_count": int,        # Number of currently running tasks
             "pending_count": int,        # Number of tasks waiting in queue
             "queue_size": int,           # Total queue size
@@ -64,6 +65,7 @@ async def get_queue_status(user: User = Depends(require_admin)):
     if snapshot is not None and _is_snapshot_fresh(snapshot):
         return {
             "max_concurrent": snapshot.get("max_concurrent") or Config.get_max_concurrent(default=4),
+            "gpu_count": snapshot.get("gpu_count", 0),
             "task_timeout": snapshot.get("task_timeout") or Config.get_task_timeout(),
             "running_count": snapshot.get("running_count", 0),
             "pending_count": snapshot.get("pending_count", 0),
@@ -82,6 +84,7 @@ async def get_queue_status(user: User = Depends(require_admin)):
     fallback = empty_runtime_status(is_running=worker_running)
     return {
         "max_concurrent": Config.get_max_concurrent(default=4),
+        "gpu_count": fallback["gpu_count"],
         "task_timeout": Config.get_task_timeout(),
         "running_count": fallback["running_count"],
         "pending_count": fallback["pending_count"],
