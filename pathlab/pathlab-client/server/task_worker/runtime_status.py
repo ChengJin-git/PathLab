@@ -18,6 +18,10 @@ logger = logging.getLogger("task_worker.runtime_status")
 
 def build_runtime_status_snapshot(queue: Any, *, is_running: bool = True) -> dict[str, Any]:
     max_concurrent = getattr(queue, "max_concurrent", None)
+    try:
+        gpu_count = int(getattr(queue, "gpu_count", 0) or 0)
+    except (TypeError, ValueError):
+        gpu_count = 0
     task_timeout = getattr(queue, "task_timeout", None)
     running_tasks = getattr(queue, "_running_tasks", {})
     pending_tasks = getattr(queue, "_pending_tasks", {})
@@ -30,6 +34,7 @@ def build_runtime_status_snapshot(queue: Any, *, is_running: bool = True) -> dic
     return {
         "is_running": is_running,
         "max_concurrent": max_concurrent,
+        "gpu_count": gpu_count,
         "task_timeout": task_timeout,
         "running_count": len(running_tasks),
         "pending_count": len(pending_tasks),
@@ -50,6 +55,7 @@ def empty_runtime_status(*, is_running: bool) -> dict[str, Any]:
     return {
         "is_running": is_running,
         "max_concurrent": None,
+        "gpu_count": 0,
         "task_timeout": None,
         "running_count": 0,
         "pending_count": 0,

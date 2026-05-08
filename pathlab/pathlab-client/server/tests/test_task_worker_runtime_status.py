@@ -31,6 +31,7 @@ class FakeRedis:
 def test_build_runtime_status_snapshot_full():
     queue = MagicMock()
     queue.max_concurrent = 4
+    queue.gpu_count = 7
     queue.min_vram_mb = 2048.0
     queue.task_timeout = None
     queue._queue = MagicMock()
@@ -49,6 +50,7 @@ def test_build_runtime_status_snapshot_full():
 
     assert snapshot["is_running"] is True
     assert snapshot["max_concurrent"] == 4
+    assert snapshot["gpu_count"] == 7
     assert snapshot["task_timeout"] is None
     assert snapshot["running_count"] == 2
     assert snapshot["pending_count"] == 2
@@ -71,6 +73,7 @@ def test_build_runtime_status_snapshot_missing_attrs():
 
     assert snapshot["is_running"] is False
     assert snapshot["max_concurrent"] is None
+    assert snapshot["gpu_count"] == 0
     assert snapshot["task_timeout"] is None
     assert snapshot["running_count"] == 0
     assert snapshot["pending_count"] == 0
@@ -125,6 +128,7 @@ def test_empty_runtime_status():
 
     assert snapshot["is_running"] is False
     assert snapshot["max_concurrent"] is None
+    assert snapshot["gpu_count"] == 0
     assert snapshot["task_timeout"] is None
     assert snapshot["running_count"] == 0
     assert snapshot["pending_count"] == 0
@@ -147,6 +151,7 @@ async def test_publish_runtime_status():
     fake = FakeRedis()
     queue = MagicMock()
     queue.max_concurrent = 2
+    queue.gpu_count = 5
     queue.task_timeout = None
     queue._queue = MagicMock()
     queue._queue.qsize.return_value = 1
@@ -162,6 +167,7 @@ async def test_publish_runtime_status():
     assert stored["ex"] == RUNTIME_STATUS_TTL_SECONDS
     parsed = json.loads(stored["value"])
     assert parsed["is_running"] is True
+    assert parsed["gpu_count"] == 5
     assert parsed["running_count"] == 1
 
 
