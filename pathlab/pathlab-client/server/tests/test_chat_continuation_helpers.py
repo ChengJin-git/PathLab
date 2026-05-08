@@ -184,6 +184,26 @@ def test_format_chat_dataset_list_prioritizes_query_matches():
     assert "Dataset 1" in rendered
 
 
+def test_prioritize_dataset_lines_matches_compound_dataset_name_in_natural_language_query():
+    dataset_lines = [
+        "  - Lung-MUT-EGFR (CPTAC) (dataset_id=lung_mut_egfr_cptac): 200 files, type=wsi, source=lung",
+    ]
+    dataset_lines.extend(
+        f"  - Filler Dataset {i} (dataset_id=filler_{i}): files"
+        for i in range(1, MAX_DATASETS_IN_CHAT_CONTEXT + 1)
+    )
+    tcga_line = "  - Lung-MUT-EGFR (TCGA) (dataset_id=lung_mut_egfr_tcga): 300 files, type=wsi, source=lung"
+    dataset_lines.append(tcga_line)
+
+    prioritized = _prioritize_dataset_lines_for_query(
+        dataset_lines,
+        "Paste在TCGA上跑一下Lung-MUT-EGFR，尽你最大努力，实现做好的效果",
+    )
+    rendered = _format_chat_dataset_list(prioritized, limit=MAX_DATASETS_IN_CHAT_CONTEXT)
+
+    assert tcga_line in rendered
+
+
 def test_prioritize_dataset_lines_keeps_original_order_without_match():
     dataset_lines = [
         "  - Dataset 1 (dataset_id=d1): files",

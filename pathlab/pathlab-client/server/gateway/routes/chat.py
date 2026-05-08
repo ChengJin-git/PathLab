@@ -253,12 +253,43 @@ def _filter_datasets_by_query(
     return matched
 
 
+def _dataset_line_query_score(line: str, query_text: str) -> int:
+    if not query_text:
+        return 0
+    query_tokens = set(re.findall(r"[a-z0-9]+", query_text.lower()))
+    if not query_tokens:
+        return 0
+
+    id_match = re.search(r"dataset_id=([^\s:)]+)", line)
+    name_match = re.match(r"\s+-\s+(.+?)\s+\(dataset_id=", line)
+    searchable_parts = []
+    if name_match:
+        searchable_parts.append(name_match.group(1))
+    if id_match:
+        searchable_parts.append(id_match.group(1))
+    if not searchable_parts:
+        return 0
+
+    line_tokens = set(re.findall(r"[a-z0-9]+", " ".join(searchable_parts).lower()))
+    return len(query_tokens & line_tokens)
+
+
 def _prioritize_dataset_lines_for_query(
     dataset_lines: list[str], query_text: str
 ) -> list[str]:
     matched_lines = _filter_datasets_by_query(dataset_lines, query_text)
     if not matched_lines:
-        return dataset_lines
+        scored_lines = [
+            (_dataset_line_query_score(line, query_text), index, line)
+            for index, line in enumerate(dataset_lines)
+        ]
+        matched_lines = [line for score, _, line in scored_lines if score > 0]
+        if not matched_lines:
+            return dataset_lines
+        scored_lines.sort(key=lambda item: (-item[0], item[1]))
+        return [line for score, _, line in scored_lines if score > 0] + [
+            line for score, _, line in scored_lines if score <= 0
+        ]
     return matched_lines + [line for line in dataset_lines if line not in matched_lines]
 
 
