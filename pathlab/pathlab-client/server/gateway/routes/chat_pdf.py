@@ -2062,13 +2062,36 @@ async def _parse_pdf_with_pymupdf_in_worker_thread(
 
 
 def _extract_gpu_index_from_device(assigned_device: str | None) -> int | None:
-    """Extract the physical GPU index from strings like ``cuda:1``."""
+    """Extract the CUDA logical GPU index from strings like ``cuda:1``."""
     if not assigned_device:
         return None
     match = re.fullmatch(r"cuda:(\d+)", assigned_device.strip().lower())
     if not match:
         return None
     return int(match.group(1))
+
+
+def _resolve_marker_physical_gpu_index(assigned_device: str | None) -> int | None:
+    logical_index = _extract_gpu_index_from_device(assigned_device)
+    if logical_index is None:
+        return None
+
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "").strip()
+    if not visible_devices:
+        return logical_index
+
+    physical_indices: list[int] = []
+    for token in visible_devices.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            physical_indices.append(int(token))
+        except ValueError:
+            return logical_index
+    if logical_index >= len(physical_indices):
+        return None
+    return physical_indices[logical_index]
 
 
 def _save_marker_rendered_images(
@@ -2215,7 +2238,7 @@ def _run_marker_in_isolated_process(
     physical_gpu_index: int | None = None
     if normalized_device.startswith("cuda"):
         if normalized_device != "cuda":
-            physical_gpu_index = _extract_gpu_index_from_device(accelerator_device)
+            physical_gpu_index = _resolve_marker_physical_gpu_index(accelerator_device)
             if physical_gpu_index is None:
                 raise RuntimeError(
                     f"Invalid assigned GPU device for Marker parse: {accelerator_device}"

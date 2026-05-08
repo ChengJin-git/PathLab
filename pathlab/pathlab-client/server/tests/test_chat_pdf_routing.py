@@ -109,6 +109,12 @@ def test_get_cached_pdf_prefers_high_quality_marker_markdown(tmp_path, monkeypat
     assert parse_method == chat_pdf.PDF_PARSE_METHOD_MARKER
 
 
+def test_marker_gpu_subprocess_translates_visible_logical_index(monkeypatch):
+    monkeypatch.setenv("CUDA_VISIBLE_DEVICES", "0,1,3,4")
+
+    assert chat_pdf._resolve_marker_physical_gpu_index("cuda:2") == 3
+
+
 @pytest.mark.asyncio
 async def test_best_effort_foreground_skips_all_local_marker_paths(monkeypatch):
     calls = {
