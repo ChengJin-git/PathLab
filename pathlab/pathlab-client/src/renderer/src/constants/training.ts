@@ -35,6 +35,8 @@ export const TASK_TYPES = [
 export type TaskType = typeof TASK_TYPES[number]['value']
 export type TaskFamily = 'classification' | 'survival' | 'segmentation'
 export type AggregationLevel = 'file' | 'case'
+export type UploadTaskMode = TaskType | TaskFamily
+export type UploadDataType = 'wsi' | 'patch'
 
 export interface TaskMetadata {
   taskType: TaskType
@@ -123,6 +125,50 @@ export function isSurvivalTask(taskType: string | null | undefined): boolean {
 
 export function isSegmentationTask(taskType: string | null | undefined): boolean {
   return isCanonicalTaskType(taskType) && getTaskFamily(taskType) === 'segmentation'
+}
+
+/** Resolve a canonical TaskType for uploads before the API receives metadata. */
+export interface UploadTaskTypeHints {
+  fileName?: string | null
+  fileSize?: number | null
+  dataType?: UploadDataType | null
+}
+
+export function inferUploadDataType(hints?: UploadTaskTypeHints | string | null): UploadDataType {
+  const normalizedHints: UploadTaskTypeHints = typeof hints === 'string'
+    ? { fileName: hints }
+    : hints ?? {}
+
+  if (normalizedHints.dataType === 'wsi' || normalizedHints.dataType === 'patch') {
+    return normalizedHints.dataType
+  }
+
+  const fileName = normalizedHints.fileName?.toLowerCase() ?? ''
+  const ext = fileName.includes('.') ? fileName.split('.').pop() : undefined
+  if (!ext) return 'wsi'
+
+  if (['jpg', 'jpeg', 'png', 'bmp'].includes(ext)) return 'patch'
+  if (ext === 'tif' || ext === 'tiff') {
+    const sizeThreshold = 32 * 1024 * 1024
+    return (normalizedHints.fileSize ?? 0) >= sizeThreshold ? 'wsi' : 'patch'
+  }
+
+  return 'wsi'
+}
+
+export function resolveUploadTaskType(
+  uploadMode: string | null | undefined,
+  hints?: UploadTaskTypeHints | string | null
+): TaskType {
+  if (isCanonicalTaskType(uploadMode)) return uploadMode
+  if (uploadMode === 'survival') return 'wsi_survival'
+  if (uploadMode === 'segmentation') return 'patch_segmentation'
+
+  const dataType = inferUploadDataType(hints)
+  const canonical = toCanonicalTaskType(uploadMode, dataType)
+  if (canonical) return canonical
+
+  throw new Error(`Unsupported upload task type: ${uploadMode ?? 'empty'}`)
 }
 
 // ============================================================================

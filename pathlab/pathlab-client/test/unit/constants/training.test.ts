@@ -7,6 +7,7 @@ import {
   isSegmentationTask,
   isSurvivalTask,
   toCanonicalTaskType,
+  resolveUploadTaskType,
   type TaskType,
 } from '@renderer/constants/training'
 
@@ -74,5 +75,57 @@ describe('canonical training task taxonomy', () => {
 
   it('normalizes legacy segmentation family to patch_segmentation when data_type is patch', () => {
     expect(toCanonicalTaskType('segmentation', 'patch')).toBe('patch_segmentation')
+  })
+
+  describe('resolveUploadTaskType', () => {
+    it('maps classification + patch image file to patch_classification', () => {
+      expect(resolveUploadTaskType('classification', 'image.jpg')).toBe('patch_classification')
+      expect(resolveUploadTaskType('classification', 'image.jpeg')).toBe('patch_classification')
+      expect(resolveUploadTaskType('classification', 'image.png')).toBe('patch_classification')
+      expect(resolveUploadTaskType('classification', 'image.bmp')).toBe('patch_classification')
+    })
+
+    it('maps classification + tiff by size threshold', () => {
+      expect(resolveUploadTaskType('classification', { fileName: 'small.tif', fileSize: 1024 })).toBe('patch_classification')
+      expect(resolveUploadTaskType('classification', { fileName: 'small.tiff', fileSize: 1024 })).toBe('patch_classification')
+      expect(resolveUploadTaskType('classification', { fileName: 'large.tif', fileSize: 64 * 1024 * 1024 })).toBe('wsi_classification')
+    })
+
+    it('uses explicit data type over filename heuristics', () => {
+      expect(resolveUploadTaskType('classification', { fileName: 'slide.svs', dataType: 'patch' })).toBe('patch_classification')
+      expect(resolveUploadTaskType('classification', { fileName: 'image.jpg', dataType: 'wsi' })).toBe('wsi_classification')
+    })
+
+    it('maps classification + WSI file to wsi_classification', () => {
+      expect(resolveUploadTaskType('classification', { fileName: 'slide.svs' })).toBe('wsi_classification')
+      expect(resolveUploadTaskType('classification', { fileName: 'slide.ndpi' })).toBe('wsi_classification')
+      expect(resolveUploadTaskType('classification', { fileName: 'slide.mrxs' })).toBe('wsi_classification')
+    })
+
+    it('maps survival to wsi_survival regardless of file', () => {
+      expect(resolveUploadTaskType('survival', 'slide.svs')).toBe('wsi_survival')
+      expect(resolveUploadTaskType('survival', 'image.png')).toBe('wsi_survival')
+    })
+
+    it('maps segmentation to patch_segmentation regardless of file', () => {
+      expect(resolveUploadTaskType('segmentation', 'image.png')).toBe('patch_segmentation')
+      expect(resolveUploadTaskType('segmentation', 'slide.svs')).toBe('patch_segmentation')
+    })
+
+    it('passes through canonical task types unchanged', () => {
+      expect(resolveUploadTaskType('wsi_classification', 'anything')).toBe('wsi_classification')
+      expect(resolveUploadTaskType('patch_classification', 'anything')).toBe('patch_classification')
+      expect(resolveUploadTaskType('wsi_survival', 'anything')).toBe('wsi_survival')
+      expect(resolveUploadTaskType('patch_segmentation', 'anything')).toBe('patch_segmentation')
+    })
+
+    it('defaults classification without file hint to wsi_classification', () => {
+      expect(resolveUploadTaskType('classification')).toBe('wsi_classification')
+      expect(resolveUploadTaskType('classification', '')).toBe('wsi_classification')
+    })
+
+    it('rejects unknown task terms instead of defaulting silently', () => {
+      expect(() => resolveUploadTaskType('unknown' as any)).toThrow('Unsupported upload task type')
+    })
   })
 })

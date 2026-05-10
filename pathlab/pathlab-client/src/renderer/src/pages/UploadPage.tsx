@@ -40,6 +40,7 @@ import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCS
 import { ApiError } from '../api/client'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
+import { resolveUploadTaskType } from '../constants/training'
 import { parseCsvMetadata } from '../lib/csvImporter'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../lib/segmentationUploadUtils'
 import { organSources } from '../constants/wsi'
@@ -729,7 +730,7 @@ export default function RegisterPage() {
         file,
         metadata: {
           dataset_id: datasetId ?? undefined,
-          task_type: uploadMode,
+          task_type: resolveUploadTaskType(uploadMode, { fileName: file.name, fileSize: file.size, dataType: currentDataType }),
         }
       }))
       : itemsWithMeta.map(({ item, finalMeta }) => {
@@ -739,6 +740,11 @@ export default function RegisterPage() {
         const matchedSegmentationJson = uploadMode === 'segmentation'
           ? segmentationJsonFiles.get(getSegmentationStem(item.name))
           : undefined
+        const canonicalTaskType = resolveUploadTaskType(uploadMode, {
+          fileName: item.name,
+          fileSize: item.file?.size ?? null,
+          dataType: currentDataType,
+        })
 
         return {
           key: item.key,
@@ -751,7 +757,7 @@ export default function RegisterPage() {
             source_organ: datasetId ? undefined : (resolvedDatasetSource || undefined),
             aggregation_level: datasetId ? undefined : dataLevel,
             is_public: datasetId ? undefined : isPublic,
-            task_type: uploadMode,
+            task_type: canonicalTaskType,
             label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
             case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
             age,
@@ -921,7 +927,7 @@ export default function RegisterPage() {
 
   const handleDownloadTemplate = async () => {
     try {
-      await downloadCSVTemplate(uploadMode)
+      await downloadCSVTemplate(resolveUploadTaskType(uploadMode, { dataType: currentDataType }))
     } catch (e) {
       console.error("Failed to download template", e)
       toastError(e instanceof Error ? e.message : t('uploadPage.failedDownloadTemplate'))

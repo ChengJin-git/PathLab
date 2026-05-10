@@ -10,7 +10,7 @@ import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTask
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 import { Select } from '../ui/select'
 import { organSources, organSourceKeyMap } from '../../constants/wsi'
-import { getTaskFamily, toCanonicalTaskType, type TaskType } from '../../constants/training'
+import { getTaskFamily, resolveUploadTaskType, toCanonicalTaskType, type UploadTaskMode, type TaskType } from '../../constants/training'
 import { collectItemsFromDataTransfer, type CollectionProgressSnapshot, type LocalItem } from '../upload'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
@@ -31,7 +31,7 @@ interface DatasetRegistrationConfig {
   dataset_id?: string
   dataset_name?: string
   source_organ?: string
-  upload_mode?: TaskType
+  upload_mode?: UploadTaskMode
   aggregation_level?: 'file' | 'case'
   initial_view?: 'new' | 'existing'
   submitted_task_id?: string
@@ -77,7 +77,7 @@ export function DatasetRegistrationCard({
   const [datasetSourceSelection, setDatasetSourceSelection] = useState<string>(config?.source_organ || '')
   const [datasetSourceCustom, setDatasetSourceCustom] = useState('')
   const [isPublic, setIsPublic] = useState<boolean>(Boolean(config?.is_public))
-  const canonicalUploadMode = toCanonicalTaskType(config?.upload_mode) || 'wsi_classification'
+  const canonicalUploadMode = resolveUploadTaskType(config?.upload_mode ?? 'classification')
   const isSegmentation = getTaskFamily(canonicalUploadMode) === 'segmentation'
   const [dataLevel, setDataLevel] = useState<'file' | 'case'>(isSegmentation ? 'file' : (config?.aggregation_level || 'file'))
   
@@ -203,7 +203,7 @@ export function DatasetRegistrationCard({
       if (mode === 'existing' && selectedDatasetId) {
         const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
         if (dataset && dataset.task_type) {
-          uploadMode = toCanonicalTaskType(dataset.task_type, dataset.data_type) || canonicalUploadMode
+          uploadMode = toCanonicalTaskType(dataset.task_type, dataset.data_type) || resolveUploadTaskType(config?.upload_mode ?? 'classification', { dataType: dataset.data_type })
         }
       } else {
         uploadMode = canonicalUploadMode
@@ -325,7 +325,7 @@ export function DatasetRegistrationCard({
           file,
           metadata: {
             dataset_id: selectedDatasetId,
-            task_type: canonicalUploadMode,
+            task_type: resolveUploadTaskType(canonicalUploadMode, { fileName: file.name, fileSize: file.size, dataType: 'patch' }),
           }
         }))
         : localItems.map(item => {
@@ -333,21 +333,29 @@ export function DatasetRegistrationCard({
           const matchedSegmentationJson = isSegmentation
             ? segmentationJsonFiles.get(getSegmentationStem(item.name))
             : undefined
+          const selectedDataType = mode === 'existing'
+            ? datasets.find(d => d.dataset_id === selectedDatasetId)?.data_type
+            : undefined
+          const taskType = resolveUploadTaskType(canonicalUploadMode, {
+            fileName: item.name,
+            fileSize: item.file?.size ?? null,
+            dataType: selectedDataType,
+          })
 
           return {
             key: item.key,
             name: item.name,
             file: item.file,
             path: item.path,
-              metadata: {
-                dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
-                dataset_name: mode === 'new' ? newDatasetName : undefined,
-                source_organ: mode === 'new' ? (resolvedDatasetSource || undefined) : undefined,
-                aggregation_level: dataLevel,
-                is_public: mode === 'new' ? isPublic : undefined,
-                task_type: canonicalUploadMode,
-                label: isSegmentation ? undefined : '',
-                case_id: '',
+            metadata: {
+              dataset_id: mode === 'existing' ? selectedDatasetId : undefined,
+              dataset_name: mode === 'new' ? newDatasetName : undefined,
+              source_organ: mode === 'new' ? (resolvedDatasetSource || undefined) : undefined,
+              aggregation_level: dataLevel,
+              is_public: mode === 'new' ? isPublic : undefined,
+              task_type: taskType,
+              label: isSegmentation ? undefined : '',
+              case_id: '',
               age: undefined,
               gender: '',
               event_time: undefined,

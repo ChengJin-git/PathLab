@@ -85,7 +85,7 @@ def _resolve_to_canonical_id(task_type: str | TaskType, data_type: str) -> str:
     data = _normalize_axis(data_type, name="data_type")
 
     if not is_canonical_task_type(task_raw):
-        raise ValueError(f"unsupported canonical task id: {task_raw}")
+        raise ValueError(f"task_type must be one of {CANONICAL_TASK_IDS}, got: {task_raw}")
 
     metadata = get_task_metadata(task_raw)
     if metadata.data_type != data:
