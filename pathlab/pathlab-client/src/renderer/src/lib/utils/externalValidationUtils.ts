@@ -101,8 +101,6 @@ export function getDatasetCompatibilityError(
   const modelIsSegmentation = isSegmentationTask(modelTask.task_type)
   const modelClasses = new Set(normalizeLabels(model.classes || []))
   const modelWsiIds = new Set(modelTask.wsi_ids || [])
-  const modelExtractor = model.feature_extractor || ''
-  const modelEmbedDim = EXTRACTOR_EMBED_DIM[modelExtractor] ?? 0
 
   if (dataset.data_type !== modelDataType) {
     return 'Data type mismatch between source model and target dataset.'
@@ -165,16 +163,6 @@ export function getDatasetCompatibilityError(
     for (const cls of modelClasses) {
       if (!dsLabels.has(cls)) {
         return 'Label sets must exactly match between source model and target dataset.'
-      }
-    }
-  }
-
-  if (modelDataType === 'wsi' && modelExtractor && modelEmbedDim > 0) {
-    const dsExtractors = dataset.available_feature_extractors || []
-    if (dsExtractors.length > 0) {
-      const hasSameDim = dsExtractors.some(e => (EXTRACTOR_EMBED_DIM[e] ?? 0) === modelEmbedDim)
-      if (!hasSameDim) {
-        return 'Feature extractor embedding dimensions do not match.'
       }
     }
   }

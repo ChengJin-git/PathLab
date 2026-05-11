@@ -162,13 +162,13 @@ describe('getDatasetCompatibilityError', () => {
     expect(err).toBeNull()
   })
 
-  it('returns error when WSI extractor embed dims do not match', () => {
+  it('does not reject WSI datasets when only different cached extractor dims are present', () => {
     const err = getDatasetCompatibilityError(
-      makeModel({ feature_extractor: 'uni' }),
+      makeModel({ feature_extractor: 'H-Optimus-0' }),
       makeTask(),
       makeDataset({ available_feature_extractors: ['conch'] })
     )
-    expect(err).toContain('embedding dimensions do not match')
+    expect(err).toBeNull()
   })
 
   it('skips extractor check when dataset has no extractors listed', () => {
