@@ -48,29 +48,6 @@ from .analysis_metrics import (
 logger = logging.getLogger(__name__)
 
 
-EXTRACTOR_EMBED_DIM: Dict[str, int] = {
-    "resnet50": 2048,
-    "vit_l_16": 1024,
-    "conch": 512,
-    "uni": 1024,
-    "uni2": 1536,
-    "virchow": 1280,
-    "virchow2": 1280,
-    "plip": 512,
-    "phikon": 1024,
-    "phikon2": 1024,
-    "patho_clip": 512,
-    "openmidnight": 1536,
-    "conch15": 512,
-    "H-Optimus-1": 1536,
-    "H-Optimus-0": 1536,
-    "mSTAR": 1024,
-    "GPFM": 1024,
-    "SmartCCS": 1024,
-    "SmartCyto": 768,
-}
-
-
 class ExtvalModelInfo(TypedDict):
     data_type: str
     task_type: str
@@ -208,19 +185,6 @@ def check_extval_compatibility(
             if extra:
                 parts.append(f"Dataset labels not in model: {extra}.")
             return " ".join(parts)
-
-    if model_data_type == "wsi":
-        model_extractor = model_info["feature_extractor"]
-        model_embed_dim = EXTRACTOR_EMBED_DIM.get(model_extractor, 0)
-        if model_extractor and model_embed_dim > 0:
-            ds_extractors = dataset_info["feature_extractors"]
-            if ds_extractors:
-                has_same_dim = any(
-                    EXTRACTOR_EMBED_DIM.get(e, 0) == model_embed_dim
-                    for e in ds_extractors
-                )
-                if not has_same_dim:
-                    return "Feature extractor embedding dimensions do not match."
 
     ds_wsi_ids = dataset_info["wsi_ids"]
     if model_info["wsi_ids"] and ds_wsi_ids and (model_info["wsi_ids"] & ds_wsi_ids):

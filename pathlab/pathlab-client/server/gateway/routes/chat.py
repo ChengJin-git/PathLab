@@ -122,7 +122,6 @@ from .external_validation_analysis import (
     check_extval_compatibility,
     ExtvalModelInfo,
     ExtvalDatasetInfo,
-    EXTRACTOR_EMBED_DIM,
 )
 
 router = APIRouter(tags=["Chat & Conversations"])
