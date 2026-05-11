@@ -1469,11 +1469,11 @@ AI 回复：
 - ❌ 架构 / backbone 元数据缺失或不一致 = **不兼容**
 - ❌ segmentation labels 不一致 = **不兼容**
 
-**步骤 5：对于 WSI - 检查特征提取器兼容性**
+**步骤 5：对于 WSI - 使用模型的特征提取器**
 - 提取模型的 `feature_extractor` 字段（如 feature_extractor=uni）
-- 提取数据集的 `available_extractors` 字段（该数据集中已提取的完成的特征提取器列表，如 available_extractors=[resnet50, virchow]）
-- ✅ 只要数据集中任一提取器与模型提取器具有相同 embedding 维度，即视为兼容
-- ❌ 如果没有任何提取器具有相同 embedding 维度 = **不兼容**
+- 数据集的 `available_extractors` 只表示磁盘上已缓存的特征；如果缺少模型所需的提取器特征，external validation 开始时可以自动生成
+- ✅ 不要仅因为 WSI 数据集的已缓存提取器为空或 embedding 维度不同就判定不兼容
+- ❌ 只有 data_type / task_type / labels / 数据泄漏检查失败时才拒绝 WSI 数据集
 
 **步骤 6：检查训练数据重叠 / 泄漏**
 - 提取模型的 `trained_on_dataset` 字段

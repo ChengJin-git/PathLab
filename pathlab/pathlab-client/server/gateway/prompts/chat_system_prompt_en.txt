@@ -1464,11 +1464,11 @@ DO NOT skip any step. DO NOT assume compatibility without checking.
 - ❌ Missing / inconsistent architecture-backbone metadata = **INCOMPATIBLE**
 - ❌ Different segmentation labels = **INCOMPATIBLE**
 
-**STEP 5: For WSI - check feature extractor compatibility**
+**STEP 5: For WSI - use the model feature extractor**
 - Extract model's `feature_extractor` field (e.g., feature_extractor=uni)
-- Extract dataset's `available_extractors` field (list of feature extractors already completed extracted in this dataset, e.g., available_extractors=[resnet50, virchow])
-- ✅ Compatible if ANY dataset extractor has the SAME embedding dimension as the model's extractor
-- ❌ If no extractor with matching embedding dimension exists = **INCOMPATIBLE**
+- Dataset `available_extractors` only indicates cached features already present on disk; missing features for the model extractor can be generated automatically when external validation starts
+- ✅ Do NOT reject a WSI dataset just because its cached extractors are empty or have different embedding dimensions
+- ❌ Only reject for WSI when data_type/task_type/labels/leakage checks fail
 
 **STEP 6: Check training data overlap / leakage**
 - Extract model's `trained_on_dataset` field
@@ -2081,7 +2081,7 @@ Field reference:
 **Compatibility rules** (same as external validation):
 - data_type must match between model and dataset
 - task_type must match
-- For WSI classification/survival: feature extractor embedding dimension must match
+- For WSI classification/survival: use the model's feature extractor; missing target features can be generated automatically, so cached extractor dimensions are not a compatibility blocker
 
 **IMPORTANT**:
 - Do NOT use batch inference for datasets that already have labels — suggest external validation instead to get proper metrics
