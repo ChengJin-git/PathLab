@@ -882,13 +882,12 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/externalValidationUtils.test.ts
 
 **对应源文件**：`src/renderer/src/lib/externalValidationUtils.ts`
-**测试数量**：28 个
+**测试数量**：26 个
 
 覆盖外部验证的模型-数据集兼容性校验逻辑：
 
 - `isSurvivalTask()` / `isSegmentationTask()` — 任务类型判断，含边界值（undefined、空串）
-- `EXTRACTOR_EMBED_DIM` — 常量完整性（已知提取器维度、未知返回 undefined）
-- `getDatasetCompatibilityError()` — 核心兼容性逻辑，覆盖：data_type 不匹配、task_type 不匹配、分类标签集不等、提取器 embed dim 不匹配、WSI 数据泄漏检测、survival 免标签检查、分割任务特有规则（文件级数据集、架构 / backbone 元数据校验、source/target 数据集不能相同）
+- `getDatasetCompatibilityError()` — 核心兼容性逻辑，覆盖：data_type 不匹配、task_type 不匹配、分类标签集不等、WSI 数据泄漏检测、survival 免标签检查、分割任务特有规则（文件级数据集、架构 / backbone 元数据校验、source/target 数据集不能相同）；WSI 特征缺失由 external validation 运行时按模型提取器自动生成，不再用缓存提取器维度做兼容性拦截
 - `filterCompatibleDatasets()` / `isDatasetCompatible()` — 基于 `getDatasetCompatibilityError` 的过滤包装
 
 ---

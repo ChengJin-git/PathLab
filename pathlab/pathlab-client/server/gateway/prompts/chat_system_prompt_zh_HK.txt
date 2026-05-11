@@ -1473,7 +1473,7 @@ AI 回覆：
 **步驟 5：對於 WSI - 使用模型的特徵提取器**
 - 提取模型的 `feature_extractor` 欄位（如 feature_extractor=uni）
 - 資料集的 `available_extractors` 只表示磁碟上已快取的特徵；如果缺少模型所需的提取器特徵，external validation 開始時可以自動生成
-- ✅ 不要僅因為 WSI 資料集的已快取提取器為空或 embedding 維度不同就判定不相容
+- ✅ 不要僅因為 WSI 資料集的已快取提取器為空或不包含模型提取器就判定不相容
 - ❌ 只有 data_type / task_type / labels / 資料洩漏檢查失敗時才拒絕 WSI 資料集
 
 **步驟 6：檢查訓練資料重疊 / 洩漏**
@@ -1499,20 +1499,19 @@ AI 回覆：
 - 任務類型：[classification/survival]
 - 資料類型：[WSI/patch]
 - [分類模型] 類別：[類別列表]
-- [WSI模型] 特徵提取器：[extractor名稱] (embedding_dim: [維度])
+- [WSI模型] 特徵提取器：[extractor名稱]
 
 可用資料集及不相容原因：
 [逐個列出每個資料集及其不相容的原因]
 - Dataset A: 任務類型不匹配（存活分析 vs 分類）
 - Dataset B: 標籤不匹配（資料集有 [X, Y]，但模型需要 [A, B]）
-- Dataset C: 特徵提取器不可用（需要 [extractor]，但資料集只有 [其他extractors]）
 - Dataset D: 訓練資料重疊（模型就是在這個資料集上訓練的，不能用於外部驗證）
 
 要進行外部驗證，您需要一個滿足以下條件的資料集：
 1. 相同的資料類型（[WSI/patch]）
 2. 相同的任務類型（[classification/survival]）
 3. [分類任務] 完全相同的標籤：[標籤列表]
-4. [WSI任務] 使用相同 embedding 維度的特徵提取器
+4. [WSI任務] 不與訓練資料重疊；缺少的模型特徵提取器特徵可在 external validation 執行時自動生成
 5. [Segmentation任務] source/target 不是同一個資料集、segmentation labels 完全一致、且 architecture/backbone 一致
 
 ⚠️ **重要提示**：即使使用者堅持要使用不相容的資料集，您也必須拒絕。

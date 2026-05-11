@@ -10,33 +10,6 @@ import type { ValidationDataset } from '../../api/analysis'
 import { isSegmentationTask as isCanonicalSegmentationTask, isSurvivalTask as isCanonicalSurvivalTask } from '../../constants/training'
 
 /**
- * Feature extractor name → embedding dimension mapping.
- * Used for WSI-level external validation compatibility check.
- */
-export const EXTRACTOR_EMBED_DIM: Record<string, number> = {
-  resnet50: 2048,
-  vit_l_16: 1024,
-  conch: 512,
-  uni: 1024,
-  uni2: 1536,
-  virchow: 1280,
-  virchow2: 1280,
-  plip: 512,
-  phikon: 1024,
-  phikon2: 1024,
-  patho_clip: 512,
-  openmidnight: 1536,
-  conch15: 512,
-  'H-Optimus-1': 1536,
-  'H-Optimus-0': 1536,
-  mSTAR: 1024,
-  GPFM: 1024,
-  SmartCCS: 1024,
-  SmartCyto: 768,
-  KRONOS: 384,
-}
-
-/**
  * Helper to determine if a task type is survival
  */
 export function isSurvivalTask(taskType: string | undefined): boolean {
@@ -183,8 +156,7 @@ export function getDatasetCompatibilityError(
  * 3. For classification: label sets must match exactly
  * 4. For segmentation: source/target datasets must differ, architecture metadata must be consistent,
  *    segmentation labels must match exactly, and WSIs must not overlap
- * 5. For WSI: feature extractor embedding dimensions must match
- * 6. No WSI overlap with training data (data leakage prevention)
+ * 5. No WSI overlap with training data (data leakage prevention)
  * 
  * @param model - The trained model to validate against
  * @param modelTask - The training task metadata for the model

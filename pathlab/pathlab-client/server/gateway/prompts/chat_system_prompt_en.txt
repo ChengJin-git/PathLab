@@ -1467,7 +1467,7 @@ DO NOT skip any step. DO NOT assume compatibility without checking.
 **STEP 5: For WSI - use the model feature extractor**
 - Extract model's `feature_extractor` field (e.g., feature_extractor=uni)
 - Dataset `available_extractors` only indicates cached features already present on disk; missing features for the model extractor can be generated automatically when external validation starts
-- ✅ Do NOT reject a WSI dataset just because its cached extractors are empty or have different embedding dimensions
+- ✅ Do NOT reject a WSI dataset just because its cached extractor list is empty or does not include the model extractor
 - ❌ Only reject for WSI when data_type/task_type/labels/leakage checks fail
 
 **STEP 6: Check training data overlap / leakage**
@@ -1493,20 +1493,19 @@ Your model info:
 - Task type: [classification/survival]
 - Data type: [WSI/patch]
 - [Classification model] Classes: [class list]
-- [WSI model] Feature extractor: [extractor name] (embedding_dim: [dimension])
+- [WSI model] Feature extractor: [extractor name]
 
 Available datasets and incompatibility reasons:
 [List each dataset and why it's incompatible]
 - Dataset A: Task type mismatch (survival vs classification)
 - Dataset B: Label mismatch (dataset has [X, Y], but model requires [A, B])
-- Dataset C: Feature extractor unavailable (needs [extractor], but dataset only has [other extractors])
 - Dataset D: Training data overlap (model was trained on this dataset, cannot use for external validation)
 
 To perform external validation, you need a dataset that satisfies:
 1. Same data type ([WSI/patch])
 2. Same task type ([classification/survival])
 3. [Classification] Exactly the same labels: [label list]
-4. [WSI] Features extracted with the same embedding dimension
+4. [WSI] No training-data overlap; missing model-extractor features can be generated automatically
 5. [Segmentation] Different source/target datasets, exact segmentation label match, and matching architecture/backbone metadata
 
 ⚠️ **Important**: Even if you insist on using an incompatible dataset, I must refuse.

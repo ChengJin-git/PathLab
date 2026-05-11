@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   isSurvivalTask,
   isSegmentationTask,
-  EXTRACTOR_EMBED_DIM,
   getDatasetCompatibilityError,
   filterCompatibleDatasets,
   isDatasetCompatible,
@@ -33,27 +32,6 @@ describe('isSegmentationTask', () => {
   it('returns true for "patch_segmentation"', () => expect(isSegmentationTask('patch_segmentation')).toBe(true))
   it('returns false for classification', () => expect(isSegmentationTask('classification')).toBe(false))
   it('returns false for undefined', () => expect(isSegmentationTask(undefined)).toBe(false))
-})
-
-// ---------------------------------------------------------------------------
-// EXTRACTOR_EMBED_DIM
-// ---------------------------------------------------------------------------
-
-describe('EXTRACTOR_EMBED_DIM', () => {
-  it('contains known extractors with correct dimensions', () => {
-    expect(EXTRACTOR_EMBED_DIM['uni']).toBe(1024)
-    expect(EXTRACTOR_EMBED_DIM['conch']).toBe(512)
-    expect(EXTRACTOR_EMBED_DIM['virchow']).toBe(1280)
-    expect(EXTRACTOR_EMBED_DIM['resnet50']).toBe(2048)
-  })
-
-  it('returns undefined for unknown extractors', () => {
-    expect(EXTRACTOR_EMBED_DIM['unknown_extractor']).toBeUndefined()
-  })
-
-  it('has at least 10 entries', () => {
-    expect(Object.keys(EXTRACTOR_EMBED_DIM).length).toBeGreaterThanOrEqual(10)
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -162,7 +140,7 @@ describe('getDatasetCompatibilityError', () => {
     expect(err).toBeNull()
   })
 
-  it('does not reject WSI datasets when only different cached extractor dims are present', () => {
+  it('does not reject WSI datasets based on cached extractors', () => {
     const err = getDatasetCompatibilityError(
       makeModel({ feature_extractor: 'H-Optimus-0' }),
       makeTask(),
@@ -171,7 +149,7 @@ describe('getDatasetCompatibilityError', () => {
     expect(err).toBeNull()
   })
 
-  it('skips extractor check when dataset has no extractors listed', () => {
+  it('allows WSI datasets without cached extractors', () => {
     const err = getDatasetCompatibilityError(
       makeModel({ feature_extractor: 'uni' }),
       makeTask(),
