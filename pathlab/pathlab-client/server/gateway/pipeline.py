@@ -40,6 +40,8 @@ _GPU_VRAM_REPROBE_TIMEOUT_SECS = float(
     os.getenv("GPU_VRAM_REPROBE_TIMEOUT_SECS", "1800")
 )
 _GPU_VRAM_REPROBE_POLL_SECS = 10.0
+_DEFAULT_MODEL_VRAM_MB = 1000.0
+_BATCH_BUFFER_MB = 50.0
 
 
 def _get_gpu_utils_module():
@@ -48,6 +50,29 @@ def _get_gpu_utils_module():
 
 def _get_results_route_module():
     return import_module("gateway.routes.results")
+
+
+def _estimate_stage_vram_mb(model_name: str, batch_size: int | None = None) -> float:
+    try:
+        estimates = import_module(
+            "backend.ai.utils.vram_guard"
+        ).MODEL_SIZE_ESTIMATES_MB
+    except Exception:
+        estimates = {}
+    normalized_model = str(model_name or "").strip().lower()
+    model_mb = _DEFAULT_MODEL_VRAM_MB
+    for estimate_name, estimate_mb in estimates.items():
+        if str(estimate_name).strip().lower() == normalized_model:
+            model_mb = float(estimate_mb)
+            break
+    try:
+        bounded_batch_size = max(1, int(batch_size if batch_size is not None else 64))
+    except (TypeError, ValueError):
+        bounded_batch_size = 64
+    return max(
+        float(Config.DEFAULT_MIN_VRAM_MB),
+        model_mb + float(Config.MIN_INFERENCE_OVERHEAD_MB) + bounded_batch_size * _BATCH_BUFFER_MB,
+    )
 
 
 def _training_task_family(training_task_type: str) -> str:
@@ -880,6 +905,7 @@ async def run_training_pipeline(
             )
 
         task_family = _training_task_family(training_task_type)
+        from .task_queue import get_task_queue
 
         # For patch-level tasks, route based on training_task_type
         if data_type == "patch":
@@ -971,44 +997,54 @@ async def run_training_pipeline(
                         db, task_id, TaskStatus.TRAINING, progress=_seg_start_progress
                     )
 
-                await _ensure_gpu_vram_for_step(
-                    assigned_device, "patch_segmentation", logger_manager
-                )
-                _decoder_type = (
-                    architecture.replace("_decoder", "")
-                    if architecture.endswith("_decoder")
-                    else None
-                )
-                _seg_payload: dict[str, Any] = {
-                    "task_id": task_id,
-                    "architecture": architecture,
-                    "backbone": backbone,
-                    "loss_names": loss_names,
-                    "loss_weights": loss_weights,
-                    "epochs": epochs,
-                    "lr": lr,
-                    "batch_size": batch_size,
-                    "optimizer": optimizer,
-                    "early_stopping_patience": early_stopping_patience,
-                    "device": assigned_device,
-                    "seed": seed,
-                    "num_classes": num_classes,
-                }
-                if _decoder_type is not None:
-                    _seg_payload["decoder_type"] = _decoder_type
-                await _call_ai_service(
-                    logger_manager=logger_manager,
+                task_queue = get_task_queue()
+                segmentation_device = await task_queue.acquire_gpu_stage(
                     task_id=task_id,
-                    endpoint=f"{AI_SERVICE_URL}/api/ai/training/patch_segmentation",
-                    payload=_seg_payload,
-                    operation_name="patch segmentation training",
+                    stage="patch_segmentation",
+                    required_vram_mb=_estimate_stage_vram_mb(backbone, batch_size),
                 )
+                assigned_device = segmentation_device
+                try:
+                    await _ensure_gpu_vram_for_step(
+                        segmentation_device, "patch_segmentation", logger_manager
+                    )
+                    _decoder_type = (
+                        architecture.replace("_decoder", "")
+                        if architecture.endswith("_decoder")
+                        else None
+                    )
+                    _seg_payload: dict[str, Any] = {
+                        "task_id": task_id,
+                        "architecture": architecture,
+                        "backbone": backbone,
+                        "loss_names": loss_names,
+                        "loss_weights": loss_weights,
+                        "epochs": epochs,
+                        "lr": lr,
+                        "batch_size": batch_size,
+                        "optimizer": optimizer,
+                        "early_stopping_patience": early_stopping_patience,
+                        "device": segmentation_device,
+                        "seed": seed,
+                        "num_classes": num_classes,
+                    }
+                    if _decoder_type is not None:
+                        _seg_payload["decoder_type"] = _decoder_type
+                    await _call_ai_service(
+                        logger_manager=logger_manager,
+                        task_id=task_id,
+                        endpoint=f"{AI_SERVICE_URL}/api/ai/training/patch_segmentation",
+                        payload=_seg_payload,
+                        operation_name="patch segmentation training",
+                    )
 
-                await _generate_patch_segmentation_visualizations(
-                    logger_manager=logger_manager,
-                    task_id=task_id,
-                    assigned_device=assigned_device,
-                )
+                    await _generate_patch_segmentation_visualizations(
+                        logger_manager=logger_manager,
+                        task_id=task_id,
+                        assigned_device=segmentation_device,
+                    )
+                finally:
+                    task_queue.release_gpu_stage(task_id, "patch_segmentation")
 
                 async with logger_manager.session() as (logger, db):
                     await logger.info(
@@ -1065,29 +1101,39 @@ async def run_training_pipeline(
                     db, task_id, TaskStatus.TRAINING, progress=_patch_start_progress
                 )
 
-            await _ensure_gpu_vram_for_step(
-                assigned_device, "patch_classification", logger_manager
-            )
-            await _call_ai_service(
-                logger_manager=logger_manager,
+            task_queue = get_task_queue()
+            patch_device = await task_queue.acquire_gpu_stage(
                 task_id=task_id,
-                endpoint=f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
-                payload={
-                    "task_id": task_id,
-                    "epochs": epochs,
-                    "lr": lr,
-                    "feature_extractor": feature_extractor,
-                    "classifier": classifier,
-                    "batch_size": batch_size,
-                    "huggingface_token": huggingface_token or "",
-                    "optimizer": optimizer,
-                    "auto_balance": auto_balance,
-                    "early_stopping_patience": early_stopping_patience,
-                    "device": assigned_device,
-                    "seed": seed,
-                },
-                operation_name="patch classification training",
+                stage="patch_classification",
+                required_vram_mb=_estimate_stage_vram_mb(feature_extractor, batch_size),
             )
+            assigned_device = patch_device
+            try:
+                await _ensure_gpu_vram_for_step(
+                    patch_device, "patch_classification", logger_manager
+                )
+                await _call_ai_service(
+                    logger_manager=logger_manager,
+                    task_id=task_id,
+                    endpoint=f"{AI_SERVICE_URL}/api/ai/training/patch_classification",
+                    payload={
+                        "task_id": task_id,
+                        "epochs": epochs,
+                        "lr": lr,
+                        "feature_extractor": feature_extractor,
+                        "classifier": classifier,
+                        "batch_size": batch_size,
+                        "huggingface_token": huggingface_token or "",
+                        "optimizer": optimizer,
+                        "auto_balance": auto_balance,
+                        "early_stopping_patience": early_stopping_patience,
+                        "device": patch_device,
+                        "seed": seed,
+                    },
+                    operation_name="patch classification training",
+                )
+            finally:
+                task_queue.release_gpu_stage(task_id, "patch_classification")
 
             async with logger_manager.session() as (logger, db):
                 await logger.info(
@@ -1123,25 +1169,36 @@ async def run_training_pipeline(
                 f"Calling AI service for feature extraction (using {feature_extractor})"
             )
 
-        await _ensure_gpu_vram_for_step(
-            assigned_device, "feature_extraction", logger_manager
-        )
-        await _call_ai_service(
-            logger_manager=logger_manager,
+        task_queue = get_task_queue()
+        feature_device = await task_queue.acquire_gpu_stage(
             task_id=task_id,
-            endpoint=f"{AI_SERVICE_URL}/api/ai/training/extract_features",
-            payload={
-                "task_id": task_id,
-                "wsi_ids": wsi_ids,
-                "feature_extractor": feature_extractor,
-                "batch_size": feature_batch_size,
-                "force_recompute": False,
-                "huggingface_token": huggingface_token or "",
-                "preprocessing_config": preprocessing_config,
-                "device": assigned_device,
-            },
-            operation_name="feature extraction",
+            stage="feature_extraction",
+            required_vram_mb=_estimate_stage_vram_mb(
+                feature_extractor, feature_batch_size
+            ),
         )
+        try:
+            await _ensure_gpu_vram_for_step(
+                feature_device, "feature_extraction", logger_manager
+            )
+            await _call_ai_service(
+                logger_manager=logger_manager,
+                task_id=task_id,
+                endpoint=f"{AI_SERVICE_URL}/api/ai/training/extract_features",
+                payload={
+                    "task_id": task_id,
+                    "wsi_ids": wsi_ids,
+                    "feature_extractor": feature_extractor,
+                    "batch_size": feature_batch_size,
+                    "force_recompute": False,
+                    "huggingface_token": huggingface_token or "",
+                    "preprocessing_config": preprocessing_config,
+                    "device": feature_device,
+                },
+                operation_name="feature extraction",
+            )
+        finally:
+            task_queue.release_gpu_stage(task_id, "feature_extraction")
 
         async with logger_manager.session() as (logger, db):
             await logger.info("Feature extraction completed for all WSI")
@@ -1191,14 +1248,28 @@ async def run_training_pipeline(
                 "seed": seed,
             }
 
-        await _ensure_gpu_vram_for_step(assigned_device, "wsi_training", logger_manager)
-        await _call_ai_service(
-            logger_manager=logger_manager,
+        training_device = await task_queue.acquire_gpu_stage(
             task_id=task_id,
-            endpoint=endpoint,
-            payload=payload,
-            operation_name="WSI training",
+            stage="wsi_training",
+            required_vram_mb=_estimate_stage_vram_mb(
+                feature_extractor, model_config.get("batch_size")
+            ),
         )
+        payload["device"] = training_device
+        assigned_device = training_device
+        try:
+            await _ensure_gpu_vram_for_step(
+                training_device, "wsi_training", logger_manager
+            )
+            await _call_ai_service(
+                logger_manager=logger_manager,
+                task_id=task_id,
+                endpoint=endpoint,
+                payload=payload,
+                operation_name="WSI training",
+            )
+        finally:
+            task_queue.release_gpu_stage(task_id, "wsi_training")
 
         async with logger_manager.session() as (logger, db):
             await logger.info("Training pipeline completed successfully")

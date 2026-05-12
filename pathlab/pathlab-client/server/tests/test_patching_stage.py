@@ -231,6 +231,162 @@ async def test_run_patching_then_submit_happy_path():
 
 
 @pytest.mark.asyncio
+async def test_run_training_pipeline_reselects_gpu_for_wsi_feature_and_training_stages():
+    """WSI feature extraction and MIL training each acquire a fresh global GPU stage."""
+    pipeline = import_module("gateway.pipeline")
+    mock_queue = MagicMock()
+    mock_queue.acquire_gpu_stage = AsyncMock(side_effect=["cuda:0", "cuda:1"])
+    mock_queue.release_gpu_stage = MagicMock()
+
+    with (
+        patch("gateway.task_queue.get_task_queue", return_value=mock_queue),
+        patch("gateway.pipeline._call_ai_service", new_callable=AsyncMock) as mock_call_ai,
+        patch("gateway.pipeline._ensure_gpu_vram_for_step", new_callable=AsyncMock),
+        patch("gateway.pipeline.ScopedLogger") as mock_logger_cls,
+    ):
+        mock_logger = MagicMock()
+        mock_logger_cls.return_value = mock_logger
+        mock_logger.session.return_value.__aenter__ = AsyncMock(
+            return_value=(AsyncMock(), AsyncMock())
+        )
+        mock_logger.session.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await pipeline.run_training_pipeline(
+            task_id="task_wsi_stage",
+            data_type="wsi",
+            wsi_ids=["wsi_1"],
+            preprocessing_config={"feature_extractor": "resnet50"},
+            model_config={"aggregator": "abmil"},
+            training_task_type="wsi_classification",
+            assigned_device="cuda:6",
+            patching_complete=True,
+        )
+
+    stage_calls = mock_queue.acquire_gpu_stage.await_args_list
+    assert [call.kwargs["stage"] for call in stage_calls] == [
+        "feature_extraction",
+        "wsi_training",
+    ]
+    feature_payload = mock_call_ai.await_args_list[0].kwargs["payload"]
+    training_payload = mock_call_ai.await_args_list[1].kwargs["payload"]
+    assert feature_payload["device"] == "cuda:0"
+    assert training_payload["device"] == "cuda:1"
+    assert mock_queue.release_gpu_stage.call_args_list[0].args == (
+        "task_wsi_stage",
+        "feature_extraction",
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_training_pipeline_reselects_gpu_for_patch_classification_stage():
+    """Patch classification training acquires a fresh global GPU stage."""
+    pipeline = import_module("gateway.pipeline")
+    mock_queue = MagicMock()
+    mock_queue.acquire_gpu_stage = AsyncMock(return_value="cuda:3")
+    mock_queue.release_gpu_stage = MagicMock()
+
+    with (
+        patch("gateway.task_queue.get_task_queue", return_value=mock_queue),
+        patch("gateway.pipeline._call_ai_service", new_callable=AsyncMock) as mock_call_ai,
+        patch("gateway.pipeline._ensure_gpu_vram_for_step", new_callable=AsyncMock),
+        patch("gateway.pipeline.ScopedLogger") as mock_logger_cls,
+        patch("gateway.pipeline.TrainingTaskRepository") as mock_repo,
+    ):
+        mock_logger = MagicMock()
+        mock_logger_cls.return_value = mock_logger
+        mock_logger.session.return_value.__aenter__ = AsyncMock(
+            return_value=(AsyncMock(), AsyncMock())
+        )
+        mock_logger.session.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_repo.get_by_id = AsyncMock(return_value=MagicMock(status=TaskStatus.TRAINING, progress=50))
+        mock_repo.update_status = AsyncMock()
+
+        await pipeline.run_training_pipeline(
+            task_id="task_patch_cls",
+            data_type="patch",
+            wsi_ids=["patch_1"],
+            preprocessing_config={"feature_extractor": "resnet50"},
+            model_config={"classifier": "linear", "batch_size": 32},
+            training_task_type="patch_classification",
+            assigned_device="cuda:6",
+        )
+
+    mock_queue.acquire_gpu_stage.assert_awaited_once()
+    acquire_call = mock_queue.acquire_gpu_stage.await_args
+    assert acquire_call.kwargs["stage"] == "patch_classification"
+    assert mock_call_ai.await_args.kwargs["payload"]["device"] == "cuda:3"
+    mock_queue.release_gpu_stage.assert_called_once_with(
+        "task_patch_cls",
+        "patch_classification",
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_training_pipeline_reselects_gpu_for_patch_segmentation_stage():
+    """Patch segmentation training acquires a fresh global GPU stage."""
+    pipeline = import_module("gateway.pipeline")
+    mock_queue = MagicMock()
+    mock_queue.acquire_gpu_stage = AsyncMock(return_value="cuda:4")
+    mock_queue.release_gpu_stage = MagicMock()
+
+    segmentation_dataset = {
+        "train": {"annotations_path": "/tmp/train.json"},
+        "val": {"annotations_path": "/tmp/val.json"},
+        "test": {"annotations_path": "/tmp/test.json"},
+    }
+
+    with (
+        patch("gateway.task_queue.get_task_queue", return_value=mock_queue),
+        patch("gateway.pipeline._call_ai_service", new_callable=AsyncMock) as mock_call_ai,
+        patch("gateway.pipeline._ensure_gpu_vram_for_step", new_callable=AsyncMock),
+        patch(
+            "gateway.pipeline._load_segmentation_training_dataset_inputs",
+            new_callable=AsyncMock,
+            return_value=([{"wsi_id": "patch_1", "dataset_id": "ds_1", "wsi_path": "/tmp/p1.png"}], [{"images": [1]}], {"train": ["patch_1"], "val": [], "test": []}),
+        ),
+        patch(
+            "gateway.pipeline._prepare_segmentation_training_dataset_async",
+            new_callable=AsyncMock,
+            return_value=(segmentation_dataset, 2),
+        ),
+        patch(
+            "gateway.pipeline._generate_patch_segmentation_visualizations",
+            new_callable=AsyncMock,
+        ),
+        patch("gateway.pipeline.ScopedLogger") as mock_logger_cls,
+        patch("gateway.pipeline.TrainingTaskRepository") as mock_repo,
+    ):
+        mock_logger = MagicMock()
+        mock_logger_cls.return_value = mock_logger
+        mock_logger.session.return_value.__aenter__ = AsyncMock(
+            return_value=(AsyncMock(), AsyncMock())
+        )
+        mock_logger.session.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_repo.get_by_id = AsyncMock(return_value=MagicMock(status=TaskStatus.TRAINING, progress=50))
+        mock_repo.update_status = AsyncMock()
+        mock_repo.update_preprocessing_config = AsyncMock()
+
+        await pipeline.run_training_pipeline(
+            task_id="task_patch_seg",
+            data_type="patch",
+            wsi_ids=["patch_1"],
+            preprocessing_config={"split_config": {"seed": 7}},
+            model_config={"architecture": "unet", "backbone": "resnet50", "batch_size": 8},
+            training_task_type="patch_segmentation",
+            assigned_device="cuda:6",
+        )
+
+    mock_queue.acquire_gpu_stage.assert_awaited_once()
+    acquire_call = mock_queue.acquire_gpu_stage.await_args
+    assert acquire_call.kwargs["stage"] == "patch_segmentation"
+    assert mock_call_ai.await_args.kwargs["payload"]["device"] == "cuda:4"
+    mock_queue.release_gpu_stage.assert_called_once_with(
+        "task_patch_seg",
+        "patch_segmentation",
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_patching_then_submit_cancellation():
     """On CancelledError during patching: deregisters from queue manager and re-raises."""
     task_id = "test_cancel"
