@@ -160,6 +160,178 @@ def _extval_task_dict():
     }
 
 
+def _gpu_stage_snapshot():
+    return {
+        "task_123:feature_extraction": {
+            "task_id": "task_123",
+            "stage": "feature_extraction",
+            "state": "waiting",
+            "gpu": 2,
+            "device": "cuda:2",
+            "required_vram_mb": 6700.0,
+            "effective_free_mb": 4200.0,
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_training_list_attaches_gpu_stage_detail(monkeypatch):
+    from gateway.routes import training as training_routes
+
+    task = SimpleNamespace(
+        task_id="task_123",
+        to_dict=lambda: {
+            "task_id": "task_123",
+            "task_name": "WSI train",
+            "task_type": "wsi_classification",
+            "status": "training",
+            "progress": 25,
+            "model_config": {},
+        },
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_all",
+        lambda *args, **kwargs: _async_value([task]),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "count",
+        lambda *args, **kwargs: _async_value(1),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_status_counts",
+        lambda *args, **kwargs: _async_value({}),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_wsi_counts_batch",
+        lambda *args, **kwargs: _async_value({"task_123": 3}),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_source_dataset_ids_batch",
+        lambda *args, **kwargs: _async_value({}),
+    )
+    monkeypatch.setattr(
+        "backend.common.progress_store.get_all_progress",
+        lambda: _async_value({}),
+    )
+    monkeypatch.setattr(
+        training_routes,
+        "get_worker_runtime_snapshot",
+        lambda: _async_value({"gpu_stage_details": _gpu_stage_snapshot()}),
+    )
+
+    response = await training_routes.list_training_tasks(
+        page=1,
+        page_size=10,
+        search=None,
+        status_filter="all",
+        sort_by="updated",
+        user=SimpleNamespace(is_admin=lambda: False),
+        user_id_filter="user_1",
+        db=SimpleNamespace(),
+    )
+
+    assert response["items"][0]["gpu_stage_detail"] == _gpu_stage_snapshot()["task_123:feature_extraction"]
+
+
+@pytest.mark.asyncio
+async def test_training_detail_attaches_gpu_stage_detail(monkeypatch):
+    from gateway.routes import training as training_routes
+
+    task = SimpleNamespace(
+        task_id="task_123",
+        user_id="user_1",
+        model_config={},
+        to_dict=lambda: {
+            "task_id": "task_123",
+            "task_name": "WSI train",
+            "task_type": "wsi_classification",
+            "status": "training",
+            "progress": 25,
+            "model_config": {},
+        },
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_by_id",
+        lambda *args, **kwargs: _async_value(task),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_wsi_ids",
+        lambda *args, **kwargs: _async_value([]),
+    )
+    monkeypatch.setattr(
+        "backend.common.progress_store.get_progress",
+        lambda _task_id: _async_value(None),
+    )
+    monkeypatch.setattr(
+        training_routes,
+        "get_worker_runtime_snapshot",
+        lambda: _async_value({"gpu_stage_details": _gpu_stage_snapshot()}),
+    )
+
+    response = await training_routes.get_training_task(
+        "task_123",
+        user=SimpleNamespace(id="user_1", is_admin=lambda: False),
+        db=SimpleNamespace(),
+    )
+
+    assert response["gpu_stage_detail"] == _gpu_stage_snapshot()["task_123:feature_extraction"]
+
+
+@pytest.mark.asyncio
+async def test_training_stream_attaches_gpu_stage_detail(monkeypatch):
+    from gateway.routes import training as training_routes
+
+    task = SimpleNamespace(
+        task_id="task_123",
+        model_config={},
+        to_dict=lambda: {
+            "task_id": "task_123",
+            "task_name": "WSI train",
+            "task_type": "wsi_classification",
+            "status": "training",
+            "progress": 25,
+            "model_config": {},
+        },
+    )
+    monkeypatch.setattr(training_routes, "safe_session", lambda: _AsyncContext(SimpleNamespace()))
+    monkeypatch.setattr(training_routes, "make_sse_response", lambda generator: generator)
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_all",
+        lambda *args, **kwargs: _async_value([task]),
+    )
+    monkeypatch.setattr(
+        training_routes.TrainingTaskRepository,
+        "get_wsi_counts_batch",
+        lambda *args, **kwargs: _async_value({"task_123": 3}),
+    )
+    monkeypatch.setattr(
+        "backend.common.progress_store.get_all_progress",
+        lambda: _async_value({}),
+    )
+    monkeypatch.setattr(
+        training_routes,
+        "get_worker_runtime_snapshot",
+        lambda: _async_value({"gpu_stage_details": _gpu_stage_snapshot()}),
+    )
+
+    stream = await training_routes.stream_training_tasks(
+        user=SimpleNamespace(id="user_1", is_admin=lambda: False)
+    )
+    payload = _parse_sse_payload(await anext(stream))
+
+    assert payload["items"][0]["gpu_stage_detail"] == _gpu_stage_snapshot()["task_123:feature_extraction"]
+
+    await stream.aclose()
+
+
 @pytest.mark.asyncio
 async def test_training_list_uses_extval_prefix_for_total_wsi_count(monkeypatch):
     from gateway.routes import training as training_routes

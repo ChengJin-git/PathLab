@@ -6,6 +6,8 @@ Handles training task creation, monitoring, and deletion
 import asyncio
 import json
 import uuid
+from datetime import datetime, timedelta, timezone
+from importlib import import_module
 from typing import Optional, Any, cast
 from fastapi import APIRouter, HTTPException, Depends, Query
 
@@ -72,6 +74,57 @@ def _get_external_validation_wsi_count(
             return int(model_config.get("total_wsi", 0) or 0)
         return 0
     return junction_count
+
+
+async def get_worker_runtime_snapshot() -> dict[str, Any] | None:
+    runtime_status = import_module("task_worker.runtime_status")
+    get_runtime_status = runtime_status.get_runtime_status
+    runtime_status_ttl_seconds = runtime_status.RUNTIME_STATUS_TTL_SECONDS
+    snapshot = await get_runtime_status()
+    if not snapshot:
+        return None
+    updated_at_raw = snapshot.get("updated_at")
+    if not updated_at_raw:
+        return None
+    try:
+        updated_at = datetime.fromisoformat(str(updated_at_raw))
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+    if datetime.now(timezone.utc) - updated_at > timedelta(seconds=runtime_status_ttl_seconds):
+        return None
+    return snapshot
+
+
+def _gpu_stage_detail_for_task(
+    task_id: str,
+    gpu_stage_details: object,
+) -> dict[str, Any] | None:
+    if not isinstance(gpu_stage_details, dict):
+        return None
+
+    matching_details = [
+        detail
+        for detail in gpu_stage_details.values()
+        if isinstance(detail, dict) and detail.get("task_id") == task_id
+    ]
+    if not matching_details:
+        return None
+
+    matching_details.sort(
+        key=lambda detail: (detail.get("state") != "running", str(detail.get("stage") or ""))
+    )
+    return dict(matching_details[0])
+
+
+def _attach_gpu_stage_detail(
+    task_dict: dict[str, Any],
+    gpu_stage_details: object,
+) -> None:
+    detail = _gpu_stage_detail_for_task(str(task_dict.get("task_id") or ""), gpu_stage_details)
+    if detail is not None:
+        task_dict["gpu_stage_detail"] = detail
 
 
 async def _cleanup_deleted_training_task_files(
@@ -587,6 +640,8 @@ async def list_training_tasks(
     from backend.common.progress_store import get_all_progress
 
     file_progress = await get_all_progress()
+    runtime_snapshot = await get_worker_runtime_snapshot()
+    gpu_stage_details = (runtime_snapshot or {}).get("gpu_stage_details", {})
 
     # Add WSI count to each task
     result_tasks = []
@@ -606,6 +661,7 @@ async def list_training_tasks(
         task_dict["source_dataset_id"] = source_dataset_ids.get(task_id)
         if task_id in file_progress:
             task_dict["progress"] = file_progress[task_id]
+        _attach_gpu_stage_detail(task_dict, gpu_stage_details)
         result_tasks.append(task_dict)
 
     return {
@@ -665,6 +721,8 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                         from backend.common.progress_store import get_all_progress
 
                         file_progress = await get_all_progress()
+                        runtime_snapshot = await get_worker_runtime_snapshot()
+                        gpu_stage_details = (runtime_snapshot or {}).get("gpu_stage_details", {})
 
                         # Add WSI count and overlay file-based progress
                         result_tasks = []
@@ -688,6 +746,7 @@ async def stream_training_tasks(user: User = Depends(get_user_from_token_param))
                             # Overlay file progress if available (more up-to-date than DB)
                             if task_id in file_progress:
                                 task_dict["progress"] = file_progress[task_id]
+                            _attach_gpu_stage_detail(task_dict, gpu_stage_details)
                             result_tasks.append(task_dict)
 
                         # Change detection: only send if data changed
@@ -767,6 +826,8 @@ async def get_training_task(
     file_prog = await get_progress(task_id_for_progress)
     if file_prog is not None:
         result["progress"] = file_prog
+    runtime_snapshot = await get_worker_runtime_snapshot()
+    _attach_gpu_stage_detail(result, (runtime_snapshot or {}).get("gpu_stage_details", {}))
 
     return result
 

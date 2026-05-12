@@ -1,6 +1,7 @@
 import { API_BASE } from '../config'
 import { createKeyedCache, DEFAULT_CACHE_TTL } from '../lib/cache'
 import type { DataLevel, TaskType } from '../constants/training'
+import type { GpuStageDetail } from './queue'
 import { apiFetch, buildSearchParams, downloadApiFile, PaginatedResponse } from './client'
 
 // ============================================================================
@@ -29,6 +30,7 @@ export interface TrainingTask {
   finished_at: string | null
   user_id?: string | null  // User ID of task creator
   username?: string | null  // Username of task creator (only for admin users)
+  gpu_stage_detail?: GpuStageDetail | null
 }
 
 /**
