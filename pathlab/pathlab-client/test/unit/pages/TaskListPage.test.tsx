@@ -133,7 +133,7 @@ describe('TaskListPage delete modal', () => {
     expect(screen.queryByText('taskList.deleteModal.modelsKeptQuick')).not.toBeInTheDocument()
   })
 
-  it('maps admin queue gpu stage details by task id from stage-keyed snapshots', async () => {
+  it('does not render admin gpu stage detail badges from stage-keyed snapshots', async () => {
     authState.isAdmin = true
 
     vi.spyOn(apiModule, 'getTrainingTasks').mockResolvedValue({
@@ -202,8 +202,8 @@ describe('TaskListPage delete modal', () => {
 
     await screen.findByText('Queued Training Task')
 
-    expect(screen.getByText('Running')).toBeInTheDocument()
-    expect(screen.getByText('feature_extraction')).toBeInTheDocument()
-    expect(screen.getByText('cuda:1')).toBeInTheDocument()
+    expect(screen.queryByText('Running')).not.toBeInTheDocument()
+    expect(screen.queryByText('feature_extraction')).not.toBeInTheDocument()
+    expect(screen.queryByText('cuda:1')).not.toBeInTheDocument()
   })
 })

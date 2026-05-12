@@ -5,7 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats, getQueueStatus, GpuStageDetail } from '../api'
-import { ClipboardList, BarChart3, Microscope, Brain, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ClipboardList, BarChart3, Microscope, Brain, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
 import { isSegFmEncoder, isSegmentationTask } from '../constants/training'
 import { PageHeader } from '../components/PageHeader'
@@ -806,30 +806,6 @@ export default function TaskListPage() {
                             {Math.max(0, Math.min(task.progress, 100))}%
                           </span>
                         </div>
-                        {task.gpu_stage_detail && (
-                          <div className="flex items-center gap-1.5 mt-1.5 text-[10px] sm:text-xs text-gray-500">
-                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
-                              {task.gpu_stage_detail.state === 'waiting' ? (
-                                <Clock className="w-3 h-3" />
-                              ) : (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                              )}
-                              {task.gpu_stage_detail.state === 'waiting' ? 'Waiting' : 'Running'}
-                            </span>
-                            <span className="text-gray-400">·</span>
-                            <span className="font-medium text-gray-600">
-                              {task.gpu_stage_detail.stage}
-                            </span>
-                            {task.gpu_stage_detail.device && (
-                              <>
-                                <span className="text-gray-400">·</span>
-                                <span className="font-mono text-gray-500">
-                                  {task.gpu_stage_detail.device}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        )}
                       </div>
                     )}
                   </div>
