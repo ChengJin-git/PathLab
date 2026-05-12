@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats } from '../api'
+import { getTrainingTaskStorageInfo, TrainingTaskStorageInfo, cancelQueueTask, deleteTrainingTask, updateTrainingTaskName, getTrainingTasks, prefetchTrainingTasks, TrainingTaskListStats, getQueueStatus, GpuStageDetail } from '../api'
 import { ClipboardList, BarChart3, Microscope, Brain, Clock, Loader2, CheckCircle2, XCircle, AlertCircle, Trash2, Copy, Timer, ArrowLeft, X, Sparkles, User, Edit2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { TASK_LIST_STATUS_BADGES, isActiveStatus, TRAINING_CANCELLABLE_STATUSES, VALIDATION_CANCELLABLE_STATUSES } from '../constants/status'
 import { isSegFmEncoder, isSegmentationTask } from '../constants/training'
@@ -40,6 +40,26 @@ interface Task {
   model_config?: any
   user_id?: string | null  // User ID of task creator
   username?: string | null  // Username of task creator (only for admin users)
+  gpu_stage_detail?: GpuStageDetail | null
+}
+
+function getTaskGpuStageDetail(
+  taskId: string,
+  gpuStageDetails: Record<string, GpuStageDetail>,
+): GpuStageDetail | undefined {
+  const directDetail = gpuStageDetails[taskId]
+  if (directDetail) return directDetail
+
+  const matchingDetails = Object.values(gpuStageDetails).filter(detail => detail.task_id === taskId)
+  if (matchingDetails.length === 0) return undefined
+
+  matchingDetails.sort((left, right) => {
+    if (left.state === right.state) {
+      return left.stage.localeCompare(right.stage)
+    }
+    return left.state === 'running' ? -1 : 1
+  })
+  return matchingDetails[0]
 }
 
 function isExternalValidationTask(task: Pick<Task, 'task_id'>): boolean {
@@ -111,7 +131,27 @@ export default function TaskListPage() {
     placeholderData: (prev) => prev,
   })
 
-  const tasks: Task[] = trainingTasksQuery.data?.items ?? []
+  const queueStatusQuery = useQuery({
+    queryKey: ['queue-status'],
+    queryFn: getQueueStatus,
+    staleTime: 10 * 1000,
+    refetchInterval: 10 * 1000,
+    enabled: isAdmin,
+  })
+
+  const gpuStageDetails = queueStatusQuery.data?.gpu_stage_details ?? {}
+
+  const tasks: Task[] = React.useMemo(() => {
+    const items = trainingTasksQuery.data?.items ?? []
+    if (!isAdmin || !gpuStageDetails) return items
+    return items.map(task => {
+      const detail = getTaskGpuStageDetail(task.task_id, gpuStageDetails)
+      if (detail) {
+        return { ...task, gpu_stage_detail: detail }
+      }
+      return task
+    })
+  }, [trainingTasksQuery.data?.items, gpuStageDetails, isAdmin])
   const totalCount: number = trainingTasksQuery.data?.total ?? 0
   const stats: TrainingTaskListStats = trainingTasksQuery.data?.stats ?? { total: 0, running: 0, completed: 0, failed: 0, cancelled: 0 }
   const loading = trainingTasksQuery.isLoading
@@ -766,6 +806,30 @@ export default function TaskListPage() {
                             {Math.max(0, Math.min(task.progress, 100))}%
                           </span>
                         </div>
+                        {task.gpu_stage_detail && (
+                          <div className="flex items-center gap-1.5 mt-1.5 text-[10px] sm:text-xs text-gray-500">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-medium">
+                              {task.gpu_stage_detail.state === 'waiting' ? (
+                                <Clock className="w-3 h-3" />
+                              ) : (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              )}
+                              {task.gpu_stage_detail.state === 'waiting' ? 'Waiting' : 'Running'}
+                            </span>
+                            <span className="text-gray-400">·</span>
+                            <span className="font-medium text-gray-600">
+                              {task.gpu_stage_detail.stage}
+                            </span>
+                            {task.gpu_stage_detail.device && (
+                              <>
+                                <span className="text-gray-400">·</span>
+                                <span className="font-mono text-gray-500">
+                                  {task.gpu_stage_detail.device}
+                                </span>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
