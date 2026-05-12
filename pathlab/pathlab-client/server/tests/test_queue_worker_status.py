@@ -60,6 +60,7 @@ async def test_queue_status_uses_worker_heartbeat_without_local_queue():
     assert "pending_count" in data
     assert "queue_size" in data
     assert "running_task_ids" in data
+    assert "running_tasks" in data
     assert "pending_task_ids" in data
 
 
@@ -82,6 +83,10 @@ async def test_queue_status_uses_worker_runtime_snapshot_without_local_queue():
         "descriptor_dlq_count": 1,
         "queue_size": 2,
         "running_task_ids": ["run1", "run2"],
+        "running_tasks": [
+            {"task_id": "run1", "gpu": 0},
+            {"task_id": "run2", "gpu": None},
+        ],
         "pending_task_ids": ["pend1"],
         "patching_task_ids": ["patch1"],
         "bad_gpu_ids": [1],
@@ -116,6 +121,10 @@ async def test_queue_status_uses_worker_runtime_snapshot_without_local_queue():
     assert data["descriptor_dlq_count"] == 1
     assert data["queue_size"] == 2
     assert data["running_task_ids"] == ["run1", "run2"]
+    assert data["running_tasks"] == [
+        {"task_id": "run1", "gpu": 0},
+        {"task_id": "run2", "gpu": None},
+    ]
     assert data["pending_task_ids"] == ["pend1"]
     assert data["patching_count"] == 1
     assert data["patching_task_ids"] == ["patch1"]
@@ -156,6 +165,7 @@ async def test_queue_status_falls_back_to_heartbeat_when_snapshot_missing():
     assert data["descriptor_dlq_count"] == 0
     assert data["queue_size"] == 0
     assert data["running_task_ids"] == []
+    assert data["running_tasks"] == []
     assert data["pending_task_ids"] == []
     assert data["patching_count"] == 0
     assert data["patching_task_ids"] == []

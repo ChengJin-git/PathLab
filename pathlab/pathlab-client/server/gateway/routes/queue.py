@@ -74,9 +74,11 @@ async def get_queue_status(user: User = Depends(require_admin)):
             "descriptor_processing_count": snapshot.get("descriptor_processing_count", 0),
             "descriptor_dlq_count": snapshot.get("descriptor_dlq_count", 0),
             "running_task_ids": snapshot.get("running_task_ids", []),
+            "running_tasks": snapshot.get("running_tasks", []),
             "pending_task_ids": snapshot.get("pending_task_ids", []),
             "patching_count": snapshot.get("patching_count", 0),
             "patching_task_ids": snapshot.get("patching_task_ids", []),
+            "gpu_stage_details": snapshot.get("gpu_stage_details", {}),
             "is_running": snapshot.get("is_running", False),
         }
 
@@ -93,9 +95,11 @@ async def get_queue_status(user: User = Depends(require_admin)):
         "descriptor_processing_count": fallback["descriptor_processing_count"],
         "descriptor_dlq_count": fallback["descriptor_dlq_count"],
         "running_task_ids": fallback["running_task_ids"],
+        "running_tasks": fallback["running_tasks"],
         "pending_task_ids": fallback["pending_task_ids"],
         "patching_count": fallback["patching_count"],
         "patching_task_ids": fallback["patching_task_ids"],
+        "gpu_stage_details": fallback["gpu_stage_details"],
         "is_running": fallback["is_running"],
     }
 

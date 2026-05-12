@@ -105,6 +105,7 @@ class TestGetQueueStatus:
         assert "pending_count" in data
         assert "queue_size" in data
         assert "running_task_ids" in data
+        assert "running_tasks" in data
         assert "pending_task_ids" in data
         assert "is_running" in data
 
@@ -115,6 +116,7 @@ class TestGetQueueStatus:
     async def test_worker_unhealthy_reports_not_running(self, admin, tmp_path):
         app = _make_queue_app_with_stub(admin, MagicMock())
         with (
+            patch("gateway.routes.queue.get_runtime_status", new=AsyncMock(return_value=None)),
             patch("gateway.routes.queue.is_worker_healthy", new=AsyncMock(return_value=False)),
             patch(
                 "backend.common.config.Config.STORAGE_CONFIG_FILE",
