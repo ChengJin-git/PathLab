@@ -12,6 +12,7 @@ Supports:
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from importlib import import_module
@@ -20,6 +21,8 @@ from enum import Enum
 from datetime import datetime
 
 _SOFT_RESERVATION_TTL_SEC: float = 600.0
+_DEFAULT_MODEL_VRAM_MB: float = 1000.0
+_BATCH_BUFFER_MB: float = 50.0
 from sqlalchemy import select
 
 from .email_notifications import send_templated_email
@@ -131,7 +134,8 @@ class TaskQueueManager:
         self._patching_tasks: Dict[
             str, asyncio.Task[Any]
         ] = {}  # pre-queue patching tasks
-        self._soft_vram_reservations: Dict[str, Tuple[int, float, float]] = {}
+        self._soft_vram_reservations: Dict[str, Tuple[int, float, float | None]] = {}
+        self._gpu_stage_details: Dict[str, Dict[str, Any]] = {}
         self._condition: Optional[asyncio.Condition] = (
             None  # For dynamic concurrency control
         )
@@ -233,11 +237,13 @@ class TaskQueueManager:
         if removed is not None:
             logger.debug(f"Pre-queue patching task {task_id} deregistered")
 
-    def _reserve_soft_vram(self, task_id: str, cuda_idx: int, mb: float) -> None:
+    def _reserve_soft_vram(
+        self, task_id: str, cuda_idx: int, mb: float, ttl_sec: float | None = None
+    ) -> None:
         self._soft_vram_reservations[task_id] = (
             cuda_idx,
             mb,
-            time.monotonic() + _SOFT_RESERVATION_TTL_SEC,
+            time.monotonic() + ttl_sec if ttl_sec is not None else None,
         )
 
     def _release_soft_vram(self, task_id: str) -> None:
@@ -248,7 +254,7 @@ class TaskQueueManager:
         expired = [
             tid
             for tid, (idx, mb, exp) in self._soft_vram_reservations.items()
-            if exp <= now
+            if exp is not None and exp <= now
         ]
         for tid in expired:
             del self._soft_vram_reservations[tid]
@@ -258,14 +264,101 @@ class TaskQueueManager:
             if idx == cuda_idx
         )
 
-    def _select_optimal_gpu(self) -> Tuple[int, float]:
+    def _estimate_task_vram_mb(self, task_id: str) -> float:
+        queued_task = self._pending_tasks.get(task_id)
+        if queued_task is None:
+            return float(self.min_vram_mb)
+
+        kwargs = queued_task.kwargs
+        preprocessing_config = kwargs.get("preprocessing_config")
+        if not isinstance(preprocessing_config, dict):
+            preprocessing_config = {}
+        model_config = kwargs.get("model_config")
+        if not isinstance(model_config, dict):
+            model_config = {}
+
+        model_name = self._task_model_name(kwargs, preprocessing_config, model_config)
+        if not model_name:
+            return float(self.min_vram_mb)
+
+        model_size_mb = self._model_vram_estimate_mb(model_name)
+        batch_size = self._task_batch_size(kwargs, preprocessing_config, model_config)
+        required_mb = (
+            model_size_mb + float(Config.MIN_INFERENCE_OVERHEAD_MB) + batch_size * _BATCH_BUFFER_MB
+        )
+        return max(float(self.min_vram_mb), required_mb)
+
+    def _task_model_name(
+        self,
+        kwargs: Dict[str, Any],
+        preprocessing_config: Dict[str, Any],
+        model_config: Dict[str, Any],
+    ) -> str | None:
+        candidates = (
+            preprocessing_config.get("feature_extractor"),
+            model_config.get("feature_extractor"),
+            model_config.get("backbone"),
+            model_config.get("architecture"),
+            kwargs.get("feature_extractor"),
+            kwargs.get("backbone"),
+        )
+        for candidate in candidates:
+            if isinstance(candidate, str) and candidate.strip():
+                return candidate.strip()
+        return None
+
+    def _task_batch_size(
+        self,
+        kwargs: Dict[str, Any],
+        preprocessing_config: Dict[str, Any],
+        model_config: Dict[str, Any],
+    ) -> int:
+        default_batch_size = 64
+        candidates = (
+            preprocessing_config.get("feature_batch_size"),
+            preprocessing_config.get("batch_size"),
+            model_config.get("batch_size"),
+            kwargs.get("batch_size"),
+        )
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            try:
+                value = int(candidate)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                return value
+        return default_batch_size
+
+    def _model_vram_estimate_mb(self, model_name: str) -> float:
+        try:
+            estimates = import_module(
+                "backend.ai.utils.vram_guard"
+            ).MODEL_SIZE_ESTIMATES_MB
+        except Exception:
+            estimates = {}
+        normalized_model = model_name.strip().lower()
+        for estimate_name, estimate_mb in estimates.items():
+            if str(estimate_name).strip().lower() == normalized_model:
+                return float(estimate_mb)
+        return _DEFAULT_MODEL_VRAM_MB
+
+    def _select_optimal_gpu(
+        self, required_vram_mb: float | None = None
+    ) -> Tuple[int, float]:
         """
         Select the GPU with the most effective free VRAM that meets the minimum requirement.
 
-        Effective free VRAM = pynvml free VRAM minus any active soft reservations for
-        tasks whose models have not yet finished loading. Multiple tasks may share a GPU
-        once soft reservations expire (TTL = _SOFT_RESERVATION_TTL_SEC).
+        Effective free VRAM = pynvml free VRAM minus any active soft reservations.
+        Multiple tasks may share a GPU when the remaining effective free VRAM is above
+        the next task's estimated startup VRAM budget.
         """
+        required_mb = (
+            float(required_vram_mb)
+            if required_vram_mb is not None and math.isfinite(required_vram_mb)
+            else float(self.min_vram_mb)
+        )
         try:
             gpu_utils = _get_gpu_utils_module()
             get_all_gpu_info = gpu_utils.get_all_gpu_info
@@ -285,7 +378,7 @@ class TaskQueueManager:
                 continue
             soft_reserved = self._get_soft_reserved_mb(gpu_idx)
             effective_free = max(0.0, info["free_mb"] - soft_reserved)
-            if effective_free >= self.min_vram_mb and effective_free > best_free_mb:
+            if effective_free >= required_mb and effective_free > best_free_mb:
                 best_free_mb = effective_free
                 best_gpu = gpu_idx
 
@@ -297,7 +390,7 @@ class TaskQueueManager:
         else:
             logger.warning(
                 f"_select_optimal_gpu: no suitable GPU found. "
-                f"Checked {len(gpu_info_list)} GPU(s), required {self.min_vram_mb:.0f} MB effective free. "
+                f"Checked {len(gpu_info_list)} GPU(s), required {required_mb:.0f} MB effective free. "
                 f"Bad GPUs: {sorted(self._bad_gpus)}"
             )
         return (best_gpu, best_free_mb)
@@ -393,9 +486,10 @@ class TaskQueueManager:
                 logger.info(f"Task {task_id} was cancelled while waiting for GPU")
                 return -1
 
-            gpu_idx, effective_free = self._select_optimal_gpu()
+            required_vram_mb = self._estimate_task_vram_mb(task_id)
+            gpu_idx, effective_free = self._select_optimal_gpu(required_vram_mb)
             if gpu_idx >= 0:
-                self._reserve_soft_vram(task_id, gpu_idx, effective_free)
+                self._reserve_soft_vram(task_id, gpu_idx, required_vram_mb)
                 if wait_count > 0:
                     logger.info(
                         f"GPU {gpu_idx} now available for task {task_id} after {wait_count} waits"
@@ -406,7 +500,7 @@ class TaskQueueManager:
             if wait_count == 1:
                 logger.info(
                     f"Task {task_id} waiting for any GPU with sufficient VRAM. "
-                    f"Required: {self.min_vram_mb:.0f} MB"
+                    f"Required: {required_vram_mb:.0f} MB"
                 )
 
             vram_condition = self._vram_condition
@@ -427,6 +521,94 @@ class TaskQueueManager:
                 )
 
         return -1
+
+    async def acquire_gpu_stage(
+        self,
+        task_id: str,
+        stage: str,
+        required_vram_mb: float | None = None,
+    ) -> str:
+        """Select any GPU for a pipeline stage and reserve its startup VRAM budget."""
+        wait_count = 0
+        stage_key = f"{task_id}:{stage}"
+        required_mb = (
+            float(required_vram_mb)
+            if required_vram_mb is not None and math.isfinite(required_vram_mb)
+            else float(self.min_vram_mb)
+        )
+
+        # Stage-level scheduling supersedes the task startup reservation once the
+        # pipeline starts waiting on concrete GPU work.
+        self._release_soft_vram(task_id)
+
+        try:
+            while not self._shutdown:
+                self._gpu_stage_details[stage_key] = {
+                    "task_id": task_id,
+                    "stage": stage,
+                    "state": "waiting",
+                    "gpu": None,
+                    "device": None,
+                    "required_vram_mb": required_mb,
+                }
+                gpu_idx, effective_free = self._select_optimal_gpu(required_mb)
+                if gpu_idx >= 0:
+                    self._reserve_soft_vram(stage_key, gpu_idx, required_mb)
+                    self._gpu_stage_details[stage_key] = {
+                        "task_id": task_id,
+                        "stage": stage,
+                        "state": "running",
+                        "gpu": gpu_idx,
+                        "device": f"cuda:{gpu_idx}",
+                        "required_vram_mb": required_mb,
+                        "effective_free_mb": effective_free,
+                    }
+                    if wait_count > 0:
+                        logger.info(
+                            f"GPU {gpu_idx} now available for task {task_id} stage {stage} "
+                            f"after {wait_count} waits"
+                        )
+                    return f"cuda:{gpu_idx}"
+
+                wait_count += 1
+                if wait_count == 1:
+                    logger.info(
+                        f"Task {task_id} stage {stage} waiting for any GPU with sufficient VRAM. "
+                        f"Required: {required_mb:.0f} MB"
+                    )
+
+                vram_condition = self._vram_condition
+                if vram_condition is None:
+                    raise RuntimeError("VRAM wait condition is not initialized")
+                async with vram_condition:
+                    try:
+                        await asyncio.wait_for(
+                            vram_condition.wait(), timeout=self.vram_check_interval
+                        )
+                    except asyncio.TimeoutError:
+                        pass
+
+                if wait_count % 12 == 0:
+                    logger.info(
+                        f"Task {task_id} stage {stage} still waiting for GPU "
+                        f"({wait_count * self.vram_check_interval:.0f}s elapsed)"
+                    )
+        except asyncio.CancelledError:
+            self._release_soft_vram(stage_key)
+            self._gpu_stage_details.pop(stage_key, None)
+            raise
+
+        self._release_soft_vram(stage_key)
+        self._gpu_stage_details.pop(stage_key, None)
+        raise asyncio.CancelledError(
+            f"Task queue stopped while waiting for task {task_id} stage {stage}"
+        )
+
+    def release_gpu_stage(self, task_id: str, stage: str) -> None:
+        """Release the soft VRAM reservation for a completed pipeline stage."""
+        stage_key = f"{task_id}:{stage}"
+        self._release_soft_vram(stage_key)
+        self._gpu_stage_details.pop(stage_key, None)
 
     async def _notify_vram_released(self):
         """
@@ -490,6 +672,7 @@ class TaskQueueManager:
                 logger.info(
                     f"Task {queued_task.task_id} was cancelled during GPU wait, skipping"
                 )
+                self._release_soft_vram(queued_task.task_id)
                 self._queue.task_done()
                 continue
 
@@ -764,6 +947,7 @@ class TaskQueueManager:
             "running_task_ids": list(self._running_tasks.keys()),
             "running_tasks": running_tasks_info,
             "pending_task_ids": list(self._pending_tasks.keys()),
+            "gpu_stage_details": dict(self._gpu_stage_details),
             "is_running": self._worker_task is not None and not self._shutdown,
         }
 
@@ -828,6 +1012,7 @@ class TaskQueueManager:
             return False
 
         queued_task = self._pending_tasks.pop(task_id)
+        self._release_soft_vram(task_id)
         logger.info(f"Task {task_id} removed from pending queue")
         asyncio.create_task(self._notify_task_status_change(queued_task, "cancelled"))
         await self._notify_queue_state_changed()

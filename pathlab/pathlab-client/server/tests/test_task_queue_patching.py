@@ -1,12 +1,17 @@
 import asyncio
+from importlib import import_module
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+
+def _task_queue_module():
+    return import_module("gateway.task_queue")
 
 
 @pytest.fixture
 def fresh_queue():
     """Create a fresh TaskQueueManager (reset singleton state)."""
-    from gateway.task_queue import TaskQueueManager
+    TaskQueueManager = _task_queue_module().TaskQueueManager
 
     TaskQueueManager._instance = None
     TaskQueueManager._initialized = False
@@ -80,3 +85,254 @@ def test_deregister_patching_task(fresh_queue):
     assert "task_dereg" not in queue._patching_tasks
 
     queue.deregister_patching_task("task_dereg")
+
+
+@pytest.mark.asyncio
+async def test_soft_vram_reservation_uses_task_budget_until_release(
+    fresh_queue, monkeypatch
+):
+    """Startup reservations stay active and use task VRAM budget, not all free VRAM."""
+    task_queue = _task_queue_module()
+    QueuedTask = task_queue.QueuedTask
+    TaskType = task_queue.TaskType
+
+    queue = fresh_queue
+    queue.min_vram_mb = 2000.0
+    queue._vram_condition = asyncio.Condition()
+    now = 1000.0
+    monkeypatch.setattr("gateway.task_queue.time.monotonic", lambda: now)
+
+    queue._pending_tasks["task_a"] = QueuedTask(
+        task_id="task_a",
+        task_type=TaskType.TRAINING,
+        coro_func=AsyncMock(),
+        kwargs={
+            "task_id": "task_a",
+            "data_type": "patch",
+            "preprocessing_config": {"feature_extractor": "virchow2"},
+            "model_config": {"batch_size": 64},
+        },
+    )
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        return_value=[
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 0.0,
+                "free_mb": 24000.0,
+                "total_mb": 24000.0,
+            },
+            {
+                "index": 1,
+                "name": "gpu1",
+                "allocated_mb": 0.0,
+                "free_mb": 12000.0,
+                "total_mb": 24000.0,
+            },
+        ],
+    ):
+        assigned_gpu = await queue._wait_for_any_gpu("task_a")
+
+    now = 1000.0 + 601.0
+
+    assert assigned_gpu == 0
+    assert queue._get_soft_reserved_mb(0) == pytest.approx(6700.0)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_any_gpu_waits_for_estimated_task_vram(fresh_queue):
+    """A GPU above the global minimum but below task budget is not admitted."""
+    task_queue = _task_queue_module()
+    QueuedTask = task_queue.QueuedTask
+    TaskType = task_queue.TaskType
+
+    queue = fresh_queue
+    queue.min_vram_mb = 2000.0
+    queue.vram_check_interval = 0.001
+    queue._vram_condition = asyncio.Condition()
+    queue._pending_tasks["task_a"] = QueuedTask(
+        task_id="task_a",
+        task_type=TaskType.TRAINING,
+        coro_func=AsyncMock(),
+        kwargs={
+            "task_id": "task_a",
+            "data_type": "patch",
+            "preprocessing_config": {"feature_extractor": "virchow2"},
+            "model_config": {"batch_size": 64},
+        },
+    )
+    gpu_snapshots = [
+        [
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 18000.0,
+                "free_mb": 6000.0,
+                "total_mb": 24000.0,
+            }
+        ],
+        [
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 16000.0,
+                "free_mb": 8000.0,
+                "total_mb": 24000.0,
+            }
+        ],
+    ]
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        side_effect=gpu_snapshots,
+    ) as get_gpu_info:
+        assigned_gpu = await queue._wait_for_any_gpu("task_a")
+
+    assert assigned_gpu == 0
+    assert get_gpu_info.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_acquire_gpu_stage_reselects_global_gpu_between_wsi_stages(fresh_queue):
+    """Each WSI GPU stage gets a fresh global GPU selection."""
+    queue = fresh_queue
+    queue.min_vram_mb = 2000.0
+    queue.vram_check_interval = 0.001
+    queue._vram_condition = asyncio.Condition()
+    gpu_snapshots = [
+        [
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 12000.0,
+                "free_mb": 12000.0,
+                "total_mb": 24000.0,
+            },
+            {
+                "index": 1,
+                "name": "gpu1",
+                "allocated_mb": 18000.0,
+                "free_mb": 6000.0,
+                "total_mb": 24000.0,
+            },
+        ],
+        [
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 22000.0,
+                "free_mb": 2000.0,
+                "total_mb": 24000.0,
+            },
+            {
+                "index": 1,
+                "name": "gpu1",
+                "allocated_mb": 10000.0,
+                "free_mb": 14000.0,
+                "total_mb": 24000.0,
+            },
+        ],
+    ]
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        side_effect=gpu_snapshots,
+    ):
+        feature_device = await queue.acquire_gpu_stage(
+            task_id="task_wsi",
+            stage="feature_extraction",
+            required_vram_mb=6500.0,
+        )
+        queue.release_gpu_stage("task_wsi", "feature_extraction")
+        training_device = await queue.acquire_gpu_stage(
+            task_id="task_wsi",
+            stage="wsi_training",
+            required_vram_mb=6500.0,
+        )
+
+    assert feature_device == "cuda:0"
+    assert training_device == "cuda:1"
+
+
+@pytest.mark.asyncio
+async def test_acquire_gpu_stage_replaces_startup_reservation(fresh_queue):
+    """Stage reservations should supersede the task startup reservation."""
+    task_queue = _task_queue_module()
+    QueuedTask = task_queue.QueuedTask
+    TaskType = task_queue.TaskType
+
+    queue = fresh_queue
+    queue.min_vram_mb = 2000.0
+    queue._vram_condition = asyncio.Condition()
+    queue._pending_tasks["task_a"] = QueuedTask(
+        task_id="task_a",
+        task_type=TaskType.TRAINING,
+        coro_func=AsyncMock(),
+        kwargs={
+            "task_id": "task_a",
+            "data_type": "patch",
+            "preprocessing_config": {"feature_extractor": "virchow2"},
+            "model_config": {"batch_size": 64},
+        },
+    )
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        return_value=[
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 0.0,
+                "free_mb": 24000.0,
+                "total_mb": 24000.0,
+            }
+        ],
+    ):
+        assigned_gpu = await queue._wait_for_any_gpu("task_a")
+        stage_device = await queue.acquire_gpu_stage(
+            task_id="task_a",
+            stage="patch_classification",
+            required_vram_mb=6500.0,
+        )
+
+    assert assigned_gpu == 0
+    assert stage_device == "cuda:0"
+    assert queue._get_soft_reserved_mb(0) == pytest.approx(6500.0)
+
+
+@pytest.mark.asyncio
+async def test_acquire_gpu_stage_cleans_waiting_detail_on_cancellation(fresh_queue):
+    """Cancelled stage waits should not leave stale waiting details behind."""
+    queue = fresh_queue
+    queue.min_vram_mb = 2000.0
+    queue.vram_check_interval = 0.01
+    queue._vram_condition = asyncio.Condition()
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        return_value=[
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 22000.0,
+                "free_mb": 2000.0,
+                "total_mb": 24000.0,
+            }
+        ],
+    ):
+        waiter = asyncio.create_task(
+            queue.acquire_gpu_stage(
+                task_id="task_waiting",
+                stage="wsi_training",
+                required_vram_mb=6500.0,
+            )
+        )
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+
+    assert "task_waiting:wsi_training" not in queue._gpu_stage_details
+    assert queue._soft_vram_reservations == {}
