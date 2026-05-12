@@ -37,9 +37,20 @@ def test_build_runtime_status_snapshot_full():
     queue._queue = MagicMock()
     queue._queue.qsize.return_value = 3
     queue._running_tasks = {"t1": MagicMock(), "t2": MagicMock()}
+    queue._gpu_assignments = {"t1": 0, "t2": None}
     queue._pending_tasks = {"t3": MagicMock(), "t4": MagicMock()}
     queue._patching_tasks = {"t5": MagicMock()}
     queue._bad_gpus = {1, 3}
+    queue._gpu_stage_details = {
+        "t1:feature_extraction": {
+            "task_id": "t1",
+            "stage": "feature_extraction",
+            "state": "running",
+            "gpu": 0,
+            "device": "cuda:0",
+            "required_vram_mb": 6500.0,
+        }
+    }
     queue.descriptor_queue_counts = {
         "pending": 7,
         "processing": 2,
@@ -60,9 +71,14 @@ def test_build_runtime_status_snapshot_full():
     assert snapshot["descriptor_processing_count"] == 2
     assert snapshot["descriptor_dlq_count"] == 1
     assert snapshot["running_task_ids"] == ["t1", "t2"]
+    assert snapshot["running_tasks"] == [
+        {"task_id": "t1", "gpu": 0},
+        {"task_id": "t2", "gpu": None},
+    ]
     assert snapshot["pending_task_ids"] == ["t3", "t4"]
     assert snapshot["patching_task_ids"] == ["t5"]
     assert snapshot["bad_gpu_ids"] == [1, 3]
+    assert snapshot["gpu_stage_details"] == queue._gpu_stage_details
     assert "updated_at" in snapshot
 
 
@@ -83,9 +99,11 @@ def test_build_runtime_status_snapshot_missing_attrs():
     assert snapshot["descriptor_processing_count"] == 0
     assert snapshot["descriptor_dlq_count"] == 0
     assert snapshot["running_task_ids"] == []
+    assert snapshot["running_tasks"] == []
     assert snapshot["pending_task_ids"] == []
     assert snapshot["patching_task_ids"] == []
     assert snapshot["bad_gpu_ids"] == []
+    assert snapshot["gpu_stage_details"] == {}
     assert "updated_at" in snapshot
 
 
@@ -96,6 +114,7 @@ def test_build_runtime_status_snapshot_with_task_timeout():
     queue._queue = MagicMock()
     queue._queue.qsize.return_value = 0
     queue._running_tasks = {}
+    queue._gpu_assignments = {}
     queue._pending_tasks = {}
     queue._patching_tasks = {}
     queue._bad_gpus = set()
@@ -111,6 +130,7 @@ def test_build_runtime_status_snapshot_sorts_ids():
     queue._queue = MagicMock()
     queue._queue.qsize.return_value = 0
     queue._running_tasks = {"z": MagicMock(), "a": MagicMock()}
+    queue._gpu_assignments = {"a": 1, "z": 0}
     queue._pending_tasks = {"m": MagicMock(), "b": MagicMock()}
     queue._patching_tasks = {"x": MagicMock(), "c": MagicMock()}
     queue._bad_gpus = {9, 2}
@@ -118,6 +138,10 @@ def test_build_runtime_status_snapshot_sorts_ids():
     snapshot = build_runtime_status_snapshot(queue, is_running=True)
 
     assert snapshot["running_task_ids"] == ["a", "z"]
+    assert snapshot["running_tasks"] == [
+        {"task_id": "a", "gpu": 1},
+        {"task_id": "z", "gpu": 0},
+    ]
     assert snapshot["pending_task_ids"] == ["b", "m"]
     assert snapshot["patching_task_ids"] == ["c", "x"]
     assert snapshot["bad_gpu_ids"] == [2, 9]
@@ -140,9 +164,11 @@ def test_empty_runtime_status():
     assert snapshot["descriptor_processing_count"] == 0
     assert snapshot["descriptor_dlq_count"] == 0
     assert snapshot["running_task_ids"] == []
+    assert snapshot["running_tasks"] == []
     assert snapshot["pending_task_ids"] == []
     assert snapshot["patching_task_ids"] == []
     assert snapshot["bad_gpu_ids"] == []
+    assert snapshot["gpu_stage_details"] == {}
     assert "updated_at" in snapshot
 
 

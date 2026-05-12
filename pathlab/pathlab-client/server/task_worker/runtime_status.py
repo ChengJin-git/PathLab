@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from importlib import import_module
 from typing import Any
@@ -24,12 +25,20 @@ def build_runtime_status_snapshot(queue: Any, *, is_running: bool = True) -> dic
         gpu_count = 0
     task_timeout = getattr(queue, "task_timeout", None)
     running_tasks = getattr(queue, "_running_tasks", {})
+    gpu_assignments = getattr(queue, "_gpu_assignments", {}) or {}
+    if not isinstance(gpu_assignments, Mapping):
+        gpu_assignments = {}
     pending_tasks = getattr(queue, "_pending_tasks", {})
     patching_tasks = getattr(queue, "_patching_tasks", {})
     bad_gpus = getattr(queue, "_bad_gpus", set())
+    gpu_stage_details = getattr(queue, "_gpu_stage_details", {}) or {}
     queue_obj = getattr(queue, "_queue", None)
     queue_size = queue_obj.qsize() if queue_obj is not None else 0
     descriptor_counts = getattr(queue, "descriptor_queue_counts", {}) or {}
+    running_tasks_info = [
+        {"task_id": task_id, "gpu": gpu_assignments.get(task_id)}
+        for task_id in sorted(running_tasks.keys())
+    ]
 
     return {
         "is_running": is_running,
@@ -44,9 +53,11 @@ def build_runtime_status_snapshot(queue: Any, *, is_running: bool = True) -> dic
         "descriptor_processing_count": int(descriptor_counts.get("processing", 0)),
         "descriptor_dlq_count": int(descriptor_counts.get("dlq", 0)),
         "running_task_ids": sorted(running_tasks.keys()),
+        "running_tasks": running_tasks_info,
         "pending_task_ids": sorted(pending_tasks.keys()),
         "patching_task_ids": sorted(patching_tasks.keys()),
         "bad_gpu_ids": sorted(bad_gpus),
+        "gpu_stage_details": dict(gpu_stage_details),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -65,9 +76,11 @@ def empty_runtime_status(*, is_running: bool) -> dict[str, Any]:
         "descriptor_processing_count": 0,
         "descriptor_dlq_count": 0,
         "running_task_ids": [],
+        "running_tasks": [],
         "pending_task_ids": [],
         "patching_task_ids": [],
         "bad_gpu_ids": [],
+        "gpu_stage_details": {},
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
