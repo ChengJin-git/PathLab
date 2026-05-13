@@ -206,4 +206,50 @@ describe('TaskListPage delete modal', () => {
     expect(screen.queryByText('feature_extraction')).not.toBeInTheDocument()
     expect(screen.queryByText('cuda:1')).not.toBeInTheDocument()
   })
+
+  it('renders a queued task without crashing on the Clock icon path', async () => {
+    vi.spyOn(apiModule, 'getTrainingTasks').mockResolvedValue({
+      items: [
+        {
+          task_id: 'task-queued-1',
+          task_name: 'Queued Task',
+          task_type: 'wsi_classification',
+          data_type: 'wsi',
+          task_description: null,
+          status: 'queued',
+          progress: 0,
+          error_message: null,
+          preprocessing_config: null,
+          model_config: null,
+          classes: null,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          started_at: null,
+          finished_at: null,
+          user_id: 'user-1',
+        },
+      ],
+      total: 1,
+      stats: { total: 1, running: 0, completed: 0, failed: 0, cancelled: 0 },
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <MemoryRouter>
+            <TaskListPage />
+          </MemoryRouter>
+        </TooltipProvider>
+      </QueryClientProvider>,
+    )
+
+    await screen.findByText('Queued Task')
+    expect(screen.getByText('Queued Task')).toBeInTheDocument()
+  })
 })
