@@ -253,6 +253,38 @@ async def test_external_validation_submits_to_queue(mock_queue, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_external_validation_drops_preprocessing_config_before_queue_submit(
+    mock_queue, monkeypatch
+):
+    from task_worker.handlers import handle_external_validation
+    from gateway.task_dispatch import build_task_descriptor
+
+    async def fake_extval(*args, **kwargs):
+        pass
+
+    monkeypatch.setattr(
+        "task_worker.jobs.inference.run_external_validation", fake_extval
+    )
+
+    descriptor = build_task_descriptor(
+        job_id="j1",
+        job_kind="validation",
+        handler="external_validation.run",
+        payload={
+            "task_id": "t1",
+            "dataset_id": "d1",
+            "preprocessing_config": {"feature_extractor": "resnet50"},
+        },
+    )
+
+    await handle_external_validation(descriptor)
+
+    call_kwargs = mock_queue.submit.await_args.kwargs
+    assert "preprocessing_config" not in call_kwargs
+    assert call_kwargs["dataset_id"] == "d1"
+
+
+@pytest.mark.asyncio
 async def test_analysis_submits_to_queue(mock_queue, monkeypatch):
     from task_worker.handlers import handle_analysis
     from gateway.task_dispatch import build_task_descriptor

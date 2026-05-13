@@ -114,6 +114,7 @@ async def handle_external_validation(descriptor: TaskDescriptor) -> None:
     payload = descriptor.payload
     task_id = str(payload["task_id"])
     kwargs = _payload_kwargs(payload)
+    kwargs.pop("preprocessing_config", None)
     await get_task_queue().submit(
         task_id=task_id,
         task_type=TaskType.EXTERNAL_VALIDATION,
