@@ -22,7 +22,7 @@ from datetime import datetime
 
 _SOFT_RESERVATION_TTL_SEC: float = 600.0
 _DEFAULT_MODEL_VRAM_MB: float = 1000.0
-_BATCH_BUFFER_MB: float = 50.0
+_BATCH_BUFFER_MB: float = 768.0
 from sqlalchemy import select
 
 from .email_notifications import send_templated_email
@@ -284,7 +284,9 @@ class TaskQueueManager:
         model_size_mb = self._model_vram_estimate_mb(model_name)
         batch_size = self._task_batch_size(kwargs, preprocessing_config, model_config)
         required_mb = (
-            model_size_mb + float(Config.MIN_INFERENCE_OVERHEAD_MB) + batch_size * _BATCH_BUFFER_MB
+            model_size_mb
+            + float(Config.MIN_INFERENCE_OVERHEAD_MB)
+            + batch_size * _BATCH_BUFFER_MB
         )
         return max(float(self.min_vram_mb), required_mb)
 

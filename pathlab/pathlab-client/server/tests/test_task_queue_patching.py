@@ -121,8 +121,8 @@ async def test_soft_vram_reservation_uses_task_budget_until_release(
                 "index": 0,
                 "name": "gpu0",
                 "allocated_mb": 0.0,
-                "free_mb": 24000.0,
-                "total_mb": 24000.0,
+                "free_mb": 60000.0,
+                "total_mb": 80000.0,
             },
             {
                 "index": 1,
@@ -138,7 +138,7 @@ async def test_soft_vram_reservation_uses_task_budget_until_release(
     now = 1000.0 + 601.0
 
     assert assigned_gpu == 0
-    assert queue._get_soft_reserved_mb(0) == pytest.approx(6700.0)
+    assert queue._get_soft_reserved_mb(0) == pytest.approx(52652.0)
 
 
 @pytest.mark.asyncio
@@ -177,9 +177,9 @@ async def test_wait_for_any_gpu_waits_for_estimated_task_vram(fresh_queue):
             {
                 "index": 0,
                 "name": "gpu0",
-                "allocated_mb": 16000.0,
-                "free_mb": 8000.0,
-                "total_mb": 24000.0,
+                "allocated_mb": 4000.0,
+                "free_mb": 60000.0,
+                "total_mb": 80000.0,
             }
         ],
     ]
@@ -285,8 +285,8 @@ async def test_acquire_gpu_stage_replaces_startup_reservation(fresh_queue):
                 "index": 0,
                 "name": "gpu0",
                 "allocated_mb": 0.0,
-                "free_mb": 24000.0,
-                "total_mb": 24000.0,
+                "free_mb": 60000.0,
+                "total_mb": 80000.0,
             }
         ],
     ):
@@ -336,3 +336,49 @@ async def test_acquire_gpu_stage_cleans_waiting_detail_on_cancellation(fresh_que
 
     assert "task_waiting:wsi_training" not in queue._gpu_stage_details
     assert queue._soft_vram_reservations == {}
+
+
+@pytest.mark.asyncio
+async def test_feature_extraction_stage_waits_for_conservative_batch_vram(fresh_queue):
+    """Feature extraction should wait when the configured batch cannot fit yet."""
+    queue = fresh_queue
+    queue.vram_check_interval = 0.001
+    queue._vram_condition = asyncio.Condition()
+    required_vram_mb = import_module("gateway.pipeline")._estimate_stage_vram_mb(
+        "conch", 64
+    )
+
+    gpu_snapshots = [
+        [
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 8600.0,
+                "free_mb": 15524.0,
+                "total_mb": 24124.0,
+            }
+        ],
+        [
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 4000.0,
+                "free_mb": 60000.0,
+                "total_mb": 80000.0,
+            }
+        ],
+    ]
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        side_effect=gpu_snapshots,
+    ) as get_gpu_info:
+        device = await queue.acquire_gpu_stage(
+            task_id="task_batch_wait",
+            stage="feature_extraction",
+            required_vram_mb=required_vram_mb,
+        )
+
+    assert required_vram_mb > 15524.0
+    assert device == "cuda:0"
+    assert get_gpu_info.call_count == 2
