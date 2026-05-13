@@ -227,6 +227,7 @@ async def test_heartbeat_once_sets_heartbeat_and_publishes_snapshot(monkeypatch,
 
     fake_queue = MagicMock()
     fake_queue.max_concurrent = 2
+    fake_queue.set_max_concurrent = AsyncMock()
     fake_queue.task_timeout = 30
     fake_queue._running_tasks = {"t1": "running"}
     fake_queue._pending_tasks = {"t2": "pending"}
@@ -255,6 +256,40 @@ async def test_heartbeat_once_sets_heartbeat_and_publishes_snapshot(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_once_refreshes_queue_max_concurrent(monkeypatch):
+    from task_worker.main import TaskWorkerRuntime
+
+    async def fake_set_heartbeat(redis=None):
+        pass
+
+    monkeypatch.setattr(
+        "task_worker.main.set_worker_heartbeat", fake_set_heartbeat
+    )
+    from backend.common.config import Config
+
+    monkeypatch.setattr(Config, "get_max_concurrent", classmethod(lambda cls, default=1: 7))
+
+    fake_queue = MagicMock()
+    fake_queue.max_concurrent = 9
+    fake_queue.set_max_concurrent = AsyncMock()
+    monkeypatch.setattr(
+        "gateway.task_queue.get_task_queue", lambda: fake_queue
+    )
+
+    async def fake_publish_runtime_status(queue, redis=None):
+        assert queue is fake_queue
+
+    monkeypatch.setattr(
+        "task_worker.main.publish_runtime_status", fake_publish_runtime_status
+    )
+
+    runtime = TaskWorkerRuntime()
+    await runtime.heartbeat_once()
+
+    fake_queue.set_max_concurrent.assert_awaited_once_with(7)
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_once_heartbeat_failure_still_attempts_publish(monkeypatch, caplog):
     from task_worker.main import TaskWorkerRuntime
 
@@ -270,6 +305,8 @@ async def test_heartbeat_once_heartbeat_failure_still_attempts_publish(monkeypat
     )
 
     fake_queue = MagicMock()
+    fake_queue.max_concurrent = 2
+    fake_queue.set_max_concurrent = AsyncMock()
     monkeypatch.setattr(
         "gateway.task_queue.get_task_queue", lambda: fake_queue
     )

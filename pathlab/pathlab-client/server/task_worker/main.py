@@ -120,8 +120,13 @@ class TaskWorkerRuntime:
 
         try:
             from gateway.task_queue import get_task_queue
+            from backend.common.config import Config
 
-            await publish_runtime_status(get_task_queue())
+            queue = get_task_queue()
+            configured_max_concurrent = Config.get_max_concurrent(default=1)
+            if getattr(queue, "max_concurrent", None) != configured_max_concurrent:
+                await queue.set_max_concurrent(configured_max_concurrent)
+            await publish_runtime_status(queue)
         except Exception as exc:
             logger.warning(f"Runtime snapshot publish failed: {exc}")
 
