@@ -253,7 +253,7 @@ async def test_external_validation_submits_to_queue(mock_queue, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_external_validation_drops_preprocessing_config_before_queue_submit(
+async def test_external_validation_preserves_preprocessing_config_for_queue_submit(
     mock_queue, monkeypatch
 ):
     from task_worker.handlers import handle_external_validation
@@ -280,7 +280,7 @@ async def test_external_validation_drops_preprocessing_config_before_queue_submi
     await handle_external_validation(descriptor)
 
     call_kwargs = mock_queue.submit.await_args.kwargs
-    assert "preprocessing_config" not in call_kwargs
+    assert call_kwargs["preprocessing_config"] == {"feature_extractor": "resnet50"}
     assert call_kwargs["dataset_id"] == "d1"
 
 
