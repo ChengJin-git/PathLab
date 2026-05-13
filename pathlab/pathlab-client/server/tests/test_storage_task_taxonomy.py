@@ -170,3 +170,219 @@ async def test_batch_import_task_resolves_compact_scan_selection_at_runtime(monk
     assert resolved["dataset_id"] == "missing-dataset"
     assert updates[-1][1] == "failed"
     assert updates[-1][2]["error_message"] == "Dataset not found: missing-dataset"
+
+
+@pytest.mark.asyncio
+async def test_batch_import_task_maps_default_classification_to_patch_classification(monkeypatch, tmp_path):
+    captured = {}
+    updates = []
+    patch_path = tmp_path / "tumor.png"
+    patch_path.write_bytes(b"patch")
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def commit(self):
+            return None
+
+    async def _fake_update_status(_db, task_id, status, **kwargs):
+        updates.append((task_id, status, kwargs))
+
+    async def _fake_get_or_create_data_group(_db, **kwargs):
+        captured["data_group"] = kwargs
+        return types.SimpleNamespace(
+            group_id="group-patch",
+            data_type=kwargs["data_type"],
+            aggregation_level=kwargs["aggregation_level"],
+            task_type=kwargs["task_type"],
+        )
+
+    async def _fake_get_or_create_dataset(_db, dataset_name, **kwargs):
+        return types.SimpleNamespace(
+            dataset_id="dataset-patch",
+            name=dataset_name,
+            user_id=kwargs.get("user_id"),
+            data_group=types.SimpleNamespace(
+                data_type="patch",
+                aggregation_level="file",
+                task_type="patch_classification",
+            ),
+        )
+
+    async def _fake_align_dataset_data_type_for_file(_db, dataset, **kwargs):
+        captured["align"] = kwargs
+        return dataset
+
+    async def _fake_get_by_dataset(_db, dataset_id, **kwargs):
+        return []
+
+    async def _fake_create_wsi(_db, **kwargs):
+        captured["wsi"] = kwargs
+        return types.SimpleNamespace(**kwargs)
+
+    async def _fake_recompute(_db, dataset_id):
+        captured["recompute_dataset_id"] = dataset_id
+
+    monkeypatch.setattr(storage_tasks, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(storage_tasks.StorageTaskRepository, "update_status", _fake_update_status)
+    monkeypatch.setattr(storage_tasks.DataGroupRepository, "get_or_create", _fake_get_or_create_data_group)
+    monkeypatch.setattr(storage_tasks.DatasetRepository, "get_or_create", _fake_get_or_create_dataset)
+    monkeypatch.setattr(storage_tasks, "align_dataset_data_type_for_file", _fake_align_dataset_data_type_for_file)
+    monkeypatch.setattr(storage_tasks.WSIRepository, "get_by_dataset", _fake_get_by_dataset)
+    monkeypatch.setattr(storage_tasks.WSIRepository, "create", _fake_create_wsi)
+    monkeypatch.setattr(storage_tasks.DatasetStatsRepository, "recompute", _fake_recompute)
+    monkeypatch.setattr(storage_tasks.storage_manager, "save_wsi_metadata", lambda *_args, **_kwargs: None)
+
+    await storage_tasks._run_batch_import_task(
+        "task-1",
+        "u1",
+        {
+            "files": [{"path": str(patch_path), "data_type": "patch", "valid": True}],
+            "dataset_name": "Patch Dataset",
+            "task_type": "wsi_classification",
+            "aggregation_level": "file",
+            "default_label": "tumor",
+        },
+    )
+
+    assert captured["data_group"] == {
+        "data_type": "patch",
+        "aggregation_level": "file",
+        "task_type": "patch_classification",
+    }
+    assert captured["align"]["task_type"] == "patch_classification"
+    assert updates[-1][1] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("task_type", "data_type", "aggregation_level", "filename"),
+    [
+        ("wsi_classification", "wsi", "case", "slide.svs"),
+        ("patch_classification", "patch", "file", "patch.png"),
+        ("wsi_survival", "wsi", "case", "survival.svs"),
+        ("patch_segmentation", "patch", "file", "segmentation.png"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_batch_import_task_accepts_all_canonical_task_terms(
+    monkeypatch,
+    tmp_path,
+    task_type,
+    data_type,
+    aggregation_level,
+    filename,
+):
+    captured = {}
+    updates = []
+    file_path = tmp_path / filename
+    file_path.write_bytes(b"data")
+    annotation_path = tmp_path / "segmentation.json"
+    annotation_path.write_text('{"images": [], "annotations": [], "categories": []}')
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def commit(self):
+            return None
+
+    async def _fake_update_status(_db, task_id, status, **kwargs):
+        updates.append((task_id, status, kwargs))
+
+    async def _fake_get_or_create_data_group(_db, **kwargs):
+        captured["data_group"] = kwargs
+        return types.SimpleNamespace(
+            group_id="group-canonical",
+            data_type=kwargs["data_type"],
+            aggregation_level=kwargs["aggregation_level"],
+            task_type=kwargs["task_type"],
+        )
+
+    async def _fake_get_or_create_dataset(_db, dataset_name, **kwargs):
+        return types.SimpleNamespace(
+            dataset_id="dataset-canonical",
+            name=dataset_name,
+            user_id=kwargs.get("user_id"),
+            data_group=types.SimpleNamespace(
+                data_type=data_type,
+                aggregation_level=aggregation_level,
+                task_type=task_type,
+            ),
+        )
+
+    async def _fake_align_dataset_data_type_for_file(_db, dataset, **kwargs):
+        captured.setdefault("align", []).append(kwargs)
+        return dataset
+
+    async def _fake_get_by_dataset(_db, dataset_id, **kwargs):
+        return []
+
+    async def _fake_create_wsi(_db, **kwargs):
+        captured["wsi"] = kwargs
+        return types.SimpleNamespace(**kwargs)
+
+    async def _fake_upsert_annotation(_db, **kwargs):
+        captured["annotation"] = kwargs
+
+    async def _fake_recompute(_db, dataset_id):
+        captured["recompute_dataset_id"] = dataset_id
+
+    def _fake_resolve_file_data_type_and_properties(_file_path, **_kwargs):
+        return data_type, {
+            "file_size": file_path.stat().st_size,
+            "width": 100,
+            "height": 200,
+            "mpp": None,
+            "magnification": None,
+            "vendor": None,
+        }
+
+    monkeypatch.setattr(storage_tasks, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(storage_tasks.StorageTaskRepository, "update_status", _fake_update_status)
+    monkeypatch.setattr(storage_tasks.DataGroupRepository, "get_or_create", _fake_get_or_create_data_group)
+    monkeypatch.setattr(storage_tasks.DatasetRepository, "get_or_create", _fake_get_or_create_dataset)
+    monkeypatch.setattr(storage_tasks, "align_dataset_data_type_for_file", _fake_align_dataset_data_type_for_file)
+    monkeypatch.setattr(storage_tasks.WSIRepository, "get_by_dataset", _fake_get_by_dataset)
+    monkeypatch.setattr(storage_tasks.WSIRepository, "create", _fake_create_wsi)
+    monkeypatch.setattr(storage_tasks.DatasetStatsRepository, "recompute", _fake_recompute)
+    monkeypatch.setattr(storage_tasks.storage_manager, "save_wsi_metadata", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(storage_tasks, "resolve_file_data_type_and_properties", _fake_resolve_file_data_type_and_properties)
+    monkeypatch.setattr(storage_tasks, "find_matching_segmentation_annotation_path", lambda _path: annotation_path)
+    monkeypatch.setattr(storage_tasks, "load_coco_annotation_file", lambda _path: {"images": [], "annotations": [], "categories": []})
+    monkeypatch.setattr(storage_tasks.SegmentationAnnotationRepository, "upsert", _fake_upsert_annotation)
+    monkeypatch.setattr(storage_tasks, "rebuild_dataset_annotation_summary_cache", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(storage_tasks, "invalidate_chat_context", lambda *_args, **_kwargs: None)
+
+    await storage_tasks._run_batch_import_task(
+        "task-1",
+        "u1",
+        {
+            "files": [{"path": str(file_path), "data_type": data_type, "valid": True}],
+            "dataset_name": "Canonical Dataset",
+            "task_type": task_type,
+            "aggregation_level": aggregation_level,
+            "default_label": "tumor",
+            "default_event_time": 12.5,
+            "default_event_status": 1,
+        },
+    )
+
+    assert captured["data_group"] == {
+        "data_type": data_type,
+        "aggregation_level": aggregation_level,
+        "task_type": task_type,
+    }
+    assert captured["align"][-1]["task_type"] == task_type
+    assert updates[-1][1] == "completed"
+    if task_type == "wsi_survival":
+        assert captured["wsi"]["event_time"] == 12.5
+        assert captured["wsi"]["event_status"] == 1
+    if task_type == "patch_segmentation":
+        assert captured["annotation"]["source_dataset_id"] == "dataset-canonical"

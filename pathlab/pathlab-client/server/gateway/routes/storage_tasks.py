@@ -54,7 +54,7 @@ from ..utils import (
     load_coco_annotation_file,
     SEGMENTATION_TASK_TYPE,
 )
-from backend.ai.task_taxonomy import is_classification_task, is_segmentation_task, is_survival_task, normalize_task_type
+from backend.ai.task_taxonomy import get_task_metadata, is_classification_task, is_segmentation_task, is_survival_task, normalize_task_type
 from backend.ai.schemas.base import TaskStatus
 from backend.annotation.summary_cache import (
     get_dataset_annotation_summary_cache_path,
@@ -322,6 +322,12 @@ async def _run_batch_import_task(
                         )
                         if anchor_path:
                             data_type = "wsi"
+
+                if (
+                    get_task_metadata(task_type).task_family == "classification"
+                    and data_type == "patch"
+                ):
+                    task_type = "patch_classification"
 
                 try:
                     ensure_segmentation_contract(
