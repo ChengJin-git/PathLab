@@ -7,6 +7,15 @@ from importlib import import_module
 TaskStatus = import_module("backend.ai.schemas.base").TaskStatus
 
 
+def test_feature_extraction_stage_estimate_fits_24gb_gpu_startup_gate():
+    """Gateway should not reject feature extraction before AI's runtime VRAM probe."""
+    pipeline = import_module("gateway.pipeline")
+
+    required_vram_mb = pipeline._estimate_feature_extraction_vram_mb("conch", 64)
+
+    assert required_vram_mb <= 24576.0
+
+
 @pytest.mark.asyncio
 async def test_compute_patches_passes_use_otsu_to_segmenter_once():
     """compute_patches should not pass duplicate use_otsu kwargs to TissueSegmenter."""
@@ -267,6 +276,8 @@ async def test_run_training_pipeline_reselects_gpu_for_wsi_feature_and_training_
         "feature_extraction",
         "wsi_training",
     ]
+    assert stage_calls[0].kwargs["required_vram_mb"] > 2000.0
+    assert stage_calls[1].kwargs["required_vram_mb"] == 2000.0
     feature_payload = mock_call_ai.await_args_list[0].kwargs["payload"]
     training_payload = mock_call_ai.await_args_list[1].kwargs["payload"]
     assert feature_payload["device"] == "cuda:0"
@@ -314,6 +325,7 @@ async def test_run_training_pipeline_reselects_gpu_for_patch_classification_stag
     mock_queue.acquire_gpu_stage.assert_awaited_once()
     acquire_call = mock_queue.acquire_gpu_stage.await_args
     assert acquire_call.kwargs["stage"] == "patch_classification"
+    assert mock_call_ai.await_args is not None
     assert mock_call_ai.await_args.kwargs["payload"]["device"] == "cuda:3"
     mock_queue.release_gpu_stage.assert_called_once_with(
         "task_patch_cls",
@@ -379,6 +391,7 @@ async def test_run_training_pipeline_reselects_gpu_for_patch_segmentation_stage(
     mock_queue.acquire_gpu_stage.assert_awaited_once()
     acquire_call = mock_queue.acquire_gpu_stage.await_args
     assert acquire_call.kwargs["stage"] == "patch_segmentation"
+    assert mock_call_ai.await_args is not None
     assert mock_call_ai.await_args.kwargs["payload"]["device"] == "cuda:4"
     mock_queue.release_gpu_stage.assert_called_once_with(
         "task_patch_seg",

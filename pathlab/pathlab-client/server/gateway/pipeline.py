@@ -42,6 +42,7 @@ _GPU_VRAM_REPROBE_TIMEOUT_SECS = float(
 _GPU_VRAM_REPROBE_POLL_SECS = 10.0
 _DEFAULT_MODEL_VRAM_MB = 1000.0
 _BATCH_BUFFER_MB = 768.0
+_FEATURE_EXTRACTION_BATCH_BUFFER_MB = 50.0
 
 
 def _get_gpu_utils_module():
@@ -53,6 +54,20 @@ def _get_results_route_module():
 
 
 def _estimate_stage_vram_mb(model_name: str, batch_size: int | None = None) -> float:
+    return _estimate_model_batch_vram_mb(model_name, batch_size, _BATCH_BUFFER_MB)
+
+
+def _estimate_feature_extraction_vram_mb(
+    model_name: str, batch_size: int | None = None
+) -> float:
+    return _estimate_model_batch_vram_mb(
+        model_name, batch_size, _FEATURE_EXTRACTION_BATCH_BUFFER_MB
+    )
+
+
+def _estimate_model_batch_vram_mb(
+    model_name: str, batch_size: int | None, batch_buffer_mb: float
+) -> float:
     try:
         estimates = import_module(
             "backend.ai.utils.vram_guard"
@@ -71,7 +86,7 @@ def _estimate_stage_vram_mb(model_name: str, batch_size: int | None = None) -> f
         bounded_batch_size = 64
     return max(
         float(Config.DEFAULT_MIN_VRAM_MB),
-        model_mb + float(Config.MIN_INFERENCE_OVERHEAD_MB) + bounded_batch_size * _BATCH_BUFFER_MB,
+        model_mb + float(Config.MIN_INFERENCE_OVERHEAD_MB) + bounded_batch_size * batch_buffer_mb,
     )
 
 
@@ -1173,7 +1188,7 @@ async def run_training_pipeline(
         feature_device = await task_queue.acquire_gpu_stage(
             task_id=task_id,
             stage="feature_extraction",
-            required_vram_mb=_estimate_stage_vram_mb(
+            required_vram_mb=_estimate_feature_extraction_vram_mb(
                 feature_extractor, feature_batch_size
             ),
         )
@@ -1251,9 +1266,7 @@ async def run_training_pipeline(
         training_device = await task_queue.acquire_gpu_stage(
             task_id=task_id,
             stage="wsi_training",
-            required_vram_mb=_estimate_stage_vram_mb(
-                feature_extractor, model_config.get("batch_size")
-            ),
+            required_vram_mb=float(Config.DEFAULT_MIN_VRAM_MB),
         )
         payload["device"] = training_device
         assigned_device = training_device
