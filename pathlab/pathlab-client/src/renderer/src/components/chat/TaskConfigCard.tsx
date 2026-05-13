@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, UploadCloud, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
@@ -20,7 +20,6 @@ import {
   DEFAULT_PATCH_CLASSIFIER,
   OPTIMIZERS,
   DEFAULT_PYRAMID_LEVEL,
-  DEFAULT_FEATURE_BATCH_SIZE,
   DEFAULT_EXTRACTOR,
   DEFAULT_AGGREGATOR,
   SEGMENTATION_DEFAULTS,
@@ -46,6 +45,7 @@ import {
   type TaskType,
 } from '../../constants/training'
 import { parseLastChatBlockJson, stripChatBlocks } from './chatBlockParsing'
+import { resolveFeatureBatchSizeForSubmissionFromQueue } from '../../lib/featureBatchSize'
 
 // Simplified config from Agent (doesn't include wsi_ids, etc.)
 // Note: tile_size removed - PrePATH-style tiling auto-determines patch_size based on WSI magnification
@@ -573,6 +573,13 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
       const resolvedEncoder = config.encoder ?? DEFAULT_EXTRACTOR
       const resolvedAggregator = config.aggregator ?? DEFAULT_AGGREGATOR
       const resolvedClassifier = config.classifier ?? DEFAULT_PATCH_CLASSIFIER
+      const resolvedFeatureExtractor = isSegmentationTask(config.task_type)
+        ? resolvedSegBackbone
+        : resolvedEncoder
+      const featureBatchSize = await resolveFeatureBatchSizeForSubmissionFromQueue(
+        config.feature_batch_size,
+        resolvedFeatureExtractor,
+      )
       let autoDescription: string
       if (isSegmentationTask(config.task_type)) {
         autoDescription = `Segmentation: ${resolvedSegArchitecture} + ${resolvedSegBackbone}`
@@ -594,10 +601,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
           // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: config.pyramid_level ?? DEFAULT_PYRAMID_LEVEL,
           // Feature extraction
-          feature_extractor: isSegmentationTask(config.task_type)
-            ? resolvedSegBackbone
-            : resolvedEncoder,
-          feature_batch_size: config.feature_batch_size ?? DEFAULT_FEATURE_BATCH_SIZE,
+          feature_extractor: resolvedFeatureExtractor,
+          feature_batch_size: featureBatchSize,
           use_gpu: canUseGpuForDataset(selectedDatasetId ?? ''),
           // Tissue segmentation parameters (WSI only)
           sthresh: config.sthresh ?? SEGMENTATION_DEFAULTS.sthresh,

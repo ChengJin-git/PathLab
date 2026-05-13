@@ -36,6 +36,7 @@ import {
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
 } from '../lib/trainingSubmissionTracker'
+import { resolveFeatureBatchSizeForSubmissionFromQueue } from '../lib/featureBatchSize'
 import { formatFileSize } from '../lib/utils'
 import {
   FEATURE_EXTRACTORS,
@@ -551,6 +552,12 @@ export default function NewTaskPage() {
       const taskId = `train_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
       markTrainingSubmissionPending(taskId, wizard.taskName)
 
+      const featureBatchSize = await resolveFeatureBatchSizeForSubmissionFromQueue(
+        trainingConfig.featureBatchSize,
+        trainingConfig.featureExtractor,
+        { treatDefaultAsUnset: true },
+      )
+
       const request = {
         task_id: taskId,
         task_name: wizard.taskName,
@@ -565,7 +572,7 @@ export default function NewTaskPage() {
           // Note: tile_size removed - auto-determined by PrePATH-style tiling
           level: trainingConfig.pyramidLevel,
           feature_extractor: trainingConfig.featureExtractor,
-          feature_batch_size: trainingConfig.featureBatchSize,
+          feature_batch_size: featureBatchSize,
           use_gpu: canUseGpuForDataset(dataSelection.selectedDatasetId ?? ''),
           sthresh: trainingConfig.segSthresh,
           mthresh: trainingConfig.segMthresh,
