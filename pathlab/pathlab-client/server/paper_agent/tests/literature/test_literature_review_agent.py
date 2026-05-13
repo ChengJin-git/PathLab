@@ -12,7 +12,7 @@ from pathlab_paper_agent.agents.literature_review_agent import (
     LiteratureReviewInputs,
     load_existing_candidates,
 )
-from pathlab_paper_agent.citations import CitationCandidate
+from pathlab_paper_agent.citations import CitationCandidate, CitationReference
 from pathlab_paper_agent.llm import LLMResponse
 from pathlab_paper_agent.pipeline import create_dev_run
 from pathlab_paper_agent.schemas import PaperManifest
@@ -334,6 +334,25 @@ def test_literature_agent_hard_fails_when_no_refs_are_selected() -> None:
     with pytest.raises(LiteratureReviewAgentError, match="No verified references"):
         agent.generate(_inputs())
 
+    assert len(llm.calls) == 1
+
+
+def test_intro_rw_prompt_allows_public_reference_institution_names() -> None:
+    llm = MockLLM([_draft_all_selected])
+    agent = LiteratureReviewAgent(llm, search_provider=MockSearchProvider())
+    ref = CitationReference(
+        key="Mayo2022",
+        title="Mayo Clinic validation of computational pathology biomarkers",
+        authors=("Public Author",),
+        year=2022,
+        venue="Public Journal",
+        source="pubmed",
+        required=True,
+    )
+
+    draft = agent.draft_intro_related_work(_inputs(), (ref,), (ref,))
+
+    assert "\\cite{Mayo2022}" in draft.introduction_tex
     assert len(llm.calls) == 1
 
 

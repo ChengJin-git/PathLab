@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
-import { BookOpen, Download, FileCode2, Loader2, MousePointer2 } from 'lucide-react'
+import { BookOpen, Download, FileCode2, Loader2, Maximize2, MousePointer2, ZoomIn, ZoomOut } from 'lucide-react'
 import { ApiError } from '../../api/client'
 import {
   downloadPaperExport,
@@ -14,6 +14,7 @@ import {
 import { normalizeForMatch, pdfMatchSection } from '../../lib/pdfSectionMatch'
 import { Button } from '../ui/button'
 import { Card, CardContent } from '../ui/card'
+import { RegenerateSelectionPanel, type SelectionInfo } from './RegenerateSelectionPanel'
 import { SECTION_ORDER, labelForSection } from './SectionsTab'
 
 const PdfViewer = lazy(() => import('./PdfViewer').then((module) => ({ default: module.PdfViewer })))
@@ -22,7 +23,7 @@ interface PdfPreviewTabProps {
   paperId: string
   run: PaperRunDetail
   pdfRefreshKey: number
-  onSelectionDetected: (payload: { sectionName: string; text: string }) => void
+  onPdfRefreshNeeded: () => void
 }
 
 function cacheBustedUrl(url: string, key: number): string {
@@ -30,7 +31,7 @@ function cacheBustedUrl(url: string, key: number): string {
   return `${url}${separator}v=${key}`
 }
 
-export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onSelectionDetected }: PdfPreviewTabProps) {
+export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded }: PdfPreviewTabProps) {
   const [, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
   const [sourceSection, setSourceSection] = useState<string>('abstract')
@@ -38,6 +39,11 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onSelectionDetected
     tone: 'info' | 'warning' | 'success'
     text: string
   } | null>(null)
+  const [pdfSelection, setPdfSelection] = useState<{
+    sectionName: string
+    selection: SelectionInfo
+  } | null>(null)
+  const [pdfScale, setPdfScale] = useState<number>(1)
   const template = run.selected_templates[0] ?? 'miccai'
   const pdfPath = `final/${template}/main.pdf`
   const bundlePath = `exports/${template}_bundle.zip`
@@ -129,9 +135,17 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onSelectionDetected
       setSourceSection(match.section_name)
       setSelectionMessage({
         tone: 'success',
-        text: `Matched ${labelForSection(match.section_name)} (${Math.round(match.confidence * 100)}%). Opening regenerate panel...`,
+        text: `Matched ${labelForSection(match.section_name)} (${Math.round(match.confidence * 100)}%).`,
       })
-      onSelectionDetected({ sectionName: match.section_name, text })
+      setPdfSelection({
+        sectionName: match.section_name,
+        selection: {
+          text,
+          paragraphIndex: 0, // backend selection_locator resolves precise paragraph from selected_text
+          charStart: -1,     // negative ⇒ "from PDF, no precise char hint"
+          charEnd: -1,
+        },
+      })
     } catch (error) {
       setSelectionMessage({
         tone: 'warning',
@@ -238,17 +252,73 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onSelectionDetected
             'Select text directly in the PDF to regenerate it. If matching is uncertain, use Edit in source as the manual fallback.'}
         </div>
       </div>
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner">
-        <Suspense
-          fallback={
-            <div className="flex h-[72vh] items-center justify-center bg-white text-sm text-slate-500">
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Loading PDF text layer...
-            </div>
-          }
-        >
-          <PdfViewer pdfUrl={pdfUrl} refreshKey={pdfRefreshKey} onSelectionChange={handlePdfSelection} />
-        </Suspense>
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-inner">
+          <div className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-xl border border-slate-200 bg-white/95 p-1 shadow-md backdrop-blur">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom out"
+              className="h-7 w-7"
+              onClick={() => setPdfScale((s) => Math.max(0.5, +(s - 0.1).toFixed(2)))}
+              disabled={pdfScale <= 0.5}
+            >
+              <ZoomOut className="h-4 w-4" />
+            </Button>
+            <button
+              type="button"
+              className="min-w-[3.25rem] rounded-md px-2 py-1 text-xs font-semibold tabular-nums text-slate-700 hover:bg-slate-100"
+              title="Reset zoom to 100%"
+              onClick={() => setPdfScale(1)}
+            >
+              {Math.round(pdfScale * 100)}%
+            </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Zoom in"
+              className="h-7 w-7"
+              onClick={() => setPdfScale((s) => Math.min(2.5, +(s + 0.1).toFixed(2)))}
+              disabled={pdfScale >= 2.5}
+            >
+              <ZoomIn className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Fit to width"
+              className="h-7 w-7"
+              title="Fit to width (1.5×)"
+              onClick={() => setPdfScale(1.5)}
+            >
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+          </div>
+          <Suspense
+            fallback={
+              <div className="flex h-[72vh] items-center justify-center bg-white text-sm text-slate-500">
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Loading PDF text layer...
+              </div>
+            }
+          >
+            <PdfViewer pdfUrl={pdfUrl} refreshKey={pdfRefreshKey} scale={pdfScale} onSelectionChange={handlePdfSelection} />
+          </Suspense>
+        </div>
+        <div className="xl:sticky xl:top-4 xl:self-start">
+          <RegenerateSelectionPanel
+            paperId={paperId}
+            sectionName={pdfSelection?.sectionName ?? sourceSection}
+            templateId={template}
+            selection={pdfSelection?.selection ?? null}
+            onPdfRefreshNeeded={onPdfRefreshNeeded}
+            onClear={() => {
+              setPdfSelection(null)
+              setSelectionMessage(null)
+              window.getSelection()?.removeAllRanges()
+            }}
+          />
+        </div>
       </div>
     </div>
   )

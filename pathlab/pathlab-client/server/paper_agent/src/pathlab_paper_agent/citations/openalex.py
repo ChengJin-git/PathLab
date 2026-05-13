@@ -81,13 +81,20 @@ class OpenAlexClient:
         doi = _normalize_doi(item.get("doi") or ids.get("doi"))
         pmid = _normalize_pmid(ids.get("pmid"))
         openalex_id = str(item.get("id") or ids.get("openalex") or "").strip() or None
+        venue = _venue_from_locations(item)
+        biblio = item.get("biblio") if isinstance(item.get("biblio"), dict) else {}
         return CitationCandidate(
             title=str(item.get("display_name") or ""),
             source="openalex",
             abstract=_abstract_from_inverted_index(item.get("abstract_inverted_index")),
             authors=_authors_from_authorships(item.get("authorships")),
             year=_safe_int(item.get("publication_year")),
-            venue=_venue_from_locations(item),
+            venue=venue,
+            journal=venue,
+            volume=_string_or_none(biblio.get("volume")),
+            number=_string_or_none(biblio.get("issue")),
+            pages=_pages_from_biblio(biblio),
+            publication_type=_string_or_none(item.get("type_crossref") or item.get("type")),
             doi=doi,
             pmid=pmid,
             openalex_id=openalex_id,
@@ -145,6 +152,17 @@ def _url_from_item(item: dict[str, Any], *, doi: str | None, openalex_id: str | 
     return openalex_id
 
 
+def _pages_from_biblio(value: dict[str, Any]) -> str | None:
+    pages = _string_or_none(value.get("pages"))
+    if pages:
+        return pages
+    first_page = _string_or_none(value.get("first_page"))
+    last_page = _string_or_none(value.get("last_page"))
+    if first_page and last_page and first_page != last_page:
+        return f"{first_page}--{last_page}"
+    return first_page or last_page
+
+
 def _abstract_from_inverted_index(value: Any) -> str | None:
     if not isinstance(value, dict) or not value:
         return None
@@ -174,6 +192,12 @@ def _normalize_pmid(value: Any) -> str | None:
     raw = str(value).strip()
     match = _PMID_RE.search(raw)
     return match.group(1) if match else raw or None
+
+
+def _string_or_none(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    return str(value)
 
 
 def _safe_int(value: Any) -> int | None:

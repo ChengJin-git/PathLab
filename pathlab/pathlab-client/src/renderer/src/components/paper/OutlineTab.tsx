@@ -25,6 +25,13 @@ function validateOutlineDocument(value: unknown): value is OutlineDocument {
   )
 }
 
+function artifactUnavailable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.isNotFound()) return true
+  const detail = error.details || error.message
+  return error.status === 403 && detail.includes('Artifact is not registered public')
+}
+
 function JsonNode({ name, value, depth = 0 }: { name?: string; value: unknown; depth?: number }) {
   const paddingLeft = `${depth * 14}px`
 
@@ -71,7 +78,7 @@ export function OutlineTab({ paperId }: OutlineTabProps) {
   })
 
   const validation = useMemo(() => validateOutlineDocument(outlineQuery.data), [outlineQuery.data])
-  const isMissing = outlineQuery.error instanceof ApiError && outlineQuery.error.isNotFound()
+  const isMissing = artifactUnavailable(outlineQuery.error)
 
   if (outlineQuery.isLoading) {
     return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading outline...</div>

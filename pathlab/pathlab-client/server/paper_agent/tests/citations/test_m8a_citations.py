@@ -86,8 +86,133 @@ def test_ref_selector_and_bibtex_generation_are_stable() -> None:
     assert len(selection.selected_refs) == 2
     assert len(selection.required_cites) == 2
     assert "@article{" in bibtex
+    assert "@inproceedings{" in bibtex
     assert "title = {Computational pathology with whole-slide images}" in bibtex
+    assert "booktitle = {MICCAI}" in bibtex
     assert "doi = {10.1000/test}" in bibtex
+
+
+def test_ref_selector_emits_stable_citekeys_for_canonical_inputs() -> None:
+    """Lock the exact citekey strings so silent drift in the generator (e.g.
+    switching from initial-based to surname-based, or changing the title-word
+    cap) fails this test before it leaks into existing paper runs."""
+    candidates = [
+        CitationCandidate(
+            title="Computational pathology with whole-slide images",
+            source="pubmed",
+            authors=("Smith J", "Lee K"),
+            year=2020,
+            venue="Nature Medicine",
+            doi="10.1000/test",
+            cluster="macro",
+        ),
+        CitationCandidate(
+            title="Multiple instance learning for WSI",
+            source="semantic_scholar",
+            authors=("Doe A",),
+            year=2021,
+            venue="MICCAI",
+            s2_paper_id="abc",
+            cluster="mil",
+        ),
+    ]
+    selection = select_references(candidates, max_refs=10)
+    assert [ref.key for ref in selection.selected_refs] == [
+        "J2020_computational_pathology_with",
+        "A2021_multiple_instance_learning",
+    ]
+
+
+def test_bibtex_renderer_maps_entry_types_and_preserves_title_case() -> None:
+    refs = (
+        CitationReference(
+            key="Smith2024",
+            title="CRC MSI and H&E classification with WSI",
+            authors=("Smith J", "Doe A"),
+            year=2024,
+            venue="Journal of Pathology",
+            doi="10.1000/path_1",
+            url="https://example.test/paper_a?x=1&y=2",
+            source="pubmed",
+        ),
+        CitationReference(
+            key="Lee2024",
+            title="Deep {MSI} detection for CRC",
+            authors=("Lee K",),
+            year=2024,
+            venue="MICCAI",
+            s2_paper_id="s2_abc",
+            source="semantic_scholar",
+        ),
+    )
+
+    bibtex = generate_bibtex(refs)
+
+    assert "@article{Smith2024" in bibtex
+    assert "journal = {Journal of Pathology}" in bibtex
+    assert "title = {{CRC} {MSI} and {H\\&E} classification with {WSI}}" in bibtex
+    assert "doi = {10.1000/path_1}" in bibtex
+    assert "url = {https://example.test/paper_a?x=1&y=2}" in bibtex
+    assert "@inproceedings{Lee2024" in bibtex
+    assert "booktitle = {MICCAI}" in bibtex
+    assert "title = {Deep {MSI} detection for {CRC}}" in bibtex
+    assert r"\{MSI\}" not in bibtex
+
+
+def test_bibtex_renderer_protects_plural_acronyms() -> None:
+    """Plurals like WSIs / CNNs / AUCs should be wrapped in the same brace
+    as the singular acronym; substrings inside longer words must NOT match."""
+    refs = (
+        CitationReference(
+            key="Plural2024",
+            title="Classifying WSIs across CNNs with reported AUCs",
+            authors=("Author A",),
+            year=2024,
+            venue="MICCAI",
+            source="semantic_scholar",
+        ),
+        CitationReference(
+            key="NotAMatch2024",
+            title="MILstone study of CRCs in TCGA",
+            authors=("Author B",),
+            year=2024,
+            venue="Nature",
+            source="pubmed",
+        ),
+    )
+
+    bibtex = generate_bibtex(refs)
+
+    assert "title = {Classifying {WSIs} across {CNNs} with reported {AUCs}}" in bibtex
+    # "MILstone" contains "MIL" but must NOT match: lookahead `t` rejects it.
+    assert "MILstone" in bibtex
+    assert "{MIL}stone" not in bibtex
+    assert "{MILstone}" not in bibtex
+    # "CRCs" plural should still match.
+    assert "{CRCs}" in bibtex
+    # "TCGA" terminal (no plural) still wrapped.
+    assert "{TCGA}" in bibtex
+
+
+def test_bibtex_renderer_handles_arxiv_and_empty_references() -> None:
+    bibtex = generate_bibtex(
+        [
+            CitationReference(
+                key="Arxiv2024",
+                title="AI pathology preprint",
+                authors=("Preprint A",),
+                year=2024,
+                source="arxiv",
+                url="https://arxiv.org/abs/2401.01234",
+            )
+        ]
+    )
+
+    assert "@misc{Arxiv2024" in bibtex
+    assert "title = {{AI} pathology preprint}" in bibtex
+    assert "eprint = {2401.01234}" in bibtex
+    assert "archivePrefix = {arXiv}" in bibtex
+    assert generate_bibtex([]) == "% No verified references selected.\n"
 
 
 def test_coverage_and_orphan_gates() -> None:
@@ -121,6 +246,8 @@ def test_semantic_scholar_client_parses_search_results() -> None:
                         "authors": [{"name": "Author One"}],
                         "year": 2022,
                         "venue": "MICCAI",
+                        "journal": {"name": "Proceedings of MICCAI", "volume": "13435", "pages": "1--12"},
+                        "publicationTypes": ["Conference"],
                         "externalIds": {"DOI": "10.2/s2", "PubMed": "123"},
                         "url": "https://example.test/s2",
                         "citationCount": 7,
@@ -140,6 +267,10 @@ def test_semantic_scholar_client_parses_search_results() -> None:
     assert results[0].doi == "10.2/s2"
     assert results[0].pmid == "123"
     assert results[0].cluster == "mil"
+    assert results[0].journal == "Proceedings of MICCAI"
+    assert results[0].volume == "13435"
+    assert results[0].pages == "1--12"
+    assert results[0].publication_type == "Conference"
 
 
 def test_pubmed_client_parses_search_and_summary_results() -> None:
@@ -157,6 +288,10 @@ def test_pubmed_client_parses_search_and_summary_results() -> None:
                             "authors": [{"name": "Path A"}],
                             "pubdate": "2021 Jan",
                             "fulljournalname": "J Pathol",
+                            "volume": "260",
+                            "issue": "4",
+                            "pages": "100-110",
+                            "pubtype": ["Journal Article"],
                             "articleids": [{"idtype": "doi", "value": "10.3/pubmed"}],
                         }
                     }
@@ -175,6 +310,11 @@ def test_pubmed_client_parses_search_and_summary_results() -> None:
     assert results[0].doi == "10.3/pubmed"
     assert results[0].year == 2021
     assert results[0].url == "https://pubmed.ncbi.nlm.nih.gov/111/"
+    assert results[0].journal == "J Pathol"
+    assert results[0].volume == "260"
+    assert results[0].number == "4"
+    assert results[0].pages == "100-110"
+    assert results[0].publication_type == "Journal Article"
 
 
 def test_openalex_client_parses_works_search_results() -> None:
@@ -190,10 +330,17 @@ def test_openalex_client_parses_works_search_results() -> None:
                         "doi": "https://doi.org/10.4/openalex",
                         "display_name": "OpenAlex WSI MIL",
                         "publication_year": 2023,
+                        "type_crossref": "journal-article",
                         "authorships": [{"author": {"display_name": "Open Author"}}],
                         "primary_location": {
                             "landing_page_url": "https://example.test/oa",
                             "source": {"display_name": "Open Journal"},
+                        },
+                        "biblio": {
+                            "volume": "12",
+                            "issue": "2",
+                            "first_page": "101",
+                            "last_page": "109",
                         },
                         "ids": {
                             "openalex": "https://openalex.org/W123",
@@ -226,6 +373,11 @@ def test_openalex_client_parses_works_search_results() -> None:
     assert results[0].doi == "10.4/openalex"
     assert results[0].pmid == "222"
     assert results[0].venue == "Open Journal"
+    assert results[0].journal == "Open Journal"
+    assert results[0].volume == "12"
+    assert results[0].number == "2"
+    assert results[0].pages == "101--109"
+    assert results[0].publication_type == "journal-article"
     assert results[0].abstract == "OpenAlex abstract works"
 
 

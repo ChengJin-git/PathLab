@@ -8,6 +8,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
 interface PdfViewerProps {
   pdfUrl: string
   refreshKey: number
+  scale?: number
   onSelectionChange: (text: string) => void
 }
 
@@ -70,6 +71,10 @@ function PdfPage({ document, pageNumber, scale }: PdfPageProps) {
         textLayerRef.current.replaceChildren()
         textLayerRef.current.style.width = `${viewport.width}px`
         textLayerRef.current.style.height = `${viewport.height}px`
+        // PDF.js v4 text-layer spans use `calc(... * var(--scale-factor))`
+        // for font-size and offsets. Without this variable, spans collapse
+        // to 0 and selection picks the wrong text.
+        textLayerRef.current.style.setProperty('--scale-factor', String(viewport.scale))
 
         renderTask = page.render({
           canvasContext,
@@ -128,7 +133,7 @@ function PdfPage({ document, pageNumber, scale }: PdfPageProps) {
   )
 }
 
-export function PdfViewer({ pdfUrl, refreshKey, onSelectionChange }: PdfViewerProps) {
+export function PdfViewer({ pdfUrl, refreshKey, scale = 1, onSelectionChange }: PdfViewerProps) {
   const rootRef = useRef<HTMLDivElement>(null)
   const [state, setState] = useState<PdfLoadState>({
     document: null,
@@ -216,10 +221,10 @@ export function PdfViewer({ pdfUrl, refreshKey, onSelectionChange }: PdfViewerPr
       <div className="mx-auto flex max-w-fit flex-col gap-6">
         {Array.from({ length: state.document.numPages }, (_, index) => (
           <PdfPage
-            key={`${refreshKey}-${index + 1}`}
+            key={`${refreshKey}-${scale}-${index + 1}`}
             document={state.document as pdfjs.PDFDocumentProxy}
             pageNumber={index + 1}
-            scale={1}
+            scale={scale}
           />
         ))}
       </div>

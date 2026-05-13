@@ -190,7 +190,7 @@ export function RegenerateSelectionPanel({
   const canSubmit = Boolean(selection) && !startMutation.isPending && !isSubmittingOrPolling && !completedJob
 
   const helperCopy = useMemo(() => {
-    if (!selection) return 'Select any paragraph in the LaTeX source on the left to regenerate it.'
+    if (!selection) return 'Select any text on the left to regenerate just that span.'
     if (completedJob)
       return 'Review the backend diff. Accept keeps this candidate; reject restores the before snapshot.'
     if (failedJob) return jobErrorMessage(failedJob)
@@ -385,13 +385,37 @@ export function RegenerateSelectionPanel({
             ) : null}
           </>
         ) : (
-          <div className="space-y-3 py-2 text-sm text-slate-500">
-            <p>{helperCopy}</p>
-            <ul className="list-disc space-y-1 pl-4 text-xs leading-5 text-slate-400">
-              <li>Only the selected source span is regenerated.</li>
-              <li>The backend checks source hashes to avoid stale overwrites.</li>
-              <li>Completed candidates can be accepted or physically reverted.</li>
-            </ul>
+          <div className="space-y-4 py-3">
+            <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-violet-100 text-violet-600">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <p className="text-sm font-semibold text-slate-800">Pick a span to rewrite</p>
+              <p className="text-xs leading-5 text-slate-500">
+                Highlight a sentence or paragraph on the left, optionally add a note, and the model rewrites just that
+                span.
+              </p>
+            </div>
+            <div className="grid gap-2 text-xs leading-5 text-slate-500">
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">
+                  1
+                </span>
+                <span>Select text in the PDF or LaTeX source.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">
+                  2
+                </span>
+                <span>Add an optional note describing what should change.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">
+                  3
+                </span>
+                <span>Review the diff, then accept or revert. Other paragraphs stay locked.</span>
+              </div>
+            </div>
           </div>
         )}
       </CardContent>

@@ -122,17 +122,47 @@ def _new_paper_id() -> str:
     return f"paper_{uuid.uuid4().hex[:16]}"
 
 
-def _row_to_summary(row) -> PaperRunSummary:
+def _row_to_summary(row, manifest: Optional[PaperManifest] = None) -> PaperRunSummary:
+    row_status = PaperRunStatus(row.status)
+    manifest_is_initial = (
+        manifest is not None
+        and manifest.status == PaperRunStatus.pending
+        and manifest.current_stage == PaperRunStage.created
+    )
+    use_manifest_state = manifest is not None and not (
+        row_status
+        in {PaperRunStatus.completed, PaperRunStatus.failed, PaperRunStatus.cancelled}
+        and manifest.status == PaperRunStatus.running
+    ) and not (
+        row_status == PaperRunStatus.running and manifest_is_initial
+    )
+    status = manifest.status if use_manifest_state and manifest is not None else row_status
+    current_stage = (
+        manifest.current_stage
+        if use_manifest_state and manifest is not None
+        else PaperRunStage(row.current_stage)
+    )
+    finished_at = (
+        manifest.finished_at
+        if use_manifest_state and manifest is not None
+        else row.finished_at
+    )
+    error_message = (
+        manifest.error_message
+        if use_manifest_state and manifest is not None
+        else row.error_message
+    )
+
     return PaperRunSummary(
         paper_id=row.paper_id,
-        status=PaperRunStatus(row.status),
-        current_stage=PaperRunStage(row.current_stage),
+        status=status,
+        current_stage=current_stage,
         title=row.title,
         selected_templates=row.selected_templates or [],
         source_task_ids=row.source_task_ids or [],
         created_at=row.created_at,
-        finished_at=row.finished_at,
-        error_message=row.error_message,
+        finished_at=finished_at,
+        error_message=error_message,
     )
 
 
@@ -495,8 +525,12 @@ async def list_paper_runs(
     rows, total = await PaperGenerationRunRepository.list_for_user(
         db, user_filter, limit=limit, offset=offset
     )
+    items = []
+    for row in rows:
+        manifest = _load_manifest(PaperRunPaths.for_paper(row.paper_id))
+        items.append(_row_to_summary(row, manifest))
     return PaperRunListResponse(
-        items=[_row_to_summary(r) for r in rows],
+        items=items,
         total=total,
     )
 
@@ -519,9 +553,9 @@ async def get_paper_run(
     db: AsyncSession = Depends(get_db),
 ) -> PaperRunDetail:
     row = await _load_or_404(db, paper_id, user)
-    summary = _row_to_summary(row)
     paths = PaperRunPaths.for_paper(paper_id)
     manifest = _load_manifest(paths)
+    summary = _row_to_summary(row, manifest)
     return PaperRunDetail(
         **summary.model_dump(),
         artifacts=_public_artifacts(manifest),

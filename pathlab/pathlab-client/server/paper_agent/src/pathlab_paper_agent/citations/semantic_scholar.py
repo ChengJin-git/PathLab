@@ -16,6 +16,8 @@ _DEFAULT_FIELDS = ",".join(
         "authors",
         "year",
         "venue",
+        "journal",
+        "publicationTypes",
         "externalIds",
         "url",
         "citationCount",
@@ -74,6 +76,11 @@ class SemanticScholarClient:
             for author in (item.get("authors") or [])
             if isinstance(author, dict) and author.get("name")
         )
+        journal = item.get("journal") if isinstance(item.get("journal"), dict) else {}
+        publication_types = item.get("publicationTypes")
+        publication_type = None
+        if isinstance(publication_types, list) and publication_types:
+            publication_type = str(publication_types[0])
         return CitationCandidate(
             title=str(item.get("title") or ""),
             source="semantic_scholar",
@@ -81,6 +88,10 @@ class SemanticScholarClient:
             authors=authors,
             year=item.get("year"),
             venue=item.get("venue"),
+            journal=journal.get("name") or item.get("venue"),
+            volume=journal.get("volume"),
+            pages=journal.get("pages"),
+            publication_type=publication_type,
             doi=external.get("DOI"),
             pmid=external.get("PubMed"),
             s2_paper_id=item.get("paperId"),

@@ -25,7 +25,6 @@ export default function PaperRunDetailPage() {
   const { paper_id: paperId } = useParams()
   const [searchParams, setSearchParams] = useSearchParams()
   const [pdfRefreshKey, setPdfRefreshKey] = useState(0)
-  const [pdfSelection, setPdfSelection] = useState<{ sectionName: string; text: string } | null>(null)
   const activeTab = coerceWorkspaceTab(searchParams.get('tab'))
 
   const runQuery = useQuery({
@@ -46,11 +45,6 @@ export default function PaperRunDetailPage() {
 
   const bumpPdfRefreshKey = () => {
     setPdfRefreshKey((key) => key + 1)
-  }
-
-  const handlePdfSelection = (payload: { sectionName: string; text: string }) => {
-    setPdfSelection(payload)
-    setActiveTab('sections')
   }
 
   const run = runQuery.data
@@ -113,9 +107,6 @@ export default function PaperRunDetailPage() {
               onValueChange={setActiveTab}
               pdfRefreshKey={pdfRefreshKey}
               onPdfRefreshNeeded={bumpPdfRefreshKey}
-              pdfSelection={pdfSelection}
-              onPdfSelectionDetected={handlePdfSelection}
-              onPdfSelectionConsumed={() => setPdfSelection(null)}
             />
           </div>
         ) : null}

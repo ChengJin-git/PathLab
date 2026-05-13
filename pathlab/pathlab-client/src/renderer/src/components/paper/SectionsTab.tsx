@@ -12,8 +12,6 @@ interface SectionsTabProps {
   paperId: string
   templateId?: TemplateId
   onPdfRefreshNeeded: () => void
-  externalSelection?: { sectionName: string; text: string } | null
-  onExternalSelectionConsumed?: () => void
 }
 
 export const SECTION_ORDER = [
@@ -55,13 +53,7 @@ function textOffsetWithin(root: HTMLElement, target: Node, nodeOffset: number): 
   return null
 }
 
-export function SectionsTab({
-  paperId,
-  templateId,
-  onPdfRefreshNeeded,
-  externalSelection,
-  onExternalSelectionConsumed,
-}: SectionsTabProps) {
+export function SectionsTab({ paperId, templateId, onPdfRefreshNeeded }: SectionsTabProps) {
   const [searchParams, setSearchParams] = useSearchParams()
   const [selectedSection, setSelectedSection] = useState<string>('abstract')
   const [selection, setSelection] = useState<SelectionInfo | null>(null)
@@ -95,25 +87,6 @@ export function SectionsTab({
       setSelection(null)
     }
   }, [sectionParam, selectedSection])
-
-  useEffect(() => {
-    if (!externalSelection || sectionsByName.size === 0) return
-    if (!sectionsByName.has(externalSelection.sectionName)) {
-      onExternalSelectionConsumed?.()
-      return
-    }
-    setSelectedSection(externalSelection.sectionName)
-    setSelection({
-      text: externalSelection.text,
-      source: 'pdf',
-    })
-    setSearchParams((prev) => {
-      const next = new URLSearchParams(prev)
-      next.set('section', externalSelection.sectionName)
-      return next
-    })
-    onExternalSelectionConsumed?.()
-  }, [externalSelection, onExternalSelectionConsumed, sectionsByName, setSearchParams])
 
   const handleSelectSection = (section: string) => {
     setSelectedSection(section)

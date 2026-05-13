@@ -94,6 +94,11 @@ class PubMedClient:
             authors=authors,
             year=year,
             venue=item.get("fulljournalname") or item.get("source"),
+            journal=item.get("fulljournalname") or item.get("source"),
+            volume=str(item["volume"]) if item.get("volume") else None,
+            number=str(item["issue"]) if item.get("issue") else None,
+            pages=item.get("pages"),
+            publication_type=_publication_type(item.get("pubtype")),
             doi=doi,
             pmid=pmid or None,
             url=f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/" if pmid else None,
@@ -101,3 +106,11 @@ class PubMedClient:
             cluster=cluster,
             raw=item,
         )
+
+
+def _publication_type(value: object) -> str | None:
+    if isinstance(value, list) and value:
+        return str(value[0])
+    if value:
+        return str(value)
+    return None

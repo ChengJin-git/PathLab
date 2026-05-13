@@ -33,6 +33,15 @@ class CitationCandidate:
     authors: tuple[str, ...] = ()
     year: Optional[int] = None
     venue: Optional[str] = None
+    entry_type: Optional[str] = None
+    journal: Optional[str] = None
+    booktitle: Optional[str] = None
+    volume: Optional[str] = None
+    number: Optional[str] = None
+    pages: Optional[str] = None
+    publisher: Optional[str] = None
+    arxiv_id: Optional[str] = None
+    publication_type: Optional[str] = None
     doi: Optional[str] = None
     pmid: Optional[str] = None
     s2_paper_id: Optional[str] = None
@@ -68,6 +77,15 @@ class CitationCandidate:
             authors=authors,
             year=parsed_year,
             venue=data.get("venue") or data.get("journal"),
+            entry_type=data.get("entry_type") or data.get("entryType"),
+            journal=data.get("journal"),
+            booktitle=data.get("booktitle"),
+            volume=str(data["volume"]) if data.get("volume") else None,
+            number=str(data["number"]) if data.get("number") else None,
+            pages=data.get("pages"),
+            publisher=data.get("publisher"),
+            arxiv_id=data.get("arxiv_id") or data.get("arxivId"),
+            publication_type=data.get("publication_type") or data.get("publicationType"),
             doi=data.get("doi") or data.get("DOI"),
             pmid=str(data["pmid"]) if data.get("pmid") else None,
             s2_paper_id=data.get("s2_paper_id") or data.get("paperId"),
@@ -88,6 +106,15 @@ class CitationCandidate:
             "authors": list(self.authors),
             "year": self.year,
             "venue": self.venue,
+            "entry_type": self.entry_type,
+            "journal": self.journal,
+            "booktitle": self.booktitle,
+            "volume": self.volume,
+            "number": self.number,
+            "pages": self.pages,
+            "publisher": self.publisher,
+            "arxiv_id": self.arxiv_id,
+            "publication_type": self.publication_type,
             "doi": self.doi,
             "pmid": self.pmid,
             "s2_paper_id": self.s2_paper_id,
@@ -122,6 +149,15 @@ class CitationReference:
     authors: tuple[str, ...] = ()
     year: Optional[int] = None
     venue: Optional[str] = None
+    entry_type: Optional[str] = None
+    journal: Optional[str] = None
+    booktitle: Optional[str] = None
+    volume: Optional[str] = None
+    number: Optional[str] = None
+    pages: Optional[str] = None
+    publisher: Optional[str] = None
+    arxiv_id: Optional[str] = None
+    publication_type: Optional[str] = None
     doi: Optional[str] = None
     pmid: Optional[str] = None
     s2_paper_id: Optional[str] = None
@@ -144,6 +180,15 @@ class CitationReference:
             authors=candidate.authors,
             year=candidate.year,
             venue=candidate.venue,
+            entry_type=candidate.entry_type,
+            journal=candidate.journal,
+            booktitle=candidate.booktitle,
+            volume=candidate.volume,
+            number=candidate.number,
+            pages=candidate.pages,
+            publisher=candidate.publisher,
+            arxiv_id=candidate.arxiv_id,
+            publication_type=candidate.publication_type,
             doi=candidate.doi,
             pmid=candidate.pmid,
             s2_paper_id=candidate.s2_paper_id,
@@ -170,6 +215,15 @@ class CitationReference:
             authors=authors,
             year=data.get("year"),
             venue=data.get("venue"),
+            entry_type=data.get("entry_type"),
+            journal=data.get("journal"),
+            booktitle=data.get("booktitle"),
+            volume=data.get("volume"),
+            number=data.get("number"),
+            pages=data.get("pages"),
+            publisher=data.get("publisher"),
+            arxiv_id=data.get("arxiv_id"),
+            publication_type=data.get("publication_type"),
             doi=data.get("doi"),
             pmid=data.get("pmid"),
             s2_paper_id=data.get("s2_paper_id"),
@@ -190,6 +244,15 @@ class CitationReference:
             "authors": list(self.authors),
             "year": self.year,
             "venue": self.venue,
+            "entry_type": self.entry_type,
+            "journal": self.journal,
+            "booktitle": self.booktitle,
+            "volume": self.volume,
+            "number": self.number,
+            "pages": self.pages,
+            "publisher": self.publisher,
+            "arxiv_id": self.arxiv_id,
+            "publication_type": self.publication_type,
             "doi": self.doi,
             "pmid": self.pmid,
             "s2_paper_id": self.s2_paper_id,

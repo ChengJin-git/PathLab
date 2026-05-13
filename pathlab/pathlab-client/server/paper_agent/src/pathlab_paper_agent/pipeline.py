@@ -315,14 +315,33 @@ def run_stage(
         allowed = ", ".join(s.value for s in PaperRunStage)
         raise ValueError(f"Unknown paper stage {stage_value!r}. Allowed: {allowed}") from exc
 
-    manifest = load_manifest(paper_id)
+    manifest = load_manifest(paper_id, uploads_dir=uploads_dir)
     paths = PaperRunPaths.for_paper(paper_id)
     started_at = utc_now()
 
     try:
         manifest.status = PaperRunStatus.running
         manifest.current_stage = stage_enum
+        manifest.error_message = None
+        manifest.finished_at = None
         manifest.updated_at = started_at
+        if stage_enum not in (
+            PaperRunStage.completed,
+            PaperRunStage.failed,
+            PaperRunStage.cancelled,
+        ):
+            manifest.stage_log.append(
+                {
+                    "stage": stage_enum.value,
+                    "status": "running",
+                    "ts": started_at.isoformat(),
+                    "started_at": started_at.isoformat(),
+                    "finished_at": None,
+                    "duration_ms": None,
+                    "message": f"Stage {stage_enum.value} started.",
+                }
+            )
+            save_manifest(manifest, uploads_dir=uploads_dir)
         _execute_stage(paths, manifest, stage_enum)
         manifest.error_message = None
         finished_at = utc_now()
@@ -367,10 +386,10 @@ def run_stage(
                 "error_message": str(exc)[:4000],
             }
         )
-        save_manifest(manifest)
+        save_manifest(manifest, uploads_dir=uploads_dir)
         raise
 
-    save_manifest(manifest)
+    save_manifest(manifest, uploads_dir=uploads_dir)
     return manifest
 
 

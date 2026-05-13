@@ -34,6 +34,26 @@ async def test_create_dev_run_and_run_stage(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_run_stage_persists_running_state_before_execution(tmp_path, monkeypatch):
+    paper_id, paths = await create_dev_run(paper_id="paper_live_state", uploads_dir=tmp_path)
+
+    def fake_execute_stage(paths_arg, manifest_arg, stage_arg):
+        del paths_arg, manifest_arg, stage_arg
+        data = json.loads(paths.manifest.read_text(encoding="utf-8"))
+        assert data["status"] == "running"
+        assert data["current_stage"] == "collecting"
+        assert data["stage_log"][-1]["stage"] == "collecting"
+        assert data["stage_log"][-1]["status"] == "running"
+
+    monkeypatch.setattr("pathlab_paper_agent.pipeline._execute_stage", fake_execute_stage)
+
+    manifest = run_stage(paper_id, "collecting", uploads_dir=tmp_path)
+
+    assert manifest.stage_log[-1]["stage"] == "collecting"
+    assert manifest.stage_log[-1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
 async def test_complete_run_writes_scaffold_artifacts_and_exports(tmp_path):
     paper_id, paths = await create_dev_run(paper_id="paper_full", uploads_dir=tmp_path)
 

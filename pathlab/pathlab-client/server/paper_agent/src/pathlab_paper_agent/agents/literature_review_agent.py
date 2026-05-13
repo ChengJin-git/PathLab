@@ -366,9 +366,20 @@ class LiteratureReviewAgent:
                 "write_destination": "drafts/intro_rw_draft",
             },
         }
-        _assert_no_private_identifiers(payload, context="intro/RW draft prompt payload")
+        # Public citation metadata can legitimately contain names such as
+        # "Mayo Clinic"; keep PHI checks strict for private evidence/outline
+        # inputs but do not block public-reference institution names here.
+        _assert_no_private_identifiers(
+            payload,
+            context="intro/RW draft prompt payload",
+            suppress_keys=("institution_names",),
+        )
         prompt = _render_prompt(self.intro_rw_prompt, payload)
-        _assert_no_private_identifiers(prompt, context="intro/RW draft prompt")
+        _assert_no_private_identifiers(
+            prompt,
+            context="intro/RW draft prompt",
+            suppress_keys=("institution_names",),
+        )
         response = self.llm_client.complete(
             [
                 LLMMessage(
@@ -387,6 +398,7 @@ class LiteratureReviewAgent:
         _assert_no_private_identifiers(
             {"introduction": draft.introduction_tex, "related_work": draft.related_work_tex},
             context="intro/RW draft output",
+            suppress_keys=("institution_names",),
         )
         return draft
 
@@ -864,7 +876,12 @@ def _read_json_object_or_default(path: Path, default: dict[str, Any]) -> dict[st
     return payload
 
 
-def _assert_no_private_identifiers(value: Any, *, context: str) -> None:
+def _assert_no_private_identifiers(
+    value: Any,
+    *,
+    context: str,
+    suppress_keys: Sequence[str] = (),
+) -> None:
     scrubber = PhiScrubber()
     scrubber.observe(value)
     identifiers = scrubber.private_identifiers()
@@ -874,7 +891,7 @@ def _assert_no_private_identifiers(value: Any, *, context: str) -> None:
     leaked = {
         key: identifiers.get(key, [])
         for key in _PHI_HARD_FAIL_KEYS
-        if identifiers.get(key)
+        if key not in suppress_keys and identifiers.get(key)
     }
     if not leaked:
         return

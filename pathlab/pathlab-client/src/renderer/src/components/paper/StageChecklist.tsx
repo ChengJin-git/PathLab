@@ -1,5 +1,5 @@
-import { CheckCircle2, Circle, Loader2, XCircle } from 'lucide-react'
-import { Fragment } from 'react'
+import { CheckCircle2, Circle, Clock3, Loader2, XCircle } from 'lucide-react'
+import { Fragment, useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import type { PaperRunDetail, PaperRunStage, PaperStageLogEntry } from '../../api/papers'
 
@@ -9,7 +9,7 @@ interface StageChecklistProps {
   onSelectTab: (tab: string) => void
 }
 
-type RowState = 'completed' | 'running' | 'failed' | 'pending'
+type RowState = 'completed' | 'running' | 'waiting' | 'failed' | 'pending'
 
 interface StageRowDefinition {
   id: string
@@ -32,6 +32,7 @@ const STAGE_ROWS: StageRowDefinition[] = [
 ]
 
 const ACTIVE_RUN_STATUSES = new Set(['pending', 'running'])
+const WAITING_STATUSES = new Set(['awaiting_outline_approval'])
 
 function stageOrderIndex(stage: string | null | undefined): number {
   return STAGE_ROWS.findIndex((row) => row.stages.includes(stage as PaperRunStage))
@@ -41,13 +42,21 @@ function latestForRow(logs: PaperStageLogEntry[], row: StageRowDefinition): Pape
   return [...logs].reverse().find((entry) => row.stages.includes(entry.stage as PaperRunStage))
 }
 
+function timeMs(value: string | null | undefined): number | null {
+  if (!value) return null
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
 function stateForRow(run: PaperRunDetail, row: StageRowDefinition, index: number, latest?: PaperStageLogEntry): RowState {
   const currentInRow = row.stages.includes(run.current_stage)
   if (run.status === 'failed' && currentInRow) return 'failed'
   if (latest?.status === 'failed') return 'failed'
-  if (currentInRow && ACTIVE_RUN_STATUSES.has(run.status)) return 'running'
   if (latest?.status === 'running' || latest?.status === 'pending') return 'running'
+  if (latest?.status && WAITING_STATUSES.has(latest.status)) return 'waiting'
   if (latest?.status === 'completed') return 'completed'
+  if (currentInRow && WAITING_STATUSES.has(run.status)) return 'waiting'
+  if (currentInRow && ACTIVE_RUN_STATUSES.has(run.status)) return 'running'
   const currentIndex = stageOrderIndex(run.current_stage)
   if (currentIndex > index || run.status === 'completed') return 'completed'
   return 'pending'
@@ -55,17 +64,27 @@ function stateForRow(run: PaperRunDetail, row: StageRowDefinition, index: number
 
 function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined) return ''
-  if (ms < 1000) return `${ms} ms`
-  const seconds = Math.round(ms / 1000)
+  const safeMs = Math.max(0, ms)
+  if (safeMs < 1000) return `${safeMs} ms`
+  const seconds = Math.floor(safeMs / 1000)
   if (seconds < 60) return `${seconds}s`
   const minutes = Math.floor(seconds / 60)
   const rest = seconds % 60
   return `${minutes}m ${rest}s`
 }
 
+function durationForState(state: RowState, latest: PaperStageLogEntry | undefined, nowMs: number): string {
+  if ((state === 'running' || state === 'waiting') && latest) {
+    const startedMs = timeMs(latest.started_at) ?? timeMs(latest.ts)
+    if (startedMs !== null) return formatDuration(nowMs - startedMs)
+  }
+  return formatDuration(latest?.duration_ms)
+}
+
 function statusIcon(state: RowState) {
   if (state === 'completed') return <CheckCircle2 className="h-3.5 w-3.5" />
   if (state === 'running') return <Loader2 className="h-3.5 w-3.5 animate-spin" />
+  if (state === 'waiting') return <Clock3 className="h-3.5 w-3.5" />
   if (state === 'failed') return <XCircle className="h-3.5 w-3.5" />
   return <Circle className="h-3.5 w-3.5" />
 }
@@ -77,6 +96,8 @@ function pillClass(state: RowState, selected: boolean): string {
       return 'border-emerald-200 bg-emerald-50 text-emerald-700'
     case 'running':
       return 'border-sky-200 bg-sky-50 text-sky-700'
+    case 'waiting':
+      return 'border-amber-200 bg-amber-50 text-amber-700'
     case 'failed':
       return 'border-red-200 bg-red-50 text-red-700'
     default:
@@ -90,6 +111,8 @@ function connectorClass(prevState: RowState): string {
       return 'bg-emerald-300'
     case 'running':
       return 'bg-sky-200'
+    case 'waiting':
+      return 'bg-amber-200'
     case 'failed':
       return 'bg-red-200'
     default:
@@ -98,10 +121,31 @@ function connectorClass(prevState: RowState): string {
 }
 
 export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now())
   const logs = run.stage_log ?? []
-  const states = STAGE_ROWS.map((row, index) => stateForRow(run, row, index, latestForRow(logs, row)))
+  const latestEntries = STAGE_ROWS.map((row) => latestForRow(logs, row))
+  const states = STAGE_ROWS.map((row, index) => stateForRow(run, row, index, latestEntries[index]))
+  const hasRunningStage = states.includes('running')
+  useEffect(() => {
+    if (!hasRunningStage) return
+    setNowMs(Date.now())
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [hasRunningStage])
+
   const totalMs = logs.reduce<number>((sum, entry) => sum + (entry.duration_ms ?? 0), 0)
   const totalLabel = totalMs > 0 ? formatDuration(totalMs) : ''
+  const liveIndex = states.findIndex((state) => state === 'running' || state === 'waiting' || state === 'failed')
+  const liveRow = liveIndex >= 0 ? STAGE_ROWS[liveIndex] : undefined
+  const liveState = liveIndex >= 0 ? states[liveIndex] : undefined
+  const liveDuration = liveIndex >= 0 ? durationForState(states[liveIndex], latestEntries[liveIndex], nowMs) : ''
+  const liveLabel = liveRow
+    ? liveState === 'running'
+      ? `Running: ${liveRow.label}`
+      : liveState === 'waiting'
+        ? `Waiting: ${liveRow.label}`
+        : `Failed: ${liveRow.label}`
+    : undefined
 
   return (
     <div className="rounded-2xl border border-slate-200 bg-white/90 px-3 py-2.5 shadow-sm">
@@ -112,8 +156,8 @@ export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistPr
         <div className="flex flex-1 items-center gap-1 overflow-x-auto pb-0.5">
           {STAGE_ROWS.map((row, i) => {
             const state = states[i]
-            const latest = latestForRow(logs, row)
-            const duration = formatDuration(latest?.duration_ms)
+            const latest = latestEntries[i]
+            const duration = durationForState(state, latest, nowMs)
             const selected = activeTab === row.tab
             const tip = [
               row.label,
@@ -149,7 +193,21 @@ export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistPr
           })}
         </div>
         <div className="shrink-0 flex items-center gap-2 text-xs">
-          {totalLabel ? <span className="font-semibold text-slate-600 tabular-nums">{totalLabel}</span> : null}
+          {liveLabel ? (
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-semibold',
+                liveState === 'running' && 'border-sky-200 bg-sky-50 text-sky-700',
+                liveState === 'waiting' && 'border-amber-200 bg-amber-50 text-amber-700',
+                liveState === 'failed' && 'border-red-200 bg-red-50 text-red-700'
+              )}
+            >
+              {liveState ? statusIcon(liveState) : null}
+              {liveLabel}
+              {liveDuration ? <span className="font-mono text-[11px]">{liveDuration}</span> : null}
+            </span>
+          ) : null}
+          {totalLabel ? <span className="font-semibold text-slate-600 tabular-nums">Total {totalLabel}</span> : null}
           <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-semibold text-slate-600">
             {run.current_stage}
           </span>

@@ -48,8 +48,11 @@ function parseBibKeys(refsBib: string | undefined): string[] {
   return [...keys].sort((a, b) => a.localeCompare(b))
 }
 
-function missingIsNotFound(error: unknown): boolean {
-  return error instanceof ApiError && error.isNotFound()
+function artifactUnavailable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.isNotFound()) return true
+  const detail = error.details || error.message
+  return error.status === 403 && detail.includes('Artifact is not registered public')
 }
 
 export function CitationsTab({ paperId }: CitationsTabProps) {
@@ -68,8 +71,8 @@ export function CitationsTab({ paperId }: CitationsTabProps) {
   const requiredCites = useMemo(() => collectRequiredCites(outlineQuery.data), [outlineQuery.data])
   const bibKeySet = useMemo(() => new Set(bibKeys), [bibKeys])
   const loading = refsQuery.isLoading || outlineQuery.isLoading
-  const refsMissing = missingIsNotFound(refsQuery.error)
-  const outlineMissing = missingIsNotFound(outlineQuery.error)
+  const refsMissing = artifactUnavailable(refsQuery.error)
+  const outlineMissing = artifactUnavailable(outlineQuery.error)
 
   if (loading) {
     return <div className="flex items-center gap-2 text-sm text-slate-500"><Loader2 className="h-4 w-4 animate-spin" /> Loading citations...</div>
