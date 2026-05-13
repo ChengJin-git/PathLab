@@ -53,7 +53,7 @@ from gateway.chat.context_cache import (
 )
 from backend.auth import User as AuthUser
 from sqlalchemy import select as sa_select
-from backend.ai.task_taxonomy import is_segmentation_task, normalize_task_type
+from backend.ai.task_taxonomy import get_task_metadata, is_segmentation_task, normalize_task_type
 
 
 router = APIRouter(prefix="/wsi/upload", tags=["WSI Upload"])
@@ -82,6 +82,9 @@ def _resolve_task_type_for_axes(
     dataset_task_type: Optional[str] = None,
 ) -> str:
     baseline_task_type = requested_task_type or dataset_task_type or "wsi_classification"
+    baseline_metadata = get_task_metadata(baseline_task_type)
+    if baseline_metadata.task_family == "classification" and data_type == "patch":
+        baseline_task_type = "patch_classification"
     resolved_task_type = _canonicalize_task_type_for_axes(
         baseline_task_type,
         data_type=data_type,
