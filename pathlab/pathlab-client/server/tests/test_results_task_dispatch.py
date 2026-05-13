@@ -181,6 +181,7 @@ async def test_start_external_validation_enqueues_descriptor_not_local_queue():
     assert payload["model_id"] == "model-1"
     assert payload["dataset_id"] == "ds-ext"
     assert payload["wsi_ids"] == ["wsi-1"]
+    assert payload["preprocessing_config"] == model_task.preprocessing_config
     mock_enqueue.assert_awaited_once()
 
 

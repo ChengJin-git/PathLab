@@ -2837,6 +2837,7 @@ async def start_external_validation(
         "model_data_type": model_data_type,  # "wsi" or "patch"
         "dataset_id": req.dataset_id,
         "wsi_ids": wsi_ids,
+        "preprocessing_config": model_task.preprocessing_config or {},
     }
     descriptor_payload = type_cast(
         JsonPayload,
