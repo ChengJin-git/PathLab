@@ -277,6 +277,12 @@ class TaskQueueManager:
         if not isinstance(model_config, dict):
             model_config = {}
 
+        if (
+            queued_task.task_type == TaskType.TRAINING
+            and self._uses_wsi_stage_vram(kwargs)
+        ):
+            return float(self.min_vram_mb)
+
         model_name = self._task_model_name(kwargs, preprocessing_config, model_config)
         if not model_name:
             return float(self.min_vram_mb)
@@ -289,6 +295,21 @@ class TaskQueueManager:
             + batch_size * _BATCH_BUFFER_MB
         )
         return max(float(self.min_vram_mb), required_mb)
+
+    def _uses_wsi_stage_vram(self, kwargs: Dict[str, Any]) -> bool:
+        if str(kwargs.get("data_type") or "").strip().lower() == "wsi":
+            return True
+
+        training_task_type = kwargs.get("training_task_type")
+        if not isinstance(training_task_type, str) or not training_task_type.strip():
+            return False
+        try:
+            task_metadata = import_module("backend.ai.task_taxonomy").get_task_metadata(
+                training_task_type.strip().lower()
+            )
+        except Exception:
+            return False
+        return getattr(task_metadata, "data_type", None) == "wsi"
 
     def _task_model_name(
         self,
@@ -347,7 +368,9 @@ class TaskQueueManager:
         return _DEFAULT_MODEL_VRAM_MB
 
     def _select_optimal_gpu(
-        self, required_vram_mb: float | None = None
+        self,
+        required_vram_mb: float | None = None,
+        gpu_info_list: list[dict[str, Any]] | None = None,
     ) -> Tuple[int, float]:
         """
         Select the GPU with the most effective free VRAM that meets the minimum requirement.
@@ -361,14 +384,14 @@ class TaskQueueManager:
             if required_vram_mb is not None and math.isfinite(required_vram_mb)
             else float(self.min_vram_mb)
         )
-        try:
-            gpu_utils = _get_gpu_utils_module()
-            get_all_gpu_info = gpu_utils.get_all_gpu_info
-        except ImportError:
-            logger.warning("Could not import gpu_utils, defaulting to GPU 0")
-            return (0, 0.0)
-
-        gpu_info_list = get_all_gpu_info()
+        if gpu_info_list is None:
+            try:
+                gpu_utils = _get_gpu_utils_module()
+                get_all_gpu_info = gpu_utils.get_all_gpu_info
+            except ImportError:
+                logger.warning("Could not import gpu_utils, defaulting to GPU 0")
+                return (0, 0.0)
+            gpu_info_list = get_all_gpu_info()
         if not gpu_info_list:
             return (-1, 0.0)
 
@@ -396,6 +419,50 @@ class TaskQueueManager:
                 f"Bad GPUs: {sorted(self._bad_gpus)}"
             )
         return (best_gpu, best_free_mb)
+
+    def _max_schedulable_gpu_vram_mb(
+        self, gpu_info_list: list[dict[str, Any]] | None = None
+    ) -> float | None:
+        if gpu_info_list is None:
+            try:
+                gpu_utils = _get_gpu_utils_module()
+                get_all_gpu_info = gpu_utils.get_all_gpu_info
+            except ImportError:
+                return None
+            gpu_info_list = get_all_gpu_info()
+        if not gpu_info_list:
+            return 0.0
+
+        capacities: list[float] = []
+        for info in gpu_info_list:
+            gpu_idx = info.get("index")
+            if gpu_idx in self._bad_gpus:
+                continue
+            total_mb = info.get("total_mb")
+            if total_mb is None:
+                continue
+            try:
+                capacities.append(float(total_mb))
+            except (TypeError, ValueError):
+                continue
+        return max(capacities, default=0.0)
+
+    def _unschedulable_vram_message(
+        self,
+        task_id: str,
+        required_vram_mb: float,
+        gpu_info_list: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        max_gpu_vram_mb = self._max_schedulable_gpu_vram_mb(gpu_info_list)
+        if max_gpu_vram_mb is None or max_gpu_vram_mb <= 0:
+            return None
+        if required_vram_mb <= max_gpu_vram_mb:
+            return None
+        return (
+            f"Task {task_id} requires {required_vram_mb:.0f} MB VRAM, "
+            f"but the largest available single GPU has {max_gpu_vram_mb:.0f} MB. "
+            "Lower the feature batch size or use a GPU with more memory."
+        )
 
     async def _wait_for_gpu_vram(self, task_id: str, gpu_index: int) -> bool:
         """
@@ -553,7 +620,25 @@ class TaskQueueManager:
                     "device": None,
                     "required_vram_mb": required_mb,
                 }
-                gpu_idx, effective_free = self._select_optimal_gpu(required_mb)
+                try:
+                    gpu_utils = _get_gpu_utils_module()
+                    gpu_info_list = gpu_utils.get_all_gpu_info()
+                except ImportError:
+                    gpu_info_list = None
+
+                unschedulable_message = self._unschedulable_vram_message(
+                    task_id, required_mb, gpu_info_list
+                )
+                if unschedulable_message:
+                    stage_message = f"Task {task_id} stage {stage}: {unschedulable_message}"
+                    logger.error(stage_message)
+                    self._gpu_stage_details.pop(stage_key, None)
+                    self._release_soft_vram(stage_key)
+                    raise RuntimeError(stage_message)
+
+                gpu_idx, effective_free = self._select_optimal_gpu(
+                    required_mb, gpu_info_list
+                )
                 if gpu_idx >= 0:
                     self._reserve_soft_vram(stage_key, gpu_idx, required_mb)
                     self._gpu_stage_details[stage_key] = {
@@ -663,6 +748,21 @@ class TaskQueueManager:
 
             # GPU assignment: Wait for a GPU with sufficient VRAM
             # This selects the GPU with most free VRAM that meets minimum requirement
+            required_vram_mb = self._estimate_task_vram_mb(queued_task.task_id)
+            unschedulable_message = self._unschedulable_vram_message(
+                queued_task.task_id, required_vram_mb
+            )
+            if unschedulable_message:
+                logger.error(unschedulable_message)
+                await self._ensure_task_failed(
+                    queued_task.task_id, queued_task.task_type, unschedulable_message
+                )
+                self._pending_tasks.pop(queued_task.task_id, None)
+                await self._invalidate_context_for_task(queued_task)
+                await self._notify_queue_state_changed()
+                self._queue.task_done()
+                continue
+
             assigned_gpu = await self._wait_for_any_gpu(queued_task.task_id)
             if assigned_gpu < 0:
                 # Task was cancelled or shutdown requested

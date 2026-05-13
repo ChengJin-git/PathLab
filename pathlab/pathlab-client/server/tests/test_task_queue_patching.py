@@ -195,6 +195,117 @@ async def test_wait_for_any_gpu_waits_for_estimated_task_vram(fresh_queue):
 
 
 @pytest.mark.asyncio
+async def test_worker_fails_unschedulable_vram_task_and_runs_next(fresh_queue):
+    """A task larger than any single GPU should not block later queue entries."""
+    task_queue = _task_queue_module()
+    TaskType = task_queue.TaskType
+
+    queue = fresh_queue
+    queue.max_concurrent = 1
+    queue.min_vram_mb = 2000.0
+    queue.vram_check_interval = 0.001
+    second_task_started = asyncio.Event()
+
+    async def _never_should_start(**_kwargs):
+        raise AssertionError("unschedulable task should fail before execution")
+
+    async def _second_task(**_kwargs):
+        second_task_started.set()
+        await asyncio.sleep(0.05)
+
+    with (
+        patch(
+            "backend.common.gpu_utils.get_all_gpu_info",
+            return_value=[
+                {
+                    "index": 0,
+                    "name": "gpu0",
+                    "allocated_mb": 0.0,
+                    "free_mb": 24000.0,
+                    "total_mb": 24000.0,
+                },
+                {
+                    "index": 1,
+                    "name": "gpu1",
+                    "allocated_mb": 0.0,
+                    "free_mb": 24000.0,
+                    "total_mb": 24000.0,
+                },
+            ],
+        ),
+        patch.object(queue, "_ensure_task_failed", new_callable=AsyncMock) as ensure_failed,
+        patch.object(queue, "_invalidate_context_for_task", new_callable=AsyncMock),
+    ):
+        await queue.start()
+        await queue.submit(
+            "too_big",
+            TaskType.TRAINING,
+            _never_should_start,
+            data_type="patch",
+            preprocessing_config={"feature_extractor": "virchow2"},
+            model_config={"batch_size": 64},
+        )
+        await queue.submit("small", TaskType.INFERENCE, _second_task)
+
+        await asyncio.wait_for(second_task_started.wait(), timeout=5.0)
+
+    await queue.stop()
+
+    ensure_failed.assert_awaited_once()
+    assert ensure_failed.await_args is not None
+    failed_args = ensure_failed.await_args.args
+    assert failed_args[0] == "too_big"
+    assert "requires" in failed_args[2]
+
+
+@pytest.mark.asyncio
+async def test_worker_admits_wsi_training_before_feature_extraction_stage(fresh_queue):
+    """WSI tasks should not use feature-extraction peak VRAM for queue admission."""
+    task_queue = _task_queue_module()
+    TaskType = task_queue.TaskType
+
+    queue = fresh_queue
+    queue.max_concurrent = 1
+    queue.min_vram_mb = 2000.0
+    task_started = asyncio.Event()
+
+    async def _wsi_pipeline(**_kwargs):
+        task_started.set()
+        await asyncio.sleep(0.01)
+
+    with (
+        patch(
+            "backend.common.gpu_utils.get_all_gpu_info",
+            return_value=[
+                {
+                    "index": 0,
+                    "name": "gpu0",
+                    "allocated_mb": 0.0,
+                    "free_mb": 24000.0,
+                    "total_mb": 24000.0,
+                }
+            ],
+        ),
+        patch.object(queue, "_ensure_task_failed", new_callable=AsyncMock) as ensure_failed,
+    ):
+        await queue.start()
+        await queue.submit(
+            "wsi_training",
+            TaskType.TRAINING,
+            _wsi_pipeline,
+            data_type="wsi",
+            preprocessing_config={"feature_extractor": "virchow2"},
+            model_config={"batch_size": 64, "aggregator": "abmil"},
+        )
+
+        await asyncio.wait_for(task_started.wait(), timeout=5.0)
+
+    await queue.stop()
+
+    ensure_failed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_acquire_gpu_stage_reselects_global_gpu_between_wsi_stages(fresh_queue):
     """Each WSI GPU stage gets a fresh global GPU selection."""
     queue = fresh_queue
@@ -339,14 +450,48 @@ async def test_acquire_gpu_stage_cleans_waiting_detail_on_cancellation(fresh_que
 
 
 @pytest.mark.asyncio
-async def test_feature_extraction_stage_waits_for_conservative_batch_vram(fresh_queue):
-    """Feature extraction should wait when the configured batch cannot fit yet."""
+async def test_acquire_gpu_stage_fails_when_requirement_exceeds_single_gpu(fresh_queue):
+    """Stage-level waits should fail fast when no single GPU can ever fit them."""
+    queue = fresh_queue
+    queue.min_vram_mb = 2000.0
+    queue.vram_check_interval = 0.001
+    queue._vram_condition = asyncio.Condition()
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        return_value=[
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 0.0,
+                "free_mb": 24000.0,
+                "total_mb": 24000.0,
+            }
+        ],
+    ):
+        with pytest.raises(RuntimeError, match="requires 52652 MB VRAM"):
+            await asyncio.wait_for(
+                queue.acquire_gpu_stage(
+                    task_id="stage_too_big",
+                    stage="feature_extraction",
+                    required_vram_mb=52652.0,
+                ),
+                timeout=1.0,
+            )
+
+    assert "stage_too_big:feature_extraction" not in queue._gpu_stage_details
+    assert queue._soft_vram_reservations == {}
+
+
+@pytest.mark.asyncio
+async def test_feature_extraction_stage_uses_runtime_probe_startup_gate(fresh_queue):
+    """Feature extraction should not use the patch-training batch VRAM proxy."""
     queue = fresh_queue
     queue.vram_check_interval = 0.001
     queue._vram_condition = asyncio.Condition()
-    required_vram_mb = import_module("gateway.pipeline")._estimate_stage_vram_mb(
-        "conch", 64
-    )
+    required_vram_mb = import_module(
+        "gateway.pipeline"
+    )._estimate_feature_extraction_vram_mb("conch", 64)
 
     gpu_snapshots = [
         [
@@ -355,16 +500,7 @@ async def test_feature_extraction_stage_waits_for_conservative_batch_vram(fresh_
                 "name": "gpu0",
                 "allocated_mb": 8600.0,
                 "free_mb": 15524.0,
-                "total_mb": 24124.0,
-            }
-        ],
-        [
-            {
-                "index": 0,
-                "name": "gpu0",
-                "allocated_mb": 4000.0,
-                "free_mb": 60000.0,
-                "total_mb": 80000.0,
+                "total_mb": 24576.0,
             }
         ],
     ]
@@ -379,6 +515,6 @@ async def test_feature_extraction_stage_waits_for_conservative_batch_vram(fresh_
             required_vram_mb=required_vram_mb,
         )
 
-    assert required_vram_mb > 15524.0
+    assert required_vram_mb == pytest.approx(4300.0)
     assert device == "cuda:0"
-    assert get_gpu_info.call_count == 2
+    assert get_gpu_info.call_count == 1
