@@ -401,15 +401,26 @@ export default function TaskDetailPage() {
       }
       setRerunning(true)
       try {
-        const result = await startExternalValidation(
+        const syntheticTaskId = `extval_${crypto.randomUUID().replace(/-/g, '').substring(0, 16)}`
+        markTrainingSubmissionPending(syntheticTaskId, `${task.task_name} (rerun)`, task.data_type)
+        navigate(`/task/${syntheticTaskId}`)
+
+        void startExternalValidation(
           modelId,
           datasetId,
           task.model_config.analysis_metrics,
           task.model_config.analysis_charts,
           (task.model_config.bootstrap_ci_metrics?.length ?? 0) > 0,
           isAdmin ? task.task_id : undefined
-        )
-        navigate(`/task/${result.task_id}`)
+        ).then(result => {
+          clearTrainingSubmissionRecord(syntheticTaskId)
+          markTrainingSubmissionCreated(result.task_id)
+          navigate(`/task/${result.task_id}`, { replace: true })
+        }).catch((error: any) => {
+          const message = error?.message || error?.detail || String(error)
+          markTrainingSubmissionFailed(syntheticTaskId, message)
+          console.error('Failed to rerun external validation in background:', error)
+        })
       } catch (error: any) {
         const errMsg = error?.message || error?.detail || String(error)
         const parsed = parseTaskError(errMsg)
