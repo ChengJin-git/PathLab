@@ -118,6 +118,14 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchTaskTypeRaw(type)
     if (isSegmentationTask(type)) setBatchDataLevel('file')
   }
+  const resolveBatchTaskTypeForScan = (scanResult?: ScanDirectoryResponse | null): TaskType => {
+    if (batchTaskType !== 'wsi_classification') return batchTaskType
+    if (scanResult && scanResult.patch_count > 0 && scanResult.wsi_count === 0) return 'patch_classification'
+    return 'wsi_classification'
+  }
+  const resolveBatchDataLevelForTask = (taskType: TaskType): 'case' | 'file' => {
+    return taskType.startsWith('patch_') ? 'file' : batchDataLevel
+  }
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
     return cached?.datasets ?? []
@@ -213,8 +221,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchSelectAllValid(false)
     setBatchImportTaskId(null)
     void runBatchScanning(async () => {
+      const scanTaskType = resolveBatchTaskTypeForScan()
       const result = await scanDirectory(batchScanPath.trim(), {
-        taskType: batchTaskType,
+        taskType: scanTaskType,
         page: 1,
         pageSize: BATCH_SCAN_PAGE_SIZE,
       })
@@ -233,9 +242,10 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchScanError(null)
     setBatchScanStage('refresh')
     void runBatchScanning(async () => {
+      const scanTaskType = resolveBatchTaskTypeForScan(batchScanResult)
       const result = await scanDirectory(batchScanResult.directory, {
         scanId: batchScanResult.scan_id,
-        taskType: batchTaskType,
+        taskType: scanTaskType,
         page,
         pageSize: batchScanResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })
@@ -332,6 +342,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchScanError(null)
     setBatchImportTaskId(null)
     void runBatchRegistering(async () => {
+      const importTaskType = resolveBatchTaskTypeForScan(batchScanResult)
       const result = await startBatchImportTask({
         scan_id: batchScanResult?.scan_id,
         select_all_valid: batchSelectAllValid,
@@ -340,8 +351,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         dataset_id: batchDatasetMode === 'existing' ? batchSelectedDatasetId : undefined,
         dataset_name: batchDatasetMode === 'new' ? datasetNameToUse : undefined,
         scan_root: batchScanResult?.directory,
-        aggregation_level: batchDataLevel,
-        task_type: batchTaskType,
+        aggregation_level: resolveBatchDataLevelForTask(importTaskType),
+        task_type: importTaskType,
         is_public: batchDatasetMode === 'new' ? batchIsPublic : undefined,
       })
       setBatchImportTaskId(result.task_id)

@@ -54,7 +54,7 @@ from ..utils import (
     load_coco_annotation_file,
     SEGMENTATION_TASK_TYPE,
 )
-from backend.ai.task_taxonomy import is_classification_task, is_segmentation_task, is_survival_task, normalize_task_type
+from backend.ai.task_taxonomy import get_task_metadata, is_classification_task, is_segmentation_task, is_survival_task, normalize_task_type
 from backend.ai.schemas.base import TaskStatus
 from backend.annotation.summary_cache import (
     get_dataset_annotation_summary_cache_path,
@@ -180,7 +180,25 @@ async def _run_batch_import_task(
             )
             await db.commit()
 
-            files = request_params.get("files", [])
+            files: list[dict[str, Any]] = request_params.get("files", [])
+            scan_id = request_params.get("scan_id")
+            if isinstance(scan_id, str) and scan_id:
+                session = get_scan_session(scan_id, user_id)
+                if session is None:
+                    await StorageTaskRepository.update_status(
+                        db,
+                        task_id,
+                        "failed",
+                        error_message="Scan session not found or expired",
+                    )
+                    await db.commit()
+                    return
+                files = resolve_scan_selection(
+                    session,
+                    select_all_valid=bool(request_params.get("select_all_valid", False)),
+                    selected_paths=list(request_params.get("selected_paths") or []),
+                    excluded_paths=list(request_params.get("excluded_paths") or []),
+                )
             dataset_id = request_params.get("dataset_id")
             dataset_name = request_params.get("dataset_name")
             source_organ = request_params.get("source_organ")
@@ -304,6 +322,12 @@ async def _run_batch_import_task(
                         )
                         if anchor_path:
                             data_type = "wsi"
+
+                if (
+                    get_task_metadata(task_type).task_family == "classification"
+                    and data_type == "patch"
+                ):
+                    task_type = "patch_classification"
 
                 try:
                     ensure_segmentation_contract(
@@ -1896,8 +1920,10 @@ def _build_batch_import_task_params(
         if is_classification_task(task_type_normalized)
         else None
     )
-    return {
-        "files": resolved_files,
+    scan_id = getattr(request, "scan_id", None)
+    files = [] if scan_id else resolved_files
+    params = {
+        "files": files,
         "dataset_id": request.dataset_id,
         "dataset_name": request.dataset_name,
         "source_organ": request.source_organ,
@@ -1909,3 +1935,13 @@ def _build_batch_import_task_params(
         "default_event_time": request.default_event_time,
         "default_event_status": request.default_event_status,
     }
+    if scan_id:
+        params.update(
+            {
+                "scan_id": scan_id,
+                "select_all_valid": getattr(request, "select_all_valid", False),
+                "selected_paths": getattr(request, "selected_paths", []),
+                "excluded_paths": getattr(request, "excluded_paths", []),
+            }
+        )
+    return params

@@ -13,7 +13,11 @@ from backend.database.repositories.wsi import (
 )
 from gateway.models import UploadByPathRequest
 from gateway.routes import wsi as wsi_routes
-from gateway.routes.wsi_upload import get_csv_template, upload_wsi_by_path
+from gateway.routes.wsi_upload import (
+    _resolve_task_type_for_axes,
+    get_csv_template,
+    upload_wsi_by_path,
+)
 from helpers import _make_user
 
 
@@ -309,6 +313,37 @@ def test_wsi_repository_response_default_uses_patch_data_type_for_missing_task_t
 def test_wsi_repository_response_uses_row_data_type():
     # When task_type is canonical but data_type doesn't match, it should return the canonical id as-is
     assert _canonical_task_type_for_response("wsi_classification", "patch") == "wsi_classification"
+
+
+def test_upload_resolver_maps_default_classification_to_patch_classification():
+    assert (
+        _resolve_task_type_for_axes(
+            "wsi_classification",
+            data_type="patch",
+            aggregation_level="file",
+        )
+        == "patch_classification"
+    )
+
+
+@pytest.mark.parametrize(
+    ("task_type", "data_type", "aggregation_level"),
+    [
+        ("wsi_classification", "wsi", "case"),
+        ("patch_classification", "patch", "file"),
+        ("wsi_survival", "wsi", "case"),
+        ("patch_segmentation", "patch", "file"),
+    ],
+)
+def test_upload_resolver_accepts_all_canonical_task_terms(task_type, data_type, aggregation_level):
+    assert (
+        _resolve_task_type_for_axes(
+            task_type,
+            data_type=data_type,
+            aggregation_level=aggregation_level,
+        )
+        == task_type
+    )
 
 
 def test_export_fieldnames_use_survival_columns_for_canonical_wsi_survival():
