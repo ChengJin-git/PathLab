@@ -37,6 +37,8 @@ import { Select } from '../components/ui/select'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
 import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, updateDatasetSource } from '../api'
+
+export const DUPLICATE_CHECK_BATCH_SIZE = 1000
 import { ApiError } from '../api/client'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
@@ -409,15 +411,18 @@ export default function RegisterPage() {
       setIgnoredCount(prev => prev + (items.length - filtered.length))
 
       if (filtered.length > 0) {
-        // Check for duplicate filenames in database
-        const filenames = filtered.map(item => item.name)
         let nonDuplicateItems = filtered
         try {
-          const duplicateCheck = await checkDuplicateFilenames(filenames)
-          if (duplicateCheck.duplicates.length > 0) {
-            const duplicateSet = new Set(duplicateCheck.duplicates)
-            nonDuplicateItems = filtered.filter(item => !duplicateSet.has(item.name))
-            setSkippedDuplicateCount(prev => prev + duplicateCheck.duplicates.length)
+          const allFilenames = filtered.map(item => item.name)
+          const duplicates = new Set<string>()
+          for (let i = 0; i < allFilenames.length; i += DUPLICATE_CHECK_BATCH_SIZE) {
+            const batch = allFilenames.slice(i, i + DUPLICATE_CHECK_BATCH_SIZE)
+            const duplicateCheck = await checkDuplicateFilenames(batch)
+            duplicateCheck.duplicates.forEach(d => duplicates.add(d))
+          }
+          if (duplicates.size > 0) {
+            nonDuplicateItems = filtered.filter(item => !duplicates.has(item.name))
+            setSkippedDuplicateCount(prev => prev + duplicates.size)
           }
         } catch (err) {
           // If API fails, continue without duplicate check

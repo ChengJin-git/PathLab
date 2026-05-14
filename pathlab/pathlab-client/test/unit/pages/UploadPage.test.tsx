@@ -5,7 +5,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import UploadPage from '../../../src/renderer/src/pages/UploadPage'
+import UploadPage, { DUPLICATE_CHECK_BATCH_SIZE } from '../../../src/renderer/src/pages/UploadPage'
 import * as apiModule from '../../../src/renderer/src/api'
 import * as uploadModule from '../../../src/renderer/src/components/upload'
 import * as authModule from '../../../src/renderer/src/contexts/AuthContext'
@@ -46,11 +46,11 @@ describe('UploadPage', () => {
       warning: toastWarningMock,
     } as unknown as ReturnType<typeof toastModule.useToast>)
 
-    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({ items: [] } as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({ items: [], total: 0 } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
     vi.spyOn(apiModule, 'checkDuplicateFilenames').mockResolvedValue({ duplicates: [], new: [] })
     vi.spyOn(apiModule, 'downloadCSVTemplate').mockResolvedValue(undefined)
-    vi.spyOn(apiModule, 'uploadDatasetSplits').mockResolvedValue({ updated_count: 0, auto_val_count: 0, not_found_count: 0 })
-    vi.spyOn(apiModule, 'updateDatasetSource').mockResolvedValue(undefined)
+    vi.spyOn(apiModule, 'uploadDatasetSplits').mockResolvedValue({ message: '', updated_count: 0, auto_val_count: 0, not_found_count: 0, not_found_files: [] } as unknown as Awaited<ReturnType<typeof apiModule.uploadDatasetSplits>>)
+    vi.spyOn(apiModule, 'updateDatasetSource').mockResolvedValue({ message: '', dataset_id: '', source: null, updated_count: 0 } as unknown as Awaited<ReturnType<typeof apiModule.updateDatasetSource>>)
   })
 
   it('shows collection progress while gathering files for both initial and follow-up folder drops', async () => {
@@ -252,5 +252,75 @@ describe('UploadPage', () => {
     })
 
     await waitFor(() => expect(toastWarningMock).toHaveBeenCalledWith('uploadPage.uploadingWarning', 8000))
+  })
+
+  it('batches duplicate filename checks into chunks no larger than the batch size', async () => {
+    const checkDuplicateFilenamesSpy = vi.spyOn(apiModule, 'checkDuplicateFilenames')
+    checkDuplicateFilenamesSpy.mockResolvedValue({ duplicates: [], new: [] })
+
+    const batchSize = DUPLICATE_CHECK_BATCH_SIZE
+    const totalFiles = batchSize * 2 + 2
+    const items: uploadModule.LocalItem[] = []
+    for (let i = 0; i < totalFiles; i++) {
+      items.push({
+        key: `key-${i}`,
+        name: `file-${i}.png`,
+        file: new File(['data'], `file-${i}.png`, { type: 'image/png' }),
+        type: 'standard',
+      })
+    }
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+      items,
+      orphanFolders: [],
+      orphanDtFiles: new Map(),
+      unsupportedFileNames: [],
+      jsonFiles: [],
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'Batch Dataset',
+                uploadMode: 'classification',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    const dropZoneLabel = await screen.findByText('uploadPage.dropFilesHere')
+    const dropZone = dropZoneLabel.closest('div')
+    expect(dropZone).not.toBeNull()
+
+    fireEvent.drop(dropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'dummy.png' }) }] },
+    })
+
+    await waitFor(() => expect(checkDuplicateFilenamesSpy).toHaveBeenCalled())
+
+    const calls = checkDuplicateFilenamesSpy.mock.calls
+    expect(calls.length).toBeGreaterThan(1)
+
+    for (const [filenames] of calls) {
+      expect((filenames as string[]).length).toBeLessThanOrEqual(batchSize)
+    }
+
+    const totalChecked = calls.reduce((sum, [filenames]) => sum + (filenames as string[]).length, 0)
+    expect(totalChecked).toBe(totalFiles)
   })
 })
