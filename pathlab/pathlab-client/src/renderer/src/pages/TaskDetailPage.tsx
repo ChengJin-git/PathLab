@@ -362,12 +362,14 @@ export default function TaskDetailPage() {
     // Use the same i18n key strategy as TaskListPage for consistency
     let label: string
     if (isExternalValidationTaskId(task_id)) {
-      if (status === 'patching') label = t('taskList.progress.patching')
+      if (status === 'creating') label = t('taskList.progress.creatingTask')
+      else if (status === 'patching') label = t('taskList.progress.patching')
       else if (status === 'extracting') label = t('taskList.progress.extracting')
       else if (status === 'training') label = t('taskList.progress.testing')
       else label = t(`backgroundTask.serverStatus.validation.${status}`, { defaultValue: badge.label })
     } else {
-      if (status === 'patching') label = t('taskList.progress.patching')
+      if (status === 'creating') label = t('taskList.progress.creatingTask')
+      else if (status === 'patching') label = t('taskList.progress.patching')
       else if (status === 'extracting') label = t('taskList.progress.extracting')
       else if (status === 'training') label = t('taskList.progress.training')
       else label = t(`backgroundTask.serverStatus.training.${status}`, { defaultValue: badge.label })

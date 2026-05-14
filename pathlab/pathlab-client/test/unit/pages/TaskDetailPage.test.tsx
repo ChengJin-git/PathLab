@@ -53,7 +53,12 @@ describe('TaskDetailPage extval rerun', () => {
 
     vi.spyOn(apiModule, 'getAuthToken').mockReturnValue(null)
     vi.spyOn(apiModule, 'cancelQueueTask').mockResolvedValue({ cancelled: true, message: 'cancelled' })
-    vi.spyOn(apiModule, 'getTrainingTask').mockResolvedValue({
+    vi.spyOn(apiModule, 'getTrainingTask').mockImplementation(async taskId => {
+      if (taskId !== 'extval_source') {
+        throw new apiModule.ApiError('Task not found', 404, 'NOT_FOUND')
+      }
+
+      return {
       task_id: 'extval_source',
       task_name: 'Validation Task',
       task_type: 'external_validation',
@@ -76,7 +81,45 @@ describe('TaskDetailPage extval rerun', () => {
         analysis_charts: ['roc_curve'],
         bootstrap_ci_metrics: ['accuracy'],
       },
-    } as TrainingTaskDetail)
+      } as TrainingTaskDetail
+    })
+  })
+
+  it('renders i18n key for synthetic creating status on extval rerun', async () => {
+    const originalCrypto = globalThis.crypto
+    Object.defineProperty(globalThis, 'crypto', {
+      value: { randomUUID: () => '11111111-2222-3333-4444-555555555555' },
+      configurable: true,
+    })
+
+    vi.spyOn(apiModule, 'startExternalValidation').mockImplementation(
+      () => new Promise(() => {})
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/task/extval_source']}>
+        <Routes>
+          <Route path="/task/:task_id" element={<><TaskDetailPage /><LocationDisplay /></>} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await screen.findByText('Validation Task')
+
+    fireEvent.click(screen.getByRole('button', { name: 'taskDetail.rerun' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-display').textContent).toBe('/task/extval_1111111122223333')
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('taskList.progress.creatingTask')).toBeInTheDocument()
+    })
+
+    Object.defineProperty(globalThis, 'crypto', {
+      value: originalCrypto,
+      configurable: true,
+    })
   })
 
   it('navigates immediately to a synthetic task page while extval rerun is still submitting', async () => {
