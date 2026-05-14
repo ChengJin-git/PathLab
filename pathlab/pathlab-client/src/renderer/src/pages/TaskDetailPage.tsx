@@ -276,6 +276,14 @@ export default function TaskDetailPage() {
   const loadTaskDetail = async () => {
     if (!task_id) return
 
+    const tracked = getTrainingSubmissionRecord(task_id)
+    if (isExternalValidationTaskId(task_id) && tracked?.state === 'pending') {
+      setLoading(false)
+      setCreationIssue(null)
+      setWaitingForCreation(true)
+      return
+    }
+
     setLoading(true)
     try {
       const data = await getTrainingTask(task_id)
@@ -317,6 +325,11 @@ export default function TaskDetailPage() {
   // Poll for task creation when task is not found yet (fire-and-forget submission)
   useEffect(() => {
     if (!waitingForCreation || !task_id || task) return
+
+    const tracked = getTrainingSubmissionRecord(task_id)
+    if (isExternalValidationTaskId(task_id) && tracked?.state === 'pending') {
+      return
+    }
 
     let attempts = 0
     const intervalId = setInterval(async () => {

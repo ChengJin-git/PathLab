@@ -175,4 +175,87 @@ describe('TaskDetailPage extval rerun', () => {
       configurable: true,
     })
   })
+
+  it('does not call getTrainingTask for a pending synthetic extval ID before startExternalValidation resolves', async () => {
+    const originalCrypto = globalThis.crypto
+    Object.defineProperty(globalThis, 'crypto', {
+      value: { randomUUID: () => '11111111-2222-3333-4444-555555555555' },
+      configurable: true,
+    })
+
+    vi.spyOn(apiModule, 'startExternalValidation').mockImplementation(
+      () => new Promise(() => {})
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/task/extval_source']}>
+        <Routes>
+          <Route path="/task/:task_id" element={<><TaskDetailPage /><LocationDisplay /></>} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await screen.findByText('Validation Task')
+
+    fireEvent.click(screen.getByRole('button', { name: 'taskDetail.rerun' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-display').textContent).toBe('/task/extval_1111111122223333')
+    })
+
+    const getTrainingTaskCalls = vi.mocked(apiModule.getTrainingTask).mock.calls
+    const syntheticCalls = getTrainingTaskCalls.filter(([id]) => id === 'extval_1111111122223333')
+    expect(syntheticCalls).toHaveLength(0)
+
+    Object.defineProperty(globalThis, 'crypto', {
+      value: originalCrypto,
+      configurable: true,
+    })
+  })
+
+  it('does not poll getTrainingTask for a pending synthetic extval ID after the interval fires', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    const originalCrypto = globalThis.crypto
+    Object.defineProperty(globalThis, 'crypto', {
+      value: { randomUUID: () => '11111111-2222-3333-4444-555555555555' },
+      configurable: true,
+    })
+
+    vi.spyOn(apiModule, 'startExternalValidation').mockImplementation(
+      () => new Promise(() => {})
+    )
+
+    render(
+      <MemoryRouter initialEntries={['/task/extval_source']}>
+        <Routes>
+          <Route path="/task/:task_id" element={<><TaskDetailPage /><LocationDisplay /></>} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await screen.findByText('Validation Task')
+
+    fireEvent.click(screen.getByRole('button', { name: 'taskDetail.rerun' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('location-display').textContent).toBe('/task/extval_1111111122223333')
+    })
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000)
+      await Promise.resolve()
+    })
+
+    const getTrainingTaskCalls = vi.mocked(apiModule.getTrainingTask).mock.calls
+    const syntheticCalls = getTrainingTaskCalls.filter(([id]) => id === 'extval_1111111122223333')
+    expect(syntheticCalls).toHaveLength(0)
+
+    Object.defineProperty(globalThis, 'crypto', {
+      value: originalCrypto,
+      configurable: true,
+    })
+
+    vi.useRealTimers()
+  })
 })
