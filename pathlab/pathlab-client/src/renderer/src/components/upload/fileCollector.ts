@@ -73,11 +73,9 @@ const collectAllFilesFromDirectory = async (directoryEntry: any, context: Collec
       if (file) {
         files.push(file)
         context.state.discoveredFiles += 1
-        emitProgress(context, 'collecting', { currentDirectoryName: directoryEntry.name })
       }
     } else if (entry.isDirectory) {
       context.state.discoveredDirectories += 1
-      emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
       const subFiles = await collectAllFilesFromDirectory(entry, context)
       files.push(...subFiles)
     }
@@ -128,11 +126,9 @@ export const collectItemsFromDataTransfer = async (
         if (file) {
           firstLevelFiles.push(file)
           context.state.discoveredFiles += 1
-          emitProgress(context, 'collecting', { currentDirectoryName: undefined })
         }
       } else if (entry.isDirectory) {
         context.state.discoveredDirectories += 1
-        emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
         const folderEntries = await readAllEntries(entry)
         const hasWsiFiles = folderEntries.some(e => e.isFile && isSupportedName(e.name))
 
@@ -145,11 +141,9 @@ export const collectItemsFromDataTransfer = async (
               if (file) {
                 firstLevelFiles.push(file)
                 context.state.discoveredFiles += 1
-                emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
               }
             } else if (subEntry.isDirectory) {
               context.state.discoveredDirectories += 1
-              emitProgress(context, 'collecting', { currentDirectoryName: subEntry.name })
               const subFolderFiles = await collectAllFilesFromDirectory(subEntry, context)
               mrxsDataFolders.push({
                 folderName: subEntry.name,
@@ -168,7 +162,6 @@ export const collectItemsFromDataTransfer = async (
         }
 
         context.state.processedItems += 1
-        emitProgress(context, 'collecting', { currentDirectoryName: entry.name })
       }
 
       await maybeYield(context, 'collecting')
