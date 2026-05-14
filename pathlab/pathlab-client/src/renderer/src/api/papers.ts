@@ -36,6 +36,15 @@ export type DiffSummary = components['schemas']['DiffSummary']
 export type SelectionLocatorResult = components['schemas']['SelectionLocatorResult']
 export type RegenerateProgress = components['schemas']['RegenerateProgress']
 export type RegenerateRejectResponse = components['schemas']['RegenerateRejectResponse']
+export type CitationReference = components['schemas']['CitationReference']
+export type CitationsView = components['schemas']['CitationsView']
+export type VerifiedPoolSummary = components['schemas']['VerifiedPoolSummary']
+export type AddCitationMode = components['schemas']['AddCitationRequest']['mode']
+export type AddCitationRequest = components['schemas']['AddCitationRequest']
+export type ManualCitationFields = components['schemas']['ManualCitationFields']
+export type AddCitationPreview = components['schemas']['AddCitationPreview']
+export type AddCitationResponse = components['schemas']['AddCitationResponse']
+export type CitationDeleteResponse = components['schemas']['CitationDeleteResponse']
 
 export interface PostSectionRegenerateBody {
   mode: RegenerateMode
@@ -122,6 +131,41 @@ export function getPaperSections(paperId: string): Promise<PaperSectionListRespo
     `${API_BASE}/papers/${encodeURIComponent(paperId)}/sections`,
     undefined,
     'Get paper sections',
+  )
+}
+
+export function getCitations(paperId: string): Promise<CitationsView> {
+  return apiFetch<CitationsView>(
+    `${API_BASE}/papers/${encodeURIComponent(paperId)}/citations`,
+    undefined,
+    'Get paper citations',
+  )
+}
+
+export function postCitation(
+  paperId: string,
+  body: AddCitationRequest,
+): Promise<AddCitationResponse | AddCitationPreview> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<AddCitationResponse | AddCitationPreview>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/citations`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      },
+      'Add paper citation',
+    ),
+  )
+}
+
+export function deleteCitation(paperId: string, key: string): Promise<CitationDeleteResponse> {
+  return preserveBackendErrorCode(() =>
+    apiFetch<CitationDeleteResponse>(
+      `${API_BASE}/papers/${encodeURIComponent(paperId)}/citations/${encodeURIComponent(key)}`,
+      { method: 'DELETE' },
+      'Delete paper citation',
+    ),
   )
 }
 

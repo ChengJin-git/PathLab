@@ -78,6 +78,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/papers/{paper_id}/citations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Paper Citations */
+        get: operations["get_paper_citations_papers__paper_id__citations_get"];
+        put?: never;
+        /** Add Paper Citation */
+        post: operations["add_paper_citation_papers__paper_id__citations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/papers/{paper_id}/citations/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Paper Citation */
+        delete: operations["delete_paper_citation_papers__paper_id__citations__key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/papers/{paper_id}/sections/{section_name}/regenerate": {
         parameters: {
             query?: never;
@@ -184,6 +219,159 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AddCitationPreview */
+        AddCitationPreview: {
+            /** Proposed Key */
+            proposed_key: string;
+            ref: components["schemas"]["CitationReference"];
+            /** Duplicate Of */
+            duplicate_of?: string | null;
+        };
+        /** AddCitationRequest */
+        AddCitationRequest: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "doi" | "arxiv" | "bibtex" | "manual";
+            /** Doi */
+            doi?: string | null;
+            /** Arxiv Id Or Url */
+            arxiv_id_or_url?: string | null;
+            /** Bibtex Raw */
+            bibtex_raw?: string | null;
+            manual?: components["schemas"]["ManualCitationFields"] | null;
+            /** Cluster */
+            cluster?: string | null;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * Dry Run
+             * @default false
+             */
+            dry_run: boolean;
+        };
+        /** AddCitationResponse */
+        AddCitationResponse: {
+            /** Key */
+            key: string;
+            ref: components["schemas"]["CitationReference"];
+            /**
+             * Refs Bib Path
+             * @default citations/refs.bib
+             */
+            refs_bib_path: string;
+        };
+        /** CitationCoverageSummary */
+        CitationCoverageSummary: {
+            /** Selected Count */
+            selected_count: number;
+            /** Cited Count */
+            cited_count: number;
+            /** Coverage Ratio */
+            coverage_ratio: number;
+            /** Threshold */
+            threshold: number;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "passed" | "failed" | "warning";
+        };
+        /** CitationDeleteResponse */
+        CitationDeleteResponse: {
+            /** Deleted */
+            deleted: boolean;
+            /** Key */
+            key: string;
+        };
+        /**
+         * CitationReference
+         * @description Public metadata for one selected bibliography reference.
+         */
+        CitationReference: {
+            /** Key */
+            key: string;
+            /** Title */
+            title: string;
+            /** Authors */
+            authors?: string[];
+            /** Year */
+            year?: number | null;
+            /** Venue */
+            venue?: string | null;
+            /** Entry Type */
+            entry_type?: ("article" | "inproceedings" | "misc") | null;
+            /** Journal */
+            journal?: string | null;
+            /** Booktitle */
+            booktitle?: string | null;
+            /** Volume */
+            volume?: string | null;
+            /** Number */
+            number?: string | null;
+            /** Pages */
+            pages?: string | null;
+            /** Publisher */
+            publisher?: string | null;
+            /** Arxiv Id */
+            arxiv_id?: string | null;
+            /** Publication Type */
+            publication_type?: string | null;
+            /** Doi */
+            doi?: string | null;
+            /** Pmid */
+            pmid?: string | null;
+            /** S2 Paper Id */
+            s2_paper_id?: string | null;
+            /** Openalex Id */
+            openalex_id?: string | null;
+            /** Url */
+            url?: string | null;
+            /**
+             * Source
+             * @default manual
+             */
+            source: string;
+            /** Cluster */
+            cluster?: string | null;
+            /** Query */
+            query?: string | null;
+            /** Abstract */
+            abstract?: string | null;
+            /**
+             * Citation Count
+             * @default 0
+             */
+            citation_count: number;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * Added By
+             * @default agent
+             * @enum {string}
+             */
+            added_by: "agent" | "user";
+        } & {
+            [key: string]: unknown;
+        };
+        /** CitationsView */
+        CitationsView: {
+            /** Paper Id */
+            paper_id: string;
+            /** Selected Refs */
+            selected_refs?: components["schemas"]["CitationReference"][];
+            /** Required Keys */
+            required_keys?: string[];
+            coverage?: components["schemas"]["CitationCoverageSummary"] | null;
+            verified_pool_summary?: components["schemas"]["VerifiedPoolSummary"] | null;
+        };
         /**
          * CreatePaperRequest
          * @description POST /papers body.
@@ -290,6 +478,29 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** ManualCitationFields */
+        ManualCitationFields: {
+            /** Title */
+            title: string;
+            /** Authors */
+            authors?: string[];
+            /** Year */
+            year?: number | null;
+            /** Venue */
+            venue?: string | null;
+            /** Doi */
+            doi?: string | null;
+            /** Arxiv Id */
+            arxiv_id?: string | null;
+            /** Url */
+            url?: string | null;
+            /** Entry Type */
+            entry_type?: ("article" | "inproceedings" | "misc") | null;
+            /** Booktitle */
+            booktitle?: string | null;
+            /** Journal */
+            journal?: string | null;
         };
         /**
          * OutlineApprovalRequest
@@ -792,67 +1003,31 @@ export interface components {
             /** Warnings Md Path */
             warnings_md_path?: string | null;
         };
-        /**
-         * FigureManifestItem
-         * @description Frontend-facing schema for one figure entry in `figures/manifest.json`.
-         */
-        FigureManifestItem: {
-            /** Figure Id */
-            figure_id: string;
-            /**
-             * Path
-             * @default null
-             */
-            path: string | null;
-            /** Status */
-            status: string;
-            /**
-             * Source
-             * @default null
-             */
-            source: string | null;
-            /**
-             * Generator
-             * @default null
-             */
-            generator: string | null;
-            /**
-             * Caption
-             * @default null
-             */
-            caption: string | null;
-            /**
-             * Content Type
-             * @default null
-             */
-            content_type: string | null;
-            /**
-             * Kind
-             * @default null
-             */
-            kind: string | null;
-            /**
-             * Backend
-             * @default null
-             */
-            backend: string | null;
-            /**
-             * Error
-             * @default null
-             */
-            error: string | null;
-        } & {
-            [key: string]: unknown;
+        /** VerifiedPoolRejection */
+        VerifiedPoolRejection: {
+            /** Title */
+            title: string;
+            /** Year */
+            year?: number | null;
+            /** Source */
+            source: string;
+            /** Reasons */
+            reasons?: string[];
         };
-        /**
-         * FigureManifest
-         * @description Frontend-facing schema for `figures/manifest.json`.
-         */
-        FigureManifest: {
-            /** Figures */
-            figures?: components["schemas"]["FigureManifestItem"][];
-        } & {
-            [key: string]: unknown;
+        /** VerifiedPoolSummary */
+        VerifiedPoolSummary: {
+            /** Discovery Total */
+            discovery_total: number;
+            /** Verified Total */
+            verified_total: number;
+            /** Selected Total */
+            selected_total: number;
+            /** Rejection Breakdown */
+            rejection_breakdown?: {
+                [key: string]: number;
+            };
+            /** Sample Rejections */
+            sample_rejections?: components["schemas"]["VerifiedPoolRejection"][];
         };
     };
     responses: never;
@@ -1047,6 +1222,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaperSectionListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_paper_citations_papers__paper_id__citations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationsView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_paper_citation_papers__paper_id__citations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AddCitationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddCitationPreview"];
+                };
+            };
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddCitationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_paper_citation_papers__paper_id__citations__key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                paper_id: string;
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CitationDeleteResponse"];
                 };
             };
             /** @description Validation Error */
