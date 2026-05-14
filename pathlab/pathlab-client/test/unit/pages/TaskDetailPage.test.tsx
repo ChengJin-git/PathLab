@@ -6,6 +6,7 @@ import TaskDetailPage from '../../../src/renderer/src/pages/TaskDetailPage'
 import * as apiModule from '../../../src/renderer/src/api'
 import type { InferenceTaskResponse } from '../../../src/renderer/src/api/analysis'
 import type { TrainingTaskDetail } from '../../../src/renderer/src/api/training'
+import { markTrainingSubmissionCreated } from '../../../src/renderer/src/lib/trainingSubmissionTracker'
 
 const authState = {
   isAdmin: false,
@@ -255,6 +256,33 @@ describe('TaskDetailPage extval rerun', () => {
       value: originalCrypto,
       configurable: true,
     })
+
+    vi.useRealTimers()
+  })
+
+  it('does not keep polling a stale created synthetic extval ID after restart', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+
+    markTrainingSubmissionCreated('extval_stale11112222')
+
+    render(
+      <MemoryRouter initialEntries={['/task/extval_stale11112222']}>
+        <Routes>
+          <Route path="/task/:task_id" element={<><TaskDetailPage /><LocationDisplay /></>} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await screen.findByText('taskDetail.taskNotFound')
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000)
+      await Promise.resolve()
+    })
+
+    const getTrainingTaskCalls = vi.mocked(apiModule.getTrainingTask).mock.calls
+    const staleCalls = getTrainingTaskCalls.filter(([id]) => id === 'extval_stale11112222')
+    expect(staleCalls).toHaveLength(1)
 
     vi.useRealTimers()
   })

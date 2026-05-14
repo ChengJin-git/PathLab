@@ -21,6 +21,7 @@ import {
   markTrainingSubmissionCreated,
   markTrainingSubmissionFailed,
   markTrainingSubmissionPending,
+  type TrainingSubmissionState,
 } from '../lib/trainingSubmissionTracker'
 import { formatDateTime } from '../lib/utils'
 import { getBatchInferenceSummary, getBatchInferenceResults, exportBatchInferenceCsv } from '../api/batchInference'
@@ -78,6 +79,13 @@ const makeSyntheticCancelledLogEntry = (taskId: string, message: string): LogEnt
 })
 
 const isExternalValidationTaskId = (taskId: string | undefined): boolean => Boolean(taskId?.startsWith('extval_'))
+
+const shouldWaitForTaskCreation = (taskId: string, state: TrainingSubmissionState | undefined): boolean => {
+  if (isExternalValidationTaskId(taskId)) {
+    return state === 'pending'
+  }
+  return state === 'pending' || state === 'created'
+}
 
 export default function TaskDetailPage() {
   const { t } = useTranslation()
@@ -302,17 +310,20 @@ export default function TaskDetailPage() {
           setCreationIssue(trackedIssue)
           setCreationSlow(false)
           setWaitingForCreation(false)
-        } else if (tracked?.state === 'pending' || tracked?.state === 'created') {
+        } else if (shouldWaitForTaskCreation(task_id, tracked?.state)) {
           setCreationIssue(null)
           setWaitingForCreation(true)
         } else {
+          if (isExternalValidationTaskId(task_id) && tracked?.state === 'created') {
+            clearTrainingSubmissionRecord(task_id)
+          }
           setCreationIssue(null)
           setWaitingForCreation(false)
         }
       } else {
         console.error('Failed to load task detail:', error)
         const tracked = getTrainingSubmissionRecord(task_id)
-        if (tracked?.state === 'pending' || tracked?.state === 'created') {
+        if (shouldWaitForTaskCreation(task_id, tracked?.state)) {
           setCreationIssue(null)
           setWaitingForCreation(true)
         }
