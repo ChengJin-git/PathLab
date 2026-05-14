@@ -561,6 +561,316 @@ describe('UploadPage', () => {
     expect(screen.getByText(/uploadPage\.jsonOnlyAppendDesc 1/)).toBeInTheDocument()
   })
 
+  it('allows additional drops after a JSON-only drop on segmentation append', async () => {
+    let resolveFirstCollection: ((result: uploadModule.CollectionResult) => void) | undefined
+    let resolveSecondCollection: ((result: uploadModule.CollectionResult) => void) | undefined
+
+    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-jiangxi',
+          dataset_name: 'jiangxi',
+          user_id: 'user-1',
+          source_organ: 'Liver',
+          file_count: 4,
+          total_size: 2048,
+          data_type: 'patch',
+          task_type: 'patch_segmentation',
+          aggregation_level: 'file',
+        },
+      ],
+      total: 1,
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer')
+      .mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
+        return await new Promise<uploadModule.CollectionResult>(resolve => {
+          resolveFirstCollection = resolve
+        })
+      })
+      .mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
+        return await new Promise<uploadModule.CollectionResult>(resolve => {
+          resolveSecondCollection = resolve
+        })
+      })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'jiangxi',
+                datasetId: 'dataset-jiangxi',
+                uploadMode: 'patch_segmentation',
+                dataLevel: 'file',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await screen.findByText('uploadPage.appendingData')
+    const table = await screen.findByRole('table')
+    const tableDropZone = table.parentElement
+    expect(tableDropZone).not.toBeNull()
+
+    // First drop: JSON-only
+    fireEvent.drop(tableDropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isDirectory: true, name: 'labels' }) }] },
+    })
+
+    await act(async () => {
+      resolveFirstCollection?.({
+        items: [],
+        orphanFolders: [],
+        orphanDtFiles: new Map(),
+        unsupportedFileNames: [],
+        jsonFiles: [new File(['{"annotations":[]}'], 'tile-a.json', { type: 'application/json' })],
+      })
+    })
+
+    expect(await screen.findByText('uploadPage.jsonOnlyAppendTitle')).toBeInTheDocument()
+
+    // The JSON-only card should still be a drop zone
+    const jsonOnlyCard = screen.getByText('uploadPage.jsonOnlyAppendTitle').closest('div')?.parentElement?.parentElement
+    expect(jsonOnlyCard).not.toBeNull()
+
+    fireEvent.drop(jsonOnlyCard as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isDirectory: true, name: 'images' }) }] },
+    })
+
+    await act(async () => {
+      resolveSecondCollection?.({
+        items: [
+          {
+            key: 'tile-a',
+            name: 'tile-a.png',
+            file: new File(['data'], 'tile-a.png', { type: 'image/png' }),
+            type: 'standard',
+          },
+        ],
+        orphanFolders: [],
+        orphanDtFiles: new Map(),
+        unsupportedFileNames: [],
+        jsonFiles: [],
+      })
+    })
+
+    // After dropping images, the table should reappear with the matched item
+    await waitFor(() => {
+      expect(screen.queryByText('uploadPage.jsonOnlyAppendTitle')).not.toBeInTheDocument()
+    })
+    expect(screen.getByText('tile-a.png')).toBeInTheDocument()
+  })
+
+  it('allows image-only drops followed by JSON drops on segmentation append', async () => {
+    let resolveFirstCollection: ((result: uploadModule.CollectionResult) => void) | undefined
+    let resolveSecondCollection: ((result: uploadModule.CollectionResult) => void) | undefined
+
+    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-jiangxi',
+          dataset_name: 'jiangxi',
+          user_id: 'user-1',
+          source_organ: 'Liver',
+          file_count: 4,
+          total_size: 2048,
+          data_type: 'patch',
+          task_type: 'patch_segmentation',
+          aggregation_level: 'file',
+        },
+      ],
+      total: 1,
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer')
+      .mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
+        return await new Promise<uploadModule.CollectionResult>(resolve => {
+          resolveFirstCollection = resolve
+        })
+      })
+      .mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
+        return await new Promise<uploadModule.CollectionResult>(resolve => {
+          resolveSecondCollection = resolve
+        })
+      })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'jiangxi',
+                datasetId: 'dataset-jiangxi',
+                uploadMode: 'patch_segmentation',
+                dataLevel: 'file',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await screen.findByText('uploadPage.appendingData')
+    const table = await screen.findByRole('table')
+    const tableDropZone = table.parentElement
+    expect(tableDropZone).not.toBeNull()
+
+    // First drop: image-only
+    fireEvent.drop(tableDropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isDirectory: true, name: 'images' }) }] },
+    })
+
+    await act(async () => {
+      resolveFirstCollection?.({
+        items: [
+          {
+            key: 'tile-a',
+            name: 'tile-a.png',
+            file: new File(['data'], 'tile-a.png', { type: 'image/png' }),
+            type: 'standard',
+          },
+        ],
+        orphanFolders: [],
+        orphanDtFiles: new Map(),
+        unsupportedFileNames: [],
+        jsonFiles: [],
+      })
+    })
+
+    expect(await screen.findByText('tile-a.png')).toBeInTheDocument()
+
+    // Second drop: JSON-only onto the table
+    fireEvent.drop(tableDropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isDirectory: true, name: 'labels' }) }] },
+    })
+
+    await act(async () => {
+      resolveSecondCollection?.({
+        items: [],
+        orphanFolders: [],
+        orphanDtFiles: new Map(),
+        unsupportedFileNames: [],
+        jsonFiles: [new File(['{"annotations":[]}'], 'tile-a.json', { type: 'application/json' })],
+      })
+    })
+
+    // Mask should now be found for the image
+    await waitFor(() => {
+      expect(screen.getByText('uploadPage.maskFound')).toBeInTheDocument()
+    })
+  })
+
+  it('allows mixed image+JSON drops on segmentation append', async () => {
+    let resolveCollection: ((result: uploadModule.CollectionResult) => void) | undefined
+
+    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-jiangxi',
+          dataset_name: 'jiangxi',
+          user_id: 'user-1',
+          source_organ: 'Liver',
+          file_count: 4,
+          total_size: 2048,
+          data_type: 'patch',
+          task_type: 'patch_segmentation',
+          aggregation_level: 'file',
+        },
+      ],
+      total: 1,
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockImplementationOnce(async (_dataTransfer: DataTransfer, _options?: uploadModule.CollectItemsOptions) => {
+      return await new Promise<uploadModule.CollectionResult>(resolve => {
+        resolveCollection = resolve
+      })
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'jiangxi',
+                datasetId: 'dataset-jiangxi',
+                uploadMode: 'patch_segmentation',
+                dataLevel: 'file',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await screen.findByText('uploadPage.appendingData')
+    const table = await screen.findByRole('table')
+    const tableDropZone = table.parentElement
+    expect(tableDropZone).not.toBeNull()
+
+    // Mixed drop
+    fireEvent.drop(tableDropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isDirectory: true, name: 'mixed' }) }] },
+    })
+
+    await act(async () => {
+      resolveCollection?.({
+        items: [
+          {
+            key: 'tile-a',
+            name: 'tile-a.png',
+            file: new File(['data'], 'tile-a.png', { type: 'image/png' }),
+            type: 'standard',
+          },
+        ],
+        orphanFolders: [],
+        orphanDtFiles: new Map(),
+        unsupportedFileNames: [],
+        jsonFiles: [new File(['{"annotations":[]}'], 'tile-a.json', { type: 'application/json' })],
+      })
+    })
+
+    expect(await screen.findByText('tile-a.png')).toBeInTheDocument()
+    expect(screen.getByText('uploadPage.maskFound')).toBeInTheDocument()
+  })
+
   describe('missing-label navigation UX', () => {
     const renderUploadPage = async (items: uploadModule.LocalItem[]) => {
       const queryClient = new QueryClient({

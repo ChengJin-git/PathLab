@@ -1395,7 +1395,16 @@ export default function RegisterPage() {
               {/* Table Area */}
               <Card className="flex-1 min-h-0 flex flex-col overflow-hidden mb-2 sm:mb-4 mx-2 sm:mx-0 max-h-[600px]">
                 {segmentationJsonOnlyAppend ? (
-                  <div className="flex-1 bg-white p-6 sm:p-8 flex items-center justify-center">
+                  <div
+                    className="flex-1 bg-white p-6 sm:p-8 flex items-center justify-center"
+                    onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={async e => {
+                      e.preventDefault()
+                      setIsDragging(false)
+                      await handleCollectedDrop(e.dataTransfer, 'uploadPage.skippedUnsupportedFilesShort')
+                    }}
+                  >
                     <div className="max-w-2xl w-full rounded-2xl border border-green-200 bg-green-50 px-5 py-6 text-left">
                       <div className="flex items-start gap-3">
                         <FileJson className="w-6 h-6 text-green-600 shrink-0 mt-0.5" />
