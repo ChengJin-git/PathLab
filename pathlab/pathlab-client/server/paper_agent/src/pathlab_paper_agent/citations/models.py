@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 _NON_KEY_CHARS = re.compile(r"[^A-Za-z0-9_:-]+")
 
@@ -169,10 +169,16 @@ class CitationReference:
     abstract: Optional[str] = None
     citation_count: int = 0
     required: bool = False
+    added_by: Literal["agent", "user"] = "agent"
 
     @classmethod
     def from_candidate(
-        cls, candidate: CitationCandidate, *, key: str, required: bool = False
+        cls,
+        candidate: CitationCandidate,
+        *,
+        key: str,
+        required: bool = False,
+        added_by: Literal["agent", "user"] = "agent",
     ) -> "CitationReference":
         return cls(
             key=key,
@@ -200,6 +206,7 @@ class CitationReference:
             abstract=candidate.abstract,
             citation_count=candidate.citation_count,
             required=required,
+            added_by=added_by,
         )
 
     @classmethod
@@ -209,6 +216,7 @@ class CitationReference:
             authors = (authors_value,)
         else:
             authors = tuple(str(item) for item in authors_value if item)
+        added_by = data.get("added_by") if data.get("added_by") in {"agent", "user"} else "agent"
         return cls(
             key=str(data.get("key") or ""),
             title=str(data.get("title") or ""),
@@ -235,6 +243,7 @@ class CitationReference:
             abstract=data.get("abstract"),
             citation_count=int(data.get("citation_count") or 0),
             required=bool(data.get("required", False)),
+            added_by=added_by,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -264,6 +273,7 @@ class CitationReference:
             "abstract": self.abstract,
             "citation_count": self.citation_count,
             "required": self.required,
+            "added_by": self.added_by,
         }
 
 

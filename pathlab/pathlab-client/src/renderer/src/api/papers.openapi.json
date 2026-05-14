@@ -311,6 +311,174 @@
         }
       }
     },
+    "/papers/{paper_id}/citations": {
+      "get": {
+        "tags": [
+          "Paper Generation"
+        ],
+        "summary": "Get Paper Citations",
+        "operationId": "get_paper_citations_papers__paper_id__citations_get",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationsView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Paper Generation"
+        ],
+        "summary": "Add Paper Citation",
+        "operationId": "add_paper_citation_papers__paper_id__citations_post",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddCitationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddCitationPreview"
+                }
+              }
+            }
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AddCitationResponse"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/papers/{paper_id}/citations/{key}": {
+      "delete": {
+        "tags": [
+          "Paper Generation"
+        ],
+        "summary": "Delete Paper Citation",
+        "operationId": "delete_paper_citation_papers__paper_id__citations__key__delete",
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Paper Id"
+            }
+          },
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CitationDeleteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/papers/{paper_id}/sections/{section_name}/regenerate": {
       "post": {
         "tags": [
@@ -692,6 +860,507 @@
   },
   "components": {
     "schemas": {
+      "AddCitationPreview": {
+        "properties": {
+          "proposed_key": {
+            "type": "string",
+            "title": "Proposed Key"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/CitationReference"
+          },
+          "duplicate_of": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duplicate Of"
+          }
+        },
+        "type": "object",
+        "required": [
+          "proposed_key",
+          "ref"
+        ],
+        "title": "AddCitationPreview"
+      },
+      "AddCitationRequest": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "doi",
+              "arxiv",
+              "bibtex",
+              "manual"
+            ],
+            "title": "Mode"
+          },
+          "doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doi"
+          },
+          "arxiv_id_or_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Id Or Url"
+          },
+          "bibtex_raw": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bibtex Raw"
+          },
+          "manual": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ManualCitationFields"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cluster": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": false
+          },
+          "dry_run": {
+            "type": "boolean",
+            "title": "Dry Run",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "mode"
+        ],
+        "title": "AddCitationRequest"
+      },
+      "AddCitationResponse": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "ref": {
+            "$ref": "#/components/schemas/CitationReference"
+          },
+          "refs_bib_path": {
+            "type": "string",
+            "title": "Refs Bib Path",
+            "default": "citations/refs.bib"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "ref"
+        ],
+        "title": "AddCitationResponse"
+      },
+      "CitationCoverageSummary": {
+        "properties": {
+          "selected_count": {
+            "type": "integer",
+            "title": "Selected Count"
+          },
+          "cited_count": {
+            "type": "integer",
+            "title": "Cited Count"
+          },
+          "coverage_ratio": {
+            "type": "number",
+            "title": "Coverage Ratio"
+          },
+          "threshold": {
+            "type": "number",
+            "title": "Threshold"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "warning"
+            ],
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "selected_count",
+          "cited_count",
+          "coverage_ratio",
+          "threshold",
+          "status"
+        ],
+        "title": "CitationCoverageSummary"
+      },
+      "CitationDeleteResponse": {
+        "properties": {
+          "deleted": {
+            "type": "boolean",
+            "title": "Deleted"
+          },
+          "key": {
+            "type": "string",
+            "title": "Key"
+          }
+        },
+        "type": "object",
+        "required": [
+          "deleted",
+          "key"
+        ],
+        "title": "CitationDeleteResponse"
+      },
+      "CitationReference": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "venue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue"
+          },
+          "entry_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "article",
+                  "inproceedings",
+                  "misc"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Type"
+          },
+          "journal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journal"
+          },
+          "booktitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booktitle"
+          },
+          "volume": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Volume"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number"
+          },
+          "pages": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pages"
+          },
+          "publisher": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publisher"
+          },
+          "arxiv_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Id"
+          },
+          "publication_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Type"
+          },
+          "doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doi"
+          },
+          "pmid": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pmid"
+          },
+          "s2_paper_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "S2 Paper Id"
+          },
+          "openalex_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Openalex Id"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "manual"
+          },
+          "cluster": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster"
+          },
+          "query": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Query"
+          },
+          "abstract": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Abstract"
+          },
+          "citation_count": {
+            "type": "integer",
+            "title": "Citation Count",
+            "default": 0
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": false
+          },
+          "added_by": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "user"
+            ],
+            "title": "Added By",
+            "default": "agent"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "key",
+          "title"
+        ],
+        "title": "CitationReference",
+        "description": "Public metadata for one selected bibliography reference."
+      },
+      "CitationsView": {
+        "properties": {
+          "paper_id": {
+            "type": "string",
+            "title": "Paper Id"
+          },
+          "selected_refs": {
+            "items": {
+              "$ref": "#/components/schemas/CitationReference"
+            },
+            "type": "array",
+            "title": "Selected Refs"
+          },
+          "required_keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Required Keys"
+          },
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CitationCoverageSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "verified_pool_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/VerifiedPoolSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "paper_id"
+        ],
+        "title": "CitationsView"
+      },
       "CreatePaperRequest": {
         "properties": {
           "title": {
@@ -899,6 +1568,119 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "ManualCitationFields": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "authors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Authors"
+          },
+          "year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Year"
+          },
+          "venue": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Venue"
+          },
+          "doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doi"
+          },
+          "arxiv_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Arxiv Id"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          },
+          "entry_type": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "article",
+                  "inproceedings",
+                  "misc"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Entry Type"
+          },
+          "booktitle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Booktitle"
+          },
+          "journal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journal"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "ManualCitationFields"
       },
       "OutlineApprovalRequest": {
         "properties": {
@@ -2363,136 +3145,78 @@
         "title": "ValidationSummary",
         "description": "Aggregated validation/refinement state returned by GET /papers/{id}."
       },
-      "FigureManifestItem": {
-        "additionalProperties": true,
-        "description": "Frontend-facing schema for one figure entry in `figures/manifest.json`.",
+      "VerifiedPoolRejection": {
         "properties": {
-          "figure_id": {
-            "title": "Figure Id",
-            "type": "string"
+          "title": {
+            "type": "string",
+            "title": "Title"
           },
-          "path": {
+          "year": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "integer"
               },
               {
                 "type": "null"
               }
             ],
-            "default": null,
-            "title": "Path"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
+            "title": "Year"
           },
           "source": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
+            "type": "string",
             "title": "Source"
           },
-          "generator": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Generator"
-          },
-          "caption": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Caption"
-          },
-          "content_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Content Type"
-          },
-          "kind": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Kind"
-          },
-          "backend": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Backend"
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "default": null,
-            "title": "Error"
-          }
-        },
-        "required": [
-          "figure_id",
-          "status"
-        ],
-        "title": "FigureManifestItem",
-        "type": "object"
-      },
-      "FigureManifest": {
-        "additionalProperties": true,
-        "description": "Frontend-facing schema for `figures/manifest.json`.",
-        "properties": {
-          "figures": {
+          "reasons": {
             "items": {
-              "$ref": "#/components/schemas/FigureManifestItem"
+              "type": "string"
             },
-            "title": "Figures",
-            "type": "array"
+            "type": "array",
+            "title": "Reasons"
           }
         },
-        "title": "FigureManifest",
-        "type": "object"
+        "type": "object",
+        "required": [
+          "title",
+          "source"
+        ],
+        "title": "VerifiedPoolRejection"
+      },
+      "VerifiedPoolSummary": {
+        "properties": {
+          "discovery_total": {
+            "type": "integer",
+            "title": "Discovery Total"
+          },
+          "verified_total": {
+            "type": "integer",
+            "title": "Verified Total"
+          },
+          "selected_total": {
+            "type": "integer",
+            "title": "Selected Total"
+          },
+          "rejection_breakdown": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Rejection Breakdown"
+          },
+          "sample_rejections": {
+            "items": {
+              "$ref": "#/components/schemas/VerifiedPoolRejection"
+            },
+            "type": "array",
+            "title": "Sample Rejections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "discovery_total",
+          "verified_total",
+          "selected_total"
+        ],
+        "title": "VerifiedPoolSummary"
       }
     },
     "securitySchemes": {

@@ -73,6 +73,19 @@ def _check_known_identifiers(report: GuardReport, rel: str, text: str, identifie
             )
 
 
+def scan_text(text: str, *, rel: str = "metadata") -> GuardReport:
+    """Run public identifier regex checks against an in-memory text snippet."""
+    report = GuardReport(
+        "identifier_guard",
+        metadata={"private_identifier_count": 0, "checked_files": [rel]},
+    )
+    _check_regex(report, rel, text, _EMAIL_RE, "email_leak", "Email address appears in paper-facing text.")
+    _check_regex(report, rel, text, _RAW_PATH_RE, "raw_path_leak", "Raw filesystem/upload path appears in paper-facing text.")
+    _check_regex(report, rel, text, _CASE_ID_RE, "case_identifier_leak", "Possible case/patient/slide identifier appears in paper-facing text.")
+    _check_regex(report, rel, text, _HOSPITAL_RE, "institution_name_leak", "Possible institution name appears in paper-facing text.")
+    return report
+
+
 def run(paths: PaperRunPaths) -> GuardReport:
     identifiers = _load_private_identifiers(paths)
     report = GuardReport(
@@ -85,8 +98,6 @@ def run(paths: PaperRunPaths) -> GuardReport:
         rel = rel_to_run(paths, path)
         text = path.read_text(encoding="utf-8")
         _check_known_identifiers(report, rel, text, identifiers)
-        _check_regex(report, rel, text, _EMAIL_RE, "email_leak", "Email address appears in paper-facing text.")
-        _check_regex(report, rel, text, _RAW_PATH_RE, "raw_path_leak", "Raw filesystem/upload path appears in paper-facing text.")
-        _check_regex(report, rel, text, _CASE_ID_RE, "case_identifier_leak", "Possible case/patient/slide identifier appears in paper-facing text.")
-        _check_regex(report, rel, text, _HOSPITAL_RE, "institution_name_leak", "Possible institution name appears in paper-facing text.")
+        snippet_report = scan_text(text, rel=rel)
+        report.issues.extend(snippet_report.issues)
     return report

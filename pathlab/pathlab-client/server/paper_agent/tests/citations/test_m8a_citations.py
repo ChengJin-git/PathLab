@@ -236,6 +236,40 @@ def test_bibtex_renderer_handles_arxiv_and_empty_references() -> None:
     assert generate_bibtex([]) == "% No verified references selected.\n"
 
 
+def test_citation_reference_added_by_round_trips() -> None:
+    ref = CitationReference(
+        key="User2024",
+        title="User supplied pathology reference",
+        authors=("User A",),
+        year=2024,
+        source="manual",
+        added_by="user",
+    )
+
+    payload = ref.to_dict()
+    parsed = CitationReference.from_dict(payload)
+    legacy = CitationReference.from_dict({k: v for k, v in payload.items() if k != "added_by"})
+
+    assert payload["added_by"] == "user"
+    assert parsed.added_by == "user"
+    assert legacy.added_by == "agent"
+
+
+def test_added_by_metadata_does_not_change_bibtex_output() -> None:
+    base = CitationReference(
+        key="Smith2024",
+        title="Metadata stable WSI study",
+        authors=("Smith J",),
+        year=2024,
+        venue="MICCAI",
+        source="semantic_scholar",
+        added_by="agent",
+    )
+    user_ref = CitationReference.from_dict({**base.to_dict(), "added_by": "user"})
+
+    assert generate_bibtex([base]) == generate_bibtex([user_ref])
+
+
 def test_coverage_and_orphan_gates() -> None:
     refs = (
         CitationReference(key="Smith2020", title="A", required=True),
