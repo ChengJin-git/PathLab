@@ -2,16 +2,16 @@
 
 > 适用版本：`PathLab v1.0.5`
 
-本目录包含 PathLab 前端的完整单元测试套件，覆盖全部业务逻辑模块。
+本目录包含 PathLab 前端的单元测试套件，覆盖 API 客户端、工具函数、Context、页面和组件等主要业务模块。
 
 ## 测试技术栈
 
 | 工具 | 版本 | 用途 |
 |------|------|------|
-| [Vitest](https://vitest.dev/) | ^2.0 | 测试运行器与断言库 |
+| [Vitest](https://vitest.dev/) | ^2.1.9 | 测试运行器与断言库 |
 | [@testing-library/react](https://testing-library.com/docs/react-testing-library/intro/) | ^16 | React Context / Hook 测试 |
 | [@testing-library/jest-dom](https://testing-library.com/docs/ecosystem-jest-dom) | — | DOM 扩展断言 |
-| jsdom | ^24 | 浏览器环境模拟 |
+| jsdom | ^24.1.3 | 浏览器环境模拟 |
 
 ## 运行测试
 
@@ -81,7 +81,7 @@ test/
 - `blobResp(content, type?)` — 二进制 / 文件下载响应
 - `createSSEStream(lines)` — 构造 SSE 流用于流式 AI 对话测试
 
-新增的 API 测试文件全部通过 `import { ok, errResp } from '../../helpers/apiHelpers'` 使用这些工具，替代了旧测试文件中手写 Response mock 的方式。
+API 测试文件通过 `import { ok, errResp } from '../../helpers/apiHelpers'` 等方式复用这些工具，避免在各测试中重复手写 Response mock。
 
 ---
 
@@ -100,8 +100,6 @@ test/
 ## unit/lib/cache.test.ts
 
 **对应源文件**：`src/renderer/src/lib/cache.ts`
-**测试数量**：29 个
-
 PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件对这三种原语进行全面测试。
 
 ### 测试对象与覆盖点
@@ -141,8 +139,6 @@ PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件�
 ## unit/lib/avatarUrl.test.ts
 
 **对应源文件**：`src/renderer/src/lib/avatarUrl.ts`
-**测试数量**：3 个
-
 覆盖头像 URL 解析辅助函数：
 
 - 空值返回 `null`
@@ -154,8 +150,6 @@ PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件�
 ## unit/lib/utils.test.ts
 
 **对应源文件**：`src/renderer/src/lib/utils.ts`
-**测试数量**：13 个
-
 ### 测试对象与覆盖点
 
 **`cn()`**（Tailwind 类名合并）
@@ -184,8 +178,6 @@ PathLab 的 API 层大量使用三种缓存原语减少重复请求，本文件�
 ## unit/lib/chatMessageParser.test.ts
 
 **对应源文件**：`src/renderer/src/lib/chatMessageParser.ts`
-**测试数量**：18 个
-
 AI 对话消息中嵌入了多种 `[TAG]...[/TAG]` 格式的结构化控制块，这些块只供前端解析，发送给 AI 时需要清理或脱敏。
 
 ### 测试对象与覆盖点
@@ -213,8 +205,6 @@ AI 对话消息中嵌入了多种 `[TAG]...[/TAG]` 格式的结构化控制块�
 ## unit/api/crypto.test.ts
 
 **对应源文件**：`src/renderer/src/api/crypto.ts`
-**测试数量**：12 个
-
 PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输。
 
 ### 测试对象与覆盖点
@@ -249,8 +239,6 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 ## unit/api/client.test.ts
 
 **对应源文件**：`src/renderer/src/api/client.ts`
-**测试数量**：59 个
-
 整个 API 层的基础设施，本文件测试覆盖最广。
 
 ### 测试对象与覆盖点
@@ -329,8 +317,6 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 ## unit/api/auth.test.ts
 
 **对应源文件**：`src/renderer/src/api/auth.ts`
-**测试数量**：21 个
-
 ### 测试对象与覆盖点
 
 **`loginWithCredentials()`**
@@ -373,8 +359,6 @@ PathLab 使用客户端 SHA-256 对密码加盐后再发送，避免明文传输
 ## unit/api/wsi.test.ts
 
 **对应源文件**：`src/renderer/src/api/wsi.ts`
-**测试数量**：33 个
-
 WSI（全玻片图像）是系统核心数据对象，本文件测试完整的数据管理 CRUD。
 
 ### 测试对象与覆盖点
@@ -434,8 +418,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/training.test.ts
 
 **对应源文件**：`src/renderer/src/api/training.ts`
-**测试数量**：23 个
-
 ### 测试对象与覆盖点
 
 **`getTrainingTasks()`**
@@ -477,8 +459,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/results.test.ts
 
 **对应源文件**：`src/renderer/src/api/results.ts`
-**测试数量**：14 个
-
 ### 测试对象与覆盖点
 
 **`fetchResults()`**
@@ -504,8 +484,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/stats.test.ts
 
 **对应源文件**：`src/renderer/src/api/stats.ts`
-**测试数量**：17 个
-
 ### 测试对象与覆盖点
 
 **`fetchStats()`**
@@ -528,8 +506,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/chat.test.ts
 
 **对应源文件**：`src/renderer/src/api/chat.ts`
-**测试数量**：23 个
-
 ### 测试对象与覆盖点
 
 **会话 CRUD**
@@ -559,8 +535,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/heatmap.test.ts
 
 **对应源文件**：`src/renderer/src/api/heatmap.ts`
-**测试数量**：22 个
-
 ### 测试对象与覆盖点
 
 **`fetchAvailableHeatmaps()`**
@@ -596,8 +570,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/api/users.test.ts
 
 **对应源文件**：`src/renderer/src/api/users.ts`
-**测试数量**：23 个
-
 管理员专用接口。
 
 ### 测试对象与覆盖点
@@ -633,8 +605,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/contexts/AuthContext.test.tsx
 
 **对应源文件**：`src/renderer/src/contexts/AuthContext.tsx`
-**测试数量**：38 个
-
 唯一的 React Context 测试，使用 `renderHook` + `act` + `waitFor` 测试认证状态机的完整生命周期。
 
 ### Mock 策略
@@ -860,8 +830,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/datasetPagination.test.ts
 
 **对应源文件**：`src/renderer/src/lib/datasetPagination.ts`
-**测试数量**：3 个
-
 覆盖 `clampDatasetPage()` 的三条分支：请求出错时保持当前页不变、正在加载且无数据时保持不变、数据稳定时将页码夹紧到总页数上限。
 
 ---
@@ -869,8 +837,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/segmentationUploadUtils.test.ts
 
 **对应源文件**：`src/renderer/src/lib/segmentationUploadUtils.ts`
-**测试数量**：21 个
-
 覆盖分割标注上传的文件匹配工具函数：
 
 - `getSegmentationStem(name)` — 剥离 `.json` 与其他扩展名后小写化，覆盖多种命名组合
@@ -882,8 +848,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/externalValidationUtils.test.ts
 
 **对应源文件**：`src/renderer/src/lib/externalValidationUtils.ts`
-**测试数量**：26 个
-
 覆盖外部验证的模型-数据集兼容性校验逻辑：
 
 - `isSurvivalTask()` / `isSegmentationTask()` — 任务类型判断，含边界值（undefined、空串）
@@ -895,8 +859,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/useAsyncAction.test.tsx
 
 **对应源文件**：`src/renderer/src/lib/useAsyncAction.ts`
-**测试数量**：6 个
-
 覆盖 `useAsyncAction` Hook 的核心语义：
 
 - 初始状态 `isPending = false`
@@ -915,8 +877,6 @@ WSI（全玻片图像）是系统核心数据对象，本文件测试完整的�
 ## unit/lib/trainingSubmissionTracker.test.ts
 
 **对应源文件**：`src/renderer/src/lib/trainingSubmissionTracker.ts`
-**测试数量**：23 个
-
 覆盖基于 localStorage 的训练提交状态机：
 
 - **状态转换**：`markTrainingSubmissionPending()` → `Created` → `Failed` → `Cancelled`，验证各转换保留 `createdAt`、携带可选 `taskName` / `error`

@@ -20,7 +20,7 @@ Gateway 是当前 PathLab 对外 API 的统一入口，负责认证、业务聚�
   - 在存在前端构建产物时挂载静态资源
   - 始终挂载 `/avatars`
 
-> 注：GPU 探测、任务队列初始化与训练恢复当前由独立的 `TaskWorker` 进程负责；Gateway 通过 Redis 读取其发布的运行时快照与心跳，不再在 Gateway 生命周期内直接管理队列状态。
+> 注：GPU 探测、任务队列运行时初始化与训练恢复当前由独立的 `TaskWorker` 进程负责；Gateway 通过 Redis 读取其发布的运行时快照与心跳，不再在 Gateway 生命周期内初始化队列运行时。
 
 ## 任务边界与队列状态
 
@@ -135,7 +135,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 | `models.py` | Gateway 层 Pydantic 请求 / 响应模型 |
 | `utils.py` | 业务工具函数（segmentation contract 校验等） |
 | `pipeline.py` | AI 推理流水线辅助逻辑 |
-| `task_queue.py` | 集中式 GPU 任务队列管理（最大并发控制、FIFO 调度、断电恢复、VRAM 预检）|
+| `task_queue.py` | 共享 `TaskQueueManager` 实现（最大并发控制、FIFO 调度、VRAM 预检）；运行时由 TaskWorker 初始化，Gateway 路由只在需要时导入类型或提交任务 |
 | `email_notifications.py` | 模板化邮件发送（用户激活通知、申请受理通知、管理员新用户提醒）|
 | `scan_sessions.py` | 目录扫描会话状态管理（TTL 缓存，供 `storage_scan` 路由复用）|
 | `bootstrap_builtin_training_knowledge.py` | 内置训练推荐知识源预热逻辑 |

@@ -32,7 +32,7 @@
 - `uploads/coordinates/`
 - `uploads/masks/`
 - `uploads/features/`
-- `uploads/ai_results/`
+- `uploads/ai_results_bundles/`
 - `uploads/training/`
 - `uploads/models/`
 - `uploads/extractor_checkpoints/`
@@ -46,7 +46,7 @@
 - `uploads/annotations/`：Preprocessing 为数据集写出 `*_coco.json` 缓存时创建
 - `uploads/pdf_cache/`：聊天 / PDF 相关逻辑按需使用
 
-另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同。
+另外，`StorageManager` 当前还显式跟踪 `uploads/metadata/`，用于 WSI 元数据文件的删除与迁移协同；AI 结果以 `{task_id}.zarr.zip` bundle 形式存放在 `uploads/ai_results_bundles/`，临时 staging 目录位于 `uploads/ai_results_bundles/.staging/`。
 
 这已经超出“只存切片文件”的阶段，当前实现同时管理模型、训练结果、日志、缓存和用户上传衍生物。
 
@@ -58,7 +58,7 @@
 
 - `coordinates`
 - `masks`
-- `ai_results`
+- `ai_result_bundles`
 - `features_cache`
 - `training`
 - `models`
@@ -73,7 +73,7 @@
 - `coordinates`
 - `masks`
 - `features_cache`
-- `ai_results`
+- `ai_result_bundles`
 - `training`
 - `models`
 - `logs`

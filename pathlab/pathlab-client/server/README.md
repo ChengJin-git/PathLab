@@ -59,7 +59,7 @@ server/
 
 ## 任务调度边界
 
-Gateway 只负责把训练、推理、分析和补丁类长任务序列化为 Redis 任务描述符，并通过 `/queue` 等接口读取 TaskWorker 发布的运行时状态。Gateway 不在自身生命周期中初始化或持有 GPU 任务队列，也不直接执行 Marker GPU 解析、训练恢复或其他长 GPU 任务。
+Gateway 负责把训练、推理、分析和补丁类长任务序列化为 Redis 任务描述符，并通过 `/queue` 等接口读取 TaskWorker 发布的运行时状态。Gateway 不在自身生命周期中初始化队列运行时或执行训练恢复；GPU 队列运行时由 TaskWorker 初始化并消费描述符。聊天 PDF 的 Marker GPU 升级路径仍通过共享 `TaskQueueManager` 提交，但队列所有权属于 TaskWorker 运行时。
 
 TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务，放入 processing 列表，执行完成后 ack；失败时按重试上限重新入队，达到上限后进入 DLQ。取消请求会先写入短 TTL 的 durable cancellation key，再发布 pub/sub 消息；TaskWorker 同时用 job lock 防止同一 job descriptor 被重复执行。启动恢复时，TaskWorker 会先把遗留在 processing 列表中的描述符救回 pending 队列，再执行持久化训练恢复。
 

@@ -90,7 +90,7 @@ backend/
 
 - 旧文档中的 `annotation_drafts` 已不再对应当前表名；当前模型为 `segmentation_annotations`
 - 旧文档中的单体 API / 单体服务表述已经过时，当前实现明确拆成 Gateway / Preprocessing / AI 三层
-- `backend/common/config.py` 会确保 `avatars`、`coordinates`、`masks`、`features`、`ai_results`、`training`、`models`、`logs`、`wsi_files`、`metadata`、`progress` 等目录存在
+- `backend/common/config.py` 会确保 `avatars`、`coordinates`、`masks`、`features`、`ai_results_bundles`、`training`、`models`、`extractor_checkpoints`、`logs`、`wsi_files`、`metadata`、`progress` 等目录存在
 - `backend/annotation/` 当前已成为标注协作与 COCO/summary 辅助逻辑的独立共享模块
 
 ## 相关文档

@@ -15,7 +15,7 @@
 ## 关键入口文件
 
 - `vite.config.ts`：独立 Web 构建配置
-- `../electron.vite.config.ts`：Electron `main` / `preload` / `renderer` 联合构建配置
+- `../../electron.vite.config.ts`：Electron `main` / `preload` / `renderer` 联合构建配置
 - `../main/index.ts`：桌面模式主进程入口
 - `../main/services-manager.ts`：桌面模式嵌入式 PostgreSQL / Redis 生命周期管理
 - `../main/sidecar-manager.ts`：桌面模式 sidecar 启停与端口发现
