@@ -86,3 +86,8 @@ def _make_unique_key(candidate: CitationCandidate, used: set[str]) -> str:
         key = f"{base}_{suffix}"
         suffix += 1
     return key
+
+
+def make_unique_key(candidate: CitationCandidate, used: set[str]) -> str:
+    """Public wrapper for stable citekey assignment."""
+    return _make_unique_key(candidate, used)

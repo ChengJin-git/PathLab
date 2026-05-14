@@ -275,6 +275,111 @@ class ValidationSummary(BaseModel):
     warnings_md_path: Optional[str] = None
 
 
+class CitationReference(BaseModel):
+    """Public metadata for one selected bibliography reference."""
+
+    model_config = ConfigDict(extra="allow")
+
+    key: str
+    title: str
+    authors: list[str] = Field(default_factory=list)
+    year: Optional[int] = None
+    venue: Optional[str] = None
+    entry_type: Optional[Literal["article", "inproceedings", "misc"]] = None
+    journal: Optional[str] = None
+    booktitle: Optional[str] = None
+    volume: Optional[str] = None
+    number: Optional[str] = None
+    pages: Optional[str] = None
+    publisher: Optional[str] = None
+    arxiv_id: Optional[str] = None
+    publication_type: Optional[str] = None
+    doi: Optional[str] = None
+    pmid: Optional[str] = None
+    s2_paper_id: Optional[str] = None
+    openalex_id: Optional[str] = None
+    url: Optional[str] = None
+    source: str = "manual"
+    cluster: Optional[str] = None
+    query: Optional[str] = None
+    abstract: Optional[str] = None
+    citation_count: int = 0
+    required: bool = False
+    added_by: Literal["agent", "user"] = "agent"
+
+
+class CitationCoverageSummary(BaseModel):
+    selected_count: int
+    cited_count: int
+    coverage_ratio: float
+    threshold: float
+    status: Literal["passed", "failed", "warning"]
+
+
+class VerifiedPoolRejection(BaseModel):
+    title: str
+    year: Optional[int] = None
+    source: str
+    reasons: list[str] = Field(default_factory=list)
+
+
+class VerifiedPoolSummary(BaseModel):
+    discovery_total: int
+    verified_total: int
+    selected_total: int
+    rejection_breakdown: dict[str, int] = Field(default_factory=dict)
+    sample_rejections: list[VerifiedPoolRejection] = Field(default_factory=list)
+
+
+class CitationsView(BaseModel):
+    paper_id: str
+    selected_refs: list[CitationReference] = Field(default_factory=list)
+    required_keys: list[str] = Field(default_factory=list)
+    coverage: Optional[CitationCoverageSummary] = None
+    verified_pool_summary: Optional[VerifiedPoolSummary] = None
+
+
+class ManualCitationFields(BaseModel):
+    title: str
+    authors: list[str] = Field(default_factory=list)
+    year: Optional[int] = None
+    venue: Optional[str] = None
+    doi: Optional[str] = None
+    arxiv_id: Optional[str] = None
+    url: Optional[str] = None
+    entry_type: Optional[Literal["article", "inproceedings", "misc"]] = None
+    booktitle: Optional[str] = None
+    journal: Optional[str] = None
+
+
+class AddCitationRequest(BaseModel):
+    mode: Literal["doi", "arxiv", "bibtex", "manual"]
+    doi: Optional[str] = None
+    arxiv_id_or_url: Optional[str] = None
+    bibtex_raw: Optional[str] = None
+    manual: Optional[ManualCitationFields] = None
+    cluster: Optional[str] = None
+    required: bool = False
+    dry_run: bool = False
+
+
+class AddCitationPreview(BaseModel):
+    proposed_key: str
+    ref: CitationReference
+    duplicate_of: Optional[str] = None
+
+
+class AddCitationResponse(BaseModel):
+    key: str
+    ref: CitationReference
+    refs_bib_path: str = "citations/refs.bib"
+
+
+class CitationDeleteResponse(BaseModel):
+    deleted: bool
+    key: str
+
+
 class PaperRunDetail(PaperRunSummary):
     """Detailed run view returned by GET /papers/{id}."""
 

@@ -20,11 +20,14 @@ worker queue through `task_dispatch.enqueue_task_descriptor`.
 from __future__ import annotations
 
 import hashlib
-import logging
 import json
+import logging
+import os
 import shutil
 import uuid
+from collections import Counter
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -40,6 +43,13 @@ from backend.database import get_db  # noqa: E402
 from backend.database.repositories import PaperGenerationRunRepository  # noqa: E402
 
 from pathlab_paper_agent.schemas import (  # noqa: E402
+    AddCitationPreview,
+    AddCitationRequest,
+    AddCitationResponse,
+    CitationCoverageSummary,
+    CitationDeleteResponse,
+    CitationReference as CitationReferenceSchema,
+    CitationsView,
     CreatePaperRequest,
     OutlineApprovalRequest,
     PaperConfig,
@@ -63,6 +73,18 @@ from pathlab_paper_agent.schemas import (  # noqa: E402
     GuardResultSummary,
     RefinementSummary,
     ValidationSummary,
+    VerifiedPoolRejection,
+    VerifiedPoolSummary,
+)
+from pathlab_paper_agent.citations import generate_bibtex, make_unique_key  # noqa: E402
+from pathlab_paper_agent.citations.manual_add import (  # noqa: E402
+    ManualCitationError,
+    parse_input as parse_manual_citation_input,
+)
+from pathlab_paper_agent.citations.manual_dedup import duplicate_of  # noqa: E402
+from pathlab_paper_agent.citations.models import (  # noqa: E402
+    CitationCandidate,
+    CitationReference as CitationReferenceModel,
 )
 from pathlab_paper_agent.regenerate import (  # noqa: E402
     MissingSectionDraftError,
@@ -77,6 +99,7 @@ from pathlab_paper_agent.regenerate import (  # noqa: E402
     regenerate_section,
 )
 from pathlab_paper_agent.process_logging import append_pipeline_event  # noqa: E402
+from pathlab_paper_agent.validators.identifier_guard import scan_text  # noqa: E402
 from pathlab_paper_agent.scaffold import initialize_paper_run  # noqa: E402
 from pathlab_paper_agent.storage import (  # noqa: E402
     PaperRunPaths,
@@ -259,6 +282,239 @@ def _load_json_file(path) -> dict:
         logger.warning("paper_generation: failed to read JSON %s: %s", path, exc)
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _load_json_any(path: Path) -> object:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("paper_generation: failed to read JSON %s: %s", path, exc)
+        return None
+
+
+def _citation_items(payload: object) -> list[dict]:
+    if isinstance(payload, dict):
+        raw_items = payload.get("items")
+    else:
+        raw_items = payload
+    if not isinstance(raw_items, list):
+        return []
+    return [item for item in raw_items if isinstance(item, dict)]
+
+
+def _load_selected_refs(paths: PaperRunPaths) -> list[CitationReferenceModel]:
+    payload = _load_json_any(paths.citations_dir / "selected_refs.json")
+    refs: list[CitationReferenceModel] = []
+    for item in _citation_items(payload):
+        try:
+            refs.append(CitationReferenceModel.from_dict(item))
+        except Exception as exc:
+            logger.warning("paper_generation: invalid citation reference skipped: %s", exc)
+    return refs
+
+
+def _ref_to_schema(ref: CitationReferenceModel) -> CitationReferenceSchema:
+    return CitationReferenceSchema.model_validate(ref.to_dict())
+
+
+def _string_array(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    keys: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            key = item
+        elif isinstance(item, dict):
+            key = str(item.get("paperId") or item.get("paper_id") or item.get("id") or item.get("key") or "")
+        else:
+            key = ""
+        if key:
+            keys.append(key)
+    return keys
+
+
+def _collect_required_keys(outline: object) -> list[str]:
+    if not isinstance(outline, dict):
+        return []
+    found: set[str] = set()
+    for key in _string_array(outline.get("required_cites")):
+        found.add(key)
+    extensions = outline.get("pathlab_extensions")
+    if isinstance(extensions, dict):
+        for key in _string_array(extensions.get("required_cites")):
+            found.add(key)
+    section_plan = outline.get("section_plan")
+    if isinstance(section_plan, list):
+        for section in section_plan:
+            if not isinstance(section, dict):
+                continue
+            for key in _string_array(section.get("required_cites")):
+                found.add(key)
+            for key in _string_array(section.get("citations")):
+                found.add(key)
+    return sorted(found)
+
+
+def _coverage_summary(paths: PaperRunPaths, selected_refs: list[CitationReferenceModel]) -> CitationCoverageSummary | None:
+    payload = _load_json_file(paths.citations_dir / "coverage_report.json")
+    if not payload:
+        return None
+    selected_keys = payload.get("selected_ref_keys")
+    used_keys = payload.get("used_cite_keys")
+    if isinstance(selected_keys, list):
+        selected_set = {str(key) for key in selected_keys if key}
+    else:
+        selected_set = {ref.key for ref in selected_refs}
+    if isinstance(used_keys, list):
+        used_set = {str(key) for key in used_keys if key}
+    else:
+        used_set = set()
+    selected_count = _int_value(payload.get("selected_count"), len(selected_set))
+    cited_count = _int_value(payload.get("cited_count"), len(selected_set & used_set))
+    coverage_ratio = _float_value(
+        payload.get("coverage_ratio"),
+        _float_value(payload.get("selected_coverage"), 0.0),
+    )
+    threshold = _float_value(payload.get("threshold"), _float_value(payload.get("min_selected_coverage"), 0.0))
+    status = _coverage_status(payload.get("status"))
+    return CitationCoverageSummary(
+        selected_count=selected_count,
+        cited_count=cited_count,
+        coverage_ratio=coverage_ratio,
+        threshold=threshold,
+        status=status,
+    )
+
+
+def _verified_pool_summary(paths: PaperRunPaths, selected_refs: list[CitationReferenceModel]) -> VerifiedPoolSummary | None:
+    discovery = _load_json_any(paths.citations_dir / "discovery_pool.json")
+    verified = _load_json_any(paths.citations_dir / "verified_pool.json")
+    if discovery is None or verified is None:
+        return None
+    discovery_items = _citation_items(discovery)
+    verified_items = _citation_items(verified.get("verified") if isinstance(verified, dict) else None)
+    rejected_items = _citation_items(verified.get("rejected") if isinstance(verified, dict) else None)
+    breakdown: Counter[str] = Counter()
+    samples: list[VerifiedPoolRejection] = []
+    for item in rejected_items:
+        reasons = _string_array(item.get("reasons"))
+        breakdown.update(reasons)
+        if len(samples) >= 10:
+            continue
+        candidate = item.get("candidate") if isinstance(item.get("candidate"), dict) else item
+        samples.append(
+            VerifiedPoolRejection(
+                title=str(candidate.get("title") or ""),
+                year=_optional_int(candidate.get("year")),
+                source=str(candidate.get("source") or "unknown"),
+                reasons=reasons,
+            )
+        )
+    return VerifiedPoolSummary(
+        discovery_total=len(discovery_items),
+        verified_total=len(verified_items),
+        selected_total=len(selected_refs),
+        rejection_breakdown=dict(sorted(breakdown.items())),
+        sample_rejections=samples,
+    )
+
+
+def _int_value(value: object, default: int) -> int:
+    try:
+        return int(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _optional_int(value: object) -> int | None:
+    try:
+        return int(value) if value is not None and value != "" else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _float_value(value: object, default: float) -> float:
+    try:
+        return float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+
+
+def _coverage_status(value: object) -> str:
+    normalized = str(value or "").casefold()
+    if normalized in {"pass", "passed"}:
+        return "passed"
+    if normalized in {"warn", "warning"}:
+        return "warning"
+    return "failed"
+
+
+def _atomic_write_json(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _error_response(status_code: int, code: str, message: str, **extra: object) -> JSONResponse:
+    payload: dict[str, object] = {"code": code, "message": message, **extra}
+    # Keep backend error codes available to the existing frontend ApiError parser.
+    payload["detail"] = dict(payload)
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+def _candidate_metadata_text(candidate: CitationCandidate) -> str:
+    return "\n".join([candidate.title, *candidate.authors])
+
+
+def _write_selected_refs(paths: PaperRunPaths, refs: list[CitationReferenceModel]) -> None:
+    _atomic_write_json(
+        paths.citations_dir / "selected_refs.json",
+        {"items": [ref.to_dict() for ref in refs]},
+    )
+    _atomic_write_text(paths.refs_bib, generate_bibtex(refs))
+
+
+def _append_required_key(paths: PaperRunPaths, key: str) -> None:
+    outline = _load_json_file(paths.outline_json)
+    required = _string_array(outline.get("required_cites"))
+    if key not in required:
+        required.append(key)
+    outline["required_cites"] = sorted(required)
+    extensions = outline.get("pathlab_extensions")
+    if not isinstance(extensions, dict):
+        extensions = {}
+    extensions["outline_modified_by_user"] = True
+    outline["pathlab_extensions"] = extensions
+    _atomic_write_json(paths.outline_json, outline)
+
+
+def _append_citation_stage_log(paths: PaperRunPaths, *, status: str, message: str) -> None:
+    manifest = _load_manifest(paths)
+    if manifest is None:
+        return
+    now = datetime.now(UTC).isoformat()
+    manifest.stage_log.append(
+        {
+            "stage": PaperRunStage.literature_review.value,
+            "status": status,
+            "ts": now,
+            "started_at": now,
+            "finished_at": now,
+            "duration_ms": 0,
+            "message": message,
+        }
+    )
+    _save_manifest(paths, manifest)
 
 
 def _guard_result_summary(paths: PaperRunPaths, guard: str, rel_path: str) -> GuardResultSummary | None:
@@ -716,6 +972,128 @@ async def get_paper_sections(
     paths = PaperRunPaths.for_paper(paper_id)
     manifest = _load_manifest(paths)
     return PaperSectionListResponse(sections=_public_sections(paths, manifest))
+
+
+# ---------------------------------------------------------------------------
+# GET/POST/DELETE /papers/{paper_id}/citations — selected reference workflow
+# ---------------------------------------------------------------------------
+
+@router.get("/{paper_id}/citations", response_model=CitationsView)
+async def get_paper_citations(
+    paper_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> CitationsView:
+    await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    selected_refs = _load_selected_refs(paths)
+    outline = _load_json_file(paths.outline_json)
+    return CitationsView(
+        paper_id=paper_id,
+        selected_refs=[_ref_to_schema(ref) for ref in selected_refs],
+        required_keys=_collect_required_keys(outline),
+        coverage=_coverage_summary(paths, selected_refs),
+        verified_pool_summary=_verified_pool_summary(paths, selected_refs),
+    )
+
+
+@router.post(
+    "/{paper_id}/citations",
+    responses={
+        200: {"model": AddCitationPreview},
+        201: {"model": AddCitationResponse},
+    },
+)
+async def add_paper_citation(
+    paper_id: str,
+    body: AddCitationRequest,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    try:
+        candidate = parse_manual_citation_input(body)
+    except ManualCitationError as exc:
+        return _error_response(exc.status_code, exc.code, exc.message)
+
+    identifier_report = scan_text(
+        _candidate_metadata_text(candidate),
+        rel="citations/manual_add_metadata",
+    )
+    if identifier_report.status == "fail":
+        return _error_response(
+            422,
+            "phi_detected",
+            "Citation metadata contains possible PHI or private identifiers.",
+        )
+
+    selected_refs = _load_selected_refs(paths)
+    existing_keys = {ref.key for ref in selected_refs}
+    duplicate_key = duplicate_of(candidate, selected_refs)
+    if duplicate_key:
+        return _error_response(
+            409,
+            "duplicate",
+            f"Citation already exists as {duplicate_key}.",
+            duplicate_of=duplicate_key,
+        )
+
+    key = make_unique_key(candidate, existing_keys)
+    ref = CitationReferenceModel.from_candidate(
+        candidate,
+        key=key,
+        required=body.required,
+        added_by="user",
+    )
+    ref_schema = _ref_to_schema(ref)
+    if body.dry_run:
+        preview = AddCitationPreview(
+            proposed_key=key,
+            ref=ref_schema,
+            duplicate_of=None,
+        )
+        return JSONResponse(status_code=200, content=preview.model_dump(mode="json"))
+
+    selected_refs.append(ref)
+    _write_selected_refs(paths, selected_refs)
+    if body.required:
+        _append_required_key(paths, key)
+    _append_citation_stage_log(
+        paths,
+        status="user_added",
+        message=f"User added citation {key} via {body.mode}",
+    )
+    response = AddCitationResponse(key=key, ref=ref_schema)
+    return JSONResponse(status_code=201, content=response.model_dump(mode="json"))
+
+
+@router.delete("/{paper_id}/citations/{key}", response_model=CitationDeleteResponse)
+async def delete_paper_citation(
+    paper_id: str,
+    key: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+) -> CitationDeleteResponse | JSONResponse:
+    await _load_or_404(db, paper_id, user)
+    paths = PaperRunPaths.for_paper(paper_id)
+    selected_refs = _load_selected_refs(paths)
+    ref = next((item for item in selected_refs if item.key == key), None)
+    if ref is None:
+        return _error_response(404, "not_found", f"Citation {key} not found.")
+    if ref.added_by != "user":
+        return _error_response(403, "not_user_added", "Only user-added citations can be deleted.")
+    if key in _collect_required_keys(_load_json_file(paths.outline_json)):
+        return _error_response(409, "still_required", f"Citation {key} is still required by the outline.")
+
+    remaining = [item for item in selected_refs if item.key != key]
+    _write_selected_refs(paths, remaining)
+    _append_citation_stage_log(
+        paths,
+        status="user_removed",
+        message=f"User removed citation {key}",
+    )
+    return CitationDeleteResponse(deleted=True, key=key)
 
 
 # ---------------------------------------------------------------------------
