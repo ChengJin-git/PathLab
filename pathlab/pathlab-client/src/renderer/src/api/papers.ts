@@ -26,8 +26,24 @@ export type ValidationSummary = components['schemas']['ValidationSummary']
 export type GuardIssueSummary = components['schemas']['GuardIssueSummary']
 export type GuardResultSummary = components['schemas']['GuardResultSummary']
 export type OutlineDocument = components['schemas']['OutlineDocument']
-export type FigureManifest = components['schemas']['FigureManifest']
-export type FigureManifestItem = components['schemas']['FigureManifestItem']
+// Hand-typed: FigureManifest / FigureManifestItem are not exposed via any
+// `response_model` route (they live behind /files?path=figures/manifest.json
+// which returns binary JSON), so the regen'd codegen drops them. Keep these
+// in sync manually with backend `FigureManifest` Pydantic models.
+export interface FigureManifestItem {
+  figure_id: string
+  status: string
+  path?: string | null
+  caption?: string | null
+  source?: string | null
+  kind?: string | null
+  width?: number | null
+  height?: number | null
+}
+
+export interface FigureManifest {
+  figures: FigureManifestItem[]
+}
 export type PaperSection = components['schemas']['PaperSection']
 export type PaperSectionListResponse = components['schemas']['PaperSectionListResponse']
 export type RegenerateMode = components['schemas']['RegenerateSectionRequest']['mode']
