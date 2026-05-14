@@ -22,6 +22,7 @@ import {
   invalidateDatasetRepositoryCache,
   invalidateDatasetSourceOptions,
 } from '../lib/datasetQueryInvalidation'
+import { canEditDatasetVisibility } from '../lib/datasetPermissions'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useAuth } from '../contexts/AuthContext'
 import { FileMetadataModal, DeleteConfirmModal, BatchDeleteModal, EditMetadataModal, BatchEditModal, EditDatasetModal, ExportLabelsModal, DatasetCard, type ExportLabelsOptions } from '../components/list'
@@ -3106,8 +3107,7 @@ export default function ListPage() {
           })()}
           canEditVisibility={(() => {
             const ds = (datasetsQuery.data?.items ?? []).find((d: DatasetSummary) => d.dataset_id === editingDatasetId)
-            if (!ds) return false
-            return ds.user_id === user?.id || user?.role === 'admin'
+            return canEditDatasetVisibility(ds, user)
           })()}
           onNameChange={setEditingDatasetName}
           onTypeChange={setEditingDatasetType}
