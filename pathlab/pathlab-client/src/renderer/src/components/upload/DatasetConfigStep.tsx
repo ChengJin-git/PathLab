@@ -7,6 +7,7 @@ import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import { useDebounce } from '../../lib/useDebounce'
 import type { UploadMode, DataLevel } from './types'
+import { getTaskFamily } from '../../constants/training'
 import { organSources, organSourceKeyMap } from '../../constants/wsi'
 
 export interface DatasetConfigStepProps {
@@ -42,7 +43,8 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
   const [debouncedSourceCustom, setDebouncedSourceCustom] = useState(datasetSourceCustom)
   const _debouncedForParent = useDebounce(debouncedSourceCustom, 300)
 
-  const isSegmentation = uploadMode === 'segmentation'
+  const uploadModeFamily = getTaskFamily(uploadMode) ?? uploadMode
+  const isSegmentation = uploadModeFamily === 'segmentation'
   const isOtherSource = datasetSourceSelection === 'Other'
   const canEditSource = !isExistingDataset
   const sourceCustomPlaceholder = isOtherSource
@@ -157,16 +159,16 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     <button
                       onClick={() => !isExistingDataset && handleUploadModeChange('classification')}
                       disabled={isExistingDataset}
-                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'classification'
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadModeFamily === 'classification'
                         ? 'border-blue-500 bg-blue-50/50'
                         : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'classification' ? 'opacity-40' : ''}`}
+                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadModeFamily !== 'classification' ? 'opacity-40' : ''}`}
                     >
-                      <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      <div className={`p-2 rounded-lg mr-4 ${uploadModeFamily === 'classification' ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                         <Tags className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className={`font-bold block ${uploadMode === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.classification')}</span>
+                        <span className={`font-bold block ${uploadModeFamily === 'classification' ? 'text-blue-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.classification')}</span>
                         <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.classificationDesc')}</span>
                       </div>
                     </button>
@@ -174,16 +176,16 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     <button
                       onClick={() => !isExistingDataset && handleUploadModeChange('survival')}
                       disabled={isExistingDataset}
-                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'survival'
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadModeFamily === 'survival'
                         ? 'border-emerald-500 bg-emerald-50/50'
                         : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'survival' ? 'opacity-40' : ''}`}
+                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadModeFamily !== 'survival' ? 'opacity-40' : ''}`}
                     >
-                      <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      <div className={`p-2 rounded-lg mr-4 ${uploadModeFamily === 'survival' ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                         <Activity className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className={`font-bold block ${uploadMode === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.survivalAnalysis')}</span>
+                        <span className={`font-bold block ${uploadModeFamily === 'survival' ? 'text-emerald-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.survivalAnalysis')}</span>
                         <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.survivalDesc')}</span>
                       </div>
                     </button>
@@ -191,16 +193,16 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
                     <button
                       onClick={() => !isExistingDataset && handleUploadModeChange('segmentation')}
                       disabled={isExistingDataset}
-                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadMode === 'segmentation'
+                      className={`flex flex-row items-center p-4 sm:p-5 rounded-xl sm:rounded-2xl border-2 transition-all text-left ${uploadModeFamily === 'segmentation'
                         ? 'border-violet-500 bg-violet-50/50'
                         : `border-slate-100 bg-white ${!isExistingDataset ? 'hover:border-slate-200' : ''}`
-                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadMode !== 'segmentation' ? 'opacity-40' : ''}`}
+                        } ${isExistingDataset ? 'cursor-not-allowed' : ''} ${isExistingDataset && uploadModeFamily !== 'segmentation' ? 'opacity-40' : ''}`}
                     >
-                      <div className={`p-2 rounded-lg mr-4 ${uploadMode === 'segmentation' ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                      <div className={`p-2 rounded-lg mr-4 ${uploadModeFamily === 'segmentation' ? 'bg-violet-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
                         <Layers className="w-5 h-5" />
                       </div>
                       <div>
-                        <span className={`font-bold block ${uploadMode === 'segmentation' ? 'text-violet-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.segmentation')}</span>
+                        <span className={`font-bold block ${uploadModeFamily === 'segmentation' ? 'text-violet-900' : 'text-slate-900'}`}>{t('uploadComponents.datasetConfig.segmentation')}</span>
                         <span className="text-[10px] sm:text-xs text-slate-500 mt-0.5 sm:mt-1">{t('uploadComponents.datasetConfig.segmentationDesc')}</span>
                       </div>
                     </button>

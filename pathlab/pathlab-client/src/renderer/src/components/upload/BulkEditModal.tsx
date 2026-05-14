@@ -4,6 +4,7 @@ import { X, Settings2 } from 'lucide-react'
 import { Button } from '../ui/button'
 import { Select } from '../ui/select'
 import type { UploadMode, FileMetadata } from './types'
+import { getTaskFamily } from '../../constants/training'
 
 export interface BulkEditModalProps {
   uploadMode: UploadMode
@@ -18,6 +19,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
   uploadMode, selectedCount, batchMetadata, onBatchMetadataChange, onApply, onClose
 }) => {
   const { t } = useTranslation()
+  const uploadModeFamily = getTaskFamily(uploadMode) ?? uploadMode
   return (
     <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white rounded-[1.5rem] sm:rounded-3xl shadow-2xl w-full max-w-lg p-5 sm:p-8 animate-in zoom-in-95 duration-200">
@@ -35,7 +37,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
         </div>
 
         <div className="space-y-4 sm:space-y-6">
-          {uploadMode === 'classification' ? (
+          {uploadModeFamily === 'classification' ? (
             <div className="space-y-1.5">
               <label className="text-[10px] sm:text-xs font-semibold text-slate-500 uppercase tracking-wider">{t('uploadComponents.bulkEdit.label')}</label>
               <input
@@ -45,7 +47,7 @@ export const BulkEditModal: React.FC<BulkEditModalProps> = ({
                 onChange={e => onBatchMetadataChange(p => ({ ...p, label: e.target.value }))}
               />
             </div>
-          ) : uploadMode === 'survival' ? (
+          ) : uploadModeFamily === 'survival' ? (
             <div className="grid grid-cols-2 gap-3 sm:gap-4">
               <div className="space-y-1.5">
                 <label className="text-[10px] sm:text-xs font-semibold text-emerald-600 uppercase tracking-wider">{t('uploadComponents.bulkEdit.eventTime')}</label>
