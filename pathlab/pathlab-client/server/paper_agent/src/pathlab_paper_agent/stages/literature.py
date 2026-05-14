@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+from typing import Any
+
 from pathlab_paper_agent.schemas import PaperManifest  # noqa: E402
 from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
@@ -15,6 +18,8 @@ from pathlab_paper_agent.agents.literature_review_agent import (
 
 from .common import load_config, register_artifact, write_json, write_text
 
+_PROCESS_LOG_REL_PATH = "citations/literature_review_log.private.json"
+
 
 def run(
     paths: PaperRunPaths,
@@ -24,6 +29,19 @@ def run(
 ) -> None:
     config = load_config(paths)
     literature_agent = agent or LiteratureReviewAgent()
+    events: list[dict[str, Any]] = []
+    previous_sink = getattr(literature_agent, "event_sink", None)
+    started_at = datetime.now(UTC)
+    status = "failed"
+    error_payload: dict[str, str] | None = None
+
+    def sink(event: dict[str, Any]) -> None:
+        events.append(event)
+        if callable(previous_sink):
+            previous_sink(event)
+
+    if hasattr(literature_agent, "event_sink"):
+        literature_agent.event_sink = sink
     try:
         try:
             result = literature_agent.generate(
@@ -33,10 +51,26 @@ def run(
         except LiteratureCoverageError as exc:
             _write_outputs(paths, exc.result)
             _register_artifacts(manifest)
+            error_payload = {"type": type(exc).__name__, "message": str(exc)}
             raise RuntimeError(str(exc)) from exc
         _write_outputs(paths, result)
         _register_artifacts(manifest)
+        status = "completed"
+    except Exception as exc:
+        if error_payload is None:
+            error_payload = {"type": type(exc).__name__, "message": str(exc)}
+        raise
     finally:
+        if hasattr(literature_agent, "event_sink"):
+            literature_agent.event_sink = previous_sink
+        _write_process_log(
+            paths,
+            status=status,
+            started_at=started_at,
+            events=events,
+            error=error_payload,
+        )
+        _register_process_log_artifact(manifest)
         if agent is None:
             literature_agent.close()
 
@@ -103,3 +137,39 @@ def _register_artifacts(manifest: PaperManifest) -> None:
             downloadable=False,
             label=rel_path,
         )
+
+
+def _write_process_log(
+    paths: PaperRunPaths,
+    *,
+    status: str,
+    started_at: datetime,
+    events: list[dict[str, Any]],
+    error: dict[str, str] | None,
+) -> None:
+    finished_at = datetime.now(UTC)
+    write_json(
+        paths.root / _PROCESS_LOG_REL_PATH,
+        {
+            "paper_id": paths.paper_id,
+            "stage": "literature_review",
+            "status": status,
+            "started_at": started_at.isoformat(),
+            "finished_at": finished_at.isoformat(),
+            "duration_ms": max(0, int((finished_at - started_at).total_seconds() * 1000)),
+            "error": error,
+            "event_count": len(events),
+            "events": events,
+        },
+    )
+
+
+def _register_process_log_artifact(manifest: PaperManifest) -> None:
+    register_artifact(
+        manifest,
+        _PROCESS_LOG_REL_PATH,
+        visibility="private_backend_only",
+        downloadable=False,
+        label="Literature review process log",
+        content_type="application/json",
+    )

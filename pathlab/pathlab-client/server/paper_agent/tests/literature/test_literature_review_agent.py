@@ -202,6 +202,24 @@ def _search_all_response() -> dict:
     }
 
 
+def _search_response_with_pubmed_date_filter() -> dict:
+    return {
+        "queries": [
+            {
+                "query": (
+                    '("microsatellite instability"[Title/Abstract] OR MSI[Title/Abstract]) '
+                    'AND ("whole slide image"[Title/Abstract]) '
+                    'AND ("1900/01/01"[Date - Publication] : "2026/12/31"[Date - Publication])'
+                ),
+                "cluster": "macro",
+                "source": "pubmed",
+                "origin": "macro_lit_search",
+                "limit": 10,
+            }
+        ]
+    }
+
+
 def _payload_from_prompt(prompt: str) -> dict:
     return json.loads(prompt.split("Input payload:", 1)[1].strip())
 
@@ -269,6 +287,20 @@ def test_literature_agent_routes_all_queries_to_openalex_too() -> None:
     assert result.coverage_report["status"] == "pass"
 
 
+def test_literature_agent_strips_llm_pubmed_date_filters_before_phi_check() -> None:
+    llm = MockLLM([_search_response_with_pubmed_date_filter()])
+    agent = LiteratureReviewAgent(llm, search_provider=MockSearchProvider())
+
+    queries = agent.expand_queries(_inputs())
+
+    assert len(queries) == 1
+    assert queries[0].source == "pubmed"
+    assert "Date - Publication" not in queries[0].query
+    assert "1900/01/01" not in queries[0].query
+    assert "2026/12/31" not in queries[0].query
+    assert "microsatellite instability" in queries[0].query
+
+
 @pytest.mark.asyncio
 async def test_literature_stage_writes_refs_reports_and_intro_rw_drafts(tmp_path) -> None:
     _paper_id, paths = await create_dev_run(paper_id="paper_lit_stage", uploads_dir=tmp_path)
@@ -288,6 +320,9 @@ async def test_literature_stage_writes_refs_reports_and_intro_rw_drafts(tmp_path
     intro = (paths.intro_rw_draft_dir / "introduction.tex").read_text(encoding="utf-8")
     related = (paths.intro_rw_draft_dir / "related_work.tex").read_text(encoding="utf-8")
     discovery = json.loads((paths.citations_dir / "discovery_pool.json").read_text(encoding="utf-8"))
+    process_log = json.loads(
+        (paths.citations_dir / "literature_review_log.private.json").read_text(encoding="utf-8")
+    )
 
     assert len(selected["items"]) == 2
     assert coverage["status"] == "pass"
@@ -299,6 +334,47 @@ async def test_literature_stage_writes_refs_reports_and_intro_rw_drafts(tmp_path
     assert (paths.sections_dir / "introduction.tex").read_text(encoding="utf-8") == "USER INTRO\n"
     assert (paths.sections_dir / "related_work.tex").read_text(encoding="utf-8") == "USER RELATED\n"
     assert "@article" in paths.refs_bib.read_text(encoding="utf-8")
+    assert process_log["status"] == "completed"
+    assert {event["event"] for event in process_log["events"]} >= {
+        "llm_request",
+        "llm_response",
+        "verification_completed",
+        "coverage_completed",
+    }
+    assert process_log["event_count"] == len(process_log["events"])
+    assert manifest.artifact_index["citations/literature_review_log.private.json"]["visibility"] == "private_backend_only"
+
+
+@pytest.mark.asyncio
+async def test_literature_stage_writes_private_log_when_query_json_parse_fails(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_lit_bad_json", uploads_dir=tmp_path)
+    paths.outline_json.write_text(json.dumps(_inputs().outline), encoding="utf-8")
+    manifest = PaperManifest.model_validate(json.loads(paths.manifest.read_text(encoding="utf-8")))
+    agent = LiteratureReviewAgent(
+        MockLLM(["plain text without a JSON object"]),
+        search_provider=MockSearchProvider(),
+    )
+
+    with pytest.raises(LiteratureReviewAgentError, match="did not contain a JSON object"):
+        run_literature(paths, manifest, agent=agent)
+
+    process_log = json.loads(
+        (paths.citations_dir / "literature_review_log.private.json").read_text(encoding="utf-8")
+    )
+    events = process_log["events"]
+
+    assert process_log["status"] == "failed"
+    assert process_log["error"]["message"] == "literature search response did not contain a JSON object"
+    assert any(
+        event["event"] == "llm_response"
+        and event["step"] == "query_expansion"
+        and event["response"]["content"] == "plain text without a JSON object"
+        for event in events
+    )
+    assert any(event["event"] == "query_expansion_failed" for event in events)
+    assert not any(event["event"] == "discovery_start" for event in events)
+    assert not (paths.citations_dir / "discovery_pool.json").exists()
+    assert manifest.artifact_index["citations/literature_review_log.private.json"]["visibility"] == "private_backend_only"
 
 
 def test_literature_agent_hard_fails_when_selected_coverage_is_low() -> None:

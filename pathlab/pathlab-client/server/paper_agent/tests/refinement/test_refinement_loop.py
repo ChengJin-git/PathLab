@@ -130,6 +130,11 @@ async def test_score_increase_accepts_revision_and_snapshots_previous_sections(t
     assert payload["iterations"][0]["reason"] == "score_increased"
     assert payload["accepted_iterations"] == [1]
     assert "validation/refinement_log.json" in manifest.artifact_index
+    assert manifest.artifact_index["logs/refinement_llm_log.private.json"]["visibility"] == "private_backend_only"
+    process_log = json.loads((paths.root / "logs/refinement_llm_log.private.json").read_text(encoding="utf-8"))
+    assert process_log["status"] == "completed"
+    assert any(event["event"] == "llm_request" for event in process_log["events"])
+    assert any(event["event"] == "revise_completed" for event in process_log["events"])
     assert len(llm.calls) == 3
     assert payload["iterations"][0]["candidate_critic"]["total"] == 20
 

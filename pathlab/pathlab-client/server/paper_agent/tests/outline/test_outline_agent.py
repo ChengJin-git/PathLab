@@ -7,7 +7,13 @@ import pytest
 
 from pathlab_paper_agent.agents import OutlineAgent, OutlineInputs, PhiLeakError
 from pathlab_paper_agent.agents.outline_agent import OutlineAgentError, parse_outline_json
-from pathlab_paper_agent.llm import LLMConfig, LLMConfigurationError, LLMMessage, LLMResponse
+from pathlab_paper_agent.llm import (
+    LLMConfig,
+    LLMConfigurationError,
+    LLMMessage,
+    LLMProviderError,
+    LLMResponse,
+)
 from pathlab_paper_agent.llm.client import OpenAICompatibleLLMClient
 from pathlab_paper_agent.pipeline import create_dev_run
 from pathlab_paper_agent.schemas import OutlineDocument
@@ -58,8 +64,12 @@ def _outline_payload(marker: str = "llm-generated") -> dict:
 
 
 class MockLLM:
-    def __init__(self, response: str | dict) -> None:
-        self.response = json.dumps(response) if isinstance(response, dict) else response
+    def __init__(self, response: str | dict | list[str | dict]) -> None:
+        raw_responses = response if isinstance(response, list) else [response]
+        self.responses = [
+            json.dumps(item) if isinstance(item, dict) else item
+            for item in raw_responses
+        ]
         self.calls: list[dict] = []
 
     def complete(
@@ -78,7 +88,8 @@ class MockLLM:
                 "stream": stream,
             }
         )
-        return LLMResponse(content=self.response, model="mock", provider="mock")
+        index = min(len(self.calls) - 1, len(self.responses) - 1)
+        return LLMResponse(content=self.responses[index], model="mock", provider="mock")
 
 
 def _inputs() -> OutlineInputs:
@@ -154,6 +165,11 @@ async def test_outlining_stage_writes_llm_output_and_manifest(tmp_path) -> None:
     assert outline["plotting_plan"][0]["design_objective"] == "stage mock marker"
     assert outline["section_plan"][0]["goal"] != "scaffold"
     assert paper_manifest.artifact_index["drafts/outline.json"]["visibility"] == "public"
+    assert paper_manifest.artifact_index["logs/outlining_log.private.json"]["visibility"] == "private_backend_only"
+    process_log = json.loads((paths.root / "logs/outlining_log.private.json").read_text(encoding="utf-8"))
+    assert process_log["status"] == "completed"
+    assert any(event["event"] == "llm_request" for event in process_log["events"])
+    assert any(event["event"] == "llm_response" for event in process_log["events"])
 
 
 @pytest.mark.parametrize(
@@ -187,6 +203,24 @@ def test_parse_outline_json_accepts_fenced_response() -> None:
     parsed = parse_outline_json(f"Here is the JSON:\n```json\n{json.dumps(payload)}\n```")
 
     assert parsed["plotting_plan"][0]["figure_id"] == "fig:main_results"
+
+
+def test_parse_outline_json_unwraps_common_outline_container() -> None:
+    payload = _outline_payload()
+
+    parsed = parse_outline_json(json.dumps({"outline": payload}))
+
+    assert parsed["section_plan"][0]["section"] == "Introduction"
+
+
+def test_outline_agent_retries_when_first_response_has_wrong_schema() -> None:
+    agent = OutlineAgent(MockLLM([{"status": "ok"}, _outline_payload(marker="retry ok")]))
+
+    outline = agent.generate(_inputs())
+
+    assert outline["plotting_plan"][0]["design_objective"] == "retry ok"
+    assert len(agent.llm_client.calls) == 2
+    assert "failed PathLab outline schema validation" in agent.llm_client.calls[1]["messages"][1].content
 
 
 def test_parse_outline_json_rejects_missing_required_fields() -> None:
@@ -234,6 +268,7 @@ def test_reasoning_model_streams_and_aggregates_sse() -> None:
     assert response.content == '{"ok":true}'
     assert seen_payloads[0]["stream"] is True
     assert seen_payloads[0]["reasoning_effort"] == "xhigh"
+    assert seen_payloads[0]["max_completion_tokens"] == 16384
 
 
 def test_default_llm_config_uses_gpt55_xhigh(monkeypatch) -> None:
@@ -241,14 +276,54 @@ def test_default_llm_config_uses_gpt55_xhigh(monkeypatch) -> None:
     monkeypatch.delenv("PAPER_GEN_LLM_API_KEY", raising=False)
     monkeypatch.delenv("PAPER_GEN_LLM_MODEL", raising=False)
     monkeypatch.delenv("PAPER_GEN_LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("PAPER_GEN_LLM_MAX_COMPLETION_TOKENS", raising=False)
     monkeypatch.delenv("PAPER_GEN_VLLM_MODEL", raising=False)
     monkeypatch.delenv("PAPER_GEN_VLLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("PAPER_GEN_VLLM_MAX_COMPLETION_TOKENS", raising=False)
 
     config = LLMConfig.from_env()
 
     assert config.model == "gpt-5.5"
     assert config.reasoning_effort == "xhigh"
     assert config.timeout_s == 300.0
+    assert config.max_completion_tokens == 16384
+
+
+def test_llm_config_allows_max_completion_tokens_override(monkeypatch) -> None:
+    monkeypatch.setenv("PAPER_GEN_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("PAPER_GEN_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("PAPER_GEN_LLM_MODEL", "gpt-5.5")
+    monkeypatch.setenv("PAPER_GEN_LLM_MAX_COMPLETION_TOKENS", "32768")
+
+    config = LLMConfig.from_env()
+
+    assert config.max_completion_tokens == 32768
+
+
+def test_reasoning_only_stream_raises_actionable_error() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        body = "\n\n".join(
+            [
+                'data: {"model":"gpt-5.5","choices":[{"delta":{"reasoning_content":"thinking"},"finish_reason":null}]}',
+                'data: {"model":"gpt-5.5","choices":[{"delta":{},"finish_reason":"length"}]}',
+                "data: [DONE]",
+            ]
+        )
+        return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    client = OpenAICompatibleLLMClient(
+        LLMConfig(
+            base_url="https://mock-llm.invalid/v1",
+            api_key="test",
+            model="gpt-5.5",
+            provider="mock",
+        ),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(LLMProviderError, match="without assistant content"):
+        client.complete([LLMMessage(role="user", content="hi")])
 
 
 def test_transient_timeout_is_retried_once_before_failing() -> None:
@@ -278,6 +353,7 @@ def test_transient_timeout_is_retried_once_before_failing() -> None:
     assert response.content == "retried ok"
     assert len(seen_payloads) == 2
     assert "reasoning_effort" not in seen_payloads[0]
+    assert "max_completion_tokens" not in seen_payloads[0]
 
 
 def test_two_transient_timeouts_trigger_fallback_when_available() -> None:

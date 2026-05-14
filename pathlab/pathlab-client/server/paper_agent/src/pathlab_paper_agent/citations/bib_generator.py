@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Iterable
 
 from .models import CitationReference
@@ -86,6 +87,27 @@ _FIELD_KIND_TEXT = "text"
 _FIELD_KIND_TITLE = "title"
 _FIELD_KIND_IDENTIFIER = "identifier"
 _FIELD_KIND_RAW = "raw"
+_UNICODE_ASCII_REPLACEMENTS = {
+    "\u00df": "ss",
+    "\u00e6": "ae",
+    "\u00c6": "AE",
+    "\u00f8": "o",
+    "\u00d8": "O",
+    "\u0131": "i",
+    "\u0142": "l",
+    "\u0141": "L",
+    "\u03b1": "alpha",
+    "\u03b2": "beta",
+    "\u03b3": "gamma",
+    "\u03b4": "delta",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": "``",
+    "\u201d": "''",
+    "\u2013": "--",
+    "\u2014": "---",
+    "\u2026": "...",
+}
 
 
 def latex_escape(value: str, *, preserve_braces: bool = True) -> str:
@@ -191,7 +213,7 @@ def _venue_for_entry(
 
 
 def _render_value(value: str, kind: str) -> str:
-    stripped = re.sub(r"\s+", " ", value.strip())
+    stripped = re.sub(r"\s+", " ", _bibtex_ascii(value).strip())
     if kind == _FIELD_KIND_RAW:
         return stripped
     if kind == _FIELD_KIND_IDENTIFIER:
@@ -199,6 +221,12 @@ def _render_value(value: str, kind: str) -> str:
     if kind == _FIELD_KIND_TITLE:
         return latex_escape(_protect_title_case(stripped), preserve_braces=True)
     return latex_escape(stripped, preserve_braces=True)
+
+
+def _bibtex_ascii(value: str) -> str:
+    translated = "".join(_UNICODE_ASCII_REPLACEMENTS.get(char, char) for char in str(value))
+    normalized = unicodedata.normalize("NFKD", translated)
+    return normalized.encode("ascii", errors="ignore").decode("ascii")
 
 
 def _escape_identifier(value: str) -> str:

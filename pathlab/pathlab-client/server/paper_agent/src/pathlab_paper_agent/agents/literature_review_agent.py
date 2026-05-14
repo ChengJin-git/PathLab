@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from importlib import resources
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Protocol
 
 from ..bootstrap import ensure_server_on_path
@@ -46,6 +47,14 @@ _POSIX_PATH_RE = re.compile(
     r"(?<![\w:/])/(?:Users|home|private|var|tmp|mnt|data|scratch|nfs|Volumes|workspace|opt|srv)"
     r"(?:/[^\s,;\"']+)+"
 )
+_PUBMED_PUBLICATION_DATE_RANGE_RE = re.compile(
+    r"\s+\bAND\s+\(?\s*"
+    r'"?\d{4}[-_/]\d{1,2}[-_/]\d{1,2}"?\s*\[Date\s*-\s*Publication\]\s*'
+    r":\s*"
+    r'"?\d{4}[-_/]\d{1,2}[-_/]\d{1,2}"?\s*\[Date\s*-\s*Publication\]\s*'
+    r"\)?",
+    re.IGNORECASE,
+)
 # Mirrors the M7 outline agent's hard-fail set: dates are PHI when paired with
 # a cohort or institution, so YYYY-MM-DD strings must not reach an LLM prompt
 # even though the M3 scrubber already replaces them upstream.
@@ -56,6 +65,9 @@ _DEFAULT_CONCURRENCY = 10
 _MIN_SELECTED_COVERAGE = 0.9
 _GENERATED_DISCOVERY_MARKER = "m8b_literature_agent"
 _MANUAL_DISCOVERY_MODES = {"manual", "manual_candidates", "manual_seed", "manual_fixture"}
+_LOG_TEXT_LIMIT = 200_000
+
+LiteratureEventSink = Callable[[dict[str, Any]], None]
 
 
 class LiteratureReviewAgentError(RuntimeError):
@@ -231,6 +243,7 @@ class LiteratureReviewAgent:
         intro_rw_prompt: str | None = None,
         max_concurrency: int = _DEFAULT_CONCURRENCY,
         min_selected_coverage: float = _MIN_SELECTED_COVERAGE,
+        event_sink: LiteratureEventSink | None = None,
     ) -> None:
         self.llm_client = llm_client or _default_llm_client()
         self.search_provider = search_provider or _default_search_provider()
@@ -239,6 +252,7 @@ class LiteratureReviewAgent:
         self.intro_rw_prompt = intro_rw_prompt or _load_prompt_template("intro_rw_draft_v1.txt")
         self.max_concurrency = max(1, max_concurrency)
         self.min_selected_coverage = min_selected_coverage
+        self.event_sink = event_sink
 
     def close(self) -> None:
         if self._owns_search_provider:
@@ -250,24 +264,53 @@ class LiteratureReviewAgent:
         *,
         existing_candidates: Sequence[CitationCandidate] | None = None,
     ) -> LiteratureReviewResult:
+        self._emit(
+            "generate_start",
+            paper_title=inputs.paper_title,
+            submission_cutoff_year=inputs.submission_cutoff_year,
+            max_refs=_max_refs_from_inputs(inputs),
+        )
         queries = self.expand_queries(inputs)
+        self._emit("query_expansion_completed", query_count=len(queries))
         if existing_candidates is not None:
             candidates = list(existing_candidates)
             discovery_mode = "manual_candidates"
+            self._emit("manual_candidates_loaded", candidate_count=len(candidates))
         else:
             candidates = self.discover_candidates(queries)
             discovery_mode = "api_search"
             if isinstance(self.search_provider, _NoNetworkCitationSearchProvider):
                 discovery_mode = "ci_no_network_api_fixture"
+            self._emit(
+                "discovery_completed",
+                candidate_count=len(candidates),
+                discovery_mode=discovery_mode,
+            )
 
         verification = verify_candidates(candidates, cutoff_year=inputs.submission_cutoff_year)
+        self._emit(
+            "verification_completed",
+            verified_count=len(verification.verified),
+            rejected_count=len(verification.rejected),
+        )
         selection = select_references(
             verification.verified,
             max_refs=_max_refs_from_inputs(inputs),
         )
+        self._emit(
+            "selection_completed",
+            selected_ref_count=len(selection.selected_refs),
+            required_cite_count=len(selection.required_cites),
+        )
         _assert_non_empty_selection(selection)
         draft = self.draft_intro_related_work(inputs, selection.selected_refs, selection.required_cites)
         coverage_report = self.coverage_report(selection.selected_refs, selection.required_cites, draft)
+        self._emit(
+            "coverage_completed",
+            status=coverage_report.get("status"),
+            selected_coverage=coverage_report.get("selected_coverage"),
+            orphan_status=coverage_report.get("orphan_status"),
+        )
         result = LiteratureReviewResult(
             queries=queries,
             candidates=candidates,
@@ -286,6 +329,7 @@ class LiteratureReviewAgent:
                 f"coverage_status={coverage_report['coverage_status']}",
                 result,
             )
+        self._emit("generate_completed", status="pass")
         return result
 
     def expand_queries(self, inputs: LiteratureReviewInputs) -> list[ExpandedQuery]:
@@ -304,30 +348,63 @@ class LiteratureReviewAgent:
             ],
             "search_sources": ["semantic_scholar", "pubmed", "openalex"],
         }
+        self._emit("query_expansion_start", payload=payload)
         _assert_no_private_identifiers(payload, context="literature search prompt payload")
         prompt = _render_prompt(self.lit_search_prompt, payload)
         _assert_no_private_identifiers(prompt, context="literature search prompt")
-        response = self.llm_client.complete(
-            [
-                LLMMessage(
-                    role="system",
-                    content=(
-                        "You are PathLab's Literature Review Agent. Return only JSON "
-                        "with concrete Semantic Scholar and PubMed search queries."
-                    ),
+        messages = [
+            LLMMessage(
+                role="system",
+                content=(
+                    "You are PathLab's Literature Review Agent. Return only JSON "
+                    "with concrete Semantic Scholar and PubMed search queries."
                 ),
-                LLMMessage(role="user", content=prompt),
-            ],
+            ),
+            LLMMessage(role="user", content=prompt),
+        ]
+        response_format = {"type": "json_object"}
+        self._emit_llm_request(
+            "query_expansion",
+            messages=messages,
             temperature=0.2,
-            response_format={"type": "json_object"},
+            response_format=response_format,
         )
-        queries = _parse_expanded_queries(_response_text(response))
+        started = perf_counter()
+        response: Any | None = None
+        try:
+            response = self.llm_client.complete(
+                messages,
+                temperature=0.2,
+                response_format=response_format,
+            )
+            self._emit_llm_response(
+                "query_expansion",
+                response,
+                duration_ms=_elapsed_ms(started),
+            )
+            queries = _parse_expanded_queries(_response_text(response))
+        except Exception as exc:
+            if response is None:
+                self._emit(
+                    "llm_call_failed",
+                    step="query_expansion",
+                    duration_ms=_elapsed_ms(started),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+            self._emit(
+                "query_expansion_failed",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
         if not queries:
             raise LiteratureReviewAgentError("Literature search LLM returned no queries")
         _assert_no_private_identifiers([query.to_dict() for query in queries], context="expanded literature queries")
         return queries
 
     def discover_candidates(self, queries: Sequence[ExpandedQuery]) -> list[CitationCandidate]:
+        self._emit("discovery_start", query_count=len(queries), max_concurrency=self.max_concurrency)
         futures = {}
         with ThreadPoolExecutor(max_workers=self.max_concurrency) as executor:
             for query in queries:
@@ -338,8 +415,24 @@ class LiteratureReviewAgent:
             for future in as_completed(futures):
                 _query, _source = futures[future]
                 try:
-                    candidates.extend(future.result())
-                except Exception:
+                    results = future.result()
+                    candidates.extend(results)
+                    self._emit(
+                        "discovery_query_completed",
+                        source=_source,
+                        query=_query.query,
+                        cluster=_query.cluster,
+                        result_count=len(results),
+                    )
+                except Exception as exc:
+                    self._emit(
+                        "discovery_query_failed",
+                        source=_source,
+                        query=_query.query,
+                        cluster=_query.cluster,
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                    )
                     # Public literature APIs frequently rate-limit or time out.
                     # Keep the review moving when other backends can still
                     # provide verified references; the empty-selection gate
@@ -380,25 +473,66 @@ class LiteratureReviewAgent:
             context="intro/RW draft prompt",
             suppress_keys=("institution_names",),
         )
-        response = self.llm_client.complete(
-            [
-                LLMMessage(
-                    role="system",
-                    content=(
-                        "You are PathLab's Literature Review Agent. Draft only "
-                        "Introduction and Related Work LaTeX using selected citations."
-                    ),
+        messages = [
+            LLMMessage(
+                role="system",
+                content=(
+                    "You are PathLab's Literature Review Agent. Draft only "
+                    "Introduction and Related Work LaTeX using selected citations."
                 ),
-                LLMMessage(role="user", content=prompt),
-            ],
-            temperature=0.25,
-            response_format={"type": "json_object"},
+            ),
+            LLMMessage(role="user", content=prompt),
+        ]
+        response_format = {"type": "json_object"}
+        self._emit(
+            "intro_rw_draft_start",
+            selected_ref_count=len(selected_refs),
+            required_cite_count=len(required_cites),
         )
-        draft = _parse_literature_draft(_response_text(response))
+        self._emit_llm_request(
+            "intro_rw_draft",
+            messages=messages,
+            temperature=0.25,
+            response_format=response_format,
+        )
+        started = perf_counter()
+        response: Any | None = None
+        try:
+            response = self.llm_client.complete(
+                messages,
+                temperature=0.25,
+                response_format=response_format,
+            )
+            self._emit_llm_response(
+                "intro_rw_draft",
+                response,
+                duration_ms=_elapsed_ms(started),
+            )
+            draft = _parse_literature_draft(_response_text(response))
+        except Exception as exc:
+            if response is None:
+                self._emit(
+                    "llm_call_failed",
+                    step="intro_rw_draft",
+                    duration_ms=_elapsed_ms(started),
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
+            self._emit(
+                "intro_rw_draft_failed",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
         _assert_no_private_identifiers(
             {"introduction": draft.introduction_tex, "related_work": draft.related_work_tex},
             context="intro/RW draft output",
             suppress_keys=("institution_names",),
+        )
+        self._emit(
+            "intro_rw_draft_completed",
+            introduction_chars=len(draft.introduction_tex),
+            related_work_chars=len(draft.related_work_tex),
         )
         return draft
 
@@ -435,6 +569,58 @@ class LiteratureReviewAgent:
             else "fail"
         )
         return payload
+
+    def _emit(self, event: str, **payload: Any) -> None:
+        if self.event_sink is None:
+            return
+        self.event_sink(
+            _json_safe(
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                    "event": event,
+                    **payload,
+                }
+            )
+        )
+
+    def _emit_llm_request(
+        self,
+        step: str,
+        *,
+        messages: Sequence[LLMMessage],
+        temperature: float,
+        response_format: Mapping[str, Any] | None,
+    ) -> None:
+        self._emit(
+            "llm_request",
+            step=step,
+            temperature=temperature,
+            response_format=dict(response_format or {}),
+            messages=[
+                {
+                    "role": message.role,
+                    "content": _truncate_text(message.content),
+                    "content_length": len(message.content),
+                    "truncated": len(message.content) > _LOG_TEXT_LIMIT,
+                }
+                for message in messages
+            ],
+        )
+
+    def _emit_llm_response(self, step: str, response: Any, *, duration_ms: int) -> None:
+        text = _response_text(response)
+        self._emit(
+            "llm_response",
+            step=step,
+            duration_ms=duration_ms,
+            response={
+                "content": _truncate_text(text),
+                "content_length": len(text),
+                "truncated": len(text) > _LOG_TEXT_LIMIT,
+                "model": getattr(response, "model", None),
+                "provider": getattr(response, "provider", None),
+            },
+        )
 
     def _search_one(self, query: ExpandedQuery, source: str) -> list[CitationCandidate]:
         if source == "semantic_scholar":
@@ -658,6 +844,30 @@ def _decode_first_json_object(text: str, *, label: str) -> Any:
 _response_text = _common.response_text
 
 
+def _elapsed_ms(started: float) -> int:
+    return max(0, int((perf_counter() - started) * 1000))
+
+
+def _truncate_text(value: str, limit: int = _LOG_TEXT_LIMIT) -> str:
+    if len(value) <= limit:
+        return value
+    return value[:limit]
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, "to_dict"):
+        return _json_safe(value.to_dict())
+    if hasattr(value, "model_dump"):
+        return _json_safe(value.model_dump(mode="json"))
+    return str(value)
+
+
 def _render_prompt(template: str, payload: Mapping[str, Any]) -> str:
     payload_json = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
     return template.replace("{{INPUT_PAYLOAD_JSON}}", payload_json)
@@ -809,6 +1019,7 @@ def _normalize_source(source: str) -> str:
 
 def _one_sentence_query(value: str) -> str:
     cleaned = " ".join(value.replace("\n", " ").split())
+    cleaned = _strip_pubmed_publication_date_filters(cleaned)
     if not cleaned:
         return ""
     for delimiter in (". ", "? ", "! "):
@@ -816,6 +1027,12 @@ def _one_sentence_query(value: str) -> str:
             cleaned = cleaned.split(delimiter, 1)[0]
             break
     return cleaned.strip(" .?!")[:240]
+
+
+def _strip_pubmed_publication_date_filters(query: str) -> str:
+    """Drop LLM-added PubMed date ranges; cutoff filtering is deterministic."""
+    cleaned = _PUBMED_PUBLICATION_DATE_RANGE_RE.sub("", query)
+    return " ".join(cleaned.split())
 
 
 def _ensure_section(text: str, title: str) -> str:

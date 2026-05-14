@@ -31,6 +31,12 @@ async def test_create_dev_run_and_run_stage(tmp_path):
     assert stage_entry["ts"] == stage_entry["finished_at"]
     assert isinstance(stage_entry["duration_ms"], int)
     assert stage_entry["duration_ms"] >= 0
+    assert data["artifact_index"]["logs/pipeline_log.private.json"]["visibility"] == "private_backend_only"
+    assert data["artifact_index"]["logs/pipeline_log.private.json"]["downloadable"] is False
+    pipeline_log = json.loads((paths.root / "logs/pipeline_log.private.json").read_text(encoding="utf-8"))
+    events = [(event["event"], event["stage"]) for event in pipeline_log["events"]]
+    assert ("stage_started", "collecting") in events
+    assert ("stage_completed", "collecting") in events
 
 
 @pytest.mark.asyncio
@@ -51,6 +57,28 @@ async def test_run_stage_persists_running_state_before_execution(tmp_path, monke
 
     assert manifest.stage_log[-1]["stage"] == "collecting"
     assert manifest.stage_log[-1]["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_run_stage_records_private_pipeline_failure_log(tmp_path, monkeypatch):
+    paper_id, paths = await create_dev_run(paper_id="paper_failed_log", uploads_dir=tmp_path)
+
+    def fake_execute_stage(paths_arg, manifest_arg, stage_arg):
+        del paths_arg, manifest_arg, stage_arg
+        raise RuntimeError("synthetic stage failure")
+
+    monkeypatch.setattr("pathlab_paper_agent.pipeline._execute_stage", fake_execute_stage)
+
+    with pytest.raises(RuntimeError, match="synthetic stage failure"):
+        run_stage(paper_id, "collecting", uploads_dir=tmp_path)
+
+    data = json.loads(paths.manifest.read_text(encoding="utf-8"))
+    assert data["status"] == "failed"
+    assert data["artifact_index"]["logs/pipeline_log.private.json"]["visibility"] == "private_backend_only"
+    pipeline_log = json.loads((paths.root / "logs/pipeline_log.private.json").read_text(encoding="utf-8"))
+    assert pipeline_log["events"][-1]["event"] == "stage_failed"
+    assert pipeline_log["events"][-1]["stage"] == "collecting"
+    assert pipeline_log["events"][-1]["error_type"] == "RuntimeError"
 
 
 @pytest.mark.asyncio

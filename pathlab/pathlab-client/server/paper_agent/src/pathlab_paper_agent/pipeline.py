@@ -42,6 +42,7 @@ from .stages import (  # noqa: E402
     run_validating,
 )
 from .scaffold import initialize_paper_run  # noqa: E402,F401
+from .process_logging import append_pipeline_event  # noqa: E402
 from .stages.common import artifact, read_json, write_json  # noqa: E402
 
 _STAGE_ORDER: tuple[PaperRunStage, ...] = (
@@ -341,7 +342,16 @@ def run_stage(
                     "message": f"Stage {stage_enum.value} started.",
                 }
             )
-            save_manifest(manifest, uploads_dir=uploads_dir)
+        append_pipeline_event(
+            paths,
+            manifest,
+            "stage_started",
+            stage=stage_enum.value,
+            status="running",
+            started_at=started_at.isoformat(),
+            message=f"Stage {stage_enum.value} started.",
+        )
+        save_manifest(manifest, uploads_dir=uploads_dir)
         _execute_stage(paths, manifest, stage_enum)
         manifest.error_message = None
         finished_at = utc_now()
@@ -367,6 +377,17 @@ def run_stage(
                 "message": message or f"Stage {stage_enum.value} completed.",
             }
         )
+        append_pipeline_event(
+            paths,
+            manifest,
+            "stage_completed",
+            stage=stage_enum.value,
+            status="completed",
+            started_at=started_at.isoformat(),
+            finished_at=finished_at.isoformat(),
+            duration_ms=duration_ms,
+            message=message or f"Stage {stage_enum.value} completed.",
+        )
     except Exception as exc:
         failed_at = utc_now()
         duration_ms = max(0, int((failed_at - started_at).total_seconds() * 1000))
@@ -385,6 +406,19 @@ def run_stage(
                 "message": f"Stage {stage_enum.value} failed: {exc}",
                 "error_message": str(exc)[:4000],
             }
+        )
+        append_pipeline_event(
+            paths,
+            manifest,
+            "stage_failed",
+            stage=stage_enum.value,
+            status="failed",
+            started_at=started_at.isoformat(),
+            finished_at=failed_at.isoformat(),
+            duration_ms=duration_ms,
+            error_type=type(exc).__name__,
+            error_message=str(exc)[:4000],
+            message=f"Stage {stage_enum.value} failed: {exc}",
         )
         save_manifest(manifest, uploads_dir=uploads_dir)
         raise
@@ -472,6 +506,17 @@ def run_until_outline(
             "duration_ms": 0,
             "message": "Outline generated; awaiting user approval.",
         }
+    )
+    append_pipeline_event(
+        PaperRunPaths.for_paper(paper_id),
+        manifest,
+        "outline_approval_pending",
+        stage=PaperRunStage.outlining.value,
+        status=PaperRunStatus.awaiting_outline_approval.value,
+        started_at=now.isoformat(),
+        finished_at=now.isoformat(),
+        duration_ms=0,
+        message="Outline generated; awaiting user approval.",
     )
     save_manifest(manifest, uploads_dir=uploads_dir)
     return manifest

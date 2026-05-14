@@ -121,6 +121,10 @@ def _scan_file(path: Path, paths: PaperRunPaths, flags: Mapping[str, bool], repo
                 continue
             if _is_negated_claim(text, match, pattern):
                 continue
+            if pattern.code == "unsupported_external_validation_claim" and _is_evidence_scope_statement(
+                text, match
+            ):
+                continue
             keyword = " ".join(match.group(0).split())
             report.error(
                 pattern.code,
@@ -172,6 +176,70 @@ def _is_negated_claim(text: str, match: re.Match[str], pattern: ClaimPattern) ->
     start = max(0, match.start() - 100)
     end = min(len(text), match.end() + 20)
     return bool(pattern.negation_regex.search(text[start:end]))
+
+
+def _is_evidence_scope_statement(text: str, match: re.Match[str]) -> bool:
+    """Allow literature/background statements that limit rather than assert evidence."""
+    sentence = _sentence_around(text, match).casefold()
+    boundary_terms = (
+        "separate evidence",
+        "reported separately",
+        "explicit separation",
+        "does not substitute",
+        "not substitute",
+        "remain necessary",
+        "remains necessary",
+        "necessary before",
+        "needed before",
+        "required before",
+        "future work should add",
+        "next validation steps",
+    )
+    if any(term in sentence for term in boundary_terms):
+        return True
+    if "unsupported external validation" in sentence and any(
+        term in sentence for term in ("imply", "implies", "avoid", "risk", "reduces the risk")
+    ):
+        return True
+    if "external validation" in sentence and any(
+        term in sentence
+        for term in (
+            "is unavailable",
+            "was unavailable",
+            "not available",
+            "no external validation evidence",
+            "without external validation evidence",
+            "no external-cohort performance is reported",
+            "no external cohort performance is reported",
+        )
+    ):
+        return True
+    if re.search(
+        r"\brequir(?:e|es|ed|ing)\b[^.]{0,80}\bexternal validation\b[^.]{0,80}\bbefore\b",
+        sentence,
+    ):
+        return True
+    if (
+        "external validation" in sentence
+        and "evidence available" in sentence
+        and ("\\caption" in sentence or "table" in sentence)
+    ):
+        return True
+    if "external-validation examples" in sentence and "motivate" in sentence:
+        return True
+    return (
+        "external validation" in sentence
+        and "internal" in sentence
+        and any(term in sentence for term in ("separate", "distinct", "bounded"))
+    )
+
+
+def _sentence_around(text: str, match: re.Match[str]) -> str:
+    start_candidates = [text.rfind(mark, 0, match.start()) for mark in (".", "\n")]
+    start = max(start_candidates) + 1
+    end_candidates = [idx for idx in (text.find(".", match.end()), text.find("\n", match.end())) if idx != -1]
+    end = min(end_candidates) if end_candidates else len(text)
+    return text[start:end]
 
 
 def _is_latex_sectioning_match(text: str, match: re.Match[str]) -> bool:

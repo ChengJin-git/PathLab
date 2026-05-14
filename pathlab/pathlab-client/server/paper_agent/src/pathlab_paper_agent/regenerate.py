@@ -672,14 +672,14 @@ def _paragraph_context_for_locator(section_text: str, locator: SelectionLocatorR
 
 
 def _run_validating_collect(paths: PaperRunPaths, manifest: PaperManifest) -> list[dict[str, Any]]:
-    try:
-        run_validating(paths, manifest)
-    except RuntimeError as exc:
-        reports = _load_guard_reports(paths)
-        failed = [str(report.get("guard")) for report in reports if report.get("status") == "fail"]
-        failed_text = ", ".join(failed) if failed else str(exc)
-        raise RegenerateRejectedError(f"validation rejected regenerated candidate: {failed_text}") from exc
-    return _load_guard_reports(paths)
+    run_validating(paths, manifest)
+    reports = _load_guard_reports(paths)
+    failed = [str(report.get("guard")) for report in reports if report.get("status") == "fail"]
+    if failed:
+        raise RegenerateRejectedError(
+            f"validation rejected regenerated candidate: {', '.join(failed)}"
+        )
+    return reports
 
 
 def _restore_all_sections(before_dir: Path, sections_dir: Path) -> None:
@@ -1099,6 +1099,7 @@ class _TargetSectionRefinementAgent(ContentRefinementAgent):
         self.llm_client = inner.llm_client
         self.critic_prompt_template = inner.critic_prompt_template
         self.revise_prompt_template = inner.revise_prompt_template
+        self.event_sink = getattr(inner, "event_sink", None)
         self.target_section = target_section
 
     def revise(self, inputs: RefinementInputs, review: CriticReview) -> RevisionResult:

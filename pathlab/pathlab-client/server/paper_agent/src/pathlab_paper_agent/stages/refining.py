@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +29,11 @@ from pathlab_paper_agent.validators import (
 from pathlab_paper_agent.validators.claim_guard import run as run_claim_guard
 from pathlab_paper_agent.validators.consistency_guard import run as run_consistency_guard
 
+from ..process_logging import register_private_log_artifact, write_stage_process_log
 from .common import register_artifact, write_json, write_text
 
 _MAX_ITERATIONS = 3
+_PROCESS_LOG_REL_PATH = "logs/refinement_llm_log.private.json"
 _GUARD_REPORT_PATHS = {
     "metric_guard": "validation/metric_guard.json",
     "identifier_guard": "validation/identifier_guard.json",
@@ -97,6 +100,61 @@ def run(
 ) -> None:
     """Run at most three critic -> revise -> guards refinement iterations."""
     refinement_agent = agent or ContentRefinementAgent()
+    events: list[dict[str, Any]] = []
+    previous_sink = getattr(refinement_agent, "event_sink", None)
+    started_at = datetime.now(UTC)
+    status = "failed"
+    error_payload: dict[str, str] | None = None
+
+    def sink(event: dict[str, Any]) -> None:
+        events.append(event)
+        if callable(previous_sink):
+            previous_sink(event)
+
+    if hasattr(refinement_agent, "event_sink"):
+        refinement_agent.event_sink = sink
+    try:
+        _run_impl(
+            paths,
+            manifest,
+            agent=refinement_agent,
+            max_iterations=max_iterations,
+            guard_runner=guard_runner,
+            snapshots_subdir=snapshots_subdir,
+        )
+        status = "completed"
+    except Exception as exc:
+        error_payload = {"type": type(exc).__name__, "message": str(exc)}
+        raise
+    finally:
+        if hasattr(refinement_agent, "event_sink"):
+            refinement_agent.event_sink = previous_sink
+        write_stage_process_log(
+            paths,
+            _PROCESS_LOG_REL_PATH,
+            stage="refining",
+            status=status,
+            started_at=started_at,
+            events=events,
+            error=error_payload,
+        )
+        register_private_log_artifact(
+            manifest,
+            _PROCESS_LOG_REL_PATH,
+            label="Refinement LLM process log",
+        )
+
+
+def _run_impl(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    *,
+    agent: ContentRefinementAgent,
+    max_iterations: int,
+    guard_runner: GuardRunner | None,
+    snapshots_subdir: Path | None,
+) -> None:
+    refinement_agent = agent
     iterations = max(0, min(max_iterations, _MAX_ITERATIONS))
     run_guards = guard_runner or _run_guard_reports
     snapshot_root = snapshots_subdir or paths.snapshots_dir

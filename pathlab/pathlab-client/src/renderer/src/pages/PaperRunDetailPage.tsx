@@ -12,6 +12,7 @@ import { DeleteRunButton } from '../components/paper/DeleteRunButton'
 import { getPaperRun } from '../api/papers'
 
 const ACTIVE_STATUSES = new Set(['pending', 'running'])
+const ACTIVE_RUN_REFETCH_INTERVAL_MS = 500
 
 function statusBadgeVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (status === 'completed') return 'secondary'
@@ -33,7 +34,7 @@ export default function PaperRunDetailPage() {
     enabled: Boolean(paperId),
     refetchInterval: (query) => {
       const status = query.state.data?.status
-      return status && ACTIVE_STATUSES.has(status) ? 2000 : false
+      return status && ACTIVE_STATUSES.has(status) ? ACTIVE_RUN_REFETCH_INTERVAL_MS : false
     },
   })
 

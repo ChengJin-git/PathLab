@@ -20,6 +20,15 @@ ensure_server_on_path()
 from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
 from ..llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
+from ..process_logging import (  # noqa: E402
+    EventSink,
+    elapsed_ms,
+    emit_event,
+    emit_llm_failure,
+    emit_llm_request,
+    emit_llm_response,
+    now_counter,
+)
 from ..templates import get_template  # noqa: E402
 
 _REQUIRED_OUTLINE_FIELDS = (
@@ -56,6 +65,7 @@ _DEFAULT_GUARDS = (
     "figure_table",
 )
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.IGNORECASE | re.DOTALL)
+_OUTLINE_WRAPPER_KEYS = ("outline", "paper_outline", "result", "response", "data")
 
 
 class OutlineAgentError(RuntimeError):
@@ -185,34 +195,116 @@ class OutlineAgent:
         llm_client: LLMClient | None = None,
         *,
         prompt_template: str | None = None,
+        event_sink: EventSink | None = None,
     ) -> None:
         self.llm_client = llm_client or _default_llm_client()
         self.prompt_template = prompt_template or _load_prompt_template()
+        self.event_sink = event_sink
 
     def generate(self, inputs: OutlineInputs) -> dict[str, Any]:
         payload = _prompt_payload(inputs)
+        self._emit(
+            "generate_start",
+            title=inputs.title,
+            language=inputs.language,
+            input_summary=payload.get("input_summary", {}),
+        )
         prompt = self.build_prompt(inputs)
+        self._emit("prompt_built", prompt_length=len(prompt))
         _assert_no_private_identifiers(prompt, context="outline prompt")
 
-        response = self.llm_client.complete(
-            [
-                LLMMessage(
-                    role="system",
-                    content=(
-                        "You are PathLab's Outline Agent. Return only valid JSON "
-                        "matching the requested schema."
-                    ),
+        content = self._complete(prompt, step="outline_generation")
+        try:
+            outline = parse_outline_json(content)
+            self._emit(
+                "parse_completed",
+                step="outline_generation",
+                top_level_keys=sorted(outline.keys()),
+            )
+            _assert_no_private_identifiers(outline, context="outline output")
+            result = validate_outline(outline, inputs, payload)
+            self._emit(
+                "generate_completed",
+                attempt=1,
+                section_plan_count=len(result.get("section_plan", [])),
+                plotting_plan_count=len(result.get("plotting_plan", [])),
+            )
+            return result
+        except OutlineAgentError as first_error:
+            self._emit(
+                "attempt_failed",
+                step="outline_generation",
+                error_type=type(first_error).__name__,
+                error_message=str(first_error),
+            )
+            retry_prompt = _retry_prompt(prompt, first_error)
+            _assert_no_private_identifiers(retry_prompt, context="outline retry prompt")
+            self._emit(
+                "retry_start",
+                original_error_type=type(first_error).__name__,
+                retry_prompt_length=len(retry_prompt),
+            )
+            content = self._complete(retry_prompt, step="outline_retry")
+            try:
+                outline = parse_outline_json(content)
+                self._emit(
+                    "parse_completed",
+                    step="outline_retry",
+                    top_level_keys=sorted(outline.keys()),
+                )
+                _assert_no_private_identifiers(outline, context="outline retry output")
+                result = validate_outline(outline, inputs, payload)
+            except OutlineAgentError as retry_error:
+                self._emit(
+                    "attempt_failed",
+                    step="outline_retry",
+                    error_type=type(retry_error).__name__,
+                    error_message=str(retry_error),
+                )
+                raise
+            self._emit(
+                "generate_completed",
+                attempt=2,
+                section_plan_count=len(result.get("section_plan", [])),
+                plotting_plan_count=len(result.get("plotting_plan", [])),
+            )
+            return result
+
+    def _complete(self, prompt: str, *, step: str) -> str:
+        messages = [
+            LLMMessage(
+                role="system",
+                content=(
+                    "You are PathLab's Outline Agent. Return only valid JSON "
+                    "matching the requested schema."
                 ),
-                LLMMessage(role="user", content=prompt),
-            ],
+            ),
+            LLMMessage(role="user", content=prompt),
+        ]
+        response_format = {"type": "json_object"}
+        emit_llm_request(
+            self.event_sink,
+            step,
+            messages=messages,
             temperature=0.2,
-            response_format={"type": "json_object"},
+            response_format=response_format,
         )
+        started = now_counter()
+        try:
+            response = self.llm_client.complete(
+                messages,
+                temperature=0.2,
+                response_format=response_format,
+            )
+        except Exception as exc:
+            emit_llm_failure(self.event_sink, step, started=started, error=exc)
+            raise
+        emit_llm_response(self.event_sink, step, response, duration_ms=elapsed_ms(started))
         raw_content = response.content if isinstance(response, LLMResponse) else getattr(response, "content", response)
-        content = raw_content if isinstance(raw_content, str) else str(raw_content)
-        outline = parse_outline_json(content)
-        _assert_no_private_identifiers(outline, context="outline output")
-        return validate_outline(outline, inputs, payload)
+        return raw_content if isinstance(raw_content, str) else str(raw_content)
+
+    def _emit(self, event: str, **payload: Any) -> None:
+        emit_event(self.event_sink, event, **payload)
 
     def build_prompt(self, inputs: OutlineInputs) -> str:
         payload = _prompt_payload(inputs)
@@ -235,7 +327,7 @@ def parse_outline_json(text: str) -> dict[str, Any]:
         value = _decode_first_json_object(stripped)
     if not isinstance(value, dict):
         raise OutlineAgentError("Outline LLM response must be a JSON object")
-    return value
+    return _unwrap_outline_json(value)
 
 
 def validate_outline(
@@ -274,7 +366,10 @@ def validate_outline(
 def _conservative_repair(outline: Mapping[str, Any], inputs: OutlineInputs) -> dict[str, Any]:
     missing = [field for field in _REQUIRED_OUTLINE_FIELDS if field not in outline]
     if missing:
-        raise OutlineAgentError(f"Outline missing required field(s): {', '.join(missing)}")
+        present = ", ".join(sorted(str(key) for key in outline.keys())[:12]) or "<none>"
+        raise OutlineAgentError(
+            f"Outline missing required field(s): {', '.join(missing)}; top-level keys: {present}"
+        )
     for field in _LIST_FIELDS:
         if not isinstance(outline.get(field), list):
             raise OutlineAgentError(f"Outline field {field!r} must be a list")
@@ -298,6 +393,37 @@ def _conservative_repair(outline: Mapping[str, Any], inputs: OutlineInputs) -> d
     extensions.setdefault("guard_requirements", list(_DEFAULT_GUARDS))
     repaired["pathlab_extensions"] = extensions
     return repaired
+
+
+def _unwrap_outline_json(value: dict[str, Any]) -> dict[str, Any]:
+    """Accept common JSON wrappers while still requiring the real outline schema."""
+    if any(field in value for field in _REQUIRED_OUTLINE_FIELDS):
+        return value
+    for key in _OUTLINE_WRAPPER_KEYS:
+        nested = value.get(key)
+        if isinstance(nested, Mapping):
+            candidate = _unwrap_outline_json(dict(nested))
+            if any(field in candidate for field in _REQUIRED_OUTLINE_FIELDS):
+                return candidate
+    for nested in value.values():
+        if isinstance(nested, Mapping):
+            candidate = _unwrap_outline_json(dict(nested))
+            if all(field in candidate for field in _REQUIRED_OUTLINE_FIELDS):
+                return candidate
+    return value
+
+
+def _retry_prompt(original_prompt: str, error: Exception) -> str:
+    required = ", ".join(_REQUIRED_OUTLINE_FIELDS)
+    return (
+        "Your previous response failed PathLab outline schema validation.\n"
+        f"Validation error: {error}\n\n"
+        "Regenerate the answer from scratch. Return exactly one JSON object with "
+        f"these top-level keys and no wrapper key: {required}.\n"
+        "Do not return manuscript prose, status JSON, or an object nested under "
+        "`outline`, `response`, `result`, or `data`.\n\n"
+        f"{original_prompt}"
+    )
 
 
 def _prompt_payload(inputs: OutlineInputs) -> dict[str, Any]:

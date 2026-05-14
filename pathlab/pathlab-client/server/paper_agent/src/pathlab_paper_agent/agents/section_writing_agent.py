@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -18,7 +19,16 @@ from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 
 from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
-from ..llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
+from ..llm import LLMClient, LLMConfig, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
+from ..process_logging import (  # noqa: E402
+    EventSink,
+    elapsed_ms,
+    emit_event,
+    emit_llm_failure,
+    emit_llm_request,
+    emit_llm_response,
+    now_counter,
+)
 from ..renderers.citation_renderer import (  # noqa: E402
     CitationRenderError,
     extract_citation_placeholders,
@@ -62,6 +72,25 @@ _PHI_HARD_FAIL_KEYS = ("raw_paths", "case_ids", "institution_names", "dates")
 _PRIVATE_SOURCE_ID_FIELDS = {"task_id", "analysis_id", "source_model_task_id"}
 _GENERIC_PRIVATE_SOURCE_IDS = {"task", "analysis", "main", "none", "unknown", "external_validation"}
 _PUBLIC_FIGURE_STATUSES = {"ready"}
+_MAX_REFERENCE_ABSTRACT_CHARS = 900
+_MAX_REFERENCE_AUTHORS = 8
+_REFERENCE_PROMPT_FIELDS = (
+    "key",
+    "title",
+    "authors",
+    "year",
+    "venue",
+    "journal",
+    "booktitle",
+    "doi",
+    "pmid",
+    "source",
+    "cluster",
+    "query",
+    "citation_count",
+    "required",
+    "abstract",
+)
 _SECTION_TITLES = {
     "abstract": "Abstract",
     "introduction": "Introduction",
@@ -115,6 +144,10 @@ _DEFAULT_LOCKED_BLOCKS_BY_SECTION = {
     "experiments": ("locked_blocks/dataset_block.tex",),
     "results": ("locked_blocks/results_block.tex",),
 }
+_SECTION_LLM_REASONING_ENV = "PAPER_GEN_SECTION_LLM_REASONING_EFFORT"
+_SECTION_LLM_MAX_TOKENS_ENV = "PAPER_GEN_SECTION_LLM_MAX_COMPLETION_TOKENS"
+_DEFAULT_SECTION_LLM_REASONING_EFFORT = "medium"
+_DEFAULT_SECTION_LLM_MAX_COMPLETION_TOKENS = 32_768
 
 
 class SectionWritingAgentError(RuntimeError):
@@ -198,15 +231,29 @@ class SectionWritingAgent:
         *,
         prompt_template: str | None = None,
         min_selected_coverage: float = 0.9,
+        event_sink: EventSink | None = None,
     ) -> None:
         self.llm_client = llm_client or _default_llm_client()
         self.prompt_template = prompt_template or _load_prompt_template()
         self.min_selected_coverage = min_selected_coverage
+        self.event_sink = event_sink
 
     def generate(self, inputs: SectionWritingInputs) -> SectionWritingResult:
-        prompt = self.build_prompt(inputs)
-        response = self.llm_client.complete(
-            [
+        required_sections = required_section_slugs(inputs)
+        self._emit(
+            "generate_start",
+            title=inputs.title,
+            language=inputs.language,
+            required_sections=required_sections,
+            selected_ref_count=len(inputs.selected_refs),
+            required_cite_count=len(inputs.required_cites),
+            locked_block_count=len(inputs.locked_blocks),
+            table_count=len(inputs.tables),
+        )
+        try:
+            prompt = self.build_prompt(inputs)
+            self._emit("prompt_built", prompt_length=len(prompt))
+            messages = [
                 LLMMessage(
                     role="system",
                     content=(
@@ -215,38 +262,79 @@ class SectionWritingAgent:
                     ),
                 ),
                 LLMMessage(role="user", content=prompt),
-            ],
-            temperature=0.25,
-            response_format={"type": "json_object"},
+            ]
+            response_format = {"type": "json_object"}
+            emit_llm_request(
+                self.event_sink,
+                "section_writing",
+                messages=messages,
+                temperature=0.25,
+                response_format=response_format,
+            )
+            started = now_counter()
+            try:
+                response = self.llm_client.complete(
+                    messages,
+                    temperature=0.25,
+                    response_format=response_format,
+                )
+            except Exception as exc:
+                emit_llm_failure(self.event_sink, "section_writing", started=started, error=exc)
+                raise
+            emit_llm_response(
+                self.event_sink,
+                "section_writing",
+                response,
+                duration_ms=elapsed_ms(started),
+            )
+            raw_sections = parse_sections_json(_response_text(response))
+            self._emit("parse_completed", raw_section_keys=sorted(raw_sections.keys()))
+            normalized = normalize_sections(raw_sections, required_sections)
+            _assert_no_private_identifiers(normalized, context="section-writing output")
+            _assert_no_private_source_identifiers(
+                normalized,
+                inputs.private_source_ids,
+                context="section-writing output",
+            )
+            _assert_no_private_source_placeholders(normalized, context="section-writing output")
+            _assert_no_raw_cites(normalized)
+            _assert_no_raw_metric_values(normalized)
+            used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
+            normalized = _repair_missing_locked_block_inputs(normalized, inputs)
+            _assert_locked_block_contract(normalized, inputs)
+            _assert_figure_table_contract(normalized, inputs)
+            rendered = _render_sections(normalized, inputs)
+            _assert_no_private_source_identifiers(
+                rendered,
+                inputs.private_source_ids,
+                context="rendered section-writing output",
+            )
+            _assert_no_private_source_placeholders(rendered, context="rendered section-writing output")
+        except Exception as exc:
+            self._emit(
+                "generate_failed",
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
+        self._emit(
+            "contract_checks_completed",
+            used_citation_count=len(used),
+            rendered_section_count=len(rendered),
         )
-        raw_sections = parse_sections_json(_response_text(response))
-        required_sections = required_section_slugs(inputs)
-        normalized = normalize_sections(raw_sections, required_sections)
-        _assert_no_private_identifiers(normalized, context="section-writing output")
-        _assert_no_private_source_identifiers(
-            normalized,
-            inputs.private_source_ids,
-            context="section-writing output",
+        self._emit(
+            "generate_completed",
+            section_keys=sorted(rendered),
+            used_citations=sorted(used),
         )
-        _assert_no_private_source_placeholders(normalized, context="section-writing output")
-        _assert_no_raw_cites(normalized)
-        _assert_no_raw_metric_values(normalized)
-        used = _assert_citation_contract(normalized, inputs, self.min_selected_coverage)
-        normalized = _repair_missing_locked_block_inputs(normalized, inputs)
-        _assert_locked_block_contract(normalized, inputs)
-        _assert_figure_table_contract(normalized, inputs)
-        rendered = _render_sections(normalized, inputs)
-        _assert_no_private_source_identifiers(
-            rendered,
-            inputs.private_source_ids,
-            context="rendered section-writing output",
-        )
-        _assert_no_private_source_placeholders(rendered, context="rendered section-writing output")
         return SectionWritingResult(
             sections=rendered,
             raw_sections=normalized,
             used_citations=tuple(sorted(used)),
         )
+
+    def _emit(self, event: str, **payload: Any) -> None:
+        emit_event(self.event_sink, event, **payload)
 
     def build_prompt(self, inputs: SectionWritingInputs) -> str:
         payload = _redact_private_source_identifiers(_prompt_payload(inputs), inputs.private_source_ids)
@@ -255,7 +343,18 @@ class SectionWritingAgent:
             inputs.private_source_ids,
             context="section-writing prompt payload",
         )
-        _assert_no_private_identifiers(payload, context="section-writing prompt payload")
+        _assert_no_private_identifiers(
+            _prompt_payload_private_phi_view(payload),
+            context="section-writing private prompt payload",
+        )
+        # Public citation metadata can contain institution-like strings in
+        # affiliations, venues, titles, or abstracts. Keep private inputs strict
+        # above, then allow those public reference names through this prompt.
+        _assert_no_private_identifiers(
+            payload,
+            context="section-writing prompt payload",
+            suppress_keys=("institution_names",),
+        )
         payload_json = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True)
         return self.prompt_template.replace("{{INPUT_PAYLOAD_JSON}}", payload_json)
 
@@ -424,14 +523,53 @@ def _prompt_payload(inputs: SectionWritingInputs) -> dict[str, Any]:
         "drafts_intro_rw_draft": _placeholder_safe_intro_rw(inputs.intro_rw_draft),
         "figures_manifest": inputs.figures_manifest,
         "citations": {
-            "selected_refs": list(inputs.selected_refs),
-            "required_cites": list(inputs.required_cites),
+            "selected_refs": _compact_reference_items(inputs.selected_refs),
+            "required_cites": _compact_reference_items(inputs.required_cites),
             "refs_bib": inputs.refs_bib,
         },
         "metric_placeholders": metrics,
         "locked_blocks": list(inputs.locked_blocks),
         "tables": list(inputs.tables),
     }
+
+
+def _compact_reference_items(items: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    return [_compact_reference_item(item) for item in items]
+
+
+def _compact_reference_item(item: Mapping[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for field_name in _REFERENCE_PROMPT_FIELDS:
+        value = item.get(field_name)
+        if value in (None, "", [], ()):
+            continue
+        if field_name == "authors" and isinstance(value, list | tuple):
+            compact[field_name] = [str(author) for author in value[:_MAX_REFERENCE_AUTHORS]]
+            if len(value) > _MAX_REFERENCE_AUTHORS:
+                compact["author_count"] = len(value)
+        elif field_name == "abstract" and isinstance(value, str):
+            compact[field_name] = _truncate_reference_text(value, _MAX_REFERENCE_ABSTRACT_CHARS)
+        else:
+            compact[field_name] = value
+    key = _ref_key(item)
+    if key:
+        compact.setdefault("key", key)
+    return compact
+
+
+def _truncate_reference_text(text: str, max_chars: int) -> str:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return f"{cleaned[:max_chars].rstrip()}..."
+
+
+def _prompt_payload_private_phi_view(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the private-input subset that must stay fully PHI-clean."""
+    private_view = dict(payload)
+    private_view.pop("citations", None)
+    private_view.pop("drafts_intro_rw_draft", None)
+    return private_view
 
 
 def _render_sections(sections: Mapping[str, str], inputs: SectionWritingInputs) -> dict[str, str]:
@@ -1109,7 +1247,12 @@ def _assert_no_private_source_placeholders(value: Any, *, context: str) -> None:
         raise SectionPhiLeakError(f"Private source placeholder(s) leaked into {context}: {examples}")
 
 
-def _assert_no_private_identifiers(value: Any, *, context: str) -> None:
+def _assert_no_private_identifiers(
+    value: Any,
+    *,
+    context: str,
+    suppress_keys: Sequence[str] = (),
+) -> None:
     scrubber = PhiScrubber()
     scrubber.observe(value)
     identifiers = scrubber.private_identifiers()
@@ -1119,7 +1262,7 @@ def _assert_no_private_identifiers(value: Any, *, context: str) -> None:
     leaked = {
         key: identifiers.get(key, [])
         for key in _PHI_HARD_FAIL_KEYS
-        if identifiers.get(key)
+        if key not in suppress_keys and identifiers.get(key)
     }
     if not leaked:
         return
@@ -1155,7 +1298,50 @@ def _load_prompt_template() -> str:
 def _default_llm_client() -> LLMClient:
     if _ci_should_disable_network_llm():
         return _NoNetworkSectionWritingLLMClient()
-    return OpenAICompatibleLLMClient()
+    config = _section_llm_config(LLMConfig.from_env())
+    fallback_config = (
+        _section_llm_config(LLMConfig.openrouter_from_env())
+        if config.provider == "vllm_internal"
+        else None
+    )
+    return OpenAICompatibleLLMClient(config, fallback_config=fallback_config)
+
+
+def _section_llm_config(config: LLMConfig | None) -> LLMConfig | None:
+    if config is None:
+        return None
+    updates: dict[str, Any] = {}
+    if config.supports_reasoning_effort:
+        updates["reasoning_effort"] = _section_reasoning_effort()
+    if config.supports_max_completion_tokens:
+        updates["max_completion_tokens"] = _section_max_completion_tokens(config.max_completion_tokens)
+    return replace(config, **updates) if updates else config
+
+
+def _section_reasoning_effort() -> str | None:
+    value = os.environ.get(_SECTION_LLM_REASONING_ENV, _DEFAULT_SECTION_LLM_REASONING_EFFORT)
+    cleaned = value.strip().lower()
+    if cleaned in {"", "none", "off", "false", "0"}:
+        return None
+    return cleaned
+
+
+def _section_max_completion_tokens(current: int | None) -> int | None:
+    value = os.environ.get(_SECTION_LLM_MAX_TOKENS_ENV)
+    if value is None:
+        return max(current or 0, _DEFAULT_SECTION_LLM_MAX_COMPLETION_TOKENS)
+    cleaned = value.strip().lower()
+    if cleaned in {"", "none", "off", "false", "0"}:
+        return None
+    try:
+        max_tokens = int(cleaned)
+    except ValueError as exc:
+        raise SectionWritingAgentError(
+            f"{_SECTION_LLM_MAX_TOKENS_ENV} must be an integer max token count"
+        ) from exc
+    if max_tokens <= 0:
+        raise SectionWritingAgentError(f"{_SECTION_LLM_MAX_TOKENS_ENV} must be positive")
+    return max_tokens
 
 
 _ci_should_disable_network_llm = _common.ci_should_disable_network_llm

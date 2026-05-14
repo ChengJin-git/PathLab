@@ -114,7 +114,7 @@ export function WorkspaceTabs({
         <CitationsTab paperId={paperId} />
       </Tabs.Content>
       <Tabs.Content value="validation" className="p-4 focus:outline-none sm:p-5">
-        <ValidationTab paperId={paperId} validationSummary={run.validation_summary ?? null} />
+        <ValidationTab paperId={paperId} run={run} validationSummary={run.validation_summary ?? null} />
       </Tabs.Content>
       <Tabs.Content value="pdf" className="p-4 focus:outline-none sm:p-5">
         <PdfPreviewTab

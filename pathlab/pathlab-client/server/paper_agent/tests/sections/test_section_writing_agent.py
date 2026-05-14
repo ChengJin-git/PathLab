@@ -13,6 +13,7 @@ from pathlab_paper_agent.agents.section_writing_agent import (
     parse_sections_json,
 )
 from pathlab_paper_agent.llm import LLMResponse
+from pathlab_paper_agent.llm.client import OpenAICompatibleLLMClient
 from pathlab_paper_agent.pipeline import create_dev_run
 from pathlab_paper_agent.renderers.citation_renderer import CitationRenderError, render_citation_placeholders
 from pathlab_paper_agent.schemas import CreatePaperRequest, PaperManifest, SourceTaskRef, TemplateId
@@ -140,6 +141,24 @@ def _sections_payload(*, metric_key: str = "main.metrics.test_accuracy") -> dict
     }
 
 
+def test_default_section_llm_client_uses_writing_sized_reasoning_budget(monkeypatch) -> None:
+    monkeypatch.setenv("PAPER_GEN_LLM_ALLOW_NETWORK_IN_TESTS", "1")
+    monkeypatch.setenv("PAPER_GEN_LLM_BASE_URL", "https://llm.example/v1")
+    monkeypatch.setenv("PAPER_GEN_LLM_API_KEY", "test-key")
+    monkeypatch.setenv("PAPER_GEN_LLM_MODEL", "gpt-5.5")
+    monkeypatch.setenv("PAPER_GEN_LLM_REASONING_EFFORT", "xhigh")
+    monkeypatch.setenv("PAPER_GEN_LLM_MAX_COMPLETION_TOKENS", "16384")
+    monkeypatch.delenv("PAPER_GEN_SECTION_LLM_REASONING_EFFORT", raising=False)
+    monkeypatch.delenv("PAPER_GEN_SECTION_LLM_MAX_COMPLETION_TOKENS", raising=False)
+    from pathlab_paper_agent.agents.section_writing_agent import _default_llm_client
+
+    client = _default_llm_client()
+
+    assert isinstance(client, OpenAICompatibleLLMClient)
+    assert client.config.reasoning_effort == "medium"
+    assert client.config.max_completion_tokens == 32768
+
+
 def _write_minimal_inputs(paths) -> None:
     selected, required = _refs()
     paths.outline_json.write_text(json.dumps(_outline()), encoding="utf-8")
@@ -261,6 +280,38 @@ async def test_section_agent_prompt_uses_user_selected_nature_guidelines(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_section_agent_allows_public_institution_names_in_citation_metadata(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_public_ref_institution", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    selected = json.loads((paths.citations_dir / "selected_refs.json").read_text(encoding="utf-8"))
+    selected["items"][0]["abstract"] = (
+        "A public citation abstract mentions a Tertiary Care Hospital in the published study metadata."
+        + (" Long public metadata." * 120)
+    )
+    (paths.citations_dir / "selected_refs.json").write_text(json.dumps(selected), encoding="utf-8")
+
+    prompt = SectionWritingAgent(MockLLM(_sections_payload())).build_prompt(
+        SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
+    )
+    payload = _payload_from_prompt(prompt)
+
+    assert "Tertiary Care Hospital" in payload["citations"]["selected_refs"][0]["abstract"]
+    assert len(payload["citations"]["selected_refs"][0]["abstract"]) < len(selected["items"][0]["abstract"])
+
+
+@pytest.mark.asyncio
+async def test_section_agent_still_rejects_private_institution_names_outside_citations(tmp_path) -> None:
+    _paper_id, paths = await create_dev_run(paper_id="paper_sections_private_institution", uploads_dir=tmp_path)
+    _write_minimal_inputs(paths)
+    paths.idea.write_text("This private run was performed at Tertiary Care Hospital.\n", encoding="utf-8")
+
+    with pytest.raises(SectionPhiLeakError, match="institution_names=1"):
+        SectionWritingAgent(MockLLM(_sections_payload())).build_prompt(
+            SectionWritingInputs.from_paths(paths, json.loads(paths.config.read_text(encoding="utf-8")))
+        )
+
+
+@pytest.mark.asyncio
 async def test_section_agent_renders_metric_and_citation_placeholders(tmp_path) -> None:
     _paper_id, paths = await create_dev_run(paper_id="paper_sections_render", uploads_dir=tmp_path)
     _write_minimal_inputs(paths)
@@ -351,6 +402,11 @@ async def test_sections_stage_writes_final_sections_and_registers_artifacts(tmp_
     assert "0.9123" in (paths.sections_dir / "results.tex").read_text(encoding="utf-8")
     assert (paths.intro_rw_draft_dir / "introduction.tex").read_text(encoding="utf-8").startswith("\\section{Introduction}")
     assert manifest.artifact_index["drafts/sections/results.tex"]["content_type"] == "text/x-tex"
+    assert manifest.artifact_index["logs/section_writing_log.private.json"]["visibility"] == "private_backend_only"
+    process_log = json.loads((paths.root / "logs/section_writing_log.private.json").read_text(encoding="utf-8"))
+    assert process_log["status"] == "completed"
+    assert any(event["event"] == "llm_request" for event in process_log["events"])
+    assert any(event["event"] == "generate_completed" for event in process_log["events"])
 
 
 @pytest.mark.asyncio

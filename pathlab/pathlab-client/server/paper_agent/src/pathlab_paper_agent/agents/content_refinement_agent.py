@@ -19,6 +19,15 @@ from pathlab_paper_agent.storage import PaperRunPaths  # noqa: E402
 from . import _common  # noqa: E402
 from ..evidence.phi import PhiScrubber  # noqa: E402
 from ..llm import LLMClient, LLMMessage, LLMResponse, OpenAICompatibleLLMClient  # noqa: E402
+from ..process_logging import (  # noqa: E402
+    EventSink,
+    elapsed_ms,
+    emit_event,
+    emit_llm_failure,
+    emit_llm_request,
+    emit_llm_response,
+    now_counter,
+)
 from ..renderers.citation_renderer import (  # noqa: E402
     CitationRenderError,
     extract_citation_placeholders,
@@ -185,15 +194,24 @@ class ContentRefinementAgent:
         *,
         critic_prompt_template: str | None = None,
         revise_prompt_template: str | None = None,
+        event_sink: EventSink | None = None,
     ) -> None:
         self.llm_client = llm_client or _default_llm_client()
         self.critic_prompt_template = critic_prompt_template or _load_prompt_template(_CRITIC_PROMPT_NAME)
         self.revise_prompt_template = revise_prompt_template or _load_prompt_template(_REVISE_PROMPT_NAME)
+        self.event_sink = event_sink
 
     def critique(self, inputs: RefinementInputs) -> CriticReview:
-        prompt = self.build_critic_prompt(inputs)
-        response = self.llm_client.complete(
-            [
+        self._emit(
+            "critique_start",
+            iteration=inputs.iteration,
+            section_count=len(inputs.sections),
+            validation_report_count=len(inputs.validation_reports),
+        )
+        try:
+            prompt = self.build_critic_prompt(inputs)
+            self._emit("critic_prompt_built", iteration=inputs.iteration, prompt_length=len(prompt))
+            messages = [
                 LLMMessage(
                     role="system",
                     content=(
@@ -201,16 +219,58 @@ class ContentRefinementAgent:
                     ),
                 ),
                 LLMMessage(role="user", content=prompt),
-            ],
-            temperature=0.2,
-            response_format={"type": "json_object"},
+            ]
+            response_format = {"type": "json_object"}
+            emit_llm_request(
+                self.event_sink,
+                "refinement_critic",
+                messages=messages,
+                temperature=0.2,
+                response_format=response_format,
+            )
+            started = now_counter()
+            try:
+                response = self.llm_client.complete(
+                    messages,
+                    temperature=0.2,
+                    response_format=response_format,
+                )
+            except Exception as exc:
+                emit_llm_failure(self.event_sink, "refinement_critic", started=started, error=exc)
+                raise
+            emit_llm_response(
+                self.event_sink,
+                "refinement_critic",
+                response,
+                duration_ms=elapsed_ms(started),
+            )
+            review = parse_critic_review(_response_text(response))
+        except Exception as exc:
+            self._emit(
+                "critique_failed",
+                iteration=inputs.iteration,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
+        self._emit(
+            "critique_completed",
+            iteration=inputs.iteration,
+            total=review.total,
+            revise_sections=list(review.revise_sections),
         )
-        return parse_critic_review(_response_text(response))
+        return review
 
     def revise(self, inputs: RefinementInputs, review: CriticReview) -> RevisionResult:
-        prompt = self.build_revise_prompt(inputs, review)
-        response = self.llm_client.complete(
-            [
+        self._emit(
+            "revise_start",
+            iteration=inputs.iteration,
+            requested_sections=list(review.revise_sections),
+        )
+        try:
+            prompt = self.build_revise_prompt(inputs, review)
+            self._emit("revise_prompt_built", iteration=inputs.iteration, prompt_length=len(prompt))
+            messages = [
                 LLMMessage(
                     role="system",
                     content=(
@@ -219,13 +279,49 @@ class ContentRefinementAgent:
                     ),
                 ),
                 LLMMessage(role="user", content=prompt),
-            ],
-            temperature=0.25,
-            response_format={"type": "json_object"},
+            ]
+            response_format = {"type": "json_object"}
+            emit_llm_request(
+                self.event_sink,
+                "refinement_revise",
+                messages=messages,
+                temperature=0.25,
+                response_format=response_format,
+            )
+            started = now_counter()
+            try:
+                response = self.llm_client.complete(
+                    messages,
+                    temperature=0.25,
+                    response_format=response_format,
+                )
+            except Exception as exc:
+                emit_llm_failure(self.event_sink, "refinement_revise", started=started, error=exc)
+                raise
+            emit_llm_response(
+                self.event_sink,
+                "refinement_revise",
+                response,
+                duration_ms=elapsed_ms(started),
+            )
+            raw_sections, worklog = parse_revision_json(_response_text(response))
+            rendered = render_revised_sections(raw_sections, inputs)
+        except Exception as exc:
+            self._emit(
+                "revise_failed",
+                iteration=inputs.iteration,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+            raise
+        result = RevisionResult(sections=rendered, raw_sections=raw_sections, worklog=worklog)
+        self._emit(
+            "revise_completed",
+            iteration=inputs.iteration,
+            changed_sections=sorted(result.sections),
+            raw_changed_sections=sorted(result.raw_sections),
         )
-        raw_sections, worklog = parse_revision_json(_response_text(response))
-        rendered = render_revised_sections(raw_sections, inputs)
-        return RevisionResult(sections=rendered, raw_sections=raw_sections, worklog=worklog)
+        return result
 
     def build_critic_prompt(self, inputs: RefinementInputs) -> str:
         payload = _safe_prompt_payload(_base_payload(inputs), inputs, context="refinement critic prompt payload")
@@ -248,6 +344,9 @@ class ContentRefinementAgent:
             context="refinement revise prompt payload",
         )
         return self.revise_prompt_template.replace("{{INPUT_PAYLOAD_JSON}}", _json_dumps(payload))
+
+    def _emit(self, event: str, **payload: Any) -> None:
+        emit_event(self.event_sink, event, **payload)
 
 
 class _NoNetworkContentRefinementLLMClient:

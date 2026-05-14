@@ -96,6 +96,62 @@ async def test_claim_guard_does_not_flag_negated_external_evidence_statement(tmp
 
 
 @pytest.mark.asyncio
+async def test_claim_guard_allows_external_validation_scope_statements(tmp_path):
+    _paper_id, paths = await create_dev_run(paper_id="paper_m10b_claim_external_scope", uploads_dir=tmp_path)
+    paths.ensure_dirs()
+    paths.evidence_lock_private.write_text(
+        json.dumps({"source_tasks": [{"role": "main"}], "external_validation": [], "metrics": {}}),
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "introduction.tex").write_text(
+        "Internal validation must be reported separately from multicenter or external validation.\n\n"
+        "Across medical AI, internal discrimination, external validation, and clinical utility "
+        "require separate evidence.\n\n"
+        "External-validation examples motivate explicit separation of development data from "
+        "independent test evidence.\n",
+        encoding="utf-8",
+    )
+
+    report = run_claim_guard(paths)
+
+    assert report.status == "pass"
+
+
+@pytest.mark.asyncio
+async def test_claim_guard_allows_external_validation_limitation_and_status_caption(tmp_path):
+    _paper_id, paths = await create_dev_run(paper_id="paper_m10b_claim_external_limitations", uploads_dir=tmp_path)
+    paths.ensure_dirs()
+    paths.evidence_lock_private.write_text(
+        json.dumps({"source_tasks": [{"role": "main"}], "external_validation": [], "metrics": {}}),
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "abstract.tex").write_text(
+        "External validation and prospective workflow evaluation remain necessary before clinical generalization.\n",
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "discussion.tex").write_text(
+        "Interpretability outputs and attention weights require pathologist review and external validation "
+        "before they can be treated as reliable evidence.\n\n"
+        "Small wording changes can otherwise imply unsupported external validation, endpoint transfer, "
+        "or clinical utility.\n",
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "results.tex").write_text(
+        "External validation is likewise unavailable for this run, so no external-cohort performance is reported.\n",
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "experiments.tex").write_text(
+        "\\caption{External validation evidence available for this study.}\n"
+        "\\input{tables/table_5_external_validation.tex}\n",
+        encoding="utf-8",
+    )
+
+    report = run_claim_guard(paths)
+
+    assert report.status == "pass"
+
+
+@pytest.mark.asyncio
 async def test_claim_guard_does_not_flag_negated_baseline_or_statistical_statements(tmp_path):
     _paper_id, paths = await create_dev_run(paper_id="paper_m10b_claim_negated_other", uploads_dir=tmp_path)
     paths.ensure_dirs()
@@ -317,3 +373,52 @@ async def test_validating_stage_writes_m10b_reports(tmp_path):
         assert f"validation/{name}.json" in manifest.artifact_index
     warnings = (paths.validation_dir / "warnings.md").read_text(encoding="utf-8")
     assert "All deterministic M10 guards passed." in warnings
+
+
+@pytest.mark.asyncio
+async def test_validating_stage_records_failures_without_blocking_refinement(tmp_path):
+    _paper_id, paths = await create_dev_run(paper_id="paper_m10b_validating_nonblocking", uploads_dir=tmp_path)
+    paths.ensure_dirs()
+    paths.evidence_lock_private.write_text(
+        json.dumps(
+            {
+                "source_tasks": [{"task_id": "main_task", "role": "main"}],
+                "external_validation": [],
+                "metrics": {"main.metrics.test_accuracy": {"formatted": "0.9123", "value": 0.9123, "role": "main"}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "results.tex").write_text(
+        "\\section{Results}\nExternal validation on an independent cohort supports deployment.\n",
+        encoding="utf-8",
+    )
+    manifest = PaperManifest.model_validate(json.loads(paths.manifest.read_text(encoding="utf-8")))
+
+    reports = run_validating(paths, manifest)
+
+    by_guard = {report.guard: report for report in reports}
+    assert by_guard["claim_guard"].status == "fail"
+    assert json.loads((paths.validation_dir / "claim_guard.json").read_text(encoding="utf-8"))["status"] == "fail"
+    assert "unsupported_external_validation_claim" in (paths.validation_dir / "warnings.md").read_text(
+        encoding="utf-8"
+    )
+    assert "validation/claim_guard.json" in manifest.artifact_index
+
+
+@pytest.mark.asyncio
+async def test_validating_stage_can_still_fail_fast_for_candidate_validation(tmp_path):
+    _paper_id, paths = await create_dev_run(paper_id="paper_m10b_validating_strict", uploads_dir=tmp_path)
+    paths.ensure_dirs()
+    paths.evidence_lock_private.write_text(
+        json.dumps({"source_tasks": [{"role": "main"}], "external_validation": [], "metrics": {}}),
+        encoding="utf-8",
+    )
+    (paths.sections_dir / "discussion.tex").write_text(
+        "External validation on an independent cohort supports deployment.\n",
+        encoding="utf-8",
+    )
+    manifest = PaperManifest.model_validate(json.loads(paths.manifest.read_text(encoding="utf-8")))
+
+    with pytest.raises(RuntimeError, match="validation guards failed: claim_guard"):
+        run_validating(paths, manifest, fail_on_error=True)

@@ -76,6 +76,7 @@ from pathlab_paper_agent.regenerate import (  # noqa: E402
     reject_regenerate,
     regenerate_section,
 )
+from pathlab_paper_agent.process_logging import append_pipeline_event  # noqa: E402
 from pathlab_paper_agent.scaffold import initialize_paper_run  # noqa: E402
 from pathlab_paper_agent.storage import (  # noqa: E402
     PaperRunPaths,
@@ -632,6 +633,17 @@ async def update_paper_outline(
             "message": "Outline approved by user.",
         }
     )
+    append_pipeline_event(
+        paths,
+        manifest,
+        "outline_approved",
+        stage=PaperRunStage.outlining.value,
+        status="approved",
+        started_at=now.isoformat(),
+        finished_at=now.isoformat(),
+        duration_ms=0,
+        message="Outline approved by user.",
+    )
     _save_manifest(paths, manifest)
     await PaperGenerationRunRepository.update(
         db,
@@ -656,6 +668,18 @@ async def update_paper_outline(
         manifest.status = PaperRunStatus.awaiting_outline_approval
         manifest.current_stage = PaperRunStage.outlining
         manifest.error_message = f"post-outline enqueue failed: {exc}"
+        failed_at = datetime.now(UTC)
+        append_pipeline_event(
+            paths,
+            manifest,
+            "outline_approval_enqueue_failed",
+            stage=PaperRunStage.outlining.value,
+            status="failed",
+            finished_at=failed_at.isoformat(),
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            message=manifest.error_message,
+        )
         _save_manifest(paths, manifest)
         await PaperGenerationRunRepository.update(
             db,

@@ -1,4 +1,4 @@
-import { CheckCircle2, Circle, Clock3, Loader2, XCircle } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Circle, Clock3, Loader2, XCircle } from 'lucide-react'
 import { Fragment, useEffect, useState } from 'react'
 import { cn } from '../../lib/utils'
 import type { PaperRunDetail, PaperRunStage, PaperStageLogEntry } from '../../api/papers'
@@ -9,7 +9,7 @@ interface StageChecklistProps {
   onSelectTab: (tab: string) => void
 }
 
-type RowState = 'completed' | 'running' | 'waiting' | 'failed' | 'pending'
+type RowState = 'completed' | 'running' | 'waiting' | 'failed' | 'warning' | 'pending'
 
 interface StageRowDefinition {
   id: string
@@ -33,6 +33,7 @@ const STAGE_ROWS: StageRowDefinition[] = [
 
 const ACTIVE_RUN_STATUSES = new Set(['pending', 'running'])
 const WAITING_STATUSES = new Set(['awaiting_outline_approval'])
+const LIVE_DURATION_DISPLAY_DELAY_MS = 1500
 
 function stageOrderIndex(stage: string | null | undefined): number {
   return STAGE_ROWS.findIndex((row) => row.stages.includes(stage as PaperRunStage))
@@ -42,23 +43,35 @@ function latestForRow(logs: PaperStageLogEntry[], row: StageRowDefinition): Pape
   return [...logs].reverse().find((entry) => row.stages.includes(entry.stage as PaperRunStage))
 }
 
+function hasValidationGuardFailures(run: PaperRunDetail): boolean {
+  return (run.validation_summary?.m10_guards ?? []).some(
+    (guard) => guard.status.toLowerCase() === 'fail' || guard.error_count > 0,
+  )
+}
+
 function timeMs(value: string | null | undefined): number | null {
   if (!value) return null
-  const parsed = Date.parse(value)
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  // Backend stage logs may serialize naive UTC datetimes. Treat missing timezone
+  // as UTC so Hong Kong browsers do not add an artificial +8h offset.
+  const normalized = /(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(trimmed) ? trimmed : `${trimmed}Z`
+  const parsed = Date.parse(normalized)
   return Number.isNaN(parsed) ? null : parsed
 }
 
 function stateForRow(run: PaperRunDetail, row: StageRowDefinition, index: number, latest?: PaperStageLogEntry): RowState {
   const currentInRow = row.stages.includes(run.current_stage)
+  const currentIndex = stageOrderIndex(run.current_stage)
   if (run.status === 'failed' && currentInRow) return 'failed'
   if (latest?.status === 'failed') return 'failed'
+  if (row.id === 'validating' && latest?.status === 'completed' && hasValidationGuardFailures(run)) return 'warning'
+  if (currentIndex > index || run.status === 'completed') return 'completed'
   if (latest?.status === 'running' || latest?.status === 'pending') return 'running'
   if (latest?.status && WAITING_STATUSES.has(latest.status)) return 'waiting'
   if (latest?.status === 'completed') return 'completed'
   if (currentInRow && WAITING_STATUSES.has(run.status)) return 'waiting'
   if (currentInRow && ACTIVE_RUN_STATUSES.has(run.status)) return 'running'
-  const currentIndex = stageOrderIndex(run.current_stage)
-  if (currentIndex > index || run.status === 'completed') return 'completed'
   return 'pending'
 }
 
@@ -73,12 +86,29 @@ function formatDuration(ms: number | null | undefined): string {
   return `${minutes}m ${rest}s`
 }
 
-function durationForState(state: RowState, latest: PaperStageLogEntry | undefined, nowMs: number): string {
+function durationMsForState(state: RowState, latest: PaperStageLogEntry | undefined, nowMs: number): number | null {
   if ((state === 'running' || state === 'waiting') && latest) {
     const startedMs = timeMs(latest.started_at) ?? timeMs(latest.ts)
-    if (startedMs !== null) return formatDuration(nowMs - startedMs)
+    if (startedMs !== null) return nowMs - startedMs
   }
-  return formatDuration(latest?.duration_ms)
+  return latest?.duration_ms ?? null
+}
+
+function visibleDurationMsForState(state: RowState, latest: PaperStageLogEntry | undefined, nowMs: number): number | null {
+  const durationMs = durationMsForState(state, latest, nowMs)
+  if (
+    (state === 'running' || state === 'waiting') &&
+    latest?.duration_ms == null &&
+    durationMs !== null &&
+    durationMs < LIVE_DURATION_DISPLAY_DELAY_MS
+  ) {
+    return null
+  }
+  return durationMs
+}
+
+function durationForState(state: RowState, latest: PaperStageLogEntry | undefined, nowMs: number): string {
+  return formatDuration(visibleDurationMsForState(state, latest, nowMs))
 }
 
 function statusIcon(state: RowState) {
@@ -86,6 +116,7 @@ function statusIcon(state: RowState) {
   if (state === 'running') return <Loader2 className="h-3.5 w-3.5 animate-spin" />
   if (state === 'waiting') return <Clock3 className="h-3.5 w-3.5" />
   if (state === 'failed') return <XCircle className="h-3.5 w-3.5" />
+  if (state === 'warning') return <AlertCircle className="h-3.5 w-3.5" />
   return <Circle className="h-3.5 w-3.5" />
 }
 
@@ -100,6 +131,8 @@ function pillClass(state: RowState, selected: boolean): string {
       return 'border-amber-200 bg-amber-50 text-amber-700'
     case 'failed':
       return 'border-red-200 bg-red-50 text-red-700'
+    case 'warning':
+      return 'border-amber-200 bg-amber-50 text-amber-800'
     default:
       return 'border-slate-200 bg-white text-slate-400'
   }
@@ -115,6 +148,8 @@ function connectorClass(prevState: RowState): string {
       return 'bg-amber-200'
     case 'failed':
       return 'bg-red-200'
+    case 'warning':
+      return 'bg-amber-200'
     default:
       return 'bg-slate-200'
   }
@@ -125,20 +160,27 @@ export function StageChecklist({ run, activeTab, onSelectTab }: StageChecklistPr
   const logs = run.stage_log ?? []
   const latestEntries = STAGE_ROWS.map((row) => latestForRow(logs, row))
   const states = STAGE_ROWS.map((row, index) => stateForRow(run, row, index, latestEntries[index]))
-  const hasRunningStage = states.includes('running')
+  const hasLiveStage = states.some((state) => state === 'running' || state === 'waiting')
   useEffect(() => {
-    if (!hasRunningStage) return
+    if (!hasLiveStage) return
     setNowMs(Date.now())
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [hasRunningStage])
+  }, [hasLiveStage])
 
-  const totalMs = logs.reduce<number>((sum, entry) => sum + (entry.duration_ms ?? 0), 0)
-  const totalLabel = totalMs > 0 ? formatDuration(totalMs) : ''
   const liveIndex = states.findIndex((state) => state === 'running' || state === 'waiting' || state === 'failed')
   const liveRow = liveIndex >= 0 ? STAGE_ROWS[liveIndex] : undefined
   const liveState = liveIndex >= 0 ? states[liveIndex] : undefined
-  const liveDuration = liveIndex >= 0 ? durationForState(states[liveIndex], latestEntries[liveIndex], nowMs) : ''
+  const liveDurationMs = liveIndex >= 0 ? visibleDurationMsForState(states[liveIndex], latestEntries[liveIndex], nowMs) : null
+  const liveDuration = formatDuration(liveDurationMs)
+  const completedTotalMs = logs.reduce<number>((sum, entry) => sum + (entry.duration_ms ?? 0), 0)
+  const liveLoggedMs = liveIndex >= 0 ? (latestEntries[liveIndex]?.duration_ms ?? 0) : 0
+  const liveExtraMs =
+    liveState === 'running' || liveState === 'waiting'
+      ? Math.max(0, (liveDurationMs ?? 0) - liveLoggedMs)
+      : 0
+  const totalMs = completedTotalMs + liveExtraMs
+  const totalLabel = totalMs > 0 ? formatDuration(totalMs) : ''
   const liveLabel = liveRow
     ? liveState === 'running'
       ? `Running: ${liveRow.label}`

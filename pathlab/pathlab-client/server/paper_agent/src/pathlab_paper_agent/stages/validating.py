@@ -47,7 +47,19 @@ def _register_report(manifest: PaperManifest, rel_path: str, label: str) -> None
     )
 
 
-def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
+def run(
+    paths: PaperRunPaths,
+    manifest: PaperManifest,
+    *,
+    fail_on_error: bool = False,
+) -> list[GuardReport]:
+    """Run guards and persist reports.
+
+    Guard failures are correctable draft issues, so the main paper pipeline
+    must continue into the refinement stage by default. Callers that validate a
+    proposed replacement candidate (for example section regeneration) can opt
+    back into fail-fast behaviour with ``fail_on_error=True``.
+    """
     reports = [
         run_metric_guard(paths),
         run_identifier_guard(paths),
@@ -79,5 +91,6 @@ def run(paths: PaperRunPaths, manifest: PaperManifest) -> None:
     )
 
     failed = [report.guard for report in reports if report.status == "fail"]
-    if failed:
+    if failed and fail_on_error:
         raise RuntimeError(f"validation guards failed: {', '.join(failed)}")
+    return reports

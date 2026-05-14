@@ -159,6 +159,27 @@ def test_bibtex_renderer_maps_entry_types_and_preserves_title_case() -> None:
     assert r"\{MSI\}" not in bibtex
 
 
+def test_bibtex_renderer_normalizes_unicode_for_classic_bibtex() -> None:
+    refs = (
+        CitationReference(
+            key="Unicode2024",
+            title="MSI\u2013CRC \u201cstudy\u201d with \u03b2-catenin",
+            authors=("Pa\u00efvi Peltom\u00e4ki", "Miguel A. Rodr\u0131\u0301guez-Bigas"),
+            year=2024,
+            venue="Journal of Pathology",
+            source="pubmed",
+        ),
+    )
+
+    bibtex = generate_bibtex(refs)
+
+    assert all(ord(char) < 128 for char in bibtex)
+    assert "Paivi Peltomaki" in bibtex
+    assert "Rodriguez-Bigas" in bibtex
+    assert "{MSI}--{CRC}" in bibtex
+    assert "beta-catenin" in bibtex
+
+
 def test_bibtex_renderer_protects_plural_acronyms() -> None:
     """Plurals like WSIs / CNNs / AUCs should be wrapped in the same brace
     as the singular acronym; substrings inside longer words must NOT match."""

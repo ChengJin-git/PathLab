@@ -31,6 +31,13 @@ function cacheBustedUrl(url: string, key: number): string {
   return `${url}${separator}v=${key}`
 }
 
+function artifactUnavailable(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  if (error.isNotFound()) return true
+  const detail = error.details || error.message
+  return error.status === 403 && detail.includes('Artifact is not registered public')
+}
+
 export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded }: PdfPreviewTabProps) {
   const [, setSearchParams] = useSearchParams()
   const queryClient = useQueryClient()
@@ -47,6 +54,13 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
   const template = run.selected_templates[0] ?? 'miccai'
   const pdfPath = `final/${template}/main.pdf`
   const bundlePath = `exports/${template}_bundle.zip`
+  const pdfArtifact = (run.artifacts ?? []).find((artifact) => artifact.path === pdfPath)
+  const isPdfPublished = Boolean(
+    pdfArtifact &&
+      pdfArtifact.visibility === 'public' &&
+      pdfArtifact.downloadable &&
+      ['ready', 'generated', 'completed'].includes(pdfArtifact.status),
+  )
   const pdfUrl = cacheBustedUrl(getPaperFileUrl(paperId, pdfPath), pdfRefreshKey)
 
   const sectionsCacheQuery = useQuery({
@@ -77,6 +91,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
   const pdfQuery = useQuery({
     queryKey: ['paper-file', paperId, pdfPath, 'exists', pdfRefreshKey],
     queryFn: () => getPaperFileBlob(paperId, pdfPath),
+    enabled: isPdfPublished,
     retry: false,
   })
 
@@ -84,7 +99,7 @@ export function PdfPreviewTab({ paperId, run, pdfRefreshKey, onPdfRefreshNeeded 
     mutationFn: () => downloadPaperExport(paperId, template),
   })
 
-  const isMissing = pdfQuery.error instanceof ApiError && pdfQuery.error.isNotFound()
+  const isMissing = !isPdfPublished || artifactUnavailable(pdfQuery.error)
 
   useEffect(() => {
     setSourceSection((current) =>
