@@ -2,6 +2,7 @@ import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import UploadPage from '../../../src/renderer/src/pages/UploadPage'
@@ -28,6 +29,9 @@ describe('UploadPage', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
+    addUploadTaskMock.mockReset()
+    toastErrorMock.mockReset()
+    toastWarningMock.mockReset()
 
     vi.spyOn(backgroundTaskModule, 'useBackgroundTask').mockReturnValue({
       addUploadTask: addUploadTaskMock,
@@ -180,5 +184,73 @@ describe('UploadPage', () => {
     })
     expect(screen.getByText('case-b.svs')).toBeInTheDocument()
     expect(container).toBeTruthy()
+  })
+
+  it('waits for upload task creation before warning and leaving the page', async () => {
+    let resolveAddUploadTask: ((taskId: string) => void) | undefined
+    addUploadTaskMock.mockReturnValueOnce(new Promise<string>(resolve => {
+      resolveAddUploadTask = resolve
+    }))
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'Upload Dataset',
+                uploadMode: 'classification',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    const dropZoneLabel = await screen.findByText('uploadPage.dropFilesHere')
+    const dropZone = dropZoneLabel.closest('div')
+    expect(dropZone).not.toBeNull()
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+      items: [
+        {
+          key: 'case-a',
+          name: 'case-a.png',
+          file: new File(['data'], 'case-a.png', { type: 'image/png' }),
+          type: 'standard',
+        },
+      ],
+      orphanFolders: [],
+      orphanDtFiles: new Map(),
+      unsupportedFileNames: [],
+      jsonFiles: [],
+    })
+
+    fireEvent.drop(dropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'case-a.png' }) }] },
+    })
+
+    await screen.findByText('case-a.png')
+    await userEvent.type(screen.getByPlaceholderText('uploadPage.enterLabel'), 'tumor')
+    await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+    await waitFor(() => expect(addUploadTaskMock).toHaveBeenCalledTimes(1))
+    expect(toastWarningMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      resolveAddUploadTask?.('upload_task_1')
+    })
+
+    await waitFor(() => expect(toastWarningMock).toHaveBeenCalledWith('uploadPage.uploadingWarning', 8000))
   })
 })

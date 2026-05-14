@@ -773,7 +773,7 @@ export default function RegisterPage() {
 
     try {
       // Add to background task queue
-      addUploadTask(uploadFiles, {
+      await addUploadTask(uploadFiles, {
         onComplete: () => {
           // Optionally refresh WSI list when complete
         }
