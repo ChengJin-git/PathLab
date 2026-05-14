@@ -306,6 +306,53 @@ async def test_worker_admits_wsi_training_before_feature_extraction_stage(fresh_
 
 
 @pytest.mark.asyncio
+async def test_worker_admits_wsi_external_validation_before_feature_extraction(fresh_queue):
+    """WSI extval should not use feature-extraction peak VRAM for queue admission."""
+    task_queue = _task_queue_module()
+    TaskType = task_queue.TaskType
+
+    queue = fresh_queue
+    queue.max_concurrent = 1
+    queue.min_vram_mb = 2000.0
+    task_started = asyncio.Event()
+
+    async def _wsi_extval(**_kwargs):
+        task_started.set()
+        await asyncio.sleep(0.01)
+
+    with (
+        patch(
+            "backend.common.gpu_utils.get_all_gpu_info",
+            return_value=[
+                {
+                    "index": 0,
+                    "name": "gpu0",
+                    "allocated_mb": 0.0,
+                    "free_mb": 24000.0,
+                    "total_mb": 24576.0,
+                }
+            ],
+        ),
+        patch.object(queue, "_ensure_task_failed", new_callable=AsyncMock) as ensure_failed,
+    ):
+        await queue.start()
+        await queue.submit(
+            "wsi_extval",
+            TaskType.EXTERNAL_VALIDATION,
+            _wsi_extval,
+            model_data_type="wsi",
+            model_task_type="wsi_classification",
+            preprocessing_config={"feature_extractor": "conch", "feature_batch_size": 64},
+        )
+
+        await asyncio.wait_for(task_started.wait(), timeout=5.0)
+
+    await queue.stop()
+
+    ensure_failed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_acquire_gpu_stage_reselects_global_gpu_between_wsi_stages(fresh_queue):
     """Each WSI GPU stage gets a fresh global GPU selection."""
     queue = fresh_queue

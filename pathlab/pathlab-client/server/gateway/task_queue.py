@@ -277,9 +277,9 @@ class TaskQueueManager:
         if not isinstance(model_config, dict):
             model_config = {}
 
-        if (
-            queued_task.task_type == TaskType.TRAINING
-            and self._uses_wsi_stage_vram(kwargs)
+        if self._uses_wsi_stage_vram(kwargs) and queued_task.task_type in (
+            TaskType.TRAINING,
+            TaskType.EXTERNAL_VALIDATION,
         ):
             return float(self.min_vram_mb)
 
@@ -299,13 +299,15 @@ class TaskQueueManager:
     def _uses_wsi_stage_vram(self, kwargs: Dict[str, Any]) -> bool:
         if str(kwargs.get("data_type") or "").strip().lower() == "wsi":
             return True
+        if str(kwargs.get("model_data_type") or "").strip().lower() == "wsi":
+            return True
 
-        training_task_type = kwargs.get("training_task_type")
-        if not isinstance(training_task_type, str) or not training_task_type.strip():
+        task_type = kwargs.get("training_task_type") or kwargs.get("model_task_type")
+        if not isinstance(task_type, str) or not task_type.strip():
             return False
         try:
             task_metadata = import_module("backend.ai.task_taxonomy").get_task_metadata(
-                training_task_type.strip().lower()
+                task_type.strip().lower()
             )
         except Exception:
             return False
