@@ -229,6 +229,8 @@ export default function RegisterPage() {
 
   // Pagination State
   const [currentPage, setCurrentPage] = useState(1)
+  const [fileFilter, setFileFilter] = useState<'all' | 'missing-label'>('all')
+  const [highlightedItemKey, setHighlightedItemKey] = useState<string | null>(null)
   const itemsPerPage = 10
 
   // Batch metadata state (temporary for the modal)
@@ -242,12 +244,23 @@ export default function RegisterPage() {
   }
 
   const tableContainerRef = useRef<HTMLDivElement>(null)
+  const labelInputRefs = useRef<Map<string, HTMLInputElement | null>>(new Map())
 
-  const totalPages = Math.ceil(localItems.length / itemsPerPage)
+  const missingLabelItems = useMemo(() => {
+    if (uploadMode !== 'classification') return []
+    return localItems.filter(item => {
+      const meta = localMetadata.get(item.key) || { ...defaultMetadata }
+      return !meta.label.trim()
+    })
+  }, [localItems, localMetadata, uploadMode])
+  const displayedItems = fileFilter === 'missing-label' ? missingLabelItems : localItems
+  const totalPages = Math.ceil(displayedItems.length / itemsPerPage)
   const paginatedItems = useMemo(() => {
     const start = (currentPage - 1) * itemsPerPage
-    return localItems.slice(start, start + itemsPerPage)
-  }, [localItems, currentPage, itemsPerPage])
+    return displayedItems.slice(start, start + itemsPerPage)
+  }, [displayedItems, currentPage, itemsPerPage])
+  const showMissingLabelAlert = uploadMode === 'classification' && showValidation && missingLabelItems.length > 0
+  const showMissingLabelChips = missingLabelItems.length <= 5
 
   useEffect(() => {
     if (currentPage > totalPages && totalPages > 0) {
@@ -256,6 +269,17 @@ export default function RegisterPage() {
       setCurrentPage(1)
     }
   }, [totalPages, currentPage])
+
+  useEffect(() => {
+    if (fileFilter === 'missing-label' && missingLabelItems.length === 0) {
+      setFileFilter('all')
+    }
+  }, [fileFilter, missingLabelItems.length])
+
+  useEffect(() => {
+    if (!highlightedItemKey) return
+    labelInputRefs.current.get(highlightedItemKey)?.focus()
+  }, [highlightedItemKey, paginatedItems])
 
   useEffect(() => {
     if (uploadMode !== 'segmentation') {
@@ -576,6 +600,20 @@ export default function RegisterPage() {
     setSelectedItems(new Set())
   }
 
+  const jumpToMissingLabelItem = (target: LocalItem) => {
+    setFileFilter('all')
+    const targetIndex = localItems.findIndex(item => item.key === target.key)
+    if (targetIndex >= 0) {
+      setCurrentPage(Math.floor(targetIndex / itemsPerPage) + 1)
+    }
+    setHighlightedItemKey(target.key)
+  }
+
+  const toggleMissingLabelFilter = () => {
+    setFileFilter(current => current === 'missing-label' ? 'all' : 'missing-label')
+    setCurrentPage(1)
+  }
+
   // --- Bulk Edit Logic ---
 
   const handleApplyBulkEdit = () => {
@@ -704,14 +742,7 @@ export default function RegisterPage() {
     if (uploadMode === 'classification') {
       const missingLabels = itemsWithMeta.filter(({ finalMeta }) => !finalMeta.label?.toString().trim())
       if (missingLabels.length > 0) {
-        // Validation failed - we rely on the UI to show red borders
-        // But UI only knows localMetadata.
-        // If CSV provided labels but some are still missing, we block.
-        // If NO CSV, we obviously block.
-        // We set error message to help user
-        if (csvMetadataMap.size > 0) {
-          setSubmitError(t('uploadPage.validationMissingLabels', { count: missingLabels.length }))
-        }
+        setSubmitError(t('uploadPage.validationMissingLabels', { count: missingLabels.length }))
         return
       }
     } else if (uploadMode === 'survival') {
@@ -1379,6 +1410,7 @@ export default function RegisterPage() {
                       {paginatedItems.map(item => {
                         const meta = localMetadata.get(item.key) || { ...defaultMetadata }
                         const isSelected = selectedItems.has(item.key)
+                        const isHighlighted = highlightedItemKey === item.key
                         // Validation based on mode
                         const hasError = showValidation && (
                           uploadMode === 'classification'
@@ -1389,7 +1421,11 @@ export default function RegisterPage() {
                         )
 
                         return (
-                          <tr key={item.key} className={`group hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/30' : ''}`}>
+                          <tr
+                            key={item.key}
+                            data-testid={`row-${item.name}`}
+                            className={`group transition-colors ${isHighlighted ? 'bg-red-50' : isSelected ? 'bg-blue-50/30' : 'hover:bg-slate-50'}`}
+                          >
                             <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                               <Checkbox
                                 checked={isSelected}
@@ -1418,10 +1454,13 @@ export default function RegisterPage() {
                             {/* Classification: Label input | Survival: Event Time & Status inputs | Segmentation: no extra required fields */}
                             {uploadMode === 'classification' ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
-                                <input
-                                  className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-blue-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
-                                  placeholder={t('uploadPage.enterLabel')}
-                                  value={meta.label}
+                                 <input
+                                  ref={node => {
+                                    labelInputRefs.current.set(item.key, node)
+                                  }}
+                                   className={`w-full px-2 py-1.5 text-sm border rounded-lg hover:border-blue-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 outline-none transition-all ${hasError ? 'border-red-500 bg-red-50' : 'border-slate-100 bg-slate-50/50 hover:bg-white focus:bg-white'}`}
+                                   placeholder={t('uploadPage.enterLabel')}
+                                   value={meta.label}
                                   onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
                                 />
                               </td>
@@ -1508,6 +1547,56 @@ export default function RegisterPage() {
                   </div>
                 )}
               </Card>
+
+              {showMissingLabelAlert && (
+                <div
+                  role="alert"
+                  className="mx-2 sm:mx-0 mb-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800 shadow-sm"
+                >
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-600" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold">
+                          {t('uploadPage.missingLabelSummary', { count: missingLabelItems.length })}
+                        </p>
+                        <p className="mt-1 text-xs text-red-700">
+                          {showMissingLabelChips
+                            ? t('uploadPage.missingLabelClickHint')
+                            : t('uploadPage.missingLabelFilterHint')}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {showMissingLabelChips ? (
+                        missingLabelItems.map(item => (
+                          <button
+                            key={item.key}
+                            type="button"
+                            onClick={() => jumpToMissingLabelItem(item)}
+                            className="max-w-[180px] cursor-pointer truncate rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-semibold text-red-700 transition-colors hover:border-red-300 hover:bg-red-100 focus:outline-none focus:ring-4 focus:ring-red-500/20"
+                            title={item.name}
+                          >
+                            {item.name}
+                          </button>
+                        ))
+                      ) : (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={toggleMissingLabelFilter}
+                          className="h-8 border-red-200 bg-white text-xs font-semibold text-red-700 hover:bg-red-100"
+                        >
+                          {fileFilter === 'missing-label'
+                            ? t('uploadPage.showAllFiles')
+                            : t('uploadPage.showOnlyMissingLabels')}
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Dataset Metadata Configuration - metadata update via File */}
               <Card className="flex-none p-3 sm:p-4 mb-2 transition-all mx-2 sm:mx-0">
@@ -1666,6 +1755,7 @@ export default function RegisterPage() {
                           className="h-8 w-8 hover:bg-slate-50 shrink-0"
                           onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                           disabled={currentPage === 1}
+                          aria-label={t('uploadPage.previousPage')}
                         >
                           <ChevronLeft className="h-4 w-4 text-slate-600" />
                         </Button>
@@ -1678,6 +1768,7 @@ export default function RegisterPage() {
                           className="h-8 w-8 hover:bg-slate-50 shrink-0"
                           onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                           disabled={currentPage === totalPages}
+                          aria-label={t('uploadPage.nextPage')}
                         >
                           <ChevronRight className="h-4 w-4 text-slate-600" />
                         </Button>

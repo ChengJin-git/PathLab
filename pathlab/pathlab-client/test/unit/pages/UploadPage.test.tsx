@@ -1,7 +1,7 @@
 import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -17,7 +17,10 @@ vi.mock('react-i18next', async importOriginal => {
   return {
     ...actual,
     useTranslation: () => ({
-      t: (key: string) => key,
+      t: (key: string, values?: Record<string, unknown>) => {
+        if (!values) return key
+        return `${key} ${Object.values(values).join(' / ')}`
+      },
     }),
   }
 })
@@ -322,5 +325,150 @@ describe('UploadPage', () => {
 
     const totalChecked = calls.reduce((sum, [filenames]) => sum + (filenames as string[]).length, 0)
     expect(totalChecked).toBe(totalFiles)
+  })
+
+  describe('missing-label navigation UX', () => {
+    const renderUploadPage = async (items: uploadModule.LocalItem[]) => {
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      })
+
+      vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+        items,
+        orphanFolders: [],
+        orphanDtFiles: new Map(),
+        unsupportedFileNames: [],
+        jsonFiles: [],
+      })
+
+      render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter
+            initialEntries={[
+              {
+                pathname: '/register',
+                state: {
+                  datasetName: 'Missing Label Dataset',
+                  uploadMode: 'classification',
+                },
+              },
+            ]}
+          >
+            <UploadPage />
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+
+      const dropZoneLabel = await screen.findByText('uploadPage.dropFilesHere')
+      const dropZone = dropZoneLabel.closest('div')
+      expect(dropZone).not.toBeNull()
+
+      fireEvent.drop(dropZone as HTMLElement, {
+        preventDefault: vi.fn(),
+        dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'dummy.png' }) }] },
+      })
+
+      await waitFor(() => expect(screen.queryByText('uploadPage.dropFilesHere')).not.toBeInTheDocument())
+    }
+
+    it('shows clickable filename chips when a small number of files are missing labels', async () => {
+      const items: uploadModule.LocalItem[] = [
+        { key: 'a', name: 'file-a.png', file: new File(['a'], 'file-a.png'), type: 'standard' },
+        { key: 'b', name: 'file-b.png', file: new File(['b'], 'file-b.png'), type: 'standard' },
+        { key: 'c', name: 'file-c.png', file: new File(['c'], 'file-c.png'), type: 'standard' },
+      ]
+
+      await renderUploadPage(items)
+
+      await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+
+      expect(screen.getByRole('button', { name: 'file-a.png' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'file-b.png' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'file-c.png' })).toBeInTheDocument()
+    })
+
+    it('clicking a missing-label chip jumps to the correct page, highlights the row, and focuses the label input', async () => {
+      const items: uploadModule.LocalItem[] = Array.from({ length: 12 }, (_, i) => ({
+        key: `key-${i}`,
+        name: `file-${String(i).padStart(2, '0')}.png`,
+        file: new File([String(i)], `file-${String(i).padStart(2, '0')}.png`),
+        type: 'standard',
+      }))
+
+      await renderUploadPage(items)
+
+      for (const input of screen.getAllByPlaceholderText('uploadPage.enterLabel')) {
+        await userEvent.type(input, 'tumor')
+      }
+
+      await userEvent.click(screen.getByRole('button', { name: 'uploadPage.nextPage' }))
+      const secondPageInputs = screen.getAllByPlaceholderText('uploadPage.enterLabel')
+      await userEvent.type(secondPageInputs[1], 'tumor')
+
+      await userEvent.click(screen.getByRole('button', { name: 'uploadPage.previousPage' }))
+
+      await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+
+      const targetChip = screen.getByRole('button', { name: 'file-10.png' })
+      await userEvent.click(targetChip)
+
+      await waitFor(() => {
+        expect(screen.getByText(/uploadPage\.pageIndicator/)).toHaveTextContent('2 / 2')
+      })
+
+      const highlightedRow = screen.getByTestId('row-file-10.png')
+      expect(highlightedRow).toHaveClass('bg-red-50')
+
+      const labelInput = within(highlightedRow).getByPlaceholderText('uploadPage.enterLabel')
+      expect(labelInput).toHaveFocus()
+    })
+
+    it('shows summary with filter toggle when many files are missing labels', async () => {
+      const items: uploadModule.LocalItem[] = Array.from({ length: 18 }, (_, i) => ({
+        key: `key-${i}`,
+        name: `file-${i}.png`,
+        file: new File([String(i)], `file-${i}.png`),
+        type: 'standard',
+      }))
+
+      await renderUploadPage(items)
+
+      for (const input of screen.getAllByPlaceholderText('uploadPage.enterLabel')) {
+        await userEvent.type(input, 'tumor')
+      }
+
+      await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+
+      expect(screen.queryByRole('button', { name: 'file-0.png' })).not.toBeInTheDocument()
+      expect(screen.getByText(/uploadPage\.missingLabelSummary/)).toBeInTheDocument()
+
+      const toggleBtn = screen.getByRole('button', { name: /uploadPage\.showOnlyMissingLabels/ })
+      await userEvent.click(toggleBtn)
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('row')).toHaveLength(8 + 1)
+      })
+      expect(screen.queryByText('file-0.png')).not.toBeInTheDocument()
+      expect(screen.getByText('file-10.png')).toBeInTheDocument()
+
+      const showAllBtn = screen.getByRole('button', { name: /uploadPage\.showAllFiles/ })
+      await userEvent.click(showAllBtn)
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('row')).toHaveLength(10 + 1)
+      })
+    })
   })
 })
