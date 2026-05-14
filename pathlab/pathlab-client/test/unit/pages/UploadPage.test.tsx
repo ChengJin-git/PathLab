@@ -259,6 +259,126 @@ describe('UploadPage', () => {
     await waitFor(() => expect(toastWarningMock).toHaveBeenCalledWith('uploadPage.uploadingWarning', 8000))
   })
 
+  it('resolves new patch classification uploads to the patch canonical task type', async () => {
+    addUploadTaskMock.mockResolvedValueOnce('upload_task_patch')
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'Patch Classification Dataset',
+                uploadMode: 'classification',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+      items: [
+        {
+          key: 'patch-a',
+          name: 'patch-a.png',
+          file: new File(['data'], 'patch-a.png', { type: 'image/png' }),
+          type: 'standard',
+        },
+      ],
+      orphanFolders: [],
+      orphanDtFiles: new Map(),
+      unsupportedFileNames: [],
+      jsonFiles: [],
+    })
+
+    const dropZoneLabel = await screen.findByText('uploadPage.dropFilesHere')
+    const dropZone = dropZoneLabel.closest('div')
+    expect(dropZone).not.toBeNull()
+
+    fireEvent.drop(dropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'patch-a.png' }) }] },
+    })
+
+    await screen.findByText('patch-a.png')
+    await userEvent.type(screen.getByPlaceholderText('uploadPage.enterLabel'), 'tumor')
+    await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+    await waitFor(() => expect(addUploadTaskMock).toHaveBeenCalledTimes(1))
+    const [files] = addUploadTaskMock.mock.calls[0]
+    expect(files[0].metadata.task_type).toBe('patch_classification')
+  })
+
+  it('resolves new WSI classification uploads to the WSI canonical task type', async () => {
+    addUploadTaskMock.mockResolvedValueOnce('upload_task_wsi')
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'WSI Classification Dataset',
+                uploadMode: 'classification',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+      items: [
+        {
+          key: 'slide-a',
+          name: 'slide-a.svs',
+          file: new File(['data'], 'slide-a.svs', { type: 'image/tiff' }),
+          type: 'standard',
+        },
+      ],
+      orphanFolders: [],
+      orphanDtFiles: new Map(),
+      unsupportedFileNames: [],
+      jsonFiles: [],
+    })
+
+    const dropZoneLabel = await screen.findByText('uploadPage.dropFilesHere')
+    const dropZone = dropZoneLabel.closest('div')
+    expect(dropZone).not.toBeNull()
+
+    fireEvent.drop(dropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'slide-a.svs' }) }] },
+    })
+
+    await screen.findByText('slide-a.svs')
+    await userEvent.type(screen.getByPlaceholderText('uploadPage.enterLabel'), 'tumor')
+    await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+    await waitFor(() => expect(addUploadTaskMock).toHaveBeenCalledTimes(1))
+    const [files] = addUploadTaskMock.mock.calls[0]
+    expect(files[0].metadata.task_type).toBe('wsi_classification')
+  })
+
   it('batches duplicate filename checks into chunks no larger than the batch size', async () => {
     const checkDuplicateFilenamesSpy = vi.spyOn(apiModule, 'checkDuplicateFilenames')
     checkDuplicateFilenamesSpy.mockResolvedValue({ duplicates: [], new: [] })
@@ -373,6 +493,72 @@ describe('UploadPage', () => {
       expect(screen.getByText('uploadPage.appendingData')).toBeInTheDocument()
     })
     expect(updateDatasetSourceSpy).not.toHaveBeenCalled()
+  })
+
+  it('accepts JSON-only drops when appending to an existing canonical segmentation dataset', async () => {
+    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-jiangxi',
+          dataset_name: 'jiangxi',
+          user_id: 'user-1',
+          source_organ: 'Liver',
+          file_count: 4,
+          total_size: 2048,
+          data_type: 'patch',
+          task_type: 'patch_segmentation',
+          aggregation_level: 'file',
+        },
+      ],
+      total: 1,
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+      items: [],
+      orphanFolders: [],
+      orphanDtFiles: new Map(),
+      unsupportedFileNames: [],
+      jsonFiles: [new File(['{"annotations":[]}'], 'tile-a.json', { type: 'application/json' })],
+    })
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'jiangxi',
+                datasetId: 'dataset-jiangxi',
+                uploadMode: 'patch_segmentation',
+                dataLevel: 'file',
+              },
+            },
+          ]}
+        >
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await screen.findByText('uploadPage.appendingData')
+    const table = await screen.findByRole('table')
+    const tableDropZone = table.parentElement
+    expect(tableDropZone).not.toBeNull()
+
+    fireEvent.drop(tableDropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isDirectory: true, name: 'labels' }) }] },
+    })
+
+    expect(await screen.findByText('uploadPage.jsonOnlyAppendTitle')).toBeInTheDocument()
+    expect(screen.getByText(/uploadPage\.jsonOnlyAppendDesc 1/)).toBeInTheDocument()
   })
 
   describe('missing-label navigation UX', () => {

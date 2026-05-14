@@ -42,7 +42,7 @@ export const DUPLICATE_CHECK_BATCH_SIZE = 1000
 import { ApiError } from '../api/client'
 import { useToast } from '../contexts/ToastContext'
 import { ALL_EXTENSIONS, PATCH_EXTENSIONS, TIF_EXTENSIONS, isSupportedName, isTmapDataFile, getBaseName, getFilePath } from '../constants/fileTypes'
-import { resolveUploadTaskType } from '../constants/training'
+import { getTaskFamily, resolveUploadTaskType, type TaskFamily } from '../constants/training'
 import { parseCsvMetadata } from '../lib/csvImporter'
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../lib/segmentationUploadUtils'
 import { organSources } from '../constants/wsi'
@@ -68,6 +68,16 @@ const pickResolvedMetadataValue = (uiValue: unknown, csvValue: unknown) => {
   return uiText.trim() ? uiText : csvValue
 }
 
+const getUploadModeFamily = (uploadMode: UploadMode): TaskFamily | null => {
+  return getTaskFamily(uploadMode) ?? (['classification', 'survival', 'segmentation'].includes(uploadMode) ? uploadMode as TaskFamily : null)
+}
+
+const isClassificationUploadMode = (uploadMode: UploadMode) => getUploadModeFamily(uploadMode) === 'classification'
+const isSurvivalUploadMode = (uploadMode: UploadMode) => getUploadModeFamily(uploadMode) === 'survival'
+const isSegmentationUploadMode = (uploadMode: UploadMode) => {
+  return getUploadModeFamily(uploadMode) === 'segmentation'
+}
+
 const resolveItemMetadata = (
   item: LocalItem,
   uiMetadata: FileMetadata | undefined,
@@ -77,7 +87,7 @@ const resolveItemMetadata = (
   const csvMeta = getCsvMetadataForItem(item, csvMetadataMap)
 
   return {
-    label: uploadMode === 'segmentation' ? undefined : pickResolvedMetadataValue(uiMetadata?.label, csvMeta.label),
+    label: isSegmentationUploadMode(uploadMode) ? undefined : pickResolvedMetadataValue(uiMetadata?.label, csvMeta.label),
     case_id: pickResolvedMetadataValue(uiMetadata?.case_id, csvMeta.case_id),
     age: pickResolvedMetadataValue(uiMetadata?.age, csvMeta.age),
     gender: pickResolvedMetadataValue(uiMetadata?.gender, csvMeta.gender),
@@ -196,9 +206,11 @@ export default function RegisterPage() {
       if (location.state.datasetId) {
         setDatasetId(location.state.datasetId)
       }
-      // Accept uploadMode from AI Chat navigation
+      // Accept uploadMode from AI Chat navigation (normalize canonical types to UI family)
       if (location.state.uploadMode) {
-        setUploadMode(location.state.uploadMode as UploadMode)
+        const rawMode = location.state.uploadMode as UploadMode
+        const family = getUploadModeFamily(rawMode)
+        setUploadMode(family ?? rawMode)
       }
       // Accept dataLevel from AI Chat navigation (case-level or file-level)
       if (location.state.dataLevel) {
@@ -236,7 +248,9 @@ export default function RegisterPage() {
   useEffect(() => {
     const trimmed = datasetName.trim()
     if (existingDatasetTypes.has(trimmed)) {
-      setUploadMode(existingDatasetTypes.get(trimmed)!)
+      const rawType = existingDatasetTypes.get(trimmed)!
+      const family = getUploadModeFamily(rawType)
+      setUploadMode(family ?? rawType)
     }
     if (existingDatasetLevels.has(trimmed)) {
       setDataLevel(existingDatasetLevels.get(trimmed)!)
@@ -305,7 +319,7 @@ export default function RegisterPage() {
   const labelInputRefs = useRef<Map<string, HTMLInputElement | null>>(new Map())
 
   const missingLabelItems = useMemo(() => {
-    if (uploadMode !== 'classification') return []
+    if (!isClassificationUploadMode(uploadMode)) return []
     return localItems.filter(item => {
       const meta = resolveItemMetadata(item, localMetadata.get(item.key), splitMetadata, uploadMode)
       return !String(meta.label ?? '').trim()
@@ -317,7 +331,7 @@ export default function RegisterPage() {
     const start = (currentPage - 1) * itemsPerPage
     return displayedItems.slice(start, start + itemsPerPage)
   }, [displayedItems, currentPage, itemsPerPage])
-  const showMissingLabelAlert = uploadMode === 'classification' && showValidation && missingLabelItems.length > 0
+  const showMissingLabelAlert = isClassificationUploadMode(uploadMode) && showValidation && missingLabelItems.length > 0
   const showMissingLabelChips = missingLabelItems.length <= 5
 
   useEffect(() => {
@@ -340,7 +354,7 @@ export default function RegisterPage() {
   }, [highlightedItemKey, paginatedItems])
 
   useEffect(() => {
-    if (uploadMode !== 'segmentation') {
+    if (!isSegmentationUploadMode(uploadMode)) {
       setMatchedMasks(new Set())
       setPendingJsonStems(new Set())
       return
@@ -352,7 +366,7 @@ export default function RegisterPage() {
   }, [localItems, segmentationJsonFiles, uploadMode])
 
   const supportsNativePicker = typeof window !== 'undefined' && !!window.api?.files?.selectFiles
-  const segmentationJsonOnlyAppend = uploadMode === 'segmentation' && !!datasetId && localItems.length === 0 && segmentationJsonFiles.size > 0
+  const segmentationJsonOnlyAppend = isSegmentationUploadMode(uploadMode) && !!datasetId && localItems.length === 0 && segmentationJsonFiles.size > 0
   const readyToUploadCount = segmentationJsonOnlyAppend ? segmentationJsonFiles.size : localItems.length
   const isCollecting = collectionProgress !== null && !collectionProgress.completed
 
@@ -574,7 +588,7 @@ export default function RegisterPage() {
       }
     }
 
-    if (uploadMode === 'segmentation' && jsonFiles && jsonFiles.length > 0) {
+    if (isSegmentationUploadMode(uploadMode) && jsonFiles && jsonFiles.length > 0) {
       let duplicateJsonStems: string[] = []
       setSegmentationJsonFiles(prev => {
         const merged = mergeSegmentationJsonFiles(prev, jsonFiles)
@@ -614,8 +628,8 @@ export default function RegisterPage() {
   const handleLocalPathSelect = async () => {
     if (!window.api?.files?.selectFiles) return
     const patchOnlyExtensions = [...PATCH_EXTENSIONS, ...TIF_EXTENSIONS]
-    const activeExtensions = uploadMode === 'segmentation' ? patchOnlyExtensions : ALL_EXTENSIONS
-    const filterName = uploadMode === 'segmentation' ? 'Patch Images' : 'Supported Formats (WSI & Patch)'
+    const activeExtensions = isSegmentationUploadMode(uploadMode) ? patchOnlyExtensions : ALL_EXTENSIONS
+    const filterName = isSegmentationUploadMode(uploadMode) ? 'Patch Images' : 'Supported Formats (WSI & Patch)'
     const filters = [{ name: filterName, extensions: activeExtensions.map(ext => ext.replace(/^\./, '')) }]
     const paths = await window.api.files.selectFiles({ title: 'Select local files', filters })
 
@@ -682,7 +696,7 @@ export default function RegisterPage() {
         const current = updated.get(item.key) || { ...defaultMetadata }
         updated.set(item.key, {
           ...current,
-          label: uploadMode === 'classification' ? (batchMetadata.label || current.label) : current.label,
+          label: isClassificationUploadMode(uploadMode) ? (batchMetadata.label || current.label) : current.label,
           case_id: batchMetadata.case_id || current.case_id,
           age: batchMetadata.age || current.age,
           gender: batchMetadata.gender || current.gender,
@@ -748,7 +762,7 @@ export default function RegisterPage() {
 
     if (readyToUploadCount === 0) return
 
-    if (uploadMode === 'segmentation') {
+    if (isSegmentationUploadMode(uploadMode)) {
       const invalidSegmentationItems = localItems.filter(item => item.type !== 'standard')
       if (invalidSegmentationItems.length > 0) {
         setSubmitError('Segmentation upload only supports patch/image files.')
@@ -782,13 +796,13 @@ export default function RegisterPage() {
     })
 
     // Validate based on upload mode (using resolved metadata)
-    if (uploadMode === 'classification') {
+    if (isClassificationUploadMode(uploadMode)) {
       const missingLabels = itemsWithMeta.filter(({ finalMeta }) => !finalMeta.label?.toString().trim())
       if (missingLabels.length > 0) {
         setSubmitError(t('uploadPage.validationMissingLabels', { count: missingLabels.length }))
         return
       }
-    } else if (uploadMode === 'survival') {
+    } else if (isSurvivalUploadMode(uploadMode)) {
       // Survival mode: require event_time and event_status
       const missingSurvival = itemsWithMeta.filter(({ finalMeta }) => {
         return !finalMeta.event_time?.toString().trim() || !finalMeta.event_status?.toString().trim()
@@ -816,7 +830,7 @@ export default function RegisterPage() {
         const age = finalMeta.age ? parseInt(String(finalMeta.age)) : undefined
         const eventTime = finalMeta.event_time ? parseFloat(String(finalMeta.event_time)) : undefined
         const eventStatus = finalMeta.event_status ? parseInt(String(finalMeta.event_status)) : undefined
-        const matchedSegmentationJson = uploadMode === 'segmentation'
+        const matchedSegmentationJson = isSegmentationUploadMode(uploadMode)
           ? segmentationJsonFiles.get(getSegmentationStem(item.name))
           : undefined
         const canonicalTaskType = resolveUploadTaskType(uploadMode, {
@@ -837,14 +851,14 @@ export default function RegisterPage() {
             aggregation_level: datasetId ? undefined : dataLevel,
             is_public: datasetId ? undefined : isPublic,
             task_type: canonicalTaskType,
-            label: uploadMode !== 'segmentation' && finalMeta.label ? String(finalMeta.label) : undefined,
+            label: !isSegmentationUploadMode(uploadMode) && finalMeta.label ? String(finalMeta.label) : undefined,
             case_id: finalMeta.case_id ? String(finalMeta.case_id) : undefined,
             age,
             gender: finalMeta.gender ? String(finalMeta.gender) : undefined,
             event_time: eventTime,
             event_status: eventStatus
           },
-          associatedFiles: uploadMode === 'segmentation' && matchedSegmentationJson
+          associatedFiles: isSegmentationUploadMode(uploadMode) && matchedSegmentationJson
             ? [matchedSegmentationJson]
             : item.associatedFiles
         }
@@ -963,12 +977,12 @@ export default function RegisterPage() {
         return
       }
 
-      if (uploadMode === 'classification') {
+      if (isClassificationUploadMode(uploadMode)) {
         if (!headers.includes('label')) {
           setSplitFileError(t('uploadPage.missingLabelColumn'))
           return
         }
-      } else if (uploadMode === 'survival') {
+      } else if (isSurvivalUploadMode(uploadMode)) {
         // survival mode
         if (!headers.includes('event_time')) {
           setSplitFileError(t('uploadPage.missingEventTimeColumn'))
@@ -1141,9 +1155,9 @@ export default function RegisterPage() {
             <div className="flex flex-col sm:flex-row sm:items-center justify-between bg-slate-50/50 p-3 sm:p-2 sm:px-4 rounded-xl border border-slate-100 gap-3">
               <div className="flex items-center gap-3 sm:gap-4 text-left">
                 <div className="p-2 sm:p-3 bg-white rounded-lg sm:rounded-xl shadow-sm border border-slate-100 flex-shrink-0">
-                  {uploadMode === 'classification' ? (
+                  {isClassificationUploadMode(uploadMode) ? (
                     <Tags className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600" />
-                  ) : uploadMode === 'segmentation' ? (
+                  ) : isSegmentationUploadMode(uploadMode) ? (
                     <Layers className="w-5 h-5 sm:w-6 sm:h-6 text-violet-600" />
                   ) : (
                     <Activity className="w-5 h-5 sm:w-6 sm:h-6 text-emerald-600" />
@@ -1161,7 +1175,7 @@ export default function RegisterPage() {
                   <p className="text-xs sm:text-sm text-slate-500">
                     {currentDataType === 'patch' ? t('uploadPage.patchCollection') : currentDataType === 'wsi' ? t('uploadPage.wsiCollection') : t('uploadPage.dataset')}
                     {' · '}
-                    <span className="capitalize">{uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation')}</span>
+                    <span className="capitalize">{isClassificationUploadMode(uploadMode) ? t('uploadPage.classification') : isSurvivalUploadMode(uploadMode) ? t('uploadPage.survival') : t('uploadPage.segmentation')}</span>
                   </p>
                 </div>
               </div>
@@ -1243,12 +1257,12 @@ export default function RegisterPage() {
                 </div>
                 <h3 className="text-xl sm:text-3xl font-bold text-slate-900 mb-2 sm:mb-4">{t('uploadPage.dropFilesHere')}</h3>
                 <p className="text-sm sm:text-lg text-slate-500 mb-2 sm:mb-4 max-w-xl leading-relaxed px-4">
-                  {uploadMode === 'segmentation' ? t('uploadPage.supportedFormatsPatch') : t('uploadPage.supportedFormats')}
+                  {isSegmentationUploadMode(uploadMode) ? t('uploadPage.supportedFormatsPatch') : t('uploadPage.supportedFormats')}
                 </p>
                 <p className="text-xs sm:text-sm text-slate-400 mb-4 sm:mb-6 max-w-xl leading-relaxed px-4">
-                  {uploadMode === 'classification' ? t('uploadPage.dropHintClassification') : uploadMode === 'survival' ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
+                  {isClassificationUploadMode(uploadMode) ? t('uploadPage.dropHintClassification') : isSurvivalUploadMode(uploadMode) ? t('uploadPage.dropHintSurvival') : t('uploadPage.dropHintSegmentation')}
                 </p>
-                {uploadMode === 'segmentation' && (
+                {isSegmentationUploadMode(uploadMode) && (
                   <div className="mb-6 sm:mb-10 text-left w-full max-w-sm transition-all">
                     <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800">
                       <FolderOpen className="w-4 h-4 text-amber-500" />
@@ -1291,7 +1305,7 @@ export default function RegisterPage() {
                   </div>
                 )}
 
-                {(uploadMode === 'classification' || uploadMode === 'survival') && (
+                {(isClassificationUploadMode(uploadMode) || isSurvivalUploadMode(uploadMode)) && (
                   <div className="mb-6 sm:mb-10 text-left w-full max-w-sm transition-all">
                     <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-800">
                       <FolderOpen className="w-4 h-4 text-amber-500" />
@@ -1321,7 +1335,7 @@ export default function RegisterPage() {
                       <div className="flex items-center gap-2 px-2 py-1.5 rounded-md cursor-default mt-2">
                         <FileSpreadsheet className="w-4 h-4 text-emerald-500 shrink-0" />
                         <span className="truncate">
-                          {uploadMode === 'classification'
+                          {isClassificationUploadMode(uploadMode)
                             ? t('uploadPage.folderExampleExcelClassification')
                             : t('uploadPage.folderExampleExcelSurvival')}
                         </span>
@@ -1425,9 +1439,9 @@ export default function RegisterPage() {
                           <div className="sr-only">Select</div>
                         </th>
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[180px] sm:min-w-[200px]">{t('uploadPage.fileName')}</th>
-                        {uploadMode === 'classification' ? (
+                        {isClassificationUploadMode(uploadMode) ? (
                           <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[120px] sm:min-w-[150px]">{t('uploadPage.label')} <span className="text-red-500">*</span></th>
-                        ) : uploadMode === 'survival' ? (
+                        ) : isSurvivalUploadMode(uploadMode) ? (
                           <>
                             <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[90px] sm:min-w-[100px]">{t('uploadPage.eventTime')} <span className="text-red-500">*</span></th>
                             <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[90px]">
@@ -1439,7 +1453,7 @@ export default function RegisterPage() {
                               </span>
                             </th>
                           </>
-                        ) : uploadMode === 'segmentation' ? (
+                        ) : isSegmentationUploadMode(uploadMode) ? (
                           <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[80px] sm:min-w-[100px]">{t('uploadPage.maskStatus')}</th>
                         ) : null}
                         <th className="px-3 sm:px-4 py-2 text-[10px] sm:text-xs font-bold text-slate-500 uppercase tracking-wider bg-slate-50 min-w-[100px] sm:min-w-[120px]">{t('uploadPage.caseId')}</th>
@@ -1456,9 +1470,9 @@ export default function RegisterPage() {
                         const isHighlighted = highlightedItemKey === item.key
                         // Validation based on mode
                         const hasError = showValidation && (
-                          uploadMode === 'classification'
+                          isClassificationUploadMode(uploadMode)
                             ? !String(resolvedMeta.label ?? '').trim()
-                            : uploadMode === 'survival'
+                            : isSurvivalUploadMode(uploadMode)
                               ? (!meta.event_time.trim() || !meta.event_status.trim())
                               : false
                         )
@@ -1495,7 +1509,7 @@ export default function RegisterPage() {
                               </div>
                             </td>
                             {/* Classification: Label input | Survival: Event Time & Status inputs | Segmentation: no extra required fields */}
-                            {uploadMode === 'classification' ? (
+                            {isClassificationUploadMode(uploadMode) ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                  <input
                                   ref={node => {
@@ -1507,7 +1521,7 @@ export default function RegisterPage() {
                                   onChange={e => handleMetadataChange(item.key, 'label', e.target.value)}
                                 />
                               </td>
-                            ) : uploadMode === 'survival' ? (
+                            ) : isSurvivalUploadMode(uploadMode) ? (
                               <>
                                 <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                   <input
@@ -1532,7 +1546,7 @@ export default function RegisterPage() {
                                    />
                                  </td>
                               </>
-                            ) : uploadMode === 'segmentation' ? (
+                            ) : isSegmentationUploadMode(uploadMode) ? (
                               <td className="px-3 sm:px-4 py-3 align-middle border-b border-slate-100">
                                 {matchedMasks.has(item.key) ? (
                                   <span className="text-sm text-green-700">
@@ -1692,23 +1706,23 @@ export default function RegisterPage() {
 
                     {/* Help text - different for classification vs survival vs segmentation */}
                     <div className="mb-4 p-2 sm:p-3 bg-blue-50 rounded-lg text-[10px] sm:text-sm text-blue-800">
-                      <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: uploadMode === 'classification' ? t('uploadPage.classification') : uploadMode === 'survival' ? t('uploadPage.survival') : t('uploadPage.segmentation') })}</p>
+                      <p className="font-bold mb-1">{t('uploadPage.fileFormatTitle', { mode: isClassificationUploadMode(uploadMode) ? t('uploadPage.classification') : isSurvivalUploadMode(uploadMode) ? t('uploadPage.survival') : t('uploadPage.segmentation') })}</p>
                       <ul className="list-disc list-inside space-y-0.5 text-blue-700">
-                        {uploadMode === 'classification' && (
+                        {isClassificationUploadMode(uploadMode) && (
                           <li><code className="bg-blue-100 px-1 rounded">filename</code>, <code className="bg-blue-100 px-1 rounded">label</code></li>
                         )}
-                        {uploadMode === 'survival' && (
+                        {isSurvivalUploadMode(uploadMode) && (
                           <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
                         )}
-                        {uploadMode === 'survival' && (
+                        {isSurvivalUploadMode(uploadMode) && (
                           <li><code className="bg-blue-100 px-1 rounded">event_time</code>, <code className="bg-blue-100 px-1 rounded">event_status</code></li>
                         )}
-                        {uploadMode === 'segmentation' && (
+                        {isSegmentationUploadMode(uploadMode) && (
                           <li><code className="bg-blue-100 px-1 rounded">filename</code></li>
                         )}
                         <li className="hidden sm:list-item">{t('uploadPage.optionalFields')} <code className="bg-blue-100 px-1 rounded">case_id</code>, <code className="bg-blue-100 px-1 rounded">age</code>, <code className="bg-blue-100 px-1 rounded">gender</code>, <code className="bg-blue-100 px-1 rounded">split</code></li>
                       </ul>
-                      {uploadMode === 'survival' && (
+                      {isSurvivalUploadMode(uploadMode) && (
                         <div className="mt-2 pt-2 border-t border-blue-100 flex flex-col gap-0.5">
                           <span className="text-[9px] sm:text-[11px] font-semibold text-blue-500 uppercase tracking-widest">
                             {t('uploadPage.survivalStatusConvention')}
