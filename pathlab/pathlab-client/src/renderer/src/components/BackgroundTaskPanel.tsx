@@ -313,11 +313,7 @@ const TaskCard: React.FC<{
                 <button
                   onClick={async (e) => {
                     e.stopPropagation()
-                    if (isServerTask) {
-                      setShowCancelConfirm(true)
-                      return
-                    }
-                    onCancel()
+                    setShowCancelConfirm(true)
                   }}
                   disabled={isCancelling}
                   className="p-1 hover:bg-gray-200 rounded text-gray-400 hover:text-red-600 disabled:opacity-50"
@@ -347,7 +343,11 @@ const TaskCard: React.FC<{
                     onClick={async () => {
                       setIsCancelling(true)
                       setShowCancelConfirm(false)
-                      await onCancelServer()
+                      if (isServerTask) {
+                        await onCancelServer()
+                      } else {
+                        onCancel()
+                      }
                       setIsCancelling(false)
                     }}
                     className="h-5 w-5 flex items-center justify-center text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-all shadow-sm ring-1 ring-inset ring-red-100"
