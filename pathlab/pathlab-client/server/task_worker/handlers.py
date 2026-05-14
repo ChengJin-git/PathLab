@@ -114,10 +114,16 @@ async def handle_external_validation(descriptor: TaskDescriptor) -> None:
     payload = descriptor.payload
     task_id = str(payload["task_id"])
     kwargs = _payload_kwargs(payload)
+
+    async def _run_external_validation_without_queue_metadata(**queue_kwargs: object) -> object:
+        runner_kwargs = dict(queue_kwargs)
+        runner_kwargs.pop("preprocessing_config", None)
+        return await inference_jobs.run_external_validation(**runner_kwargs)
+
     await get_task_queue().submit(
         task_id=task_id,
         task_type=TaskType.EXTERNAL_VALIDATION,
-        coro_func=inference_jobs.run_external_validation,
+        coro_func=_run_external_validation_without_queue_metadata,
         **kwargs,
     )
 

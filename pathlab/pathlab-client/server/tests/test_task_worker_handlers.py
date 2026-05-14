@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from importlib import import_module
 from unittest.mock import MagicMock, AsyncMock
 
 from gateway.task_dispatch import build_task_descriptor
@@ -248,7 +249,7 @@ async def test_external_validation_submits_to_queue(mock_queue, monkeypatch):
     call_kwargs = mock_queue.submit.await_args.kwargs
     assert call_kwargs["task_id"] == "t1"
     assert call_kwargs["task_type"] == TaskType.EXTERNAL_VALIDATION
-    assert call_kwargs["coro_func"] is fake_extval
+    assert callable(call_kwargs["coro_func"])
     assert call_kwargs["dataset_id"] == "d1"
 
 
@@ -282,6 +283,55 @@ async def test_external_validation_preserves_preprocessing_config_for_queue_subm
     call_kwargs = mock_queue.submit.await_args.kwargs
     assert call_kwargs["preprocessing_config"] == {"feature_extractor": "resnet50"}
     assert call_kwargs["dataset_id"] == "d1"
+
+
+@pytest.mark.asyncio
+async def test_external_validation_queue_callable_ignores_vram_metadata(
+    mock_queue, monkeypatch
+):
+    received_kwargs = {}
+
+    async def fake_extval(**kwargs):
+        received_kwargs.update(kwargs)
+
+    monkeypatch.setattr(
+        "task_worker.jobs.inference.run_external_validation", fake_extval
+    )
+
+    descriptor = build_task_descriptor(
+        job_id="j1",
+        job_kind="validation",
+        handler="external_validation.run",
+        payload={
+            "task_id": "t1",
+            "dataset_id": "d1",
+            "model_task_type": "wsi_classification",
+            "model_data_type": "wsi",
+            "preprocessing_config": {"feature_extractor": "resnet50"},
+        },
+    )
+
+    handlers = import_module("task_worker.handlers")
+    await handlers.handle_external_validation(descriptor)
+
+    call_kwargs = mock_queue.submit.await_args.kwargs
+    queued_callable = call_kwargs["coro_func"]
+    await queued_callable(
+        task_id="t1",
+        dataset_id="d1",
+        model_task_type="wsi_classification",
+        model_data_type="wsi",
+        preprocessing_config={"feature_extractor": "resnet50"},
+        assigned_device="cuda:0",
+    )
+
+    assert received_kwargs == {
+        "task_id": "t1",
+        "dataset_id": "d1",
+        "model_task_type": "wsi_classification",
+        "model_data_type": "wsi",
+        "assigned_device": "cuda:0",
+    }
 
 
 @pytest.mark.asyncio
