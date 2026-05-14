@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event'
 import { StorageTab } from '@renderer/components/settings/StorageTab'
 import { scanDirectory, startBatchImportTask } from '@renderer/api/storage'
 
+const mockOpenPanel = vi.fn()
+
 vi.mock('react-router-dom', () => ({
   useNavigate: () => vi.fn(),
 }))
@@ -14,7 +16,7 @@ vi.mock('react-i18next', () => ({
 }))
 
 vi.mock('@renderer/contexts/BackgroundTaskContext', () => ({
-  useBackgroundTask: () => ({ addMigrationTask: vi.fn() }),
+  useBackgroundTask: () => ({ addMigrationTask: vi.fn(), openPanel: mockOpenPanel }),
 }))
 
 vi.mock('@renderer/api/wsi', () => ({
@@ -66,6 +68,7 @@ describe('StorageTab batch registration', () => {
   beforeEach(() => {
     mockScanDirectory.mockReset()
     mockStartBatchImportTask.mockReset()
+    mockOpenPanel.mockReset()
   })
 
   it('submits patch-only classification scans as patch_classification without expanding all paths', async () => {
@@ -111,5 +114,42 @@ describe('StorageTab batch registration', () => {
       selected_paths: [],
       excluded_paths: [],
     }))
+  })
+
+  it('opens the notification center after submitting a batch import task', async () => {
+    mockScanDirectory.mockResolvedValueOnce({
+      scan_id: 'scan_patch_2',
+      directory: '/patches',
+      files: [
+        {
+          path: '/patches/a.png',
+          filename: 'a.png',
+          size: 100,
+          extension: '.png',
+          format_type: 'standard',
+          data_type: 'patch',
+          valid: true,
+          validation_message: null,
+        },
+      ],
+      total_count: 1,
+      valid_count: 1,
+      total_size: 100,
+      wsi_count: 0,
+      patch_count: 1,
+      page: 1,
+      page_size: 100,
+      total_pages: 1,
+    })
+    mockStartBatchImportTask.mockResolvedValueOnce({ task_id: 'import_2', message: 'started', total_files: 1 })
+
+    render(<StorageTab showConfirmDialog={vi.fn()} closeConfirmDialog={vi.fn()} />)
+
+    await userEvent.type(screen.getByLabelText('scan-path'), '/patches')
+    await userEvent.click(screen.getByRole('button', { name: 'scan' }))
+    await screen.findByRole('button', { name: 'register' })
+    await userEvent.click(screen.getByRole('button', { name: 'register' }))
+
+    await waitFor(() => expect(mockOpenPanel).toHaveBeenCalledTimes(1))
   })
 })

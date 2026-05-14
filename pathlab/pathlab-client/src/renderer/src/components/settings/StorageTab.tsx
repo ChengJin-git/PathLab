@@ -73,7 +73,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const BATCH_SCAN_PAGE_SIZE = 100
   const navigate = useNavigate()
   const { t } = useTranslation()
-  const { addMigrationTask } = useBackgroundTask()
+  const { addMigrationTask, openPanel } = useBackgroundTask()
   const [isDangerZoneOpen, setIsDangerZoneOpen] = React.useState(false)
   const hasSelectDirectoryApi = !!window.api?.files?.selectDirectory
 
@@ -356,6 +356,7 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         is_public: batchDatasetMode === 'new' ? batchIsPublic : undefined,
       })
       setBatchImportTaskId(result.task_id)
+      openPanel()
       setBatchSelectedFiles(new Set())
       setBatchExcludedFiles(new Set())
       setBatchSelectAllValid(false)
