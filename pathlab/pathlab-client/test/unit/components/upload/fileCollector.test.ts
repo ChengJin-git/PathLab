@@ -163,4 +163,21 @@ describe('collectItemsFromDataTransfer', () => {
       completed: true,
     })
   })
+
+  it('collects a directly dropped JSON-only folder as segmentation label files', async () => {
+    const jsonOnlyFolder = makeDirectoryEntry('labels', [
+      makeFileEntry(makeFile('patch-a.json', '{"labels":[]}')),
+      makeFileEntry(makeFile('patch-b.json', '{"labels":[]}')),
+    ])
+    const dataTransfer = makeDataTransfer([jsonOnlyFolder])
+
+    const result = await Reflect.apply(collectItemsFromDataTransfer, undefined, [
+      dataTransfer,
+      { yieldAfterEntries: 1 },
+    ])
+
+    expect(result.items).toHaveLength(0)
+    expect(result.orphanFolders).toHaveLength(0)
+    expect(result.jsonFiles.map(file => file.name)).toEqual(['patch-a.json', 'patch-b.json'])
+  })
 })

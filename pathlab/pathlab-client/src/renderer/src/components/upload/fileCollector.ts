@@ -261,7 +261,18 @@ export const collectItemsFromDataTransfer = async (
   }
 
   // Collect orphan folders (MRXS data folders without matching .mrxs)
-  const orphanFolders = folders.filter(f => !usedFolders.has(f.folderName))
+  const orphanFolders: MrxsDataFolder[] = []
+  for (const folder of folders) {
+    if (usedFolders.has(folder.folderName)) continue
+
+    const jsonFolderFiles = folder.folderFiles.filter(file => file.name.toLowerCase().endsWith('.json'))
+    if (jsonFolderFiles.length === folder.folderFiles.length) {
+      jsonFiles.push(...jsonFolderFiles)
+      continue
+    }
+
+    orphanFolders.push(folder)
+  }
 
   // Collect orphan dt files (without matching .tmap)
   const orphanDtFiles = new Map<string, File[]>()
