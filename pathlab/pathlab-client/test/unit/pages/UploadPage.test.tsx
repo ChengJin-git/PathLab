@@ -33,6 +33,7 @@ describe('UploadPage', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks()
+    sessionStorage.clear()
     addUploadTaskMock.mockReset()
     toastErrorMock.mockReset()
     toastWarningMock.mockReset()
@@ -326,6 +327,52 @@ describe('UploadPage', () => {
 
     const totalChecked = calls.reduce((sum, [filenames]) => sum + (filenames as string[]).length, 0)
     expect(totalChecked).toBe(totalFiles)
+  })
+
+  it('locks dataset source to the original source when appending to an existing dataset', async () => {
+    const updateDatasetSourceSpy = vi.spyOn(apiModule, 'updateDatasetSource')
+    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-1',
+          dataset_name: 'PanCancer-TIL',
+          user_id: 'user-1',
+          source_organ: 'Pancreas',
+          file_count: 3,
+          total_size: 1024,
+          data_type: 'patch',
+          task_type: 'classification',
+          aggregation_level: 'file',
+        },
+      ],
+      total: 1,
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={[{ pathname: '/register' }]}>
+          <UploadPage />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await userEvent.type(screen.getByPlaceholderText('uploadComponents.datasetConfig.datasetNamePlaceholder'), 'PanCancer-TIL')
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /organSources\.pancreas/ })).toBeDisabled()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /uploadComponents\.datasetConfig\.nextChooseFiles/ }))
+
+    await waitFor(() => {
+      expect(screen.getByText('uploadPage.appendingData')).toBeInTheDocument()
+    })
+    expect(updateDatasetSourceSpy).not.toHaveBeenCalled()
   })
 
   describe('missing-label navigation UX', () => {

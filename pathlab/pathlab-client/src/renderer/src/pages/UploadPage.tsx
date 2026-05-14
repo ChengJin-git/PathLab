@@ -36,7 +36,7 @@ import { Checkbox } from '../components/ui/checkbox'
 import { Select } from '../components/ui/select'
 import { useBackgroundTask, UploadTaskFile } from '../contexts/BackgroundTaskContext'
 import { useAuth } from '../contexts/AuthContext'
-import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate, updateDatasetSource } from '../api'
+import { checkDuplicateFilenames, fetchDatasets, uploadDatasetSplits, downloadCSVTemplate } from '../api'
 
 export const DUPLICATE_CHECK_BATCH_SIZE = 1000
 import { ApiError } from '../api/client'
@@ -1106,16 +1106,6 @@ export default function RegisterPage() {
             ) {
               toastError(t('uploadPage.datasetNameExistsForCurrentUser'))
               return
-            }
-            if (isExistingDataset && datasetId) {
-              const resolvedSource = getResolvedDatasetSource()
-              if (resolvedSource && resolvedSource !== existingDatasetSource) {
-                try {
-                  await updateDatasetSource(datasetId, resolvedSource)
-                } catch (e) {
-                  console.warn('Failed to update dataset source organ:', e)
-                }
-              }
             }
             setStep(2)
           }}

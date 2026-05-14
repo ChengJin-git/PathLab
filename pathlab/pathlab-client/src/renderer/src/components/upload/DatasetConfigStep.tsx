@@ -44,7 +44,7 @@ export const DatasetConfigStep: React.FC<DatasetConfigStepProps> = ({
 
   const isSegmentation = uploadMode === 'segmentation'
   const isOtherSource = datasetSourceSelection === 'Other'
-  const canEditSource = true
+  const canEditSource = !isExistingDataset
   const sourceCustomPlaceholder = isOtherSource
     ? t('uploadComponents.datasetConfig.otherSourcePlaceholder')
     : datasetSourceSelection
