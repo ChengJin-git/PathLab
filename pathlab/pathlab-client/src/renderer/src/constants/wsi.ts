@@ -1,5 +1,5 @@
 export const organSources = [
-  'Adrenal Gland', 'Aorta', 'Bladder', 'Blood Vessel', 'Bone', 'Bone Marrow',
+  'Adrenal Gland', 'Aorta', 'Bladder', 'Blood Vessel', 'Hematologic', 'Bone', 'Bone Marrow',
   'Brain', 'Breast', 'Bronchus', 'Cartilage', 'Cervix', 'Colon',
   'Endometrium', 'Esophagus', 'Eye', 'Fallopian Tube', 'Gallbladder',
   'Heart', 'Joint', 'Kidney', 'Larynx', 'Liver', 'Lung', 'Lymph Node',
@@ -16,6 +16,7 @@ export const organSourceKeyMap: Record<string, string> = {
   'Aorta': 'aorta',
   'Bladder': 'bladder',
   'Blood Vessel': 'bloodVessel',
+  'Hematologic': 'hematologic',
   'Bone': 'bone',
   'Bone Marrow': 'boneMarrow',
   'Brain': 'brain',
