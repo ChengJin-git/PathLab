@@ -1727,6 +1727,7 @@
     "missingLabelFilterHint": "缺少标签的文件较多，不逐一列出。可仅显示缺少标签的文件进行检查。",
     "showOnlyMissingLabels": "仅显示缺少标签",
     "showAllFiles": "显示全部文件",
+    "validatingMetadata": "正在校验元数据...",
     "cancel": "取消",
     "uploadCsv": "上传 CSV",
     "addToDataset": "添加到数据集",

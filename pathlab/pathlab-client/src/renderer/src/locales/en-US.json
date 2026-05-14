@@ -1727,6 +1727,7 @@
     "missingLabelFilterHint": "Too many files are missing labels to list individually. Show only missing files to review them.",
     "showOnlyMissingLabels": "Show only missing labels",
     "showAllFiles": "Show all files",
+    "validatingMetadata": "Validating metadata...",
     "cancel": "Cancel",
     "uploadCsv": "Upload CSV",
     "addToDataset": "Add to Dataset",

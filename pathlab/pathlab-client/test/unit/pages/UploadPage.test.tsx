@@ -11,6 +11,7 @@ import * as uploadModule from '../../../src/renderer/src/components/upload'
 import * as authModule from '../../../src/renderer/src/contexts/AuthContext'
 import * as backgroundTaskModule from '../../../src/renderer/src/contexts/BackgroundTaskContext'
 import * as toastModule from '../../../src/renderer/src/contexts/ToastContext'
+import { TooltipProvider } from '../../../src/renderer/src/components/ui/tooltip'
 
 vi.mock('react-i18next', async importOriginal => {
   const actual = await importOriginal<typeof import('react-i18next')>()
@@ -341,7 +342,7 @@ describe('UploadPage', () => {
         jsonFiles: [],
       })
 
-      render(
+      const renderResult = render(
         <QueryClientProvider client={queryClient}>
           <MemoryRouter
             initialEntries={[
@@ -354,7 +355,9 @@ describe('UploadPage', () => {
               },
             ]}
           >
-            <UploadPage />
+            <TooltipProvider>
+              <UploadPage />
+            </TooltipProvider>
           </MemoryRouter>
         </QueryClientProvider>,
       )
@@ -369,6 +372,20 @@ describe('UploadPage', () => {
       })
 
       await waitFor(() => expect(screen.queryByText('uploadPage.dropFilesHere')).not.toBeInTheDocument())
+
+      return renderResult
+    }
+
+    const uploadCsvMetadata = async (container: HTMLElement, file: File) => {
+      await userEvent.click(screen.getByText('uploadPage.datasetMetadataConfig'))
+      const csvInput = container.querySelector('input[type="file"][accept=".csv,.xlsx,.xls"]')
+      expect(csvInput).not.toBeNull()
+
+      await userEvent.upload(csvInput as HTMLInputElement, file)
+
+      await waitFor(() => {
+        expect(screen.getByText(file.name)).toBeInTheDocument()
+      })
     }
 
     it('shows clickable filename chips when a small number of files are missing labels', async () => {
@@ -468,6 +485,76 @@ describe('UploadPage', () => {
 
       await waitFor(() => {
         expect(screen.getAllByRole('row')).toHaveLength(10 + 1)
+      })
+    })
+
+    it('uses CSV metadata to report only the files that are actually missing labels', async () => {
+      const items: uploadModule.LocalItem[] = [
+        'matched-a.png',
+        'matched-b.png',
+        'matched-c.png',
+        'missing-a.png',
+        'missing-b.png',
+      ].map(name => ({
+        key: name,
+        name,
+        file: new File([name], name),
+        type: 'standard',
+      }))
+
+      const { container } = await renderUploadPage(items)
+      await uploadCsvMetadata(
+        container,
+        new File([
+          'filename,label\n',
+          'matched-a.png,tumor\n',
+          'matched-b.png,normal\n',
+          'matched-c.png,tumor\n',
+        ], 'labels.csv', { type: 'text/csv' }),
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toBeInTheDocument()
+      })
+
+      expect(screen.getByRole('button', { name: 'missing-a.png' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'missing-b.png' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'matched-a.png' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'matched-b.png' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'matched-c.png' })).not.toBeInTheDocument()
+    })
+
+    it('shows metadata validation progress while a large CSV is being checked', async () => {
+      const items: uploadModule.LocalItem[] = [
+        { key: 'a', name: 'file-a.png', file: new File(['a'], 'file-a.png'), type: 'standard' },
+        { key: 'b', name: 'file-b.png', file: new File(['b'], 'file-b.png'), type: 'standard' },
+      ]
+      let resolveCsvRead: ((value: string) => void) | undefined
+      const csvReadPromise = new Promise<string>(resolve => {
+        resolveCsvRead = resolve
+      })
+      const csvFile = new File(['filename,label\nfile-a.png,tumor\n'], 'large-labels.csv', { type: 'text/csv' })
+      Object.defineProperty(csvFile, 'text', {
+        value: vi.fn()
+          .mockResolvedValueOnce('filename,label\nfile-a.png,tumor\n')
+          .mockReturnValueOnce(csvReadPromise),
+      })
+
+      const { container } = await renderUploadPage(items)
+      await uploadCsvMetadata(container, csvFile)
+
+      await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+      expect(await screen.findByText('uploadPage.validatingMetadata')).toBeInTheDocument()
+
+      await act(async () => {
+        resolveCsvRead?.('filename,label\nfile-a.png,tumor\n')
+      })
+
+      await waitFor(() => {
+        expect(screen.queryByText('uploadPage.validatingMetadata')).not.toBeInTheDocument()
       })
     })
   })

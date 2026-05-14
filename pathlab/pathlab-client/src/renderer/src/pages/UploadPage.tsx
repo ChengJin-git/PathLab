@@ -3,7 +3,7 @@ import { useDraftState, clearDraftKeys } from '../lib/useDraftState'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { xlsxToCSV } from '../lib/csvImporter'
+import { readFileText, xlsxToCSV } from '../lib/csvImporter'
 import { Tooltip } from '../components/ui/tooltip'
 import {
   Download,
@@ -55,6 +55,61 @@ import {
 } from '../components/upload'
 
 declare const window: Window & { api?: ElectronApi }
+
+const getCsvMetadataForItem = (item: LocalItem, csvMetadataMap: Map<string, any>) => {
+  if (csvMetadataMap.size === 0) return {}
+  const name = item.name.toLowerCase()
+  const nameNoExt = name.replace(/\.[^/.]+$/, '')
+  return csvMetadataMap.get(name) || csvMetadataMap.get(nameNoExt) || {}
+}
+
+const pickResolvedMetadataValue = (uiValue: unknown, csvValue: unknown) => {
+  const uiText = uiValue == null ? '' : String(uiValue)
+  return uiText.trim() ? uiText : csvValue
+}
+
+const resolveItemMetadata = (
+  item: LocalItem,
+  uiMetadata: FileMetadata | undefined,
+  csvMetadataMap: Map<string, any>,
+  uploadMode: UploadMode,
+) => {
+  const csvMeta = getCsvMetadataForItem(item, csvMetadataMap)
+
+  return {
+    label: uploadMode === 'segmentation' ? undefined : pickResolvedMetadataValue(uiMetadata?.label, csvMeta.label),
+    case_id: pickResolvedMetadataValue(uiMetadata?.case_id, csvMeta.case_id),
+    age: pickResolvedMetadataValue(uiMetadata?.age, csvMeta.age),
+    gender: pickResolvedMetadataValue(uiMetadata?.gender, csvMeta.gender),
+    event_time: pickResolvedMetadataValue(uiMetadata?.event_time, csvMeta.event_time),
+    event_status: pickResolvedMetadataValue(uiMetadata?.event_status, csvMeta.event_status),
+  }
+}
+
+const buildCsvMetadataMapFromRows = (headers: string[], lines: string[]) => {
+  const filenameIndex = headers.indexOf('filename')
+  const metadataMap = new Map<string, any>()
+
+  lines.slice(1).forEach(line => {
+    const values = line.split(',').map(value => value.trim())
+    const filename = values[filenameIndex]
+    if (!filename) return
+
+    const row = headers.reduce<Record<string, string>>((acc, header, index) => {
+      acc[header] = values[index] ?? ''
+      return acc
+    }, {})
+    const normalizedName = filename.toLowerCase()
+    metadataMap.set(normalizedName, row)
+
+    const nameNoExt = filename.replace(/\.[^/.]+$/, '')
+    if (nameNoExt !== filename) {
+      metadataMap.set(nameNoExt.toLowerCase(), row)
+    }
+  })
+
+  return metadataMap
+}
 
 export default function RegisterPage() {
   const { error: toastError, warning: toastWarning } = useToast()
@@ -211,6 +266,9 @@ export default function RegisterPage() {
   const [skippedDuplicateCount, setSkippedDuplicateCount] = useState(0) // Count of skipped duplicate files
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [collectionProgress, setCollectionProgress] = useState<CollectionProgressSnapshot | null>(null)
+  const [isValidatingMetadata, setIsValidatingMetadata] = useState(false)
+  const [splitFile, setSplitFile] = useState<File | null>(null)
+  const [splitMetadata, setSplitMetadata] = useState<Map<string, any>>(new Map())
 
   // Sub-selection for bulk actions
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
@@ -249,10 +307,10 @@ export default function RegisterPage() {
   const missingLabelItems = useMemo(() => {
     if (uploadMode !== 'classification') return []
     return localItems.filter(item => {
-      const meta = localMetadata.get(item.key) || { ...defaultMetadata }
-      return !meta.label.trim()
+      const meta = resolveItemMetadata(item, localMetadata.get(item.key), splitMetadata, uploadMode)
+      return !String(meta.label ?? '').trim()
     })
-  }, [localItems, localMetadata, uploadMode])
+  }, [localItems, localMetadata, splitMetadata, uploadMode])
   const displayedItems = fileFilter === 'missing-label' ? missingLabelItems : localItems
   const totalPages = Math.ceil(displayedItems.length / itemsPerPage)
   const paginatedItems = useMemo(() => {
@@ -676,12 +734,15 @@ export default function RegisterPage() {
     // Case 2: New Dataset - Parse CSV to bind to files
     if (splitFile && !datasetId) {
       try {
+        setIsValidatingMetadata(true)
         csvMetadataMap = await parseCsvMetadata(splitFile)
         console.log(`[Upload] Parsed ${csvMetadataMap.size} entries from CSV for binding`)
       } catch (err) {
         console.error("Failed to parse split file for binding", err)
         setSubmitError(t('uploadPage.failedParseCsv', { error: String(err) }))
         return
+      } finally {
+        setIsValidatingMetadata(false)
       }
     }
 
@@ -714,27 +775,9 @@ export default function RegisterPage() {
 
     // Prepare items with resolved metadata (UI + CSV)
     const itemsWithMeta = localItems.map(item => {
-      const uiMeta = localMetadata.get(item.key) || {} as FileMetadata
-      let csvMeta: any = {}
-
-      if (csvMetadataMap.size > 0) {
-        const name = item.name.toLowerCase()
-        const nameNoExt = name.replace(/\.[^/.]+$/, "")
-        // Try exact match, then name-without-extension
-        csvMeta = csvMetadataMap.get(name) || csvMetadataMap.get(nameNoExt) || {}
-      }
-
-      // Merge: UI takes precedence if non-empty, otherwise CSV
       return {
         item,
-        finalMeta: {
-          label: uploadMode === 'segmentation' ? undefined : ((uiMeta.label && uiMeta.label.trim()) ? uiMeta.label : csvMeta.label),
-          case_id: (uiMeta.case_id && uiMeta.case_id.trim()) ? uiMeta.case_id : csvMeta.case_id,
-          age: (uiMeta.age && uiMeta.age.trim()) ? uiMeta.age : csvMeta.age,
-          gender: (uiMeta.gender && uiMeta.gender.trim()) ? uiMeta.gender : csvMeta.gender,
-          event_time: (uiMeta.event_time && uiMeta.event_time.trim()) ? uiMeta.event_time : csvMeta.event_time,
-          event_status: (uiMeta.event_status && uiMeta.event_status.trim()) ? uiMeta.event_status : csvMeta.event_status
-        }
+        finalMeta: resolveItemMetadata(item, localMetadata.get(item.key), csvMetadataMap, uploadMode),
       }
     })
 
@@ -850,6 +893,9 @@ export default function RegisterPage() {
     setSelectedItems(new Set())
     setSubmitError(null)
     setCollectionProgress(null)
+    setIsValidatingMetadata(false)
+    setSplitFile(null)
+    setSplitMetadata(new Map())
     setMatchedMasks(new Set())
     setPendingJsonStems(new Set())
     setSegmentationJsonFiles(new Map())
@@ -876,7 +922,6 @@ export default function RegisterPage() {
   }
 
   // --- Split Upload Logic ---
-  const [splitFile, setSplitFile] = useState<File | null>(null)
   const [uploadingSplit, setUploadingSplit] = useState(false)
 
   const [splitFileError, setSplitFileError] = useState<string | null>(null)
@@ -900,7 +945,7 @@ export default function RegisterPage() {
         csvContent = csv
         finalFile = new File([new Blob([csv], { type: 'text/csv' })], file.name, { type: 'text/csv' })
       } else {
-        csvContent = await file.text()
+        csvContent = await readFileText(file)
       }
 
       const lines = csvContent.split('\n').filter(line => line.trim() !== '')
@@ -935,10 +980,17 @@ export default function RegisterPage() {
         }
       }
 
+      setSplitMetadata(buildCsvMetadataMapFromRows(headers, lines))
       setSplitFile(finalFile)
     } catch (err) {
+      setSplitMetadata(new Map())
       setSplitFileError(t('uploadPage.failedReadFile', { error: String(err) }))
     }
+  }
+
+  const clearSplitFile = () => {
+    setSplitFile(null)
+    setSplitMetadata(new Map())
   }
 
   const handleSplitFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1409,12 +1461,13 @@ export default function RegisterPage() {
                     <tbody className="bg-white divide-y divide-slate-100">
                       {paginatedItems.map(item => {
                         const meta = localMetadata.get(item.key) || { ...defaultMetadata }
+                        const resolvedMeta = resolveItemMetadata(item, meta, splitMetadata, uploadMode)
                         const isSelected = selectedItems.has(item.key)
                         const isHighlighted = highlightedItemKey === item.key
                         // Validation based on mode
                         const hasError = showValidation && (
                           uploadMode === 'classification'
-                            ? !meta.label.trim()
+                            ? !String(resolvedMeta.label ?? '').trim()
                             : uploadMode === 'survival'
                               ? (!meta.event_time.trim() || !meta.event_status.trim())
                               : false
@@ -1696,7 +1749,7 @@ export default function RegisterPage() {
                           </div>
                           <Tooltip content={t('uploadPage.removeFile')}>
                           <button
-                            onClick={() => setSplitFile(null)}
+                            onClick={clearSplitFile}
                             className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors flex-shrink-0"
                           >
                             <X className="w-4 h-4" />
@@ -1783,13 +1836,19 @@ export default function RegisterPage() {
                       <span className="truncate">{submitError}</span>
                     </div>
                   )}
+                  {isValidatingMetadata && (
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-xs">
+                      <Activity className="w-4 h-4 shrink-0 animate-spin" />
+                      <span className="truncate">{t('uploadPage.validatingMetadata')}</span>
+                    </div>
+                  )}
                   <div className="flex gap-2">
                     <Button variant="ghost" className="h-10 flex-1 sm:flex-none" onClick={resetUpload}>
                       {t('uploadPage.cancel')}
                     </Button>
                     <Button
                       onClick={handleUpload}
-                      disabled={isCollecting || (readyToUploadCount === 0 && !splitFile)}
+                      disabled={isCollecting || isValidatingMetadata || (readyToUploadCount === 0 && !splitFile)}
                       className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white flex-1 sm:min-w-[160px] rounded-xl h-10 shadow-sm`}
                     >
                       {isExistingDataset ? (
