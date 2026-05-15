@@ -1,4 +1,5 @@
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Sequence
 
 """
 Storage batch task routes — background tasks, task management, and SSE streaming.
@@ -19,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy import delete as sql_delete
+from sqlalchemy import delete as sql_delete, update as sql_update
 from backend.database import get_db, async_session, safe_session
 from backend.database.repositories import (
     WSIRepository,
@@ -30,7 +31,7 @@ from backend.database.repositories import (
     SegmentationAnnotationRepository,
     DatasetStatsRepository,
 )
-from backend.database.models import TrainingTaskWSI, AIResult, AITask
+from backend.database.models import TrainingTaskWSI, AIResult, AITask, WSISlide
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import get_dataset_with_access, require_admin
 from ..dependencies import logger, storage_manager
@@ -38,6 +39,7 @@ from ..models import (
     StartBatchImportRequest,
     StartDeleteDatasetRequest,
     StartDeleteExternalRequest,
+    StartDeleteWSIsRequest,
     StartBatchUpdateMetadataRequest,
     _normalize_task_type_for_dataset_axes,
 )
@@ -66,6 +68,166 @@ from backend.common.file_types import WSI_EXTENSIONS
 from gateway.chat.context_cache import invalidate_chat_context
 
 router = APIRouter()
+
+
+@dataclass(frozen=True)
+class WSICleanupItem:
+    wsi_id: str
+    wsi_path: str
+    dataset_id: str | None
+    user_id: str | None
+
+
+@dataclass(frozen=True)
+class DeleteUserProxy:
+    id: str
+    is_admin_user: bool
+
+    def is_admin(self) -> bool:
+        return self.is_admin_user
+
+
+def _build_wsi_cleanup_items(wsis: Sequence[Any]) -> list[WSICleanupItem]:
+    return [
+        WSICleanupItem(
+            wsi_id=str(wsi.wsi_id),
+            wsi_path=str(wsi.wsi_path),
+            dataset_id=str(wsi.dataset_id) if wsi.dataset_id else None,
+            user_id=str(wsi.user_id) if wsi.user_id else None,
+        )
+        for wsi in wsis
+    ]
+
+
+async def _bulk_delete_wsi_records(
+    db: AsyncSession, wsis: Sequence[Any]
+) -> list[WSICleanupItem]:
+    cleanup_items = _build_wsi_cleanup_items(wsis)
+    wsi_ids = [item.wsi_id for item in cleanup_items]
+    if not wsi_ids:
+        return []
+
+    await db.execute(sql_delete(TrainingTaskWSI).where(TrainingTaskWSI.wsi_id.in_(wsi_ids)))
+    await db.execute(sql_delete(AIResult).where(AIResult.wsi_id.in_(wsi_ids)))
+    await db.execute(sql_delete(AITask).where(AITask.wsi_id.in_(wsi_ids)))
+    await db.execute(
+        sql_update(WSISlide)
+        .where(WSISlide.parent_wsi_id.in_(wsi_ids))
+        .values(parent_wsi_id=None)
+    )
+    await db.execute(sql_delete(WSISlide).where(WSISlide.wsi_id.in_(wsi_ids)))
+
+    for dataset_id in sorted({item.dataset_id for item in cleanup_items if item.dataset_id}):
+        await DatasetStatsRepository.recompute(db, dataset_id)
+
+    await db.flush()
+    return cleanup_items
+
+
+async def _resolve_deletable_wsies(
+    db: AsyncSession, wsi_ids: list[str], user: User | DeleteUserProxy
+) -> list[Any]:
+    if not wsi_ids:
+        raise HTTPException(status_code=400, detail="No WSI IDs provided")
+
+    unique_ids = list(dict.fromkeys(wsi_ids))
+    wsi_map = await WSIRepository.get_by_ids(db, unique_ids)
+    missing_ids = [wsi_id for wsi_id in unique_ids if wsi_id not in wsi_map]
+    if missing_ids:
+        raise HTTPException(status_code=404, detail=f"WSI not found: {missing_ids[0]}")
+
+    if not user.is_admin():
+        unauthorized = [
+            wsi_id
+            for wsi_id in unique_ids
+            if str(wsi_map[wsi_id].user_id or "") != str(user.id)
+        ]
+        if unauthorized:
+            raise HTTPException(
+                status_code=403,
+                detail="You don't have permission to delete one or more WSIs",
+            )
+
+    return [wsi_map[wsi_id] for wsi_id in unique_ids]
+
+
+def _make_delete_user_proxy(user_id: str, is_admin: bool):
+    return DeleteUserProxy(id=user_id, is_admin_user=is_admin)
+
+
+async def _cleanup_deleted_wsi_files(
+    db: AsyncSession,
+    task_id: str,
+    cleanup_items: Sequence[WSICleanupItem],
+    mode: str,
+    *,
+    progress_start: int = 10,
+    progress_span: int = 90,
+) -> tuple[list[dict[str, Any]], int, int]:
+    results: list[dict[str, Any]] = []
+    success_count = 0
+    failed_count = 0
+    total_items = len(cleanup_items)
+
+    for index, item in enumerate(cleanup_items):
+        if is_storage_task_cancelled(task_id):
+            clear_storage_task_cancellation(task_id)
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                "cancelled",
+                processed_items=index,
+                success_count=success_count,
+                failed_count=failed_count,
+                results=results,
+            )
+            await db.commit()
+            return results, success_count, failed_count
+
+        try:
+            cleanup = await asyncio.to_thread(
+                storage_manager.delete_wsi_files,
+                item.wsi_id,
+                item.wsi_path,
+                mode,
+            )
+            failed = cleanup.get("failed") or []
+            if failed:
+                failed_count += 1
+                status = "failed"
+            else:
+                success_count += 1
+                status = "deleted"
+            results.append(
+                {
+                    "wsi_id": item.wsi_id,
+                    "status": status,
+                    "message": cleanup.get("summary", "Storage cleanup completed"),
+                    "storage_cleanup": cleanup,
+                }
+            )
+        except Exception as exc:
+            failed_count += 1
+            results.append(
+                {"wsi_id": item.wsi_id, "status": "failed", "message": str(exc)}
+            )
+            logger.error(f"Failed to cleanup deleted WSI files for {item.wsi_id}: {exc}")
+
+        progress = progress_start + int(
+            ((index + 1) / max(total_items, 1)) * progress_span
+        )
+        await StorageTaskRepository.update_status(
+            db,
+            task_id,
+            "processing",
+            progress=min(progress, 99),
+            processed_items=index + 1,
+            success_count=success_count,
+            failed_count=failed_count,
+        )
+        await db.commit()
+
+    return results, success_count, failed_count
 
 # ==============================================================================
 # Storage Task Cancellation Mechanism
@@ -964,6 +1126,56 @@ async def _run_delete_external_task(task_id: str, user_id: str, wsi_ids: list[An
             await db.commit()
 
 
+async def _run_delete_wsis_task(
+    task_id: str, user_id: str, is_admin: bool, wsi_ids: list[str], delete_mode: str
+):
+    """Background task for owner-safe WSI batch deletion."""
+    async with async_session() as db:
+        try:
+            await StorageTaskRepository.update_status(
+                db, task_id, "processing", progress=0
+            )
+            await db.commit()
+
+            user_proxy = _make_delete_user_proxy(user_id, is_admin)
+            wsis = await _resolve_deletable_wsies(db, wsi_ids, user_proxy)
+            cleanup_items = await _bulk_delete_wsi_records(db, wsis)
+            await db.commit()
+
+            invalidated_user_ids = {item.user_id for item in cleanup_items if item.user_id}
+            for affected_user_id in invalidated_user_ids:
+                await invalidate_chat_context(affected_user_id)
+
+            results, success_count, failed_count = await _cleanup_deleted_wsi_files(
+                db, task_id, cleanup_items, delete_mode
+            )
+            final_status = "completed" if failed_count == 0 else "failed"
+            error_message = (
+                None
+                if failed_count == 0
+                else f"Failed to cleanup {failed_count} WSI file sets"
+            )
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                final_status,
+                progress=100,
+                processed_items=len(cleanup_items),
+                success_count=success_count,
+                failed_count=failed_count,
+                error_message=error_message,
+                results=results,
+            )
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            logger.error(f"Delete WSI task {task_id} failed: {exc}")
+            await StorageTaskRepository.update_status(
+                db, task_id, "failed", error_message=str(exc)
+            )
+            await db.commit()
+
+
 async def _run_delete_dataset_task(
     task_id: str, user_id: str, dataset_id: str, delete_mode: str
 ):
@@ -1017,79 +1229,37 @@ async def _run_delete_dataset_task(
                 await db.commit()
                 return
 
-            for i, wsi_id in enumerate(wsi_ids):
-                if is_storage_task_cancelled(task_id):
-                    logger.info(
-                        f"Delete dataset task {task_id} cancelled by user at item {i + 1}/{total_items}"
-                    )
-                    clear_storage_task_cancellation(task_id)
-                    return
+            if is_storage_task_cancelled(task_id):
+                logger.info(f"Delete dataset task {task_id} cancelled before DB delete")
+                clear_storage_task_cancellation(task_id)
+                return
 
-                try:
-                    wsi = await WSIRepository.get_by_id(db, wsi_id)
-                    if not wsi:
-                        raise RuntimeError("WSI not found")
+            wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+            wsis = [wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map]
+            cleanup_items = await _bulk_delete_wsi_records(db, wsis)
+            await DatasetRepository.delete(db, dataset_id)
+            await db.commit()
 
-                    await _delete_wsi_record_and_files(
-                        db,
-                        wsi,
-                        cleanup_mode=delete_mode,
-                        cleanup_wsi_path=wsi.wsi_path,
-                    )
-                    results.append(
-                        {
-                            "wsi_id": wsi_id,
-                            "status": "deleted",
-                            "message": "WSI and associated files deleted successfully",
-                        }
-                    )
-                    deleted_count += 1
-                except Exception as exc:
-                    await db.rollback()
-                    failed_count += 1
-                    results.append(
-                        {"wsi_id": wsi_id, "status": "failed", "message": str(exc)}
-                    )
-                    logger.error(
-                        f"Failed to delete WSI {wsi_id} in dataset task {task_id}: {exc}"
-                    )
+            invalidated_user_ids = {item.user_id for item in cleanup_items if item.user_id}
+            for affected_user_id in invalidated_user_ids:
+                await invalidate_chat_context(affected_user_id)
 
-                progress = int(((i + 1) / total_items) * 100)
-                await StorageTaskRepository.update_status(
-                    db,
-                    task_id,
-                    "processing",
-                    progress=progress,
-                    processed_items=i + 1,
-                    success_count=deleted_count,
-                    failed_count=failed_count,
-                )
-                await db.commit()
-
-            dataset_deleted = await _cleanup_empty_dataset_record(db, dataset_id)
-            if not dataset_deleted:
-                failed_count += 1
-                results.append(
-                    {
-                        "dataset_id": dataset_id,
-                        "status": "failed",
-                        "message": "Dataset record still has remaining dependencies or undeleted files",
-                    }
-                )
-            else:
-                results.append(
-                    {
-                        "dataset_id": dataset_id,
-                        "status": "deleted",
-                        "message": f"Dataset '{dataset.name}' deleted successfully",
-                    }
-                )
+            results, deleted_count, failed_count = await _cleanup_deleted_wsi_files(
+                db, task_id, cleanup_items, delete_mode
+            )
+            results.append(
+                {
+                    "dataset_id": dataset_id,
+                    "status": "deleted",
+                    "message": f"Dataset '{dataset.name}' deleted successfully",
+                }
+            )
 
             final_status = "completed" if failed_count == 0 else "failed"
             error_message = (
                 None
                 if failed_count == 0
-                else f"Failed to fully delete dataset {dataset.name}"
+                else f"Failed to cleanup {failed_count} WSI file sets from dataset {dataset.name}"
             )
             await StorageTaskRepository.update_status(
                 db,
@@ -1533,6 +1703,52 @@ async def start_delete_external_task(
         logger.error(f"Failed to start delete external task: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to start delete external task: {str(e)}"
+        )
+
+
+@router.post("/tasks/delete-wsis")
+async def start_delete_wsis_task(
+    request: StartDeleteWSIsRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start an asynchronous owner-safe WSI batch deletion task."""
+    try:
+        unique_ids = list(dict.fromkeys(request.wsi_ids))
+        await _resolve_deletable_wsies(db, unique_ids, user)
+        task_id = f"delete_wsis_{uuid.uuid4().hex[:16]}"
+
+        await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type="delete_wsis",
+            total_items=len(unique_ids),
+            params={"wsi_ids": unique_ids, "mode": request.mode.value},
+        )
+        await db.commit()
+
+        background_tasks.add_task(
+            _run_delete_wsis_task,
+            task_id,
+            str(user.id),
+            user.is_admin(),
+            unique_ids,
+            request.mode.value,
+        )
+
+        return {
+            "task_id": task_id,
+            "message": "Delete WSI task started",
+            "total_items": len(unique_ids),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(f"Failed to start delete WSI task: {exc}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start delete WSI task: {str(exc)}"
         )
 
 

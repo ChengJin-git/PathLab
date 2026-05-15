@@ -463,6 +463,13 @@ class StartDeleteExternalRequest(BaseModel):
     wsi_ids: List[str]  # List of WSI IDs to delete
 
 
+class StartDeleteWSIsRequest(BaseModel):
+    """Request model for starting owner-safe WSI batch deletion."""
+
+    wsi_ids: List[str] = Field(min_length=1)
+    mode: DeletionMode = DeletionMode.STANDARD
+
+
 class StartDeleteDatasetRequest(BaseModel):
     """Request model for starting a dataset deletion background task."""
 
