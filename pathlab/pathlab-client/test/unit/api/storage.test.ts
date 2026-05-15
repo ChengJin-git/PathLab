@@ -25,6 +25,7 @@ import {
   scanDirectory,
   startBatchImportTask,
   startDeleteExternalTask,
+  startDeleteWSIsTask,
   getStorageTaskStatus,
   cancelStorageTask,
   startBatchUpdateMetadataTask,
@@ -301,6 +302,25 @@ describe('startDeleteExternalTask', () => {
     expect(String(url)).toContain('/storage/tasks/delete-external')
     const body = JSON.parse(opts?.body as string)
     expect(body.wsi_ids).toEqual(['wsi_001', 'wsi_002', 'wsi_003'])
+  })
+})
+
+describe('startDeleteWSIsTask', () => {
+  it('sends POST to /storage/tasks/delete-wsis with ids and mode', async () => {
+    mockFetch.mockResolvedValueOnce(ok({
+      task_id: 'delete_wsis_abc',
+      message: 'Delete WSI task started',
+      total_items: 2,
+    }))
+
+    const result = await startDeleteWSIsTask({ wsi_ids: ['wsi_1', 'wsi_2'], mode: 'complete' })
+
+    const [url, opts] = mockFetch.mock.calls[0]
+    expect(String(url)).toContain('/storage/tasks/delete-wsis')
+    expect(opts?.method).toBe('POST')
+    const body = JSON.parse(opts?.body as string)
+    expect(body).toEqual({ wsi_ids: ['wsi_1', 'wsi_2'], mode: 'complete' })
+    expect(result.task_id).toBe('delete_wsis_abc')
   })
 })
 

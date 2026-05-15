@@ -685,6 +685,17 @@ export interface StartDeleteExternalResponse {
   total_files: number
 }
 
+export interface StartDeleteWSIsRequest {
+  wsi_ids: string[]
+  mode?: 'standard' | 'complete'
+}
+
+export interface StartDeleteWSIsResponse {
+  task_id: string
+  message: string
+  total_items: number
+}
+
 export interface StartDeleteDatasetRequest {
   dataset_id: string
   mode: 'standard' | 'complete'
@@ -758,6 +769,20 @@ export async function startDeleteExternalTask(wsiIds: string[]): Promise<StartDe
       body: JSON.stringify({ wsi_ids: wsiIds })
     },
     'Failed to start delete external task'
+  )
+}
+
+export async function startDeleteWSIsTask(
+  request: StartDeleteWSIsRequest
+): Promise<StartDeleteWSIsResponse> {
+  return apiFetch<StartDeleteWSIsResponse>(
+    `${API_BASE}/storage/tasks/delete-wsis`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request)
+    },
+    'Failed to start delete WSI task'
   )
 }
 
