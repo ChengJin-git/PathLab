@@ -129,6 +129,8 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       return t('backgroundTask.typeLabels.unbindDataset')
     case 'reset_derived_data':
       return t('backgroundTask.typeLabels.resetDerivedData')
+    case 'scan_directory':
+      return t('backgroundTask.typeLabels.scanDirectory')
     case 'delete_external':
       return t('backgroundTask.typeLabels.deleteExternal')
     case 'extraction':
