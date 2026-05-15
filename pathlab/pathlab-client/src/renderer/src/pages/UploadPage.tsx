@@ -861,6 +861,7 @@ export default function RegisterPage() {
         }
       })
 
+    setIsImporting(true)
     try {
       // Add to background task queue
       await addUploadTask(uploadFiles, {
@@ -884,9 +885,11 @@ export default function RegisterPage() {
         const message = t('uploadPage.datasetNameExistsForCurrentUser')
         toastError(message)
         setSubmitError(message)
+        setIsImporting(false)
         return
       }
       setSubmitError(error instanceof Error ? error.message : String(error))
+      setIsImporting(false)
     }
   }
 
@@ -933,7 +936,7 @@ export default function RegisterPage() {
   }
 
   // --- Split Upload Logic ---
-  const [uploadingSplit, setUploadingSplit] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
 
   const [splitFileError, setSplitFileError] = useState<string | null>(null)
   const [isCsvDragging, setIsCsvDragging] = useState(false)
@@ -1044,7 +1047,7 @@ export default function RegisterPage() {
       return false
     }
 
-    setUploadingSplit(true)
+    setIsImporting(true)
     setSplitFileError(null)
     setSplitUploadSuccess(null)
     try {
@@ -1065,7 +1068,7 @@ export default function RegisterPage() {
       setSplitFileError(String(e))
       return false
     } finally {
-      setUploadingSplit(false)
+      setIsImporting(false)
     }
   }
 
@@ -1858,10 +1861,15 @@ export default function RegisterPage() {
                     </Button>
                     <Button
                       onClick={handleUpload}
-                      disabled={isCollecting || isValidatingMetadata || (readyToUploadCount === 0 && !splitFile)}
+                      disabled={isCollecting || isValidatingMetadata || isImporting || (readyToUploadCount === 0 && !splitFile)}
                       className={`${isExistingDataset ? 'bg-amber-600 hover:bg-amber-700' : 'bg-green-600 hover:bg-green-700'} text-white flex-1 sm:min-w-[160px] rounded-xl h-10 shadow-sm`}
                     >
-                      {isExistingDataset ? (
+                      {isImporting ? (
+                        <>
+                          <Activity className="w-4 h-4 mr-2 shrink-0 animate-spin" />
+                          <span className="truncate">{t('uploadPage.importing')}</span>
+                        </>
+                      ) : isExistingDataset ? (
                         <>
                           <Plus className="w-4 h-4 mr-2 shrink-0" />
                           <span className="truncate">{readyToUploadCount === 0 && splitFile ? t('uploadPage.uploadCsv') : t('uploadPage.addToDataset')}</span>

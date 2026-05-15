@@ -1,4 +1,3 @@
-import React from 'react'
 import { MemoryRouter } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -1189,6 +1188,167 @@ describe('UploadPage', () => {
       await waitFor(() => {
         expect(screen.queryByText('uploadPage.validatingMetadata')).not.toBeInTheDocument()
       })
+    })
+  })
+
+  it('disables the submit button and shows importing state while addUploadTask is pending', async () => {
+    let resolveAddUploadTask: ((taskId: string) => void) | undefined
+    addUploadTaskMock.mockReturnValueOnce(new Promise<string>(resolve => {
+      resolveAddUploadTask = resolve
+    }))
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'Importing Dataset',
+                uploadMode: 'classification',
+              },
+            },
+          ]}
+        >
+          <TooltipProvider>
+            <UploadPage />
+          </TooltipProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    const dropZoneLabel = await screen.findByText('uploadPage.dropFilesHere')
+    const dropZone = dropZoneLabel.closest('div')
+    expect(dropZone).not.toBeNull()
+
+    vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+      items: [
+        {
+          key: 'case-a',
+          name: 'case-a.png',
+          file: new File(['data'], 'case-a.png', { type: 'image/png' }),
+          type: 'standard',
+        },
+      ],
+      orphanFolders: [],
+      orphanDtFiles: new Map(),
+      unsupportedFileNames: [],
+      jsonFiles: [],
+    })
+
+    fireEvent.drop(dropZone as HTMLElement, {
+      preventDefault: vi.fn(),
+      dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'case-a.png' }) }] },
+    })
+
+    await screen.findByText('case-a.png')
+    await userEvent.type(screen.getByPlaceholderText('uploadPage.enterLabel'), 'tumor')
+    await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+    await waitFor(() => expect(addUploadTaskMock).toHaveBeenCalledTimes(1))
+
+    const submitButton = screen.getByRole('button', { name: /uploadPage\.importing/ })
+    expect(submitButton).toBeDisabled()
+    expect(screen.getByText('uploadPage.importing')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveAddUploadTask?.('upload_task_1')
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('uploadPage.importing')).not.toBeInTheDocument()
+    })
+  })
+
+  it('disables the submit button while split upload is pending', async () => {
+    let resolveUploadSplit: ((value: Awaited<ReturnType<typeof apiModule.uploadDatasetSplits>>) => void) | undefined
+    vi.spyOn(apiModule, 'uploadDatasetSplits').mockReturnValueOnce(
+      new Promise(resolve => {
+        resolveUploadSplit = resolve
+      }),
+    )
+
+    vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-split',
+          dataset_name: 'Split Dataset',
+          user_id: 'user-1',
+          source_organ: 'Liver',
+          file_count: 20,
+          total_size: 4096,
+          data_type: 'patch',
+          task_type: 'classification',
+          aggregation_level: 'file',
+        },
+      ],
+      total: 1,
+    } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+
+    const { container } = render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter
+          initialEntries={[
+            {
+              pathname: '/register',
+              state: {
+                datasetName: 'Split Dataset',
+                datasetId: 'dataset-split',
+                uploadMode: 'classification',
+              },
+            },
+          ]}
+        >
+          <TooltipProvider>
+            <UploadPage />
+          </TooltipProvider>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    )
+
+    await screen.findByText('uploadPage.appendingData')
+
+    await userEvent.click(screen.getByText('uploadPage.datasetMetadataConfig'))
+    const csvInput = container.querySelector('input[type="file"][accept=".csv,.xlsx,.xls"]')
+    expect(csvInput).not.toBeNull()
+
+    await userEvent.upload(
+      csvInput as HTMLInputElement,
+      new File(['filename,label\nfile-a.png,tumor\n'], 'splits.csv', { type: 'text/csv' }),
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('splits.csv')).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByRole('button', { name: /uploadPage\.uploadCsv/ }))
+
+    await waitFor(() => expect(apiModule.uploadDatasetSplits).toHaveBeenCalledTimes(1))
+
+    const submitButton = screen.getByRole('button', { name: /uploadPage\.importing/ })
+    expect(submitButton).toBeDisabled()
+    expect(screen.getByText('uploadPage.importing')).toBeInTheDocument()
+
+    await act(async () => {
+      resolveUploadSplit?.({
+        message: '',
+        updated_count: 1,
+        auto_val_count: 0,
+        not_found_count: 0,
+        not_found_files: [],
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText('uploadPage.importing')).not.toBeInTheDocument()
     })
   })
 })
