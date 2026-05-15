@@ -10,7 +10,7 @@ from fastapi import HTTPException, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import User
-from backend.database.repositories import WSIRepository
+from backend.database.repositories import DatasetStatsRepository, WSIRepository
 from gateway.routes import wsi as wsi_routes
 
 
@@ -75,6 +75,8 @@ async def test_upload_dataset_splits_matches_case_insensitive_extensionless_file
         "invalidate_chat_context",
         AsyncMock(),
     )
+    recompute_mock = AsyncMock()
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", recompute_mock)
 
     file = UploadFile(
         filename="splits.csv",
@@ -94,6 +96,7 @@ async def test_upload_dataset_splits_matches_case_insensitive_extensionless_file
     assert slides[0].split == "train"
     assert slides[1].split == "test"
     assert slides[2].split == "val"
+    recompute_mock.assert_awaited_once_with(db, "dataset-1")
     assert db.committed is True
 
 

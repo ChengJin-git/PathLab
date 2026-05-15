@@ -1756,6 +1756,7 @@ async def upload_dataset_splits(
             f"Auto-created val split: moved {auto_val_count} samples from train to val"
         )
 
+    await DatasetStatsRepository.recompute(db, dataset_id)
     await db.commit()
     await invalidate_chat_context(str(user.id))
 
