@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
 import { Play, AlertCircle, CheckCircle, Loader2, ChevronDown, ChevronUp, Layers, UploadCloud, ThumbsUp, ThumbsDown } from 'lucide-react'
 import { createTrainingTask, fetchDatasets, type TrainingTaskConfig, type DatasetSummary, type SplitConfig } from '../../api'
 import { useBackgroundTask } from '../../contexts/BackgroundTaskContext'
@@ -214,6 +215,7 @@ export function removeTaskConfigBlock(content: string): string {
 
 export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmitError, onConfigChange, messageId, onHelpfulnessFeedback, savedHelpfulnessFeedback, submitTrigger }: TaskConfigCardProps) {
   const { t } = useTranslation()
+  const navigate = useNavigate()
   const { hasUploadingTasks } = useBackgroundTask()
   const { canUseGpuForDataset } = useAuth()
   const [config, setConfig] = useState<AgentTaskConfig>(normalizeAgentTaskConfig(initialConfig))
@@ -892,15 +894,28 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
                      <span className="text-amber-600">{t('training.dataSplit.test')}:{predefinedSplitCounts.test}</span>
                    </div>
                  </button>
-               ) : (
-                 <div className="p-2.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/80">
-                   <div className="flex items-center gap-1.5 mb-0.5">
-                     <UploadCloud className="w-3 h-3 text-gray-400" />
-                     <span className="text-xs font-medium text-gray-500">{t('training.dataSplit.uploadSplits')}</span>
-                   </div>
-                   <p className="text-[10px] text-blue-500 pl-4">{t('training.dataSplit.noSplitsFound')}</p>
-                 </div>
-               )}
+                ) : (
+                  <button
+                    type="button"
+                    disabled={isFormDisabled}
+                    onClick={() => {
+                      if (!isFormDisabled && selectedDataset) {
+                        navigate('/register', {
+                          state: { datasetId: selectedDataset.dataset_id, datasetName: selectedDataset.dataset_name },
+                        })
+                      }
+                    }}
+                    className={`p-2.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/80 text-left transition-all ${
+                      isFormDisabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer hover:bg-gray-100 hover:border-gray-300'
+                    }`}
+                  >
+                    <div className="flex items-center gap-1.5 mb-0.5">
+                      <UploadCloud className="w-3 h-3 text-gray-400" />
+                      <span className="text-xs font-medium text-gray-500">{t('training.dataSplit.uploadSplits')}</span>
+                    </div>
+                    <p className="text-[10px] text-blue-500 pl-4">{t('training.dataSplit.noSplitsFound')}</p>
+                  </button>
+                )}
              </div>
 
             {isSegmentationTask(config.task_type) && splitStrategy !== 'manual' && (
