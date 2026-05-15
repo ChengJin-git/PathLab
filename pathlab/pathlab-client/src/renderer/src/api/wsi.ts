@@ -271,10 +271,16 @@ export function invalidateWSIListCache(): void {
   datasetsListCache.invalidateAll()
 }
 
+export interface DatasetSplitSummary {
+  has_predefined_splits?: boolean
+  predefined_split_counts?: { train: number; val: number; test: number }
+  predefined_split_unit?: 'files' | 'cases'
+}
+
 /**
- * Dataset summary returned from list datasets endpoint
+ * Dataset summary returned by dataset list endpoints.
  */
-export interface DatasetSummary {
+export interface DatasetSummary extends DatasetSplitSummary {
   dataset_id: string | null  // UUID for API calls (null for uncategorized)
   dataset_name: string  // Display name
   user_id: string | null  // Dataset owner
@@ -290,9 +296,6 @@ export interface DatasetSummary {
   is_public?: boolean
   // Permission flag - whether user can delete this dataset
   can_delete?: boolean
-  // Pre-defined split information (from CSV upload)
-  has_predefined_splits?: boolean
-  predefined_split_counts?: { train: number; val: number; test: number }
   // COCO categories for segmentation datasets
   coco_categories?: Array<{ id: number; name: string; supercategory?: string }>
   num_coco_categories?: number
