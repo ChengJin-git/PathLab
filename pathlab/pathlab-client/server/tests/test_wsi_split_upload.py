@@ -2,6 +2,7 @@
 import types
 from dataclasses import dataclass
 from io import BytesIO
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import AsyncMock
 
@@ -28,6 +29,60 @@ class _DummyDB:
 
     async def commit(self):
         self.committed = True
+
+
+class _FakeResult:
+    _rows: list[SimpleNamespace]
+
+    def __init__(self, rows: list[SimpleNamespace]) -> None:
+        self._rows = rows
+
+    def all(self) -> list[SimpleNamespace]:
+        return self._rows
+
+
+class _DatasetSummaryDB:
+    execute_count: int
+
+    def __init__(self) -> None:
+        self.execute_count = 0
+
+    async def execute(self, _query: object) -> _FakeResult:
+        self.execute_count += 1
+        if self.execute_count == 1:
+            return _FakeResult(
+                [
+                    SimpleNamespace(
+                        _total_count=1,
+                        dataset_id="dataset-1",
+                        dataset_name="All-IDB",
+                        dataset_user_id="user-1",
+                        group_id="group-1",
+                        data_type="wsi",
+                        aggregation_level="file",
+                        task_type="wsi_classification",
+                        source_organ=None,
+                        is_public=False,
+                        parent_dataset_id=None,
+                        parent_dataset_name=None,
+                        file_count=260,
+                        total_size=1024,
+                        split_train_count=0,
+                        split_val_count=0,
+                        split_test_count=0,
+                    )
+                ]
+            )
+        return _FakeResult(
+            [
+                SimpleNamespace(
+                    dataset_id="dataset-1",
+                    split_train_count=180,
+                    split_val_count=40,
+                    split_test_count=40,
+                )
+            ]
+        )
 
 
 @pytest.mark.asyncio
@@ -154,3 +209,27 @@ async def test_upload_dataset_splits_reports_ambiguous_extensionless_matches(
     assert exc_info.value.status_code == 400
     assert "ambiguous" in str(exc_info.value.detail).lower()
     assert db.committed is False
+
+
+@pytest.mark.asyncio
+async def test_dataset_summary_uses_live_split_counts_when_cached_stats_are_stale(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        WSIRepository,
+        "_get_coco_categories_batch",
+        AsyncMock(return_value={}),
+    )
+
+    datasets, total = await WSIRepository.get_datasets_with_total(
+        db=cast(AsyncSession, cast(object, _DatasetSummaryDB())),
+        dataset_id="dataset-1",
+    )
+
+    assert total == 1
+    assert datasets[0]["has_predefined_splits"] is True
+    assert datasets[0]["predefined_split_counts"] == {
+        "train": 180,
+        "val": 40,
+        "test": 40,
+    }
