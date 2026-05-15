@@ -1069,6 +1069,96 @@ describe('UploadPage', () => {
       expect(screen.queryByRole('button', { name: 'matched-c.png' })).not.toBeInTheDocument()
     })
 
+    it('binds CSV labels only to newly appended files for existing datasets', async () => {
+      const uploadDatasetSplitsSpy = vi.spyOn(apiModule, 'uploadDatasetSplits')
+      vi.spyOn(apiModule, 'fetchDatasets').mockResolvedValue({
+        items: [
+          {
+            dataset_id: 'dataset-append',
+            dataset_name: 'Append Dataset',
+            user_id: 'user-1',
+            source_organ: 'Liver',
+            file_count: 20,
+            total_size: 4096,
+            data_type: 'patch',
+            task_type: 'classification',
+            aggregation_level: 'file',
+          },
+        ],
+        total: 1,
+      } as unknown as Awaited<ReturnType<typeof apiModule.fetchDatasets>>)
+
+      const items: uploadModule.LocalItem[] = [
+        { key: 'append-a', name: 'append-a.png', file: new File(['a'], 'append-a.png'), type: 'standard' },
+        { key: 'append-b', name: 'append-b.png', file: new File(['b'], 'append-b.png'), type: 'standard' },
+      ]
+
+      vi.spyOn(uploadModule, 'collectItemsFromDataTransfer').mockResolvedValueOnce({
+        items,
+        orphanFolders: [],
+        orphanDtFiles: new Map(),
+        unsupportedFileNames: [],
+        jsonFiles: [],
+      })
+
+      const queryClient = new QueryClient({
+        defaultOptions: { queries: { retry: false } },
+      })
+
+      const { container } = render(
+        <QueryClientProvider client={queryClient}>
+          <MemoryRouter
+            initialEntries={[
+              {
+                pathname: '/register',
+                state: {
+                  datasetName: 'Append Dataset',
+                  datasetId: 'dataset-append',
+                  uploadMode: 'classification',
+                },
+              },
+            ]}
+          >
+            <TooltipProvider>
+              <UploadPage />
+            </TooltipProvider>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      )
+
+      await screen.findByText('uploadPage.appendingData')
+      const dropZone = screen.getByRole('table').closest('div')
+      expect(dropZone).not.toBeNull()
+
+      fireEvent.drop(dropZone as HTMLElement, {
+        preventDefault: vi.fn(),
+        dataTransfer: { items: [{ webkitGetAsEntry: () => ({ isFile: true, name: 'append-a.png' }) }] },
+      })
+
+      await waitFor(() => expect(screen.getByText('append-a.png')).toBeInTheDocument())
+
+      await uploadCsvMetadata(
+        container,
+        new File([
+          'filename,label\n',
+          'append-a.png,tumor\n',
+          'append-b.png,normal\n',
+        ], 'append-labels.csv', { type: 'text/csv' }),
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: /uploadPage\.addToDataset/ }))
+
+      await waitFor(() => {
+        expect(addUploadTaskMock).toHaveBeenCalledTimes(1)
+      })
+
+      expect(uploadDatasetSplitsSpy).not.toHaveBeenCalled()
+      const [files] = addUploadTaskMock.mock.calls[0]
+      expect(files).toHaveLength(2)
+      expect(files[0].metadata).toMatchObject({ dataset_id: 'dataset-append', label: 'tumor' })
+      expect(files[1].metadata).toMatchObject({ dataset_id: 'dataset-append', label: 'normal' })
+    })
+
     it('shows metadata validation progress while a large CSV is being checked', async () => {
       const items: uploadModule.LocalItem[] = [
         { key: 'a', name: 'file-a.png', file: new File(['a'], 'file-a.png'), type: 'standard' },

@@ -725,28 +725,25 @@ export default function RegisterPage() {
     }
 
     // --- CSV BINDING STRATEGY ---
-    // 1. Existing Dataset: Use handleUploadSplit (Client uploads raw CSV, Backend binds)
-    // 2. New Dataset: Parse CSV on Client, bind to files, create dataset with metadata
+    // 1. Existing dataset with no new local files: upload raw CSV so backend updates existing records.
+    // 2. New dataset or appended local files: parse CSV on client and bind only to local items.
 
     let csvMetadataMap = new Map<string, any>()
 
-    // Case 1: Existing Dataset - Upload CSV separately
-    if (splitFile && datasetId) {
+    // Case 1: Existing Dataset CSV-only update - Upload CSV separately
+    if (splitFile && datasetId && localItems.length === 0 && !segmentationJsonOnlyAppend) {
       const success = await handleUploadSplit()
       if (!success) {
         setSubmitError(t('uploadPage.failedUploadCsv'))
         return
       }
 
-      // If we only had a CSV and no files, we are done
-      if (localItems.length === 0 && !segmentationJsonOnlyAppend) {
-        setStep(3)
-        return
-      }
+      setStep(3)
+      return
     }
 
-    // Case 2: New Dataset - Parse CSV to bind to files
-    if (splitFile && !datasetId) {
+    // Case 2: New Dataset or appended local files - Parse CSV to bind to local files
+    if (splitFile) {
       try {
         setIsValidatingMetadata(true)
         csvMetadataMap = await parseCsvMetadata(splitFile)
