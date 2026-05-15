@@ -104,6 +104,58 @@ def _build_segmentation_wsi_lookups(wsis) -> tuple[Dict[str, str], Dict[str, str
     return exact_lookup, stem_lookup
 
 
+def _build_split_wsi_lookups(wsis) -> tuple[Dict[str, Any], Dict[str, Any], Set[str]]:
+    exact_lookup: Dict[str, Any] = {}
+    stem_candidates: Dict[str, Dict[str, Any]] = {}
+
+    for wsi in wsis:
+        for candidate in (
+            getattr(wsi, "original_filename", None),
+            getattr(wsi, "wsi_path", None),
+        ):
+            key = _normalize_annotation_file_key(candidate)
+            if not key:
+                continue
+            exact_lookup[key] = wsi
+            stem_candidates.setdefault(Path(key).stem, {})[wsi.wsi_id] = wsi
+
+    stem_lookup = {
+        stem: next(iter(candidates.values()))
+        for stem, candidates in stem_candidates.items()
+        if len(candidates) == 1
+    }
+    ambiguous_stems = {
+        stem for stem, candidates in stem_candidates.items() if len(candidates) > 1
+    }
+    return exact_lookup, stem_lookup, ambiguous_stems
+
+
+def _resolve_split_wsi_by_filename(
+    filename: str,
+    exact_lookup: Dict[str, Any],
+    stem_lookup: Dict[str, Any],
+    ambiguous_stems: Set[str],
+):
+    key = _normalize_annotation_file_key(filename)
+    if not key:
+        return None
+
+    if key in exact_lookup:
+        return exact_lookup[key]
+
+    stem = Path(key).stem
+    if stem in ambiguous_stems:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Ambiguous filename '{filename}' in CSV. Include the full filename "
+                "with extension to match the target slide."
+            ),
+        )
+
+    return stem_lookup.get(stem)
+
+
 def _get_wsi_data_type(wsi) -> str:
     return get_effective_wsi_data_type(wsi)
 
@@ -1512,8 +1564,9 @@ async def upload_dataset_splits(
             status_code=404, detail=f"No slides found in dataset: {dataset_id}"
         )
 
-    # Create lookup map: original filename -> WSI object
-    filename_map = {w.original_filename: w for w in wsis}
+    exact_filename_map, stem_filename_map, ambiguous_filename_stems = (
+        _build_split_wsi_lookups(wsis)
+    )
 
     # Validate case-level + survival: all slides in a case must have same event_time/event_status
     # Access aggregation_level and task_type through the DataGroup relationship
@@ -1636,7 +1689,12 @@ async def upload_dataset_splits(
         if not fname:
             continue
 
-        target_wsi = filename_map.get(fname)
+        target_wsi = _resolve_split_wsi_by_filename(
+            fname,
+            exact_filename_map,
+            stem_filename_map,
+            ambiguous_filename_stems,
+        )
 
         if not target_wsi:
             not_found_files.append(fname)
