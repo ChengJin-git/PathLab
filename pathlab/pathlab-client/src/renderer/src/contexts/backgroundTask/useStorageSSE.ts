@@ -97,6 +97,10 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               taskTypeDisplay = 'scan_directory'
               taskPrefix = 'scan'
               itemNamePrefix = 'Scan Directory'
+            } else if (task.task_type === 'delete_wsis') {
+              taskTypeDisplay = 'delete_wsi'
+              taskPrefix = 'delete_wsis'
+              itemNamePrefix = 'Delete WSI'
             } else {
               taskTypeDisplay = 'delete_external'
               taskPrefix = 'delete_ext'

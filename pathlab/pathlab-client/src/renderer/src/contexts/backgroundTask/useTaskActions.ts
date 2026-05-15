@@ -8,9 +8,9 @@
 import React, { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
-import { uploadWSIFile, uploadWSIByPath, deleteWSI, fetchDatasets, uploadDatasetSplits } from '../../api/wsi'
+import { uploadWSIFile, uploadWSIByPath, fetchDatasets, uploadDatasetSplits, invalidateWSIListCache } from '../../api/wsi'
 import { deleteTrainingTask } from '../../api/training'
-import { checkUploadSpace, cancelStorageTask, startMigration, getMigrationStatus } from '../../api/storage'
+import { checkUploadSpace, cancelStorageTask, startMigration, getMigrationStatus, startDeleteWSIsTask } from '../../api/storage'
 import { cancelQueueTask } from '../../api/queue'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
 import { generateId } from './helpers'
@@ -231,57 +231,12 @@ export function useTaskActions(params: TaskActionsParams) {
 
   // Add delete WSI task
   const addDeleteWSITask = useCallback(async (wsiIds: string[], mode: 'standard' | 'complete'): Promise<string> => {
-    const taskId = generateId()
-    const task: BackgroundTask = {
-      id: taskId,
-      type: 'delete_wsi',
-      title: t('backgroundTask.taskTitles.deletingFiles', { count: wsiIds.length }),
-      items: wsiIds.map(id => ({
-        id,
-        name: id,
-        status: 'pending' as TaskStatus,
-        progress: 0
-      })),
-      status: 'running',
-      createdAt: new Date(),
-      totalProgress: 0,
-      successCount: 0,
-      failedCount: 0
-    }
-
-    setLocalTasks(prev => [task, ...prev])
+    const response = await startDeleteWSIsTask({ wsi_ids: wsiIds, mode })
+    invalidateWSIListCache()
+    void refreshDiskSpace()
     setIsPanelExpanded(true)
-
-    // Process deletes sequentially (background)
-    const processDeletes = async () => {
-      for (const wsiId of wsiIds) {
-        if (cancelledTasksRef.current.has(taskId)) {
-          updateTaskItem(taskId, wsiId, { status: 'cancelled', progress: 0 })
-          continue
-        }
-
-        updateTaskItem(taskId, wsiId, { status: 'running', progress: 50 })
-
-        try {
-          await deleteWSI(wsiId, mode)
-          updateTaskItem(taskId, wsiId, { status: 'success', progress: 100 })
-        } catch (err) {
-          updateTaskItem(taskId, wsiId, {
-            status: 'error',
-            progress: 0,
-            error: err instanceof Error ? err.message : String(err)
-          })
-        }
-      }
-
-      // Refresh disk space after delete
-      refreshDiskSpace()
-    }
-
-    processDeletes()
-
-    return taskId
-  }, [t, updateTaskItem, refreshDiskSpace, setLocalTasks, setIsPanelExpanded, cancelledTasksRef])
+    return response.task_id
+  }, [refreshDiskSpace, setIsPanelExpanded])
 
   // Add migration task
   const addMigrationTask = useCallback(async (targetPath: string, deleteSource: boolean): Promise<string> => {
@@ -534,6 +489,10 @@ export function useTaskActions(params: TaskActionsParams) {
       } else if (taskId.startsWith('delete_dataset_')) {
         // Storage task: delete_dataset
         actualTaskId = taskId.replace('delete_dataset_', '')
+        isStorageTask = true
+      } else if (taskId.startsWith('delete_wsis_')) {
+        // Storage task: selected WSI batch deletion
+        actualTaskId = taskId.replace('delete_wsis_', '')
         isStorageTask = true
       } else if (taskId.startsWith('cleanup_empty_')) {
         // Storage task: cleanup_empty_datasets
