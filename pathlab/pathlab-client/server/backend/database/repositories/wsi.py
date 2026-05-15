@@ -518,14 +518,6 @@ class WSIRepository(BaseRepository[WSISlide]):
         # Build data_type case expressions
         is_wsi_case = case((is_wsi, 1), else_=0)
         is_patch_case = case((is_patch, 1), else_=0)
-        split_unit_identifier = case(
-            (
-                DataGroup.aggregation_level == "case",
-                func.coalesce(WSISlide.case_id, WSISlide.wsi_id),
-            ),
-            else_=WSISlide.wsi_id,
-        )
-
         datasets_query = (
             select(
                 Dataset.dataset_id,
@@ -559,6 +551,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             DataGroup.aggregation_level,
         ).order_by(Dataset.name)
         datasets_result = await db.execute(datasets_query)
+        dataset_rows = datasets_result.all()
 
         # Get labels per dataset
         labels_per_dataset_query = (
@@ -634,72 +627,10 @@ class WSIRepository(BaseRepository[WSISlide]):
             row.dataset_id: row.annot_count for row in seg_per_dataset_result.all()
         }
 
-        # Get split counts per dataset (train/val/test)
-        splits_per_dataset_query = (
-            select(
-                Dataset.dataset_id,
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                func.lower(WSISlide.split) == "train",
-                                split_unit_identifier,
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_train_count"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                or_(
-                                    func.lower(WSISlide.split) == "val",
-                                    func.lower(WSISlide.split) == "validation",
-                                ),
-                                split_unit_identifier,
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_val_count"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                func.lower(WSISlide.split) == "test",
-                                split_unit_identifier,
-                            ),
-                            else_=None,
-                        )
-                    )
-                ).label("split_test_count"),
-            )
-            .select_from(WSISlide)
-            .outerjoin(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
-            .outerjoin(DataGroup, Dataset.group_id == DataGroup.group_id)
+        dataset_ids_for_split_summary = [row.dataset_id for row in dataset_rows if row.dataset_id]
+        split_summaries = await DatasetSplitService.summarize_many(
+            db, dataset_ids_for_split_summary
         )
-
-        if dataset_visibility_filter is not None:
-            splits_per_dataset_query = splits_per_dataset_query.where(
-                dataset_visibility_filter
-            )
-
-        splits_per_dataset_query = splits_per_dataset_query.group_by(Dataset.dataset_id)
-        splits_per_dataset_result = await db.execute(splits_per_dataset_query)
-
-        # Build splits map per dataset_id
-        dataset_splits_map = {}
-        for row in splits_per_dataset_result.all():
-            train_count = row.split_train_count or 0
-            val_count = row.split_val_count or 0
-            test_count = row.split_test_count or 0
-            dataset_splits_map[row.dataset_id] = {
-                "has_predefined_splits": (train_count + val_count + test_count) > 0,
-                "train": train_count,
-                "val": val_count,
-                "test": test_count,
-            }
 
         # Get event_status distribution per dataset (for survival prediction)
         event_status_per_dataset_query = (
@@ -740,7 +671,7 @@ class WSIRepository(BaseRepository[WSISlide]):
                 dataset_event_status_map[ds_id]["censored"] = row.count
 
         datasets = []
-        for row in datasets_result.all():
+        for row in dataset_rows:
             group_data_type = (
                 row.group_data_type if row.group_data_type in {"wsi", "patch"} else None
             )
@@ -757,10 +688,15 @@ class WSIRepository(BaseRepository[WSISlide]):
                 is_unlabeled = survival_count == 0
             else:
                 is_unlabeled = len(ds_labels) == 0
-            splits_info = dataset_splits_map.get(
-                row.dataset_id,
-                {"has_predefined_splits": False, "train": 0, "val": 0, "test": 0},
-            )
+            split_summary = split_summaries.get(row.dataset_id)
+            if split_summary is not None:
+                has_predefined_splits = split_summary.has_predefined_splits
+                split_counts = split_summary.predefined_split_counts
+                predefined_split_unit = split_summary.predefined_split_unit
+            else:
+                has_predefined_splits = False
+                split_counts = {"train": 0, "val": 0, "test": 0}
+                predefined_split_unit = "files"
             event_status_dist = dataset_event_status_map.get(row.dataset_id, {})
 
             if (
@@ -794,12 +730,9 @@ class WSIRepository(BaseRepository[WSISlide]):
                     "labels": ds_labels,
                     "survival_count": survival_count,
                     "event_status": event_status_dist,
-                    "has_predefined_splits": splits_info["has_predefined_splits"],
-                    "predefined_split_counts": {
-                        "train": splits_info["train"],
-                        "val": splits_info["val"],
-                        "test": splits_info["test"],
-                    },
+                    "has_predefined_splits": has_predefined_splits,
+                    "predefined_split_counts": split_counts,
+                    "predefined_split_unit": predefined_split_unit,
                     "is_public": bool(row.is_public or False),
                     "access_type": access_type,
                     "is_unlabeled": is_unlabeled,

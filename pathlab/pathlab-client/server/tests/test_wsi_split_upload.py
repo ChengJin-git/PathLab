@@ -42,6 +42,16 @@ class _FakeResult:
         return self._rows
 
 
+class _FakeOneResult:
+    _row: SimpleNamespace
+
+    def __init__(self, row: SimpleNamespace) -> None:
+        self._row = row
+
+    def one(self) -> SimpleNamespace:
+        return self._row
+
+
 class _DatasetSummaryDB:
     execute_count: int
 
@@ -84,6 +94,41 @@ class _DatasetSummaryDB:
                 )
             ]
         )
+
+
+class _ChatContextStatsDB:
+    execute_count: int
+
+    def __init__(self) -> None:
+        self.execute_count = 0
+
+    async def execute(self, _query: object) -> _FakeResult | _FakeOneResult:
+        self.execute_count += 1
+        if self.execute_count == 1:
+            return _FakeOneResult(
+                SimpleNamespace(total_count=260, wsi_count=260, patch_count=0)
+            )
+        if self.execute_count == 2:
+            return _FakeResult([])
+        if self.execute_count == 3:
+            return _FakeResult(
+                [
+                    SimpleNamespace(
+                        dataset_id="dataset-1",
+                        dataset_name="All-IDB",
+                        dataset_owner_id="user-1",
+                        is_public=False,
+                        source_organ=None,
+                        group_data_type="wsi",
+                        group_task_type="wsi_classification",
+                        aggregation_level="file",
+                        file_count=260,
+                        wsi_count=260,
+                        patch_count=0,
+                    )
+                ]
+            )
+        return _FakeResult([])
 
 
 @pytest.mark.asyncio
@@ -286,3 +331,31 @@ async def test_get_datasets_with_total_uses_split_service_for_stale_stats(
         "test": 0,
     }
     assert datasets[0]["predefined_split_unit"] == "files"
+
+
+@pytest.mark.asyncio
+async def test_chat_context_stats_use_split_service_for_predefined_splits(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    service_mock = AsyncMock(
+        return_value={
+            "dataset-1": SimpleNamespace(
+                has_predefined_splits=True,
+                predefined_split_counts={"train": 12, "val": 3, "test": 5},
+                predefined_split_unit="files",
+            )
+        }
+    )
+    monkeypatch.setattr(DatasetSplitService, "summarize_many", service_mock)
+
+    db = cast(AsyncSession, cast(object, _ChatContextStatsDB()))
+    stats = await WSIRepository.get_chat_context_stats(db=db, user_id="user-1")
+
+    service_mock.assert_awaited_once_with(db, ["dataset-1"])
+    assert stats["datasets"][0]["has_predefined_splits"] is True
+    assert stats["datasets"][0]["predefined_split_counts"] == {
+        "train": 12,
+        "val": 3,
+        "test": 5,
+    }
+    assert stats["datasets"][0]["predefined_split_unit"] == "files"
