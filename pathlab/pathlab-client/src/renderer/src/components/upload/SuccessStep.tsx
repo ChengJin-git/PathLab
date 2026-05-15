@@ -17,7 +17,7 @@ export const SuccessStep: React.FC<SuccessStepProps> = ({
 }) => {
   const { t } = useTranslation()
   return (
-    <div className="flex-1 flex flex-col items-center lg:justify-center p-4 sm:p-8 lg:-mt-12">
+    <div data-testid="success-step-root" className="flex-1 flex flex-col items-center justify-center p-4 sm:p-8">
       <Card className="w-full max-w-4xl overflow-hidden shadow-2xl border-slate-100 rounded-[1.5rem] sm:rounded-[2rem] bg-white ring-1 ring-slate-900/5 animate-in zoom-in-95 duration-300">
         <div className="grid grid-cols-1 md:grid-cols-2 min-h-[300px] md:min-h-[420px]">
           <div className="bg-slate-50/80 p-6 sm:p-10 flex flex-col justify-center items-center text-center border-b md:border-b-0 md:border-r border-slate-100">
