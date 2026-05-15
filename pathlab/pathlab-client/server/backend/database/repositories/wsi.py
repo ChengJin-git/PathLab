@@ -4,7 +4,7 @@ WSIRepository - Data Access Layer
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Protocol
+from typing import List, Optional, Dict, Any
 from sqlalchemy import select, update, delete, func, asc, desc, and_, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, aliased
@@ -19,6 +19,7 @@ from backend.common.file_types import (
     SIZE_THRESHOLD,
 )
 from backend.ai.task_taxonomy import normalize_task_type, is_segmentation_task
+from backend.services.dataset_splits import DatasetSplitService
 from .base import BaseRepository
 
 
@@ -60,12 +61,6 @@ def _dataset_with_group_loader():
 
 def _parent_wsi_loader():
     return selectinload(WSISlide.parent_wsi).selectinload(WSISlide.dataset)
-
-
-class _SplitCountRow(Protocol):
-    split_train_count: int | None
-    split_val_count: int | None
-    split_test_count: int | None
 
 
 class WSIRepository(BaseRepository[WSISlide]):
@@ -931,68 +926,6 @@ class WSIRepository(BaseRepository[WSISlide]):
         return query
 
     @staticmethod
-    async def _get_live_split_counts_batch(
-        db: AsyncSession, dataset_ids: List[str]
-    ) -> Dict[str, Dict[str, int]]:
-        if not dataset_ids:
-            return {}
-
-        split_unit = case(
-            (
-                DataGroup.aggregation_level == "case",
-                func.coalesce(WSISlide.case_id, WSISlide.wsi_id),
-            ),
-            else_=WSISlide.wsi_id,
-        )
-        query = (
-            select(
-                WSISlide.dataset_id,
-                func.count(
-                    func.distinct(
-                        case((func.lower(WSISlide.split) == "train", split_unit))
-                    )
-                ).label("split_train_count"),
-                func.count(
-                    func.distinct(
-                        case(
-                            (
-                                func.lower(WSISlide.split).in_(["val", "validation"]),
-                                split_unit,
-                            )
-                        )
-                    )
-                ).label("split_val_count"),
-                func.count(
-                    func.distinct(
-                        case((func.lower(WSISlide.split) == "test", split_unit))
-                    )
-                ).label("split_test_count"),
-            )
-            .join(Dataset, WSISlide.dataset_id == Dataset.dataset_id)
-            .join(DataGroup, Dataset.group_id == DataGroup.group_id)
-            .where(WSISlide.dataset_id.in_(dataset_ids))
-            .group_by(WSISlide.dataset_id)
-        )
-
-        result = await db.execute(query)
-        return {
-            row.dataset_id: {
-                "train": row.split_train_count or 0,
-                "val": row.split_val_count or 0,
-                "test": row.split_test_count or 0,
-            }
-            for row in result.all()
-        }
-
-    @staticmethod
-    def _cached_split_counts_are_empty(row: _SplitCountRow) -> bool:
-        return (
-            (row.split_train_count or 0)
-            + (row.split_val_count or 0)
-            + (row.split_test_count or 0)
-        ) == 0
-
-    @staticmethod
     async def count_datasets(
         db: AsyncSession,
         data_type: Optional[str] = None,
@@ -1076,22 +1009,20 @@ class WSIRepository(BaseRepository[WSISlide]):
         if seg_ids:
             coco_map = await WSIRepository._get_coco_categories_batch(db, seg_ids)
 
-        empty_split_dataset_ids = [
-            r.dataset_id
-            for r in rows
-            if r.dataset_id and WSIRepository._cached_split_counts_are_empty(r)
-        ]
-        live_split_counts = await WSIRepository._get_live_split_counts_batch(
-            db, empty_split_dataset_ids
-        )
+        dataset_ids = [r.dataset_id for r in rows if r.dataset_id]
+        split_summaries = await DatasetSplitService.summarize_many(db, dataset_ids)
 
         datasets = []
         for row in rows:
-            live_counts = live_split_counts.get(row.dataset_id, {})
-            train_count = live_counts.get("train", row.split_train_count or 0)
-            val_count = live_counts.get("val", row.split_val_count or 0)
-            test_count = live_counts.get("test", row.split_test_count or 0)
-            has_predefined_splits = (train_count + val_count + test_count) > 0
+            summary = split_summaries.get(row.dataset_id)
+            if summary is not None:
+                has_predefined_splits = summary.has_predefined_splits
+                split_counts = summary.predefined_split_counts
+                split_unit = summary.predefined_split_unit
+            else:
+                has_predefined_splits = False
+                split_counts = {"train": 0, "val": 0, "test": 0}
+                split_unit = "cases" if row.aggregation_level == "case" else "files"
 
             canonical_task_type = _canonical_task_type_for_response(
                 row.task_type, row.data_type
@@ -1111,14 +1042,8 @@ class WSIRepository(BaseRepository[WSISlide]):
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
                 "has_predefined_splits": has_predefined_splits,
-                "predefined_split_unit": "cases"
-                if row.aggregation_level == "case"
-                else "files",
-                "predefined_split_counts": {
-                    "train": train_count,
-                    "val": val_count,
-                    "test": test_count,
-                },
+                "predefined_split_unit": split_unit,
+                "predefined_split_counts": split_counts,
             }
 
             if is_segmentation_task(canonical_task_type) and row.dataset_id:
@@ -1260,21 +1185,21 @@ class WSIRepository(BaseRepository[WSISlide]):
         if seg_ids:
             coco_map = await WSIRepository._get_coco_categories_batch(db, seg_ids)
 
-        empty_split_dataset_ids = [
-            r.dataset_id
-            for r in rows
-            if r.dataset_id and WSIRepository._cached_split_counts_are_empty(r)
-        ]
-        live_split_counts = await WSIRepository._get_live_split_counts_batch(
-            db, empty_split_dataset_ids
-        )
+        dataset_ids = [r.dataset_id for r in rows if r.dataset_id]
+        split_summaries = await DatasetSplitService.summarize_many(db, dataset_ids)
 
         datasets: List[Dict[str, Any]] = []
         for row in rows:
-            live_counts = live_split_counts.get(row.dataset_id, {})
-            train_count = live_counts.get("train", row.split_train_count or 0)
-            val_count = live_counts.get("val", row.split_val_count or 0)
-            test_count = live_counts.get("test", row.split_test_count or 0)
+            summary = split_summaries.get(row.dataset_id)
+            if summary is not None:
+                has_predefined_splits = summary.has_predefined_splits
+                split_counts = summary.predefined_split_counts
+                split_unit = summary.predefined_split_unit
+            else:
+                has_predefined_splits = False
+                split_counts = {"train": 0, "val": 0, "test": 0}
+                split_unit = "cases" if row.aggregation_level == "case" else "files"
+
             canonical_task_type = _canonical_task_type_for_response(
                 row.task_type, row.data_type
             )
@@ -1292,15 +1217,9 @@ class WSIRepository(BaseRepository[WSISlide]):
                 "parent_dataset_name": row.parent_dataset_name,
                 "file_count": row.file_count,
                 "total_size": row.total_size or 0,
-                "has_predefined_splits": (train_count + val_count + test_count) > 0,
-                "predefined_split_unit": "cases"
-                if row.aggregation_level == "case"
-                else "files",
-                "predefined_split_counts": {
-                    "train": train_count,
-                    "val": val_count,
-                    "test": test_count,
-                },
+                "has_predefined_splits": has_predefined_splits,
+                "predefined_split_unit": split_unit,
+                "predefined_split_counts": split_counts,
             }
             if is_segmentation_task(canonical_task_type) and row.dataset_id:
                 coco_categories = coco_map.get(row.dataset_id, [])

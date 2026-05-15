@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.auth import User
 from backend.database.repositories import DatasetStatsRepository, WSIRepository
+from backend.services.dataset_splits import DatasetSplitService
 from gateway.routes import wsi as wsi_routes
 
 
@@ -220,6 +221,19 @@ async def test_dataset_summary_uses_live_split_counts_when_cached_stats_are_stal
         "_get_coco_categories_batch",
         AsyncMock(return_value={}),
     )
+    monkeypatch.setattr(
+        DatasetSplitService,
+        "summarize_many",
+        AsyncMock(
+            return_value={
+                "dataset-1": SimpleNamespace(
+                    has_predefined_splits=True,
+                    predefined_split_counts={"train": 180, "val": 40, "test": 40},
+                    predefined_split_unit="files",
+                )
+            }
+        ),
+    )
 
     datasets, total = await WSIRepository.get_datasets_with_total(
         db=cast(AsyncSession, cast(object, _DatasetSummaryDB())),
@@ -233,3 +247,42 @@ async def test_dataset_summary_uses_live_split_counts_when_cached_stats_are_stal
         "val": 40,
         "test": 40,
     }
+
+
+@pytest.mark.asyncio
+async def test_get_datasets_with_total_uses_split_service_for_stale_stats(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Regression: repository must delegate stale split resolution to DatasetSplitService."""
+    monkeypatch.setattr(
+        WSIRepository,
+        "_get_coco_categories_batch",
+        AsyncMock(return_value={}),
+    )
+
+    service_mock = AsyncMock(
+        return_value={
+            "dataset-1": SimpleNamespace(
+                has_predefined_splits=True,
+                predefined_split_counts={"train": 99, "val": 1, "test": 0},
+                predefined_split_unit="files",
+            )
+        }
+    )
+    monkeypatch.setattr(DatasetSplitService, "summarize_many", service_mock)
+
+    db = cast(AsyncSession, cast(object, _DatasetSummaryDB()))
+    datasets, total = await WSIRepository.get_datasets_with_total(
+        db=db,
+        dataset_id="dataset-1",
+    )
+
+    assert total == 1
+    service_mock.assert_awaited_once_with(db, ["dataset-1"])
+    assert datasets[0]["has_predefined_splits"] is True
+    assert datasets[0]["predefined_split_counts"] == {
+        "train": 99,
+        "val": 1,
+        "test": 0,
+    }
+    assert datasets[0]["predefined_split_unit"] == "files"
