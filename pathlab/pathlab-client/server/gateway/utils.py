@@ -532,11 +532,26 @@ def load_coco_annotation_file(annotation_path: str | Path) -> dict[str, Any]:
     return validate_coco_annotation_payload(payload, source_name=path_obj.name)
 
 
-async def require_no_active_batch_imports(db: AsyncSession, *, detail: str) -> None:
-    """Raise HTTP 400 when a batch import storage task is still running."""
+async def require_no_active_batch_imports(
+    db: AsyncSession, *, detail: str, dataset_ids: Optional[Iterable[str]] = None
+) -> None:
+    """Raise HTTP 400 when an active batch import targets the same dataset."""
     active_storage_tasks = await StorageTaskRepository.get_active_tasks(db)
-    if any(task.task_type == "batch_import" for task in active_storage_tasks):
-        raise HTTPException(status_code=400, detail=detail)
+    normalized_dataset_ids = {
+        dataset_id for dataset_id in (dataset_ids or []) if dataset_id
+    }
+    for task in active_storage_tasks:
+        task_type = getattr(task, "task_type", None)
+        if task_type != "batch_import":
+            continue
+        if dataset_ids is None:
+            raise HTTPException(status_code=400, detail=detail)
+        if not normalized_dataset_ids:
+            continue
+
+        params = getattr(task, "params", None) or {}
+        if params.get("dataset_id") in normalized_dataset_ids:
+            raise HTTPException(status_code=400, detail=detail)
 
 
 async def cancel_ai_service_training(task_id: str) -> None:
