@@ -93,6 +93,10 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               taskTypeDisplay = 'reset_derived_data'
               taskPrefix = 'reset'
               itemNamePrefix = 'Reset Derived Data'
+            } else if (task.task_type === 'scan_directory') {
+              taskTypeDisplay = 'scan_directory'
+              taskPrefix = 'scan'
+              itemNamePrefix = 'Scan Directory'
             } else {
               taskTypeDisplay = 'delete_external'
               taskPrefix = 'delete_ext'
@@ -173,4 +177,3 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
 
   return { storageTasks }
 }
-
