@@ -202,9 +202,11 @@ async def create_wsi_classification(
                 f"Please check your network storage connection and try again.",
             )
 
+    dataset_id = getattr(wsi, "dataset_id", None)
     await require_no_active_batch_imports(
         db,
         detail="Cannot submit inference task while files are being imported. Please wait for all imports to complete.",
+        dataset_ids={str(dataset_id)} if dataset_id else set(),
     )
 
     # Check GPU permission: either user has GPU access OR has temporary elevated permission for this dataset

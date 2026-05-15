@@ -351,6 +351,7 @@ async def create_training_task(
             await require_no_active_batch_imports(
                 db,
                 detail="Cannot submit training task while files are being imported. Please wait for all imports to complete.",
+                dataset_ids=dataset_ids_involved,
             )
 
             dataset_ids = [
