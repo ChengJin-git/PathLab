@@ -28,6 +28,7 @@ _backend_common_config = importlib.import_module("backend.common.config")
 _backend_common_file_types = importlib.import_module("backend.common.file_types")
 
 get_db = _backend_database.get_db
+async_session = _backend_database.async_session
 WSIRepository = _backend_repositories.WSIRepository
 DatasetRepository = _backend_repositories.DatasetRepository
 StorageTaskRepository = _backend_repositories.StorageTaskRepository
@@ -44,6 +45,7 @@ from .access_control import User
 from ..dependencies import logger
 from ..models import (
     ScanDirectoryRequest,
+    StartScanDirectoryTaskRequest,
     CheckExternalFilesRequest,
     DeleteUnavailableFilesRequest,
 )
@@ -57,6 +59,35 @@ from ..utils import (
 
 
 router = APIRouter()
+
+
+def _validate_scan_directory_path(directory: str) -> None:
+    if not os.path.exists(directory):
+        raise HTTPException(status_code=400, detail=f"Directory does not exist: {directory}")
+
+    if not os.path.isdir(directory):
+        raise HTTPException(status_code=400, detail=f"Path is not a directory: {directory}")
+
+    if not os.access(directory, os.R_OK):
+        raise HTTPException(status_code=400, detail=f"Directory is not readable: {directory}")
+
+
+def _build_scan_task_results(
+    *,
+    session: dict[str, Any],
+    page_size: int,
+) -> dict[str, Any]:
+    files = session["files"]
+    return {
+        "scan_id": session["scan_id"],
+        "directory": session["directory"],
+        "total_count": len(files),
+        "valid_count": session["valid_count"],
+        "wsi_count": session["wsi_count"],
+        "patch_count": session["patch_count"],
+        "page_size": page_size,
+        "annotation_scan_enabled": session.get("annotation_scan_enabled", False),
+    }
 
 
 # ==============================================================================
@@ -226,6 +257,107 @@ def _scan_directory_for_wsi(
     return results
 
 
+async def _run_scan_directory_task(task_id: str, user_id: str, params: dict[str, Any]):
+    directory = params["directory_path"]
+    task_type = params.get("task_type")
+    page_size = min(max(1, int(params.get("page_size") or 100)), 500)
+    include_annotation_json = task_type == "patch_segmentation"
+
+    try:
+        async with async_session() as db:
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                "processing",
+                progress=0,
+                processed_items=0,
+            )
+            await db.commit()
+
+        files = await asyncio.to_thread(
+            _scan_directory_for_wsi,
+            directory,
+            include_annotation_json=include_annotation_json,
+        )
+        valid_count = sum(1 for file in files if file.get("valid"))
+        session = create_scan_session(
+            directory=directory,
+            files=files,
+            user_id=user_id,
+            annotation_scan_enabled=include_annotation_json,
+        )
+        results = _build_scan_task_results(session=session, page_size=page_size)
+
+        async with async_session() as db:
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                "completed",
+                progress=100,
+                processed_items=len(files),
+                success_count=valid_count,
+                failed_count=0,
+                results=results,
+            )
+            await db.commit()
+    except Exception as e:
+        logger.error(f"Directory scan task {task_id} failed: {e}")
+        async with async_session() as db:
+            await StorageTaskRepository.update_status(
+                db,
+                task_id,
+                "failed",
+                error_message=str(e),
+            )
+            await db.commit()
+
+
+@router.post("/tasks/scan-directory")
+async def start_scan_directory_task(
+    request: StartScanDirectoryTaskRequest,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Start a directory scan background task and return immediately."""
+    try:
+        directory = request.directory_path
+        _validate_scan_directory_path(directory)
+
+        page_size = min(max(1, request.page_size), 500)
+        task_id = f"scan_{uuid.uuid4().hex[:16]}"
+        params = {
+            "directory_path": directory,
+            "task_type": request.task_type,
+            "page_size": page_size,
+        }
+
+        await StorageTaskRepository.create(
+            db,
+            task_id=task_id,
+            user_id=str(user.id),
+            task_type="scan_directory",
+            total_items=0,
+            params=params,
+        )
+        await db.commit()
+
+        background_tasks.add_task(_run_scan_directory_task, task_id, str(user.id), params)
+
+        return {
+            "task_id": task_id,
+            "message": "Directory scan task started",
+            "directory": directory,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start directory scan task: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to start directory scan: {str(e)}"
+        )
+
+
 @router.post("/scan-directory")
 async def scan_directory(
     request: ScanDirectoryRequest,
@@ -278,21 +410,7 @@ async def scan_directory(
             if not include_annotation_json or session.get("annotation_scan_enabled"):
                 return build_scan_response(session, page=page, page_size=page_size)
 
-        # Validate directory exists
-        if not os.path.exists(directory):
-            raise HTTPException(
-                status_code=400, detail=f"Directory does not exist: {directory}"
-            )
-
-        if not os.path.isdir(directory):
-            raise HTTPException(
-                status_code=400, detail=f"Path is not a directory: {directory}"
-            )
-
-        if not os.access(directory, os.R_OK):
-            raise HTTPException(
-                status_code=400, detail=f"Directory is not readable: {directory}"
-            )
+        _validate_scan_directory_path(directory)
 
         # Scan directory in thread pool to avoid blocking
         files = await asyncio.to_thread(

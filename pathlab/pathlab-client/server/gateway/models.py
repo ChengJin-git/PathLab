@@ -360,6 +360,14 @@ class ScanDirectoryRequest(BaseModel):
     page_size: int = 100
 
 
+class StartScanDirectoryTaskRequest(BaseModel):
+    """Request model for starting an asynchronous directory scan"""
+
+    directory_path: str
+    task_type: Optional[str] = None
+    page_size: int = 100
+
+
 class BatchRegisterFileInfo(BaseModel):
     """File info for batch registration, including associated files for special formats"""
 
