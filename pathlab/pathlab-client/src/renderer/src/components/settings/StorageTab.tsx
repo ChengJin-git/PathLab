@@ -23,9 +23,11 @@ import {
   updateStorageConfig,
   scanDirectory,
   checkExternalFiles,
+  startScanDirectoryTask,
   startBatchImportTask,
   startDeleteExternalTask,
   startUnbindDatasetTask,
+  getStorageTaskStatus,
   getExternalDatasets,
   getExternalDatasetsCachedSync,
   invalidateExternalDatasetsCache,
@@ -38,6 +40,7 @@ import type {
   OrphanedRecordsCleanupResult,
   StorageConfig,
   ScanDirectoryResponse,
+  ScanDirectoryTaskResult,
   CheckExternalFilesResponse,
   ExternalDatasetInfo,
 } from '../../api/storage'
@@ -63,6 +66,8 @@ interface ElectronApi {
   files?: ElectronFilesApi
 }
 declare const window: Window & { api?: ElectronApi }
+
+const SCAN_TASK_POLL_INTERVAL_MS = 2000
 
 export interface StorageTabProps {
   showConfirmDialog: ShowConfirmDialog
@@ -125,6 +130,29 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   }
   const resolveBatchDataLevelForTask = (taskType: TaskType): 'case' | 'file' => {
     return taskType.startsWith('patch_') ? 'file' : batchDataLevel
+  }
+  const waitForScanDirectoryTask = async (taskId: string): Promise<ScanDirectoryTaskResult> => {
+    while (true) {
+      const task = await getStorageTaskStatus(taskId)
+
+      if (task.status === 'completed') {
+        const results = task.results as ScanDirectoryTaskResult | null
+        if (!results?.scan_id) {
+          throw new Error('Directory scan completed without a scan session')
+        }
+        return results
+      }
+
+      if (task.status === 'failed') {
+        throw new Error(task.error_message || t('settings.storageTab.failedToScanDir'))
+      }
+
+      if (task.status === 'cancelled') {
+        throw new Error('Directory scan was cancelled')
+      }
+
+      await new Promise(resolve => setTimeout(resolve, SCAN_TASK_POLL_INTERVAL_MS))
+    }
   }
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
@@ -222,10 +250,16 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     setBatchImportTaskId(null)
     void runBatchScanning(async () => {
       const scanTaskType = resolveBatchTaskTypeForScan()
-      const result = await scanDirectory(batchScanPath.trim(), {
+      const task = await startScanDirectoryTask(batchScanPath.trim(), {
+        taskType: scanTaskType,
+        pageSize: BATCH_SCAN_PAGE_SIZE,
+      })
+      const scanTaskResult = await waitForScanDirectoryTask(task.task_id)
+      const result = await scanDirectory(scanTaskResult.directory, {
+        scanId: scanTaskResult.scan_id,
         taskType: scanTaskType,
         page: 1,
-        pageSize: BATCH_SCAN_PAGE_SIZE,
+        pageSize: scanTaskResult.page_size || BATCH_SCAN_PAGE_SIZE,
       })
       setBatchScanResult(result)
       setBatchSelectAllValid(true)

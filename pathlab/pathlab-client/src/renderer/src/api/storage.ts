@@ -631,8 +631,8 @@ export function getExternalDatasetsCachedSync(): ExternalDatasetsResponse | null
 export interface StorageTaskStatus {
   task_id: string
   user_id: string
-  task_type: 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'unbind_dataset' | 'reset_derived_data' | 'delete_dataset' | 'cleanup_empty_datasets'
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  task_type: 'batch_import' | 'delete_external' | 'batch_update_metadata' | 'unbind_dataset' | 'reset_derived_data' | 'delete_dataset' | 'cleanup_empty_datasets' | 'scan_directory'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
   progress: number
   error_message: string | null
   total_items: number
@@ -645,10 +645,21 @@ export interface StorageTaskStatus {
     wsi_id?: string
     status: string
     message: string
-  }> | null
+  }> | ScanDirectoryTaskResult | null
   created_at: string | null
   started_at: string | null
   completed_at: string | null
+}
+
+export interface ScanDirectoryTaskResult {
+  scan_id: string
+  directory: string
+  total_count: number
+  valid_count: number
+  wsi_count: number
+  patch_count: number
+  page_size: number
+  annotation_scan_enabled: boolean
 }
 
 /**
@@ -658,6 +669,11 @@ export interface StartBatchImportResponse {
   task_id: string
   message: string
   total_files: number
+}
+
+export interface StartScanDirectoryTaskResponse {
+  task_id: string
+  message: string
 }
 
 /**
@@ -704,6 +720,25 @@ export async function startBatchImportTask(request: BatchRegisterRequest): Promi
       body: JSON.stringify(request)
     },
     'Failed to start batch import task'
+  )
+}
+
+export async function startScanDirectoryTask(
+  directoryPath: string,
+  options: Pick<ScanDirectoryOptions, 'taskType' | 'pageSize'> = {}
+): Promise<StartScanDirectoryTaskResponse> {
+  return apiFetch<StartScanDirectoryTaskResponse>(
+    `${API_BASE}/storage/tasks/scan-directory`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        directory_path: directoryPath,
+        task_type: options.taskType,
+        page_size: options.pageSize ?? 100,
+      })
+    },
+    'Failed to start directory scan task'
   )
 }
 
