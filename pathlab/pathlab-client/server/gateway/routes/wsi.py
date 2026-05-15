@@ -31,6 +31,7 @@ from backend.database.repositories import (
     SegmentationAnnotationRepository,
     DatasetStatsRepository,
 )
+from backend.services.dataset_splits import DatasetSplitService
 from backend.database.models import AIResult, AITask, TrainingTaskWSI
 from backend.common.split_generation import (
     generate_split_assignments,
@@ -102,58 +103,6 @@ def _build_segmentation_wsi_lookups(wsis) -> tuple[Dict[str, str], Dict[str, str
         if len(wsi_ids) == 1
     }
     return exact_lookup, stem_lookup
-
-
-def _build_split_wsi_lookups(wsis) -> tuple[Dict[str, Any], Dict[str, Any], Set[str]]:
-    exact_lookup: Dict[str, Any] = {}
-    stem_candidates: Dict[str, Dict[str, Any]] = {}
-
-    for wsi in wsis:
-        for candidate in (
-            getattr(wsi, "original_filename", None),
-            getattr(wsi, "wsi_path", None),
-        ):
-            key = _normalize_annotation_file_key(candidate)
-            if not key:
-                continue
-            exact_lookup[key] = wsi
-            stem_candidates.setdefault(Path(key).stem, {})[wsi.wsi_id] = wsi
-
-    stem_lookup = {
-        stem: next(iter(candidates.values()))
-        for stem, candidates in stem_candidates.items()
-        if len(candidates) == 1
-    }
-    ambiguous_stems = {
-        stem for stem, candidates in stem_candidates.items() if len(candidates) > 1
-    }
-    return exact_lookup, stem_lookup, ambiguous_stems
-
-
-def _resolve_split_wsi_by_filename(
-    filename: str,
-    exact_lookup: Dict[str, Any],
-    stem_lookup: Dict[str, Any],
-    ambiguous_stems: Set[str],
-):
-    key = _normalize_annotation_file_key(filename)
-    if not key:
-        return None
-
-    if key in exact_lookup:
-        return exact_lookup[key]
-
-    stem = Path(key).stem
-    if stem in ambiguous_stems:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Ambiguous filename '{filename}' in CSV. Include the full filename "
-                "with extension to match the target slide."
-            ),
-        )
-
-    return stem_lookup.get(stem)
 
 
 def _get_wsi_data_type(wsi) -> str:
@@ -1497,55 +1446,7 @@ async def upload_dataset_splits(
             status_code=400, detail="Invalid CSV file: not valid UTF-8 encoding"
         )
 
-    # Parse CSV
-    try:
-        f = io.StringIO(text)
-        reader = csv.DictReader(f)
-
-        # Check columns exist
-        if not reader.fieldnames:
-            raise HTTPException(
-                status_code=400, detail="CSV is empty or has no header row"
-            )
-
-        # Identify filename column (required)
-        filename_key = next(
-            (
-                h
-                for h in reader.fieldnames
-                if h.strip().lower() in ["filename", "file_name", "original_filename"]
-            ),
-            None,
-        )
-        if not filename_key:
-            raise HTTPException(
-                status_code=400, detail="CSV must contain 'filename' column"
-            )
-
-        # Identify split column (optional)
-        split_key = next(
-            (h for h in reader.fieldnames if h.strip().lower() == "split"), None
-        )
-
-        rows = list(reader)
-        if not rows:
-            raise HTTPException(status_code=400, detail="CSV has no data rows")
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
-
-    # Validate split values (only if split column exists)
-    valid_splits = {"train", "val", "validation", "test"}
-    if split_key:
-        for i, row in enumerate(rows, start=2):  # start=2 because row 1 is header
-            split_val = row.get(split_key, "").strip().lower()
-            if split_val and split_val not in valid_splits:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid split value '{row.get(split_key)}' at row {i}. Allowed values: train, val, test",
-                )
+    rows, filename_key, _ = DatasetSplitService.parse_csv_assignments(text)
 
     # Validate dataset exists
     dataset = await get_dataset_with_access(
@@ -1563,10 +1464,6 @@ async def upload_dataset_splits(
         raise HTTPException(
             status_code=404, detail=f"No slides found in dataset: {dataset_id}"
         )
-
-    exact_filename_map, stem_filename_map, ambiguous_filename_stems = (
-        _build_split_wsi_lookups(wsis)
-    )
 
     # Validate case-level + survival: all slides in a case must have same event_time/event_status
     # Access aggregation_level and task_type through the DataGroup relationship
@@ -1681,99 +1578,34 @@ async def upload_dataset_splits(
                 )
                 raise HTTPException(status_code=400, detail=error_msg)
 
-    updated_count = 0
-    not_found_files = []
-
-    for row in rows:
-        fname = row.get(filename_key, "").strip()
-        if not fname:
-            continue
-
-        target_wsi = _resolve_split_wsi_by_filename(
-            fname,
-            exact_filename_map,
-            stem_filename_map,
-            ambiguous_filename_stems,
-        )
-
-        if not target_wsi:
-            not_found_files.append(fname)
-            continue
-
-        # Update split (only if split column exists)
-        if split_key:
-            split_val = row.get(split_key, "").strip().lower()
-            if split_val:
-                if split_val == "validation":
-                    split_val = "val"
-                target_wsi.split = split_val
-
-        # Update other metadata if present
-        for key, val in row.items():
-            norm_key = key.strip().lower()
-            if not val:
-                continue
-
-            val = val.strip()
-            if norm_key == "label":
-                if is_segmentation_task(task_type):
-                    continue
-                target_wsi.label = val
-            elif norm_key == "case_id":
-                target_wsi.case_id = val
-            elif norm_key == "age":
-                if val.isdigit():
-                    target_wsi.age = int(val)
-            elif norm_key == "gender":
-                target_wsi.gender = val
-            elif norm_key == "event_time":
-                try:
-                    target_wsi.event_time = float(val)
-                except (ValueError, TypeError):
-                    pass
-            elif norm_key == "event_status":
-                if val in ["0", "1"]:
-                    target_wsi.event_status = int(val)
-
-        updated_count += 1
-
-    # Auto-create val split if empty
-    # Count splits after update
-    train_wsis = [w for w in wsis if w.split == "train"]
-    val_wsis = [w for w in wsis if w.split == "val"]
-
-    auto_val_count = 0
-    if len(val_wsis) == 0 and len(train_wsis) > 0:
-        import random
-
-        n_val = max(1, int(len(train_wsis) * 0.1))
-        # Shuffle and select
-        random.shuffle(train_wsis)
-        for i in range(min(n_val, len(train_wsis))):
-            train_wsis[i].split = "val"
-            auto_val_count += 1
+    split_result = await DatasetSplitService.apply_csv_splits(
+        db=db,
+        dataset_id=dataset_id,
+        slides=wsis,
+        csv_text=text,
+        task_type=task_type,
+    )
+    if split_result.auto_val_count > 0:
         logger.info(
-            f"Auto-created val split: moved {auto_val_count} samples from train to val"
+            f"Auto-created val split: moved {split_result.auto_val_count} samples from train to val"
         )
-
-    await DatasetStatsRepository.recompute(db, dataset_id)
     await db.commit()
     await invalidate_chat_context(str(user.id))
 
     # Build response message
-    message = f"Successfully updated {updated_count} slides from CSV"
-    if auto_val_count > 0:
-        message += f". Auto-assigned {auto_val_count} samples from train to val (10%)"
-    if not_found_files:
-        message += f". Warning: {len(not_found_files)} files not found in dataset"
+    message = f"Successfully updated {split_result.updated_count} slides from CSV"
+    if split_result.auto_val_count > 0:
+        message += f". Auto-assigned {split_result.auto_val_count} samples from train to val (10%)"
+    if split_result.not_found_files:
+        message += f". Warning: {len(split_result.not_found_files)} files not found in dataset"
 
     return {
         "message": message,
-        "updated_count": updated_count,
-        "auto_val_count": auto_val_count,
-        "not_found_count": len(not_found_files),
-        "not_found_files": not_found_files[:10]
-        if not_found_files
+        "updated_count": split_result.updated_count,
+        "auto_val_count": split_result.auto_val_count,
+        "not_found_count": len(split_result.not_found_files),
+        "not_found_files": split_result.not_found_files[:10]
+        if split_result.not_found_files
         else [],  # Return first 10 for debugging
     }
 

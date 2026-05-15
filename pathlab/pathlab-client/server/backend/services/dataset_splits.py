@@ -1,10 +1,16 @@
-# pyright: reportImplicitRelativeImport=false, reportAny=false
+# pyright: reportImplicitRelativeImport=false, reportAny=false, reportExplicitAny=false
 
+import csv
+import io
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy import select, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.ai.task_taxonomy import is_segmentation_task
 from backend.database.models import Dataset, DataGroup, WSISlide, DatasetStats
 from backend.database.repositories.dataset_stats import DatasetStatsRepository
 
@@ -16,7 +22,208 @@ class DatasetSplitSummary:
     predefined_split_unit: str
 
 
+@dataclass(frozen=True)
+class DatasetSplitApplyResult:
+    updated_count: int
+    auto_val_count: int
+    not_found_files: list[str]
+
+
+def _normalize_file_key(file_name: str | None) -> str | None:
+    if not file_name:
+        return None
+    normalized = Path(str(file_name)).name.strip().lower()
+    return normalized or None
+
+
+def _build_split_wsi_lookups(slides: list[Any]) -> tuple[dict[str, Any], dict[str, Any], set[str]]:
+    exact_lookup: dict[str, Any] = {}
+    stem_candidates: dict[str, dict[str, Any]] = {}
+
+    for slide in slides:
+        for candidate in (
+            getattr(slide, "original_filename", None),
+            getattr(slide, "wsi_path", None),
+        ):
+            key = _normalize_file_key(candidate)
+            if not key:
+                continue
+            exact_lookup[key] = slide
+            stem_candidates.setdefault(Path(key).stem, {})[slide.wsi_id] = slide
+
+    stem_lookup = {
+        stem: next(iter(candidates.values()))
+        for stem, candidates in stem_candidates.items()
+        if len(candidates) == 1
+    }
+    ambiguous_stems = {
+        stem for stem, candidates in stem_candidates.items() if len(candidates) > 1
+    }
+    return exact_lookup, stem_lookup, ambiguous_stems
+
+
+def _resolve_split_wsi_by_filename(
+    filename: str,
+    exact_lookup: dict[str, Any],
+    stem_lookup: dict[str, Any],
+    ambiguous_stems: set[str],
+):
+    key = _normalize_file_key(filename)
+    if not key:
+        return None
+
+    if key in exact_lookup:
+        return exact_lookup[key]
+
+    stem = Path(key).stem
+    if stem in ambiguous_stems:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Ambiguous filename '{filename}' in CSV. Include the full filename "
+                "with extension to match the target slide."
+            ),
+        )
+
+    return stem_lookup.get(stem)
+
+
 class DatasetSplitService:
+    @staticmethod
+    def parse_csv_assignments(csv_text: str) -> tuple[list[dict[str, str]], str, str | None]:
+        try:
+            reader = csv.DictReader(io.StringIO(csv_text))
+            if not reader.fieldnames:
+                raise HTTPException(
+                    status_code=400, detail="CSV is empty or has no header row"
+                )
+
+            filename_key = next(
+                (
+                    h
+                    for h in reader.fieldnames
+                    if h.strip().lower()
+                    in ["filename", "file_name", "original_filename"]
+                ),
+                None,
+            )
+            if not filename_key:
+                raise HTTPException(
+                    status_code=400, detail="CSV must contain 'filename' column"
+                )
+
+            split_key = next(
+                (h for h in reader.fieldnames if h.strip().lower() == "split"), None
+            )
+            rows = list(reader)
+            if not rows:
+                raise HTTPException(status_code=400, detail="CSV has no data rows")
+
+            valid_splits = {"train", "val", "validation", "test"}
+            if split_key:
+                for i, row in enumerate(rows, start=2):
+                    split_val = row.get(split_key, "").strip().lower()
+                    if split_val and split_val not in valid_splits:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                f"Invalid split value '{row.get(split_key)}' at row {i}. "
+                                "Allowed values: train, val, test"
+                            ),
+                        )
+
+            return rows, filename_key, split_key
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(exc)}")
+
+    @staticmethod
+    async def apply_csv_splits(
+        db: AsyncSession,
+        dataset_id: str,
+        slides: list[Any],
+        csv_text: str,
+        task_type: str,
+    ) -> DatasetSplitApplyResult:
+        rows, filename_key, split_key = DatasetSplitService.parse_csv_assignments(csv_text)
+        exact_lookup, stem_lookup, ambiguous_stems = _build_split_wsi_lookups(slides)
+
+        updated_count = 0
+        not_found_files: list[str] = []
+        for row in rows:
+            fname = row.get(filename_key, "").strip()
+            if not fname:
+                continue
+
+            target_wsi = _resolve_split_wsi_by_filename(
+                fname, exact_lookup, stem_lookup, ambiguous_stems
+            )
+            if not target_wsi:
+                not_found_files.append(fname)
+                continue
+
+            if split_key:
+                split_val = row.get(split_key, "").strip().lower()
+                if split_val:
+                    target_wsi.split = "val" if split_val == "validation" else split_val
+
+            DatasetSplitService._apply_metadata_row(target_wsi, row, task_type)
+            updated_count += 1
+
+        auto_val_count = DatasetSplitService._auto_create_val_split(slides)
+        await DatasetStatsRepository.recompute(db, dataset_id)
+        return DatasetSplitApplyResult(
+            updated_count=updated_count,
+            auto_val_count=auto_val_count,
+            not_found_files=not_found_files,
+        )
+
+    @staticmethod
+    def _apply_metadata_row(target_wsi: Any, row: dict[str, str], task_type: str) -> None:
+        for key, val in row.items():
+            norm_key = key.strip().lower()
+            if not val:
+                continue
+
+            val = val.strip()
+            if norm_key == "label":
+                if is_segmentation_task(task_type):
+                    continue
+                target_wsi.label = val
+            elif norm_key == "case_id":
+                target_wsi.case_id = val
+            elif norm_key == "age":
+                if val.isdigit():
+                    target_wsi.age = int(val)
+            elif norm_key == "gender":
+                target_wsi.gender = val
+            elif norm_key == "event_time":
+                try:
+                    target_wsi.event_time = float(val)
+                except (ValueError, TypeError):
+                    pass
+            elif norm_key == "event_status":
+                if val in ["0", "1"]:
+                    target_wsi.event_status = int(val)
+
+    @staticmethod
+    def _auto_create_val_split(slides: list[Any]) -> int:
+        train_slides = [slide for slide in slides if slide.split == "train"]
+        val_slides = [slide for slide in slides if slide.split == "val"]
+        if val_slides or not train_slides:
+            return 0
+
+        import random
+
+        auto_val_count = 0
+        n_val = max(1, int(len(train_slides) * 0.1))
+        random.shuffle(train_slides)
+        for i in range(min(n_val, len(train_slides))):
+            train_slides[i].split = "val"
+            auto_val_count += 1
+        return auto_val_count
+
     @staticmethod
     async def summarize_many(
         db: AsyncSession, dataset_ids: list[str]

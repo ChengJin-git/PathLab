@@ -4,10 +4,35 @@ from typing import cast
 from unittest.mock import AsyncMock
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.database.repositories.dataset_stats import DatasetStatsRepository
 from backend.services.dataset_splits import DatasetSplitService
+
+
+class _DummyDB:
+    pass
+
+
+class _Slide:
+    def __init__(
+        self,
+        wsi_id: str,
+        original_filename: str,
+        wsi_path: str,
+        split: str | None = None,
+    ) -> None:
+        self.wsi_id: str = wsi_id
+        self.original_filename: str = original_filename
+        self.wsi_path: str = wsi_path
+        self.split: str | None = split
+        self.label: str | None = None
+        self.case_id: str | None = None
+        self.age: int | None = None
+        self.gender: str | None = None
+        self.event_time: float | None = None
+        self.event_status: int | None = None
 
 
 class _FakeResult:
@@ -288,3 +313,84 @@ async def test_summarize_many_mixed_datasets_returns_one_per_id(
     assert summaries["ds-case"].predefined_split_unit == "cases"
 
     recompute_mock.assert_awaited_once_with(db, "ds-case")
+
+
+@pytest.mark.asyncio
+async def test_apply_csv_splits_matches_case_insensitive_extensionless_filenames(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = _DummyDB()
+    slides = [
+        _Slide("wsi-1", "Tumor_A.SVS", "/uploads/wsi_files/Tumor_A.SVS"),
+        _Slide("wsi-2", "control_b.svs", "/uploads/wsi_files/control_b.svs"),
+        _Slide("wsi-3", "normal_c.svs", "/uploads/wsi_files/normal_c.svs"),
+    ]
+    recompute_mock = AsyncMock()
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", recompute_mock)
+
+    result = await DatasetSplitService.apply_csv_splits(
+        db=cast(AsyncSession, cast(object, db)),
+        dataset_id="dataset-1",
+        slides=slides,
+        csv_text="filename,split\ntumor_a,train\nCONTROL_B,test\nnormal_c,val\n",
+        task_type="wsi_classification",
+    )
+
+    assert result.updated_count == 3
+    assert result.auto_val_count == 0
+    assert result.not_found_files == []
+    assert slides[0].split == "train"
+    assert slides[1].split == "test"
+    assert slides[2].split == "val"
+    recompute_mock.assert_awaited_once_with(db, "dataset-1")
+
+
+@pytest.mark.asyncio
+async def test_apply_csv_splits_reports_ambiguous_extensionless_matches():
+    slides = [
+        _Slide("wsi-1", "sample.svs", "/uploads/wsi_files/sample.svs"),
+        _Slide("wsi-2", "sample.tiff", "/uploads/wsi_files/sample.tiff"),
+    ]
+
+    with pytest.raises(HTTPException) as exc_info:
+        _ = await DatasetSplitService.apply_csv_splits(
+            db=cast(AsyncSession, cast(object, _DummyDB())),
+            dataset_id="dataset-1",
+            slides=slides,
+            csv_text="filename,split\nsample,train\n",
+            task_type="wsi_classification",
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "ambiguous" in str(exc_info.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_apply_csv_splits_updates_metadata_and_normalizes_validation(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = _DummyDB()
+    slide = _Slide("wsi-1", "sample.svs", "/uploads/wsi_files/sample.svs")
+    recompute_mock = AsyncMock()
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", recompute_mock)
+
+    result = await DatasetSplitService.apply_csv_splits(
+        db=cast(AsyncSession, cast(object, db)),
+        dataset_id="dataset-1",
+        slides=[slide],
+        csv_text=(
+            "file_name,split,label,case_id,age,gender,event_time,event_status\n"
+            "sample.svs,validation,tumor,case-1,42,F,13.5,1\n"
+        ),
+        task_type="wsi_classification",
+    )
+
+    assert result.updated_count == 1
+    assert slide.split == "val"
+    assert slide.label == "tumor"
+    assert slide.case_id == "case-1"
+    assert slide.age == 42
+    assert slide.gender == "F"
+    assert slide.event_time == 13.5
+    assert slide.event_status == 1
+    recompute_mock.assert_awaited_once_with(db, "dataset-1")

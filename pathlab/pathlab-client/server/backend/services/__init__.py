@@ -1,3 +1,11 @@
-from .dataset_splits import DatasetSplitService, DatasetSplitSummary
+from .dataset_splits import (
+    DatasetSplitApplyResult,
+    DatasetSplitService,
+    DatasetSplitSummary,
+)
 
-__all__ = ["DatasetSplitService", "DatasetSplitSummary"]
+__all__ = [
+    "DatasetSplitApplyResult",
+    "DatasetSplitService",
+    "DatasetSplitSummary",
+]
