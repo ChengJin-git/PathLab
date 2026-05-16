@@ -45,6 +45,7 @@ export interface BackgroundTask {
   isServerTask?: boolean
   serverTaskStatus?: TrainingTaskStatus  // Original status from server
   taskName?: string  // Task name for training tasks
+  datasetId?: string  // Dataset ID for batch_import / upload tasks (for scoping upload guards)
   datasetName?: string  // Dataset name for delete_dataset / batch_import storage tasks
   dataLevel?: 'wsi' | 'patch' // For progress calculation
   // For analysis tasks
@@ -136,7 +137,7 @@ export interface BackgroundTaskContextType {
   subscribeStorageSSE: () => () => void
 
   // Validation
-  hasUploadingTasks: () => boolean  // Check if there are any uploading tasks (upload or batch_import)
+  hasUploadingTasks: (datasetId?: string) => boolean  // Check if there are any uploading tasks (upload or batch_import), optionally scoped to a dataset
 
   // Dataset deletion overlay state (context-level, persists across navigation)
   deletingDatasetNames: Set<string>

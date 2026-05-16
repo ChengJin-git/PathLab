@@ -118,7 +118,9 @@ export function useTaskActions(params: TaskActionsParams) {
       createdAt: new Date(),
       totalProgress: 0,
       successCount: 0,
-      failedCount: 0
+      failedCount: 0,
+      datasetId: files.find(f => f.metadata?.dataset_id)?.metadata?.dataset_id,
+      datasetName: files.find(f => f.metadata?.dataset_name)?.metadata?.dataset_name
     }
 
     setLocalTasks(prev => [task, ...prev])
@@ -526,12 +528,17 @@ export function useTaskActions(params: TaskActionsParams) {
   }, [])
 
   // Check if there are any uploading tasks (upload or batch_import)
-  const hasUploadingTasks = useCallback((): boolean => {
+  const hasUploadingTasks = useCallback((datasetId?: string): boolean => {
     return tasks.some(task => {
       // Check for upload or batch_import tasks that are pending or running
       const isUploadType = task.type === 'upload' || task.type === 'batch_import'
       const isActiveStatus = task.status === 'pending' || task.status === 'running'
-      return isUploadType && isActiveStatus
+      if (!isUploadType || !isActiveStatus) return false
+      // If datasetId is provided, only match tasks for that dataset
+      if (datasetId) {
+        return task.datasetId === datasetId || task.datasetName === datasetId
+      }
+      return true
     })
   }, [tasks])
 

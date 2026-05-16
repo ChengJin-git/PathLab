@@ -99,4 +99,70 @@ describe('useTaskActions addDeleteWSITask', () => {
     expect(cancelStorageTaskSpy).toHaveBeenCalledWith('delete_wsis_abc')
     expect(cancelQueueTaskSpy).not.toHaveBeenCalled()
   })
+
+  it('records the existing dataset id on local upload tasks', async () => {
+    const { result } = renderHook(() => useTaskActions(defaultParams))
+
+    await act(async () => {
+      await result.current.addUploadTask([
+        {
+          key: 'slide-1',
+          name: 'slide-1.svs',
+          metadata: { dataset_id: 'training-dataset' },
+        },
+      ])
+    })
+
+    const addTaskUpdater = mockSetLocalTasks.mock.calls[0][0]
+    const [task] = addTaskUpdater([])
+    expect(task.datasetId).toBe('training-dataset')
+  })
+
+  it('does not report uploads for an unrelated batch import when scoped to a dataset', () => {
+    const { result } = renderHook(() => useTaskActions({
+      ...defaultParams,
+      tasks: [
+        {
+          id: 'import_other-dataset',
+          type: 'batch_import',
+          title: 'Other Dataset (10/100)',
+          items: [],
+          status: 'running',
+          createdAt: new Date(),
+          totalProgress: 10,
+          successCount: 10,
+          failedCount: 0,
+          isServerTask: true,
+          datasetId: 'other-dataset',
+          datasetName: 'Other Dataset',
+        },
+      ],
+    }))
+
+    expect(result.current.hasUploadingTasks('training-dataset')).toBe(false)
+  })
+
+  it('reports uploads for a matching batch import when scoped to a dataset', () => {
+    const { result } = renderHook(() => useTaskActions({
+      ...defaultParams,
+      tasks: [
+        {
+          id: 'import_training-dataset',
+          type: 'batch_import',
+          title: 'Training Dataset (10/100)',
+          items: [],
+          status: 'running',
+          createdAt: new Date(),
+          totalProgress: 10,
+          successCount: 10,
+          failedCount: 0,
+          isServerTask: true,
+          datasetId: 'training-dataset',
+          datasetName: 'Training Dataset',
+        },
+      ],
+    }))
+
+    expect(result.current.hasUploadingTasks('training-dataset')).toBe(true)
+  })
 })
