@@ -8,11 +8,11 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import select, func, case
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.ai.task_taxonomy import is_segmentation_task
-from backend.database.models import Dataset, DataGroup, WSISlide, DatasetStats
-from backend.database.repositories.dataset_stats import DatasetStatsRepository
+from backend.database.models import Dataset, DataGroup, WSISlide, DatasetStats, WSISlideUserSplit
 
 
 @dataclass(frozen=True)
@@ -145,11 +145,13 @@ class DatasetSplitService:
         slides: list[Any],
         csv_text: str,
         task_type: str,
+        target_user_id: str | None = None,
     ) -> DatasetSplitApplyResult:
         rows, filename_key, split_key = DatasetSplitService.parse_csv_assignments(csv_text)
         exact_lookup, stem_lookup, ambiguous_stems = _build_split_wsi_lookups(slides)
 
         updated_count = 0
+        override_rows: list[dict[str, str]] = []
         not_found_files: list[str] = []
         for row in rows:
             fname = row.get(filename_key, "").strip()
@@ -166,18 +168,72 @@ class DatasetSplitService:
             if split_key:
                 split_val = row.get(split_key, "").strip().lower()
                 if split_val:
-                    target_wsi.split = "val" if split_val == "validation" else split_val
+                    normalized_split = "val" if split_val == "validation" else split_val
+                    if target_user_id:
+                        override_rows.append(
+                            {
+                                "wsi_id": target_wsi.wsi_id,
+                                "user_id": target_user_id,
+                                "split": normalized_split,
+                            }
+                        )
+                    else:
+                        target_wsi.split = normalized_split
 
-            DatasetSplitService._apply_metadata_row(target_wsi, row, task_type)
+            if not target_user_id:
+                DatasetSplitService._apply_metadata_row(target_wsi, row, task_type)
             updated_count += 1
 
-        auto_val_count = DatasetSplitService._auto_create_val_split(slides)
-        await DatasetStatsRepository.recompute(db, dataset_id)
+        if override_rows:
+            await DatasetSplitService._upsert_user_split_overrides(db, override_rows)
+        auto_val_count = 0 if target_user_id else DatasetSplitService._auto_create_val_split(slides)
+        if not target_user_id:
+            from backend.database.repositories.dataset_stats import DatasetStatsRepository
+
+            await DatasetStatsRepository.recompute(db, dataset_id)
         return DatasetSplitApplyResult(
             updated_count=updated_count,
             auto_val_count=auto_val_count,
             not_found_files=not_found_files,
         )
+
+    @staticmethod
+    async def _upsert_user_split_overrides(
+        db: AsyncSession,
+        rows: list[dict[str, str]],
+    ) -> None:
+        if not rows:
+            return
+        statement = pg_insert(WSISlideUserSplit).values(rows)
+        statement = statement.on_conflict_do_update(
+            index_elements=["wsi_id", "user_id"],
+            set_={
+                "split": statement.excluded.split,
+                "updated_at": func.now(),
+            },
+        )
+        await db.execute(statement)
+
+    @staticmethod
+    async def resolve_effective_splits(
+        db: AsyncSession,
+        slides: list[Any],
+        user_id: str | None,
+    ) -> dict[str, str]:
+        baseline = {slide.wsi_id: slide.split for slide in slides if getattr(slide, "split", None)}
+        if not user_id or not slides:
+            return baseline
+
+        wsi_ids = [slide.wsi_id for slide in slides]
+        result = await db.execute(
+            select(WSISlideUserSplit.wsi_id, WSISlideUserSplit.split).where(
+                WSISlideUserSplit.user_id == user_id,
+                WSISlideUserSplit.wsi_id.in_(wsi_ids),
+            )
+        )
+        for row in result.all():
+            baseline[row.wsi_id] = row.split
+        return baseline
 
     @staticmethod
     def _apply_metadata_row(target_wsi: Any, row: dict[str, str], task_type: str) -> None:
@@ -278,6 +334,8 @@ class DatasetSplitService:
                 counts = live_counts.get(ds_id, {"train": 0, "val": 0, "test": 0})
                 total = counts["train"] + counts["val"] + counts["test"]
                 if total > 0:
+                    from backend.database.repositories.dataset_stats import DatasetStatsRepository
+
                     await DatasetStatsRepository.recompute(db, ds_id)
                 row = cached_rows.get(ds_id)
                 unit = (

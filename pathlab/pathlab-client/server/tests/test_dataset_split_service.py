@@ -57,6 +57,14 @@ class _FakeDB:
         return _FakeResult(rows)
 
 
+class _OverrideDB:
+    def __init__(self, rows: list[SimpleNamespace]) -> None:
+        self.rows = rows
+
+    async def execute(self, _query: object) -> _FakeResult:
+        return _FakeResult(self.rows)
+
+
 def fake_db_with_cached_counts(train: int, val: int, test: int) -> _FakeDB:
     return _FakeDB(
         [
@@ -145,6 +153,23 @@ async def test_summarize_many_returns_empty_dict_for_empty_dataset_ids():
         dataset_ids=[],
     )
     assert summaries == {}
+
+
+@pytest.mark.asyncio
+async def test_resolve_effective_splits_prefers_user_override_before_baseline():
+    slides = [
+        _Slide("wsi-1", "a.svs", "/slides/a.svs", split="train"),
+        _Slide("wsi-2", "b.svs", "/slides/b.svs", split="val"),
+    ]
+    db = _OverrideDB([SimpleNamespace(wsi_id="wsi-1", split="test")])
+
+    splits = await DatasetSplitService.resolve_effective_splits(
+        db=cast(AsyncSession, cast(object, db)),
+        slides=slides,
+        user_id="user-2",
+    )
+
+    assert splits == {"wsi-1": "test", "wsi-2": "val"}
 
 
 @pytest.mark.asyncio
