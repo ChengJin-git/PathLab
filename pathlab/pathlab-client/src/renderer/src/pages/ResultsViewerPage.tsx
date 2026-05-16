@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useDebounce } from '../lib/useDebounce'
 import { useAsyncAction } from '../lib/useAsyncAction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
@@ -139,11 +140,40 @@ const getTaskSplitLabel = (
   return t('taskDetail.configuration.splitManual')
 }
 
+export function filterTasksByQuery(
+  tasks: TrainingTask[],
+  query: string
+): TrainingTask[] {
+  const q = query.trim().toLowerCase()
+  if (!q) return tasks
+  return tasks.filter(task => {
+    if (task.name.toLowerCase().includes(q)) return true
+    if (task.task_type.toLowerCase().includes(q)) return true
+    if (task.task_id.toLowerCase().includes(q)) return true
+    const modelLabel = getTaskModelDisplayLabel(task)
+    if (modelLabel?.toLowerCase().includes(q)) return true
+    const backbone = typeof task.model_config?.backbone === 'string' ? task.model_config.backbone : null
+    if (backbone?.toLowerCase().includes(q)) return true
+    const splitStrategy = task.split_config?.strategy
+    if (splitStrategy) {
+      if (splitStrategy === 'random' && 'random'.includes(q)) return true
+      if (splitStrategy === 'manual' && 'manual'.includes(q)) return true
+      if (splitStrategy === 'k_fold') {
+        const nSplits = task.split_config?.n_splits ?? 'K'
+        const foldLabel = `${nSplits}-fold`
+        if (foldLabel.toLowerCase().includes(q)) return true
+        if ('k-fold'.includes(q)) return true
+      }
+    }
+    return false
+  })
+}
+
 export default function ResultsViewerPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const [searchParams] = useSearchParams()
-  const { analysisTasks, subscribeAnalysisSSE } = useBackgroundTask()
+  const { analysisTasks, subscribeAnalysisSSE, rawTrainingTasks, subscribeTrainingSSE } = useBackgroundTask()
   const { isAdmin } = useAuth()
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -153,6 +183,16 @@ export default function ResultsViewerPage() {
     const unsubscribe = subscribeAnalysisSSE()
     return () => unsubscribe()
   }, [subscribeAnalysisSSE])
+
+  useEffect(() => {
+    const unsubscribe = subscribeTrainingSSE()
+    return () => unsubscribe()
+  }, [subscribeTrainingSSE])
+
+  useEffect(() => {
+    if (rawTrainingTasks === null) return
+    void qc.invalidateQueries({ queryKey: ['results-tasks'] })
+  }, [rawTrainingTasks, qc])
 
   // Check for task_id in URL params first, then fall back to navigation state
   const taskIdFromUrl = searchParams.get('task_id') || searchParams.get('task')
@@ -171,6 +211,8 @@ export default function ResultsViewerPage() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleting, runDeleting] = useAsyncAction<void>({ onError: (err) => setAnalysisError(err instanceof Error ? err.message : t('resultsPage.failedToDeleteRetry')) })
   const [isTaskDropdownOpen, setIsTaskDropdownOpen] = useState(false)
+  const [taskSearchQuery, setTaskSearchQuery] = useState('')
+  const debouncedTaskSearchQuery = useDebounce(taskSearchQuery, 300)
   const [analysisError, setAnalysisError] = useState<string | null>(null)
   const [bootstrapCIMetrics, setBootstrapCIMetrics] = useState<string[]>([])
 
@@ -1361,16 +1403,39 @@ export default function ResultsViewerPage() {
                   <>
                     <div
                       className="fixed inset-0 z-10"
-                      onClick={() => setIsTaskDropdownOpen(false)}
+                      onClick={() => { setIsTaskDropdownOpen(false); setTaskSearchQuery('') }}
                     />
                     <div className="absolute z-20 w-full mt-2 bg-white/80 backdrop-blur-xl border border-white/20 rounded-xl shadow-2xl shadow-indigo-500/10 overflow-hidden animate-in fade-in zoom-in-95 duration-200 origin-top ring-1 ring-black/5">
+                      <div className="px-3 py-2 border-b border-gray-100">
+                        <input
+                          type="text"
+                          value={taskSearchQuery}
+                          onChange={e => setTaskSearchQuery(e.target.value)}
+                          placeholder={t('resultsPage.searchTasks', { defaultValue: 'Search tasks...' })}
+                          className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
+                          onClick={e => e.stopPropagation()}
+                        />
+                      </div>
                       <div className="max-h-[320px] overflow-y-auto py-2 scrollbar-thin scrollbar-thumb-gray-200">
-                        {tasks.map(task => (
+                        {(() => {
+                          const filteredTasks = filterTasksByQuery(tasks, debouncedTaskSearchQuery)
+                          if (filteredTasks.length === 0) {
+                            return (
+                              <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
+                                <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
+                                  <History className="w-5 h-5 text-gray-400" />
+                                </div>
+                                <p>{tasks.length === 0 ? t('resultsPage.noTasksAvailable') : t('resultsPage.noMatchingTasks', { defaultValue: 'No tasks match your search' })}</p>
+                              </div>
+                            )
+                          }
+                          return filteredTasks.map(task => (
                           <button
                             key={task.task_id}
                             onClick={() => {
                               setSelectedTaskId(task.task_id)
                               setIsTaskDropdownOpen(false)
+                              setTaskSearchQuery('')
                             }}
                             onMouseEnter={() => {
                               if (task.task_id !== selectedTaskId) {
@@ -1460,15 +1525,8 @@ export default function ResultsViewerPage() {
                               )}
                             </div>
                           </button>
-                        ))}
-                        {tasks.length === 0 && (
-                          <div className="px-4 py-8 text-sm text-gray-500 text-center flex flex-col items-center gap-2">
-                             <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
-                               <History className="w-5 h-5 text-gray-400" />
-                             </div>
-                             <p>{t('resultsPage.noTasksAvailable')}</p>
-                          </div>
-                        )}
+                        ))
+                        })()}
                       </div>
                     </div>
                   </>
