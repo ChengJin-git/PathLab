@@ -48,6 +48,7 @@ from backend.common.split_generation import (
     generate_split_assignments,
     load_segmentation_multilabels,
 )
+from backend.services.dataset_splits import DatasetSplitService
 from backend.ai.task_taxonomy import (
     is_classification_task,
     is_segmentation_task,
@@ -338,8 +339,11 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             if strategy == "manual":
                 # For manual strategy, read splits directly from WSI records in database
                 # This is more reliable than depending on frontend state which may be stale
-                wsi_split_map = {wsi.wsi_id: wsi.split for wsi in wsis if wsi.split}
-                wsi_splits = wsi_split_map
+                wsi_splits = await DatasetSplitService.resolve_effective_splits(
+                    db,
+                    wsis,
+                    str(task_data.get("user_id")) if task_data.get("user_id") else None,
+                )
             else:
                 aggregation_level = "file"
                 task_type_from_group = task_type
