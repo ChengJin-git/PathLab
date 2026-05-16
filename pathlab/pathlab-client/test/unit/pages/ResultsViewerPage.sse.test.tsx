@@ -5,6 +5,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ResultsViewerPage from '../../../src/renderer/src/pages/ResultsViewerPage'
 import { TooltipProvider } from '../../../src/renderer/src/components/ui/tooltip'
+import enUS from '../../../src/renderer/src/locales/en-US.json'
+import zhCN from '../../../src/renderer/src/locales/zh-CN.json'
+import zhHK from '../../../src/renderer/src/locales/zh-HK.json'
+
+const LOCALES = [
+  { name: 'en-US', data: enUS },
+  { name: 'zh-CN', data: zhCN },
+  { name: 'zh-HK', data: zhHK },
+]
+
 const authState = {
   isAdmin: false,
 }
@@ -85,6 +95,23 @@ describe('ResultsViewerPage training SSE invalidation', () => {
     })
 
     unmount()
+  })
+
+  it('has resultsPage search keys in all locale files', () => {
+    const keys = [
+      'searchModels',
+      'noMatchingModels',
+      'searchTasks',
+      'noMatchingTasks',
+    ]
+    for (const { name, data } of LOCALES) {
+      for (const key of keys) {
+        expect(
+          (data as any).resultsPage?.[key],
+          `Missing resultsPage.${key} in ${name}`
+        ).toBeDefined()
+      }
+    }
   })
 
   it('invalidates results-tasks query when rawTrainingTasks changes from SSE', async () => {

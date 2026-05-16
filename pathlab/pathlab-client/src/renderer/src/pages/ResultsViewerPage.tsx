@@ -880,7 +880,7 @@ export default function ResultsViewerPage() {
                           type="text"
                           value={modelSearchQuery}
                           onChange={e => setModelSearchQuery(e.target.value)}
-                          placeholder={t('resultsPage.searchModels', { defaultValue: 'Search models...' })}
+                          placeholder={t('resultsPage.searchModels')}
                           className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500/30 focus:border-orange-400"
                           onClick={e => e.stopPropagation()}
                         />
@@ -894,7 +894,7 @@ export default function ResultsViewerPage() {
                           if (filtered.length === 0) {
                             return (
                               <div className="px-4 py-8 text-center text-gray-500">
-                                {trainedModels.length === 0 ? t('resultsPage.noActiveModels') : t('resultsPage.noMatchingModels', { defaultValue: 'No models match your search' })}
+                                {trainedModels.length === 0 ? t('resultsPage.noActiveModels') : t('resultsPage.noMatchingModels')}
                               </div>
                             )
                           }
@@ -1411,7 +1411,7 @@ export default function ResultsViewerPage() {
                           type="text"
                           value={taskSearchQuery}
                           onChange={e => setTaskSearchQuery(e.target.value)}
-                          placeholder={t('resultsPage.searchTasks', { defaultValue: 'Search tasks...' })}
+                          placeholder={t('resultsPage.searchTasks')}
                           className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-400"
                           onClick={e => e.stopPropagation()}
                         />
@@ -1425,7 +1425,7 @@ export default function ResultsViewerPage() {
                                 <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center">
                                   <History className="w-5 h-5 text-gray-400" />
                                 </div>
-                                <p>{tasks.length === 0 ? t('resultsPage.noTasksAvailable') : t('resultsPage.noMatchingTasks', { defaultValue: 'No tasks match your search' })}</p>
+                                <p>{tasks.length === 0 ? t('resultsPage.noTasksAvailable') : t('resultsPage.noMatchingTasks')}</p>
                               </div>
                             )
                           }
