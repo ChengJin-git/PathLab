@@ -68,6 +68,7 @@ from backend.ai.tasks.training_utils import (
     is_kfold_splits,
     get_num_folds,
     calculate_kfold_classification_metrics,
+    classification_metrics_from_fold_results,
     calculate_progress_update_interval,
     interpolate_progress,
     save_resume_checkpoint_sync,
@@ -882,8 +883,8 @@ class PatchClassificationTrainer(BaseTrainer):
                 _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
                 if _ckpt.get("type") == "kfold":
                     fold_results = _ckpt.get("completed_fold_results", {})
-                    all_val_metrics = _ckpt.get(
-                        "completed_val_metrics", all_val_metrics
+                    all_val_metrics = classification_metrics_from_fold_results(
+                        fold_results
                     )
                     _resume_start_fold = _ckpt.get("fold_idx", 0)
                     _resume_start_epoch = _ckpt.get("epoch", 0) + 1
@@ -972,11 +973,6 @@ class PatchClassificationTrainer(BaseTrainer):
                     metadata={"fold": fold_idx + 1},
                 )
                 completed_metrics = fold_results[val_fold_key]["val_metrics"]
-                all_val_metrics["accuracy"].append(
-                    completed_metrics.get("accuracy", 0.0)
-                )
-                if completed_metrics.get("auc") is not None:
-                    all_val_metrics["auc"].append(completed_metrics["auc"])
                 continue
 
             await logger.info(
