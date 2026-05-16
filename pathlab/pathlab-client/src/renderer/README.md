@@ -6,7 +6,7 @@
 
 ## 当前实现概览
 
-- 技术栈：React 18 + TypeScript + Vite + Tailwind CSS
+- 技术栈：React 18 + TypeScript + Vite 7 + Tailwind CSS 4
 - 路由：浏览器模式使用 `BrowserRouter`，Electron 模式使用 `HashRouter`
 - 国际化：`en-US`、`zh-CN`、`zh-HK`
 - PWA：浏览器模式会注册 Service Worker，Electron 模式不会
@@ -34,12 +34,14 @@ src/renderer/
 │   ├── components/         # UI、聊天、阅片、结果、设置等组件
 │   ├── constants/          # 常量定义
 │   ├── contexts/           # Auth / BackgroundTask / Toast
-│   ├── lib/                # hooks 与工具函数
+│   ├── hooks/              # 独立 React Hook 模块
+│   ├── lib/                # 工具函数与辅助逻辑
 │   ├── locales/            # i18n 文案
 │   ├── pages/              # 页面组件
 │   ├── types/              # 类型声明
 │   ├── App.tsx
 │   ├── config.ts
+│   ├── i18n.ts
 │   └── main.tsx
 └── vite.config.ts
 ```
@@ -59,10 +61,10 @@ src/renderer/
 `src/App.tsx` 当前定义了：
 
 - 公开页：`/`、`/login`
-- 受保护页：`/dashboard`、`/dashboard/:conversationId`、`/tools`、`/settings`
-- 任务相关：`/task-setup`、`/task-list`、`/task/:task_id`
+- 受保护页：`/dashboard`、`/dashboard/:conversationId`、`/tools`、`/settings`（requireAdmin）
+- 任务相关：`/task-setup`（requireGpu）、`/task-list`、`/task/:task_id`
 - 数据相关：`/wsi-list`、`/register`、`/wsi/:wsi_id`
-- 结果相关：`/results`、`/reports`
+- 结果相关：`/results`（requireGpu）、`/reports`
 - 以及 1 个 `*` 兜底路由
 
 另外，`pages/StorageManagementPage.tsx` 当前仍是设置页内部功能页，并非独立路由。

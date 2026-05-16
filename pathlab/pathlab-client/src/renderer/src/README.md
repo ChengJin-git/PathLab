@@ -11,11 +11,13 @@ src/
 ├── App.tsx                 # 路由入口
 ├── main.tsx                # BrowserRouter / HashRouter 选择、Context 装配、PWA 注册
 ├── config.ts               # Gateway / Preprocessing / AI 地址解析
+├── i18n.ts                 # i18next 初始化
 ├── api/                    # 按业务拆分的 API 客户端
 ├── components/             # 可复用 UI、聊天、阅片、结果、设置等组件
 ├── contexts/               # Auth / BackgroundTask / Toast 状态
 ├── constants/              # 文件类型、指标、训练等常量
-├── lib/                    # hooks 与辅助工具
+├── hooks/                  # 独立 React Hook 模块
+├── lib/                    # 工具函数与辅助逻辑
 ├── locales/                # `en-US` / `zh-CN` / `zh-HK`
 ├── pages/                  # 页面级组件
 └── types/                  # 类型声明
@@ -30,13 +32,13 @@ src/
   - `/dashboard`
   - `/dashboard/:conversationId`
   - `/tools`
-  - `/settings`
-  - `/task-setup`
+  - `/settings`（requireAdmin）
+  - `/task-setup`（requireGpu）
   - `/task-list`
   - `/task/:task_id`
   - `/wsi-list`
   - `/register`
-  - `/results`
+  - `/results`（requireGpu）
   - `/reports`
   - `/wsi/:wsi_id`
 

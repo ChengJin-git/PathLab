@@ -14,6 +14,7 @@ This directory stores the static image assets bundled with PathLab's local OpenS
 - The viewer UI is wrapped by `src/renderer/src/components/WSIViewer.tsx`
 - The preprocessing service provides DZI descriptors and tiles; these assets only provide the viewer chrome
 - `deploy/start.sh` and `deploy/hot-reload.sh frontend` both copy this asset tree into `src/renderer/dist`
+- Gateway serves the copied frontend asset tree from `/assets` only when `src/renderer/dist/assets` exists
 - Project-specific viewer behavior is documented in the frontend READMEs, not here
 
 ## Maintenance note
