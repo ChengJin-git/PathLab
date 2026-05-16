@@ -26,6 +26,12 @@
 
 ## 当前 uploads 目录现状
 
+**存储根目录解析优先级**（`Config.get_uploads_dir()`）：
+
+1. 环境变量 `PATHLAB_UPLOADS_DIR` — 最高优先级，适用于固定外置存储路径的部署场景
+2. `storage.json` 中保存的 `uploads_dir` 字段（通过 `/storage/config POST` 接口写入）
+3. 系统 app data 目录下的 `uploads/` 子目录（`{appDataDir}/uploads/`，Electron 桌面模式的默认落地路径）
+
 根据 `backend/common/config.py`，当前启动时会确保这些目录存在：
 
 - `uploads/avatars/`

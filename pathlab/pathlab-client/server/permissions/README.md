@@ -149,7 +149,7 @@ Conclusion: **guest can upload** (subject to downstream dataset/write validation
 
 ## 5.2 Grant model
 - Grant dimensions: `can_read`, `can_collaborate`, `can_use_gpu`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py`.
-- The public `POST /datasets/{dataset_id}/grants` endpoint always forces `can_read=True, can_collaborate=False, can_use_gpu=False` (lines 437–439); the `can_collaborate` dimension is set separately via the collaborator add endpoint, and `can_use_gpu` is only accessible through the internal `_grant_or_renew_permission` helper.
+- The public `POST /datasets/{dataset_id}/grants` endpoint always forces `can_read=True, can_collaborate=False, can_use_gpu=False`; the `can_collaborate` dimension is set separately via the collaborator add endpoint, and `can_use_gpu` is only accessible through the internal `_grant_or_renew_permission` helper.
 - Guest cannot receive GPU grants:
   - runtime guard in `_grant_or_renew_permission`: `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py`
   - test coverage: `pathlab/pathlab-client/server/tests/test_permission_policy_updates.py`.
@@ -328,6 +328,8 @@ Gateway registers 17 top-level routers. The following are authenticated-user-onl
 | `asr` | `?token=` query param (WebSocket) | See Section 13.3 for dedicated auth path |
 
 `wsi_grants` is not a top-level router but an auxiliary module included by the `wsi` router. Grant creation (`POST /datasets/{dataset_id}/grants`) requires the caller to be **admin only** (`require_admin` dependency): `pathlab/pathlab-client/server/gateway/routes/wsi_grants.py`. Dataset owners without admin role cannot create grants through this endpoint.
+
+Current top-level router registration lives in `server/gateway/app_setup.py`; update this section from that file rather than from route filenames alone, because several `routes/*.py` modules are support modules imported by top-level routers.
 
 ---
 

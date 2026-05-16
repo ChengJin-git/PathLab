@@ -136,6 +136,7 @@ Gateway 对长任务只做描述符入队、取消请求发布和状态查询。
 | `utils.py` | 业务工具函数（segmentation contract 校验等） |
 | `pipeline.py` | AI 推理流水线辅助逻辑 |
 | `task_queue.py` | 共享 `TaskQueueManager` 实现（最大并发控制、FIFO 调度、VRAM 预检）；运行时由 TaskWorker 初始化，Gateway 路由只在需要时导入类型或提交任务 |
+| `task_dispatch.py` | 构造并写入 Redis 任务描述符；Gateway 侧长任务入口通过它把工作交给 TaskWorker |
 | `email_notifications.py` | 模板化邮件发送（用户激活通知、申请受理通知、管理员新用户提醒）|
 | `scan_sessions.py` | 目录扫描会话状态管理（TTL 缓存，供 `storage_scan` 路由复用）|
 | `bootstrap_builtin_training_knowledge.py` | 内置训练推荐知识源预热逻辑 |

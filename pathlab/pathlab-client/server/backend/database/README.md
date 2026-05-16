@@ -79,6 +79,11 @@
 - 计算逻辑：`GET /annotation/datasets/{dataset_id}/labels` 端点（annotation.py）读取 effective annotation 记录并根据 `source` 字段判断
 - `SegmentationAnnotation.to_dict()` 也会在单条记录序列化时输出此字段（供 WSI viewer GT overlay 使用）
 
+## 模型关键字段与索引提示
+
+- `Dataset`（`datasets` 表）含 `parent_dataset_id` 外键字段，支持数据集层级关系（子数据集引用父数据集）。
+- `WSISlide`（`wsi_slides` 表）的 `data_type` 字段带 `index=True`，并建有 `idx_wsi_user_type (user_id, data_type)` 和 `idx_wsi_dataset_type (dataset_id, data_type)` 复合索引，用于加速按用户或数据集维度的 WSI 类型过滤查询。
+
 ## 与旧文档相比的关键变化
 
 - 标注表当前是 `segmentation_annotations`，不是旧文档里的 `annotation_drafts`
@@ -107,7 +112,7 @@
 - `PermissionAuditLogRepository`
 - `StorageTaskRepository`
 - `OrphanedRecordsRepository`
-- `SegmentationAnnotationRepository`（同时导出 `VersionConflictError`）
+- `SegmentationAnnotationRepository`（同时导出 `VersionConflictError` 和 `AnnotationOwnershipConflictError`）
 - `AnnotationAuditLogRepository`
 
 此外，`repositories/base.py` 还提供共享的 `BaseRepository`、以及供旧代码兼容导入的 `DatasetRepository` / `WSIRepository` 别名；`repositories/utils.py` 提供 `paginate_query` 与 `apply_user_filter` 辅助函数。
