@@ -36,6 +36,7 @@ server/
 │   ├── helpers.py          # 测试工具函数
 │   └── test_*.py           # 路由 / 权限 / 任务 / 存储 / 结果 / AI 回归，完整清单以文件系统为准
 ├── gateway/                # 对外 API 网关
+├── task_worker/            # Redis 描述符队列消费者、GPU 队列运行时与任务恢复
 ├── backend/
 │   ├── ai/                 # AI 服务与任务实现
 │   ├── auth/               # 认证模型与 FastAPI-Users 配置
@@ -70,6 +71,7 @@ TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务�
 - PostgreSQL：元数据与业务状态
 - Redis：任务队列、日志、进度与部分缓存
 - `uploads/`：WSI、特征缓存、模型、日志、标注及衍生文件
+- 上传目录解析顺序：`PATHLAB_UPLOADS_DIR` 环境变量 > `storage.json` 中的 `uploads_dir` > 系统 app data 目录下的 `uploads/`
 
 默认配置可在 `backend/common/config.py` 中看到，包括：
 
@@ -78,7 +80,7 @@ TaskWorker 是任务执行边界。它从 Redis 描述符队列中 claim 任务�
 
 ## 当前实现重点
 
-- `main.py` 中 Preprocessing 允许多 worker，并支持 `PREPROCESSING_MAX_REQUESTS`
+- `main.py` 中 Preprocessing 默认以 **4 个 worker** 启动（`PREPROCESSING_WORKERS` 环境变量可覆盖），并默认设置 `PREPROCESSING_MAX_REQUESTS=500`（每个 worker 处理满 500 个请求后自动回收，释放 C 库内存；`PREPROCESSING_MAX_REQUESTS` 可覆盖）
 - `main.py` 通过 `multiprocessing.Process` 拉起 3 个 uvicorn 服务和 1 个 TaskWorker，并统一清理子进程
 - Gateway 会在自身生命周期中初始化数据库、Redis 和若干启动期清理逻辑
 - 任务队列初始化、GPU 探测与训练恢复由独立的 `TaskWorker` 进程负责，Gateway 通过 Redis 消费其发布的运行时快照与心跳

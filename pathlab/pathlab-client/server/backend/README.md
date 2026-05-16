@@ -78,6 +78,7 @@ backend/
 - 端口与服务发现工具：`common/port_utils.py` 等
 - GPU / slide / split 等通用辅助位于 `common/gpu_utils.py`、`slide_utils.py`、`split_generation.py`
 - 持久化全局设置当前覆盖 `openrouter`、`huggingface`、`dashscope`、`exa`、`local_vllm`、`local_asr`、`turnstile`、`admin_notify_email`、`email_templates` 等键
+- 存储根目录解析由 `Config.get_uploads_dir()` 负责，优先级为 `PATHLAB_UPLOADS_DIR`、`storage.json`、系统 app data 目录
 
 ### 存储
 
@@ -92,6 +93,7 @@ backend/
 - 旧文档中的单体 API / 单体服务表述已经过时，当前实现明确拆成 Gateway / Preprocessing / AI 三层
 - `backend/common/config.py` 会确保 `avatars`、`coordinates`、`masks`、`features`、`ai_results_bundles`、`training`、`models`、`extractor_checkpoints`、`logs`、`wsi_files`、`metadata`、`progress` 等目录存在
 - `backend/annotation/` 当前已成为标注协作与 COCO/summary 辅助逻辑的独立共享模块
+- 长任务执行边界当前在 `server/task_worker/`，`backend/ai/` 提供任务实现、模型注册和训练 / 推理内部能力
 
 ## 相关文档
 
