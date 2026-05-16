@@ -50,6 +50,7 @@ from ..models import (
     DeleteUnavailableFilesRequest,
 )
 from ..scan_sessions import build_scan_response, create_scan_session, get_scan_session
+from . import storage_tasks
 from ..utils import (
     build_segmentation_annotation_index,
     get_scan_file_data_type,
@@ -88,6 +89,25 @@ def _build_scan_task_results(
         "page_size": page_size,
         "annotation_scan_enabled": session.get("annotation_scan_enabled", False),
     }
+
+
+async def _mark_scan_directory_task_cancelled(
+    task_id: str,
+    *,
+    processed_items: int = 0,
+    success_count: int = 0,
+) -> None:
+    storage_tasks.clear_storage_task_cancellation(task_id)
+    async with async_session() as db:
+        await StorageTaskRepository.update_status(
+            db,
+            task_id,
+            "cancelled",
+            processed_items=processed_items,
+            success_count=success_count,
+            failed_count=0,
+        )
+        await db.commit()
 
 
 # ==============================================================================
@@ -274,12 +294,25 @@ async def _run_scan_directory_task(task_id: str, user_id: str, params: dict[str,
             )
             await db.commit()
 
+        if storage_tasks.is_storage_task_cancelled(task_id):
+            await _mark_scan_directory_task_cancelled(task_id)
+            return
+
         files = await asyncio.to_thread(
             _scan_directory_for_wsi,
             directory,
             include_annotation_json=include_annotation_json,
         )
         valid_count = sum(1 for file in files if file.get("valid"))
+
+        if storage_tasks.is_storage_task_cancelled(task_id):
+            await _mark_scan_directory_task_cancelled(
+                task_id,
+                processed_items=len(files),
+                success_count=valid_count,
+            )
+            return
+
         session = create_scan_session(
             directory=directory,
             files=files,

@@ -4,7 +4,7 @@ import pytest
 from fastapi import BackgroundTasks
 
 from gateway.models import StartScanDirectoryTaskRequest
-from gateway.routes import storage_scan
+from gateway.routes import storage_scan, storage_tasks
 
 
 class FakeSession:
@@ -151,3 +151,49 @@ async def test_scan_directory_task_marks_failure(monkeypatch, tmp_path):
 
     assert updates[-1][1] == "failed"
     assert updates[-1][2]["error_message"] == "disk error"
+
+
+@pytest.mark.asyncio
+async def test_scan_directory_task_preserves_user_cancel_after_scan_finishes(monkeypatch, tmp_path):
+    updates = []
+    scan_dir = tmp_path / "patches"
+    scan_dir.mkdir()
+    (scan_dir / "a.png").write_bytes(b"patch")
+
+    async def _fake_update_status(_db, task_id, status, **kwargs):
+        updates.append((task_id, status, kwargs))
+        return True
+
+    scanned = False
+
+    def _fake_scan_directory(_directory, *, include_annotation_json=False):
+        nonlocal scanned
+        scanned = True
+        return [{"valid": True}]
+
+    def _fake_is_cancelled(task_id):
+        return task_id == "scan_task_1" and scanned
+
+    def _fake_clear_cancelled(task_id):
+        updates.append((task_id, "clear_cancel", {}))
+
+    monkeypatch.setattr(storage_scan, "async_session", lambda: FakeSession())
+    monkeypatch.setattr(storage_scan.StorageTaskRepository, "update_status", _fake_update_status)
+    monkeypatch.setattr(storage_scan, "_scan_directory_for_wsi", _fake_scan_directory)
+    monkeypatch.setattr(storage_tasks, "is_storage_task_cancelled", _fake_is_cancelled)
+    monkeypatch.setattr(storage_tasks, "clear_storage_task_cancellation", _fake_clear_cancelled)
+
+    await storage_scan._run_scan_directory_task(
+        "scan_task_1",
+        "u1",
+        {
+            "directory_path": str(scan_dir),
+            "task_type": "patch_classification",
+            "page_size": 100,
+        },
+    )
+
+    statuses = [status for _, status, _ in updates]
+    assert scanned is True
+    assert "cancelled" in statuses
+    assert "completed" not in statuses
