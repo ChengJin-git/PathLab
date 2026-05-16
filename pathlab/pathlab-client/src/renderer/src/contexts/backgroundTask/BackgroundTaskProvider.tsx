@@ -142,7 +142,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   const tasks = useMemo(() => {
     const filteredTrainingTasks = trainingTasks.filter(t => !dismissedServerTasks.has(t.id))
     const filteredAnalysisTasks = analysisTasks.filter(t => !dismissedServerTasks.has(t.id))
-    const filteredStorageTasks = storageTasks.filter(t => !dismissedServerTasks.has(t.id))
+    const filteredStorageTasks = storageTasks.filter(t => !dismissedServerTasks.has(t.id) && t.type !== 'scan_directory')
 
     // Find external analysis tasks and their corresponding external validation tasks
     const externalAnalysisByTaskId = new Map<string, BackgroundTask>()

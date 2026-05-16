@@ -133,7 +133,10 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               ? task.params?.dataset_name || 'Dataset'
               : itemNamePrefix
 
-            const displayName = `${displayBaseName} (${task.processed_items || 0}/${task.total_items || 0})`
+            const hasKnownTotal = typeof task.total_items === 'number' && task.total_items > 0
+            const displayName = hasKnownTotal
+              ? `${displayBaseName} (${task.processed_items || 0}/${task.total_items})`
+              : displayBaseName
 
             return {
               id: `${taskPrefix}_${task.task_id}`,

@@ -68,4 +68,32 @@ describe('useStorageSSE', () => {
     await waitFor(() => expect(result.current.storageTasks).toHaveLength(1))
     expect(result.current.storageTasks[0].datasetId).toBe('training-dataset')
   })
+
+  it('does not render unknown scan totals as 0 of 0', async () => {
+    const { result } = renderHook(() => useStorageSSE(false, true, true))
+
+    act(() => {
+      MockEventSource.instances[0].onmessage?.({
+        data: JSON.stringify({
+          items: [
+            {
+              task_id: 'scan-1',
+              task_type: 'scan_directory',
+              status: 'processing',
+              progress: 0,
+              total_items: 0,
+              processed_items: 0,
+              success_count: 0,
+              failed_count: 0,
+              skipped_count: 0,
+            },
+          ],
+        }),
+      } as MessageEvent)
+    })
+
+    await waitFor(() => expect(result.current.storageTasks).toHaveLength(1))
+    expect(result.current.storageTasks[0].title).toBe('Scan Directory')
+    expect(result.current.storageTasks[0].items[0].name).toBe('Scan Directory')
+  })
 })
