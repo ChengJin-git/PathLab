@@ -9,9 +9,9 @@ PathLab 是一个面向数字病理研究的桌面 / Web 一体化代码库。�
 ## 当前仓库重点
 
 - Electron 主进程、preload 与 sidecar 管理位于 `pathlab/pathlab-client/src/main`、`src/preload`
-- React 前端源码位于 `pathlab/pathlab-client/src/renderer/src`
+- React 前端源码位于 `pathlab/pathlab-client/src/renderer/src`，当前构建栈为 React 18 + Vite 7 + Tailwind CSS 4
 - Python 统一入口位于 `pathlab/pathlab-client/server/main.py`
-- `server/main.py` 当前会拉起 3 个 HTTP 服务：`Gateway`、`Preprocessing`、`AI`，以及无端口后台 `TaskWorker`
+- `server/main.py` 当前会拉起 3 个 HTTP 服务：`Gateway`、`Preprocessing`、`AI`，以及无端口后台 `TaskWorker`；TaskWorker 代码位于 `pathlab/pathlab-client/server/task_worker/`
 - 前端单元测试位于 `pathlab/pathlab-client/test/`，当前使用 Vitest（`test` / `test:run` / `test:coverage`）；后端单元测试位于 `pathlab/pathlab-client/server/tests/`，当前使用 pytest
 - 固定端口部署、Nginx 与 systemd 模板位于 `pathlab/pathlab-client/deploy/`
 - `server/backend/` 当前按 `ai / annotation / auth / common / database / preprocessing / storage` 分层组织共享后端代码
@@ -46,6 +46,7 @@ pathlab/
     ├── server/
     │   ├── main.py          # Python sidecar 统一入口，拉起 HTTP 服务和 TaskWorker
     │   ├── gateway/         # 对外 API 网关
+    │   ├── task_worker/     # Redis 描述符队列消费者与后台任务执行边界
     │   └── backend/         # AI / annotation / auth / common / database / preprocessing / storage
     ├── test/                # 前端单元测试（Vitest）
     ├── server/tests/        # 后端单元测试（pytest）

@@ -16,7 +16,7 @@
 - `scripts/prepare-redis.sh`：嵌入式 Redis 二进制准备脚本
 - `server/main.spec`：PyInstaller spec（onedir 模式，含完整依赖配置）
 - `deploy/start.sh` / `deploy/hot-reload.sh`：固定端口部署与热更新脚本
-- `package.json`：Electron 开发 / 构建脚本定义（`dev`、`build`、`start` 等）
+- `package.json`：Electron 开发 / 构建脚本定义；当前 npm 脚本包括 `dev`、`build`、`build:python`、`prepare-redis`、`build:linux`、`build:mac`、`build:win`、`test`、`test:run`、`test:coverage` 等
 
 ## 当前目录结构
 
@@ -29,13 +29,14 @@ pathlab-client/
 │   │   ├── conftest.py     # fixtures（auth mock、app factory、load_dotenv）
 │   │   ├── helpers.py      # 测试工具函数
 │   │   └── test_*.py       # 以当前文件系统为准，不在 README 固定完整清单
+│   ├── task_worker/        # Redis 描述符队列消费者与后台任务执行边界
 │   ├── pytest.ini          # asyncio_mode = auto
 │   └── requirements-test.txt
 ├── src/
 │   ├── main/               # Electron 主进程
 │   ├── preload/            # Electron preload
 │   └── renderer/           # React + Vite 前端
-├── test/                   # 前端单元测试（Vitest）
+├── test/                   # 前端单元测试（Vitest 2）
 │   ├── setup.ts            # 全局 mock 初始化
 │   ├── unit/api/           # API 客户端层测试
 │   ├── unit/lib/           # 工具函数 / Hook 测试
@@ -79,7 +80,7 @@ pathlab-client/
 
 ### 前端
 
-- React 18 + TypeScript + Vite + Tailwind CSS
+- React 18 + TypeScript + Vite 7 + Tailwind CSS 4
 - BrowserRouter / HashRouter 双运行时
 - 模块化 API 客户端位于 `src/renderer/src/api/`
 - React Query、TooltipProvider 与多层 Context 在 `src/renderer/src/main.tsx` 中统一装配
@@ -91,7 +92,7 @@ pathlab-client/
 - Preprocessing 负责 WSI 信息、图像、缩略图、DZI、瓦片与部分热图辅助逻辑
 - AI 服务负责训练、推理与模型相关内部能力
 - TaskWorker 负责消费 Redis 任务描述符、持有 GPU 队列、执行长任务并发布运行时快照
-- PostgreSQL + Redis + `uploads/` 共同组成运行时状态层
+- PostgreSQL + Redis + `uploads/` 共同组成运行时状态层；`uploads/` 优先由 `PATHLAB_UPLOADS_DIR` 指定，其次读取 `storage.json`，否则落到系统 app data 目录
 
 ## 当前已确认的实现事实
 
@@ -112,7 +113,7 @@ npm run test          # 交互式监听模式
 npm run test:coverage # 生成覆盖率报告
 ```
 
-当前测试入口由 `vitest.config.ts` 的 `include: ['test/**/*.test.{ts,tsx}']` 决定；不要在 README 固定完整文件数量，实际清单以 `test/unit/**` 为准。全部 API 测试文件均使用 `test/helpers/apiHelpers.ts` 中的工具函数（`ok` / `errResp` / `noContent` / `blobResp` / `createSSEStream`）构造 Response mock，详细说明见 [test/README.md](test/README.md)。
+当前测试入口由 `vitest.config.ts` 的 `include: ['test/**/*.test.{ts,tsx}']` 决定；不要在 README 固定完整文件数量，实际清单以 `test/unit/**` 为准。全部 API 测试文件均使用 `test/helpers/apiHelpers.ts` 中的工具函数（`ok` / `errResp` / `noContent` / `blobResp` / `createSSEStream`）构造 Response mock，详细说明见 [test/README.md](test/README.md)。测试运行器为 **Vitest 2**（`^2.1.9`）。
 
 ### 后端测试（pytest）
 
