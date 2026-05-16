@@ -508,6 +508,10 @@ export function useTaskActions(params: TaskActionsParams) {
         // Storage task: reset_derived_data
         actualTaskId = taskId.replace('reset_', '')
         isStorageTask = true
+      } else if (taskId.startsWith('scan_')) {
+        // Storage task: scan_directory
+        actualTaskId = taskId.replace('scan_', '')
+        isStorageTask = true
       }
 
       // Use different API for storage tasks vs training tasks

@@ -100,6 +100,34 @@ describe('useTaskActions addDeleteWSITask', () => {
     expect(cancelQueueTaskSpy).not.toHaveBeenCalled()
   })
 
+  it('cancels scan_directory server tasks through storage task cancellation', async () => {
+    const cancelStorageTaskSpy = vi
+      .spyOn(storageApi, 'cancelStorageTask')
+      .mockResolvedValue({ cancelled: true, message: 'Cancelled' })
+    const cancelQueueTaskSpy = vi
+      .spyOn(queueApi, 'cancelQueueTask')
+      .mockResolvedValue({ cancelled: false, message: 'Wrong path' })
+
+    const { result } = renderHook(() => useTaskActions(defaultParams))
+
+    const cancelled = await result.current.cancelServerTask({
+      id: 'scan_scan_abc',
+      type: 'scan_directory',
+      title: 'Scan Directory',
+      items: [],
+      status: 'running',
+      createdAt: new Date(),
+      totalProgress: 0,
+      successCount: 0,
+      failedCount: 0,
+      isServerTask: true,
+    })
+
+    expect(cancelled).toBe(true)
+    expect(cancelStorageTaskSpy).toHaveBeenCalledWith('scan_abc')
+    expect(cancelQueueTaskSpy).not.toHaveBeenCalled()
+  })
+
   it('records the existing dataset id on local upload tasks', async () => {
     const { result } = renderHook(() => useTaskActions(defaultParams))
 
