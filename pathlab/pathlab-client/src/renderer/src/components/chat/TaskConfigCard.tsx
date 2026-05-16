@@ -528,8 +528,8 @@ export function TaskConfigCard({ config: initialConfig, onSubmitSuccess, onSubmi
     if (!validate()) return
     if (!selectedDatasetId) return
 
-    // Check if there are any uploading tasks (upload or batch_import)
-    if (hasUploadingTasks()) {
+    // Check if there are any uploading tasks (upload or batch_import) for the selected dataset
+    if (hasUploadingTasks(selectedDatasetId)) {
       setSubmitStatus('error')
       setErrorMessage(t('chatComponents.taskConfig.errors.uploadInProgress'))
       return

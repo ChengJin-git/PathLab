@@ -475,8 +475,8 @@ export default function NewTaskPage() {
     setSubmissionIssue(null)
     setCreationSlow(false)
 
-    // Check if there are any uploading tasks (upload or batch_import)
-    if (hasUploadingTasks()) {
+    // Check if there are any uploading tasks (upload or batch_import) for the selected dataset
+    if (hasUploadingTasks(dataSelection.selectedDatasetId ?? undefined)) {
       wizard.setSubmitError(t('newTask.errors.uploadInProgress'))
       wizard.setTrainingStatus('failed')
       return
