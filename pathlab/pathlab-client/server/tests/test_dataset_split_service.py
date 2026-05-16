@@ -59,10 +59,19 @@ class _FakeDB:
 
 class _OverrideDB:
     def __init__(self, rows: list[SimpleNamespace]) -> None:
-        self.rows = rows
+        self.rows: list[SimpleNamespace] = rows
 
     async def execute(self, _query: object) -> _FakeResult:
         return _FakeResult(self.rows)
+
+
+class _RecordingDB:
+    def __init__(self) -> None:
+        self.execute_calls: int = 0
+
+    async def execute(self, _query: object) -> _FakeResult:
+        self.execute_calls += 1
+        return _FakeResult([])
 
 
 def fake_db_with_cached_counts(train: int, val: int, test: int) -> _FakeDB:
@@ -170,6 +179,30 @@ async def test_resolve_effective_splits_prefers_user_override_before_baseline():
     )
 
     assert splits == {"wsi-1": "test", "wsi-2": "val"}
+
+
+@pytest.mark.asyncio
+async def test_large_user_split_override_upsert_is_chunked_to_avoid_asyncpg_parameter_limit():
+    slides = [
+        _Slide(f"wsi-{idx}", f"slide-{idx}.svs", f"/slides/slide-{idx}.svs")
+        for idx in range(7000)
+    ]
+    csv_text = "filename,split\n" + "\n".join(
+        f"slide-{idx}.svs,train" for idx in range(7000)
+    )
+    db = _RecordingDB()
+
+    # Regression test for the asyncpg 32,767 argument cap seen on AML override uploads.
+    _ = await DatasetSplitService.apply_csv_splits(
+        db=cast(AsyncSession, cast(object, db)),
+        dataset_id="dataset-1",
+        slides=slides,
+        csv_text=csv_text,
+        task_type="wsi_classification",
+        target_user_id="user-2",
+    )
+
+    assert db.execute_calls == 2
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ import csv
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from fastapi import HTTPException
 from sqlalchemy import select, func, case
@@ -89,6 +89,8 @@ def _resolve_split_wsi_by_filename(
 
 
 class DatasetSplitService:
+    _USER_SPLIT_UPSERT_BATCH_SIZE: ClassVar[int] = 5000
+
     @staticmethod
     def parse_csv_assignments(csv_text: str) -> tuple[list[dict[str, str]], str, str | None]:
         try:
@@ -202,17 +204,19 @@ class DatasetSplitService:
         db: AsyncSession,
         rows: list[dict[str, str]],
     ) -> None:
-        if not rows:
-            return
-        statement = pg_insert(WSISlideUserSplit).values(rows)
-        statement = statement.on_conflict_do_update(
-            index_elements=["wsi_id", "user_id"],
-            set_={
-                "split": statement.excluded.split,
-                "updated_at": func.now(),
-            },
-        )
-        await db.execute(statement)
+        for start in range(0, len(rows), DatasetSplitService._USER_SPLIT_UPSERT_BATCH_SIZE):
+            batch = rows[start : start + DatasetSplitService._USER_SPLIT_UPSERT_BATCH_SIZE]
+            if not batch:
+                continue
+            statement = pg_insert(WSISlideUserSplit).values(batch)
+            statement = statement.on_conflict_do_update(
+                index_elements=["wsi_id", "user_id"],
+                set_={
+                    "split": statement.excluded.split,
+                    "updated_at": func.now(),
+                },
+            )
+            _ = await db.execute(statement)
 
     @staticmethod
     async def resolve_effective_splits(
