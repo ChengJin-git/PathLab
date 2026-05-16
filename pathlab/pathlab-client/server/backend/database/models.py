@@ -372,6 +372,26 @@ class WSISlide(TimestampMixin, Base):
         }
 
 
+class WSISlideUserSplit(TimestampMixin, Base):
+    """Per-user split overrides for public datasets."""
+
+    __tablename__ = "wsi_slide_user_splits"
+
+    wsi_id = Column(
+        String(255),
+        ForeignKey("wsi_slides.wsi_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = Column(String(255), nullable=False)
+    split = Column(String(20), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("wsi_id", "user_id", name="uq_wsi_slide_user_splits_wsi_user"),
+        Index("idx_wsi_slide_user_splits_user", "user_id"),
+        Index("idx_wsi_slide_user_splits_wsi", "wsi_id"),
+    )
+
+
 class AITask(Base):
     """
     AI Task table.

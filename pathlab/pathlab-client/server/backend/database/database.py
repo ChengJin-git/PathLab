@@ -240,6 +240,31 @@ async def init_db():
                     "ADD COLUMN IF NOT EXISTS visibility_mode VARCHAR(20) NOT NULL DEFAULT 'personal'"
                 )
             )
+            await conn.execute(
+                text(
+                    "CREATE TABLE IF NOT EXISTS wsi_slide_user_splits ("
+                    "    id SERIAL PRIMARY KEY,"
+                    "    wsi_id VARCHAR(255) NOT NULL REFERENCES wsi_slides(wsi_id) ON DELETE CASCADE,"
+                    "    user_id VARCHAR(255) NOT NULL,"
+                    "    split VARCHAR(20) NOT NULL,"
+                    "    created_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                    "    updated_at TIMESTAMP NOT NULL DEFAULT NOW(),"
+                    "    CONSTRAINT uq_wsi_slide_user_splits_wsi_user UNIQUE (wsi_id, user_id)"
+                    ")"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_slide_user_splits_user "
+                    "ON wsi_slide_user_splits(user_id)"
+                )
+            )
+            await conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS idx_wsi_slide_user_splits_wsi "
+                    "ON wsi_slide_user_splits(wsi_id)"
+                )
+            )
             logger.info(
                 "Skipping wsi_slides.data_type startup DDL; migration handled separately"
             )
