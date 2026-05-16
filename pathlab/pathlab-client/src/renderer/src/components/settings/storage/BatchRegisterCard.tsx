@@ -1,6 +1,6 @@
 import React from 'react'
 import { useTranslation } from 'react-i18next'
-import { FolderSearch, Search, RefreshCw, AlertCircle } from 'lucide-react'
+import { FolderSearch, Search, RefreshCw, AlertCircle, X } from 'lucide-react'
 import { Card } from '../../ui/card'
 import { Button } from '../../ui/button'
 import { Input } from '../../ui/input'
@@ -36,6 +36,8 @@ interface BatchRegisterCardProps {
   setBatchIsPublic: (value: boolean) => void
   handleSelectBatchScanDir: () => Promise<void>
   handleBatchScan: () => void
+  handleCancelBatchScan?: () => void
+  canCancelBatchScan?: boolean
   handleBatchScanPageChange: (page: number) => void
   isBatchFileSelected: (path: string, valid: boolean) => boolean
   handleBatchFileToggle: (path: string, valid: boolean) => void
@@ -82,6 +84,8 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
   setBatchIsPublic,
   handleSelectBatchScanDir,
   handleBatchScan,
+  handleCancelBatchScan,
+  canCancelBatchScan = false,
   handleBatchScanPageChange,
   isBatchFileSelected,
   handleBatchFileToggle,
@@ -152,8 +156,23 @@ export const BatchRegisterCard: React.FC<BatchRegisterCardProps> = ({
 
       {batchScanning && batchScanStage === 'initial' && (
         <div className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
-          <p className="text-sm font-medium text-blue-900">{t('settings.storage.scanInProgressTitle')}</p>
-          <p className="mt-1 text-xs text-blue-700">{t('settings.storage.scanInProgressDescription')}</p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-blue-900">{t('settings.storage.scanInProgressTitle')}</p>
+              <p className="mt-1 text-xs text-blue-700">{t('settings.storage.scanInProgressDescription')}</p>
+            </div>
+            {handleCancelBatchScan && (
+              <button
+                type="button"
+                onClick={handleCancelBatchScan}
+                disabled={!canCancelBatchScan}
+                className="inline-flex items-center gap-1 rounded-md border border-blue-300 bg-white px-2.5 py-1.5 text-xs font-medium text-blue-700 shadow-sm hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-1"
+              >
+                <X className="w-3.5 h-3.5" />
+                {t('common.cancel')}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

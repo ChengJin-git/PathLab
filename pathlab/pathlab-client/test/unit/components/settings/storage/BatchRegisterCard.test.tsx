@@ -1,6 +1,7 @@
 import React, { createRef } from 'react'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { BatchRegisterCard } from '@renderer/components/settings/storage/BatchRegisterCard'
 
 vi.mock('react-i18next', () => ({
@@ -40,6 +41,8 @@ const baseProps = {
   handleSelectBatchScanDir: vi.fn(async () => {}),
   handleBatchScan: vi.fn(),
   handleBatchScanPageChange: vi.fn(),
+  handleCancelBatchScan: vi.fn(),
+  canCancelBatchScan: true,
   isBatchFileSelected: vi.fn(() => false),
   handleBatchFileToggle: vi.fn(),
   handleBatchSelectAll: vi.fn(),
@@ -99,5 +102,51 @@ describe('BatchRegisterCard', () => {
 
     expect(screen.getByText('settings.storage.refreshingScanResults')).toBeInTheDocument()
     expect(screen.getByTestId('batch-scan-results')).toBeInTheDocument()
+  })
+
+  it('shows a cancel scan button while the initial directory scan is running', () => {
+    render(
+      <BatchRegisterCard
+        {...baseProps}
+        batchScanning={true}
+        batchScanStage="initial"
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'common.cancel' })).toBeInTheDocument()
+  })
+
+  it('disables the cancel scan button until the scan task can be cancelled', () => {
+    render(
+      <BatchRegisterCard
+        {...baseProps}
+        batchScanning={true}
+        batchScanStage="initial"
+        canCancelBatchScan={false}
+      />,
+    )
+
+    expect(screen.getByRole('button', { name: 'common.cancel' })).toBeDisabled()
+  })
+
+  it('does not show a cancel scan button when not scanning', () => {
+    render(<BatchRegisterCard {...baseProps} batchScanning={false} batchScanStage="idle" />)
+
+    expect(screen.queryByRole('button', { name: 'common.cancel' })).not.toBeInTheDocument()
+  })
+
+  it('calls handleCancelBatchScan when the cancel button is clicked', async () => {
+    const handleCancelBatchScan = vi.fn()
+    render(
+      <BatchRegisterCard
+        {...baseProps}
+        batchScanning={true}
+        batchScanStage="initial"
+        handleCancelBatchScan={handleCancelBatchScan}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: 'common.cancel' }))
+    expect(handleCancelBatchScan).toHaveBeenCalledTimes(1)
   })
 })

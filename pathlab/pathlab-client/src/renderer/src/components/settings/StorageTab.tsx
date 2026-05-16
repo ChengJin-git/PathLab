@@ -31,6 +31,7 @@ import {
   getExternalDatasets,
   getExternalDatasetsCachedSync,
   invalidateExternalDatasetsCache,
+  cancelStorageTask,
 } from '../../api/storage'
 import type {
   StorageStats,
@@ -115,6 +116,8 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
   const batchNewDatasetNameRef = useRef<HTMLInputElement>(null)
   const [batchRegistering, runBatchRegistering] = useAsyncAction<void>({ onError: (err) => setBatchScanError(err instanceof Error ? err.message : t('settings.storageTab.failedToStartImport')) })
   const [batchImportTaskId, setBatchImportTaskId] = useState<string | null>(null)
+  const [activeScanTaskId, setActiveScanTaskId] = useState<string | null>(null)
+  const activeScanTaskIdRef = useRef<string | null>(null)
   const [batchDatasets, setBatchDatasets] = useState<DatasetSummary[]>([])
   const [batchTaskType, setBatchTaskTypeRaw] = useState<TaskType>('wsi_classification')
   const [batchDataLevel, setBatchDataLevel] = useState<'case' | 'file'>('file')
@@ -154,6 +157,17 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
       await new Promise(resolve => setTimeout(resolve, SCAN_TASK_POLL_INTERVAL_MS))
     }
   }
+
+  useEffect(() => {
+    return () => {
+      const activeId = activeScanTaskIdRef.current
+      if (activeId) {
+        cancelStorageTask(activeId).catch(() => {})
+        activeScanTaskIdRef.current = null
+        setActiveScanTaskId(null)
+      }
+    }
+  }, [])
   const [externalDatasets, setExternalDatasets] = useState<ExternalDatasetInfo[]>(() => {
     const cached = getExternalDatasetsCachedSync()
     return cached?.datasets ?? []
@@ -239,6 +253,16 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
     }
   }
 
+  const handleCancelBatchScan = () => {
+    const activeId = activeScanTaskIdRef.current
+    if (activeId) {
+      cancelStorageTask(activeId).catch(() => {})
+      activeScanTaskIdRef.current = null
+      setActiveScanTaskId(null)
+    }
+    setBatchScanStage('idle')
+  }
+
   const handleBatchScan = () => {
     if (!batchScanPath.trim()) return
     setBatchScanError(null)
@@ -254,16 +278,23 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         taskType: scanTaskType,
         pageSize: BATCH_SCAN_PAGE_SIZE,
       })
-      const scanTaskResult = await waitForScanDirectoryTask(task.task_id)
-      const result = await scanDirectory(scanTaskResult.directory, {
-        scanId: scanTaskResult.scan_id,
-        taskType: scanTaskType,
-        page: 1,
-        pageSize: scanTaskResult.page_size || BATCH_SCAN_PAGE_SIZE,
-      })
-      setBatchScanResult(result)
-      setBatchSelectAllValid(true)
-      setBatchScanStage('idle')
+      activeScanTaskIdRef.current = task.task_id
+      setActiveScanTaskId(task.task_id)
+      try {
+        const scanTaskResult = await waitForScanDirectoryTask(task.task_id)
+        const result = await scanDirectory(scanTaskResult.directory, {
+          scanId: scanTaskResult.scan_id,
+          taskType: scanTaskType,
+          page: 1,
+          pageSize: scanTaskResult.page_size || BATCH_SCAN_PAGE_SIZE,
+        })
+        setBatchScanResult(result)
+        setBatchSelectAllValid(true)
+        setBatchScanStage('idle')
+      } finally {
+        activeScanTaskIdRef.current = null
+        setActiveScanTaskId(null)
+      }
     }).catch((err: unknown) => {
       setBatchScanStage('idle')
       console.error('Failed to scan directory:', err)
@@ -807,7 +838,9 @@ export const StorageTab: React.FC<StorageTabProps> = ({ showConfirmDialog, close
         setBatchIsPublic={setBatchIsPublic}
         handleSelectBatchScanDir={handleSelectBatchScanDir}
         handleBatchScan={handleBatchScan}
-          handleBatchScanPageChange={handleBatchScanPageChange}
+        handleCancelBatchScan={handleCancelBatchScan}
+        canCancelBatchScan={Boolean(activeScanTaskId)}
+        handleBatchScanPageChange={handleBatchScanPageChange}
           isBatchFileSelected={isBatchFileSelected}
           handleBatchFileToggle={handleBatchFileToggle}
         handleBatchSelectAll={handleBatchSelectAll}
