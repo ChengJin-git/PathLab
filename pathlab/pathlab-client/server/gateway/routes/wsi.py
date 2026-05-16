@@ -1446,7 +1446,7 @@ async def upload_dataset_splits(
             status_code=400, detail="Invalid CSV file: not valid UTF-8 encoding"
         )
 
-    rows, filename_key, _ = DatasetSplitService.parse_csv_assignments(text)
+    rows, filename_key, split_key = DatasetSplitService.parse_csv_assignments(text)
 
     # Validate dataset exists and that public readers can create only their own overrides.
     dataset = await get_dataset_with_access(
@@ -1458,21 +1458,32 @@ async def upload_dataset_splits(
         forbidden_detail="You don't have permission to modify this dataset",
     )
     user_id_str = str(user.id)
-    is_owner_or_admin = user.is_admin() or dataset.user_id == user_id_str
-    if not is_owner_or_admin and not getattr(dataset, "is_public", False):
+    is_public_dataset = bool(getattr(dataset, "is_public", False))
+    is_owner_or_admin = bool(user.is_admin()) or str(dataset.user_id) == user_id_str
+    if not is_owner_or_admin and not is_public_dataset:
         raise HTTPException(
             status_code=403,
             detail="Only the dataset owner or an admin can modify private dataset splits",
         )
-    target_user_id = None if is_owner_or_admin else user_id_str
 
     # Public override uploads must match all dataset slides, not only the uploader's slides.
-    wsi_user_filter = None if target_user_id else user_id_filter
+    wsi_user_filter = None if not is_owner_or_admin else user_id_filter
     wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=wsi_user_filter)
     if not wsis:
         raise HTTPException(
             status_code=404, detail=f"No slides found in dataset: {dataset_id}"
         )
+    has_csv_split_values = bool(
+        split_key and any(row.get(split_key, "").strip() for row in rows)
+    )
+    has_baseline_splits = any(getattr(wsi, "split", None) for wsi in wsis)
+    should_initialize_public_baseline = (
+        not is_owner_or_admin
+        and is_public_dataset
+        and has_csv_split_values
+        and not has_baseline_splits
+    )
+    target_user_id = None if is_owner_or_admin or should_initialize_public_baseline else user_id_str
 
     # Validate case-level + survival: all slides in a case must have same event_time/event_status
     # Access aggregation_level and task_type through the DataGroup relationship

@@ -290,6 +290,72 @@ async def test_public_non_owner_upload_writes_user_override_without_changing_bas
 
 
 @pytest.mark.asyncio
+async def test_public_non_owner_first_split_upload_initializes_shared_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user = _user("user-2")
+    db = _DummyDB()
+    dataset = types.SimpleNamespace(
+        user_id="user-1",
+        is_public=True,
+        parent_dataset_id=None,
+        data_group=types.SimpleNamespace(
+            aggregation_level="file",
+            task_type="wsi_classification",
+        ),
+    )
+    slides = [
+        _Slide(
+            wsi_id="wsi-1",
+            original_filename="tumor_a.svs",
+            wsi_path="/uploads/wsi_files/tumor_a.svs",
+            split=None,
+        )
+    ]
+    apply_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            updated_count=1,
+            auto_val_count=0,
+            not_found_files=[],
+        )
+    )
+
+    monkeypatch.setattr(
+        wsi_routes,
+        "get_dataset_with_access",
+        AsyncMock(return_value=dataset),
+    )
+    get_by_dataset_mock = AsyncMock(return_value=slides)
+    monkeypatch.setattr(WSIRepository, "get_by_dataset", get_by_dataset_mock)
+    monkeypatch.setattr(wsi_routes, "invalidate_chat_context", AsyncMock())
+    monkeypatch.setattr(DatasetSplitService, "apply_csv_splits", apply_mock)
+
+    file = UploadFile(
+        filename="splits.csv",
+        file=BytesIO(b"filename,split\ntumor_a.svs,test\n"),
+    )
+
+    await wsi_routes.upload_dataset_splits(
+        dataset_id="dataset-1",
+        file=file,
+        user=cast(User, user),
+        user_id_filter="user-2",
+        db=cast(AsyncSession, cast(object, db)),
+    )
+
+    get_by_dataset_mock.assert_awaited_once_with(db, "dataset-1", user_id=None)
+    apply_mock.assert_awaited_once_with(
+        db=db,
+        dataset_id="dataset-1",
+        slides=slides,
+        csv_text="filename,split\ntumor_a.svs,test\n",
+        task_type="wsi_classification",
+        target_user_id=None,
+    )
+    assert db.committed is True
+
+
+@pytest.mark.asyncio
 async def test_private_non_owner_upload_is_rejected_even_with_read_access(
     monkeypatch: pytest.MonkeyPatch,
 ):
