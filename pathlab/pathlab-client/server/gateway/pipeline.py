@@ -65,6 +65,12 @@ def _estimate_feature_extraction_vram_mb(
     )
 
 
+def _estimate_patch_classification_vram_mb(
+    model_name: str, batch_size: int | None = None
+) -> float:
+    return _estimate_feature_extraction_vram_mb(model_name, batch_size)
+
+
 def _estimate_model_batch_vram_mb(
     model_name: str, batch_size: int | None, batch_buffer_mb: float
 ) -> float:
@@ -1120,7 +1126,9 @@ async def run_training_pipeline(
             patch_device = await task_queue.acquire_gpu_stage(
                 task_id=task_id,
                 stage="patch_classification",
-                required_vram_mb=_estimate_stage_vram_mb(feature_extractor, batch_size),
+                required_vram_mb=_estimate_patch_classification_vram_mb(
+                    feature_extractor, batch_size
+                ),
             )
             assigned_device = patch_device
             try:

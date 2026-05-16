@@ -565,3 +565,38 @@ async def test_feature_extraction_stage_uses_runtime_probe_startup_gate(fresh_qu
     assert required_vram_mb == pytest.approx(4300.0)
     assert device == "cuda:0"
     assert get_gpu_info.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_patch_classification_stage_uses_feature_extraction_startup_gate(
+    fresh_queue,
+):
+    """Patch classification should match WSI feature-extraction VRAM gating."""
+    queue = fresh_queue
+    queue.vram_check_interval = 0.001
+    queue._vram_condition = asyncio.Condition()
+    pipeline = import_module("gateway.pipeline")
+    required_vram_mb = pipeline._estimate_patch_classification_vram_mb(
+        "H-Optimus-0", 27
+    )
+
+    with patch(
+        "backend.common.gpu_utils.get_all_gpu_info",
+        return_value=[
+            {
+                "index": 0,
+                "name": "gpu0",
+                "allocated_mb": 0.0,
+                "free_mb": 24576.0,
+                "total_mb": 24576.0,
+            }
+        ],
+    ):
+        device = await queue.acquire_gpu_stage(
+            task_id="task_patch_cls",
+            stage="patch_classification",
+            required_vram_mb=required_vram_mb,
+        )
+
+    assert required_vram_mb == pytest.approx(5850.0)
+    assert device == "cuda:0"
