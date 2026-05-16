@@ -62,7 +62,7 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
             skipped_count?: number;
             created_at?: string;
             completed_at?: string;
-            params?: { dataset_name?: string };
+            params?: { dataset_id?: string; dataset_name?: string };
           }) => {
             // Determine task type for display
             let taskTypeDisplay: TaskType
@@ -153,6 +153,9 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               failedCount: task.failed_count || 0,
               skippedCount: task.skipped_count || 0,
               isServerTask: true,
+              datasetId: task.task_type === 'batch_import'
+                ? task.params?.dataset_id
+                : undefined,
               datasetName: (task.task_type === 'delete_dataset' || task.task_type === 'batch_import')
                 ? task.params?.dataset_name
                 : undefined,
