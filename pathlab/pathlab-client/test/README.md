@@ -4,6 +4,8 @@
 
 本目录包含 PathLab 前端的单元测试套件，覆盖 API 客户端、工具函数、Context、页面和组件等主要业务模块。
 
+当前测试清单以 `test/**/*.test.{ts,tsx}` 为准；README 只记录稳定的目录分层和代表性测试对象，不把所有测试文件数量写死。
+
 ## 测试技术栈
 
 | 工具 | 版本 | 用途 |
@@ -66,6 +68,8 @@ test/
     └── components/       # 组件测试
         └── **/*.test.tsx
 ```
+
+后端 pytest 套件位于 `server/tests/`，覆盖 Gateway 路由、权限边界、任务队列、存储、分析、AI 结果与 GPU/模型 smoke；详见 `server/README.md`。
 
 ---
 

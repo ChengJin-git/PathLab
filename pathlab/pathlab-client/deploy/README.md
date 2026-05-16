@@ -154,7 +154,7 @@ CUDA_VISIBLE_DEVICES=0,1,3
 5. 用 Vite 构建前端到 `src/renderer/dist`
 6. 导出 `PATHLAB_DEBUG=1` 与固定端口环境变量
 7. 以 `nohup` 方式启动 `server/main.py`
-8. 同时通过 `http://127.0.0.1:6100/health`、`6101/health`、`6102/health` 做三服务健康检查
+8. 同时通过 `http://127.0.0.1:6100/health`、`6101/health`、`6102/health` 做三服务健康检查；TaskWorker 是无 HTTP 端口后台进程，通过 Redis 队列状态间接观察
 9. 将日志写入 `logs/backend.log`，并记录 `logs/backend.pid`
 
 该脚本是“直接执行型”的，不需要额外传 `start` 子命令。
@@ -216,6 +216,7 @@ HTTPS 版本额外包含证书与 SSL 配置；HTTP-only 版本仅保留静态�
 - 前端构建输出：`src/renderer/dist`
 - 部署日志：`logs/`
 - 后端环境变量：`server/.env`
+- 上传目录：优先由 `PATHLAB_UPLOADS_DIR` 指定；未设置时沿用 `storage.json`，再回退到系统 app data 目录
 
 ### 相关文档
 
