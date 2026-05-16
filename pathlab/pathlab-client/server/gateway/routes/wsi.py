@@ -1448,18 +1448,27 @@ async def upload_dataset_splits(
 
     rows, filename_key, _ = DatasetSplitService.parse_csv_assignments(text)
 
-    # Validate dataset exists
+    # Validate dataset exists and that public readers can create only their own overrides.
     dataset = await get_dataset_with_access(
         dataset_id,
         user,
         db,
-        require_owner=True,
+        require_owner=False,
         not_found_detail=f"Dataset not found: {dataset_id}",
         forbidden_detail="You don't have permission to modify this dataset",
     )
+    user_id_str = str(user.id)
+    is_owner_or_admin = user.is_admin() or dataset.user_id == user_id_str
+    if not is_owner_or_admin and not getattr(dataset, "is_public", False):
+        raise HTTPException(
+            status_code=403,
+            detail="Only the dataset owner or an admin can modify private dataset splits",
+        )
+    target_user_id = None if is_owner_or_admin else user_id_str
 
-    # Get existing WSIs for mapping (only user's WSIs if not admin)
-    wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=user_id_filter)
+    # Public override uploads must match all dataset slides, not only the uploader's slides.
+    wsi_user_filter = None if target_user_id else user_id_filter
+    wsis = await WSIRepository.get_by_dataset(db, dataset_id, user_id=wsi_user_filter)
     if not wsis:
         raise HTTPException(
             status_code=404, detail=f"No slides found in dataset: {dataset_id}"
@@ -1584,6 +1593,7 @@ async def upload_dataset_splits(
         slides=wsis,
         csv_text=text,
         task_type=task_type,
+        target_user_id=target_user_id,
     )
     if split_result.auto_val_count > 0:
         logger.info(

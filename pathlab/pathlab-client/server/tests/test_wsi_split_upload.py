@@ -32,6 +32,10 @@ class _DummyDB:
         self.committed = True
 
 
+def _user(user_id: str, *, is_admin: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(id=user_id, is_admin=lambda: is_admin)
+
+
 class _FakeResult:
     _rows: list[SimpleNamespace]
 
@@ -135,9 +139,11 @@ class _ChatContextStatsDB:
 async def test_upload_dataset_splits_matches_case_insensitive_extensionless_filenames(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    user = types.SimpleNamespace(id="user-1")
+    user = _user("user-1")
     db = _DummyDB()
     dataset = types.SimpleNamespace(
+        user_id="user-1",
+        is_public=False,
         data_group=types.SimpleNamespace(
             aggregation_level="file",
             task_type="wsi_classification",
@@ -202,12 +208,205 @@ async def test_upload_dataset_splits_matches_case_insensitive_extensionless_file
 
 
 @pytest.mark.asyncio
+async def test_public_non_owner_upload_writes_user_override_without_changing_baseline(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user = _user("user-2")
+    db = _DummyDB()
+    dataset = types.SimpleNamespace(
+        user_id="user-1",
+        is_public=True,
+        parent_dataset_id=None,
+        data_group=types.SimpleNamespace(
+            aggregation_level="file",
+            task_type="wsi_classification",
+        ),
+    )
+    slides = [
+        _Slide(
+            wsi_id="wsi-1",
+            original_filename="tumor_a.svs",
+            wsi_path="/uploads/wsi_files/tumor_a.svs",
+            split="train",
+        )
+    ]
+
+    monkeypatch.setattr(
+        wsi_routes,
+        "get_dataset_with_access",
+        AsyncMock(return_value=dataset),
+    )
+    monkeypatch.setattr(
+        WSIRepository,
+        "get_by_dataset",
+        AsyncMock(return_value=slides),
+    )
+    monkeypatch.setattr(wsi_routes, "invalidate_chat_context", AsyncMock())
+    recompute_mock = AsyncMock()
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", recompute_mock)
+    apply_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            updated_count=1,
+            auto_val_count=0,
+            not_found_files=[],
+        )
+    )
+    monkeypatch.setattr(DatasetSplitService, "apply_csv_splits", apply_mock)
+
+    file = UploadFile(
+        filename="splits.csv",
+        file=BytesIO(b"filename,split\ntumor_a.svs,test\n"),
+    )
+
+    response = await wsi_routes.upload_dataset_splits(
+        dataset_id="dataset-1",
+        file=file,
+        user=cast(User, user),
+        user_id_filter="user-2",
+        db=cast(AsyncSession, cast(object, db)),
+    )
+
+    assert response["updated_count"] == 1
+    assert slides[0].split == "train"
+    wsi_routes.get_dataset_with_access.assert_awaited_once_with(
+        "dataset-1",
+        user,
+        db,
+        require_owner=False,
+        not_found_detail="Dataset not found: dataset-1",
+        forbidden_detail="You don't have permission to modify this dataset",
+    )
+    WSIRepository.get_by_dataset.assert_awaited_once_with(db, "dataset-1", user_id=None)
+    apply_mock.assert_awaited_once_with(
+        db=db,
+        dataset_id="dataset-1",
+        slides=slides,
+        csv_text="filename,split\ntumor_a.svs,test\n",
+        task_type="wsi_classification",
+        target_user_id="user-2",
+    )
+    recompute_mock.assert_not_awaited()
+    assert db.committed is True
+
+
+@pytest.mark.asyncio
+async def test_private_non_owner_upload_is_rejected_even_with_read_access(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user = _user("user-2")
+    db = _DummyDB()
+    dataset = types.SimpleNamespace(
+        user_id="user-1",
+        is_public=False,
+        parent_dataset_id=None,
+        data_group=types.SimpleNamespace(
+            aggregation_level="file",
+            task_type="wsi_classification",
+        ),
+    )
+    apply_mock = AsyncMock()
+
+    monkeypatch.setattr(
+        wsi_routes,
+        "get_dataset_with_access",
+        AsyncMock(return_value=dataset),
+    )
+    monkeypatch.setattr(WSIRepository, "get_by_dataset", AsyncMock(return_value=[]))
+    monkeypatch.setattr(DatasetSplitService, "apply_csv_splits", apply_mock)
+
+    file = UploadFile(
+        filename="splits.csv",
+        file=BytesIO(b"filename,split\ntumor_a.svs,test\n"),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await wsi_routes.upload_dataset_splits(
+            dataset_id="dataset-1",
+            file=file,
+            user=cast(User, user),
+            user_id_filter="user-2",
+            db=cast(AsyncSession, cast(object, db)),
+        )
+
+    assert exc_info.value.status_code == 403
+    apply_mock.assert_not_awaited()
+    assert db.committed is False
+
+
+@pytest.mark.asyncio
+async def test_owner_upload_updates_baseline_split_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user = _user("user-1")
+    db = _DummyDB()
+    dataset = types.SimpleNamespace(
+        user_id="user-1",
+        is_public=True,
+        parent_dataset_id=None,
+        data_group=types.SimpleNamespace(
+            aggregation_level="file",
+            task_type="wsi_classification",
+        ),
+    )
+    slides = [
+        _Slide(
+            wsi_id="wsi-1",
+            original_filename="tumor_a.svs",
+            wsi_path="/uploads/wsi_files/tumor_a.svs",
+            split="train",
+        )
+    ]
+    apply_mock = AsyncMock(
+        return_value=SimpleNamespace(
+            updated_count=1,
+            auto_val_count=0,
+            not_found_files=[],
+        )
+    )
+
+    monkeypatch.setattr(
+        wsi_routes,
+        "get_dataset_with_access",
+        AsyncMock(return_value=dataset),
+    )
+    monkeypatch.setattr(WSIRepository, "get_by_dataset", AsyncMock(return_value=slides))
+    monkeypatch.setattr(wsi_routes, "invalidate_chat_context", AsyncMock())
+    monkeypatch.setattr(DatasetSplitService, "apply_csv_splits", apply_mock)
+
+    file = UploadFile(
+        filename="splits.csv",
+        file=BytesIO(b"filename,split\ntumor_a.svs,test\n"),
+    )
+
+    await wsi_routes.upload_dataset_splits(
+        dataset_id="dataset-1",
+        file=file,
+        user=cast(User, user),
+        user_id_filter="user-1",
+        db=cast(AsyncSession, cast(object, db)),
+    )
+
+    WSIRepository.get_by_dataset.assert_awaited_once_with(db, "dataset-1", user_id="user-1")
+    apply_mock.assert_awaited_once_with(
+        db=db,
+        dataset_id="dataset-1",
+        slides=slides,
+        csv_text="filename,split\ntumor_a.svs,test\n",
+        task_type="wsi_classification",
+        target_user_id=None,
+    )
+    assert db.committed is True
+
+
+@pytest.mark.asyncio
 async def test_upload_dataset_splits_reports_ambiguous_extensionless_matches(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    user = types.SimpleNamespace(id="user-1")
+    user = _user("user-1")
     db = _DummyDB()
     dataset = types.SimpleNamespace(
+        user_id="user-1",
+        is_public=False,
         data_group=types.SimpleNamespace(
             aggregation_level="file",
             task_type="wsi_classification",
