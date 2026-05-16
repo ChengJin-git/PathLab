@@ -75,11 +75,13 @@ from backend.ai.tasks.training_utils import (
     is_kfold_splits,
     get_num_folds,
     calculate_kfold_classification_metrics,
+    classification_metrics_from_fold_results,
     calculate_progress_update_interval,
     interpolate_progress,
     save_resume_checkpoint_sync,
     delete_resume_checkpoint,
     check_training_interruption,
+    should_load_resume_checkpoint,
     save_ai_result_artifacts,
     finalize_ai_result_artifacts,
 )
@@ -1168,20 +1170,21 @@ class WSIClassificationTrainer(BaseTrainer):
                 _ckpt = torch.load(
                     resume_checkpoint_path, map_location="cpu", weights_only=False
                 )
-                model.load_state_dict(_ckpt["model_state_dict"])
-                optimizer.load_state_dict(_ckpt["optimizer_state_dict"])
-                scheduler.load_state_dict(_ckpt["scheduler_state_dict"])
-                history = _ckpt["history"]
-                best_val_loss = _ckpt["best_val_loss"]
-                best_val_auc = _ckpt["best_val_auc"]
-                best_state_dict = _ckpt["best_state_dict"]
-                epochs_without_improvement = _ckpt["epochs_without_improvement"]
-                start_epoch = _ckpt["epoch"] + 1
-                prefix = f"{run_name} " if run_name else ""
-                await logger.info(
-                    f"{prefix}Resumed training from epoch {_ckpt['epoch']}",
-                    metadata={"resumed_from_epoch": _ckpt["epoch"]},
-                )
+                if should_load_resume_checkpoint(_ckpt, fold_idx=fold_idx):
+                    model.load_state_dict(_ckpt["model_state_dict"])
+                    optimizer.load_state_dict(_ckpt["optimizer_state_dict"])
+                    scheduler.load_state_dict(_ckpt["scheduler_state_dict"])
+                    history = _ckpt["history"]
+                    best_val_loss = _ckpt["best_val_loss"]
+                    best_val_auc = _ckpt["best_val_auc"]
+                    best_state_dict = _ckpt["best_state_dict"]
+                    epochs_without_improvement = _ckpt["epochs_without_improvement"]
+                    start_epoch = _ckpt["epoch"] + 1
+                    prefix = f"{run_name} " if run_name else ""
+                    await logger.info(
+                        f"{prefix}Resumed training from epoch {_ckpt['epoch']}",
+                        metadata={"resumed_from_epoch": _ckpt["epoch"]},
+                    )
             except Exception as _e:
                 prefix = f"{run_name} " if run_name else ""
                 await logger.info(
@@ -2092,8 +2095,8 @@ class WSIClassificationTrainer(BaseTrainer):
                 _ckpt = torch.load(_resume_path, map_location="cpu", weights_only=False)
                 if _ckpt.get("type") == "kfold":
                     fold_results = _ckpt.get("completed_fold_results", {})
-                    all_val_metrics = _ckpt.get(
-                        "completed_val_metrics", all_val_metrics
+                    all_val_metrics = classification_metrics_from_fold_results(
+                        fold_results
                     )
                     await logger.info(
                         f"Resumed kfold: {len(fold_results)} folds already completed",
@@ -2197,6 +2200,7 @@ class WSIClassificationTrainer(BaseTrainer):
                     "type": "kfold",
                     "completed_fold_results": fold_results,
                     "completed_val_metrics": all_val_metrics,
+                    "fold_idx": fold_idx + 1,
                 },
             )
 

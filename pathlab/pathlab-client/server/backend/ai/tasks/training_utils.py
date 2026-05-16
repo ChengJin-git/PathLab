@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import asyncio
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 from contextlib import asynccontextmanager
@@ -151,6 +152,39 @@ def get_num_folds(splits_map: Dict[str, List[str]]) -> int:
     """Get number of folds from k-fold splits_map."""
     fold_keys = [k for k in splits_map.keys() if k.startswith("fold_")]
     return len(fold_keys)
+
+
+def should_load_resume_checkpoint(
+    checkpoint: Mapping[str, object], fold_idx: Optional[int] = None
+) -> bool:
+    """Return whether a checkpoint may restore model state for this run.
+
+    Regular training may load only regular checkpoints. K-fold training may load
+    model/optimizer/history state only for the exact fold that wrote it.
+    """
+    checkpoint_type = checkpoint.get("type")
+    if fold_idx is None:
+        return checkpoint_type != "kfold"
+    return checkpoint_type == "kfold" and checkpoint.get("fold_idx") == fold_idx
+
+
+def classification_metrics_from_fold_results(
+    fold_results: Mapping[str, Mapping[str, Mapping[str, float | None]]],
+) -> Dict[str, List[float]]:
+    """Rebuild aggregate classification metric arrays from completed folds."""
+    metrics: Dict[str, List[float]] = {"accuracy": [], "auc": [], "loss": []}
+    for fold_key in sorted(fold_results.keys()):
+        val_metrics = fold_results.get(fold_key, {}).get("val_metrics", {})
+        accuracy = val_metrics.get("accuracy")
+        auc = val_metrics.get("auc")
+        loss = val_metrics.get("loss")
+        if accuracy is not None:
+            metrics["accuracy"].append(accuracy)
+        if auc is not None:
+            metrics["auc"].append(auc)
+        if loss is not None:
+            metrics["loss"].append(loss)
+    return metrics
 
 
 def calculate_kfold_classification_metrics(
