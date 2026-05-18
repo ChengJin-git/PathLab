@@ -357,7 +357,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
   // Task action callbacks
   const {
     addUploadTask, addDeleteWSITask, addMigrationTask, addDeleteTrainingTask,
-    addExtractionTask,
+    addExtractionTask, addAnalysisExportTask,
     cancelTask, clearCompletedTasks, removeTask, togglePanel,
     cancelServerTask, hasUploadingTasks, addMetadataUploadTask, getMetadataUploadResult
   } = useTaskActions({
@@ -382,6 +382,7 @@ export function BackgroundTaskProvider({ children }: BackgroundTaskProviderProps
     addExtractionTask,
     addMigrationTask,
     addMetadataUploadTask,
+    addAnalysisExportTask,
     cancelTask,
     cancelServerTask,
     clearCompletedTasks,

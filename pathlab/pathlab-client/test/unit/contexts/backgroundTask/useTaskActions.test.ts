@@ -193,4 +193,19 @@ describe('useTaskActions addDeleteWSITask', () => {
 
     expect(result.current.hasUploadingTasks('training-dataset')).toBe(true)
   })
+
+  it('creates segmentation mask export tasks with packaging copy instead of inference copy', () => {
+    const { result } = renderHook(() => useTaskActions(defaultParams))
+
+    act(() => {
+      result.current.addAnalysisExportTask('export-task-1', 'analysis-abcdef123')
+    })
+
+    const addTaskUpdater = mockSetLocalTasks.mock.calls[0][0]
+    const [task] = addTaskUpdater([])
+
+    expect(task.type).toBe('segmentation_export')
+    expect(task.title).toBe('backgroundTask.taskTitles.segmentationMaskExport')
+    expect(task.items[0].name).toBe('backgroundTask.taskTitles.packagingSegmentationMasks')
+  })
 })

@@ -745,6 +745,86 @@ export function useTaskActions(params: TaskActionsParams) {
     return metadataUploadResults.get(datasetName)
   }, [metadataUploadResults])
 
+  const addAnalysisExportTask = useCallback((exportTaskId: string, analysisId: string): string => {
+    const taskId = generateId()
+    const shortId = analysisId.slice(0, 8)
+    const task: BackgroundTask = {
+      id: taskId,
+      type: 'segmentation_export',
+      title: t('backgroundTask.taskTitles.segmentationMaskExport', { id: shortId }),
+      items: [{
+        id: 'export_main',
+        name: t('backgroundTask.taskTitles.packagingSegmentationMasks'),
+        status: 'running' as const,
+        progress: 0
+      }],
+      status: 'running',
+      createdAt: new Date(),
+      totalProgress: 0,
+      successCount: 0,
+      failedCount: 0
+    }
+
+    setLocalTasks(prev => [task, ...prev])
+    setIsPanelExpanded(true)
+
+    const pollInterval = setInterval(async () => {
+      try {
+        const { getAnalysisFullExportStatus, downloadAnalysisFullExportFile } = await import('../../api/export')
+        const status = await getAnalysisFullExportStatus(exportTaskId)
+
+        if (status.status === 'completed') {
+          clearInterval(pollInterval)
+          const blob = await downloadAnalysisFullExportFile(exportTaskId)
+          const { downloadBlobFile } = await import('../../api/client')
+          downloadBlobFile(blob, `full_results_${analysisId}.zip`)
+
+          setLocalTasks(prev => prev.map(task => {
+            if (task.id !== taskId) return task
+            return {
+              ...task,
+              status: 'success',
+              totalProgress: 100,
+              successCount: 1,
+              items: task.items.map(i => ({ ...i, status: 'success' as const, progress: 100 }))
+            }
+          }))
+        } else if (status.status === 'failed') {
+          clearInterval(pollInterval)
+          setLocalTasks(prev => prev.map(task => {
+            if (task.id !== taskId) return task
+            return {
+              ...task,
+              status: 'error',
+              totalProgress: 0,
+              failedCount: 1,
+              items: task.items.map(i => ({
+                ...i,
+                status: 'error' as const,
+                progress: 0,
+                error: status.error_message || t('backgroundTask.errors.analysisExportFailed')
+              }))
+            }
+          }))
+        } else {
+          const progress = Math.round(status.progress)
+          setLocalTasks(prev => prev.map(task => {
+            if (task.id !== taskId) return task
+            return {
+              ...task,
+              totalProgress: progress,
+              items: task.items.map(i => ({ ...i, progress }))
+            }
+          }))
+        }
+      } catch (err) {
+        console.error('Analysis full export polling error:', err)
+      }
+    }, 2000)
+
+    return taskId
+  }, [t, setLocalTasks, setIsPanelExpanded])
+
   return {
     updateTask,
     updateTaskItem,
@@ -753,6 +833,7 @@ export function useTaskActions(params: TaskActionsParams) {
     addMigrationTask,
     addDeleteTrainingTask,
     addExtractionTask,
+    addAnalysisExportTask,
     cancelTask,
     clearCompletedTasks,
     removeTask,
