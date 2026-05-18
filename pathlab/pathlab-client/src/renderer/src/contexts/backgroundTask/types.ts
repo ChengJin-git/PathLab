@@ -52,6 +52,7 @@ export interface BackgroundTask {
   analysisType?: 'internal' | 'external'  // Type of analysis
   taskCategory?: 'classification' | 'survival' | 'segmentation'  // Task category for i18n display (internal analysis only)
   trainingTaskId?: string  // The training task ID this analysis belongs to (for merging external validation)
+  exportTaskId?: string  // Async export task ID for cancellable analysis exports
 }
 
 // Disk space info
@@ -122,7 +123,7 @@ export interface BackgroundTaskContextType {
   addExtractionTask: (taskId: string, datasetName: string) => string
   addMigrationTask: (targetPath: string, deleteSource: boolean) => Promise<string>
   addMetadataUploadTask: (config: MetadataUploadTaskConfig) => string
-  addAnalysisExportTask: (exportTaskId: string, analysisId: string) => string
+  addAnalysisExportTask: (exportTaskId: string, analysisId: string, taskName: string) => string
   cancelTask: (taskId: string) => void
   cancelServerTask: (task: BackgroundTask) => Promise<boolean>  // Cancel training/inference task on server
   clearCompletedTasks: () => void

@@ -33,7 +33,7 @@ export interface ExportTaskStatus {
  */
 export interface AnalysisFullExportTaskStatus {
   task_id: string
-  status: 'pending' | 'processing' | 'completed' | 'failed'
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
   progress: number
   error_message: string | null
   created_at: string | null
@@ -154,3 +154,18 @@ export async function downloadAnalysisFullExportFile(exportTaskId: string): Prom
   )
 }
 
+/**
+ * Cancel an in-progress analysis full export task.
+ * @param exportTaskId - Export task ID
+ * @returns Cancellation result
+ * @throws {ApiError} If the request fails or export can no longer be cancelled
+ */
+export async function cancelAnalysisFullExport(
+  exportTaskId: string
+): Promise<{ cancelled: boolean; status: 'cancelled' }> {
+  return apiFetch(
+    `${API_BASE}/results/analysis/full-export/${exportTaskId}`,
+    { method: 'DELETE' },
+    'Failed to cancel analysis full export'
+  )
+}
