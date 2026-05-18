@@ -3362,7 +3362,7 @@
       "validation": "Validation: {{name}}",
       "batchInference": "Batch inference: {{name}}",
       "analysisExport": "Exporting analysis: {{id}}",
-      "segmentationMaskExport": "Exporting segmentation masks: {{id}}",
+      "segmentationMaskExport": "Exporting segmentation masks: {{name}}",
       "packagingSegmentationMasks": "Packaging segmentation masks"
     },
     "relocatingToPath": "Relocating to {{name}}",

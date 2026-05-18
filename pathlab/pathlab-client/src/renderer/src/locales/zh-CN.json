@@ -3300,8 +3300,8 @@
       "validation": "验证中：{{name}}",
       "batchInference": "批量推理：{{name}}",
       "analysisExport": "正在导出分析结果：{{id}}",
-      "segmentationMaskExport": "正在导出分割掩膜：{{id}}",
-      "packagingSegmentationMasks": "正在打包分割掩膜"
+      "segmentationMaskExport": "正在导出分割结果：{{name}}",
+      "packagingSegmentationMasks": "正在打包分割结果"
     },
     "relocatingToPath": "迁移至 {{name}}",
     "errors": {

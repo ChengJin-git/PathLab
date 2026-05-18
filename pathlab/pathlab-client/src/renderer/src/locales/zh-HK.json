@@ -3304,8 +3304,8 @@
       "validation": "驗證中：{{name}}",
       "batchInference": "批量推理：{{name}}",
       "analysisExport": "正在匯出分析結果：{{id}}",
-      "segmentationMaskExport": "正在匯出分割遮罩：{{id}}",
-      "packagingSegmentationMasks": "正在打包分割遮罩"
+      "segmentationMaskExport": "正在匯出分割結果：{{name}}",
+      "packagingSegmentationMasks": "正在打包分割結果"
     },
     "relocatingToPath": "遷移至 {{name}}",
     "errors": {
