@@ -1,15 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, act } from '@testing-library/react'
+import { renderHook, act, waitFor } from '@testing-library/react'
 import { useTaskActions } from '@renderer/contexts/backgroundTask/useTaskActions'
 import * as storageApi from '@renderer/api/storage'
 import * as wsiApi from '@renderer/api/wsi'
 import * as queueApi from '@renderer/api/queue'
+import * as exportApi from '@renderer/api/export'
+
+const mockT = vi.hoisted(() => vi.fn((key: string) => key))
 
 vi.mock('react-i18next', async () => {
   const actual = await vi.importActual('react-i18next')
   return {
     ...actual,
-    useTranslation: () => ({ t: (key: string) => key }),
+    useTranslation: () => ({ t: mockT }),
   }
 })
 
@@ -42,10 +45,12 @@ describe('useTaskActions addDeleteWSITask', () => {
   }
 
   beforeEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     mockSetLocalTasks.mockClear()
     mockSetIsPanelExpanded.mockClear()
     mockRefreshDiskSpace.mockClear()
+    mockT.mockClear()
   })
 
   it('calls startDeleteWSIsTask once with all WSI IDs and does not call deleteWSI per item', async () => {
@@ -198,7 +203,7 @@ describe('useTaskActions addDeleteWSITask', () => {
     const { result } = renderHook(() => useTaskActions(defaultParams))
 
     act(() => {
-      result.current.addAnalysisExportTask('export-task-1', 'analysis-abcdef123')
+      result.current.addAnalysisExportTask('export-task-1', 'analysis-abcdef123', 'Tumor segmentation run')
     })
 
     const addTaskUpdater = mockSetLocalTasks.mock.calls[0][0]
@@ -207,5 +212,43 @@ describe('useTaskActions addDeleteWSITask', () => {
     expect(task.type).toBe('segmentation_export')
     expect(task.title).toBe('backgroundTask.taskTitles.segmentationMaskExport')
     expect(task.items[0].name).toBe('backgroundTask.taskTitles.packagingSegmentationMasks')
+    expect(mockT).toHaveBeenCalledWith('backgroundTask.taskTitles.segmentationMaskExport', { name: 'Tumor segmentation run' })
+  })
+
+  it('cancels segmentation mask export polling and backend export task', async () => {
+    vi.useFakeTimers()
+    const cancelAnalysisFullExportSpy = vi
+      .spyOn(exportApi, 'cancelAnalysisFullExport')
+      .mockResolvedValue({ cancelled: true, status: 'cancelled' })
+    const getStatusSpy = vi
+      .spyOn(exportApi, 'getAnalysisFullExportStatus')
+      .mockResolvedValue({
+        task_id: 'export-task-1',
+        status: 'completed',
+        progress: 100,
+        error_message: null,
+        created_at: null,
+        started_at: null,
+        completed_at: null,
+      })
+    const downloadSpy = vi.spyOn(exportApi, 'downloadAnalysisFullExportFile')
+      .mockResolvedValue(new Blob(['zip']))
+
+    const { result } = renderHook(() => useTaskActions(defaultParams))
+
+    let taskId: string
+    act(() => {
+      taskId = result.current.addAnalysisExportTask('export-task-1', 'analysis-abcdef123', 'Tumor segmentation run')
+    })
+
+    act(() => {
+      result.current.cancelTask(taskId!)
+    })
+
+    expect(cancelAnalysisFullExportSpy).toHaveBeenCalledWith('export-task-1')
+    expect(getStatusSpy).not.toHaveBeenCalled()
+    expect(downloadSpy).not.toHaveBeenCalled()
+
+    vi.useRealTimers()
   })
 })

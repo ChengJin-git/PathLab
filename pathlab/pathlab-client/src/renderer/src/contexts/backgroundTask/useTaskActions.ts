@@ -13,6 +13,7 @@ import { deleteTrainingTask } from '../../api/training'
 import { checkUploadSpace, cancelStorageTask, startMigration, getMigrationStatus, startDeleteWSIsTask } from '../../api/storage'
 import { cancelQueueTask } from '../../api/queue'
 import { getExtractProgressSSEUrl } from '../../api/annotation'
+import * as analysisExportApi from '../../api/export'
 import { generateId } from './helpers'
 import { markTrainingSubmissionCancelled } from '../../lib/trainingSubmissionTracker'
 import { invalidateDatasetRepositoryCache } from '../../lib/datasetQueryInvalidation'
@@ -41,6 +42,8 @@ export interface TaskActionsParams {
 export function useTaskActions(params: TaskActionsParams) {
   const { t } = useTranslation()
   const qc = useQueryClient()
+  const analysisExportTaskIdsRef = React.useRef(new Map<string, string>())
+  const analysisExportIntervalsRef = React.useRef(new Map<string, ReturnType<typeof setInterval>>())
   const {
     setLocalTasks, setIsPanelExpanded, setDismissedServerTasks,
     setMetadataUploadResults, cancelledTasksRef, abortControllersRef,
@@ -368,6 +371,19 @@ export function useTaskActions(params: TaskActionsParams) {
   // Cancel a running task
   const cancelTask = useCallback((taskId: string) => {
     cancelledTasksRef.current.add(taskId)
+
+    const exportTaskId = analysisExportTaskIdsRef.current.get(taskId)
+    if (exportTaskId) {
+      const pollInterval = analysisExportIntervalsRef.current.get(taskId)
+      if (pollInterval) {
+        clearInterval(pollInterval)
+        analysisExportIntervalsRef.current.delete(taskId)
+      }
+      void analysisExportApi.cancelAnalysisFullExport(exportTaskId).catch(error => {
+        console.error('Failed to cancel analysis full export:', error)
+      })
+      analysisExportTaskIdsRef.current.delete(taskId)
+    }
 
     // Abort any in-flight upload requests
     const abortController = abortControllersRef.current.get(taskId)
@@ -745,13 +761,12 @@ export function useTaskActions(params: TaskActionsParams) {
     return metadataUploadResults.get(datasetName)
   }, [metadataUploadResults])
 
-  const addAnalysisExportTask = useCallback((exportTaskId: string, analysisId: string): string => {
+  const addAnalysisExportTask = useCallback((exportTaskId: string, analysisId: string, taskName: string): string => {
     const taskId = generateId()
-    const shortId = analysisId.slice(0, 8)
     const task: BackgroundTask = {
       id: taskId,
       type: 'segmentation_export',
-      title: t('backgroundTask.taskTitles.segmentationMaskExport', { id: shortId }),
+      title: t('backgroundTask.taskTitles.segmentationMaskExport', { name: taskName }),
       items: [{
         id: 'export_main',
         name: t('backgroundTask.taskTitles.packagingSegmentationMasks'),
@@ -762,20 +777,33 @@ export function useTaskActions(params: TaskActionsParams) {
       createdAt: new Date(),
       totalProgress: 0,
       successCount: 0,
-      failedCount: 0
+      failedCount: 0,
+      exportTaskId
     }
 
     setLocalTasks(prev => [task, ...prev])
     setIsPanelExpanded(true)
+    analysisExportTaskIdsRef.current.set(taskId, exportTaskId)
 
     const pollInterval = setInterval(async () => {
+      if (cancelledTasksRef.current.has(taskId)) {
+        clearInterval(pollInterval)
+        analysisExportIntervalsRef.current.delete(taskId)
+        return
+      }
       try {
-        const { getAnalysisFullExportStatus, downloadAnalysisFullExportFile } = await import('../../api/export')
-        const status = await getAnalysisFullExportStatus(exportTaskId)
+        const status = await analysisExportApi.getAnalysisFullExportStatus(exportTaskId)
+
+        if (cancelledTasksRef.current.has(taskId)) {
+          clearInterval(pollInterval)
+          analysisExportIntervalsRef.current.delete(taskId)
+          return
+        }
 
         if (status.status === 'completed') {
           clearInterval(pollInterval)
-          const blob = await downloadAnalysisFullExportFile(exportTaskId)
+          analysisExportIntervalsRef.current.delete(taskId)
+          const blob = await analysisExportApi.downloadAnalysisFullExportFile(exportTaskId)
           const { downloadBlobFile } = await import('../../api/client')
           downloadBlobFile(blob, `full_results_${analysisId}.zip`)
 
@@ -789,20 +817,22 @@ export function useTaskActions(params: TaskActionsParams) {
               items: task.items.map(i => ({ ...i, status: 'success' as const, progress: 100 }))
             }
           }))
-        } else if (status.status === 'failed') {
+        } else if (status.status === 'failed' || status.status === 'cancelled') {
           clearInterval(pollInterval)
+          analysisExportIntervalsRef.current.delete(taskId)
           setLocalTasks(prev => prev.map(task => {
             if (task.id !== taskId) return task
+            const wasCancelled = status.status === 'cancelled'
             return {
               ...task,
-              status: 'error',
+              status: wasCancelled ? 'cancelled' : 'error',
               totalProgress: 0,
-              failedCount: 1,
+              failedCount: wasCancelled ? 0 : 1,
               items: task.items.map(i => ({
                 ...i,
-                status: 'error' as const,
+                status: wasCancelled ? 'cancelled' as const : 'error' as const,
                 progress: 0,
-                error: status.error_message || t('backgroundTask.errors.analysisExportFailed')
+                error: wasCancelled ? undefined : status.error_message || t('backgroundTask.errors.analysisExportFailed')
               }))
             }
           }))
@@ -821,6 +851,7 @@ export function useTaskActions(params: TaskActionsParams) {
         console.error('Analysis full export polling error:', err)
       }
     }, 2000)
+    analysisExportIntervalsRef.current.set(taskId, pollInterval)
 
     return taskId
   }, [t, setLocalTasks, setIsPanelExpanded])
