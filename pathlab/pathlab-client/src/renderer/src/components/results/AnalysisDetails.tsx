@@ -78,13 +78,14 @@ export interface AnalysisSummary {
 export interface AnalysisDetailsProps {
   analysis: AnalysisSummary
   taskId?: string
+  taskName?: string
   modelId?: string
   selectedMetrics?: string[]
   selectedCharts?: string[]
   isExternal?: boolean
 }
 
-export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
+export function AnalysisDetails({ analysis, taskId, taskName, modelId, selectedMetrics, selectedCharts, isExternal = false }: AnalysisDetailsProps) {
   const { t } = useTranslation()
   const { addAnalysisExportTask } = useBackgroundTask()
   const [isExportingModel, setIsExportingModel] = useState(false)
@@ -187,7 +188,7 @@ export function AnalysisDetails({ analysis, taskId, modelId, selectedMetrics, se
       setIsExportingFullResults(true)
       try {
         const response = await startAnalysisFullExport(effectiveTaskId, analysis.analysis_id)
-        addAnalysisExportTask(response.task_id, analysis.analysis_id)
+        addAnalysisExportTask(response.task_id, analysis.analysis_id, taskName ?? effectiveTaskId)
       } catch (error) {
         console.error('Failed to start analysis full export:', error)
       } finally {
