@@ -687,8 +687,15 @@ async def process_segmentation_analysis_full_export(
     user_id: str,
     db_session_maker,
 ):
+    async def _is_cancelled() -> bool:
+        current = await ExportTaskRepository.get_by_id(db, export_task_id)
+        status = getattr(current, "status", None) if current is not None else None
+        return isinstance(status, str) and status == "cancelled"
+
     async with db_session_maker() as db:
         try:
+            if await _is_cancelled():
+                return
             await ExportTaskRepository.update_status(
                 db,
                 task_id=export_task_id,
@@ -696,6 +703,9 @@ async def process_segmentation_analysis_full_export(
                 progress=5,
             )
             await db.commit()
+
+            if await _is_cancelled():
+                return
 
             task = await TrainingTaskRepository.get_by_id(db, source_task_id)
             if task is not None:
@@ -722,6 +732,8 @@ async def process_segmentation_analysis_full_export(
             rows = _segmentation_export_rows(results_payload)
             masks: Dict[str, Dict[str, Optional[np.ndarray]]] = {}
             for idx, row in enumerate(rows):
+                if await _is_cancelled():
+                    return
                 wsi_id = str(row.get("wsi_id") or "")
                 if not wsi_id:
                     continue
@@ -738,6 +750,8 @@ async def process_segmentation_analysis_full_export(
                 )
                 await db.commit()
 
+            if await _is_cancelled():
+                return
             export_dir = Config.get_uploads_dir() / "exports" / "analysis"
             zip_path = export_dir / f"{export_task_id}.zip"
             manifest = await asyncio.to_thread(
@@ -750,6 +764,10 @@ async def process_segmentation_analysis_full_export(
                 masks,
             )
 
+            if await _is_cancelled():
+                if zip_path.exists():
+                    zip_path.unlink()
+                return
             await ExportTaskRepository.update_status(
                 db,
                 task_id=export_task_id,
@@ -760,6 +778,8 @@ async def process_segmentation_analysis_full_export(
             )
             await db.commit()
         except Exception as err:
+            if await _is_cancelled():
+                return
             logger.error(f"Segmentation analysis export {export_task_id} failed: {err}")
             await ExportTaskRepository.update_status(
                 db,
@@ -4051,6 +4071,31 @@ async def get_segmentation_analysis_full_export_status(
     if str(getattr(task, "user_id", "")) != str(user.id) and not user.is_admin():
         raise HTTPException(status_code=403, detail="You don't have permission to view this export")
     return task.to_dict()
+
+
+@router.delete("/analysis/full-export/{export_task_id}")
+async def cancel_segmentation_analysis_full_export(
+    export_task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await ExportTaskRepository.get_by_id(db, export_task_id)
+    if not task or getattr(task, "export_type", None) != "segmentation_analysis_full":
+        raise HTTPException(status_code=404, detail="Export task not found")
+    if str(getattr(task, "user_id", "")) != str(user.id) and not user.is_admin():
+        raise HTTPException(status_code=403, detail="You don't have permission to cancel this export")
+    if str(getattr(task, "status", "")) in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=400, detail=f"Export cannot be cancelled. Status: {task.status}")
+
+    await ExportTaskRepository.update_status(
+        db,
+        export_task_id,
+        status="cancelled",
+        progress=0,
+        error_message="Cancelled by user",
+    )
+    await db.commit()
+    return {"cancelled": True, "status": "cancelled"}
 
 
 @router.get("/analysis/full-export/{export_task_id}/download")

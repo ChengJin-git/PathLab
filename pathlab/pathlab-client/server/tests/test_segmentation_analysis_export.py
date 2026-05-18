@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
+from fastapi import HTTPException
 
 from helpers import _make_user
 
@@ -66,6 +67,77 @@ async def test_start_segmentation_analysis_full_export_creates_async_zip_task(mo
 
 
 @pytest.mark.asyncio
+async def test_cancel_segmentation_analysis_full_export_marks_export_cancelled(monkeypatch):
+    from gateway.routes import results
+
+    user = _make_user("admin")
+    db = AsyncMock()
+    db.commit = AsyncMock()
+    task = SimpleNamespace(
+        task_id="export-task-1",
+        user_id=str(user.id),
+        export_type="segmentation_analysis_full",
+        status="processing",
+    )
+
+    monkeypatch.setattr(
+        results.ExportTaskRepository,
+        "get_by_id",
+        AsyncMock(return_value=task),
+    )
+    monkeypatch.setattr(
+        results.ExportTaskRepository,
+        "update_status",
+        AsyncMock(return_value=True),
+    )
+
+    response = await results.cancel_segmentation_analysis_full_export(
+        export_task_id="export-task-1",
+        user=user,
+        db=db,
+    )
+
+    assert response == {"cancelled": True, "status": "cancelled"}
+    results.ExportTaskRepository.update_status.assert_awaited_once_with(
+        db,
+        "export-task-1",
+        status="cancelled",
+        progress=0,
+        error_message="Cancelled by user",
+    )
+    db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancel_completed_segmentation_analysis_full_export_is_rejected(monkeypatch):
+    from gateway.routes import results
+
+    user = _make_user("admin")
+    db = AsyncMock()
+    task = SimpleNamespace(
+        task_id="export-task-1",
+        user_id=str(user.id),
+        export_type="segmentation_analysis_full",
+        status="completed",
+    )
+
+    monkeypatch.setattr(
+        results.ExportTaskRepository,
+        "get_by_id",
+        AsyncMock(return_value=task),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await results.cancel_segmentation_analysis_full_export(
+            export_task_id="export-task-1",
+            user=user,
+            db=db,
+        )
+
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
 async def test_segmentation_analysis_full_export_zip_contains_metadata_and_masks(monkeypatch, tmp_path):
     from gateway.routes import results
 
@@ -99,6 +171,11 @@ async def test_segmentation_analysis_full_export_zip_contains_metadata_and_masks
         AsyncMock(return_value=_segmentation_task()),
     )
     monkeypatch.setattr(results, "_require_task_access", AsyncMock())
+    monkeypatch.setattr(
+        results.ExportTaskRepository,
+        "get_by_id",
+        AsyncMock(return_value=SimpleNamespace(status="processing")),
+    )
     monkeypatch.setattr(
         results.ExportTaskRepository,
         "update_status",
