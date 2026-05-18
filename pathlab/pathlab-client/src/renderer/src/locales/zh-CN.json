@@ -3218,6 +3218,7 @@
       "batchInference": "批量推理",
       "externalAnalysis": "外部分析",
       "internalAnalysis": "内部分析",
+      "segmentationExport": "分割区域导出",
       "storage": "存储",
       "batchImport": "批量导入",
       "metadataUpdate": "元数据更新",
@@ -3297,14 +3298,18 @@
       "analyzing": "分析中：{{name}}",
       "training": "训练中：{{name}}",
       "validation": "验证中：{{name}}",
-      "batchInference": "批量推理：{{name}}"
+      "batchInference": "批量推理：{{name}}",
+      "analysisExport": "正在导出分析结果：{{id}}",
+      "segmentationMaskExport": "正在导出分割掩膜：{{id}}",
+      "packagingSegmentationMasks": "正在打包分割掩膜"
     },
     "relocatingToPath": "迁移至 {{name}}",
     "errors": {
       "migrationFailed": "迁移失败",
       "notAuthenticated": "未认证",
       "extractionFailed": "提取失败",
-      "datasetPollingTimeout": "等待 5 分钟后仍未找到数据集"
+      "datasetPollingTimeout": "等待 5 分钟后仍未找到数据集",
+      "analysisExportFailed": "分析导出失败"
     }
   },
   "errors": {
@@ -3672,7 +3677,8 @@
     "downloadFullResults": "下载完整结果",
     "modelFiles": "模型文件",
     "downloadModel": "导出模型",
-    "exportingModel": "正在准备导出..."
+    "exportingModel": "正在准备导出...",
+    "exportingFullResults": "正在准备完整导出..."
   },
   "analysisCharts": {
     "confusionMatrix": "混淆矩阵",

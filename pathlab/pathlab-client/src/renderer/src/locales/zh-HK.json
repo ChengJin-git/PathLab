@@ -3222,6 +3222,7 @@
       "batchInference": "批量推理",
       "externalAnalysis": "外部分析",
       "internalAnalysis": "內部分析",
+      "segmentationExport": "分割區域匯出",
       "storage": "儲存",
       "batchImport": "批量匯入",
       "metadataUpdate": "中繼資料更新",
@@ -3301,14 +3302,18 @@
       "analyzing": "分析中：{{name}}",
       "training": "訓練中：{{name}}",
       "validation": "驗證中：{{name}}",
-      "batchInference": "批量推理：{{name}}"
+      "batchInference": "批量推理：{{name}}",
+      "analysisExport": "正在匯出分析結果：{{id}}",
+      "segmentationMaskExport": "正在匯出分割遮罩：{{id}}",
+      "packagingSegmentationMasks": "正在打包分割遮罩"
     },
     "relocatingToPath": "遷移至 {{name}}",
     "errors": {
       "migrationFailed": "遷移失敗",
       "notAuthenticated": "未認證",
       "extractionFailed": "提取失敗",
-      "datasetPollingTimeout": "等待 5 分鐘後仍未找到資料集"
+      "datasetPollingTimeout": "等待 5 分鐘後仍未找到資料集",
+      "analysisExportFailed": "分析匯出失敗"
     }
   },
   "errors": {

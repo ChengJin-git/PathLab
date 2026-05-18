@@ -2960,7 +2960,8 @@
     "downloadFullResults": "Download Full Results",
     "modelFiles": "Model Files",
     "downloadModel": "Export Model",
-    "exportingModel": "Preparing Export..."
+    "exportingModel": "Preparing Export...",
+    "exportingFullResults": "Preparing Full Export..."
   },
   "analysisCharts": {
     "confusionMatrix": "Confusion Matrix",
@@ -3279,6 +3280,7 @@
       "batchInference": "Batch Inference",
       "externalAnalysis": "External Analysis",
       "internalAnalysis": "Internal Analysis",
+      "segmentationExport": "Segmentation Mask Export",
       "storage": "Storage",
       "batchImport": "Batch Import",
       "metadataUpdate": "Metadata Update",
@@ -3358,14 +3360,18 @@
       "analyzing": "Analyzing: {{name}}",
       "training": "Training: {{name}}",
       "validation": "Validation: {{name}}",
-      "batchInference": "Batch inference: {{name}}"
+      "batchInference": "Batch inference: {{name}}",
+      "analysisExport": "Exporting analysis: {{id}}",
+      "segmentationMaskExport": "Exporting segmentation masks: {{id}}",
+      "packagingSegmentationMasks": "Packaging segmentation masks"
     },
     "relocatingToPath": "Relocating to {{name}}",
     "errors": {
       "migrationFailed": "Migration failed",
       "notAuthenticated": "Not authenticated",
       "extractionFailed": "Extraction failed",
-      "datasetPollingTimeout": "Could not find dataset after 5 minutes of polling"
+      "datasetPollingTimeout": "Could not find dataset after 5 minutes of polling",
+      "analysisExportFailed": "Analysis export failed"
     }
   },
   "errors": {

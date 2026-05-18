@@ -115,6 +115,8 @@ const getTypeLabel = (task: BackgroundTask, t: TFunction): string => {
       }
       return analysisTypeLabel
     }
+    case 'segmentation_export':
+      return t('backgroundTask.typeLabels.segmentationExport')
     case 'migration':
       return t('backgroundTask.typeLabels.storage')
     case 'batch_import':
