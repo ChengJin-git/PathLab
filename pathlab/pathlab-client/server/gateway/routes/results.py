@@ -10,21 +10,27 @@ import functools
 import logging
 import json
 import base64
+import os
 import shutil
 import traceback
+import uuid
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional, Callable, Tuple, cast as type_cast
 from collections import defaultdict
-from fastapi import APIRouter, Depends, Query, HTTPException
+import tempfile
+
+import numpy as np
+from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_, cast, String
 from sqlalchemy.orm import selectinload
 
 from backend.ai.schemas.base import TaskStatus
-from backend.database import get_db, safe_session
+from backend.database import get_db, safe_session, async_session_maker
 from backend.database.models import (
     AIResult,
     AITask,
@@ -45,6 +51,8 @@ from backend.database.repositories import (
     DataGroupRepository,
     DatasetRepository,
     DatasetGrantRepository,
+    ExportTaskRepository,
+    SegmentationAnnotationRepository,
 )
 from backend.common.config import Config
 from ..dependencies import make_sse_response
@@ -64,7 +72,7 @@ from backend.auth.dependencies import (
 )
 from .access_control import assert_owner
 from backend.ai.tasks.patch_cache import find_any_cached_coords_for_wsi
-from backend.ai.result_store import AIResultStore, IncompleteAIResultBundleError
+from backend.ai.result_store import AIResultStore, IncompleteAIResultBundleError, PRED_MASK_ARTIFACT
 from backend.preprocessing.heatmap_preview_cache import (
     ensure_recommendation_preview_cache,
 )
@@ -496,6 +504,271 @@ def _analysis_has_required_files(analysis_run_dir: Path) -> bool:
     return (analysis_run_dir / "summary.json").exists() and (
         analysis_run_dir / "results.json"
     ).exists()
+
+
+def _safe_export_member_name(value: Any) -> str:
+    name = Path(str(value or "unknown")).stem.strip()
+    safe = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in name)
+    return safe or "unknown"
+
+
+def _segmentation_export_rows(results_payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    rows = results_payload.get("wsi_results") or results_payload.get("results") or []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _write_array_to_zip(zf: zipfile.ZipFile, member_name: str, array: np.ndarray) -> None:
+    buffer = BytesIO()
+    np.save(buffer, np.asarray(array), allow_pickle=False)
+    zf.writestr(member_name, buffer.getvalue())
+
+
+def _load_segmentation_export_pred_mask(task_id: str, wsi_id: str) -> Optional[np.ndarray]:
+    try:
+        return AIResultStore(Config.get_uploads_dir()).read_array(
+            task_id,
+            wsi_id,
+            PRED_MASK_ARTIFACT,
+            strict=False,
+        )
+    except Exception as err:
+        logger.debug(f"Predicted mask unavailable for {task_id}/{wsi_id}: {err}")
+        return None
+
+
+def _annotation_payload_for_wsi(record: SegmentationAnnotation, wsi_id: str) -> Optional[Dict[str, Any]]:
+    annotations = getattr(record, "annotations", None)
+    if not isinstance(annotations, dict):
+        return None
+    images = annotations.get("images") or []
+    matched_image_ids = set()
+    matched_images = []
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        file_name = str(image.get("file_name") or "")
+        if wsi_id not in {str(image.get("wsi_id") or ""), str(image.get("id") or ""), Path(file_name).stem}:
+            continue
+        image_id = image.get("id")
+        if image_id is None:
+            continue
+        matched_image_ids.add(image_id)
+        matched_images.append(dict(image))
+
+    if not matched_images:
+        return None
+
+    return {
+        "images": matched_images,
+        "annotations": [
+            dict(annotation)
+            for annotation in annotations.get("annotations") or []
+            if isinstance(annotation, dict) and annotation.get("image_id") in matched_image_ids
+        ],
+        "categories": annotations.get("categories", []),
+    }
+
+
+async def _load_segmentation_export_gt_mask(db: AsyncSession, task: TrainingTask, wsi_id: str) -> Optional[np.ndarray]:
+    wsi_map = await WSIRepository.get_by_ids(db, [wsi_id])
+    wsi = wsi_map.get(wsi_id)
+    dataset_id = getattr(wsi, "dataset_id", None) if wsi is not None else None
+    wsi_path = getattr(wsi, "wsi_path", None) if wsi is not None else None
+    if not dataset_id or not wsi_path:
+        return None
+
+    records = await SegmentationAnnotationRepository.get_all_by_dataset(
+        db,
+        str(dataset_id),
+        include_drafts=False,
+    )
+    if not records:
+        return None
+
+    payload = None
+    preferred_id = f"label_{wsi_id}"
+    for record in records:
+        if getattr(record, "annotation_id", None) == preferred_id:
+            payload = _annotation_payload_for_wsi(record, wsi_id)
+            if payload:
+                break
+    if payload is None:
+        for record in records:
+            payload = _annotation_payload_for_wsi(record, wsi_id)
+            if payload:
+                break
+    if payload is None:
+        return None
+
+    with tempfile.TemporaryDirectory(prefix="pathlab_gt_export_") as tmp_dir:
+        from backend.ai.utils.patch_resize import resolve_patch_resize_size
+        from backend.ai.utils.segmentation_dataset import SegmentationDataset, get_transforms
+
+        tmp_root = Path(tmp_dir)
+        image_path = Path(str(wsi_path)).resolve()
+        payload["images"][0]["file_name"] = image_path.name
+        annotations_path = tmp_root / "annotations.json"
+        with open(annotations_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+
+        model_config = getattr(task, "model_config", None) or {}
+        preprocessing_config = getattr(task, "preprocessing_config", None) or {}
+        resize_size = resolve_patch_resize_size(model_config, preprocessing_config)
+        dataset = SegmentationDataset(
+            img_dir=str(image_path.parent),
+            annotations_path=str(annotations_path),
+            transform=get_transforms("val", size=(resize_size, resize_size)),
+        )
+        if len(dataset) == 0:
+            return None
+        _, mask = dataset[0]
+        return np.asarray(mask)
+
+
+def _build_segmentation_export_zip_sync(
+    zip_path: Path,
+    source_task_id: str,
+    analysis_id: str,
+    summary: Dict[str, Any],
+    results_payload: Dict[str, Any],
+    masks: Dict[str, Dict[str, Optional[np.ndarray]]],
+) -> Dict[str, Any]:
+    rows = _segmentation_export_rows(results_payload)
+    counts = {"pred": 0, "gt": 0, "missing_pred": 0, "missing_gt": 0}
+    zip_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = zip_path.with_suffix(".zip.tmp")
+
+    with zipfile.ZipFile(tmp_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("summary.json", json.dumps(summary, indent=2))
+        zf.writestr("results.json", json.dumps(results_payload, indent=2))
+
+        for row in rows:
+            wsi_id = str(row.get("wsi_id") or "")
+            if not wsi_id:
+                continue
+            safe_id = _safe_export_member_name(wsi_id)
+            pred_mask = masks.get(wsi_id, {}).get("pred")
+            gt_mask = masks.get(wsi_id, {}).get("gt")
+            if pred_mask is not None:
+                _write_array_to_zip(zf, f"pred_masks/{safe_id}.npy", pred_mask)
+                counts["pred"] += 1
+            else:
+                counts["missing_pred"] += 1
+            if gt_mask is not None:
+                _write_array_to_zip(zf, f"gt_masks/{safe_id}.npy", gt_mask)
+                counts["gt"] += 1
+            else:
+                counts["missing_gt"] += 1
+
+        manifest = {
+            "export_type": "segmentation_analysis_full",
+            "source_task_id": source_task_id,
+            "analysis_id": analysis_id,
+            "task_type": results_payload.get("task_type") or summary.get("task_type"),
+            "num_samples": len(rows),
+            "mask_counts": counts,
+            "files": {
+                "summary": "summary.json",
+                "results": "results.json",
+                "pred_masks": "pred_masks/*.npy",
+                "gt_masks": "gt_masks/*.npy",
+            },
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+    tmp_path.replace(zip_path)
+    return manifest
+
+
+async def process_segmentation_analysis_full_export(
+    export_task_id: str,
+    source_task_id: str,
+    analysis_id: str,
+    user_id: str,
+    db_session_maker,
+):
+    async with db_session_maker() as db:
+        try:
+            await ExportTaskRepository.update_status(
+                db,
+                task_id=export_task_id,
+                status="processing",
+                progress=5,
+            )
+            await db.commit()
+
+            task = await TrainingTaskRepository.get_by_id(db, source_task_id)
+            if task is not None:
+                await _require_task_access(
+                    type_cast(User, type("ExportUser", (), {"id": user_id, "role": "admin", "is_admin": lambda self: True})()),
+                    task,
+                    db,
+                    forbidden_detail="You don't have permission to export this analysis",
+                )
+
+            analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / source_task_id / analysis_id
+            if not _analysis_has_required_files(analysis_dir):
+                raise FileNotFoundError(f"Analysis not found: {analysis_id}")
+
+            with open(analysis_dir / "summary.json", "r", encoding="utf-8") as f:
+                summary = json.load(f)
+            with open(analysis_dir / "results.json", "r", encoding="utf-8") as f:
+                results_payload = json.load(f)
+
+            task_type = results_payload.get("task_type") or summary.get("task_type")
+            if task_type != "patch_segmentation":
+                raise ValueError("Full mask export is only available for segmentation analyses")
+
+            rows = _segmentation_export_rows(results_payload)
+            masks: Dict[str, Dict[str, Optional[np.ndarray]]] = {}
+            for idx, row in enumerate(rows):
+                wsi_id = str(row.get("wsi_id") or "")
+                if not wsi_id:
+                    continue
+                masks[wsi_id] = {
+                    "pred": _load_segmentation_export_pred_mask(source_task_id, wsi_id),
+                    "gt": await _load_segmentation_export_gt_mask(db, task, wsi_id) if task is not None else None,
+                }
+                progress = 10 + int(((idx + 1) / max(len(rows), 1)) * 75)
+                await ExportTaskRepository.update_status(
+                    db,
+                    task_id=export_task_id,
+                    status="processing",
+                    progress=min(progress, 85),
+                )
+                await db.commit()
+
+            export_dir = Config.get_uploads_dir() / "exports" / "analysis"
+            zip_path = export_dir / f"{export_task_id}.zip"
+            manifest = await asyncio.to_thread(
+                _build_segmentation_export_zip_sync,
+                zip_path,
+                source_task_id,
+                analysis_id,
+                summary,
+                results_payload,
+                masks,
+            )
+
+            await ExportTaskRepository.update_status(
+                db,
+                task_id=export_task_id,
+                status="completed",
+                progress=100,
+                file_path=str(zip_path),
+                total_records=manifest["num_samples"],
+            )
+            await db.commit()
+        except Exception as err:
+            logger.error(f"Segmentation analysis export {export_task_id} failed: {err}")
+            await ExportTaskRepository.update_status(
+                db,
+                task_id=export_task_id,
+                status="failed",
+                progress=100,
+                error_message=str(err),
+            )
+            await db.commit()
 
 
 def _iter_complete_analysis_runs(analysis_dir: Path):
@@ -3714,6 +3987,95 @@ async def get_analysis_file(
         raise HTTPException(status_code=404, detail=f"File not found: {filename}")
 
     return FileResponse(file_path)
+
+
+@router.post("/tasks/{task_id}/analysis/{analysis_id}/full-export")
+async def start_segmentation_analysis_full_export(
+    task_id: str,
+    analysis_id: str,
+    background_tasks: BackgroundTasks,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await TrainingTaskRepository.get_by_id(db, task_id)
+    if task:
+        await _require_task_access(
+            user,
+            task,
+            db,
+            forbidden_detail="You don't have permission to export this analysis",
+        )
+        data_group = getattr(task, "data_group", None)
+        if getattr(data_group, "task_type", None) != "patch_segmentation":
+            raise HTTPException(
+                status_code=400,
+                detail="Full mask export is only available for segmentation analyses",
+            )
+
+    analysis_dir = Config.get_uploads_dir() / "logs" / "analysis" / task_id / analysis_id
+    if not _analysis_has_required_files(analysis_dir):
+        raise HTTPException(status_code=404, detail=f"Analysis not found: {analysis_id}")
+
+    export_task_id = str(uuid.uuid4())
+    await ExportTaskRepository.create(
+        db=db,
+        task_id=export_task_id,
+        user_id=str(user.id),
+        export_type="segmentation_analysis_full",
+        file_format="zip",
+        filter_params={"task_id": task_id, "analysis_id": analysis_id},
+    )
+    await db.commit()
+
+    background_tasks.add_task(
+        process_segmentation_analysis_full_export,
+        export_task_id,
+        task_id,
+        analysis_id,
+        str(user.id),
+        async_session_maker,
+    )
+
+    return {"task_id": export_task_id, "status": "pending"}
+
+
+@router.get("/analysis/full-export/{export_task_id}")
+async def get_segmentation_analysis_full_export_status(
+    export_task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await ExportTaskRepository.get_by_id(db, export_task_id)
+    if not task or getattr(task, "export_type", None) != "segmentation_analysis_full":
+        raise HTTPException(status_code=404, detail="Export task not found")
+    if str(getattr(task, "user_id", "")) != str(user.id) and not user.is_admin():
+        raise HTTPException(status_code=403, detail="You don't have permission to view this export")
+    return task.to_dict()
+
+
+@router.get("/analysis/full-export/{export_task_id}/download")
+async def download_segmentation_analysis_full_export(
+    export_task_id: str,
+    user: User = Depends(current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    task = await ExportTaskRepository.get_by_id(db, export_task_id)
+    if not task or getattr(task, "export_type", None) != "segmentation_analysis_full":
+        raise HTTPException(status_code=404, detail="Export task not found")
+    if str(getattr(task, "user_id", "")) != str(user.id) and not user.is_admin():
+        raise HTTPException(status_code=403, detail="You don't have permission to download this export")
+    if str(getattr(task, "status", "")) != "completed":
+        raise HTTPException(status_code=400, detail=f"Export not ready. Status: {task.status}")
+
+    file_path = getattr(task, "file_path", None)
+    if not file_path or not os.path.exists(str(file_path)):
+        raise HTTPException(status_code=404, detail="Export file not found")
+
+    return FileResponse(
+        path=str(file_path),
+        filename=f"segmentation_analysis_{export_task_id}.zip",
+        media_type="application/zip",
+    )
 
 
 @router.delete("/tasks/{task_id}/analysis/{analysis_id}")
