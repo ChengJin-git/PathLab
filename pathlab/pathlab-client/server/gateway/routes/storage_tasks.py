@@ -667,6 +667,7 @@ async def _run_batch_import_task(
                         "wsi_path": file_path,
                         "dataset_id": resolved_dataset_id,
                         "file_size": props.get("file_size", 0),
+                        "data_type": file_data_type,
                         "width": props.get("width"),
                         "height": props.get("height"),
                         "mpp": props.get("mpp"),

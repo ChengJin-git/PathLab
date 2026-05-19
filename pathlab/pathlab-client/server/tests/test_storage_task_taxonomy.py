@@ -379,6 +379,7 @@ async def test_batch_import_task_accepts_all_canonical_task_terms(
         "aggregation_level": aggregation_level,
         "task_type": task_type,
     }
+    assert captured["wsi"]["data_type"] == data_type
     assert captured["align"][-1]["task_type"] == task_type
     assert updates[-1][1] == "completed"
     if task_type == "wsi_survival":
