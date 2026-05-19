@@ -32,6 +32,12 @@ WSIRepository = _repositories.WSIRepository
 TrainingLogger = import_module("backend.database.utils.training_logger").TrainingLogger
 Config = import_module("backend.common.config").Config
 _task_taxonomy = import_module("backend.ai.task_taxonomy")
+_split_generation = import_module("backend.common.split_generation")
+generate_split_assignments = _split_generation.generate_split_assignments
+load_segmentation_multilabels = _split_generation.load_segmentation_multilabels
+DatasetSplitService = import_module(
+    "backend.services.dataset_splits"
+).DatasetSplitService
 from .dependencies import logger, AI_SERVICE_URL
 from .utils import cancel_ai_service_training, ensure_coords_ready
 
@@ -43,6 +49,137 @@ _GPU_VRAM_REPROBE_POLL_SECS = 10.0
 _DEFAULT_MODEL_VRAM_MB = 1000.0
 _BATCH_BUFFER_MB = 768.0
 _FEATURE_EXTRACTION_BATCH_BUFFER_MB = 50.0
+
+
+async def resolve_training_input_ref(
+    task_id: str,
+    pipeline_kwargs: dict[str, Any],
+) -> tuple[dict[str, Any], list[tuple[Any, ...]]]:
+    if "wsi_ids" in pipeline_kwargs:
+        raise ValueError("training task descriptor must use input_ref; inline wsi_ids are not allowed")
+
+    input_ref = pipeline_kwargs.get("input_ref")
+    if not isinstance(input_ref, dict):
+        raise ValueError("training task descriptor must use input_ref")
+
+    kind = str(input_ref.get("kind") or "").strip()
+    resolved_kwargs = dict(pipeline_kwargs)
+
+    async with safe_session() as db:
+        if kind == "training_task_selection":
+            ref_task_id = str(input_ref.get("task_id") or "").strip()
+            if not ref_task_id:
+                raise ValueError("training task descriptor must use input_ref with task_id")
+            wsi_ids = await TrainingTaskRepository.get_wsi_ids(db, ref_task_id)
+        elif kind == "dataset":
+            dataset_id = str(input_ref.get("dataset_id") or "").strip()
+            if not dataset_id:
+                raise ValueError("training task descriptor must use input_ref with dataset_id")
+            wsi_ids = await WSIRepository.get_ids_by_dataset(
+                db,
+                dataset_id,
+                data_type=str(pipeline_kwargs.get("data_type") or "").strip() or None,
+            )
+        else:
+            raise ValueError(f"unsupported input_ref kind: {kind}")
+
+        wsi_map = await WSIRepository.get_by_ids(db, wsi_ids)
+
+        if kind == "dataset":
+            task_record = await TrainingTaskRepository.get_by_id(db, task_id)
+            if task_record is None:
+                raise ValueError(f"Training task not found: {task_id}")
+            wsi_list = [wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map]
+            metadata_classes, split_map = await _resolve_dataset_reference_metadata(
+                db,
+                task_record,
+                wsi_list,
+                pipeline_kwargs,
+            )
+            if metadata_classes is not None or split_map:
+                task_record = await TrainingTaskRepository.update_training_reference_metadata(
+                    db,
+                    task_id,
+                    classes=metadata_classes,
+                    split_map=split_map,
+                )
+                await db.commit()
+
+    resolved_kwargs.pop("input_ref", None)
+    resolved_kwargs["wsi_ids"] = wsi_ids
+    resolved_kwargs["wsi_count"] = int(resolved_kwargs.get("wsi_count") or len(wsi_ids))
+
+    paths_to_check: list[tuple[Any, ...]] = [
+        (
+            wsi_id,
+            getattr(wsi_map[wsi_id], "wsi_path", None),
+            getattr(wsi_map[wsi_id], "original_filename", None),
+        )
+        for wsi_id in wsi_ids
+        if wsi_id in wsi_map
+    ]
+
+    return resolved_kwargs, paths_to_check
+
+
+async def _resolve_dataset_reference_metadata(
+    db: Any,
+    task_record: Any,
+    wsis: list[Any],
+    pipeline_kwargs: dict[str, Any],
+) -> tuple[list[str] | None, dict[str, str]]:
+    preprocessing_config = pipeline_kwargs.get("preprocessing_config") or {}
+    split_config = preprocessing_config.get("split_config") or None
+    task_type = str(pipeline_kwargs.get("training_task_type") or "").strip().lower()
+
+    classes: list[str] | None = None
+    segmentation_multilabels: dict[str, set[str]] = {}
+    if _task_taxonomy.is_segmentation_task(task_type):
+        classes, segmentation_multilabels = await load_segmentation_multilabels(db, wsis)
+        if not classes:
+            raise ValueError(
+                "Segmentation tasks require at least one COCO category in the selected dataset."
+            )
+    elif _task_taxonomy.is_classification_task(task_type):
+        existing_classes = list(getattr(task_record, "classes", None) or [])
+        classes = existing_classes or sorted(
+            {str(wsi.label) for wsi in wsis if getattr(wsi, "label", None)}
+        )
+        if len(classes) < 2:
+            raise ValueError(
+                f"Classification tasks require at least 2 different classes. "
+                f"Found {len(classes)} class(es): {classes}. "
+                f"Please assign different labels to your slides."
+            )
+
+    split_map: dict[str, str] = {}
+    if split_config:
+        strategy = split_config.get("strategy", "random")
+        if strategy == "manual":
+            split_map = await DatasetSplitService.resolve_effective_splits(
+                db,
+                wsis,
+                str(getattr(task_record, "user_id", "") or "") or None,
+            )
+        else:
+            aggregation_level = await TrainingTaskRepository.get_dataset_aggregation_level(
+                db, getattr(task_record, "task_id")
+            )
+            wsi_splits, _ = await asyncio.to_thread(
+                generate_split_assignments,
+                wsis,
+                aggregation_level=aggregation_level or "file",
+                task_type="segmentation"
+                if _task_taxonomy.is_segmentation_task(task_type)
+                else "survival"
+                if _task_taxonomy.is_survival_task(task_type)
+                else "classification",
+                split_config=split_config,
+                segmentation_multilabels=segmentation_multilabels,
+            )
+            split_map = {str(k): str(v) for k, v in wsi_splits.items()}
+
+    return classes, split_map
 
 
 def _get_gpu_utils_module():

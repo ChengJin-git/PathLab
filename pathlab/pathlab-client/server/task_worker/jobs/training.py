@@ -10,9 +10,13 @@ async def validate_files_and_enqueue(
     uploads_dir: str,
     pipeline_kwargs: dict[str, Any],
 ) -> None:
+    from gateway.pipeline import resolve_training_input_ref
     from gateway.routes.training import _validate_files_and_enqueue as impl
 
-    await impl(task_id, [tuple(path) for path in paths_to_check], uploads_dir, pipeline_kwargs)
+    resolved_kwargs, resolved_paths_to_check = await resolve_training_input_ref(
+        task_id, pipeline_kwargs
+    )
+    await impl(task_id, resolved_paths_to_check, uploads_dir, resolved_kwargs)
 
 
 async def run_training_pipeline(**kwargs: Any) -> Any:
