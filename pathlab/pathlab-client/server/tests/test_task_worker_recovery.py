@@ -30,6 +30,18 @@ def _make_task(
     return task
 
 
+def _assert_training_input_ref_payload(descriptor, task_id: str, wsi_count: int = 1):
+    assert descriptor.handler == "training.preflight"
+    assert descriptor.payload["task_id"] == task_id
+    assert descriptor.payload["paths_to_check"] == []
+    assert descriptor.payload["pipeline_kwargs"]["input_ref"] == {
+        "kind": "training_task_selection",
+        "task_id": task_id,
+    }
+    assert descriptor.payload["pipeline_kwargs"]["wsi_count"] == wsi_count
+    assert "wsi_ids" not in descriptor.payload["pipeline_kwargs"]
+
+
 @pytest.mark.asyncio
 async def test_recovery_builds_batch_inference_descriptor():
     task = _make_task(
@@ -119,15 +131,13 @@ async def test_recovery_builds_training_descriptor_for_wsi_patching_stage():
 
     from task_worker.recovery import _build_training_descriptor
 
-    descriptor = _build_training_descriptor(task, wsi_ids=["w1"])
-    assert descriptor.handler == "training.patch_then_run"
-    assert descriptor.payload["task_id"] == "task_wsi_1"
-    assert descriptor.payload["wsi_ids"] == ["w1"]
-    assert descriptor.payload["data_type"] == "wsi"
-    assert descriptor.payload["preprocessing_config"] == {"foo": "bar"}
-    assert descriptor.payload["model_config"] == {"epochs": 10}
-    assert descriptor.payload["training_task_type"] == "wsi_classification"
-    assert descriptor.payload.get("patching_complete") is None
+    descriptor = _build_training_descriptor(task, wsi_count=250000)
+    _assert_training_input_ref_payload(descriptor, "task_wsi_1", wsi_count=250000)
+    pipeline_kwargs = descriptor.payload["pipeline_kwargs"]
+    assert pipeline_kwargs["data_type"] == "wsi"
+    assert pipeline_kwargs["preprocessing_config"] == {"foo": "bar"}
+    assert pipeline_kwargs["model_config"] == {"epochs": 10}
+    assert pipeline_kwargs["training_task_type"] == "wsi_classification"
 
 
 @pytest.mark.asyncio
@@ -143,10 +153,9 @@ async def test_recovery_builds_training_descriptor_for_wsi_gpu_stage():
 
     from task_worker.recovery import _build_training_descriptor
 
-    descriptor = _build_training_descriptor(task, wsi_ids=["w1"])
-    assert descriptor.handler == "training.run"
-    assert descriptor.payload["patching_complete"] is True
-    assert descriptor.payload["task_id"] == "task_wsi_2"
+    descriptor = _build_training_descriptor(task, wsi_count=250000)
+    _assert_training_input_ref_payload(descriptor, "task_wsi_2", wsi_count=250000)
+    assert descriptor.payload["pipeline_kwargs"].get("patching_complete") is True
 
 
 @pytest.mark.asyncio
@@ -162,10 +171,10 @@ async def test_recovery_builds_training_descriptor_for_patch_task():
 
     from task_worker.recovery import _build_training_descriptor
 
-    descriptor = _build_training_descriptor(task, wsi_ids=["img1"])
-    assert descriptor.handler == "training.run"
-    assert descriptor.payload["data_type"] == "patch"
-    assert descriptor.payload.get("patching_complete") is None
+    descriptor = _build_training_descriptor(task, wsi_count=250000)
+    _assert_training_input_ref_payload(descriptor, "task_patch_1", wsi_count=250000)
+    assert descriptor.payload["pipeline_kwargs"]["data_type"] == "patch"
+    assert descriptor.payload["pipeline_kwargs"].get("patching_complete") is None
 
 
 @pytest.mark.asyncio
@@ -181,7 +190,8 @@ async def test_recovery_resumes_interrupted_tasks_idempotent():
     mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
     mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
     mock_repo.update_status = AsyncMock()
-    mock_repo.get_wsi_ids = AsyncMock(return_value=["img1"])
+    mock_repo.get_wsi_ids = AsyncMock(side_effect=AssertionError("training recovery must not materialize WSI IDs"))
+    mock_repo.get_wsi_counts_batch = AsyncMock(return_value={"task_idem": 250000})
 
     captured_descriptors = []
 
@@ -210,6 +220,7 @@ async def test_recovery_resumes_interrupted_tasks_idempotent():
 
     assert len(captured_descriptors) == 1
     assert captured_descriptors[0].job_id == "task_idem"
+    _assert_training_input_ref_payload(captured_descriptors[0], "task_idem", wsi_count=250000)
 
 
 @pytest.mark.asyncio
@@ -224,7 +235,8 @@ async def test_recovery_marks_unrecoverable_no_wsi_ids():
     mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
     mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
     mock_repo.update_status = AsyncMock()
-    mock_repo.get_wsi_ids = AsyncMock(return_value=[])
+    mock_repo.get_wsi_ids = AsyncMock(side_effect=AssertionError("training recovery must not materialize WSI IDs"))
+    mock_repo.get_wsi_counts_batch = AsyncMock(return_value={"task_no_wsi": 0})
 
     captured = []
 

@@ -33,7 +33,8 @@ async def test_resume_wsi_extracting_task_skips_patching():
     mock_queue.submit = AsyncMock()
     mock_repo = MagicMock()
     mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
-    mock_repo.get_wsi_ids = AsyncMock(return_value=["wsi_1"])
+    mock_repo.get_wsi_ids = AsyncMock(side_effect=AssertionError("training recovery must not materialize WSI IDs"))
+    mock_repo.get_wsi_counts_batch = AsyncMock(return_value={"task_ext": 250000})
     mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
     mock_repo.update_status = AsyncMock()
 
@@ -57,8 +58,15 @@ async def test_resume_wsi_extracting_task_skips_patching():
 
     mock_enqueue.assert_awaited_once()
     descriptor = mock_enqueue.call_args.args[0]
-    assert descriptor.handler == "training.run"
-    assert descriptor.payload.get("patching_complete") is True
+    assert descriptor.handler == "training.preflight"
+    assert descriptor.payload["paths_to_check"] == []
+    assert descriptor.payload["pipeline_kwargs"]["input_ref"] == {
+        "kind": "training_task_selection",
+        "task_id": "task_ext",
+    }
+    assert descriptor.payload["pipeline_kwargs"]["wsi_count"] == 250000
+    assert descriptor.payload["pipeline_kwargs"].get("patching_complete") is True
+    assert "wsi_ids" not in descriptor.payload["pipeline_kwargs"]
 
 
 @pytest.mark.asyncio
@@ -67,7 +75,8 @@ async def test_resume_wsi_patching_task_reruns_patching():
 
     mock_repo = MagicMock()
     mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
-    mock_repo.get_wsi_ids = AsyncMock(return_value=["wsi_1"])
+    mock_repo.get_wsi_ids = AsyncMock(side_effect=AssertionError("training recovery must not materialize WSI IDs"))
+    mock_repo.get_wsi_counts_batch = AsyncMock(return_value={"task_patch_state": 250000})
     mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
     mock_repo.update_status = AsyncMock()
 
@@ -91,7 +100,11 @@ async def test_resume_wsi_patching_task_reruns_patching():
 
     mock_enqueue.assert_awaited_once()
     descriptor = mock_enqueue.call_args.args[0]
-    assert descriptor.handler == "training.patch_then_run"
+    assert descriptor.handler == "training.preflight"
+    assert descriptor.payload["pipeline_kwargs"]["input_ref"] == {
+        "kind": "training_task_selection",
+        "task_id": "task_patch_state",
+    }
 
 
 @pytest.mark.asyncio
@@ -100,7 +113,8 @@ async def test_resume_patch_task_submits_to_queue():
 
     mock_repo = MagicMock()
     mock_repo.get_interrupted_tasks = AsyncMock(return_value=[task])
-    mock_repo.get_wsi_ids = AsyncMock(return_value=["img_1"])
+    mock_repo.get_wsi_ids = AsyncMock(side_effect=AssertionError("training recovery must not materialize WSI IDs"))
+    mock_repo.get_wsi_counts_batch = AsyncMock(return_value={"task_patch_cls": 250000})
     mock_repo.try_claim_for_resume = AsyncMock(return_value=True)
     mock_repo.update_status = AsyncMock()
 
@@ -124,8 +138,12 @@ async def test_resume_patch_task_submits_to_queue():
 
     mock_enqueue.assert_awaited_once()
     descriptor = mock_enqueue.call_args.args[0]
-    assert descriptor.handler == "training.run"
-    assert descriptor.payload.get("patching_complete", False) is False
+    assert descriptor.handler == "training.preflight"
+    assert descriptor.payload["pipeline_kwargs"]["input_ref"] == {
+        "kind": "training_task_selection",
+        "task_id": "task_patch_cls",
+    }
+    assert descriptor.payload["pipeline_kwargs"].get("patching_complete", False) is False
 
 
 @pytest.mark.asyncio

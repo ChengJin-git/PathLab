@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from backend.ai.schemas.base import TaskStatus
+from backend.common.config import Config
 from backend.database import get_db
 from backend.database.repositories import (
     DatasetRepository,
@@ -77,14 +78,18 @@ def _build_external_validation_descriptor(task: Any, wsi_ids: list[str]) -> Task
     )
 
 
-def _build_training_descriptor(task: Any, wsi_ids: list[str]) -> TaskDescriptor:
+def _build_training_descriptor(task: Any, wsi_count: int) -> TaskDescriptor:
     data_type = task.data_group.data_type if task.data_group else "wsi"
     task_type = task.data_group.task_type if task.data_group else "wsi_classification"
 
     pipeline_kwargs: dict[str, Any] = {
         "task_id": task.task_id,
         "data_type": data_type,
-        "wsi_ids": wsi_ids,
+        "input_ref": {
+            "kind": "training_task_selection",
+            "task_id": task.task_id,
+        },
+        "wsi_count": wsi_count,
         "preprocessing_config": task.preprocessing_config or {},
         "model_config": task.model_config or {},
         "huggingface_token": None,
@@ -95,19 +100,19 @@ def _build_training_descriptor(task: Any, wsi_ids: list[str]) -> TaskDescriptor:
         TaskStatus.EXTRACTING,
         TaskStatus.TRAINING,
     ):
-        payload = {**pipeline_kwargs, "patching_complete": True}
-        handler = "training.run"
-    elif data_type == "wsi":
-        payload = pipeline_kwargs
-        handler = "training.patch_then_run"
-    else:
-        payload = pipeline_kwargs
-        handler = "training.run"
+        pipeline_kwargs["patching_complete"] = True
+
+    payload = {
+        "task_id": task.task_id,
+        "paths_to_check": [],
+        "uploads_dir": str(Config.get_uploads_dir()),
+        "pipeline_kwargs": pipeline_kwargs,
+    }
 
     return build_task_descriptor(
         job_id=task.task_id,
         job_kind="training",
-        handler=handler,
+        handler="training.preflight",
         payload=payload,
     )
 
@@ -191,11 +196,18 @@ async def resume_interrupted_tasks() -> None:
                             else []
                         )
                     else:
-                        wsi_ids = await TrainingTaskRepository.get_wsi_ids(
-                            db, task.task_id
+                        task_counts = await TrainingTaskRepository.get_wsi_counts_batch(
+                            db, [task.task_id]
                         )
+                        wsi_count = int(task_counts.get(task.task_id, 0))
+                        wsi_ids = []
 
-                    if not wsi_ids:
+                    if _is_external_validation_task_id(task.task_id):
+                        has_training_inputs = bool(wsi_ids)
+                    else:
+                        has_training_inputs = wsi_count > 0
+
+                    if not has_training_inputs:
                         logger.warning(
                             f"Task {task.task_id} has no associated WSI IDs, marking as failed"
                         )
@@ -211,12 +223,14 @@ async def resume_interrupted_tasks() -> None:
                     logger.info(f"Resuming task: {task.task_id} ({task.task_name})")
                     logger.info(f"  - Status before interruption: {task.status}")
                     logger.info(f"  - Progress before interruption: {task.progress}%")
-                    logger.info(f"  - WSI count: {len(wsi_ids)}")
+                    logger.info(
+                        f"  - WSI count: {len(wsi_ids) if _is_external_validation_task_id(task.task_id) else wsi_count}"
+                    )
 
                     if _is_external_validation_task_id(task.task_id):
                         descriptor = _build_external_validation_descriptor(task, wsi_ids)
                     else:
-                        descriptor = _build_training_descriptor(task, wsi_ids)
+                        descriptor = _build_training_descriptor(task, wsi_count)
 
                     await _enqueue_recovery_descriptor(descriptor)
 
