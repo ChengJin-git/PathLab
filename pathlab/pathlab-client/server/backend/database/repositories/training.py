@@ -21,6 +21,7 @@ from sqlalchemy import (
     or_,
     cast,
     String,
+    literal,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -198,6 +199,87 @@ def _build_training_task_wsi_batches(
     return batches
 
 
+async def _load_class_labels_for_dataset(
+    db: AsyncSession,
+    dataset_id: str,
+    data_type: Optional[str] = None,
+) -> List[str]:
+    query = (
+        select(WSISlide.label)
+        .where(WSISlide.dataset_id == dataset_id)
+        .where(WSISlide.label.isnot(None))
+        .where(WSISlide.label != "")
+        .distinct()
+        .order_by(WSISlide.label)
+    )
+    if data_type:
+        query = query.where(WSISlide.data_type == data_type)
+    result = await db.execute(query)
+    return [row[0] for row in result.all()]
+
+
+async def _load_wsis_for_training_reference(
+    db: AsyncSession,
+    *,
+    wsi_ids: Optional[List[str]] = None,
+    dataset_id: Optional[str] = None,
+    data_type: Optional[str] = None,
+) -> Tuple[List[str], List[WSISlide]]:
+    if dataset_id:
+        query = (
+            select(WSISlide)
+            .where(WSISlide.dataset_id == dataset_id)
+            .order_by(desc(WSISlide.created_at))
+        )
+        if data_type:
+            query = query.where(WSISlide.data_type == data_type)
+        result = await db.execute(query)
+        wsis = list(result.scalars().all())
+        return [wsi.wsi_id for wsi in wsis], wsis
+
+    resolved_ids = list(wsi_ids or [])
+    if not resolved_ids:
+        return [], []
+
+    wsis: List[WSISlide] = []
+    batch_size = 500
+    for i in range(0, len(resolved_ids), batch_size):
+        batch_ids = resolved_ids[i : i + batch_size]
+        wsi_list = await db.execute(
+            select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
+        )
+        wsis.extend(wsi_list.scalars().all())
+    return resolved_ids, wsis
+
+
+async def _insert_dataset_wsi_associations(
+    db: AsyncSession,
+    *,
+    task_id: str,
+    dataset_id: str,
+    data_type: Optional[str] = None,
+) -> None:
+    association_select = (
+        select(
+            literal(task_id),
+            WSISlide.wsi_id,
+            literal("train"),
+            literal(utc_now()),
+        )
+        .where(WSISlide.dataset_id == dataset_id)
+        .order_by(desc(WSISlide.created_at))
+    )
+    if data_type:
+        association_select = association_select.where(WSISlide.data_type == data_type)
+    await db.execute(
+        insert(TrainingTaskWSI)
+        .from_select(
+            ["task_id", "wsi_id", "split", "created_at"],
+            association_select,
+        )
+    )
+
+
 async def _load_segmentation_multilabels(
     db: AsyncSession,
     wsis: List[WSISlide],
@@ -259,20 +341,76 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             prefetched_wsis: Optional list of already-fetched WSISlide objects.
                              If provided, skips redundant DB query for WSI data.
         """
-        # Use pre-fetched WSIs if available, otherwise query from DB
         if prefetched_wsis is not None:
+            resolved_wsi_ids = list(wsi_ids)
             wsis = prefetched_wsis
         else:
-            # Extract unique classes from WSI labels
-            # For large datasets, query in batches for memory efficiency
-            wsis = []
-            batch_size = 500
-            for i in range(0, len(wsi_ids), batch_size):
-                batch_ids = wsi_ids[i : i + batch_size]
-                wsi_list = await db.execute(
-                    select(WSISlide).where(WSISlide.wsi_id.in_(batch_ids))
+            resolved_wsi_ids, wsis = await _load_wsis_for_training_reference(
+                db, wsi_ids=wsi_ids
+            )
+
+        return await TrainingTaskRepository._create_from_resolved_wsis(
+            db,
+            task_data,
+            resolved_wsi_ids,
+            wsis,
+            split_config=split_config,
+        )
+
+    @staticmethod
+    async def create_reference(
+        db: AsyncSession,
+        task_data: Dict[str, Any],
+        *,
+        dataset_id: str,
+        data_type: Optional[str] = None,
+        split_config: Optional[Dict[str, Any]] = None,
+    ) -> TrainingTask:
+        task_type = str(task_data.get("task_type", "wsi_classification")).strip().lower()
+        classification_task = is_classification_task(task_type)
+
+        classes: List[str] = []
+        if classification_task:
+            classes = await _load_class_labels_for_dataset(
+                db, dataset_id, data_type=data_type
+            )
+            if len(classes) < 2:
+                raise ValueError(
+                    f"Classification tasks require at least 2 different classes. "
+                    f"Found {len(classes)} class(es): {classes}. "
+                    f"Please assign different labels to your slides."
                 )
-                wsis.extend(wsi_list.scalars().all())
+
+        if split_config:
+            preprocessing_config = task_data.get("preprocessing_config", {}) or {}
+            preprocessing_config["split_config"] = split_config
+            task_data["preprocessing_config"] = preprocessing_config
+
+        task_data_cleaned = {k: v for k, v in task_data.items() if k != "task_type"}
+        task_id = task_data_cleaned["task_id"]
+
+        task = TrainingTask(
+            **task_data_cleaned,
+            classes=classes,
+            status=TaskStatus.PENDING,
+            progress=0,
+        )
+        db.add(task)
+        await db.flush()
+        await _insert_dataset_wsi_associations(
+            db, task_id=task_id, dataset_id=dataset_id, data_type=data_type
+        )
+        return task
+
+    @staticmethod
+    async def _create_from_resolved_wsis(
+        db: AsyncSession,
+        task_data: Dict[str, Any],
+        wsi_ids: List[str],
+        wsis: List[Any],
+        *,
+        split_config: Optional[Dict[str, Any]] = None,
+    ) -> TrainingTask:
 
         # Validate task based on canonical task_type.
         task_type = task_data.get("task_type", "wsi_classification")
@@ -961,6 +1099,39 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             .where(TrainingTask.task_id == task_id)
             .values(preprocessing_config=preprocessing_config, updated_at=utc_now())
         )
+        await db.flush()
+        return await TrainingTaskRepository.get_by_id(db, task_id)
+
+    @staticmethod
+    async def update_training_reference_metadata(
+        db: AsyncSession,
+        task_id: str,
+        *,
+        classes: Optional[List[str]] = None,
+        split_map: Optional[Dict[str, str]] = None,
+    ) -> Optional[TrainingTask]:
+        update_data: Dict[str, Any] = {"updated_at": utc_now()}
+        if classes is not None:
+            update_data["classes"] = classes
+        if update_data.keys() - {"updated_at"}:
+            await db.execute(
+                update(TrainingTask)
+                .where(TrainingTask.task_id == task_id)
+                .values(**update_data)
+            )
+        if split_map:
+            rows = [
+                {"wsi_id": wsi_id, "split": split}
+                for wsi_id, split in split_map.items()
+            ]
+            for i in range(0, len(rows), 1000):
+                for row in rows[i : i + 1000]:
+                    await db.execute(
+                        update(TrainingTaskWSI)
+                        .where(TrainingTaskWSI.task_id == task_id)
+                        .where(TrainingTaskWSI.wsi_id == row["wsi_id"])
+                        .values(split=row["split"])
+                    )
         await db.flush()
         return await TrainingTaskRepository.get_by_id(db, task_id)
 
