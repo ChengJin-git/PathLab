@@ -229,14 +229,16 @@ class DatasetSplitService:
             return baseline
 
         wsi_ids = [slide.wsi_id for slide in slides]
-        result = await db.execute(
-            select(WSISlideUserSplit.wsi_id, WSISlideUserSplit.split).where(
-                WSISlideUserSplit.user_id == user_id,
-                WSISlideUserSplit.wsi_id.in_(wsi_ids),
+        for start in range(0, len(wsi_ids), DatasetSplitService._USER_SPLIT_UPSERT_BATCH_SIZE):
+            batch_ids = wsi_ids[start : start + DatasetSplitService._USER_SPLIT_UPSERT_BATCH_SIZE]
+            result = await db.execute(
+                select(WSISlideUserSplit.wsi_id, WSISlideUserSplit.split).where(
+                    WSISlideUserSplit.user_id == user_id,
+                    WSISlideUserSplit.wsi_id.in_(batch_ids),
+                )
             )
-        )
-        for row in result.all():
-            baseline[row.wsi_id] = row.split
+            for row in result.all():
+                baseline[row.wsi_id] = row.split
         return baseline
 
     @staticmethod

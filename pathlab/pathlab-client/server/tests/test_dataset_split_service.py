@@ -182,6 +182,24 @@ async def test_resolve_effective_splits_prefers_user_override_before_baseline():
 
 
 @pytest.mark.asyncio
+async def test_resolve_effective_splits_batches_large_user_override_queries():
+    slides = [
+        _Slide(f"wsi-{idx}", f"slide-{idx}.svs", f"/slides/slide-{idx}.svs")
+        for idx in range(70000)
+    ]
+    db = _RecordingDB()
+
+    splits = await DatasetSplitService.resolve_effective_splits(
+        db=cast(AsyncSession, cast(object, db)),
+        slides=slides,
+        user_id="user-2",
+    )
+
+    assert splits == {}
+    assert db.execute_calls == 14
+
+
+@pytest.mark.asyncio
 async def test_large_user_split_override_upsert_is_chunked_to_avoid_asyncpg_parameter_limit():
     slides = [
         _Slide(f"wsi-{idx}", f"slide-{idx}.svs", f"/slides/slide-{idx}.svs")
