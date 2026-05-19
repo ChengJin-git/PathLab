@@ -22,6 +22,7 @@ from sqlalchemy import (
     cast,
     String,
     literal,
+    bindparam,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -36,6 +37,7 @@ from ..models import (
     TrainingTaskWSI,
     TrainedModel,
     TrainingLog,
+    WSISlideUserSplit,
     utc_now,
 )
 from .base import BaseRepository
@@ -258,17 +260,34 @@ async def _insert_dataset_wsi_associations(
     task_id: str,
     dataset_id: str,
     data_type: Optional[str] = None,
+    split_config: Optional[Dict[str, Any]] = None,
+    user_id: Optional[str] = None,
 ) -> None:
+    split_value = literal("train")
+    if split_config and split_config.get("strategy") == "manual":
+        split_value = func.coalesce(WSISlide.split, literal("train"))
+
     association_select = (
         select(
             literal(task_id),
             WSISlide.wsi_id,
-            literal("train"),
+            split_value,
             literal(utc_now()),
         )
         .where(WSISlide.dataset_id == dataset_id)
         .order_by(desc(WSISlide.created_at))
     )
+    if split_config and split_config.get("strategy") == "manual" and user_id:
+        association_select = association_select.outerjoin(
+            WSISlideUserSplit,
+            (WSISlideUserSplit.wsi_id == WSISlide.wsi_id)
+            & (WSISlideUserSplit.user_id == user_id),
+        ).with_only_columns(
+            literal(task_id),
+            WSISlide.wsi_id,
+            func.coalesce(WSISlideUserSplit.split, WSISlide.split, literal("train")),
+            literal(utc_now()),
+        )
     if data_type:
         association_select = association_select.where(WSISlide.data_type == data_type)
     await db.execute(
@@ -398,7 +417,12 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
         db.add(task)
         await db.flush()
         await _insert_dataset_wsi_associations(
-            db, task_id=task_id, dataset_id=dataset_id, data_type=data_type
+            db,
+            task_id=task_id,
+            dataset_id=dataset_id,
+            data_type=data_type,
+            split_config=split_config,
+            user_id=task_data_cleaned.get("user_id"),
         )
         return task
 
@@ -1121,17 +1145,18 @@ class TrainingTaskRepository(BaseRepository[TrainingTask]):
             )
         if split_map:
             rows = [
-                {"wsi_id": wsi_id, "split": split}
+                {"b_task_id": task_id, "b_wsi_id": wsi_id, "b_split": split}
                 for wsi_id, split in split_map.items()
             ]
             for i in range(0, len(rows), 1000):
-                for row in rows[i : i + 1000]:
-                    await db.execute(
-                        update(TrainingTaskWSI)
-                        .where(TrainingTaskWSI.task_id == task_id)
-                        .where(TrainingTaskWSI.wsi_id == row["wsi_id"])
-                        .values(split=row["split"])
-                    )
+                await db.execute(
+                    update(TrainingTaskWSI.__table__)
+                    .where(TrainingTaskWSI.__table__.c.task_id == bindparam("b_task_id"))
+                    .where(TrainingTaskWSI.__table__.c.wsi_id == bindparam("b_wsi_id"))
+                    .values(split=bindparam("b_split"))
+                    .execution_options(synchronize_session=False),
+                    rows[i : i + 1000],
+                )
         await db.flush()
         return await TrainingTaskRepository.get_by_id(db, task_id)
 

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.sql.dml import Update
 
 from backend.ai.schemas.base import TaskStatus
 
@@ -16,6 +17,26 @@ def _make_user(role: str = "admin") -> MagicMock:
     user.is_admin = MagicMock(return_value=(role == "admin"))
     user.can_use_gpu = MagicMock(return_value=(role in ("admin", "pathologist")))
     return user
+
+
+def _make_created_task(task_id: str, task_name: str) -> SimpleNamespace:
+    return SimpleNamespace(
+        task_id=task_id,
+        task_name=task_name,
+        task_description=None,
+        group_id="g1",
+        user_id="user_1",
+        status=TaskStatus.PENDING,
+        progress=0,
+        error_message=None,
+        preprocessing_config={},
+        model_config={},
+        classes=["tumor", "normal"],
+        created_at=None,
+        updated_at=None,
+        started_at=None,
+        finished_at=None,
+    )
 
 
 class _SafeSessionCtx:
@@ -38,6 +59,32 @@ def _make_safe_session_factory(*dbs):
         return _SafeSessionCtx(queue.pop(0))
 
     return _factory
+
+
+class _DetachedTrainingTask:
+    task_id = "train_large_dataset"
+    task_name = "large dataset"
+    task_description = None
+    group_id = "g1"
+    user_id = "user_1"
+    status = TaskStatus.PENDING
+    progress = 0
+    error_message = None
+    preprocessing_config = {}
+    model_config = {}
+    classes = ["normal", "tumor"]
+    created_at = None
+    updated_at = None
+    started_at = None
+    finished_at = None
+
+    @property
+    def data_group(self):
+        raise RuntimeError("response serialization must not lazy-load data_group")
+
+    def to_dict(self):
+        _ = self.data_group
+        return {"task_id": self.task_id}
 
 
 @pytest.mark.asyncio
@@ -83,9 +130,44 @@ async def test_create_reference_is_reference_only_for_segmentation_dataset():
     assert task.preprocessing_config == {"split_config": {"strategy": "random"}}
     assert task.status == TaskStatus.PENDING
     insert_associations.assert_awaited_once_with(
-        db, task_id="train_seg_large", dataset_id="ds_large", data_type="patch"
+        db,
+        task_id="train_seg_large",
+        dataset_id="ds_large",
+        data_type="patch",
+        split_config={"strategy": "random"},
+        user_id="user_1",
     )
     db.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dataset_reference_associations_preserve_manual_dataset_splits():
+    training_repo_module = __import__(
+        "backend.database.repositories.training", fromlist=[""]
+    )
+
+    db = AsyncMock()
+    captured_statement = None
+
+    async def _capture_execute(statement, *args, **kwargs):
+        nonlocal captured_statement
+        captured_statement = statement
+        return MagicMock()
+
+    db.execute = AsyncMock(side_effect=_capture_execute)
+
+    await training_repo_module._insert_dataset_wsi_associations(
+        db,
+        task_id="train_large_dataset",
+        dataset_id="ds_large",
+        data_type="patch",
+        split_config={"strategy": "manual"},
+        user_id="user_1",
+    )
+
+    statement_sql = str(captured_statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "wsi_slide_user_splits" in statement_sql
+    assert "coalesce(wsi_slide_user_splits.split, wsi_slides.split, 'train')" in statement_sql
 
 
 @pytest.mark.asyncio
@@ -114,10 +196,7 @@ async def test_dataset_based_training_task_enqueues_dataset_input_reference_with
         data_type="patch",
         aggregation_level="file",
     )
-    created_task = SimpleNamespace(
-        classes=["tumor", "normal"],
-        to_dict=lambda: {"task_id": "train_large_dataset"},
-    )
+    created_task = _make_created_task("train_large_dataset", "large dataset")
 
     db_read = AsyncMock()
     db_write = AsyncMock()
@@ -200,6 +279,89 @@ async def test_dataset_based_training_task_enqueues_dataset_input_reference_with
     assert result["wsi_count"] == 250000
     create_reference.assert_awaited_once()
     assert create_reference.await_args.kwargs["data_type"] == "patch"
+
+
+@pytest.mark.asyncio
+async def test_dataset_based_training_task_response_avoids_detached_data_group_lazy_load():
+    training_module = __import__("gateway.routes.training", fromlist=[""])
+
+    req = training_module.TrainingTaskRequest(
+        task_id="train_large_dataset",
+        task_name="large dataset",
+        task_type="patch_classification",
+        data_type="patch",
+        dataset_id="ds_large",
+        preprocessing={"tile_size": 224},
+        model={"architecture": "resnet18"},
+    )
+    user = _make_user("admin")
+
+    dataset = SimpleNamespace(
+        dataset_id="ds_large",
+        user_id="owner_1",
+        is_public=False,
+        parent_dataset_id=None,
+    )
+    contract = SimpleNamespace(
+        task_type="patch_classification",
+        data_type="patch",
+        aggregation_level="file",
+    )
+    captured_descriptor = None
+
+    async def _capture_enqueue(descriptor):
+        nonlocal captured_descriptor
+        captured_descriptor = descriptor
+
+    with (
+        patch(
+            "gateway.routes.training.safe_session",
+            side_effect=_make_safe_session_factory(AsyncMock(), AsyncMock()),
+        ),
+        patch(
+            "gateway.routes.training.require_no_active_batch_imports",
+            new=AsyncMock(),
+        ),
+        patch("gateway.routes.training.DatasetRepository.get_by_id", new=AsyncMock(return_value=dataset)),
+        patch(
+            "gateway.routes.training.ensure_dataset_segmentation_contract",
+            return_value=contract,
+        ),
+        patch(
+            "gateway.routes.training.DatasetStatsRepository.get_by_dataset_id",
+            new=AsyncMock(return_value=SimpleNamespace(file_count=250000)),
+        ),
+        patch(
+            "gateway.routes.training.DataGroupRepository.get_or_create",
+            new=AsyncMock(
+                return_value=SimpleNamespace(
+                    group_id="g1",
+                    task_type="patch_classification",
+                    data_type="patch",
+                    aggregation_level="file",
+                )
+            ),
+        ),
+        patch(
+            "gateway.routes.training.TrainingTaskRepository.create_reference",
+            new=AsyncMock(return_value=_DetachedTrainingTask()),
+        ),
+        patch("gateway.routes.training.invalidate_chat_context", new=AsyncMock()),
+        patch("gateway.routes.training.Config.get_global_settings", return_value={}),
+        patch("gateway.routes.training.Config.get_uploads_dir", return_value=Path("/uploads")),
+        patch("gateway.routes.training.is_worker_healthy", new=AsyncMock(return_value=True)),
+        patch(
+            "gateway.routes.training.enqueue_task_descriptor",
+            new=AsyncMock(side_effect=_capture_enqueue),
+        ),
+    ):
+        result = await training_module.create_training_task(req=req, user=user)
+
+    assert captured_descriptor is not None
+    assert result["task_id"] == "train_large_dataset"
+    assert result["data_type"] == "patch"
+    assert result["task_type"] == "patch_classification"
+    assert result["aggregation_level"] == "file"
 
 
 @pytest.mark.asyncio
@@ -287,6 +449,58 @@ async def test_worker_rejects_inline_wsi_ids_training_descriptors():
                 "training_task_type": "patch_classification",
             },
         )
+
+
+@pytest.mark.asyncio
+async def test_preflight_submit_ignores_descriptor_metadata_from_recovery_descriptor():
+    training_module = __import__("gateway.routes.training", fromlist=[""])
+
+    submitted = {}
+
+    class _Queue:
+        async def submit(self, task_id, task_type, coro_func, **kwargs):
+            submitted["task_id"] = task_id
+            submitted["task_type"] = task_type
+            submitted["coro_func"] = coro_func
+            submitted["kwargs"] = kwargs
+
+    db = AsyncMock()
+
+    with (
+        patch(
+            "gateway.routes.training._check_file_accessibility",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch("gateway.routes.training.get_task_queue", return_value=_Queue()),
+        patch(
+            "gateway.routes.training.safe_session",
+            side_effect=_make_safe_session_factory(db),
+        ),
+        patch(
+            "gateway.routes.training.TrainingTaskRepository.update_status",
+            new=AsyncMock(),
+        ),
+        patch.object(training_module.TrainingLogger, "info", new=AsyncMock()),
+    ):
+        await training_module._validate_files_and_enqueue(
+            "train_recovered",
+            [],
+            "/uploads",
+            {
+                "task_id": "train_recovered",
+                "data_type": "patch",
+                "wsi_ids": ["patch_1"],
+                "wsi_count": 1,
+                "preprocessing_config": {},
+                "model_config": {},
+                "training_task_type": "patch_classification",
+            },
+        )
+
+    assert submitted["task_id"] == "train_recovered"
+    assert "task_id" not in submitted["kwargs"]
+    assert "wsi_count" not in submitted["kwargs"]
+    assert submitted["kwargs"]["wsi_ids"] == ["patch_1"]
 
 
 @pytest.mark.asyncio
@@ -381,6 +595,50 @@ async def test_worker_finalizes_dataset_reference_split_metadata_outside_gateway
 
 
 @pytest.mark.asyncio
+async def test_update_training_reference_metadata_bulk_updates_split_assignments():
+    training_repo_module = __import__(
+        "backend.database.repositories.training", fromlist=[""]
+    )
+
+    db = AsyncMock()
+    execute_statements = []
+
+    async def _capture_execute(statement, *args, **kwargs):
+        execute_statements.append(statement)
+        result = MagicMock()
+        result.scalar_one_or_none.return_value = SimpleNamespace(
+            task_id="train_large_dataset"
+        )
+        return result
+
+    db.execute = AsyncMock(side_effect=_capture_execute)
+    db.flush = AsyncMock()
+
+    split_map = {f"patch_{i}": "train" for i in range(2500)}
+
+    await training_repo_module.TrainingTaskRepository.update_training_reference_metadata(
+        db,
+        "train_large_dataset",
+        split_map=split_map,
+    )
+
+    split_updates = [
+        stmt
+        for stmt in execute_statements
+        if isinstance(stmt, Update) and stmt.table.name == "training_task_wsi"
+    ]
+    assert len(split_updates) <= 3
+    assert all(
+        stmt.get_execution_options().get("synchronize_session") is False
+        for stmt in split_updates
+    )
+    assert all(
+        stmt._propagate_attrs.get("compile_state_plugin") != "orm"
+        for stmt in split_updates
+    )
+
+
+@pytest.mark.asyncio
 async def test_create_training_task_enqueues_descriptor_and_does_not_run_preflight_locally():
     training_module = __import__("gateway.routes.training", fromlist=[""])
 
@@ -410,10 +668,7 @@ async def test_create_training_task_enqueues_descriptor_and_does_not_run_preflig
         data_type="patch",
         aggregation_level="file",
     )
-    created_task = SimpleNamespace(
-        classes=["tumor", "normal"],
-        to_dict=lambda: {"task_id": "train_dispatch_test"},
-    )
+    created_task = _make_created_task("train_dispatch_test", "dispatch test")
 
     db_read = AsyncMock()
     db_write = AsyncMock()
@@ -547,10 +802,7 @@ async def test_create_training_task_returns_503_when_worker_unhealthy():
         data_type="patch",
         aggregation_level="file",
     )
-    created_task = SimpleNamespace(
-        classes=["tumor", "normal"],
-        to_dict=lambda: {"task_id": "train_unhealthy"},
-    )
+    created_task = _make_created_task("train_unhealthy", "unhealthy")
 
     db_read = AsyncMock()
     db_write = AsyncMock()
@@ -730,10 +982,7 @@ async def test_create_training_task_marks_task_failed_when_descriptor_enqueue_fa
         data_type="patch",
         aggregation_level="file",
     )
-    created_task = SimpleNamespace(
-        classes=["tumor", "normal"],
-        to_dict=lambda: {"task_id": "train_enqueue_failure"},
-    )
+    created_task = _make_created_task("train_enqueue_failure", "enqueue failure")
 
     db_read = AsyncMock()
     db_write = AsyncMock()

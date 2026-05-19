@@ -191,6 +191,9 @@ async def _validate_files_and_enqueue(
     pipeline_kwargs: dict[str, Any],
 ) -> None:
     training_logger = TrainingLogger(task_id)
+    queue_pipeline_kwargs = dict(pipeline_kwargs)
+    queue_pipeline_kwargs.pop("task_id", None)
+    queue_wsi_count = queue_pipeline_kwargs.pop("wsi_count", 0)
 
     async def _fail(detail: str) -> None:
         logger.error(f"Training task {task_id} failed pre-flight file check: {detail}")
@@ -223,8 +226,8 @@ async def _validate_files_and_enqueue(
 
     task_queue = get_task_queue()
 
-    if pipeline_kwargs.get("data_type") == "wsi":
-        patching_coro = run_patching_then_submit(task_id, pipeline_kwargs)
+    if queue_pipeline_kwargs.get("data_type") == "wsi":
+        patching_coro = run_patching_then_submit(task_id, queue_pipeline_kwargs)
         patching_task = asyncio.create_task(patching_coro)
         task_queue.register_patching_task(task_id, patching_task)
 
@@ -232,9 +235,9 @@ async def _validate_files_and_enqueue(
             "[PreQueue] Starting patch extraction before GPU queue submission",
             metadata={
                 "status": TaskStatus.PATCHING,
-                "task_type": pipeline_kwargs.get("training_task_type"),
+                "task_type": queue_pipeline_kwargs.get("training_task_type"),
                 "data_type": "wsi",
-                "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
+                "wsi_count": queue_wsi_count or len(queue_pipeline_kwargs.get("wsi_ids", [])),
             },
         )
     else:
@@ -242,7 +245,7 @@ async def _validate_files_and_enqueue(
             task_id=task_id,
             task_type=TaskType.TRAINING,
             coro_func=run_training_pipeline,
-            **pipeline_kwargs,
+            **queue_pipeline_kwargs,
         )
 
         async with safe_session() as db:
@@ -255,9 +258,9 @@ async def _validate_files_and_enqueue(
             "[Queue] Patch task submitted to GPU queue, waiting for available worker/GPU resources",
             metadata={
                 "status": TaskStatus.QUEUED,
-                "task_type": pipeline_kwargs.get("training_task_type"),
-                "data_type": pipeline_kwargs.get("data_type"),
-                "wsi_count": pipeline_kwargs.get("wsi_count", 0),
+                "task_type": queue_pipeline_kwargs.get("training_task_type"),
+                "data_type": queue_pipeline_kwargs.get("data_type"),
+                "wsi_count": queue_wsi_count,
             },
         )
 
@@ -599,10 +602,27 @@ async def create_training_task(
             raise HTTPException(status_code=503, detail="Task worker unavailable")
         await invalidate_chat_context(effective_task_owner_user_id)
 
-        result = task.to_dict()
-        result["status"] = TaskStatus.PENDING
-        result["progress"] = 0
-        result["wsi_count"] = wsi_count
+        result = {
+            "task_id": task.task_id,
+            "task_name": task.task_name,
+            "task_description": task.task_description,
+            "group_id": task.group_id,
+            "data_type": req.data_type,
+            "aggregation_level": aggregation_level,
+            "task_type": requested_task_type,
+            "user_id": task.user_id,
+            "status": TaskStatus.PENDING,
+            "progress": 0,
+            "error_message": task.error_message,
+            "preprocessing_config": task.preprocessing_config,
+            "model_config": task.model_config,
+            "classes": task.classes,
+            "created_at": task.created_at.isoformat() + "Z" if task.created_at else None,
+            "updated_at": task.updated_at.isoformat() + "Z" if task.updated_at else None,
+            "started_at": task.started_at.isoformat() + "Z" if task.started_at else None,
+            "finished_at": task.finished_at.isoformat() + "Z" if task.finished_at else None,
+            "wsi_count": wsi_count,
+        }
 
         return result
 
