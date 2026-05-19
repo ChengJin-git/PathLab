@@ -22,12 +22,14 @@ from backend.database.repositories import (
     TrainingLogRepository,
     DataGroupRepository,
     DatasetRepository,
+    DatasetStatsRepository,
 )
 from backend.auth import current_active_user, User, get_user_from_token_param
 from backend.auth.dependencies import (
     require_can_use_gpu,
     require_pathologist_or_admin,
     check_dataset_gpu_permission,
+    check_dataset_access_permission,
     get_user_id_filter,
     check_wsi_access_permission,
 )
@@ -255,7 +257,7 @@ async def _validate_files_and_enqueue(
                 "status": TaskStatus.QUEUED,
                 "task_type": pipeline_kwargs.get("training_task_type"),
                 "data_type": pipeline_kwargs.get("data_type"),
-                "wsi_count": len(pipeline_kwargs.get("wsi_ids", [])),
+                "wsi_count": pipeline_kwargs.get("wsi_count", 0),
             },
         )
 
@@ -276,17 +278,10 @@ async def create_training_task(
     try:
         effective_task_owner_user_id = str(user.id)
 
-        # Resolve WSI IDs: prefer dataset_id (server-side resolution) over client-provided wsi_ids
-        wsi_ids = req.wsi_ids or []
-        if not wsi_ids and req.dataset_id:
-            async with safe_session() as db:
-                wsi_ids = await DatasetRepository.get_wsi_ids(db, req.dataset_id)
-            if not wsi_ids:
-                raise HTTPException(
-                    status_code=400,
-                    detail="No WSI files found in the specified dataset",
-                )
-        if not wsi_ids:
+        selected_wsi_ids = req.wsi_ids or []
+        dataset_input = bool(req.dataset_id and not selected_wsi_ids)
+        dataset_input_id = str(req.dataset_id) if dataset_input and req.dataset_id else ""
+        if not dataset_input and not selected_wsi_ids:
             raise HTTPException(
                 status_code=400, detail="At least one WSI must be selected"
             )
@@ -310,43 +305,73 @@ async def create_training_task(
                 if source_task.user_id:
                     effective_task_owner_user_id = source_task.user_id
 
-            # Batch fetch all WSIs in a single query to avoid N+1 problem
-            wsi_map = await WSIRepository.get_by_ids_with_dataset(db, wsi_ids)
-
-            # Check for missing WSIs
-            missing_wsi_ids = [wsi_id for wsi_id in wsi_ids if wsi_id not in wsi_map]
-            if missing_wsi_ids:
-                raise HTTPException(
-                    status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}"
-                )
-
-            # Collect dataset IDs and check access permissions
             dataset_ids_involved = set()
-            paths_to_check = []
+            wsi_count = 0
+            wsi_map = {}
+            prefetched_wsis = None
 
-            if user.is_admin():
-                # Admin can access everything - skip per-WSI permission check
-                for wsi_id in wsi_ids:
-                    wsi = wsi_map[wsi_id]
-                    dataset_ids_involved.add(wsi.dataset_id)
-                    if wsi.wsi_path:
-                        paths_to_check.append(
-                            (wsi_id, wsi.wsi_path, wsi.original_filename)
-                        )
+            if dataset_input:
+                dataset = await DatasetRepository.get_by_id(db, dataset_input_id)
+                if dataset is None:
+                    raise HTTPException(
+                        status_code=400, detail=f"Dataset not found: {dataset_input_id}"
+                    )
+                has_access = await check_dataset_access_permission(
+                    user,
+                    dataset_input_id,
+                    dataset.user_id,
+                    db,
+                    is_public=bool(getattr(dataset, "is_public", False)),
+                    parent_dataset_id=getattr(dataset, "parent_dataset_id", None),
+                )
+                if not has_access:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You don't have permission to use dataset: {dataset_input_id}",
+                    )
+                dataset_ids_involved.add(dataset_input_id)
+                dataset_stats = await DatasetStatsRepository.get_by_dataset_id(
+                    db, dataset_input_id
+                )
+                if dataset_stats is None:
+                    await DatasetStatsRepository.recompute(db, dataset_input_id)
+                    dataset_stats = await DatasetStatsRepository.get_by_dataset_id(
+                        db, dataset_input_id
+                    )
+                wsi_count = int(getattr(dataset_stats, "file_count", 0) or 0)
+                if wsi_count <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No WSI files found in the specified dataset",
+                    )
             else:
-                for wsi_id in wsi_ids:
-                    wsi = wsi_map[wsi_id]
-                    has_access = await _has_wsi_training_access(user, wsi, db)
-                    if not has_access:
-                        raise HTTPException(
-                            status_code=403,
-                            detail=f"You don't have permission to use WSI: {wsi_id}",
-                        )
-                    dataset_ids_involved.add(wsi.dataset_id)
-                    if wsi.wsi_path:
-                        paths_to_check.append(
-                            (wsi_id, wsi.wsi_path, wsi.original_filename)
-                        )
+                wsi_map = await WSIRepository.get_by_ids_with_dataset(db, selected_wsi_ids)
+                missing_wsi_ids = [
+                    wsi_id for wsi_id in selected_wsi_ids if wsi_id not in wsi_map
+                ]
+                if missing_wsi_ids:
+                    raise HTTPException(
+                        status_code=404, detail=f"WSI not found: {missing_wsi_ids[0]}"
+                    )
+
+                if user.is_admin():
+                    for wsi_id in selected_wsi_ids:
+                        wsi = wsi_map[wsi_id]
+                        dataset_ids_involved.add(wsi.dataset_id)
+                else:
+                    for wsi_id in selected_wsi_ids:
+                        wsi = wsi_map[wsi_id]
+                        has_access = await _has_wsi_training_access(user, wsi, db)
+                        if not has_access:
+                            raise HTTPException(
+                                status_code=403,
+                                detail=f"You don't have permission to use WSI: {wsi_id}",
+                            )
+                        dataset_ids_involved.add(wsi.dataset_id)
+                wsi_count = len(selected_wsi_ids)
+                prefetched_wsis = [
+                    wsi_map[wsi_id] for wsi_id in selected_wsi_ids if wsi_id in wsi_map
+                ]
 
             await require_no_active_batch_imports(
                 db,
@@ -357,10 +382,13 @@ async def create_training_task(
             dataset_ids = [
                 dataset_id for dataset_id in dataset_ids_involved if dataset_id
             ]
-            dataset_map = {
-                dataset.dataset_id: dataset
-                for dataset in await DatasetRepository.get_by_ids(db, list(dataset_ids))
-            }
+            if dataset_input:
+                dataset_map = {dataset_input_id: dataset}
+            else:
+                dataset_map = {
+                    dataset.dataset_id: dataset
+                    for dataset in await DatasetRepository.get_by_ids(db, list(dataset_ids))
+                }
             group_contracts = set()
             for dataset_id in dataset_ids:
                 dataset = dataset_map.get(dataset_id)
@@ -484,16 +512,22 @@ async def create_training_task(
                 # Survival/random/k-fold split generation is order-sensitive when
                 # stratified splitting shuffles indices with a fixed seed, so we
                 # must keep the same order as dataset export / selection flows.
-                prefetched_wsis = [
-                    wsi_map[wsi_id] for wsi_id in wsi_ids if wsi_id in wsi_map
-                ]
-                task = await TrainingTaskRepository.create(
-                    db,
-                    task_data,
-                    wsi_ids,
-                    split_config=split_config_dict,
-                    prefetched_wsis=prefetched_wsis,
-                )
+                if dataset_input:
+                    task = await TrainingTaskRepository.create_reference(
+                        db,
+                        task_data,
+                        dataset_id=dataset_input_id,
+                        data_type=req.data_type,
+                        split_config=split_config_dict,
+                    )
+                else:
+                    task = await TrainingTaskRepository.create(
+                        db,
+                        task_data,
+                        selected_wsi_ids,
+                        split_config=split_config_dict,
+                        prefetched_wsis=prefetched_wsis,
+                    )
                 await db.commit()
             except ValueError as e:
                 # Convert validation errors to HTTP 400 Bad Request
@@ -507,7 +541,7 @@ async def create_training_task(
         logger.info(
             f"  - Data type: {req.data_type}, Aggregation level: {aggregation_level}"
         )
-        logger.info(f"  - WSI count: {len(wsi_ids)}")
+        logger.info(f"  - WSI count: {wsi_count}")
         logger.info(f"  - Classes: {task.classes}")
 
         global_settings = Config.get_global_settings()
@@ -517,19 +551,23 @@ async def create_training_task(
 
         pipeline_kwargs = {
             "data_type": req.data_type,
-            "wsi_ids": wsi_ids,
             "preprocessing_config": pipeline_preprocessing_config,
             "model_config": req.model,
             "huggingface_token": huggingface_token,
             "training_task_type": requested_task_type,
             "user_id": str(user.id),
             "user_is_admin": user.is_admin(),
+            "wsi_count": wsi_count,
+            "input_ref": {
+                "kind": "dataset" if dataset_input else "training_task_selection",
+                **(
+                    {"dataset_id": dataset_input_id}
+                    if dataset_input
+                    else {"task_id": task_id}
+                ),
+            },
         }
-
-        descriptor_paths_to_check = [
-            [str(wsi_id), str(wsi_path), str(original_filename)]
-            for wsi_id, wsi_path, original_filename in paths_to_check
-        ]
+        descriptor_paths_to_check = []
         descriptor_payload = cast(
             JsonPayload,
             {
@@ -564,7 +602,7 @@ async def create_training_task(
         result = task.to_dict()
         result["status"] = TaskStatus.PENDING
         result["progress"] = 0
-        result["wsi_count"] = len(wsi_ids)
+        result["wsi_count"] = wsi_count
 
         return result
 
