@@ -1,5 +1,7 @@
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from ..models import DatasetStats
 
 _RECOMPUTE_SQL = text("""
     INSERT INTO dataset_stats (
@@ -47,6 +49,13 @@ _DELETE_IF_EMPTY_SQL = text("""
 
 
 class DatasetStatsRepository:
+    @staticmethod
+    async def get_by_dataset_id(db: AsyncSession, dataset_id: str) -> DatasetStats | None:
+        result = await db.execute(
+            select(DatasetStats).where(DatasetStats.dataset_id == dataset_id)
+        )
+        return result.scalar_one_or_none()
+
     @staticmethod
     async def recompute(db: AsyncSession, dataset_id: str) -> None:
         await db.execute(_RECOMPUTE_SQL, {"dataset_id": dataset_id})

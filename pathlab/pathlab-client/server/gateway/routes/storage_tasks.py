@@ -1770,7 +1770,15 @@ async def start_delete_dataset_task(
             forbidden_detail="You don't have permission to delete this dataset",
         )
 
-        total_items = len(await DatasetRepository.get_wsi_ids(db, request.dataset_id))
+        dataset_stats = await DatasetStatsRepository.get_by_dataset_id(
+            db, request.dataset_id
+        )
+        if dataset_stats is None:
+            await DatasetStatsRepository.recompute(db, request.dataset_id)
+            dataset_stats = await DatasetStatsRepository.get_by_dataset_id(
+                db, request.dataset_id
+            )
+        total_items = int(getattr(dataset_stats, "file_count", 0) or 0)
         task_id = f"delete_dataset_{uuid.uuid4().hex[:16]}"
         params = {
             "dataset_id": request.dataset_id,

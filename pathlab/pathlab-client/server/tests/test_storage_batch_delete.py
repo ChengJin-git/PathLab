@@ -240,3 +240,51 @@ async def test_delete_dataset_task_uses_bulk_delete_once():
         )
 
     bulk_delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_start_delete_dataset_task_does_not_materialize_wsi_ids_before_returning():
+    from gateway.models import DeletionMode, StartDeleteDatasetRequest
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    user = SimpleNamespace(id="user_1")
+    dataset = SimpleNamespace(dataset_id="dataset_1", name="Dataset 1", user_id="user_1")
+    background_tasks = SimpleNamespace(add_task=lambda *args, **kwargs: None)
+
+    with (
+        patch.object(
+            storage_tasks,
+            "get_dataset_with_access",
+            new=AsyncMock(return_value=dataset),
+        ),
+        patch.object(
+            storage_tasks.DatasetRepository,
+            "get_wsi_ids",
+            new=AsyncMock(side_effect=AssertionError("must not load every WSI ID")),
+        ) as get_wsi_ids,
+        patch.object(
+            storage_tasks.DatasetStatsRepository,
+            "get_by_dataset_id",
+            new=AsyncMock(return_value=SimpleNamespace(file_count=250000)),
+        ) as get_stats,
+        patch.object(
+            storage_tasks.StorageTaskRepository,
+            "create",
+            new=AsyncMock(),
+        ) as create_task,
+        patch.object(storage_tasks.uuid, "uuid4", return_value=SimpleNamespace(hex="abc123")),
+    ):
+        response = await storage_tasks.start_delete_dataset_task(
+            StartDeleteDatasetRequest(dataset_id="dataset_1", mode=DeletionMode.STANDARD),
+            background_tasks,
+            user,
+            db,
+        )
+
+    get_wsi_ids.assert_not_awaited()
+    get_stats.assert_awaited_once_with(db, "dataset_1")
+    create_task.assert_awaited_once()
+    assert create_task.await_args is not None
+    assert create_task.await_args.kwargs["total_items"] == 250000
+    assert response["total_items"] == 250000
