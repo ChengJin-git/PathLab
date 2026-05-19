@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy.sql import visitors
 from sqlalchemy.sql.dml import Delete, Update
 
 
@@ -108,6 +109,193 @@ async def test_bulk_delete_wsi_records_recomputes_each_dataset_once():
     assert recompute.await_count == 2
     recomputed_dataset_ids = {call.args[1] for call in recompute.await_args_list}
     assert recomputed_dataset_ids == {"dataset_1", "dataset_2"}
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_wsi_records_chunks_large_id_lists_below_asyncpg_limit():
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    wsis = [
+        SimpleNamespace(
+            wsi_id=f"patch_{index}",
+            wsi_path=f"/tmp/patch_{index}.png",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        )
+        for index in range(32768)
+    ]
+
+    with patch.object(
+        storage_tasks.DatasetStatsRepository, "recompute", new=AsyncMock()
+    ):
+        await storage_tasks._bulk_delete_wsi_records(db, wsis)
+
+    largest_expanding_bind = 0
+    for call in db.execute.await_args_list:
+        statement = call.args[0]
+
+        def visit_bindparam(bind):
+            nonlocal largest_expanding_bind
+            value = getattr(bind, "value", None)
+            if isinstance(value, list):
+                largest_expanding_bind = max(largest_expanding_bind, len(value))
+
+        visitors.traverse(statement, {}, {"bindparam": visit_bindparam})
+
+    assert largest_expanding_bind <= storage_tasks.WSI_DELETE_DB_BATCH_SIZE
+    assert largest_expanding_bind < 32767
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_wsi_records_counts_deleted_items_from_first_db_batch():
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    wsis = [
+        SimpleNamespace(
+            wsi_id=f"patch_{index}",
+            wsi_path=f"/tmp/patch_{index}.png",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        )
+        for index in range(3)
+    ]
+
+    with (
+        patch.object(storage_tasks, "WSI_DELETE_DB_BATCH_SIZE", 2),
+        patch.object(
+            storage_tasks.DatasetStatsRepository, "recompute", new=AsyncMock()
+        ) as recompute,
+        patch.object(
+            storage_tasks.StorageTaskRepository, "update_status", new=AsyncMock()
+        ) as update_status,
+        patch.object(storage_tasks, "is_storage_task_cancelled", return_value=False),
+    ):
+        await storage_tasks._bulk_delete_wsi_records(
+            db,
+            wsis,
+            task_id="task_1",
+            commit_batches=True,
+        )
+
+    assert db.execute.await_count == 10
+    update_status.assert_any_await(
+        db,
+        "task_1",
+        "processing",
+        progress=66,
+        processed_items=2,
+    )
+    update_status.assert_any_await(
+        db,
+        "task_1",
+        "processing",
+        progress=100,
+        processed_items=3,
+    )
+    recompute.assert_awaited_once_with(db, "dataset_1")
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_wsi_records_stops_after_cancellation_between_batches():
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    wsis = [
+        SimpleNamespace(
+            wsi_id=f"patch_{index}",
+            wsi_path=f"/tmp/patch_{index}.png",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        )
+        for index in range(3)
+    ]
+
+    with (
+        patch.object(storage_tasks, "WSI_DELETE_DB_BATCH_SIZE", 2),
+        patch.object(
+            storage_tasks.DatasetStatsRepository, "recompute", new=AsyncMock()
+        ),
+        patch.object(
+            storage_tasks.StorageTaskRepository, "update_status", new=AsyncMock()
+        ) as update_status,
+        patch.object(
+            storage_tasks, "is_storage_task_cancelled", side_effect=[False, True]
+        ),
+        patch.object(storage_tasks, "clear_storage_task_cancellation") as clear_cancel,
+    ):
+        with pytest.raises(storage_tasks.StorageTaskCancelledError):
+            await storage_tasks._bulk_delete_wsi_records(
+                db,
+                wsis,
+                task_id="task_1",
+                commit_batches=True,
+            )
+
+    assert db.execute.await_count == 5
+    update_status.assert_any_await(
+        db,
+        "task_1",
+        "processing",
+        progress=66,
+        processed_items=2,
+    )
+    update_status.assert_any_await(
+        db,
+        "task_1",
+        "cancelled",
+        progress=66,
+        processed_items=2,
+        error_message="Task cancelled by user",
+    )
+    clear_cancel.assert_called_once_with("task_1")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_deleted_wsi_files_does_not_regress_reported_processed_items():
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    cleanup_items = [
+        storage_tasks.WSICleanupItem(
+            wsi_id="patch_1",
+            wsi_path="/tmp/patch_1.png",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        ),
+        storage_tasks.WSICleanupItem(
+            wsi_id="patch_2",
+            wsi_path="/tmp/patch_2.png",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        ),
+    ]
+
+    with (
+        patch.object(storage_tasks, "is_storage_task_cancelled", return_value=False),
+        patch.object(
+            storage_tasks.storage_manager,
+            "delete_wsi_files",
+            return_value={"failed": [], "summary": "ok"},
+        ),
+        patch.object(
+            storage_tasks.StorageTaskRepository, "update_status", new=AsyncMock()
+        ) as update_status,
+    ):
+        await storage_tasks._cleanup_deleted_wsi_files(
+            db,
+            "task_1",
+            cleanup_items,
+            "complete",
+            progress_start=100,
+            progress_span=0,
+            processed_items_floor=len(cleanup_items),
+        )
+
+    for call in update_status.await_args_list:
+        assert call.kwargs["processed_items"] == len(cleanup_items)
+        assert call.kwargs["progress"] == 100
 
 
 @pytest.mark.asyncio
