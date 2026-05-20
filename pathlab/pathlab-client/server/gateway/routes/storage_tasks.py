@@ -70,6 +70,7 @@ from gateway.chat.context_cache import invalidate_chat_context
 router = APIRouter()
 
 WSI_DELETE_DB_BATCH_SIZE = 1000
+WSI_DELETE_PROGRESS_UPDATE_TARGET = 100
 
 
 class StorageTaskCancelledError(Exception):
@@ -109,6 +110,15 @@ def _chunk_sequence(items: Sequence[str], size: int) -> list[Sequence[str]]:
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
+def _delete_progress_batch_size(total_items: int) -> int:
+    if total_items <= 0:
+        return 1
+    if total_items <= WSI_DELETE_DB_BATCH_SIZE:
+        return 1
+    target_size = (total_items + WSI_DELETE_PROGRESS_UPDATE_TARGET - 1) // WSI_DELETE_PROGRESS_UPDATE_TARGET
+    return max(1, min(WSI_DELETE_DB_BATCH_SIZE, target_size))
+
+
 async def _bulk_delete_wsi_records(
     db: AsyncSession,
     wsis: Sequence[Any],
@@ -121,7 +131,7 @@ async def _bulk_delete_wsi_records(
     if not wsi_ids:
         return []
 
-    batches = _chunk_sequence(wsi_ids, WSI_DELETE_DB_BATCH_SIZE)
+    batches = _chunk_sequence(wsi_ids, _delete_progress_batch_size(len(wsi_ids)))
     processed_items = 0
     dataset_ids = sorted({item.dataset_id for item in cleanup_items if item.dataset_id})
 

@@ -179,7 +179,14 @@ async def test_bulk_delete_wsi_records_counts_deleted_items_from_first_db_batch(
             commit_batches=True,
         )
 
-    assert db.execute.await_count == 10
+    assert db.execute.await_count == 15
+    update_status.assert_any_await(
+        db,
+        "task_1",
+        "processing",
+        progress=33,
+        processed_items=1,
+    )
     update_status.assert_any_await(
         db,
         "task_1",
@@ -195,6 +202,46 @@ async def test_bulk_delete_wsi_records_counts_deleted_items_from_first_db_batch(
         processed_items=3,
     )
     recompute.assert_awaited_once_with(db, "dataset_1")
+
+
+@pytest.mark.asyncio
+async def test_bulk_delete_wsi_records_reports_small_datasets_one_item_at_a_time():
+    from gateway.routes import storage_tasks
+
+    db = AsyncMock()
+    wsis = [
+        SimpleNamespace(
+            wsi_id=f"patch_{index}",
+            wsi_path=f"/tmp/patch_{index}.png",
+            dataset_id="dataset_1",
+            user_id="user_1",
+        )
+        for index in range(3)
+    ]
+
+    with (
+        patch.object(storage_tasks, "WSI_DELETE_DB_BATCH_SIZE", 10),
+        patch.object(
+            storage_tasks.DatasetStatsRepository, "recompute", new=AsyncMock()
+        ),
+        patch.object(
+            storage_tasks.StorageTaskRepository, "update_status", new=AsyncMock()
+        ) as update_status,
+        patch.object(storage_tasks, "is_storage_task_cancelled", return_value=False),
+    ):
+        await storage_tasks._bulk_delete_wsi_records(
+            db,
+            wsis,
+            task_id="task_1",
+            commit_batches=True,
+        )
+
+    progress_updates = [
+        call.kwargs["processed_items"]
+        for call in update_status.await_args_list
+        if call.args[2] == "processing"
+    ]
+    assert progress_updates == [1, 2, 3]
 
 
 @pytest.mark.asyncio
@@ -238,15 +285,15 @@ async def test_bulk_delete_wsi_records_stops_after_cancellation_between_batches(
         db,
         "task_1",
         "processing",
-        progress=66,
-        processed_items=2,
+        progress=33,
+        processed_items=1,
     )
     update_status.assert_any_await(
         db,
         "task_1",
         "cancelled",
-        progress=66,
-        processed_items=2,
+        progress=33,
+        processed_items=1,
         error_message="Task cancelled by user",
     )
     clear_cancel.assert_called_once_with("task_1")
