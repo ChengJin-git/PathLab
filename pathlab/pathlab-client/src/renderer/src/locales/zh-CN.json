@@ -3237,7 +3237,7 @@
       "training": {
         "creating": "正在创建任务",
         "queued": "排队中",
-        "pending": "待处理",
+        "pending": "检查数据集完整性",
         "patching": "图像切片中",
         "extracting": "提取特征中",
         "training": "训练模型中",

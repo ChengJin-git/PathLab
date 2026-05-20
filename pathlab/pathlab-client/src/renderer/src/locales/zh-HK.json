@@ -3241,7 +3241,7 @@
       "training": {
         "creating": "正在建立任務",
         "queued": "排隊中",
-        "pending": "待處理",
+        "pending": "檢查資料集完整性",
         "patching": "圖像切片中",
         "extracting": "擷取特徵中",
         "training": "訓練模型中",

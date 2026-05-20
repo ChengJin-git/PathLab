@@ -3299,7 +3299,7 @@
       "training": {
         "creating": "Creating Task",
         "queued": "Queued",
-        "pending": "Pending",
+        "pending": "Checking Dataset Integrity",
         "patching": "Patching Images",
         "extracting": "Extracting Features",
         "training": "Training Model",
