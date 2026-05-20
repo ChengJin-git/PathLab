@@ -2,11 +2,34 @@
  * SSE subscription hook for storage tasks (batch import, dataset deletion, metadata update, etc.)
  */
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getAuthToken } from '../../api/client'
 import { getCurrentUser } from '../../api/auth'
 import { API_BASE } from '../../config'
 import type { BackgroundTask, TaskType, TaskStatus, StorageTaskType } from './types'
+
+interface InterpState {
+  displayed: number
+  target: number
+  total: number
+}
+
+const INTERP_INTERVAL_MS = 100
+const INTERP_STEP = 25
+
+function shouldInterpolate(taskType: StorageTaskType, total: number, rawProcessed: number, status: string): boolean {
+  if (taskType !== 'delete_dataset' && taskType !== 'delete_wsis') return false
+  if (total < 1000) return false
+  if (rawProcessed <= 0) return false
+  if (rawProcessed >= total) return false
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') return false
+  return true
+}
+
+function computeNextDisplayed(current: number, target: number): number {
+  if (current >= target) return target
+  return Math.min(target, current + INTERP_STEP)
+}
 
 /**
  * Custom hook that manages the storage SSE connection and owns the storage tasks state.
@@ -14,12 +37,12 @@ import type { BackgroundTask, TaskType, TaskStatus, StorageTaskType } from './ty
  */
 export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: boolean) {
   const [storageTasks, setStorageTasks] = useState<BackgroundTask[]>([])
+  const interpRef = useRef<Map<string, InterpState>>(new Map())
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
-    // Get auth token for SSE (EventSource doesn't support custom headers)
     const token = getAuthToken()
 
-    // Don't connect SSE if not authenticated or if there are no subscribers
     if (!token || !isLoggedIn || !enabled) {
       return
     }
@@ -33,21 +56,16 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
         const data = JSON.parse(event.data)
         const serverTasks = data.items || []
 
-        // Convert server storage tasks to BackgroundTask format
-        // Only show active tasks (not completed/failed older than 10 minutes)
         const now = new Date()
         const tenMinutesAgo = new Date(now.getTime() - 10 * 60 * 1000)
 
         const convertedTasks: BackgroundTask[] = serverTasks
           .filter((task: { status: string; completed_at?: string }) => {
-            // Always show non-finished tasks
             if (task.status !== 'completed' && task.status !== 'failed' && task.status !== 'cancelled') return true
-            // For finished tasks (completed/failed/cancelled), only show if finished within last 10 minutes
             if (task.completed_at) {
               const completedAt = new Date(task.completed_at.replace(/\+00:00Z$/, 'Z'))
               return completedAt > tenMinutesAgo
             }
-            // If no completed_at for a finished task, don't show it (stale/zombie task)
             return false
           })
           .map((task: {
@@ -64,7 +82,6 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
             completed_at?: string;
             params?: { dataset_id?: string; dataset_name?: string };
           }) => {
-            // Determine task type for display
             let taskTypeDisplay: TaskType
             let taskPrefix: string
             let itemNamePrefix: string
@@ -107,7 +124,6 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               itemNamePrefix = 'Delete External'
             }
 
-            // Map storage task status to our TaskStatus
             let taskStatus: TaskStatus
             switch (task.status) {
               case 'pending':
@@ -133,13 +149,32 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               ? task.params?.dataset_name || 'Dataset'
               : itemNamePrefix
 
-            const hasKnownTotal = typeof task.total_items === 'number' && task.total_items > 0
+            const totalItems = typeof task.total_items === 'number' ? task.total_items : 0
+            const rawProcessed = task.processed_items || 0
+            const hasKnownTotal = totalItems > 0
+            const taskKey = `${taskPrefix}_${task.task_id}`
+            const prev = interpRef.current.get(taskKey)
+
+            let displayProcessed: number
+            let isInterpolatedDelete = false
+            if (shouldInterpolate(task.task_type, totalItems, rawProcessed, task.status)) {
+              const target = rawProcessed
+              displayProcessed = Math.min(target, (prev?.displayed ?? 0) + INTERP_STEP)
+              interpRef.current.set(taskKey, { displayed: displayProcessed, target, total: totalItems })
+              isInterpolatedDelete = true
+            } else {
+              displayProcessed = rawProcessed
+              if (prev) {
+                interpRef.current.delete(taskKey)
+              }
+            }
+
             const displayName = hasKnownTotal
-              ? `${displayBaseName} (${task.processed_items || 0}/${task.total_items})`
+              ? `${displayBaseName} (${displayProcessed}/${totalItems})`
               : displayBaseName
 
             return {
-              id: `${taskPrefix}_${task.task_id}`,
+              id: taskKey,
               type: taskTypeDisplay,
               title: displayName,
               items: [{
@@ -152,7 +187,7 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
               createdAt: task.created_at ? new Date(task.created_at.replace(/\+00:00Z$/, 'Z')) : new Date(),
               completedAt: task.completed_at ? new Date(task.completed_at.replace(/\+00:00Z$/, 'Z')) : undefined,
               totalProgress: task.progress,
-              successCount: task.success_count || 0,
+              successCount: isInterpolatedDelete ? displayProcessed : (task.success_count || 0),
               failedCount: task.failed_count || 0,
               skippedCount: task.skipped_count || 0,
               isServerTask: true,
@@ -174,14 +209,39 @@ export function useStorageSSE(isAdmin: boolean, isLoggedIn: boolean, enabled: bo
     eventSource.onerror = () => {
       console.error('Storage SSE connection error')
       if (eventSource.readyState === EventSource.CLOSED) {
-        // Connection was rejected by server (possibly 401 auth failure).
-        // Verify auth status - if 401, apiFetch will dispatch SESSION_EXPIRED_EVENT → redirect to login.
         getCurrentUser().catch(() => {})
       }
     }
 
+    intervalRef.current = setInterval(() => {
+      setStorageTasks((prevTasks) => {
+        let changed = false
+        const next = prevTasks.map((t) => {
+          const state = interpRef.current.get(t.id)
+          if (!state) return t
+          if (state.displayed >= state.target) return t
+          const nextDisplayed = computeNextDisplayed(state.displayed, state.target)
+          if (nextDisplayed === state.displayed) return t
+          changed = true
+          interpRef.current.set(t.id, { ...state, displayed: nextDisplayed })
+          const newName = t.title.replace(/\(\d+\//, `(${nextDisplayed}/`)
+          return {
+            ...t,
+            title: newName,
+            items: t.items.map((item) => ({ ...item, name: newName })),
+            successCount: nextDisplayed,
+          }
+        })
+        return changed ? next : prevTasks
+      })
+    }, INTERP_INTERVAL_MS)
+
     return () => {
       eventSource.close()
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+        intervalRef.current = null
+      }
     }
   }, [isAdmin, isLoggedIn, enabled])
 
