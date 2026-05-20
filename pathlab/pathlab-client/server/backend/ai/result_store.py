@@ -101,7 +101,8 @@ class AIResultStore:
                     attributes=item_attrs,
                 )
 
-            self._merge_wsi_id(root, task_id, wsi_id, update_index=update_index)
+            if update_index:
+                self._merge_wsi_id(root, task_id, wsi_id, update_index=True)
             if finalize:
                 return self._finalize_task_bundle(task_id)
             return None
@@ -434,6 +435,7 @@ class AIResultStore:
             raise FileNotFoundError(f"staging bundle not found: {staging}")
         root = self._open_staging_group(task_id, overwrite=False)
         self._ensure_root_attrs(root, task_id)
+        root.attrs["wsi_ids"] = self._collect_staged_wsi_ids(root)
         root.attrs["finalized"] = True
 
         tmp_zip = self.bundle_path(task_id).with_name(f"{task_id}.zarr.zip.tmp")
@@ -582,6 +584,18 @@ class AIResultStore:
             if root is not None:
                 return sorted(cast(list[str], root.attrs.get("wsi_ids", [])))
         return []
+
+    def _collect_staged_wsi_ids(self, root: zarr.Group) -> list[str]:
+        wsi_ids = set(cast(list[str], root.attrs.get("wsi_ids", [])))
+        for group_name in ("results", *ARRAY_ARTIFACTS):
+            group = root.get(group_name)
+            if group is None:
+                continue
+            for item_key in cast(zarr.Group, group).keys():
+                decoded = self._decode_item_key(str(item_key))
+                if decoded is not None:
+                    wsi_ids.add(decoded[0])
+        return sorted(wsi_ids)
 
     def _discover_task_ids(self) -> list[str]:
         return sorted(path.name.removesuffix(".zarr.zip") for path in self.bundle_dir.glob("*.zarr.zip"))

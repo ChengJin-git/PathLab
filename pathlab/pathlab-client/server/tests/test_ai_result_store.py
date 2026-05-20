@@ -282,6 +282,34 @@ def test_training_artifact_helper_can_stage_without_finalizing(tmp_path, monkeyp
     assert finalize_calls == 1
 
 
+def test_staged_writes_defer_wsi_id_aggregation_until_finalize(tmp_path):
+    store = AIResultStore(tmp_path)
+    task_id = "task-deferred-index"
+
+    store.write_wsi_result(
+        task_id,
+        "wsi-b",
+        {"wsi_id": "wsi-b", "task_id": task_id},
+        finalize=False,
+        update_index=False,
+    )
+    store.write_wsi_result(
+        task_id,
+        "wsi-a",
+        {"wsi_id": "wsi-a", "task_id": task_id},
+        arrays={"cam": np.ones((2, 2), dtype=np.float32)},
+        finalize=False,
+        update_index=False,
+    )
+
+    root = store._open_staging_group(task_id, overwrite=False)
+    assert root.attrs["wsi_ids"] == []
+
+    store.write_task_bundle(task_id=task_id)
+
+    assert store.list_results(task_id) == ["wsi-a", "wsi-b"]
+
+
 def test_finalize_recovers_corrupt_wsi_index_without_failing_task(tmp_path):
     store = AIResultStore(tmp_path)
     store.write_task_bundle(
