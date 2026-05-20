@@ -11,7 +11,7 @@
 
 const BASE_STATUS_LABELS: Record<string, string> = {
   creating: 'Creating Task',
-  pending: 'Pending',
+  pending: 'Checking Dataset Integrity',
   queued: 'Queued',
   patching: 'Patching Images',
   extracting: 'Extracting Features',
@@ -85,7 +85,7 @@ export interface StatusBadgeConfig {
 
 export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
   creating:   { bg: 'bg-blue-50',     text: 'text-blue-700',   label: 'Creating Task' },
-  pending:    { bg: 'bg-gray-100',    text: 'text-gray-800',   label: 'Pending' },
+  pending:    { bg: 'bg-gray-100',    text: 'text-gray-800',   label: 'Checking Dataset Integrity' },
   queued:     { bg: 'bg-yellow-100',  text: 'text-yellow-800', label: 'Queued' },
   resuming:   { bg: 'bg-yellow-100',  text: 'text-yellow-800', label: 'Resuming' },
   patching:   { bg: 'bg-blue-100',    text: 'text-blue-800',   label: 'Patching' },
@@ -98,7 +98,7 @@ export const TASK_DETAIL_STATUS_BADGES: Record<string, StatusBadgeConfig> = {
 
 export const TASK_LIST_STATUS_BADGES: Record<string, { color: string; label: string }> = {
   creating:   { color: 'bg-blue-50 text-blue-700',      label: 'Creating Task' },
-  pending:    { color: 'bg-gray-100 text-gray-800',     label: 'Pending' },
+  pending:    { color: 'bg-gray-100 text-gray-800',     label: 'Checking Dataset Integrity' },
   queued:     { color: 'bg-yellow-100 text-yellow-800', label: 'Queued' },
   resuming:   { color: 'bg-yellow-100 text-yellow-800', label: 'Resuming' },
   patching:   { color: 'bg-blue-100 text-blue-800',     label: 'Patching' },
