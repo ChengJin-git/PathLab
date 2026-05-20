@@ -346,6 +346,33 @@ async def test_cleanup_deleted_wsi_files_does_not_regress_reported_processed_ite
 
 
 @pytest.mark.asyncio
+async def test_completed_storage_task_status_clears_stale_error_message():
+    from backend.database.repositories.storage_task import StorageTaskRepository
+
+    db = AsyncMock()
+    result = SimpleNamespace(rowcount=1)
+    db.execute.return_value = result
+
+    updated = await StorageTaskRepository.update_status(
+        db,
+        "delete_dataset_task_1",
+        "completed",
+        progress=100,
+        processed_items=10,
+        success_count=10,
+        failed_count=0,
+        error_message=None,
+    )
+
+    assert updated is True
+    statement = db.execute.await_args.args[0]
+    assert isinstance(statement, Update)
+    compiled_params = statement.compile().params
+    assert "error_message" in compiled_params
+    assert compiled_params["error_message"] is None
+
+
+@pytest.mark.asyncio
 async def test_resolve_deletable_wsies_rejects_missing_before_authorization():
     from fastapi import HTTPException
     from gateway.routes import storage_tasks

@@ -68,7 +68,7 @@ class StorageTaskRepository(BaseRepository[StorageTask]):
             update_data["failed_count"] = failed_count
         if skipped_count is not None:
             update_data["skipped_count"] = skipped_count
-        if error_message is not None:
+        if error_message is not None or status == "completed":
             update_data["error_message"] = error_message
         if results is not None:
             update_data["results"] = results
