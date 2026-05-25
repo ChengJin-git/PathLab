@@ -101,7 +101,7 @@ async def test_analysis_state_expires_recently_cancelled_tasks_like_other_termin
 
 
 @pytest.mark.asyncio
-async def test_chat_context_stats_uses_labeled_data_group_columns():
+async def test_chat_context_stats_uses_labeled_data_group_columns(monkeypatch):
     from backend.database.repositories.wsi import WSIRepository
 
     stats_row = SimpleNamespace(total_count=1, wsi_count=1, patch_count=0)
@@ -129,6 +129,10 @@ async def test_chat_context_stats_uses_labeled_data_group_columns():
             _AsyncResult(all_values=[]),
             _AsyncResult(all_values=[]),
         ]
+    )
+    monkeypatch.setattr(
+        "backend.database.repositories.wsi.DatasetSplitService.summarize_many",
+        lambda *_args, **_kwargs: _async_value({}),
     )
 
     stats = await WSIRepository.get_chat_context_stats(db)

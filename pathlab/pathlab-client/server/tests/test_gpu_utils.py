@@ -4,6 +4,7 @@ from types import SimpleNamespace
 def test_get_gpu_count_falls_back_to_nvml(monkeypatch):
     from backend.common import gpu_utils
 
+    monkeypatch.delenv("CUDA_VISIBLE_DEVICES", raising=False)
     monkeypatch.setattr(gpu_utils.torch.cuda, "is_available", lambda: False)
     monkeypatch.setattr(gpu_utils, "_nvml_available", True)
     monkeypatch.setattr(

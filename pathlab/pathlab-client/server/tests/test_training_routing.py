@@ -256,7 +256,19 @@ async def test_create_training_task_normalizes_wsi_classification_for_canonical_
         aggregation_level="case",
     )
     created_task = SimpleNamespace(
+        task_id="train_taxonomy_legacy_match",
+        task_name="canonical wsi classification",
+        task_description=None,
+        group_id="g1",
+        user_id="user_1",
+        error_message=None,
+        preprocessing_config={"tile_size": 224},
+        model_config={"architecture": "resnet18"},
         classes=["tumor", "normal"],
+        created_at=None,
+        updated_at=None,
+        started_at=None,
+        finished_at=None,
         to_dict=lambda: {"task_id": "train_taxonomy_legacy_match"},
     )
 
@@ -330,7 +342,19 @@ async def test_create_training_task_preserves_case_level_for_wsi_classification_
         aggregation_level="case",
     )
     created_task = SimpleNamespace(
+        task_id="train_taxonomy_case_level",
+        task_name="case-level wsi classification",
+        task_description=None,
+        group_id="g2",
+        user_id="user_2",
+        error_message=None,
+        preprocessing_config={"tile_size": 224},
+        model_config={"architecture": "resnet18"},
         classes=["tumor", "normal"],
+        created_at=None,
+        updated_at=None,
+        started_at=None,
+        finished_at=None,
         to_dict=lambda: {"task_id": "train_taxonomy_case_level"},
     )
 
