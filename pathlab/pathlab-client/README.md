@@ -97,7 +97,7 @@ pathlab-client/
 ## 当前已确认的实现事实
 
 - Gateway 顶层 router 由 `server/gateway/app_setup.py` 统一注册；`server/gateway/routes/` 下的部分模块作为分析 / 聊天 / 存储 / 训练辅助模块被复用，不一定单独挂载
-- 数据库当前可见 ORM 表为 21 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`
+- 数据库当前可见 ORM 表为 22 个，其中标注表为 `segmentation_annotations`，权限相关表统一为 `dataset_grants` 与 `permission_audit_logs`，用户级 WSI split 覆盖表为 `wsi_slide_user_splits`
 - 前端构建更应以 `vite.config.ts`、`electron.vite.config.ts` 与 `deploy/` 脚本为准，而不是沿用旧版 README 的脚本描述
 - `server/backend/` 当前已收敛为 `ai / annotation / auth / common / database / preprocessing / storage` 七组共享模块
 

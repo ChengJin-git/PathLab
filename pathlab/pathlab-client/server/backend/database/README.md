@@ -14,34 +14,35 @@
 
 ## 当前 ORM 表现状
 
-当前代码里可直接看到 **21 个 ORM 表**：
+当前代码里可直接看到 **22 个 ORM 表**：
 
 ### 业务表（`models.py`）
 
 1. `data_groups`
 2. `datasets`
 3. `wsi_slides`
-4. `ai_tasks`
-5. `ai_results`
-6. `chat_conversations`
-7. `chat_messages`
-8. `message_feedbacks`
-9. `export_tasks`
-10. `training_tasks`
-11. `training_task_wsi`（训练任务与 WSI 的关联表）
-12. `trained_models`
-13. `training_logs`
-14. `storage_tasks`
-15. `segmentation_annotations`
-16. `annotation_audit_logs`（标注操作审计日志表）
-17. `analysis_runs`（分析运行记录表，追踪训练任务结果的内部统计分析）
-18. `dataset_stats`
-19. `dataset_grants`
-20. `permission_audit_logs`
+4. `wsi_slide_user_splits`（用户级 WSI split 覆盖表，用于公共数据集上的个人训练划分）
+5. `ai_tasks`
+6. `ai_results`
+7. `chat_conversations`
+8. `chat_messages`
+9. `message_feedbacks`
+10. `export_tasks`
+11. `training_tasks`
+12. `training_task_wsi`（训练任务与 WSI 的关联表）
+13. `trained_models`
+14. `training_logs`
+15. `storage_tasks`
+16. `segmentation_annotations`
+17. `annotation_audit_logs`（标注操作审计日志表）
+18. `analysis_runs`（分析运行记录表，追踪训练任务结果的内部统计分析）
+19. `dataset_stats`
+20. `dataset_grants`
+21. `permission_audit_logs`
 
 ### 认证表（`backend/auth/models.py`）
 
-21. `users`
+22. `users`
 
 `users` 当前除 FastAPI-Users 的基础字段外，还直接扩展了这些与业务强相关的字段：
 
@@ -83,6 +84,7 @@
 
 - `Dataset`（`datasets` 表）含 `parent_dataset_id` 外键字段，支持数据集层级关系（子数据集引用父数据集）。
 - `WSISlide`（`wsi_slides` 表）的 `data_type` 字段带 `index=True`，并建有 `idx_wsi_user_type (user_id, data_type)` 和 `idx_wsi_dataset_type (dataset_id, data_type)` 复合索引，用于加速按用户或数据集维度的 WSI 类型过滤查询。
+- `WSISlideUserSplit`（`wsi_slide_user_splits` 表）按 `(wsi_id, user_id)` 建唯一约束，用于记录公共数据集上每个用户自己的 train/val/test split 覆盖值。
 
 ## 与旧文档相比的关键变化
 
