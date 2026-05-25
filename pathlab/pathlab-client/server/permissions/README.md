@@ -286,14 +286,14 @@ Code: `pathlab/pathlab-client/server/gateway/routes/results.py`, `pathlab/pathla
 - Dataset/WSI access ancestor grant logic: `pathlab/pathlab-client/server/tests/test_permission_logic.py`, `pathlab/pathlab-client/server/tests/test_permission_logic.py`.
 - Upload CSV route gate is authenticated-user (guest-capable) regression check: `pathlab/pathlab-client/server/tests/test_permission_closure_regressions.py`.
 
-### New anchors (`test_permission_revocation_fixes.py`)
-- `check_dataset_gpu_permission` reaches `has_valid_gpu` DB query for all `can_use_gpu()=False` users (Fix 3): `test_gpu_permission_reaches_has_valid_gpu_when_can_use_gpu_false`.
+### Revocation and GPU-grant anchors (`test_permission_revocation_fixes.py`)
+- `check_dataset_gpu_permission` reaches `has_valid_gpu` DB query for all `can_use_gpu()=False` users: `test_gpu_permission_reaches_has_valid_gpu_when_can_use_gpu_false`.
 - Pathologist (role-level GPU) never hits DB in `check_dataset_gpu_permission`: `test_gpu_permission_pathologist_never_hits_db`.
 - Non-GPU user without a valid DB grant is denied: `test_gpu_permission_denied_when_no_grant_and_can_use_gpu_false`.
-- `_notify_ai_service_permission_revocation` marks task revoked in-process before HTTP call succeeds (Fix 2a): `test_notify_revocation_marks_task_revoked_in_process`.
-- Local revoke fires even when HTTP call to AI service fails (Fix 2a): `test_notify_revocation_marks_task_even_when_http_fails`.
-- `run_task_analysis` raises HTTP 403 when dataset access has been revoked (Fix 1a): `test_run_task_analysis_raises_403_when_dataset_access_revoked`.
-- Admin bypasses dataset access check in `run_task_analysis` (Fix 1a): `test_run_task_analysis_admin_skips_dataset_access_check`.
+- `_notify_ai_service_permission_revocation` marks task revoked in-process before HTTP call succeeds: `test_notify_revocation_marks_task_revoked_in_process`.
+- Local revoke fires even when HTTP call to AI service fails: `test_notify_revocation_marks_task_even_when_http_fails`.
+- `run_task_analysis` raises HTTP 403 when dataset access has been revoked: `test_run_task_analysis_raises_403_when_dataset_access_revoked`.
+- Admin bypasses dataset access check in `run_task_analysis`: `test_run_task_analysis_admin_skips_dataset_access_check`.
 - `revoke_task_permission` / `clear_revocation` lifecycle: `test_revoke_marks_task_and_clear_removes_it`, `test_revoke_affects_only_named_task`, `test_clear_revocation_is_idempotent`.
 - `PermissionRevokedException` is an `Exception` subclass: `test_permission_revoked_exception_is_exception_subclass`.
 
