@@ -1946,7 +1946,8 @@ async def _is_wsi_unlabeled_for_independent_inference(
         query_result = await db.execute(
             select(func.count())
             .select_from(SegmentationAnnotation)
-            .where(SegmentationAnnotation.wsi_id == wsi.wsi_id)
+            .where(SegmentationAnnotation.annotation_id == f"label_{wsi.wsi_id}")
+            .where(SegmentationAnnotation.source_dataset_id == wsi.dataset_id)
             .where(SegmentationAnnotation.source != "viewer")
             .where(SegmentationAnnotation.status == "finalized")
         )

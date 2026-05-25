@@ -299,6 +299,36 @@ async def test_independent_inference_wsi_list_includes_unlabeled_uploads():
 
 
 @pytest.mark.asyncio
+async def test_independent_inference_wsi_list_checks_segmentation_annotations_by_annotation_id():
+    wsi = _mock_wsi("wsi-1", task_type="patch_segmentation", data_type="patch")
+    db = AsyncMock()
+    query_result = MagicMock()
+    query_result.scalar.return_value = 0
+    db.execute = AsyncMock(return_value=query_result)
+
+    with (
+        patch(
+            "gateway.routes.results.TrainedModelRepository.get_active_models",
+            new_callable=AsyncMock,
+            return_value=[_mock_trained_model()],
+        ),
+        patch(
+            "gateway.routes.results.WSIRepository.get_all_with_dataset",
+            new_callable=AsyncMock,
+            return_value=[wsi],
+        ),
+    ):
+        from gateway.routes.results import get_wsi_for_independent_inference
+
+        result = await get_wsi_for_independent_inference(user=_make_user("admin"), db=db)
+
+    assert result["total"] == 1
+    assert result["items"][0]["wsi_id"] == "wsi-1"
+    query_params = db.execute.await_args.args[0].compile().params
+    assert "label_wsi-1" in query_params.values()
+
+
+@pytest.mark.asyncio
 async def test_independent_inference_submit_success():
     model_task = _mock_model_task("wsi_classification", "wsi")
     trained_model = _mock_trained_model()
