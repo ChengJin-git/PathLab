@@ -18,6 +18,7 @@ from gateway.routes.wsi_upload import (
     get_csv_template,
     upload_wsi_by_path,
 )
+from backend.database.migrate_task_taxonomy import LEGACY_TO_CANONICAL
 from helpers import _make_user
 
 
@@ -306,6 +307,22 @@ async def test_csv_template_accepts_canonical_patch_segmentation_task_type():
     assert "segmentation_metadata_template.csv" in content_disposition
 
 
+@pytest.mark.asyncio
+async def test_csv_template_accepts_canonical_patch_classification_task_type():
+    response = await get_csv_template(task_type="patch_classification", user=cast(User, _make_user()))
+
+    content_disposition = response.headers["content-disposition"]
+    assert "patch_classification_metadata_template.csv" in content_disposition
+
+
+@pytest.mark.asyncio
+async def test_csv_template_default_uses_canonical_wsi_classification_task_type():
+    response = await get_csv_template(user=cast(User, _make_user()))
+
+    content_disposition = response.headers["content-disposition"]
+    assert "wsi_classification_metadata_template.csv" in content_disposition
+
+
 def test_wsi_repository_response_default_uses_patch_data_type_for_missing_task_type():
     assert _canonical_task_type_for_response(None, "patch") == "patch_classification"
 
@@ -429,14 +446,29 @@ def test_wsi_csv_template_accepts_wsi_survival():
     assert "survival_metadata_template.csv" in response.headers["content-disposition"]
 
 
-def test_wsi_csv_template_rejects_legacy_classification():
+@pytest.mark.parametrize("legacy_task_type", ["classification", "survival", "segmentation"])
+def test_wsi_csv_template_rejects_legacy_task_types(legacy_task_type):
     from gateway.routes.wsi_upload import get_csv_template
     import asyncio
 
     async def _run():
-        with pytest.raises(ValueError, match="unknown canonical task id: classification"):
+        with pytest.raises(ValueError, match=f"got: {legacy_task_type}"):
             await get_csv_template(
-                task_type="classification", user=cast(User, _make_user())
+                task_type=legacy_task_type, user=cast(User, _make_user())
             )
 
     asyncio.run(_run())
+
+
+def test_task_taxonomy_migration_maps_legacy_data_groups_to_canonical_ids():
+    assert LEGACY_TO_CANONICAL[("classification", "wsi", "case")] == "wsi_classification"
+    assert LEGACY_TO_CANONICAL[("classification", "wsi", "file")] == "wsi_classification"
+    assert LEGACY_TO_CANONICAL[("classification", "patch", "file")] == "patch_classification"
+    assert LEGACY_TO_CANONICAL[("survival", "wsi", "case")] == "wsi_survival"
+    assert LEGACY_TO_CANONICAL[("survival", "wsi", "file")] == "wsi_survival"
+    assert LEGACY_TO_CANONICAL[("segmentation", "patch", "file")] == "patch_segmentation"
+
+
+def test_task_taxonomy_migration_marks_invalid_legacy_groups_for_cleanup():
+    assert LEGACY_TO_CANONICAL[("classification", "patch", "case")] is None
+    assert LEGACY_TO_CANONICAL[("survival", "patch", "file")] is None

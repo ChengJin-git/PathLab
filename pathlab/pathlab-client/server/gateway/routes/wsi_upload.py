@@ -10,7 +10,7 @@ import asyncio
 import csv
 import io
 from pathlib import Path
-from typing import Optional, List, Any
+from typing import Annotated, Optional, List, Any
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1352,10 +1352,12 @@ async def upload_wsi_by_path(
 
 @router.get("/csv/template")
 async def get_csv_template(
-    task_type: str = Query(
-        "classification",
-        description="Task type: 'classification', 'survival', or 'segmentation'",
-    ),
+    task_type: Annotated[
+        str,
+        Query(
+            description="Canonical task id: 'wsi_classification', 'patch_classification', 'wsi_survival', or 'patch_segmentation'"
+        ),
+    ] = "wsi_classification",
     user: User = Depends(current_active_user),
 ):
     """
@@ -1374,10 +1376,7 @@ async def get_csv_template(
     Note: If no 'val' split is provided, 10% of 'train' samples will be
     automatically assigned to 'val' during upload.
     """
-    template_task_type = normalize_task_type(
-        task_type=task_type,
-        data_type="patch" if is_segmentation_task(task_type) else "wsi",
-    )
+    template_task_type = normalize_task_type(task_type=task_type)
     if template_task_type == "wsi_survival":
         # Survival analysis template
         headers = [
@@ -1475,7 +1474,7 @@ async def get_csv_template(
                 "gender": "Male",
             },
         ]
-        filename = "wsi_classification_metadata_template.csv"
+        filename = f"{template_task_type}_metadata_template.csv"
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=headers)
