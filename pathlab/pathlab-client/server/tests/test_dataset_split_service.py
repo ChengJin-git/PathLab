@@ -422,6 +422,84 @@ async def test_apply_csv_splits_matches_case_insensitive_extensionless_filenames
 
 
 @pytest.mark.asyncio
+async def test_apply_csv_splits_accepts_quoted_comma_filenames(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = _DummyDB()
+    slide = _Slide(
+        "wsi-1",
+        "slide, copy.svs",
+        "/uploads/wsi_files/slide, copy.svs",
+    )
+    existing_val = _Slide(
+        "wsi-2",
+        "existing-val.svs",
+        "/uploads/wsi_files/existing-val.svs",
+        split="val",
+    )
+    recompute_mock = AsyncMock()
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", recompute_mock)
+
+    result = await DatasetSplitService.apply_csv_splits(
+        db=cast(AsyncSession, cast(object, db)),
+        dataset_id="dataset-1",
+        slides=[slide, existing_val],
+        csv_text='filename,split,label\n"slide, copy.svs",train,tumor\n',
+        task_type="wsi_classification",
+    )
+
+    assert result.updated_count == 1
+    assert result.not_found_files == []
+    assert slide.split == "train"
+    assert slide.label == "tumor"
+    recompute_mock.assert_awaited_once_with(db, "dataset-1")
+
+
+@pytest.mark.asyncio
+async def test_apply_csv_splits_repairs_unquoted_comma_filenames(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = _DummyDB()
+    slide = _Slide(
+        "wsi-1",
+        "slide, copy.svs",
+        "/uploads/wsi_files/slide, copy.svs",
+    )
+    existing_val = _Slide(
+        "wsi-2",
+        "existing-val.svs",
+        "/uploads/wsi_files/existing-val.svs",
+        split="val",
+    )
+    recompute_mock = AsyncMock()
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", recompute_mock)
+
+    result = await DatasetSplitService.apply_csv_splits(
+        db=cast(AsyncSession, cast(object, db)),
+        dataset_id="dataset-1",
+        slides=[slide, existing_val],
+        csv_text="filename,split,label\nslide, copy.svs,train,tumor\n",
+        task_type="wsi_classification",
+    )
+
+    assert result.updated_count == 1
+    assert result.not_found_files == []
+    assert slide.split == "train"
+    assert slide.label == "tumor"
+    recompute_mock.assert_awaited_once_with(db, "dataset-1")
+
+
+def test_parse_csv_assignments_handles_short_rows_without_none_strip():
+    rows, filename_key, split_key = DatasetSplitService.parse_csv_assignments(
+        "filename,split,label\nslide.svs\n"
+    )
+
+    assert filename_key == "filename"
+    assert split_key == "split"
+    assert rows == [{"filename": "slide.svs", "split": "", "label": ""}]
+
+
+@pytest.mark.asyncio
 async def test_apply_csv_splits_reports_ambiguous_extensionless_matches():
     slides = [
         _Slide("wsi-1", "sample.svs", "/uploads/wsi_files/sample.svs"),

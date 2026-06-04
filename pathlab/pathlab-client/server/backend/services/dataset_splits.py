@@ -92,6 +92,40 @@ class DatasetSplitService:
     _USER_SPLIT_UPSERT_BATCH_SIZE: ClassVar[int] = 5000
 
     @staticmethod
+    def _normalize_csv_row(
+        row: dict[str | None, str | list[str] | None],
+        fieldnames: list[str],
+        filename_key: str,
+    ) -> dict[str, str]:
+        ordered_cells = [row.get(fieldname) for fieldname in fieldnames]
+        overflow = row.get(None)
+        if isinstance(overflow, list) and overflow:
+            ordered_cells.extend(overflow)
+
+        filename_index = fieldnames.index(filename_key)
+        trailing_count = len(fieldnames) - filename_index - 1
+        normalized: dict[str, str] = {}
+
+        for idx, fieldname in enumerate(fieldnames[:filename_index]):
+            value = ordered_cells[idx] if idx < len(ordered_cells) else ""
+            normalized[fieldname] = str(value or "")
+
+        if len(ordered_cells) > len(fieldnames):
+            filename_end = len(ordered_cells) - trailing_count if trailing_count else len(ordered_cells)
+            filename_parts = ordered_cells[filename_index:filename_end]
+            normalized[filename_key] = ",".join(str(part or "") for part in filename_parts)
+            trailing_cells = ordered_cells[filename_end:]
+            for idx, fieldname in enumerate(fieldnames[filename_index + 1 :]):
+                value = trailing_cells[idx] if idx < len(trailing_cells) else ""
+                normalized[fieldname] = str(value or "")
+        else:
+            for idx, fieldname in enumerate(fieldnames[filename_index:], start=filename_index):
+                value = ordered_cells[idx] if idx < len(ordered_cells) else ""
+                normalized[fieldname] = str(value or "")
+
+        return normalized
+
+    @staticmethod
     def parse_csv_assignments(csv_text: str) -> tuple[list[dict[str, str]], str, str | None]:
         try:
             reader = csv.DictReader(io.StringIO(csv_text))
@@ -100,10 +134,11 @@ class DatasetSplitService:
                     status_code=400, detail="CSV is empty or has no header row"
                 )
 
+            fieldnames = [str(h or "") for h in reader.fieldnames]
             filename_key = next(
                 (
                     h
-                    for h in reader.fieldnames
+                    for h in fieldnames
                     if h.strip().lower()
                     in ["filename", "file_name", "original_filename"]
                 ),
@@ -115,9 +150,12 @@ class DatasetSplitService:
                 )
 
             split_key = next(
-                (h for h in reader.fieldnames if h.strip().lower() == "split"), None
+                (h for h in fieldnames if h.strip().lower() == "split"), None
             )
-            rows = list(reader)
+            rows = [
+                DatasetSplitService._normalize_csv_row(row, fieldnames, filename_key)
+                for row in reader
+            ]
             if not rows:
                 raise HTTPException(status_code=400, detail="CSV has no data rows")
 

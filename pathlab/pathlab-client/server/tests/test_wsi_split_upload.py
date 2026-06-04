@@ -208,6 +208,68 @@ async def test_upload_dataset_splits_matches_case_insensitive_extensionless_file
 
 
 @pytest.mark.asyncio
+async def test_upload_dataset_splits_accepts_comma_filenames(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user = _user("user-1")
+    db = _DummyDB()
+    dataset = types.SimpleNamespace(
+        user_id="user-1",
+        is_public=False,
+        data_group=types.SimpleNamespace(
+            aggregation_level="file",
+            task_type="wsi_classification",
+        ),
+    )
+    slides = [
+        _Slide(
+            wsi_id="wsi-1",
+            original_filename="slide, copy.svs",
+            wsi_path="/uploads/wsi_files/slide, copy.svs",
+        ),
+        _Slide(
+            wsi_id="wsi-2",
+            original_filename="existing-val.svs",
+            wsi_path="/uploads/wsi_files/existing-val.svs",
+            split="val",
+        ),
+    ]
+
+    monkeypatch.setattr(
+        wsi_routes,
+        "get_dataset_with_access",
+        AsyncMock(return_value=dataset),
+    )
+    monkeypatch.setattr(
+        WSIRepository,
+        "get_by_dataset",
+        AsyncMock(return_value=slides),
+    )
+    monkeypatch.setattr(wsi_routes, "invalidate_chat_context", AsyncMock())
+    recompute_mock = AsyncMock()
+    monkeypatch.setattr(DatasetStatsRepository, "recompute", recompute_mock)
+
+    file = UploadFile(
+        filename="splits.csv",
+        file=BytesIO(b"filename,split,label\nslide, copy.svs,train,tumor\n"),
+    )
+
+    response = await wsi_routes.upload_dataset_splits(
+        dataset_id="dataset-1",
+        file=file,
+        user=cast(User, user),
+        user_id_filter="user-1",
+        db=cast(AsyncSession, cast(object, db)),
+    )
+
+    assert response["updated_count"] == 1
+    assert response["not_found_count"] == 0
+    assert slides[0].split == "train"
+    assert db.committed is True
+    recompute_mock.assert_awaited_once_with(db, "dataset-1")
+
+
+@pytest.mark.asyncio
 async def test_public_non_owner_upload_writes_user_override_without_changing_baseline(
     monkeypatch: pytest.MonkeyPatch,
 ):
