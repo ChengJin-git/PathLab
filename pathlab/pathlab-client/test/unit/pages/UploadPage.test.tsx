@@ -1158,6 +1158,35 @@ describe('UploadPage', () => {
       expect(files[1].metadata).toMatchObject({ dataset_id: 'dataset-append', label: 'normal' })
     })
 
+    it('parses CSV filenames containing commas when quoted', async () => {
+      const items: uploadModule.LocalItem[] = [
+        { key: 'slide-copy', name: 'slide, copy.svs', file: new File(['a'], 'slide, copy.svs'), type: 'standard' },
+        { key: 'plain', name: 'plain.svs', file: new File(['b'], 'plain.svs'), type: 'standard' },
+      ]
+
+      const { container } = await renderUploadPage(items)
+      await uploadCsvMetadata(
+        container,
+        new File([
+          'filename,label\n',
+          '"slide, copy.svs",tumor\n',
+          'plain.svs,normal\n',
+        ], 'labels.csv', { type: 'text/csv' }),
+      )
+
+      await userEvent.click(screen.getByRole('button', { name: /uploadPage\.registerAll/ }))
+
+      await waitFor(() => {
+        expect(addUploadTaskMock).toHaveBeenCalledTimes(1)
+      })
+
+      const [files] = addUploadTaskMock.mock.calls[0]
+      const labeledCopy = files.find((f: any) => f.name === 'slide, copy.svs')
+      const labeledPlain = files.find((f: any) => f.name === 'plain.svs')
+      expect(labeledCopy?.metadata.label).toBe('tumor')
+      expect(labeledPlain?.metadata.label).toBe('normal')
+    })
+
     it('shows metadata validation progress while a large CSV is being checked', async () => {
       const items: uploadModule.LocalItem[] = [
         { key: 'a', name: 'file-a.png', file: new File(['a'], 'file-a.png'), type: 'standard' },

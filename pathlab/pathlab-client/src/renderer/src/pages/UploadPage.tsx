@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { readFileText, xlsxToCSV } from '../lib/csvImporter'
+import Papa from 'papaparse'
 import { Tooltip } from '../components/ui/tooltip'
 import {
   Download,
@@ -96,12 +97,11 @@ const resolveItemMetadata = (
   }
 }
 
-const buildCsvMetadataMapFromRows = (headers: string[], lines: string[]) => {
+const buildCsvMetadataMapFromRows = (headers: string[], rows: string[][]) => {
   const filenameIndex = headers.indexOf('filename')
   const metadataMap = new Map<string, any>()
 
-  lines.slice(1).forEach(line => {
-    const values = line.split(',').map(value => value.trim())
+  rows.forEach(values => {
     const filename = values[filenameIndex]
     if (!filename) return
 
@@ -962,14 +962,15 @@ export default function RegisterPage() {
         csvContent = await readFileText(file)
       }
 
-      const lines = csvContent.split('\n').filter(line => line.trim() !== '')
+      const parsed = Papa.parse(csvContent, { skipEmptyLines: true })
+      const rows = parsed.data as string[][]
 
-      if (lines.length < 2) {
+      if (rows.length < 2) {
         setSplitFileError(t('uploadPage.fileEmptyOrNoData'))
         return
       }
 
-      const headers = lines[0].toLowerCase().split(',').map(h => h.trim())
+      const headers = rows[0].map(h => h.toLowerCase().trim())
 
       // Validate required columns based on upload mode
       if (!headers.includes('filename')) {
@@ -994,7 +995,7 @@ export default function RegisterPage() {
         }
       }
 
-      setSplitMetadata(buildCsvMetadataMapFromRows(headers, lines))
+      setSplitMetadata(buildCsvMetadataMapFromRows(headers, rows.slice(1)))
       setSplitFile(finalFile)
     } catch (err) {
       setSplitMetadata(new Map())
