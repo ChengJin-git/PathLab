@@ -106,17 +106,134 @@ describe('DatasetRegistrationCard', () => {
     expect(screen.getByText('chatComponents.datasetRegistration.filesSelected')).toBeInTheDocument()
   })
 
-  it('downloads canonical segmentation templates from canonical chat config', async () => {
+  it.each([
+    ['wsi_classification'],
+    ['patch_classification'],
+    ['wsi_survival'],
+    ['patch_segmentation'],
+  ] as const)('downloads exact canonical %s template from canonical chat config', async (taskType) => {
     render(
       <DatasetRegistrationCard
-        config={{ upload_mode: 'patch_segmentation' }}
+        config={{ upload_mode: taskType }}
       />,
     )
 
     fireEvent.click(screen.getByText('chatComponents.datasetRegistration.downloadTemplate'))
 
     await waitFor(() => {
-      expect(downloadCSVTemplateMock).toHaveBeenCalledWith('patch_segmentation')
+      expect(downloadCSVTemplateMock).toHaveBeenCalledWith(taskType)
+    })
+  })
+
+  it('downloads exact canonical task_type for existing dataset without backward compat mapping', async () => {
+    fetchDatasetsMock.mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-1',
+          dataset_name: 'LegacyDS',
+          task_type: 'wsi_classification',
+          data_type: 'wsi',
+          aggregation_level: 'file',
+          file_count: 1,
+          total_size: 1,
+        },
+      ],
+    })
+
+    render(
+      <DatasetRegistrationCard
+        config={{ upload_mode: 'classification', dataset_id: 'dataset-1' }}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(fetchDatasetsMock).toHaveBeenCalled()
+    })
+
+    const selectButton = screen.getByRole('button', { name: /chatComponents\.datasetRegistration\.chooseDataset/ })
+    fireEvent.click(selectButton)
+    const option = await screen.findByText('chatComponents.datasetRegistration.datasetWithSource')
+    fireEvent.click(option)
+
+    fireEvent.click(screen.getByText('chatComponents.datasetRegistration.downloadTemplate'))
+
+    await waitFor(() => {
+      expect(downloadCSVTemplateMock).toHaveBeenCalledWith('wsi_classification')
+    })
+  })
+
+  it('surfaces error when existing dataset has non-canonical task_type instead of mapping', async () => {
+    const onErrorMock = vi.fn()
+    fetchDatasetsMock.mockResolvedValue({
+      items: [
+        {
+          dataset_id: 'dataset-legacy',
+          dataset_name: 'LegacyDS',
+          task_type: 'classification',
+          data_type: 'wsi',
+          aggregation_level: 'file',
+          file_count: 1,
+          total_size: 1,
+        },
+      ],
+    })
+
+    render(
+      <DatasetRegistrationCard
+        config={{ dataset_id: 'dataset-legacy' }}
+        onError={onErrorMock}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(fetchDatasetsMock).toHaveBeenCalled()
+    })
+
+    const selectButton = screen.getByRole('button', { name: /chatComponents\.datasetRegistration\.chooseDataset/ })
+    fireEvent.click(selectButton)
+    const option = await screen.findByText('chatComponents.datasetRegistration.datasetWithSource')
+    fireEvent.click(option)
+
+    fireEvent.click(screen.getByText('chatComponents.datasetRegistration.downloadTemplate'))
+
+    await waitFor(() => {
+      expect(onErrorMock).toHaveBeenCalledWith('chatComponents.datasetRegistration.downloadTemplateFailed')
+    })
+    expect(downloadCSVTemplateMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['classification'],
+    ['survival'],
+    ['segmentation'],
+  ] as const)('rejects explicit legacy upload_mode "%s" for template download and calls onError', async (legacyMode) => {
+    const onErrorMock = vi.fn()
+    render(
+      <DatasetRegistrationCard
+        config={{ upload_mode: legacyMode }}
+        onError={onErrorMock}
+      />,
+    )
+
+    fireEvent.click(screen.getByText('chatComponents.datasetRegistration.downloadTemplate'))
+
+    await waitFor(() => {
+      expect(onErrorMock).toHaveBeenCalledWith('chatComponents.datasetRegistration.downloadTemplateFailed')
+    })
+    expect(downloadCSVTemplateMock).not.toHaveBeenCalled()
+  })
+
+  it('defaults missing upload_mode to wsi_classification for template download', async () => {
+    render(
+      <DatasetRegistrationCard
+        config={{}}
+      />,
+    )
+
+    fireEvent.click(screen.getByText('chatComponents.datasetRegistration.downloadTemplate'))
+
+    await waitFor(() => {
+      expect(downloadCSVTemplateMock).toHaveBeenCalledWith('wsi_classification')
     })
   })
 

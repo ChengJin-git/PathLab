@@ -10,7 +10,7 @@ import { useBackgroundTask, UploadTaskFile } from '../../contexts/BackgroundTask
 import { getSegmentationStem, mergeSegmentationJsonFiles, summarizeSegmentationMatches } from '../../lib/segmentationUploadUtils'
 import { Select } from '../ui/select'
 import { organSources, organSourceKeyMap } from '../../constants/wsi'
-import { getTaskFamily, resolveUploadTaskType, toCanonicalTaskType, type UploadTaskMode, type TaskType } from '../../constants/training'
+import { getTaskFamily, isCanonicalTaskType, resolveUploadTaskType, type UploadTaskMode, type TaskType } from '../../constants/training'
 import { collectItemsFromDataTransfer, type CollectionProgressSnapshot, type LocalItem } from '../upload'
 
 export function parseDatasetRegistrationConfig(content: string): DatasetRegistrationConfig | null {
@@ -198,15 +198,27 @@ export function DatasetRegistrationCard({
 
   const handleDownloadTemplate = async () => {
     try {
-      let uploadMode: TaskType = canonicalUploadMode
+      let uploadMode: TaskType
 
       if (mode === 'existing' && selectedDatasetId) {
         const dataset = datasets.find(d => d.dataset_id === selectedDatasetId)
         if (dataset && dataset.task_type) {
-          uploadMode = toCanonicalTaskType(dataset.task_type, dataset.data_type) || resolveUploadTaskType(config?.upload_mode ?? 'classification', { dataType: dataset.data_type })
+          if (!isCanonicalTaskType(dataset.task_type)) {
+            throw new Error(t('chatComponents.datasetRegistration.downloadTemplateFailed'))
+          }
+          uploadMode = dataset.task_type
+        } else {
+          uploadMode = canonicalUploadMode
         }
       } else {
-        uploadMode = canonicalUploadMode
+        const explicitMode = config?.upload_mode
+        if (explicitMode === undefined) {
+          uploadMode = 'wsi_classification'
+        } else if (isCanonicalTaskType(explicitMode)) {
+          uploadMode = explicitMode
+        } else {
+          throw new Error(t('chatComponents.datasetRegistration.downloadTemplateFailed'))
+        }
       }
 
       await downloadCSVTemplate(uploadMode)
