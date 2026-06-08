@@ -117,7 +117,7 @@ describe('chatWithAI (streaming)', () => {
     } as unknown as Response)
     const onMessageId = vi.fn()
     await chatWithAI(MOCK_MESSAGES, vi.fn(), undefined, onMessageId)
-    expect(onMessageId).toHaveBeenCalledWith(42)
+    expect(onMessageId).toHaveBeenCalledWith(42, undefined)
   })
 
   it('calls onContextLimit when context_limit flag is received', async () => {
