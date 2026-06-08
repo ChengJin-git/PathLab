@@ -37,7 +37,14 @@ from .settings import router as settings_router
 from .gpu import router as gpu_router
 from .annotation import router as annotation_router
 from .training_options import router as training_options_router
-from backend.auto_research.server import router as auto_research_router
+from .pathscientist import router as pathscientist_router
+try:
+    from backend.auto_research.server import router as auto_research_router
+except ImportError:
+    from fastapi import APIRouter
+
+    # Legacy auto-research is optional; keep Gateway startup available for PathScientist.
+    auto_research_router = APIRouter(prefix="/api/auto-research", tags=["Auto Research"])
 
 __all__ = [
     "auth_router",
@@ -57,5 +64,6 @@ __all__ = [
     "gpu_router",
     "annotation_router",
     "training_options_router",
+    "pathscientist_router",
     "auto_research_router",
 ]

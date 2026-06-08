@@ -190,6 +190,7 @@ export PATHLAB_DEBUG=1
 export GATEWAY_PORT=6100
 export PREPROCESSING_PORT=6101
 export AI_PORT=6102
+export DEFAULT_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-admin}"
 
 if [ -n "${CUDA_VISIBLE_DEVICES:-}" ]; then
     echo -e "  ${CYAN}[GPU]${NC} CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
@@ -257,4 +258,3 @@ echo ""
 echo -e "  ${YELLOW}查看日志:${NC}  tail -f $LOG_DIR/backend.log"
 echo -e "  ${YELLOW}停止服务:${NC}  kill \$(cat $LOG_DIR/backend.pid)"
 echo ""
-

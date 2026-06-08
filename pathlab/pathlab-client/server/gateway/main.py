@@ -60,6 +60,7 @@ from .routes import (
     gpu_router,
     annotation_router,
     training_options_router,
+    pathscientist_router,
     auto_research_router,
 )
 from backend.common.config import Config
@@ -725,6 +726,7 @@ app.include_router(settings_router)
 app.include_router(gpu_router)
 app.include_router(annotation_router)
 app.include_router(training_options_router)
+app.include_router(pathscientist_router)
 app.include_router(auto_research_router)
 
 logger.info("Gateway service initialized with all route modules")

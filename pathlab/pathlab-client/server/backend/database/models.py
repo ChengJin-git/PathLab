@@ -19,6 +19,7 @@ from sqlalchemy import (
     JSON,
     Index,
     Boolean,
+    UniqueConstraint,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -59,9 +60,7 @@ class DataGroup(TimestampMixin, Base):
 
     __tablename__ = "data_groups"
 
-    group_id = Column(
-        String(255), unique=True, nullable=False, index=True
-    )  # UUID for API
+    group_id = Column(String(255), nullable=False)  # UUID for API
     name = Column(
         String(255), nullable=False
     )  # Display name (e.g., "WSI Case-level Classification")
@@ -84,6 +83,7 @@ class DataGroup(TimestampMixin, Base):
 
     # Unique constraint: only one group per combination
     __table_args__ = (
+        UniqueConstraint("group_id", name="uq_data_groups_group_id"),
         Index(
             "idx_data_group_unique",
             "data_type",
@@ -119,9 +119,7 @@ class Dataset(TimestampMixin, Base):
 
     __tablename__ = "datasets"
 
-    dataset_id = Column(
-        String(255), unique=True, nullable=False, index=True
-    )  # UUID for API
+    dataset_id = Column(String(255), nullable=False)  # UUID for API
     name = Column(
         String(255), nullable=False
     )  # Display name (stored only, never sent in URL/params)
@@ -148,6 +146,10 @@ class Dataset(TimestampMixin, Base):
         ForeignKey("datasets.dataset_id", ondelete="SET NULL"),
         nullable=True,
         index=True,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("dataset_id", name="uq_datasets_dataset_id"),
     )
 
     # Relationships
@@ -188,7 +190,7 @@ class WSISlide(TimestampMixin, Base):
 
     __tablename__ = "wsi_slides"
 
-    wsi_id = Column(String(255), unique=True, nullable=False, index=True)
+    wsi_id = Column(String(255), nullable=False)
     original_filename = Column(
         String(500)
     )  # Original filename for internal reference (not exposed to frontend)
@@ -260,6 +262,7 @@ class WSISlide(TimestampMixin, Base):
     )
 
     __table_args__ = (
+        UniqueConstraint("wsi_id", name="uq_wsi_slides_wsi_id"),
         Index("idx_wsi_user_dataset", "user_id", "dataset_id"),
         Index("idx_wsi_dataset_created", "dataset_id", "created_at"),
         Index("idx_wsi_user_type", "user_id", "data_type"),
@@ -477,8 +480,14 @@ class ChatConversation(TimestampMixin, Base):
     """
 
     __tablename__ = "chat_conversations"
+    __table_args__ = (
+        UniqueConstraint(
+            "conversation_id",
+            name="uq_chat_conversations_conversation_id",
+        ),
+    )
 
-    conversation_id = Column(String(255), unique=True, nullable=False, index=True)
+    conversation_id = Column(String(255), nullable=False)
     user_id = Column(String(255), index=True)  # For future multi-user support
     title = Column(String(500))  # Auto-generated from first message
     parent_conversation_id = Column(
@@ -772,6 +781,10 @@ class TrainingTask(TimestampMixin, Base):
     )
     trained_models = relationship(
         "TrainedModel", back_populates="training_task", cascade="all, delete-orphan"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("task_id", name="uq_training_tasks_task_id"),
     )
 
     def to_dict(self):
@@ -1297,7 +1310,7 @@ class AutoResearchSession(Base):
     __tablename__ = "auto_research_sessions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    session_id = Column(String(255), unique=True, nullable=False, index=True)
+    session_id = Column(String(255), nullable=False)
     user_id = Column(String(255), nullable=False, index=True)
     research_question = Column(Text, nullable=False)
     phase = Column(String(50), nullable=False, default="literature")
@@ -1320,6 +1333,7 @@ class AutoResearchSession(Base):
                            cascade="all, delete-orphan")
 
     __table_args__ = (
+        UniqueConstraint("session_id", name="uq_auto_research_sessions_session_id"),
         Index("idx_ar_session_user_status", "user_id", "status"),
     )
 

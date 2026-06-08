@@ -31,6 +31,11 @@ from backend.common.port_utils import find_free_port, announce_port
 from backend.common.config import Config
 
 
+def _apply_default_admin_password() -> None:
+    """Use a stable local default unless the operator provided one."""
+    os.environ.setdefault("DEFAULT_ADMIN_PASSWORD", "admin")
+
+
 def _detect_and_exclude_bad_gpus() -> list[int]:
     # If operator has already configured CUDA_VISIBLE_DEVICES (e.g. via server/.env),
     # respect it unconditionally — do not overwrite with auto-detected healthy list.
@@ -137,6 +142,8 @@ def run_service(
 
 def main():
     """Main entry point for PathLab Python backend"""
+    _apply_default_admin_password()
+
     # Determine mode
     debug_mode = os.environ.get("PATHLAB_DEBUG", "0") == "1"
     main_pid = os.getpid()

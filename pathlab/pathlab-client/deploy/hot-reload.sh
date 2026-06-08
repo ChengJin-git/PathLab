@@ -40,6 +40,7 @@ if [ -f "$SERVER_DIR/.env" ]; then set -a; source "$SERVER_DIR/.env"; set +a; fi
 
 # Ensure env vars
 export PATHLAB_DEBUG=1 GATEWAY_PORT=6100 PREPROCESSING_PORT=6101 AI_PORT=6102
+export DEFAULT_ADMIN_PASSWORD="${DEFAULT_ADMIN_PASSWORD:-admin}"
 export PREPROCESSING_SERVICE_URL="http://127.0.0.1:6101" AI_SERVICE_URL="http://127.0.0.1:6102"
 
 mkdir -p "$LOG_DIR"
