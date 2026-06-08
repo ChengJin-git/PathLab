@@ -1,25 +1,29 @@
-import timm
 from torchvision import transforms
 import torch
 
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
+from .dinov2.models import vision_transformer as vits
+from .weight_loading import extract_teacher_backbone_state, load_state_dict_file
 
 
 class GPFMExtractor(BaseExtractor):
     def __init__(self, hf_token: str = ""):
         super().__init__()
         ckpt_path = get_ckpt_path("GPFM", hf_token)
-        # load backbone
-        self.backbone = timm.create_model(
-            "vit_large_patch14_dinov2.lvd142m",
-            pretrained=False,
+        vit_kwargs = dict(
             img_size=224,
+            patch_size=14,
             init_values=1.0e-05,
+            ffn_layer="mlp",
+            block_chunks=4,
+            qkv_bias=True,
+            proj_bias=True,
+            ffn_bias=True,
         )
-        self.backbone.load_state_dict(
-            torch.load(ckpt_path, map_location="cpu"), strict=True
-        )
+        self.backbone = vits.__dict__["vit_large"](**vit_kwargs)
+        ckpt = load_state_dict_file(ckpt_path)
+        self.backbone.load_state_dict(extract_teacher_backbone_state(ckpt), strict=True)
         self.backbone.eval()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

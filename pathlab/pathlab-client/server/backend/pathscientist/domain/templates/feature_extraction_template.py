@@ -11,7 +11,7 @@ Extracts patch-level features from WSIs using PathLab's real pipeline:
 Code Agent can modify ANY part of this script.
 Constraints (from skill definition):
   - Output convention: {output_dir}/pt_files/{extractor_name}/{wsi_id}.pt
-  - Coordinates: {output_dir}/h5_files/{wsi_id}_coords.h5
+  - Coordinates: {output_dir}/patches/{wsi_id}_coords.h5
   - Each feature tensor shape: (N_patches, D)
   - Save extraction_meta.json and metrics.json in output_dir
 
@@ -24,6 +24,7 @@ Reference:
 import json
 import logging
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -61,7 +62,28 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 # Extractor — Code Agent can replace backbone, add multi-scale, etc.
 # ============================================================================
 
-def build_extractor(extractor_name="resnet50", device="cuda"):
+DEFAULT_EXTRACTOR_NAME = "uni2"
+
+_EXTRACTOR_ALIASES = {
+    "UNI2": "uni2",
+    "UNI": "uni",
+    "CONCH": "conch",
+    "CONCH15": "conch15",
+    "CONCH 1.5": "conch15",
+    "Virchow2": "virchow2",
+    "Virchow": "virchow",
+    "ResNet50": "resnet50",
+}
+
+
+def _normalize_extractor_name(value: str) -> str:
+    name = str(value or "").strip()
+    if not name:
+        return DEFAULT_EXTRACTOR_NAME
+    return _EXTRACTOR_ALIASES.get(name, _EXTRACTOR_ALIASES.get(name.upper(), name))
+
+
+def build_extractor(extractor_name=DEFAULT_EXTRACTOR_NAME, device="cuda"):
     """
     Build a feature extractor by name from PathLab's registry.
 
@@ -74,15 +96,13 @@ def build_extractor(extractor_name="resnet50", device="cuda"):
         transforms = get_extractor_transforms(extractor_name, mode="eval")
         output_dim = model.output_dim
     except Exception as e:
-        logger.warning(f"Registry load failed ({e}), falling back to timm ResNet50")
-        import timm
-        from torchvision import transforms as T
-        model = timm.create_model("resnet50", pretrained=True, num_classes=0)
-        transforms = T.Compose([
-            T.ToPILImage(), T.Resize((224, 224)), T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-        output_dim = 2048
+        raise RuntimeError(
+            f"Failed to load feature extractor '{extractor_name}': {e}. "
+            "Refusing to fall back to ImageNet ResNet50 because that would "
+            "produce mislabeled features. Configure the requested pathology "
+            "foundation model checkpoint or set PATHSCIENTIST_FEATURE_EXTRACTOR "
+            "explicitly."
+        ) from e
 
     model = model.to(device).eval()
     return model, transforms, output_dim
@@ -92,20 +112,25 @@ def build_extractor(extractor_name="resnet50", device="cuda"):
 # Hyperparameters — Code Agent can change any of these
 # ============================================================================
 
-EXTRACTOR_NAME = "resnet50"
+EXTRACTOR_NAME = _normalize_extractor_name(
+    os.getenv("PATHSCIENTIST_FEATURE_EXTRACTOR")
+    or os.getenv("PATHLAB_EXTRACTOR")
+    or DEFAULT_EXTRACTOR_NAME
+)
 
-# Segmentation parameters (matches PathLab's TissueSegmenter defaults)
+# Segmentation parameters (PrePATH/CLAM TCGA preset)
 SEG_PARAMS = {
+    "seg_level": -1,       # Auto-select segmentation level
     "sthresh": 8,          # Binary threshold for tissue detection
     "mthresh": 7,          # Median blur kernel size
     "close": 4,            # Morphological closing kernel
-    "use_otsu": False,     # Use Otsu threshold instead of binary
+    "use_otsu": True,      # Use Otsu threshold instead of binary
 }
 
-# Filter parameters (matches PathLab's defaults)
+# Filter parameters (PrePATH/CLAM TCGA preset)
 FILTER_PARAMS = {
-    "a_t": 100,            # Min tissue area (in 512px² patch units)
-    "a_h": 16,             # Min hole area
+    "a_t": 16,             # Min tissue area (in 512px² patch units)
+    "a_h": 4,              # Min hole area
     "max_n_holes": 8,      # Max holes per contour
 }
 
@@ -118,6 +143,44 @@ USE_PADDING = True         # Allow edge patches
 BATCH_SIZE = 64            # Patches per GPU batch
 NUM_WORKERS = 0            # DataLoader workers (0 = main process, avoids CUDA fork issues)
 MIN_PATCHES = 10           # Skip WSIs with fewer patches
+LEGACY_COORDS_SUBDIR = "h5_files"
+
+
+def _coords_file(coords_dir: Path, wsi_id: str) -> Path:
+    return Path(coords_dir) / f"{wsi_id}_coords.h5"
+
+
+def _find_existing_coords(
+    wsi_id: str,
+    coords_dir: Path,
+    legacy_coords_dir: Path,
+) -> Optional[Path]:
+    current = _coords_file(coords_dir, wsi_id)
+    if current.exists():
+        return current
+    legacy = _coords_file(legacy_coords_dir, wsi_id)
+    if legacy.exists():
+        return legacy
+    return None
+
+
+def _copy_legacy_coords_if_needed(
+    wsi_id: str,
+    coords_dir: Path,
+    legacy_coords_dir: Path,
+) -> None:
+    current = _coords_file(coords_dir, wsi_id)
+    if current.exists():
+        return
+    legacy = _coords_file(legacy_coords_dir, wsi_id)
+    if not legacy.exists():
+        return
+    try:
+        current.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(legacy, current)
+        logger.info(f"  Migrated legacy coordinates to {current}")
+    except OSError as e:
+        logger.warning(f"  Could not migrate legacy coordinates for {wsi_id}: {e}")
 
 
 # ============================================================================
@@ -146,6 +209,7 @@ def tile_wsi(wsi_path: str, coords_dir: str, wsi_id: str) -> Optional[str]:
 
     # Segment tissue
     segmenter = TissueSegmenter(
+        seg_level=SEG_PARAMS["seg_level"],
         sthresh=SEG_PARAMS["sthresh"],
         mthresh=SEG_PARAMS["mthresh"],
         close=SEG_PARAMS["close"],
@@ -166,7 +230,12 @@ def tile_wsi(wsi_path: str, coords_dir: str, wsi_id: str) -> Optional[str]:
     Path(coords_dir).mkdir(parents=True, exist_ok=True)
 
     try:
-        coords = tiler.compute_coordinates(slide, str(coords_path))
+        coords = tiler.compute_coordinates(
+            slide,
+            str(coords_path),
+            seg_params=SEG_PARAMS,
+            filter_params=FILTER_PARAMS,
+        )
         if hasattr(slide, "close"):
             slide.close()
 
@@ -281,12 +350,12 @@ def extract():
 
     Output directory convention:
       {data_output}/pt_files/{extractor_name}/{wsi_id}.pt
-      {data_output}/h5_files/{wsi_id}_coords.h5
+      {data_output}/patches/{wsi_id}_coords.h5
 
     DATA_OUTPUT_DIR: stable user-visible path for feature/coord files.
     OUTPUT_DIR: per-run directory for metrics.json (used by the agent).
     """
-    wsi_dir = os.getenv("WSI_DIR", "/data/wsi")
+    wsi_dir = os.getenv("WSI_DIR", "/data/WSIs")
     output_dir = os.getenv("OUTPUT_DIR", "/results")
     # DATA_OUTPUT_DIR is the stable path for actual data artifacts;
     # falls back to OUTPUT_DIR for backward compatibility.
@@ -295,7 +364,8 @@ def extract():
 
     # Data artifacts go to DATA_OUTPUT_DIR (stable, user-visible)
     features_dir = Path(data_output) / "pt_files" / EXTRACTOR_NAME
-    coords_dir = Path(data_output) / "h5_files"
+    coords_dir = Path(data_output) / "patches"
+    legacy_coords_dir = Path(data_output) / LEGACY_COORDS_SUBDIR
 
     features_dir.mkdir(parents=True, exist_ok=True)
     coords_dir.mkdir(parents=True, exist_ok=True)
@@ -321,12 +391,17 @@ def extract():
     # --- Early skip: check if all features and coordinates already exist ---
     wsi_ids = [f.stem for f in wsi_files]
     existing_features = [wid for wid in wsi_ids if (features_dir / f"{wid}.pt").exists()]
-    existing_coords = [wid for wid in wsi_ids if (coords_dir / f"{wid}_coords.h5").exists()]
+    existing_coords = [
+        wid for wid in wsi_ids
+        if _find_existing_coords(wid, coords_dir, legacy_coords_dir) is not None
+    ]
 
     if len(existing_features) == len(wsi_files) and len(existing_coords) == len(wsi_files):
         logger.info(
             f"All {len(wsi_files)} WSIs already have features and coordinates — skipping extraction"
         )
+        for wid in wsi_ids:
+            _copy_legacy_coords_if_needed(wid, coords_dir, legacy_coords_dir)
         # Load patch counts from existing features for metrics
         total_patches = 0
         results = {}
@@ -347,6 +422,7 @@ def extract():
             "patches_extracted": total_patches,
             "features_dir": str(features_dir),
             "coords_dir": str(coords_dir),
+            "legacy_coords_dir": str(legacy_coords_dir),
             "skipped": True,
             "results": results,
         }
@@ -389,6 +465,7 @@ def extract():
         out_path = features_dir / f"{wsi_id}.pt"
 
         if out_path.exists():
+            _copy_legacy_coords_if_needed(wsi_id, coords_dir, legacy_coords_dir)
             logger.info(f"[{i}/{len(wsi_files)}] {wsi_id} — cached")
             results[wsi_id] = {"status": "cached"}
             continue
@@ -439,6 +516,7 @@ def extract():
         "patches_extracted": total_patches,
         "features_dir": str(features_dir),
         "coords_dir": str(coords_dir),
+        "legacy_coords_dir": str(legacy_coords_dir),
         "config": {
             "seg_params": SEG_PARAMS,
             "filter_params": FILTER_PARAMS,

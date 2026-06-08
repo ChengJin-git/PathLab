@@ -13,6 +13,12 @@ from openhands.sdk.event import ObservationEvent
 from openhands.sdk.tool.schema import Action, Observation
 from openhands.sdk.tool.tool import ToolAnnotations, ToolDefinition, ToolExecutor
 
+from ..runtime.data_protocol import (
+    data_protocol_change_message as _data_protocol_change_message,
+    extract_data_protocol as _extract_data_protocol,
+    locked_data_protocol_from_tracker as _locked_data_protocol_from_tracker,
+)
+
 if TYPE_CHECKING:
     from openhands.sdk.conversation import LocalConversation
 
@@ -160,16 +166,61 @@ def _finalize_iteration(
         else:
             run_id = f"run_{uuid4().hex[:8]}"
 
-        # Update tracker
-        if deps.tracker:
-            deps.tracker.record(resolved_metrics, committed=committed, iteration=pre_increment_iteration, run_id=run_id)
+        try:
+            from ..orchestrator.metrics_utils import (
+                is_external_test_run,
+                is_non_metric_setup_run,
+            )
+
+            primary_name = deps.config.primary_metric if deps.config else "auc"
+            exp = deps.last_experiment or {}
+            external_test_run = is_external_test_run(
+                run_kind=str(exp.get("run_kind", "") or "")
+            )
+            non_metric_setup = is_non_metric_setup_run(
+                resolved_metrics,
+                primary_name,
+                run_kind=str(exp.get("run_kind", "") or ""),
+                exit_code=int(exp.get("exit_code", 0) or 0),
+                error_type=str(exp.get("error_type", "") or ""),
+            )
+        except Exception:
+            external_test_run = False
+            non_metric_setup = False
+
+        if external_test_run:
+            exp = deps.last_experiment or {}
+            deps.external_test_history.append({
+                "run_id": run_id,
+                "metrics": dict(resolved_metrics or {}),
+                "committed": bool(committed),
+                "model_path": str(exp.get("model_path") or ""),
+                "run_dir": str(exp.get("run_dir") or ""),
+            })
+
+        # Update tracker only for metric-bearing scientific iterations.
+        # Feature extraction/data setup may still be committed and evidenced,
+        # but it must not spend the training iteration budget or create a
+        # tracker row with missing AUC.
+        if deps.tracker and not non_metric_setup and not external_test_run:
+            deps.tracker.record(
+                resolved_metrics,
+                committed=committed,
+                iteration=pre_increment_iteration,
+                run_id=run_id,
+            )
 
         # Update iteration state (increments iteration_index).
         # Append to finalized_run_ids BEFORE record_iteration so the canonical
-        # list stays consistent with the tracker entry we just wrote.
+        # list stays consistent with the tracker entry we just wrote. Setup
+        # runs deliberately skip this block so remaining_budget is unchanged.
         if deps.iteration_state:
-            deps.iteration_state.finalized_run_ids.append(run_id)
-            deps.iteration_state.record_iteration(metrics=resolved_metrics, committed=committed)
+            if not non_metric_setup and not external_test_run:
+                deps.iteration_state.finalized_run_ids.append(run_id)
+                deps.iteration_state.record_iteration(
+                    metrics=resolved_metrics,
+                    committed=committed,
+                )
             # Reset last_run_id so the next iteration's ensure_run_id() mints
             # a fresh uuid instead of reusing this one. Prevents the sticky
             # run_id bug (session_b14b074d2268) where finalized_run_ids
@@ -476,6 +527,29 @@ class RatchetCommitExecutor(ToolExecutor):
             artifact_metrics = dict(deps.last_experiment["metrics"])
         commit_metrics_source = artifact_metrics or dict(action.metrics or {})
 
+        # Gate: synthetic/mock/demo fallback metrics are not scientific
+        # evidence. Even a clean exit_code must fail closed here because old
+        # sessions could generate fake Virchow-shaped features and report a
+        # formal AUC without touching real data.
+        try:
+            from ..orchestrator.metrics_utils import is_invalid_synthetic_run
+            synthetic_metrics = is_invalid_synthetic_run(commit_metrics_source)
+        except Exception:
+            synthetic_metrics = False
+        if synthetic_metrics:
+            return RatchetCommitObservation(
+                commit_hash="",
+                files=self._workspace.list_files(),
+                content=[TextContent(text=(
+                    "❌ ratchet_commit refused: metrics indicate synthetic/mock/demo data.\n"
+                    "  Synthetic fallback runs are not valid scientific evidence and "
+                    "must not be committed as improvements.\n"
+                    "  Use real data: fix DATA_DIR/FEATURES_DIR/LABELS paths, run "
+                    "dataset acquisition/readiness, or fail with a data-readiness "
+                    "error instead of reporting an AUC."
+                ))],
+            )
+
         # Gate D (Plan-2026-04-29 P0 #2): refuse experiment commits with
         # an empty metrics dict. Pre-fix, session_7a23f8edcce9
         # event-00163 called ``ratchet_commit(metrics={})`` — the metrics
@@ -501,8 +575,120 @@ class RatchetCommitExecutor(ToolExecutor):
                     "  Commit messages with metrics in prose alone are not\n"
                     "  machine-checkable and were how stale numbers slipped\n"
                     "  through in session_7a23f8edcce9."
-                ))],
+                    ))],
+                )
+
+        # Gate: full metric-bearing training commits must strictly improve
+        # over the already committed best. get_metrics tells the agent which
+        # branch to take, but ratchet_commit is the final tool boundary and
+        # must fail closed if the agent calls it for a flat/worse run.
+        if not action.external and deps is not None and deps.last_experiment:
+            from ..orchestrator.metrics_utils import (
+                is_external_test_run,
+                is_non_metric_setup_run,
+                recompute_best_metric_from_history,
+                resolve_primary_metric,
             )
+
+            primary_metric_name = (
+                deps.config.primary_metric if deps.config else "auc"
+            )
+            exp = deps.last_experiment
+            external_test_run = is_external_test_run(
+                run_kind=str(exp.get("run_kind", "") or "")
+            )
+            non_metric_setup = is_non_metric_setup_run(
+                commit_metrics_source,
+                primary_metric_name,
+                run_kind=str(exp.get("run_kind", "") or ""),
+                exit_code=int(exp.get("exit_code", 0) or 0),
+                error_type=str(exp.get("error_type", "") or ""),
+            )
+            if not non_metric_setup:
+                current_value = resolve_primary_metric(
+                    commit_metrics_source, primary_metric_name
+                )
+                if current_value <= 0:
+                    return RatchetCommitObservation(
+                        commit_hash="",
+                        files=self._workspace.list_files(),
+                        content=[TextContent(text=(
+                            "❌ ratchet_commit refused: missing primary metric.\n"
+                            f"  A full experiment commit must include a positive "
+                            f"{primary_metric_name!r} value in artifact metrics.\n"
+                            f"  Current artifact metrics: {commit_metrics_source!r}\n"
+                            "  Re-run through run_experiment until the metric parser "
+                            "captures the primary metric, or ratchet_revert if the "
+                            "run is not usable."
+                        ))],
+                    )
+
+                tracker_best = (
+                    float(getattr(deps.tracker, "best_value", 0.0) or 0.0)
+                    if deps.tracker
+                    else 0.0
+                )
+                history_best = (
+                    recompute_best_metric_from_history(
+                        getattr(deps.tracker, "history", []),
+                        primary_metric_name,
+                    )
+                    if deps.tracker
+                    else 0.0
+                )
+                committed_best = max(tracker_best, history_best)
+                if (
+                    not external_test_run
+                    and committed_best > 0
+                    and current_value <= committed_best
+                ):
+                    return RatchetCommitObservation(
+                        commit_hash="",
+                        files=self._workspace.list_files(),
+                        content=[TextContent(text=(
+                            "❌ ratchet_commit refused: metric did not improve "
+                            "committed best.\n"
+                            f"  primary metric: {primary_metric_name}\n"
+                            f"  current artifact {primary_metric_name}: "
+                            f"{current_value:.4f}\n"
+                            f"  committed best {primary_metric_name}: "
+                            f"{committed_best:.4f}\n"
+                            "  Use ratchet_revert to discard this non-improving "
+                            "change, then try a new method."
+                        ))],
+                    )
+
+        # Gate E: data protocol lock. Once a full run has been committed,
+        # later commits in the same ratchet ladder must keep the data protocol
+        # fixed. Otherwise the agent can "improve" by changing n_train/n_val,
+        # split source, or dataset identity rather than improving the method.
+        external_test_for_protocol = False
+        if deps is not None and deps.last_experiment:
+            try:
+                from ..orchestrator.metrics_utils import is_external_test_run
+
+                external_test_for_protocol = is_external_test_run(
+                    run_kind=str(deps.last_experiment.get("run_kind", "") or "")
+                )
+            except Exception:
+                external_test_for_protocol = False
+        if not action.external and deps is not None and not external_test_for_protocol:
+            locked_protocol, locked_run_id, locked_iteration = (
+                _locked_data_protocol_from_tracker(deps.tracker)
+            )
+            if locked_protocol:
+                current_protocol = _extract_data_protocol(commit_metrics_source)
+                if current_protocol != locked_protocol:
+                    return RatchetCommitObservation(
+                        commit_hash="",
+                        files=self._workspace.list_files(),
+                        content=[TextContent(text=_data_protocol_change_message(
+                            locked=locked_protocol,
+                            current=current_protocol,
+                            run_id=locked_run_id,
+                            iteration=locked_iteration,
+                        ))],
+                    )
 
         # Detect > 0.5pp disagreement on the primary metric so the agent
         # sees the discrepancy in the observation text. Uses the same

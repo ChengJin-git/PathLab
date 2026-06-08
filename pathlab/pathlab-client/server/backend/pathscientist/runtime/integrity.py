@@ -266,6 +266,22 @@ def _metric_value(entry_metrics: Any, primary_metric: str) -> Any:
     return float(value)
 
 
+def _is_non_metric_setup_tracker_entry(entry: dict, primary_metric: str) -> bool:
+    if not isinstance(entry, dict):
+        return False
+    try:
+        from ..orchestrator.metrics_utils import is_non_metric_setup_run
+
+        return is_non_metric_setup_run(
+            entry.get("metrics"),
+            primary_metric,
+            exit_code=0,
+            error_type="",
+        )
+    except Exception:
+        return False
+
+
 def _check_tracker_metric_missing(
     tracker_history: list[dict], primary_metric: str
 ) -> list[IntegrityIssue]:
@@ -275,6 +291,8 @@ def _check_tracker_metric_missing(
         if not isinstance(entry, dict):
             continue
         if not entry.get("committed"):
+            continue
+        if _is_non_metric_setup_tracker_entry(entry, primary_metric):
             continue
         value = _metric_value(entry.get("metrics"), primary_metric)
         if value is None:
@@ -407,7 +425,13 @@ def _check_history_length_mismatch(
     tracker_history: list[dict], research_run_history: list[dict]
 ) -> list[IntegrityIssue]:
     """Warning: tracker and research run histories differ in length."""
-    tracker_len = len(tracker_history or [])
+    # Feature extraction setup is intentionally tracked/evidenced separately
+    # from metric-bearing research runs. Ignore legacy setup rows when
+    # comparing tracker and research histories.
+    tracker_len = len([
+        entry for entry in (tracker_history or [])
+        if not _is_non_metric_setup_tracker_entry(entry, "auc")
+    ])
     research_len = len(research_run_history or [])
     if tracker_len == research_len:
         return []

@@ -32,16 +32,43 @@ from sklearn.metrics import (
     f1_score,
 )
 
-# ── Logging ─────────────────────────────────────────────────────
+TEMPLATE_ROOT = Path(__file__).resolve().parent
+if str(TEMPLATE_ROOT) not in sys.path:
+    sys.path.insert(0, str(TEMPLATE_ROOT))
+
+try:
+    from common.aggregators.registry import get_aggregator
+except Exception as exc:
+    get_aggregator = None
+    _AGGREGATOR_IMPORT_ERROR = exc
+else:
+    _AGGREGATOR_IMPORT_ERROR = None
+
+# ── Output / logging ─────────────────────────────────────────────
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/results"))
+
 logger = logging.getLogger("training")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("/results/training.log"),
-    ],
-)
+logger.setLevel(logging.INFO)
+logger.propagate = False
+_LOG_FORMATTER = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+if not logger.handlers:
+    _stream_handler = logging.StreamHandler(sys.stdout)
+    _stream_handler.setFormatter(_LOG_FORMATTER)
+    logger.addHandler(_stream_handler)
+
+
+def ensure_file_logging():
+    """Attach the file logger only when train() runs and OUTPUT_DIR is writable."""
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = OUTPUT_DIR / "training.log"
+    if not any(
+        isinstance(handler, logging.FileHandler)
+        and Path(getattr(handler, "baseFilename", "")) == log_path
+        for handler in logger.handlers
+    ):
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(_LOG_FORMATTER)
+        logger.addHandler(file_handler)
 
 # ── Reproducibility ─────────────────────────────────────────────
 SEED = 42
@@ -52,16 +79,15 @@ if torch.cuda.is_available():
 
 
 # ============================================================================
-# Model — Code Agent can replace this entirely
+# Model — controlled by the pre-execution model-selection contract
 # ============================================================================
 
 class MILAggregator(nn.Module):
     """
-    Gated Attention-Based MIL Aggregator (ABMIL).
+    Fallback Gated Attention-Based MIL Aggregator (ABMIL).
 
-    Based on PathLab's ABMILAggregator (server/backend/ai/aggregators/abmil.py).
-    Code Agent can: change architecture, add layers, use different attention,
-    add regularization, use CLAM/TransMIL/DSMIL, etc.
+    Used only if the copied ``common.aggregators`` registry is unavailable.
+    Normal runs build the pre-selected architecture via PATHSCIENTIST_MIL_MODEL.
     """
 
     def __init__(self, in_dim=1024, num_classes=2, hidden_dim=256, dropout=0.25):
@@ -94,6 +120,39 @@ class MILAggregator(nn.Module):
         logits, _ = self.forward(H)
         loss = criterion(logits, y)
         return loss, logits
+
+
+def normalize_mil_model_name(name):
+    raw = (name or "abmil").strip().lower().replace("-", "_")
+    aliases = {
+        "ab_mil": "abmil",
+        "attention_mil": "abmil",
+        "attention_based_mil": "abmil",
+        "clam": "clam_sb",
+        "dtfd_mil": "dtfdmil",
+        "trans_mil": "transmil",
+    }
+    return aliases.get(raw, raw)
+
+
+def build_mil_model(in_dim, num_classes):
+    """Build the MIL aggregator fixed by PATHSCIENTIST_MIL_MODEL."""
+    mil_model = normalize_mil_model_name(
+        os.getenv("PATHSCIENTIST_MIL_MODEL", "abmil")
+    )
+    if get_aggregator is not None:
+        return get_aggregator(mil_model, in_dim=in_dim, num_classes=num_classes)
+    if mil_model == "abmil":
+        logger.warning(
+            "common.aggregators registry unavailable (%s); using fallback ABMIL",
+            _AGGREGATOR_IMPORT_ERROR,
+        )
+        return MILAggregator(in_dim=in_dim, num_classes=num_classes)
+    raise RuntimeError(
+        "PATHSCIENTIST_MIL_MODEL="
+        f"{mil_model!r} requires common.aggregators registry; "
+        f"import failed: {_AGGREGATOR_IMPORT_ERROR}"
+    )
 
 
 # ============================================================================
@@ -158,6 +217,73 @@ def load_features(wsi_id, features_dir="/data/features", device="cpu"):
     raise FileNotFoundError(f"No features found for {wsi_id} in {features_dir}")
 
 
+def feature_path_for(wsi_id, features_dir="/data/features"):
+    """Return the existing feature tensor path for ``wsi_id``, if any."""
+    feature_root = Path(features_dir)
+    for ext in (".pt", ".pth"):
+        path = feature_root / f"{wsi_id}{ext}"
+        if path.exists():
+            return path
+    return None
+
+
+def filter_ids_with_features(wsi_ids, labels, features_dir="/data/features"):
+    """Filter one split to slides that have both labels and feature tensors."""
+    usable_ids = []
+    missing_feature_ids = []
+    missing_label_ids = []
+    for wsi_id in wsi_ids:
+        if wsi_id not in labels:
+            missing_label_ids.append(wsi_id)
+            continue
+        if feature_path_for(wsi_id, features_dir) is None:
+            missing_feature_ids.append(wsi_id)
+            continue
+        usable_ids.append(wsi_id)
+    return usable_ids, missing_feature_ids, missing_label_ids
+
+
+def prepare_feature_splits(splits, features_dir="/data/features"):
+    """Filter train/val/test once before training and report coverage.
+
+    This prevents silent per-epoch skips when a slide is present in
+    ``splits.json`` but its ``.pt``/``.pth`` tensor was not produced.
+    """
+    raw_labels = {k: int(v) for k, v in splits["labels"].items()}
+    filtered = {}
+    stats = {
+        "raw_counts": {},
+        "usable_counts": {},
+        "missing_feature_counts": {},
+        "missing_label_counts": {},
+        "missing_feature_ids": {},
+        "missing_label_ids": {},
+    }
+
+    for split_name in ("train", "val", "test"):
+        raw_ids = list(splits.get(split_name, []))
+        usable_ids, missing_feature_ids, missing_label_ids = filter_ids_with_features(
+            raw_ids,
+            raw_labels,
+            features_dir,
+        )
+        filtered[split_name] = usable_ids
+        stats["raw_counts"][split_name] = len(raw_ids)
+        stats["usable_counts"][split_name] = len(usable_ids)
+        stats["missing_feature_counts"][split_name] = len(missing_feature_ids)
+        stats["missing_label_counts"][split_name] = len(missing_label_ids)
+        stats["missing_feature_ids"][split_name] = missing_feature_ids
+        stats["missing_label_ids"][split_name] = missing_label_ids
+
+    usable_label_ids = {
+        wsi_id
+        for split_ids in filtered.values()
+        for wsi_id in split_ids
+    }
+    labels = {wsi_id: raw_labels[wsi_id] for wsi_id in usable_label_ids}
+    return filtered, labels, stats
+
+
 # ============================================================================
 # Evaluation (mirrors PathLab's _evaluate_split)
 # ============================================================================
@@ -176,11 +302,8 @@ def evaluate(model, wsi_ids, labels, features_dir, num_classes, criterion, devic
 
     for wsi_id in wsi_ids:
         if wsi_id not in labels:
-            continue
-        try:
-            H = load_features(wsi_id, features_dir, device=device)
-        except FileNotFoundError:
-            continue
+            raise KeyError(f"Missing label for filtered slide {wsi_id}")
+        H = load_features(wsi_id, features_dir, device=device)
 
         y = torch.tensor([labels[wsi_id]], device=device)
         loss, logits = model.run_one_step(H, y, criterion)
@@ -240,17 +363,62 @@ def train():
     - Early stopping on validation AUC (or loss if AUC unavailable)
     - Class weight auto-balancing
     """
+    ensure_file_logging()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     features_dir = os.getenv("FEATURES_DIR", "/data/features")
+    # Plan-2026-04-30 data-readiness review P1-4: also honor SPLITS_FILE so
+    # workspace-generated splits (under .dataset/readiness/splits.json) can
+    # flow through without re-mounting them under /data.
+    splits_file = os.getenv("SPLITS_FILE", "/data/splits.json")
 
-    # Load data
-    splits = load_splits()
-    labels = {k: int(v) for k, v in splits["labels"].items()}
-    train_ids = splits["train"]
-    val_ids = splits["val"]
-    test_ids = splits["test"]
+    # Load data and filter feature coverage once up front. Do not silently
+    # skip missing tensors inside each epoch; that makes metrics ambiguous.
+    splits = load_splits(splits_file)
+    filtered_splits, labels, split_stats = prepare_feature_splits(
+        splits,
+        features_dir,
+    )
+    train_ids = filtered_splits["train"]
+    val_ids = filtered_splits["val"]
+    test_ids = filtered_splits["test"]
 
-    logger.info(f"Data: train={len(train_ids)}, val={len(val_ids)}, test={len(test_ids)}")
+    raw = split_stats["raw_counts"]
+    usable = split_stats["usable_counts"]
+    missing_features = split_stats["missing_feature_counts"]
+    logger.info(
+        "Data raw: train=%d, val=%d, test=%d",
+        raw["train"], raw["val"], raw["test"],
+    )
+    logger.info(
+        "Data usable after feature filtering: train=%d, val=%d, test=%d",
+        usable["train"], usable["val"], usable["test"],
+    )
+    if any(missing_features.values()):
+        logger.warning(
+            "Missing feature tensors skipped before training: train=%d, val=%d, test=%d; examples=%s",
+            missing_features["train"],
+            missing_features["val"],
+            missing_features["test"],
+            {
+                k: v[:10]
+                for k, v in split_stats["missing_feature_ids"].items()
+                if v
+            },
+        )
+    if any(split_stats["missing_label_counts"].values()):
+        logger.warning(
+            "Slides without labels skipped before training: %s",
+            split_stats["missing_label_counts"],
+        )
+    empty_splits = [
+        name for name, ids in filtered_splits.items()
+        if not ids
+    ]
+    if empty_splits:
+        raise RuntimeError(
+            "No usable split after feature filtering: "
+            f"{empty_splits}; features_dir={features_dir}"
+        )
 
     # Determine dimensions
     sample_feat = load_features(train_ids[0], features_dir)
@@ -258,10 +426,14 @@ def train():
     num_classes = len(set(labels.values()))
     logger.info(f"Feature dim={in_dim}, num_classes={num_classes}")
 
-    # Build model
-    model = MILAggregator(in_dim=in_dim, num_classes=num_classes).to(device)
+    # Build model. The orchestrator sets PATHSCIENTIST_MIL_MODEL from
+    # literature-grounded model selection and keeps it fixed across iterations.
+    mil_model_name = normalize_mil_model_name(
+        os.getenv("PATHSCIENTIST_MIL_MODEL", "abmil")
+    )
+    model = build_mil_model(in_dim=in_dim, num_classes=num_classes).to(device)
     params = sum(p.numel() for p in model.parameters())
-    logger.info(f"Model: {params:,} parameters")
+    logger.info(f"MIL model={mil_model_name}; params={params:,}")
 
     # Class weights (PathLab pattern: n_total / (n_classes * count))
     class_weights = None
@@ -305,11 +477,8 @@ def train():
         # MIL training: one WSI per step (matches PathLab's _run_one_epoch)
         for wsi_id in train_ids:
             if wsi_id not in labels:
-                continue
-            try:
-                H = load_features(wsi_id, features_dir, device=device)
-            except FileNotFoundError:
-                continue
+                raise KeyError(f"Missing label for filtered slide {wsi_id}")
+            H = load_features(wsi_id, features_dir, device=device)
 
             y = torch.tensor([labels[wsi_id]], device=device)
 
@@ -352,7 +521,7 @@ def train():
         if is_improvement:
             best_state_dict = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             epochs_without_improvement = 0
-            torch.save(best_state_dict, "/results/best_model.pth")
+            torch.save(best_state_dict, OUTPUT_DIR / "best_model.pth")
             logger.info(f"  → Best model saved (AUC={best_val_auc}, loss={val_metrics['loss']})")
         else:
             epochs_without_improvement += 1
@@ -386,15 +555,17 @@ def train():
             "auto_balance": AUTO_BALANCE,
         },
         "model_params": params,
+        "mil_model": mil_model_name,
         "feature_dim": in_dim,
         "num_classes": num_classes,
+        "data_coverage": split_stats,
     }
 
-    Path("/results").mkdir(parents=True, exist_ok=True)
-    with open("/results/metrics.json", "w") as f:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with open(OUTPUT_DIR / "metrics.json", "w") as f:
         json.dump(results, f, indent=2, default=lambda x: float(x) if isinstance(x, (np.floating,)) else None)
 
-    logger.info("Training complete. Results saved to /results/metrics.json")
+    logger.info("Training complete. Results saved to %s", OUTPUT_DIR / "metrics.json")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 import warnings
 
 os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
@@ -20,12 +21,15 @@ warnings.filterwarnings("ignore", message="Cost calculation failed:.*")
 from .agent import create_agent, create_conversation
 from .cli_commands import handle_command
 from .cli_input import configure_line_editing, expand_file_mentions, parse_bang_command, read_user_input
-from .cli_render import build_status_line
+from .cli_progress import ProgressTicker, ProgressVisualizer
+from .cli_render import build_status_line, format_duration
 from .cli_state import InteractiveCLIState
 from .config import (
+    DEFAULT_LITERATURE_ONLINE_PROVIDERS,
     PathScientistConfig,
     env_truthy,
     load_project_env,
+    parse_provider_list,
     resolve_llm_api_key,
     resolve_llm_base_url,
     resolve_llm_model,
@@ -69,7 +73,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", default="")
     parser.add_argument("--metric", default="auc")
     parser.add_argument("--max-iter", type=int, default=5)
-    parser.add_argument("--timeout", type=int, default=600)
+    parser.add_argument("--timeout", type=int, default=None)
     parser.add_argument("--gpu", default="0")
     parser.add_argument("--model", default="")
     parser.add_argument("--api-key", default="")
@@ -78,21 +82,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--codex-config", default="", help="Path to Codex config.toml for --llm-profile codex-relay")
     parser.add_argument("--codex-auth", default="", help="Path to Codex auth.json for --llm-profile codex-relay")
     parser.add_argument("--data-mount", action="append", default=[])
-    parser.add_argument("--sandbox", choices=["local", "apptainer", "auto"], default="auto")
+    parser.add_argument("--sandbox", choices=["local", "apptainer", "auto"], default=None)
     parser.add_argument("--sandbox-image", default="")
     parser.add_argument("--mode", choices=["research", "code"], default="research")
     parser.add_argument("--resume", default="", help="Resume conversation by UUID")
     parser.add_argument("--manual-approval", action="store_true", help="Pause after grounding and wait for /approve or /reject")
     parser.add_argument("--stop-before-execution", action="store_true", help="Run intake/grounding/acquisition and stop before the code agent executes")
-    parser.add_argument("--literature-online", action="store_true", help="Enable online literature search (OpenAlex)")
-    parser.add_argument("--literature-online-provider", default="openalex", help="Online search provider")
+    parser.add_argument("--literature-online", action="store_true", help="Enable online literature search")
+    parser.add_argument("--literature-online-provider", default="", help="Single online search provider override")
+    parser.add_argument("--literature-online-providers", default="", help="Comma-separated online search providers")
     parser.add_argument("--literature-online-max-results", type=int, default=5, help="Max online search results")
     parser.add_argument("--refresh-sota", action="store_true", help="Bypass cached SOTA lookup results for this session")
     parser.add_argument("--rag", action="store_true", help="Enable literature RAG retrieval")
     parser.add_argument("--rag-corpus-dir", default="", help="Local directory of papers for RAG ingestion")
     parser.add_argument("--rag-top-k", type=int, default=3, help="Number of passages to retrieve")
     parser.add_argument("--auto-acquire-data", action="store_true", help="Enable dataset acquisition before execution")
-    parser.add_argument("--download-policy", choices=["public_only", "manual_only", "disabled"], default=None)
+    parser.add_argument("--download-policy", choices=["public_only", "manual_only", "public_or_manual", "all", "disabled"], default=None)
     parser.add_argument("--max-download-size-gb", type=float, default=None)
     parser.add_argument("--allow-large-downloads", action="store_true")
     parser.add_argument("--dataset-cache-dir", default="")
@@ -114,7 +119,20 @@ def _build_config(args: argparse.Namespace) -> PathScientistConfig:
         gpu_ids=args.gpu.split(","),
         primary_metric=args.metric,
         max_iterations=args.max_iter,
-        execution_timeout=args.timeout,
+        quick_check_timeout=int(
+            os.environ.get("PATHSCIENTIST_QUICK_CHECK_TIMEOUT", "3600")
+        ),
+        execution_timeout=(
+            args.timeout
+            if args.timeout is not None
+            else int(os.environ.get("PATHSCIENTIST_TIMEOUT", "3600"))
+        ),
+        feature_extraction_timeout=int(
+            os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTION_TIMEOUT", "86400")
+        ),
+        feature_extraction_quick_timeout=int(
+            os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTION_QUICK_TIMEOUT", "3600")
+        ),
         llm_model=resolve_llm_model(args.model, default=""),
         llm_api_key=resolve_llm_api_key(args.api_key),
         llm_base_url=resolve_llm_base_url(args.base_url),
@@ -123,12 +141,19 @@ def _build_config(args: argparse.Namespace) -> PathScientistConfig:
         codex_config_path=args.codex_config or os.environ.get("PATHSCIENTIST_CODEX_CONFIG", ""),
         codex_auth_path=args.codex_auth or os.environ.get("PATHSCIENTIST_CODEX_AUTH", ""),
         skill_name=args.skill,
-        sandbox_mode=args.sandbox,
-        sandbox_image=args.sandbox_image,
+        sandbox_mode=args.sandbox or os.environ.get("PATHSCIENTIST_SANDBOX", "auto"),
+        sandbox_image=args.sandbox_image or os.environ.get("PATHSCIENTIST_SANDBOX_IMAGE", ""),
         manual_approval=args.manual_approval or env_truthy("PATHSCIENTIST_MANUAL_APPROVAL"),
         stop_before_execution=args.stop_before_execution or env_truthy("PATHSCIENTIST_STOP_BEFORE_EXECUTION"),
         literature_online_enabled=args.literature_online or env_truthy("PATHSCIENTIST_LITERATURE_ONLINE"),
-        literature_online_provider=args.literature_online_provider,
+        literature_online_provider=args.literature_online_provider or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "openalex"),
+        literature_online_providers=parse_provider_list(
+            args.literature_online_providers
+            or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDERS", "")
+            or args.literature_online_provider
+            or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "")
+            or DEFAULT_LITERATURE_ONLINE_PROVIDERS,
+        ),
         literature_online_max_results=args.literature_online_max_results,
         literature_online_timeout=int(os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_TIMEOUT", "15")),
         refresh_sota=args.refresh_sota or env_truthy("PATHSCIENTIST_REFRESH_SOTA"),
@@ -235,6 +260,31 @@ def main(argv: list[str] | None = None):
         else:
             _handle_code_message(state, config, user_input)
 
+def _start_cli_timer(state: InteractiveCLIState) -> float:
+    start = time.monotonic()
+    if not getattr(state, "session_started_monotonic", 0.0):
+        state.session_started_monotonic = start
+    return start
+
+
+def _finish_cli_timer(state: InteractiveCLIState, start: float, *, label: str = "Elapsed") -> None:
+    elapsed = max(0.0, time.monotonic() - start)
+    state.last_turn_seconds = elapsed
+    print(f"{DIM}{label}: {format_duration(elapsed)}{RESET}")
+
+
+def _bind_progress_ticker(conversation, ticker: ProgressTicker) -> None:
+    """Attach a new ticker to an existing conversation when possible."""
+    if conversation is None:
+        return
+    try:
+        ticker.attach_conversation_state(conversation.state)
+    except Exception:
+        pass
+    visualizer = getattr(conversation, "_visualizer", None)
+    if isinstance(visualizer, ProgressVisualizer):
+        visualizer.set_ticker(ticker)
+
 
 def _handle_research_message(state: InteractiveCLIState, config: PathScientistConfig, message: str):
     """Handle a user message in research mode."""
@@ -261,15 +311,17 @@ def _handle_research_message(state: InteractiveCLIState, config: PathScientistCo
 def _start_research_session(state: InteractiveCLIState, config: PathScientistConfig, message: str):
     """Create and run a new research session, then hydrate CLI state."""
     print(f"{DIM}Starting research session...{RESET}")
+    turn_start = _start_cli_timer(state)
+    ticker = ProgressTicker(state)
+    ticker.start("research")
     try:
-        from openhands.sdk.conversation.visualizer import DefaultConversationVisualizer
         from .orchestrator.runner import run_research_session
         from .runtime.session_registry import get_session
         research_state, session, conversation = run_research_session(
             config,
             message,
             auto_approve=not config.manual_approval,
-            visualizer=DefaultConversationVisualizer,
+            visualizer=ProgressVisualizer(ticker),
         )
         # Hydrate CLI state so /status /metrics /workspace /summary all work
         deps = get_session(session.session_id)
@@ -294,35 +346,47 @@ def _start_research_session(state: InteractiveCLIState, config: PathScientistCon
         print(f"\n{YELLOW}Interrupted.{RESET}")
     except Exception as e:
         print(f"\n{RED}Error: {e}{RESET}")
+    finally:
+        ticker.stop()
+        _finish_cli_timer(state, turn_start)
 
 
 def _handle_code_message(state: InteractiveCLIState, config: PathScientistConfig, message: str):
     """Handle a user message in code mode."""
-    # Init on first message
-    if not state.ready:
-        print(f"{DIM}Initializing agent...{RESET}")
-        from openhands.sdk.conversation.visualizer import DefaultConversationVisualizer
-        agent, workspace, tracker, session = create_agent(config, research_question=message)
-        conversation = create_conversation(agent, workspace, session, visualizer=DefaultConversationVisualizer)
-        state.agent = agent
-        state.workspace = workspace
-        state.tracker = tracker
-        state.session = session
-        state.conversation = conversation
-        print(f"{DIM}Conversation: {session.conversation_id}{RESET}")
-        print(f"{DIM}Workspace: {workspace.root}{RESET}\n")
-
-    # Expand @file references
-    if state.workspace:
-        message = expand_file_mentions(message, state.workspace.root)
-
+    turn_start = _start_cli_timer(state)
+    ticker = ProgressTicker(state)
+    ticker.start("code")
     try:
+        # Init on first message. Count this in the user-visible turn time.
+        if not state.ready:
+            print(f"{DIM}Initializing agent...{RESET}")
+            agent, workspace, tracker, session = create_agent(config, research_question=message)
+            conversation = create_conversation(
+                agent, workspace, session, visualizer=ProgressVisualizer(ticker)
+            )
+            state.agent = agent
+            state.workspace = workspace
+            state.tracker = tracker
+            state.session = session
+            state.conversation = conversation
+            print(f"{DIM}Conversation: {session.conversation_id}{RESET}")
+            print(f"{DIM}Workspace: {workspace.root}{RESET}\n")
+        else:
+            _bind_progress_ticker(state.conversation, ticker)
+
+        # Expand @file references
+        if state.workspace:
+            message = expand_file_mentions(message, state.workspace.root)
+
         state.conversation.send_message(message)
         state.conversation.run()
     except KeyboardInterrupt:
         print(f"\n{YELLOW}Interrupted.{RESET} Send another message or /quit.")
     except Exception as e:
         print(f"\n{RED}Error: {e}{RESET}")
+    finally:
+        ticker.stop()
+        _finish_cli_timer(state, turn_start)
 
     if state.tracker and state.tracker.best_value > 0:
         print(f"\n{DIM}Best {state.tracker.primary_metric}: {state.tracker.best_value:.4f}{RESET}")
@@ -332,10 +396,14 @@ def _handle_search(config: PathScientistConfig, query: str):
     """Search for papers online and display results."""
     try:
         from .literature_search import print_results, save_papers, search_papers
-        print(f"{DIM}Searching OpenAlex for: {query}{RESET}")
+        provider_names = list(getattr(config, "literature_online_providers", []) or [])
+        if not provider_names:
+            provider_names = [config.literature_online_provider]
+        print(f"{DIM}Searching {','.join(provider_names)} for: {query}{RESET}")
         papers = search_papers(
             query,
             provider=config.literature_online_provider,
+            providers=provider_names,
             top_k=config.literature_online_max_results,
             timeout=config.literature_online_timeout,
         )
@@ -368,6 +436,10 @@ def _handle_approved(state: InteractiveCLIState, config: PathScientistConfig):
         print(f"{RED}No active session to approve.{RESET}")
         return
     print(f"{DIM}Approved. Continuing research session...{RESET}")
+    turn_start = _start_cli_timer(state)
+    ticker = ProgressTicker(state)
+    _bind_progress_ticker(state.conversation, ticker)
+    ticker.start("approve")
     try:
         from .orchestrator.runner import continue_research_session
         from .runtime.session_registry import get_session
@@ -394,6 +466,9 @@ def _handle_approved(state: InteractiveCLIState, config: PathScientistConfig):
         print(f"\n{YELLOW}Interrupted.{RESET}")
     except Exception as e:
         print(f"\n{RED}Error: {e}{RESET}")
+    finally:
+        ticker.stop()
+        _finish_cli_timer(state, turn_start)
 
 
 def _handle_rejected(state: InteractiveCLIState, config: PathScientistConfig):
@@ -402,6 +477,10 @@ def _handle_rejected(state: InteractiveCLIState, config: PathScientistConfig):
         print(f"{RED}No active session to reject.{RESET}")
         return
     print(f"{DIM}Rejected. Terminating research session...{RESET}")
+    turn_start = _start_cli_timer(state)
+    ticker = ProgressTicker(state)
+    _bind_progress_ticker(state.conversation, ticker)
+    ticker.start("reject")
     try:
         from .orchestrator.runner import continue_research_session
         from .runtime.session_registry import get_session
@@ -424,6 +503,9 @@ def _handle_rejected(state: InteractiveCLIState, config: PathScientistConfig):
         print(f"\n{YELLOW}Interrupted.{RESET}")
     except Exception as e:
         print(f"\n{RED}Error: {e}{RESET}")
+    finally:
+        ticker.stop()
+        _finish_cli_timer(state, turn_start)
 
 
 def _handle_resume(state: InteractiveCLIState, config: PathScientistConfig, conv_id: str):
@@ -452,8 +534,10 @@ def _handle_list_sessions(config: PathScientistConfig):
         for c in conversations[:10]:
             status = c.get("execution_status", "?")
             conv_id = c.get("conversation_id", "?")
+            duration = c.get("duration", "-")
+            updated = str(c.get("updated_at", "") or "").replace("T", " ")[:16] or "-"
             summary = c.get("research_summary", "")[:60]
-            print(f"  {conv_id[:12]}  {status:10s}  {summary}")
+            print(f"  {conv_id[:12]}  {status:10s}  {duration:>9s}  {updated:16s}  {summary}")
     except Exception as e:
         print(f"{RED}Error listing sessions: {e}{RESET}")
 

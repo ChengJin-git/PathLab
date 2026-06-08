@@ -68,7 +68,13 @@ class SkillBrowserExecutor(ToolExecutor):
 
     def _list_skills(self, registry) -> SkillBrowserObservation:
         skills = registry.list_skills()
-        text = f"Available skills ({len(skills)}):\n\n"
+        try:
+            from ..domain.data_skills import registry as data_skill_registry
+            data_skills = data_skill_registry.list_skills()
+        except Exception:
+            data_skills = []
+        text = f"Available skills ({len(skills) + len(data_skills)}):\n\n"
+        text += "Training skills:\n\n"
         for skill in skills:
             text += (
                 f"  **{skill.name}**\n"
@@ -77,7 +83,19 @@ class SkillBrowserExecutor(ToolExecutor):
                 f"    Primary metric: {skill.primary_metric}\n"
                 f"    Template: {skill.template}\n\n"
             )
-        text += "Use 'view <name>' for details or 'load <name>' to load a template."
+        if data_skills:
+            text += "Data preparation skills:\n\n"
+            for skill in data_skills:
+                text += (
+                    f"  **{skill.name}**\n"
+                    f"    {skill.description.strip()}\n"
+                    f"    Kind: {skill.kind}\n"
+                    f"    Label types: {skill.supported_label_types}\n\n"
+                )
+        text += (
+            "Use 'view <name>' for details or 'load <name>' to load a "
+            "training template. Data preparation skills run automatically."
+        )
         return SkillBrowserObservation(
             content=[TextContent(text=text)],
         )
@@ -85,10 +103,38 @@ class SkillBrowserExecutor(ToolExecutor):
     def _view_skill(self, registry, name: str) -> SkillBrowserObservation:
         try:
             skill = registry.get(name)
-        except KeyError as e:
-            return SkillBrowserObservation.from_text(
-                text=f"Skill not found: {name}. Use 'list' to see available skills.",
-                is_error=True,
+        except KeyError:
+            try:
+                from ..domain.data_skills import registry as data_skill_registry
+                data_skill = data_skill_registry.get(name)
+            except Exception:
+                return SkillBrowserObservation.from_text(
+                    text=f"Skill not found: {name}. Use 'list' to see available skills.",
+                    is_error=True,
+                )
+            text = f"Data preparation skill: {data_skill.name}\n"
+            text += f"Description: {data_skill.description.strip()}\n\n"
+            text += f"Kind: {data_skill.kind}\n"
+            text += f"Supported label types: {data_skill.supported_label_types}\n\n"
+            planned = getattr(data_skill, "planned_label_types", [])
+            if planned:
+                text += f"Planned label types: {planned}\n\n"
+            if data_skill.inputs:
+                text += f"Expected inputs: {json.dumps(data_skill.inputs, indent=2)}\n"
+            if data_skill.outputs:
+                text += f"Expected outputs: {json.dumps(data_skill.outputs, indent=2)}\n"
+            if data_skill.constraints:
+                text += "Constraints:\n"
+                for c in data_skill.constraints:
+                    text += f"  - {c}\n"
+            text += (
+                "\nThis is an orchestrator data-preparation skill. "
+                "It runs during acquisition/readiness and cannot be loaded "
+                "as a code template."
+            )
+            return SkillBrowserObservation(
+                skill_name=name,
+                content=[TextContent(text=text)],
             )
 
         text = f"Skill: {skill.name}\n"
@@ -126,8 +172,20 @@ class SkillBrowserExecutor(ToolExecutor):
         try:
             skill = registry.get(name)
         except KeyError:
+            try:
+                from ..domain.data_skills import registry as data_skill_registry
+                data_skill_registry.get(name)
+            except Exception:
+                return SkillBrowserObservation.from_text(
+                    text=f"Skill not found: {name}. Use 'list' to see available skills.",
+                    is_error=True,
+                )
             return SkillBrowserObservation.from_text(
-                text=f"Skill not found: {name}. Use 'list' to see available skills.",
+                text=(
+                    f"{name} is an orchestrator data-preparation skill, "
+                    "not a code template skill. It runs automatically during "
+                    "acquisition/readiness."
+                ),
                 is_error=True,
             )
 
@@ -137,7 +195,11 @@ class SkillBrowserExecutor(ToolExecutor):
         # FileNotFoundError that propagated up to the OpenHands tool
         # dispatcher and stalled the session (session_a70dd3a564c1).
         try:
-            template = skill.get_template_content()
+            get_template_files = getattr(skill, "get_template_files", None)
+            if callable(get_template_files):
+                template_files = get_template_files()
+            else:
+                template_files = {"train.py": skill.get_template_content()}
         except FileNotFoundError as e:
             return SkillBrowserObservation.from_text(
                 text=(
@@ -155,13 +217,15 @@ class SkillBrowserExecutor(ToolExecutor):
                 ),
                 is_error=True,
             )
-        self._workspace.set_baseline({"train.py": template})
+        self._workspace.set_baseline(template_files)
         self._loaded_skill = skill
 
         constraints = skill.get_constraints_prompt()
+        file_list = ", ".join(sorted(template_files))
+        total_chars = sum(len(text) for text in template_files.values())
         text = (
             f"Loaded skill '{name}' into workspace.\n"
-            f"Template: train.py ({len(template)} chars, {template.count(chr(10))} lines)\n"
+            f"Templates: {file_list} ({total_chars} chars total)\n"
             f"Primary metric: {skill.primary_metric}\n"
         )
         if constraints:

@@ -1,10 +1,14 @@
 name: patch_classification
+coarse_task_type: classification
 description: >
-  Patch-level classification with FROZEN feature extractor + trainable classifier head.
-  Processes individual image patches (not whole slides).
-  Input is a directory of pre-extracted feature vectors (one .pt per patch); features
-  should come from a pathology foundation model (UNI / CONCH / Virchow / ...) via
-  the `feature_extraction` skill. Matches PathLab's PatchClassificationTrainer.
+  Patch-level classification. Task granularity: each sample is one patch and
+  the prediction target is the patch label, not a slide/bag label. The default
+  representation is frozen pathology foundation model embeddings plus a
+  trainable classifier head. Feature extraction is the patch representation
+  step, not a slide-level MIL feature pipeline and not a separate task
+  objective. Input prefers pre-extracted feature vectors (one .pt per patch);
+  raw patch images may be materialized into cached embeddings before training.
+  Matches PathLab's PatchClassificationTrainer.
 
 template: patch_classification_template.py
 
@@ -82,10 +86,12 @@ constraints:
   - "x shape: (batch_size, D) — batch of feature vectors"
   - "Return: logits of shape (batch_size, num_classes)"
   - "Feature extractor is FROZEN — only classifier head is trained"
+  - "Patch-level + feature vectors means one feature vector per patch; do NOT reinterpret this as slide-level MIL or a separate feature-extraction objective."
   - "Use standard DataLoader batching (batch_size > 1)"
   - "Default to features from a pathology foundation model (UNI2/CONCH/Virchow2/H-Optimus-1/GPFM/Phikon2). Do NOT default to ImageNet ResNet50/ViT-L/16 features — they are ablation-only baselines"
   - "Match the classifier input dim to the extractor's feature dim (see dataset.feature_dim_by_extractor)"
   - "Do NOT modify FIXED zones"
+  - "Do NOT generate synthetic/mock/demo/dummy features, labels, or metrics when data is missing; fail with a data-readiness error instead."
   - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
 
 reference_code:

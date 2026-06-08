@@ -22,6 +22,9 @@ Two input shapes are supported:
   2. Raw images: ``DATA_DIR/images/<class>/<patch_id>.{png,jpg,tif}``.
      The template loads ``common.extractors.get_extractor(DEFAULT_EXTRACTOR)``
      and computes features once per patch (frozen extractor, no fine-tune).
+     This remains patch-level classification: feature extraction only converts
+     each patch image into its representation; it is not a separate task
+     objective and not a slide-level MIL pipeline.
 
 The classifier head is a linear probe by default. The Code Agent may swap
 in a small MLP under the ``# MODIFIABLE: model`` block; the contract is
@@ -51,6 +54,7 @@ from torch.utils.data import DataLoader, Dataset
 # ── Configuration ──────────────────────────────────────────────────────────
 DEFAULT_EXTRACTOR = os.getenv("PATHLAB_EXTRACTOR", "uni2")
 EPOCHS = int(os.getenv("PATHLAB_MAX_EPOCHS", "50"))
+EARLY_STOPPING_PATIENCE = int(os.getenv("PATHLAB_EARLY_STOPPING_PATIENCE", "10"))
 BATCH_SIZE = int(os.getenv("PATHLAB_BATCH_SIZE", "64"))
 LR = float(os.getenv("PATHLAB_LR", "1e-4"))
 WEIGHT_DECAY = float(os.getenv("PATHLAB_WD", "1e-5"))
@@ -578,6 +582,8 @@ def main() -> None:
     # 5. Train.
     best_val_auc = -1.0
     best_state: dict[str, Any] | None = None
+    epochs_without_improvement = 0
+    last_epoch_completed = 0
     started = time.time()
     for epoch in range(EPOCHS):
         model.train()
@@ -597,9 +603,20 @@ def main() -> None:
             "epoch %d/%d  loss=%.4f  val_auc=%.4f  val_acc=%.4f",
             epoch + 1, EPOCHS, avg_loss, val_metrics["auc"], val_metrics["accuracy"],
         )
+        last_epoch_completed = epoch + 1
         if val_metrics["auc"] > best_val_auc:
             best_val_auc = val_metrics["auc"]
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+            epochs_without_improvement = 0
+        else:
+            epochs_without_improvement += 1
+            if epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
+                logger.info(
+                    "Early stopping at epoch %d "
+                    "(no val_auc improvement for %d epochs)",
+                    epoch + 1, EARLY_STOPPING_PATIENCE,
+                )
+                break
 
     if best_state is not None:
         model.load_state_dict(best_state)
@@ -614,7 +631,10 @@ def main() -> None:
         "accuracy": test_metrics["accuracy"],
         "f1": test_metrics["f1"],
         "val_auc": best_val_auc,
-        "epochs": EPOCHS,
+        "epochs": last_epoch_completed if last_epoch_completed else EPOCHS,
+        "epochs_max": EPOCHS,
+        "early_stopping_patience": EARLY_STOPPING_PATIENCE,
+        "early_stopped": last_epoch_completed < EPOCHS if last_epoch_completed else False,
         "feature_dim": int(feature_dim or 0),
         "extractor": DEFAULT_EXTRACTOR,
         "n_classes": n_classes,

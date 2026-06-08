@@ -8,6 +8,7 @@ from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
 from .transforms import IMAGENET_MEAN, IMAGENET_STD
 from .dinov2.models import vision_transformer as vits
+from .weight_loading import extract_teacher_backbone_state, load_state_dict_file
 
 logger = logging.getLogger(__name__)
 
@@ -38,15 +39,8 @@ class CytoFMExtractor(BaseExtractor):
         )
         self.backbone = vits.__dict__["vit_large"](**vit_kwargs)
 
-        # Load checkpoint: format is ckpt['teacher'], keys prefixed with 'backbone.'
-        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-        teacher_state = ckpt["teacher"]
-        new_state = {}
-        for k, v in teacher_state.items():
-            if k.startswith("backbone."):
-                new_key = k[len("backbone.") :]
-                new_state[new_key] = v
-        msg = self.backbone.load_state_dict(new_state, strict=True)
+        ckpt = load_state_dict_file(ckpt_path)
+        msg = self.backbone.load_state_dict(extract_teacher_backbone_state(ckpt), strict=True)
         logger.info(f"CytoFM checkpoint loaded: {msg}")
         self.backbone.eval()
 

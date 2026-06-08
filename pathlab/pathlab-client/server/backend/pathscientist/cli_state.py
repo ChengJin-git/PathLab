@@ -16,6 +16,8 @@ class InteractiveCLIState:
     conversation: Any = None
     session: Any = None
     research_state: Any = None
+    session_started_monotonic: float = 0.0
+    last_turn_seconds: float = 0.0
 
     @property
     def ready(self) -> bool:
@@ -44,3 +46,5 @@ class InteractiveCLIState:
         self.conversation = None
         self.session = None
         self.research_state = None
+        self.session_started_monotonic = 0.0
+        self.last_turn_seconds = 0.0

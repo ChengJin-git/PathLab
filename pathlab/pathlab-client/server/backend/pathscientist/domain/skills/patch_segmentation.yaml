@@ -1,4 +1,5 @@
 name: patch_segmentation
+coarse_task_type: segmentation
 description: >
   Patch-level semantic segmentation using UNet-style architectures.
   Input: image + mask pairs. Output: pixel-level predictions.
@@ -62,6 +63,7 @@ constraints:
   - "Use AMP (torch.cuda.amp) for mixed precision training"
   - "Use gradient accumulation if batch_size is large"
   - "Do NOT modify FIXED zones"
+  - "Do NOT generate synthetic/mock/demo/dummy images, masks, labels, or metrics when data is missing; fail with a data-readiness error instead."
 
 reference_code:
   trainer: server/backend/ai/tasks/patch_segmentation/trainer.py

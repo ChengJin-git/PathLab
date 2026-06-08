@@ -21,7 +21,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
+import tempfile
 from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 from pydantic import Field
@@ -88,6 +91,13 @@ def _check_extractor_available(name: str) -> str:
     return ""
 
 
+def _normalize_script_type(script_path: str, script_type: str = "auto") -> str:
+    requested = (script_type or "auto").strip().lower()
+    if requested in {"python", "bash"}:
+        return requested
+    return "bash" if Path(script_path or "").suffix.lower() in {".sh", ".bash"} else "python"
+
+
 class ValidateScriptAction(Action):
     script_content: str = Field(
         default="",
@@ -106,6 +116,14 @@ class ValidateScriptAction(Action):
             "the hash recorded by validate_script is computed from the file "
             "at this path so the handoff to ``run_experiment`` cannot drift."
         ),
+    )
+    script_type: str = Field(
+        default="auto",
+        description="auto, python, or bash. auto infers from script_path suffix.",
+    )
+    script_inputs: list[str] = Field(
+        default_factory=list,
+        description="Additional workspace-relative dependency files to hash with script_path.",
     )
     require_metrics_output: bool = Field(
         default=True,
@@ -219,18 +237,38 @@ class ValidateScriptExecutor(ToolExecutor):
             script_for_checks = ""
 
         # 3. Syntax / entry-point / metrics / safety checks on the source-of-truth.
+        script_type = _normalize_script_type(script_path, action.script_type)
         if script_for_checks:
-            try:
-                compile(script_for_checks, "<validate>", "exec")
-            except SyntaxError as e:
-                errors.append(f"Syntax error at line {e.lineno}: {e.msg}")
+            if script_type == "python":
+                try:
+                    compile(script_for_checks, "<validate>", "exec")
+                except SyntaxError as e:
+                    errors.append(f"Syntax error at line {e.lineno}: {e.msg}")
+            else:
+                with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as fh:
+                    fh.write(script_for_checks)
+                    tmp_name = fh.name
+                try:
+                    proc = subprocess.run(
+                        ["bash", "-n", tmp_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=10,
+                    )
+                    if proc.returncode != 0:
+                        errors.append(f"Bash syntax error: {proc.stderr.strip()}")
+                finally:
+                    Path(tmp_name).unlink(missing_ok=True)
 
-            has_entry = (
-                "def train()" in script_for_checks
-                or "def extract()" in script_for_checks
-                or 'if __name__ == "__main__"' in script_for_checks
-                or "def main()" in script_for_checks
-            )
+            if script_type == "python":
+                has_entry = (
+                    "def train()" in script_for_checks
+                    or "def extract()" in script_for_checks
+                    or 'if __name__ == "__main__"' in script_for_checks
+                    or "def main()" in script_for_checks
+                )
+            else:
+                has_entry = script_for_checks.startswith("#!") or "python " in script_for_checks
             if not has_entry:
                 errors.append(
                     "Missing entry point: need train(), extract(), main(), "
@@ -241,8 +279,15 @@ class ValidateScriptExecutor(ToolExecutor):
                 if "metrics.json" not in script_for_checks:
                     errors.append("Script must save results to metrics.json.")
 
-            from ..runtime.script_safety import ScriptRisk, assess_script_risk
-            risk_level, risk_reasons = assess_script_risk(script_for_checks)
+            from ..runtime.script_safety import (
+                ScriptRisk,
+                assess_bash_script_risk,
+                assess_script_risk,
+            )
+            if script_type == "bash":
+                risk_level, risk_reasons = assess_bash_script_risk(script_for_checks)
+            else:
+                risk_level, risk_reasons = assess_script_risk(script_for_checks)
             if risk_level == ScriptRisk.HIGH:
                 for reason in risk_reasons:
                     errors.append(f"Safety: {reason}")
@@ -275,6 +320,13 @@ class ValidateScriptExecutor(ToolExecutor):
             validated_hash = hashlib.md5(script_for_checks.encode()).hexdigest()[:12]
             iteration_state = self._get_iteration_state()
             if iteration_state is not None:
+                workspace = self._get_workspace()
+                if workspace is not None:
+                    validated_hash = iteration_state.compute_file_hash(
+                        workspace.root,
+                        script_path=script_path,
+                        script_inputs=action.script_inputs,
+                    )
                 iteration_state.mark_validated(validated_hash)
                 # Remember the path too so run_experiment can surface it in
                 # a precise refusal message when the paths diverge.

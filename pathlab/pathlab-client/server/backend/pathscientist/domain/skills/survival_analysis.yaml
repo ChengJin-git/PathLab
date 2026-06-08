@@ -1,4 +1,5 @@
 name: survival_analysis
+coarse_task_type: survival
 description: >
   WSI survival prediction using Multiple Instance Learning.
   Predicts discrete-time hazard logits from patch features,
@@ -68,9 +69,32 @@ constraints:
   - "Do NOT modify FIXED zones"
   - "Survival time binning is done in FIXED code — do not reimplement"
   - "Loss function receives (hazards, time_bin_index, event_status)"
+  - "Do NOT generate synthetic/mock/demo/dummy features, labels, survival times, events, or metrics when data is missing; fail with a data-readiness error instead."
 
 reference_code:
   trainer: server/backend/ai/tasks/wsi_survival/trainer.py
   loss: server/backend/ai/tasks/wsi_survival/losses.py
 
 knowhow_tags: [survival, WSI, MIL, prognosis, c_index, hazard, NLL]
+
+# Plan-2026-04-30 data-readiness Task 9: same upstream contract as MIL
+# classification — feature_extraction is the setup step when only raw
+# WSI + survival labels are available.
+upstream_skill: feature_extraction
+
+readiness_guidance:
+  feature_ready_contract:
+    features_dir: /data/features
+    splits_file: /data/splits.json
+    splits_required_keys: [train, val, test, survival_times, event_status]
+  raw_wsi_contract:
+    wsi_dir: /data/WSIs
+    labels_file: /data/labels.csv
+  policy: >
+    If feature tensors and a survival splits file are already provided, train
+    survival_analysis directly. If only raw WSI and survival labels are
+    provided (slide_id, event_time, event_status), run feature_extraction
+    first via feature_extraction_launcher.sh (script_type=bash,
+    run_kind=feature_extraction); the splits file must include
+    survival_times and event_status keys (this differs from
+    classification's labels-only schema).

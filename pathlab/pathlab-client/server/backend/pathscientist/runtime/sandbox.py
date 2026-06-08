@@ -18,6 +18,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .kaggle_auth import (
+    resolve_kaggle_api_token,
+    resolve_kaggle_config_dir,
+)
+
 logger = logging.getLogger(__name__)
 
 # Apptainer binary — resolved once at import time.
@@ -26,11 +31,23 @@ _APPTAINER_BIN = os.getenv(
     "/cm/local/apps/apptainer/current/bin/apptainer",
 )
 
-# Default .sif image — co-located with auto_research_old
-_DEFAULT_IMAGE = (
-    os.getenv("PATHLAB_SANDBOX_IMAGE")
-    or str(Path(__file__).resolve().parents[2] / "auto_research_old" / "pathlab-sandbox.sif")
-)
+# Default .sif image — co-located with auto_research_old.
+def _resolve_default_image(backend_dir: Path | None = None) -> str:
+    """Resolve the default Apptainer image used when no image is passed."""
+    env_image = os.getenv("PATHSCIENTIST_SANDBOX_IMAGE") or os.getenv("PATHLAB_SANDBOX_IMAGE")
+    if env_image:
+        return env_image
+
+    backend = backend_dir or Path(__file__).resolve().parents[2]
+    image_dir = backend / "auto_research_old"
+    transformers_image = image_dir / "pathlab-sandbox-transformers.sif"
+    if transformers_image.exists():
+        return str(transformers_image)
+    return str(image_dir / "pathlab-sandbox.sif")
+
+
+_DEFAULT_IMAGE = _resolve_default_image()
+_KAGGLE_CONTAINER_CONFIG_DIR = "/kaggle"
 
 # Patterns that signal a fatal error within the first N seconds.
 # Compiled into a single regex so per-line matching is O(1) instead of O(patterns).
@@ -47,6 +64,11 @@ _EARLY_FAIL_PATTERNS = [
 ]
 _EARLY_FAIL_REGEX = re.compile("|".join(re.escape(p) for p in _EARLY_FAIL_PATTERNS))
 _EARLY_FAIL_WINDOW = 30  # seconds
+
+
+def _resolve_kaggle_config_dir() -> Path | None:
+    """Return the host Kaggle config dir to expose to the sandbox, if any."""
+    return resolve_kaggle_config_dir()
 
 
 @dataclass
@@ -98,8 +120,12 @@ class ApptainerSandbox:
         env_vars: dict[str, str] | None = None,
         timeout: float = 600.0,
         data_mounts: dict[str, str] | None = None,
+        script_type: str = "python",
+        session_id: str = "",
+        run_id: str = "",
+        tool_name: str = "run_experiment",
     ) -> SandboxResult:
-        """Execute a Python script inside the container.
+        """Execute a Python or bash script inside the container.
 
         Args:
             script_path: Relative path within workspace_dir (e.g. "train.py").
@@ -112,17 +138,26 @@ class ApptainerSandbox:
                 roots from acquisition land at their declared container
                 locations (e.g. ``prepared_root -> /data``).
         """
+        runner = "bash" if script_type == "bash" else "python"
         cmd = self._build_exec_cmd(workspace_dir, output_dir, data_mounts=data_mounts)
-        cmd.extend([self.image, "bash", "-c", f"cd {workspace_dir} && python {script_path}"])
+        cmd.extend([self.image, "bash", "-lc", f"cd {workspace_dir} && {runner} {script_path}"])
         env = self._build_env(env_vars)
 
         logger.info(
-            f"[sandbox] apptainer exec: {script_path} "
+            f"[sandbox] apptainer exec: {runner} {script_path} "
             f"(gpu={self.gpu_ids}, timeout={timeout:.0f}s)"
         )
 
         start = time.monotonic()
-        exit_code, stdout, early_failed = self._run_with_early_detection(cmd, env, timeout, start)
+        exit_code, stdout, early_failed = self._run_with_early_detection(
+            cmd,
+            env,
+            timeout,
+            start,
+            session_id=session_id,
+            run_id=run_id,
+            tool_name=tool_name,
+        )
         duration = time.monotonic() - start
         timed_out = exit_code == -1 and not early_failed
 
@@ -203,6 +238,19 @@ class ApptainerSandbox:
                 cmd.extend(["--bind", f"{cache_dir}:{cache_dir}:rw"])
                 bound_hosts.add(cache_dir)
 
+        # Kaggle CLI credentials. The sandbox uses --no-home, so ~/.kaggle is
+        # not visible unless we explicitly expose the config dir. Bind the
+        # minimal directory read-only instead of mounting the whole home.
+        kaggle_config_dir = _resolve_kaggle_config_dir()
+        if kaggle_config_dir is not None:
+            host_str = str(kaggle_config_dir)
+            if host_str not in bound_hosts:
+                cmd.extend([
+                    "--bind",
+                    f"{host_str}:{_KAGGLE_CONTAINER_CONFIG_DIR}:ro",
+                ])
+                bound_hosts.add(host_str)
+
         # data_mounts from acquisition / user --data-mount flags. Bound rw so
         # prepared-contract scripts can write feature outputs back into
         # prepared_root if needed. Skip entries whose host path is missing
@@ -247,6 +295,19 @@ class ApptainerSandbox:
                 "HUGGINGFACE_HUB_CACHE", f"{hf_home}/hub"
             )
 
+        # Kaggle credential forwarding for dataset acquisition inside the
+        # sandbox. Do not log these values; only pass them through when set.
+        for key in ("KAGGLE_USERNAME", "KAGGLE_KEY", "KAGGLE_API_TOKEN"):
+            value = os.getenv(key, "")
+            if value:
+                env[f"APPTAINERENV_{key}"] = value
+        kaggle_config_dir = _resolve_kaggle_config_dir()
+        if kaggle_config_dir is not None:
+            env["APPTAINERENV_KAGGLE_CONFIG_DIR"] = _KAGGLE_CONTAINER_CONFIG_DIR
+            token = resolve_kaggle_api_token(kaggle_config_dir / "kaggle.json")
+            if token and "APPTAINERENV_KAGGLE_API_TOKEN" not in env:
+                env["APPTAINERENV_KAGGLE_API_TOKEN"] = token
+
         # Extra variables from caller (e.g. OUTPUT_DIR, PATHLAB_QUICK_CHECK)
         if extra_vars:
             for k, v in extra_vars.items():
@@ -264,6 +325,10 @@ class ApptainerSandbox:
         env: dict[str, str],
         timeout: float,
         start_time: float,
+        *,
+        session_id: str = "",
+        run_id: str = "",
+        tool_name: str = "",
     ) -> tuple[int, str, bool]:
         """Run command, kill early if a fatal pattern appears in the first 30s.
 
@@ -303,6 +368,21 @@ class ApptainerSandbox:
             return -1, f"{e}", False
 
         pgid = os.getpgid(proc.pid)
+        registered_run_id = run_id or f"pid_{proc.pid}"
+        if session_id:
+            try:
+                from .session_registry import register_active_process
+
+                register_active_process(
+                    session_id=session_id,
+                    run_id=registered_run_id,
+                    pid=proc.pid,
+                    pgid=pgid,
+                    tool_name=tool_name,
+                    command=" ".join(cmd),
+                )
+            except Exception as exc:
+                logger.debug("[sandbox] active process registration failed: %s", exc)
 
         def _kill_tree(sig: int) -> None:
             try:
@@ -424,3 +504,13 @@ class ApptainerSandbox:
             except Exception:
                 pass
             return -1, "".join(log_lines) + f"\n[sandbox-error] {type(e).__name__}: {e}", False
+        finally:
+            if session_id:
+                try:
+                    from .session_registry import is_session_cancelled, unregister_active_process
+
+                    unregister_active_process(session_id, registered_run_id)
+                    if is_session_cancelled(session_id) and proc.returncode not in (0, None):
+                        log_lines.append("\n[cancelled] Stopped by user from PathLab.\n")
+                except Exception:
+                    pass

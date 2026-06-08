@@ -8,6 +8,7 @@ from torchvision import transforms
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
 from .transforms import OPENAI_CLIP_MEAN, OPENAI_CLIP_STD
+from .weight_loading import load_state_dict_file
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ def _load_smartcyto_weights(model, checkpoint_path, state_dict_prefix='module.vi
     """
     logger.info(f"Loading SmartCyto checkpoint from: {checkpoint_path}")
 
-    ckpt = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+    ckpt = load_state_dict_file(checkpoint_path)
 
     if 'state_dict' not in ckpt:
         raise ValueError(f"Checkpoint does not contain 'state_dict' key. Found keys: {list(ckpt.keys())}")
@@ -132,4 +133,3 @@ if __name__ == "__main__":
     dummy_input = torch.randn(2, 3, 224, 224)
     output = extractor.forward(dummy_input)
     print(output.shape)
-

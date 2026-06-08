@@ -23,6 +23,7 @@ class Skill:
 
     # Template
     template: str                              # filename in templates/ dir
+    template_files: dict[str, str] = field(default_factory=dict)
     modifiable_zones: list[str] = field(default_factory=lambda: ["model", "loss", "hyperparams"])
 
     # Environment
@@ -54,6 +55,14 @@ class Skill:
     # Task type matching
     task_types: list[str] = field(default_factory=lambda: ["classification"])
 
+    # Plan-2026-05-14 stage3 P2-6: coarse task category — single source of
+    # truth for "is this a classification / segmentation / survival /
+    # feature_extraction skill" used by grounding's retrieval / RAG / SOTA
+    # filters. Per-skill metadata so adding a new skill needs only its
+    # YAML, not edits in grounding.py. Empty default → grounding falls
+    # back to the legacy hardcoded map by skill name.
+    coarse_task_type: str = ""
+
     # Reference code paths (for Code Agent to read real implementations)
     reference_code: dict[str, str] = field(default_factory=dict)
 
@@ -76,6 +85,19 @@ class Skill:
     def get_template_content(self) -> str:
         """Read template source code."""
         return self.get_template_path().read_text(encoding="utf-8")
+
+    def get_template_files(self) -> dict[str, str]:
+        """Return workspace-relative template files for this skill."""
+        templates_dir = Path(__file__).parent.parent / "templates"
+        if self.template_files:
+            out: dict[str, str] = {}
+            for workspace_path, template_name in self.template_files.items():
+                path = templates_dir / template_name
+                if not path.exists():
+                    raise FileNotFoundError(f"Template not found: {path}")
+                out[workspace_path] = path.read_text(encoding="utf-8")
+            return out
+        return {"train.py": self.get_template_content()}
 
     def get_constraints_prompt(self) -> str:
         """Format constraints for injection into LLM prompt."""
@@ -249,6 +271,7 @@ class Skill:
             name=data["name"],
             description=data.get("description", ""),
             template=data["template"],
+            template_files=data.get("template_files", {}) or {},
             modifiable_zones=data.get("modifiable_zones", ["model", "loss", "hyperparams"]),
             extra_packages=env.get("extra_packages", []),
             inputs=data.get("inputs", {}),
@@ -259,6 +282,7 @@ class Skill:
             dataset=data.get("dataset", {}),
             knowhow_tags=data.get("knowhow_tags", []),
             task_types=data.get("task_types", [data.get("task_type", "classification")]),
+            coarse_task_type=data.get("coarse_task_type", "") or "",
             reference_code=data.get("reference_code", {}),
             recommended_feature_extractors=data.get("recommended_feature_extractors", {}) or {},
             extractors_available=data.get("extractors_available", {}) or {},

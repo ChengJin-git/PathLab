@@ -5,6 +5,7 @@ import torch
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
 from .transforms import IMAGENET_MEAN, IMAGENET_STD
+from .weight_loading import load_state_dict_file
 
 
 class mSTARExtractor(BaseExtractor):
@@ -15,7 +16,7 @@ class mSTARExtractor(BaseExtractor):
         self.backbone = timm.create_model(
         "vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, dynamic_img_size=True
     )
-        self.backbone.load_state_dict(torch.load(ckpt_path, map_location="cpu"), strict=True)
+        self.backbone.load_state_dict(load_state_dict_file(ckpt_path), strict=True)
         self.backbone.eval()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

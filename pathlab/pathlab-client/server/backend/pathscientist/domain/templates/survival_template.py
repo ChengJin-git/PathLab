@@ -12,6 +12,9 @@ Forward signature: model(H) -> (hazards, attention)
 """
 
 # === FIXED: Imports & Data Loading ==========================================
+import os
+from pathlib import Path
+
 from common.data_loader import load_survival_data
 from common.metrics import compute_survival_metrics
 from common.utils import save_checkpoint, save_results, set_seed, setup_logging
@@ -21,7 +24,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-logger = setup_logging()
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "output"))
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+logger = setup_logging(str(OUTPUT_DIR / "training.log"))
 set_seed(42)
 
 
@@ -152,7 +158,13 @@ def _assign_time_bins(times: dict, num_bins: int) -> dict:
 
 def train():
     # 1. Load data
-    features, times, events, splits = load_survival_data()
+    # Plan-2026-04-30 data-readiness review P1-4: env-overridable paths so
+    # workspace-generated splits (.dataset/readiness/splits.json) and
+    # alternate feature roots flow through without /data re-mount.
+    import os as _os
+    features_dir = _os.getenv("FEATURES_DIR", "/data/features")
+    splits_file = _os.getenv("SPLITS_FILE", "/data/splits.json")
+    features, times, events, splits = load_survival_data(features_dir, splits_file)
     logger.info(
         f"Data loaded: {len(features)} WSIs, "
         f"train={len(splits['train'])}, val={len(splits['val'])}, test={len(splits['test'])}"
@@ -234,7 +246,7 @@ def train():
         if val_metrics["c_index"] > best_val_metric:
             best_val_metric = val_metrics["c_index"]
             patience_counter = 0
-            save_checkpoint(model, "/results/best_model.pth")
+            save_checkpoint(model, str(OUTPUT_DIR / "best_model.pth"))
         else:
             patience_counter += 1
             if patience_counter >= EARLY_STOPPING_PATIENCE:
@@ -243,7 +255,7 @@ def train():
 
     # 9. Test evaluation
     model.load_state_dict(
-        torch.load("/results/best_model.pth", map_location="cuda", weights_only=True)
+        torch.load(OUTPUT_DIR / "best_model.pth", map_location="cuda", weights_only=True)
     )
     test_metrics = compute_survival_metrics(
         model, features, times, events, splits["test"]
@@ -251,7 +263,7 @@ def train():
     logger.info(f"Test results: c_index={test_metrics['c_index']:.4f}")
 
     # 10. Save results
-    save_results("/results/metrics.json", {
+    save_results(str(OUTPUT_DIR / "metrics.json"), {
         "best_val_c_index": best_val_metric,
         "test": test_metrics,
         "epochs_trained": epoch,
@@ -265,7 +277,7 @@ def train():
             "early_stopping_patience": EARLY_STOPPING_PATIENCE,
         },
     })
-    logger.info("Training complete. Results saved to /results/metrics.json")
+    logger.info("Training complete. Results saved to %s", OUTPUT_DIR / "metrics.json")
 
 
 if __name__ == "__main__":

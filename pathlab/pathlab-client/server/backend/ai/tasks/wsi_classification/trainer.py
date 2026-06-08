@@ -234,14 +234,14 @@ class WSIClassificationTrainer(BaseTrainer):
                         stride=preprocessing_config.get("stride", 512),
                         level=preprocessing_config.get("level", 0),
                         seg_params={
-                            "sthresh": preprocessing_config.get("sthresh", 5),
+                            "sthresh": preprocessing_config.get("sthresh", 8),
                             "mthresh": preprocessing_config.get("mthresh", 7),
                             "close": preprocessing_config.get("close", 4),
-                            "use_otsu": preprocessing_config.get("use_otsu", False),
+                            "use_otsu": preprocessing_config.get("use_otsu", True),
                         },
                         filter_params={
-                            "a_t": preprocessing_config.get("a_t", 100),
-                            "a_h": preprocessing_config.get("a_h", 16),
+                            "a_t": preprocessing_config.get("a_t", 16),
+                            "a_h": preprocessing_config.get("a_h", 4),
                             "max_n_holes": preprocessing_config.get("max_n_holes", 8),
                         },
                         contour_fn=preprocessing_config.get("contour_fn", "four_pt"),

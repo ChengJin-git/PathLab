@@ -1,4 +1,5 @@
 name: feature_extraction
+coarse_task_type: feature_extraction
 description: >
   Extract patch-level features from Whole Slide Images using PathLab's real pipeline:
   1. TissueSegmenter (CLAM-style HSV + Otsu + morphology → tissue contours)
@@ -7,6 +8,10 @@ description: >
   4. Extractor (batch forward pass through pretrained backbone → features.pt)
 
 template: feature_extraction_template.py
+template_files:
+  feature_extraction_launcher.sh: feature_extraction_launcher.sh
+  feature_extraction_worker.py: feature_extraction_worker.py
+  feature_extraction_aggregate.py: feature_extraction_aggregate.py
 
 task_types: [feature_extraction, preprocessing]
 
@@ -48,7 +53,7 @@ dataset:
       output: "features.pt with shape (N_patches, D)"
   structure:
     wsi_files: "{wsi_id}.svs"
-    coordinates: "h5_files/{wsi_id}_coords.h5"
+    coordinates: "patches/{wsi_id}_coords.h5"
     features: "pt_files/{extractor_name}/{wsi_id}.pt"
   supported_formats: [svs, ndpi, tiff, tif, mrxs, scn, bif]
   csv_format:
@@ -60,19 +65,19 @@ dataset:
       slide_002.ndpi,Normal,CASE002
 
 inputs:
-  wsi_dir: /data/wsi
+  wsi_dir: /data/WSIs
   output_dir: /results
 
 outputs:
   features: /results/pt_files/{extractor_name}/{wsi_id}.pt
-  coordinates: /results/h5_files/{wsi_id}_coords.h5
+  coordinates: /results/patches/{wsi_id}_coords.h5
   metadata: /results/extraction_meta.json
   metrics: /results/metrics.json
 
 output_convention: >
   Features are saved following the standard convention:
     {output_dir}/pt_files/{extractor_name}/{wsi_id}.pt
-    {output_dir}/h5_files/{wsi_id}_coords.h5
+    {output_dir}/patches/{wsi_id}_coords.h5
   This allows multiple extractors to coexist under the same output directory.
 
 evaluation:
@@ -82,7 +87,7 @@ evaluation:
 constraints:
   - "Before extraction, check if output already has matching feature and coordinate files for all WSIs — skip entirely if counts match"
   - "Save features to {output_dir}/pt_files/{extractor_name}/{wsi_id}.pt"
-  - "Save coordinates to {output_dir}/h5_files/{wsi_id}_coords.h5"
+  - "Save coordinates to {output_dir}/patches/{wsi_id}_coords.h5"
   - "Feature tensor shape must be (N_patches, D) where D is extractor output_dim"
   - "Must save extraction_meta.json and metrics.json in output_dir"
   - "Must use torch.no_grad() during extraction (frozen encoder, no training)"
@@ -91,8 +96,13 @@ constraints:
   - "Use PathLab's TissueSegmenter for tissue detection (not simple thresholding)"
   - "Use WSITiler for coordinate generation (supports MPP-aware auto-sizing)"
   - "Coordinates saved as HDF5 with preprocessing params in attrs"
+  - "Do NOT generate synthetic/mock/demo/dummy slides, coordinates, features, or metrics when input WSIs are missing; fail with a data-readiness error instead."
   - "Script must have extract() function or if __name__ == '__main__' entry point"
   - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
+  - "For raw WSI feature extraction, use feature_extraction_launcher.sh via run_experiment with script_type=bash and run_kind=feature_extraction."
+  - "Default feature extraction to one Python worker on the first visible GPU; use slide-level sharding only when PATHSCIENTIST_FEATURE_GPUS is explicitly set to all or a GPU list."
+  - "Do not use pgrep or log-tail success detection; use worker status JSON plus process exit codes."
+  - "Use atomic writes for .pt and .h5 artifacts to avoid stale partial caches."
 
 reference_code:
   tissue_segmenter: common/preprocessing/tiling.py
@@ -130,10 +140,10 @@ extractors_available:
     - {name: ResNet50,      dim: 2048, size: 224, origin: "ImageNet"}
     - {name: "ViT-L/16",    dim: 1024, size: 224, origin: "ImageNet"}
 
-default_extractor: UNI2
+default_extractor: Virchow2
 
 extractor_selection_guidance: >
-  By default, pick a pathology_foundation extractor (UNI2 / CONCH / Virchow2 /
+  By default, pick a pathology_foundation extractor (Virchow2 / UNI2 / CONCH /
   H-Optimus-1 / GPFM are strong general-purpose choices). Pathology FMs
   consistently outperform ImageNet backbones on histology tasks.
 

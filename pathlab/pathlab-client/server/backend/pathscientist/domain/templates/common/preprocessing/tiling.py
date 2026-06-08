@@ -107,7 +107,7 @@ class TissueSegmenter:
         sthresh: int = 8,
         mthresh: int = 7,
         close: int = 4,
-        use_otsu: bool = False,
+        use_otsu: bool = True,
         filter_params: Optional[Dict[str, Any]] = None
     ):
         """
@@ -128,10 +128,10 @@ class TissueSegmenter:
         self.close = close
         self.use_otsu = use_otsu
 
-        # Default filter parameters (CLAM defaults)
+        # Default filter parameters (PrePATH/CLAM TCGA preset)
         self.filter_params = filter_params or {
-            'a_t': 100,      # Min tissue area (in 512x512 patches)
-            'a_h': 16,       # Min hole area
+            'a_t': 16,       # Min tissue area (in 512x512 patches)
+            'a_h': 4,        # Min hole area
             'max_n_holes': 8 # Max holes per contour
         }
 
@@ -674,14 +674,14 @@ class WSITiler:
             dset.attrs['seg_level'] = self.segmenter.seg_level
 
             # Save segmentation parameters (always save with defaults for cache consistency)
-            dset.attrs['sthresh'] = seg_params.get('sthresh', 5)
+            dset.attrs['sthresh'] = seg_params.get('sthresh', 8)
             dset.attrs['mthresh'] = seg_params.get('mthresh', 7)
             dset.attrs['close'] = seg_params.get('close', 4)
-            dset.attrs['use_otsu'] = seg_params.get('use_otsu', False)
+            dset.attrs['use_otsu'] = seg_params.get('use_otsu', True)
 
             # Save filter parameters (always save with defaults for cache consistency)
-            dset.attrs['a_t'] = filter_params.get('a_t', 100)
-            dset.attrs['a_h'] = filter_params.get('a_h', 16)
+            dset.attrs['a_t'] = filter_params.get('a_t', 16)
+            dset.attrs['a_h'] = filter_params.get('a_h', 4)
             dset.attrs['max_n_holes'] = filter_params.get('max_n_holes', 8)
 
         # Atomically rename to final path
@@ -787,12 +787,12 @@ def compute_params_hash(
         "contour_fn": contour_fn,
         "use_padding": use_padding,
         "seg_level": seg_level,
-        "sthresh": seg_params.get("sthresh", 5),
+        "sthresh": seg_params.get("sthresh", 8),
         "mthresh": seg_params.get("mthresh", 7),
         "close": seg_params.get("close", 4),
-        "use_otsu": seg_params.get("use_otsu", False),
-        "a_t": filter_params.get("a_t", 100),
-        "a_h": filter_params.get("a_h", 16),
+        "use_otsu": seg_params.get("use_otsu", True),
+        "a_t": filter_params.get("a_t", 16),
+        "a_h": filter_params.get("a_h", 4),
         "max_n_holes": filter_params.get("max_n_holes", 8),
     }
     import json as _json

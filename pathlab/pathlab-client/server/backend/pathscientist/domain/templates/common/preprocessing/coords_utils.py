@@ -210,7 +210,7 @@ def _check_coords_params_match(
         return False
 
     # Check segmentation parameters (always check, use defaults if not provided)
-    requested_sthresh = seg_params.get("sthresh", 5)
+    requested_sthresh = seg_params.get("sthresh", 8)
     if attrs["sthresh"] != requested_sthresh:
         logger.warning(
             f"sthresh mismatch: cached={attrs['sthresh']}, requested={requested_sthresh}"
@@ -231,7 +231,7 @@ def _check_coords_params_match(
         )
         return False
 
-    requested_use_otsu = seg_params.get("use_otsu", False)
+    requested_use_otsu = seg_params.get("use_otsu", True)
     if attrs["use_otsu"] != requested_use_otsu:
         logger.warning(
             f"use_otsu mismatch: cached={attrs['use_otsu']}, requested={requested_use_otsu}"
@@ -239,14 +239,14 @@ def _check_coords_params_match(
         return False
 
     # Check filter parameters (always check, use defaults if not provided)
-    requested_a_t = filter_params.get("a_t", 100)
+    requested_a_t = filter_params.get("a_t", 16)
     if attrs["a_t"] != requested_a_t:
         logger.warning(
             f"a_t mismatch: cached={attrs['a_t']}, requested={requested_a_t}"
         )
         return False
 
-    requested_a_h = filter_params.get("a_h", 16)
+    requested_a_h = filter_params.get("a_h", 4)
     if attrs["a_h"] != requested_a_h:
         logger.warning(
             f"a_h mismatch: cached={attrs['a_h']}, requested={requested_a_h}"

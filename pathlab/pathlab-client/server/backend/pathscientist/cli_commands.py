@@ -2,6 +2,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
+
+from .cli_render import format_duration
+from .cli_progress import (
+    format_download_progress_status,
+    load_download_progress_for_state,
+)
 
 
 @dataclass
@@ -11,7 +18,7 @@ class CommandResult:
     should_exit: bool = False
 
 
-def handle_command(text: str, state) -> CommandResult:
+def handle_command(text: str, state, now_monotonic: float | None = None) -> CommandResult:
     """Dispatch a slash command. Returns CommandResult with handled=False if not a command."""
     if not text.startswith("/"):
         return CommandResult(handled=False)
@@ -27,7 +34,7 @@ def handle_command(text: str, state) -> CommandResult:
         return CommandResult(handled=True, output=_help_text())
 
     if cmd == "/status":
-        return _cmd_status(state)
+        return _cmd_status(state, now_monotonic=now_monotonic)
 
     if cmd == "/mode":
         return _cmd_mode(arg, state)
@@ -90,7 +97,7 @@ def _help_text() -> str:
   /quit       — exit"""
 
 
-def _cmd_status(state) -> CommandResult:
+def _cmd_status(state, now_monotonic: float | None = None) -> CommandResult:
     if not state.ready:
         return CommandResult(True, "No active session. Type a research goal to start.")
     lines = [f"Mode: {state.mode}"]
@@ -98,11 +105,21 @@ def _cmd_status(state) -> CommandResult:
     stage = getattr(rs, "stage", None)
     if stage:
         lines.append(f"Stage: {stage}")
+    started = float(getattr(state, "session_started_monotonic", 0.0) or 0.0)
+    if started:
+        now = time.monotonic() if now_monotonic is None else now_monotonic
+        lines.append(f"Elapsed: {format_duration(now - started)}")
+    last_turn = float(getattr(state, "last_turn_seconds", 0.0) or 0.0)
+    if last_turn:
+        lines.append(f"Last turn: {format_duration(last_turn)}")
     if state.tracker:
         lines.append(f"Best {state.tracker.primary_metric}: {state.tracker.best_value:.4f}")
         lines.append(f"Iterations: {state.tracker.iteration}")
     if state.session:
         lines.append(f"Conversation: {state.session.conversation_id}")
+    download = format_download_progress_status(load_download_progress_for_state(state))
+    if download:
+        lines.append(download)
     # Surface IntegrityGuard outcome when present. Fatal issues indicate a
     # broken pipeline (empty git log, blank run_id, missing evidence, ...)
     # and must be rendered here so users see the problem at a glance rather

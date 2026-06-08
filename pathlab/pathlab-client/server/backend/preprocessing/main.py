@@ -625,14 +625,14 @@ async def compute_patches(
     ),
     mthresh: int = Query(7, description="Median filter kernel size"),
     close: int = Query(4, description="Morphological closing kernel size"),
-    use_otsu: bool = Query(False, description="Use Otsu auto-thresholding"),
+    use_otsu: bool = Query(True, description="Use Otsu auto-thresholding"),
     contour_fn: str = Query(
         "four_pt", description="Contour check function (four_pt, center, basic)"
     ),
     use_padding: bool = Query(True, description="Allow patches at tissue boundary"),
     # Filter parameters
-    a_t: int = Query(100, description="Minimum tissue area (in 512x512 patches)"),
-    a_h: int = Query(16, description="Minimum hole area"),
+    a_t: int = Query(16, description="Minimum tissue area (in 512x512 patches)"),
+    a_h: int = Query(4, description="Minimum hole area"),
     max_n_holes: int = Query(8, description="Maximum number of holes per contour"),
     # Visualization
     save_mask: bool = Query(

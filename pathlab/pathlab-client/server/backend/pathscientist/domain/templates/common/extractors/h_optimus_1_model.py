@@ -3,16 +3,13 @@ import torchvision
 import torch
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
+from .h_optimus_common import build_h_optimus_backbone
 
 
 class H_Optimus_1Extractor(BaseExtractor):
     def __init__(self, hf_token: str = ""):
         super().__init__()
-        ckpt_path = "local-dir:" + get_ckpt_path("H-Optimus-1", hf_token)
-        # load backbone
-        self.backbone = timm.create_model(
-        ckpt_path, pretrained=True, init_values=1e-5, dynamic_img_size=False)
-        self.backbone.eval()
+        self.backbone = build_h_optimus_backbone(get_ckpt_path("H-Optimus-1", hf_token))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         with torch.autocast(device_type=x.device.type, dtype=torch.float16):

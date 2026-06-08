@@ -3,18 +3,31 @@ from torchvision import transforms
 
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
+from .dinov2.models import vision_transformer as vits
 from .transforms import IMAGENET_MEAN, IMAGENET_STD
+from .weight_loading import load_state_dict_file, unwrap_state_dict
+
+
+def _build_openmidnight_backbone():
+    """Build the same local DINOv2 ViT-g/14-reg backbone used by OpenMidnight."""
+    return vits.__dict__["vit_giant2"](
+        img_size=224,
+        patch_size=14,
+        init_values=1.0,
+        ffn_layer="swiglufused",
+        block_chunks=0,
+        num_register_tokens=4,
+        interpolate_antialias=True,
+        interpolate_offset=0.0,
+    )
 
 
 class OpenMidnightExtractor(BaseExtractor):
     def __init__(self, hf_token: str = ""):
         super().__init__()
         self.local_model_dir = get_ckpt_path("OpenMidnight", hf_token)
-        self.backbone = torch.hub.load('facebookresearch/dinov2', 'dinov2_vitg14_reg')
-        # Required because dinov2 is baseline 392 and we are baseline 224 resolution
-        checkpoint = torch.load(self.local_model_dir, map_location="cpu")
-        pos_embed = checkpoint["pos_embed"]
-        self.backbone.pos_embed = torch.nn.parameter.Parameter(pos_embed)
+        self.backbone = _build_openmidnight_backbone()
+        checkpoint = unwrap_state_dict(load_state_dict_file(self.local_model_dir))
         self.backbone.load_state_dict(checkpoint, strict=True)
         self.backbone.eval()
 

@@ -45,6 +45,20 @@ MEDIUM_RISK_PATTERNS = [
     (r"os\.chmod\(", "permission change"),
 ]
 
+BASH_HIGH_RISK_PATTERNS = [
+    (r"\brm\s+-rf\s+(/\S*|\$\{?HOME\}?|~)(\s|$)", "rm -rf broad deletion"),
+    (r"\bsudo\b", "sudo command"),
+    (r"\bcurl\b.*\|\s*bash", "curl pipe to bash"),
+    (r"\bwget\b.*\|\s*bash", "wget pipe to bash"),
+    (r">\s*/etc/", "write to /etc"),
+]
+
+BASH_MEDIUM_RISK_PATTERNS = [
+    (r"\brm\s+-rf\b", "recursive deletion"),
+    (r"\bkill\s+-9\b", "force kill"),
+    (r"\bchmod\s+777\b", "world-writable chmod"),
+]
+
 
 def assess_script_risk(script: str) -> tuple[ScriptRisk, list[str]]:
     """Assess safety risk of an AI-generated training script.
@@ -88,5 +102,30 @@ def assess_script_risk(script: str) -> tuple[ScriptRisk, list[str]]:
 
     if reasons:
         logger.info(f"[script_safety] Risk={risk.name}, reasons={reasons}")
+
+    return risk, reasons
+
+
+def assess_bash_script_risk(script: str) -> tuple[ScriptRisk, list[str]]:
+    """Assess safety risk for bash launchers."""
+    reasons: list[str] = []
+    risk = ScriptRisk.LOW
+    text = script or ""
+
+    for pattern, desc in BASH_HIGH_RISK_PATTERNS:
+        matches = re.findall(pattern, text)
+        if matches:
+            risk = ScriptRisk.HIGH
+            reasons.append(f"HIGH: {desc} ({len(matches)}x)")
+
+    if risk < ScriptRisk.HIGH:
+        for pattern, desc in BASH_MEDIUM_RISK_PATTERNS:
+            matches = re.findall(pattern, text)
+            if matches:
+                risk = max(risk, ScriptRisk.MEDIUM)
+                reasons.append(f"MEDIUM: {desc} ({len(matches)}x)")
+
+    if reasons:
+        logger.info(f"[script_safety:bash] Risk={risk.name}, reasons={reasons}")
 
     return risk, reasons

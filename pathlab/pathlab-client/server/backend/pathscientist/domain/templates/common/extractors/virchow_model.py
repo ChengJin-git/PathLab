@@ -6,6 +6,7 @@ import torch
 
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
+from .weight_loading import load_state_dict_file
 
 
 class VirchowExtractor(BaseExtractor):
@@ -44,9 +45,7 @@ class VirchowExtractor(BaseExtractor):
             act_layer=torch.nn.SiLU,
             **timm_kwargs
         )
-        self.backbone.load_state_dict(
-            torch.load(ckpt_path, map_location="cpu"), strict=True
-        )
+        self.backbone.load_state_dict(load_state_dict_file(ckpt_path), strict=True)
         self.backbone.eval()
         self.preprocess = create_transform(
             **resolve_data_config(pretrained_cfg=pretrained_cfg)

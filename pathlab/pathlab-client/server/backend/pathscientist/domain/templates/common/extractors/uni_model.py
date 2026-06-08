@@ -4,6 +4,7 @@ import torchvision
 import torch
 from .base import BaseExtractor
 from .checkpoint_manager import get_ckpt_path
+from .weight_loading import load_state_dict_file
 
 
 class UNIExtractor(BaseExtractor):
@@ -11,9 +12,9 @@ class UNIExtractor(BaseExtractor):
         super().__init__()
         ckpt_path = get_ckpt_path("UNI", hf_token)
         # load backbone
-        self.backbone = timm.create_model( "vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0, 
+        self.backbone = timm.create_model( "vit_large_patch16_224", img_size=224, patch_size=16, init_values=1e-5, num_classes=0,
                                           dynamic_img_size=True)
-        msg = self.backbone.load_state_dict(torch.load(ckpt_path))
+        msg = self.backbone.load_state_dict(load_state_dict_file(ckpt_path))
         # print("UNIExtractor loaded:", msg)
         self.backbone.eval()
         self.preprocess =  torchvision.transforms.Compose(
@@ -23,12 +24,12 @@ class UNIExtractor(BaseExtractor):
             torchvision.transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ]
     )
-        
-        
+
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
         Extract features from input images.
-        
+
         Args:
             x: Input tensor of shape (B, 3, H, W)
         Returns:
@@ -36,14 +37,14 @@ class UNIExtractor(BaseExtractor):
         """
         feats = self.backbone(x)
         return feats
-    
+
     def get_transforms(self, mode = "eval"):
         return self.preprocess
-    
+
     @property
     def output_dim(self) -> int:
         return 1024
-    
+
     @property
     def default_image_size(self) -> int:
         return 224
@@ -59,4 +60,4 @@ if __name__ == "__main__":
     extractor = UNIExtractor.build(hf_token=token)
     dummy_input = torch.randn(2, 3, 224, 224)
     output = extractor.forward(dummy_input)
-    print(output.shape) 
+    print(output.shape)

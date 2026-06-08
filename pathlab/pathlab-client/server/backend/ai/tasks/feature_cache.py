@@ -228,13 +228,13 @@ def compute_params_hash(
         "use_padding": use_padding,
         # Segmentation parameters (always included with defaults)
         "seg_level": seg_level,
-        "sthresh": seg_params.get("sthresh", 5),
+        "sthresh": seg_params.get("sthresh", 8),
         "mthresh": seg_params.get("mthresh", 7),
         "close": seg_params.get("close", 4),
-        "use_otsu": seg_params.get("use_otsu", False),
+        "use_otsu": seg_params.get("use_otsu", True),
         # Filter parameters (always included with defaults)
-        "a_t": filter_params.get("a_t", 100),
-        "a_h": filter_params.get("a_h", 16),
+        "a_t": filter_params.get("a_t", 16),
+        "a_h": filter_params.get("a_h", 4),
         "max_n_holes": filter_params.get("max_n_holes", 8),
     }
 

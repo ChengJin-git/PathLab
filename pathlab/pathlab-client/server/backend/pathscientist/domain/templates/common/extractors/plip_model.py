@@ -27,7 +27,19 @@ class PLIPExtractor(BaseExtractor):
         """
         inputs = {"pixel_values": x}
         outputs = self.backbone.get_image_features(**inputs)
-        return outputs
+        if torch.is_tensor(outputs):
+            return outputs
+        # Newer transformers builds may return a ModelOutput from this local
+        # PLIP checkpoint; keep the extractor contract as Tensor[(B, 512)].
+        if hasattr(outputs, "image_embeds") and torch.is_tensor(outputs.image_embeds):
+            return outputs.image_embeds
+        if hasattr(outputs, "pooler_output") and torch.is_tensor(outputs.pooler_output):
+            return outputs.pooler_output
+        if isinstance(outputs, (tuple, list)) and outputs and torch.is_tensor(outputs[0]):
+            return outputs[0]
+        raise TypeError(
+            f"PLIP get_image_features returned {type(outputs)!r}, expected a tensor-like output"
+        )
 
     def get_transforms(self, mode="eval"):
         processor = CLIPProcessor.from_pretrained(self.local_model_dir)
@@ -78,4 +90,3 @@ if __name__ == "__main__":
     dummy_input = torch.randn(2, 3, 224, 224)
     output = extractor.forward(dummy_input)
     print(output.shape)
-
