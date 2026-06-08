@@ -62,6 +62,14 @@ _ZENODO_RECORD_RE = re.compile(
     r"https?://(?:www\.)?zenodo\.org/records?/(\d+)(?:/[^?\s]*)?",
     re.IGNORECASE,
 )
+_SCIDB_DETAIL_RE = re.compile(
+    r"https?://(?:www\.|china\.)?scidb\.cn/(?:en/)?detail\?[^\s#]*dataSetId=([A-Za-z0-9]+)[^\s]*",
+    re.IGNORECASE,
+)
+_SCIDB_DOWNLOAD_RE = re.compile(
+    r"https?://(?:www\.|china\.)?scidb\.cn/download\?[^\s#]*fileId=([A-Za-z0-9]+)[^\s]*",
+    re.IGNORECASE,
+)
 # Generic fallback per-provider host (for cases that don't match the
 # structured patterns above).
 _PROVIDER_HOST_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -149,6 +157,82 @@ _DENYLIST = {
     "this data",
     "such data",
     "all data",
+}
+
+_SCIDB_GASTRITIS_DATASET_ID = "83ee1521074742cdaae997cf0b46a7b1"
+_SCIDB_GASTRITIS_URL = (
+    "https://www.scidb.cn/detail?"
+    f"dataSetId={_SCIDB_GASTRITIS_DATASET_ID}"
+)
+_KNOWN_HINT_ALIASES: dict[str, dict[str, Any]] = {
+    "cg-mil": {
+        "name": "CG-MIL",
+        "aliases": [
+            "Comprehensive Assessment of Chronic Gastritis on WSI Data",
+            "SciDB chronic gastritis WSI",
+            f"scidb:{_SCIDB_GASTRITIS_DATASET_ID}",
+            _SCIDB_GASTRITIS_DATASET_ID,
+        ],
+        "provider_hint": ProviderHint(
+            provider="scidb",
+            remote_id=_SCIDB_GASTRITIS_DATASET_ID,
+            url=_SCIDB_GASTRITIS_URL,
+            kind="scidb_dataset",
+            confidence="high",
+        ),
+        "confidence": "high",
+    },
+    "comprehensive assessment of chronic gastritis on wsi data": {
+        "name": "CG-MIL",
+        "aliases": [
+            "Comprehensive Assessment of Chronic Gastritis on WSI Data",
+            "SciDB chronic gastritis WSI",
+            f"scidb:{_SCIDB_GASTRITIS_DATASET_ID}",
+            _SCIDB_GASTRITIS_DATASET_ID,
+        ],
+        "provider_hint": ProviderHint(
+            provider="scidb",
+            remote_id=_SCIDB_GASTRITIS_DATASET_ID,
+            url=_SCIDB_GASTRITIS_URL,
+            kind="scidb_dataset",
+            confidence="high",
+        ),
+        "confidence": "high",
+    },
+    f"scidb:{_SCIDB_GASTRITIS_DATASET_ID}": {
+        "name": "CG-MIL",
+        "aliases": [
+            "Comprehensive Assessment of Chronic Gastritis on WSI Data",
+            "SciDB chronic gastritis WSI",
+            f"scidb:{_SCIDB_GASTRITIS_DATASET_ID}",
+            _SCIDB_GASTRITIS_DATASET_ID,
+        ],
+        "provider_hint": ProviderHint(
+            provider="scidb",
+            remote_id=_SCIDB_GASTRITIS_DATASET_ID,
+            url=_SCIDB_GASTRITIS_URL,
+            kind="scidb_dataset",
+            confidence="high",
+        ),
+        "confidence": "high",
+    },
+    _SCIDB_GASTRITIS_DATASET_ID: {
+        "name": "CG-MIL",
+        "aliases": [
+            "Comprehensive Assessment of Chronic Gastritis on WSI Data",
+            "SciDB chronic gastritis WSI",
+            f"scidb:{_SCIDB_GASTRITIS_DATASET_ID}",
+            _SCIDB_GASTRITIS_DATASET_ID,
+        ],
+        "provider_hint": ProviderHint(
+            provider="scidb",
+            remote_id=_SCIDB_GASTRITIS_DATASET_ID,
+            url=_SCIDB_GASTRITIS_URL,
+            kind="scidb_dataset",
+            confidence="high",
+        ),
+        "confidence": "high",
+    },
 }
 
 
@@ -269,7 +353,29 @@ def _provider_hints_from_text(text: str) -> list[ProviderHint]:
             confidence="low",
         ))
 
-    # 5. Other host-level providers (github / figshare / tcia / unstructured zenodo / hf).
+    # 5. SciDB detail page / file endpoint.
+    for m in _SCIDB_DETAIL_RE.finditer(text):
+        url = m.group(0).rstrip(".,);")
+        dataset_id = m.group(1)
+        _add(ProviderHint(
+            provider="scidb",
+            url=url,
+            remote_id=dataset_id,
+            kind="scidb_dataset",
+            confidence="low",
+        ))
+    for m in _SCIDB_DOWNLOAD_RE.finditer(text):
+        url = m.group(0).rstrip(".,);")
+        file_id = m.group(1)
+        _add(ProviderHint(
+            provider="scidb",
+            url=url,
+            remote_id=file_id,
+            kind="scidb_file",
+            confidence="low",
+        ))
+
+    # 6. Other host-level providers (github / figshare / tcia / unstructured zenodo / hf).
     for provider, pattern in _PROVIDER_HOST_PATTERNS:
         for m in pattern.finditer(text):
             url = m.group(0).rstrip(".,);")
@@ -277,7 +383,7 @@ def _provider_hints_from_text(text: str) -> list[ProviderHint]:
                 continue
             _add(ProviderHint(provider=provider, url=url, confidence="low"))
 
-    # 6. Catch-all: any *file-like* URL not yet consumed becomes direct_http.
+    # 7. Catch-all: any *file-like* URL not yet consumed becomes direct_http.
     for m in _URL_RE.finditer(text):
         url = m.group(0).rstrip(".,);")
         if url in consumed_urls:
@@ -361,6 +467,73 @@ def _get_or_create(
     return rec
 
 
+def _known_hint_config(name: str) -> dict[str, Any] | None:
+    key = (name or "").strip().lower()
+    if not key:
+        return None
+    return _KNOWN_HINT_ALIASES.get(key)
+
+
+def _add_known_dataset_hint_record(
+    by_key: OrderedDict[str, DatasetDiscoveryRecord],
+    *,
+    hint_name: str,
+    profile_fields: dict[str, Any],
+    source: str,
+) -> None:
+    config = _known_hint_config(hint_name)
+    if not config:
+        return
+    name = str(config["name"])
+    rec = _get_or_create(by_key, name, profile_fields)
+    for alias in config.get("aliases", []) or []:
+        alias = str(alias or "").strip()
+        if alias and alias not in rec.aliases:
+            rec.aliases.append(alias)
+    hint = config.get("provider_hint")
+    if isinstance(hint, ProviderHint):
+        exists = any(
+            h.provider == hint.provider
+            and h.remote_id == hint.remote_id
+            and h.url == hint.url
+            for h in rec.provider_hints
+        )
+        if not exists:
+            rec.provider_hints.append(hint)
+    rec.evidence.append(DatasetDiscoveryEvidence(
+        source="dataset_hint",
+        quote=f"{source}:{hint_name}",
+    ))
+    _bump_confidence(rec, str(config.get("confidence") or "medium"))
+
+
+def _candidate_profile_fields(
+    profile_fields: dict[str, Any],
+    name: str,
+    *evidence_texts: str,
+) -> dict[str, Any]:
+    """Copy label semantics only when the candidate text supports them.
+
+    Baselines in grounding can be broad reference results rather than
+    same-dataset evidence. A Gleason prompt must not turn unrelated baselines
+    like TCGA-LUNG into fake Gleason datasets by blindly inheriting
+    ``required_label_keywords`` from the current task profile.
+    """
+    label_keywords = list(profile_fields.get("label_keywords") or [])
+    if not label_keywords:
+        return profile_fields
+
+    text = " ".join([name, *[t or "" for t in evidence_texts]]).lower()
+    if any(kw and kw.lower() in text for kw in label_keywords):
+        return profile_fields
+
+    out = dict(profile_fields)
+    out["organs"] = []
+    out["label_keywords"] = []
+    out["prediction_target"] = ""
+    return out
+
+
 _CONFIDENCE_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 
@@ -388,6 +561,28 @@ def extract_dataset_candidates(
     pf = _profile_fields(profile)
     by_key: OrderedDict[str, DatasetDiscoveryRecord] = OrderedDict()
 
+    # 0. Strong dataset hints already extracted during grounding. This is a
+    # safety net for explicit provider URLs/names in the user prompt when
+    # literature search returns no papers/passages. Known hints carry provider
+    # metadata so they can still enter acquisition even if the cache registry
+    # is stale.
+    inferred_hint = (grounding.get("dataset_hint_inferred") or "").strip()
+    if inferred_hint:
+        _add_known_dataset_hint_record(
+            by_key,
+            hint_name=inferred_hint,
+            profile_fields=pf,
+            source="dataset_hint_inferred",
+        )
+    explicit_hint = (grounding.get("dataset_hint") or "").strip()
+    if explicit_hint:
+        _add_known_dataset_hint_record(
+            by_key,
+            hint_name=explicit_hint,
+            profile_fields=pf,
+            source="dataset_hint",
+        )
+
     # 1. Baselines (structured) — medium confidence.
     for b in grounding.get("baselines", []) or []:
         if not isinstance(b, dict):
@@ -395,7 +590,16 @@ def extract_dataset_candidates(
         name = (b.get("dataset") or "").strip()
         if not name:
             continue
-        rec = _get_or_create(by_key, name, pf)
+        rec = _get_or_create(
+            by_key,
+            name,
+            _candidate_profile_fields(
+                pf,
+                name,
+                b.get("paper_title", "") or "",
+                b.get("context", "") or "",
+            ),
+        )
         rec.evidence.append(DatasetDiscoveryEvidence(
             source="baseline",
             paper_id=_canonical(b.get("paper_id", "")),
@@ -409,7 +613,16 @@ def extract_dataset_candidates(
     if isinstance(sota, dict):
         name = (sota.get("dataset") or "").strip()
         if name:
-            rec = _get_or_create(by_key, name, pf)
+            rec = _get_or_create(
+                by_key,
+                name,
+                _candidate_profile_fields(
+                    pf,
+                    name,
+                    sota.get("paper_title", "") or "",
+                    sota.get("raw_evidence", "") or "",
+                ),
+            )
             rec.evidence.append(DatasetDiscoveryEvidence(
                 source="sota_target",
                 paper_id=_canonical(sota.get("paper_id", "")),
@@ -435,7 +648,11 @@ def extract_dataset_candidates(
             name = ds.strip()
             if not name:
                 continue
-            rec = _get_or_create(by_key, name, pf)
+            rec = _get_or_create(
+                by_key,
+                name,
+                _candidate_profile_fields(pf, name, title),
+            )
             rec.evidence.append(DatasetDiscoveryEvidence(
                 source="paper",
                 paper_id=paper_id,
@@ -452,7 +669,11 @@ def extract_dataset_candidates(
         name = (hint.get("name") or "").strip()
         if not name:
             continue
-        rec = _get_or_create(by_key, name, pf)
+        rec = _get_or_create(
+            by_key,
+            name,
+            _candidate_profile_fields(pf, name, hint.get("reason", "") or ""),
+        )
         rec.evidence.append(DatasetDiscoveryEvidence(
             source="llm_hint",
             quote=hint.get("reason", "") or "",
@@ -488,7 +709,11 @@ def extract_dataset_candidates(
             if key in seen_in_passage:
                 continue
             seen_in_passage.add(key)
-            rec = _get_or_create(by_key, name, pf)
+            rec = _get_or_create(
+                by_key,
+                name,
+                _candidate_profile_fields(pf, name, text),
+            )
             rec.evidence.append(DatasetDiscoveryEvidence(
                 source="passage",
                 paper_id=paper_id,

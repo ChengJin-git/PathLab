@@ -7,15 +7,16 @@ structured LLM response and fails open when the LLM is unavailable or malformed.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Callable
 
 from ..structured_output import extract_json
+from .organ_resolver import OrganResolver
 from .types import TaskProfile
 
 logger = logging.getLogger(__name__)
 
-_ALLOWED_ORGANS = {"prostate", "colorectal", "breast", "lung", "kidney", "uterus"}
 _ALLOWED_CONFIDENCE = {"", "low", "medium", "high"}
 _ALLOWED_TASK_TYPES = {
     "",
@@ -92,6 +93,25 @@ def _confidence(value: Any) -> str:
     return conf if conf in _ALLOWED_CONFIDENCE else ""
 
 
+def _safe_unknown_organ_slug(value: str) -> str:
+    text = _norm_lower(value)
+    if text in {"", "unknown", "unclear", "not specified", "n/a", "na", "none", "null"}:
+        return ""
+    text = re.sub(r"[^a-z0-9]+", "_", text).strip("_")
+    return text[:64]
+
+
+def _normalize_organ(value: Any) -> str:
+    raw = _norm(value)
+    if not raw:
+        return ""
+    resolver = OrganResolver.load_default()
+    match = resolver.normalize(raw, source="llm")
+    if not match.canonical:
+        match = resolver.resolve_text(raw, source="llm")
+    return match.canonical or _safe_unknown_organ_slug(raw)
+
+
 def _clean_keywords(values: Any) -> list[str]:
     if not isinstance(values, list):
         return []
@@ -138,9 +158,7 @@ def parse_llm_task_profile_response(raw: str) -> LLMTaskProfileEnrichment:
     if not isinstance(data, dict):
         return LLMTaskProfileEnrichment()
 
-    organ = _norm_lower(data.get("organ"))
-    if organ not in _ALLOWED_ORGANS:
-        organ = ""
+    organ = _normalize_organ(data.get("organ"))
     task_type = _norm_lower(data.get("task_type"))
     if task_type not in _ALLOWED_TASK_TYPES:
         task_type = ""
@@ -187,6 +205,26 @@ def _merge_keywords(base: list[str], extra: list[str]) -> list[str]:
             out.append(text)
             seen.add(key)
     return out
+
+
+def _dataset_keywords_from_candidates(
+    candidates: list[dict[str, str]],
+    label_keywords: list[str],
+) -> list[str]:
+    keywords: list[str] = []
+    for item in candidates:
+        name = _norm(item.get("name"))
+        if not name:
+            continue
+        keywords.append(name)
+        upper = name.upper()
+        for alias in ("LUAD", "LUSC", "NSCLC"):
+            if alias in upper:
+                keywords.append(alias)
+        if upper in {"TCGA-LUAD", "TCGA-LUSC", "TCGA-LUNG"}:
+            keywords.append("TCGA")
+    keywords.extend(label_keywords)
+    return _merge_keywords([], keywords)
 
 
 def _task_shape_from_enrichment(
@@ -272,6 +310,13 @@ def merge_task_profile_enrichment(
         if not profile.organ:
             updates["organ"] = enrichment.organ
             sources["organ"] = "llm"
+        elif OrganResolver.load_default().organ_matches(profile.organ, [enrichment.organ]):
+            sources["organ"] = "heuristic+llm"
+        else:
+            sources["organ_conflict"] = {
+                "heuristic": profile.organ,
+                "llm": enrichment.organ,
+            }
 
     # Prediction target from deterministic rules is usually stronger. Use LLM
     # when the rule did not infer one, or when it agrees and adds label aliases.
@@ -301,6 +346,16 @@ def merge_task_profile_enrichment(
 
     if enrichment.dataset_hint_candidates:
         sources["dataset_hint_candidates"] = enrichment.dataset_hint_candidates
+        merged_dataset_keywords = _merge_keywords(
+            profile.dataset_keywords,
+            _dataset_keywords_from_candidates(
+                enrichment.dataset_hint_candidates,
+                enrichment.required_label_keywords,
+            ),
+        )
+        if merged_dataset_keywords != profile.dataset_keywords:
+            updates["dataset_keywords"] = merged_dataset_keywords
+            sources["dataset_keywords"] = "heuristic+llm"
 
     if not updates:
         return profile, sources
@@ -311,7 +366,9 @@ def _build_prompt(question: str, heuristic_profile: TaskProfile) -> str:
     return f"""You extract a structured task profile for a computational pathology experiment.
 Use domain knowledge, but do not invent user constraints. Return ONLY JSON.
 
-Allowed organs: prostate, colorectal, breast, lung, kidney, uterus.
+Organ/site: return the most specific human anatomy site as a lowercase canonical term when implied by the task.
+Examples: stomach for gastritis/gastric, prostate for Gleason/ISUP, colorectal for CRC/MSI,
+brain_cns for glioma, liver for HCC, pancreas for PDAC. If uncertain, return "" and explain in reason.
 Allowed task_type values: classification, patch_classification, mil_classification, segmentation, survival_analysis, feature_extraction.
 Allowed asset_level values: patch, slide, region.
 Allowed input_modality values: patch_images, wsi, features, clinical_table, histology.
@@ -319,6 +376,8 @@ Confidence values: high, medium, low.
 
 For implicit domain knowledge, include confidence and reason. Example:
 "Gleason grading" usually means prostate cancer Gleason/ISUP grading.
+For TCGA NSCLC subtype tasks, identify LUAD vs LUSC and include dataset hints
+TCGA-LUAD and TCGA-LUSC; use prediction_target "nsclc_subtype".
 
 Schema:
 {{

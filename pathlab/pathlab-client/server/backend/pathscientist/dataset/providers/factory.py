@@ -15,6 +15,7 @@ from .direct_http import DirectHTTPProvider
 from .gdc import GDCProvider
 from .huggingface import HuggingFaceProvider
 from .kaggle import KaggleProvider
+from .scidb import SciDBProvider
 from .zenodo import ZenodoProvider
 
 
@@ -32,6 +33,7 @@ def build_default_providers() -> dict[str, DatasetProvider]:
         "zenodo": ZenodoProvider(),
         "huggingface": HuggingFaceProvider(),
         "kaggle": KaggleProvider(),
+        "scidb": SciDBProvider(),
         "gdc": gdc,
         "tcia": gdc,
     }

@@ -24,11 +24,14 @@ from .types import DatasetRecord, DownloadSpec
 
 logger = logging.getLogger(__name__)
 
+_TCGA_PROJECT_RE = re.compile(r"\bTCGA-[A-Z0-9]{2,12}\b", re.IGNORECASE)
 
 _PROVIDER_TO_KIND: dict[str, str] = {
     "huggingface": "hf_dataset",
     "zenodo": "zenodo",
     "direct_http": "direct_http",
+    "scidb": "scidb_dataset",
+    "gdc": "manual",
     # Plan-2026-04-30 dataset-provider-repair Task 2: when the hint carries
     # an explicit ``kind`` (e.g. ``kaggle_competition`` / ``kaggle_dataset``)
     # that wins. Falling back to ``"manual"`` means an unparsed kaggle URL
@@ -48,6 +51,17 @@ def _slugify(name: str) -> str:
     return s or "unknown"
 
 
+def _tcga_project_id(discovered: DatasetDiscoveryRecord) -> str:
+    """Return a TCGA project id from discovered name/aliases, if present."""
+    candidates = [discovered.name or ""]
+    candidates.extend(discovered.aliases or [])
+    for text in candidates:
+        m = _TCGA_PROJECT_RE.search(str(text or ""))
+        if m:
+            return m.group(0).upper()
+    return ""
+
+
 def discovery_record_to_dataset_record(
     discovered: DatasetDiscoveryRecord,
 ) -> DatasetRecord:
@@ -58,11 +72,18 @@ def discovery_record_to_dataset_record(
     decide what gets upgraded.
     """
     primary_hint = discovered.provider_hints[0] if discovered.provider_hints else None
+    tcga_project_id = _tcga_project_id(discovered)
     if primary_hint is None:
-        provider = "manual"
-        kind = "manual"
-        remote_id = ""
-        urls: list[str] = []
+        if tcga_project_id:
+            provider = "gdc"
+            kind = "manual"
+            remote_id = tcga_project_id
+            urls = [f"https://portal.gdc.cancer.gov/projects/{tcga_project_id}"]
+        else:
+            provider = "manual"
+            kind = "manual"
+            remote_id = ""
+            urls: list[str] = []
     else:
         provider = primary_hint.provider or "manual"
         # Plan-2026-04-30 dataset-provider-repair Task 2: when the hint

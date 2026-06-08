@@ -12,11 +12,11 @@ interface ExternalDatasetsTableProps {
   loadExternalDatasets: (forceRefresh?: boolean) => Promise<void>
   selectedExternalDatasets: Set<string>
   unbindingDatasets: boolean
-  refreshExternalDatasets: () => Promise<void>
+  refreshExternalDatasets: () => void | Promise<void>
   handleExternalDatasetToggle: (datasetId: string | null) => void
   handleExternalDatasetSelectAll: () => void
-  handleUnbindDataset: (datasetId: string, datasetName: string) => Promise<void>
-  handleUnbindSelectedDatasets: () => Promise<void>
+  handleUnbindDataset: (datasetId: string, datasetName: string) => void | Promise<void>
+  handleUnbindSelectedDatasets: () => void | Promise<void>
   navigate: (path: string) => void
 }
 

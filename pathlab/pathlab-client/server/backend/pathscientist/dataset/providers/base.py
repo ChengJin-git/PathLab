@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from ..types import DatasetRecord
 
@@ -42,7 +42,12 @@ class DatasetProvider(Protocol):
         """
         ...
 
-    def download(self, record: DatasetRecord, target_dir: Path) -> DownloadResult:
+    def download(
+        self,
+        record: DatasetRecord,
+        target_dir: Path,
+        progress: Any | None = None,
+    ) -> DownloadResult:
         """Fetch the dataset bytes into target_dir; return a DownloadResult.
         Must NOT raise on network/auth/policy failures.
         """

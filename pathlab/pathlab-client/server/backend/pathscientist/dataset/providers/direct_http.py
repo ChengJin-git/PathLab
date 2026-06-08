@@ -56,7 +56,7 @@ class DirectHTTPProvider:
             record.tags.append(tag)
         return record
 
-    def download(self, record: DatasetRecord, target_dir: Path) -> DownloadResult:
+    def download(self, record: DatasetRecord, target_dir: Path, progress=None) -> DownloadResult:
         target_dir = Path(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
 
@@ -76,16 +76,39 @@ class DirectHTTPProvider:
 
         files: list[Path] = []
         sess = self._session or requests
-        for url in urls:
+        bytes_total = 0
+        if progress is not None:
+            progress.start(files_total=len(urls), bytes_total=0)
+        for idx, url in enumerate(urls, start=1):
             filename = record.download.filename or Path(urlparse(url).path).name
             dest = target_dir / filename
             try:
                 with sess.get(url, stream=True, timeout=self._timeout) as r:
                     r.raise_for_status()
+                    try:
+                        file_size = int((getattr(r, "headers", {}) or {}).get("content-length") or 0)
+                    except (TypeError, ValueError):
+                        file_size = 0
+                    if file_size:
+                        bytes_total += file_size
+                    if progress is not None:
+                        progress.start(
+                            files_total=len(urls),
+                            bytes_total=bytes_total,
+                        )
+                        progress.start_file(
+                            filename,
+                            file_index=idx,
+                            file_size=file_size,
+                        )
                     with dest.open("wb") as fh:
                         for chunk in r.iter_content(chunk_size=self._chunk):
                             if chunk:
                                 fh.write(chunk)
+                                if progress is not None:
+                                    progress.update_file(len(chunk))
+                    if progress is not None:
+                        progress.finish_file(bytes_written=dest.stat().st_size)
             except Exception as e:
                 logger.warning("DirectHTTP download failed (%s): %s", url, e)
                 return DownloadResult(

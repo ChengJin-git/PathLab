@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 
 from .policy import AcquisitionPolicy, PolicyDecision
 from .registry import DatasetRegistry
+from .organ_resolver import OrganResolver
 from .types import DatasetRecord, TaskProfile
 
 
@@ -82,32 +83,51 @@ class DatasetScout:
         name/dataset_id/tags. A patch_classification + colorectal record
         with no MSI labels is NOT relevant for an MSI prediction task.
         """
+        record_text = (
+            f"{record.name} {record.dataset_id} "
+            f"{' '.join(record.tags)}"
+        ).lower()
+        label_match = any(
+            kw and kw.lower() in record_text
+            for kw in profile.required_label_keywords
+        )
+        keyword_match = any(
+            kw and kw.lower() in record_text
+            for kw in profile.dataset_keywords
+        )
+        organ_match = bool(
+            profile.organ
+            and OrganResolver.load_default().organ_matches(profile.organ, record.organs)
+        )
+        task_match = bool(profile.task_type and profile.task_type in record.task_types)
+        asset_match = bool(
+            profile.input_modality
+            and profile.input_modality.lower() in {a.lower() for a in record.asset_types}
+        )
+
         # Plan-2026-04-29 P1-6: hard label-semantics gate — must run before
         # the lenient task_type/asset checks. If the profile names a
-        # specific prediction target (MSI, HER2, etc.) and the candidate
-        # has no overlap with any required label keyword, refuse the
-        # match outright.
+        # specific prediction target (MSI, HER2, gastritis grading, etc.)
+        # and the candidate has no overlap with any required label keyword,
+        # refuse the match outright.
         if profile.required_label_keywords:
-            text = (
-                f"{record.name} {record.dataset_id} "
-                f"{' '.join(record.tags)}"
-            ).lower()
-            if not any(
-                kw and kw.lower() in text
-                for kw in profile.required_label_keywords
-            ):
+            if not label_match:
                 return False
 
-        # Rule 1: exact task_type match
-        if profile.task_type and profile.task_type in record.task_types:
+        # When the profile carries semantic constraints, task_type alone is
+        # not enough. This prevents a gastric MIL task from selecting a generic
+        # breast/lung MIL cohort just because both are WSI+MIL.
+        if profile.dataset_keywords and not keyword_match:
+            return False
+        if profile.organ and not organ_match and not keyword_match:
+            return False
+
+        # Rule 1: exact task_type match after semantic gates.
+        if task_match:
             return True
         # Rule 2: asset_type match + keyword/hint match
-        if profile.input_modality and profile.input_modality.lower() in {a.lower() for a in record.asset_types}:
-            if profile.dataset_keywords:
-                text = f"{record.name} {record.dataset_id} {' '.join(record.tags)}".lower()
-                for kw in profile.dataset_keywords:
-                    if kw and kw.lower() in text:
-                        return True
+        if asset_match and keyword_match:
+            return True
         return False
 
     def _score(self, record: DatasetRecord, profile: TaskProfile) -> tuple[float, list[str]]:
@@ -116,7 +136,10 @@ class DatasetScout:
         if profile.task_type and profile.task_type in record.task_types:
             score += 5.0
             reasons.append("task_type_match")
-        if profile.organ and any(profile.organ.lower() == o.lower() for o in record.organs):
+        if profile.organ and OrganResolver.load_default().organ_matches(
+            profile.organ,
+            record.organs,
+        ):
             score += 3.0
             reasons.append("organ_match")
         if profile.input_modality:
@@ -125,7 +148,7 @@ class DatasetScout:
                 score += 2.0
                 reasons.append("asset_match")
         # Keyword/tag/name fallback
-        text = f"{record.name} {' '.join(record.tags)}".lower()
+        text = f"{record.name} {record.dataset_id} {' '.join(record.tags)}".lower()
         for kw in profile.dataset_keywords or []:
             if kw and kw.lower() in text:
                 score += 1.0

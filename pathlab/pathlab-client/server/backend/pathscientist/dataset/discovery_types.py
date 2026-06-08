@@ -31,8 +31,8 @@ class DatasetDiscoveryEvidence:
     through ``PaperRegistry``.
 
     ``source`` is one of ``"baseline" | "sota_target" | "paper" |
-    "passage" | "llm_hint"`` — the upstream signal that surfaced this
-    dataset.
+    "passage" | "llm_hint" | "dataset_hint"`` — the upstream signal
+    that surfaced this dataset.
     """
 
     source: str

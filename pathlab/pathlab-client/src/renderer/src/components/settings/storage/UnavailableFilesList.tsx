@@ -10,7 +10,7 @@ interface UnavailableFilesListProps {
   selectedUnavailableFiles: Set<string>
   setSelectedUnavailableFiles: React.Dispatch<React.SetStateAction<Set<string>>>
   deletingUnavailableFiles: boolean
-  handleDeleteUnavailableFiles: () => Promise<void>
+  handleDeleteUnavailableFiles: () => void | Promise<void>
 }
 
 export const UnavailableFilesList: React.FC<UnavailableFilesListProps> = ({

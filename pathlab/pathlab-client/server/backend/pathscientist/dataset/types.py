@@ -95,6 +95,38 @@ class DatasetRecord:
         # asdict already recurses DownloadSpec; nothing special needed.
         return d
 
+    def dir_name(self) -> str:
+        """Filesystem-friendly short folder name for this dataset.
+
+        DC-1 (2026-05-10): the cache layout is dataset-centric — every
+        dataset gets its own ``<cache_root>/<dir_name>/`` containing
+        ``WSIs/``, ``pt_files/``, ``labels.csv``, ``splits.json`` etc.
+
+        Resolution order:
+          1. First whitespace-delimited token of ``self.name`` (e.g.,
+             "PANDA — Prostate ..." → "PANDA"). Single-token canonical
+             names like "NCT-CRC-HE-100K" / "CRC-MSI" pass through.
+          2. Fallback to ``safe_dataset_id(dataset_id)`` when name is
+             empty or yields an unsafe slug.
+
+        The token is stripped of unsafe path characters (``/``, ``..``,
+        whitespace) so a malicious ``record.name`` cannot escape the
+        cache root.
+        """
+        from .downloader import safe_dataset_id
+
+        token = ""
+        if self.name:
+            token = self.name.strip().split()[0] if self.name.strip() else ""
+        # Reject path-traversal tokens.
+        if token in ("", "..", ".") or "/" in token or "\\" in token:
+            token = ""
+        if token:
+            # Drop dots that would make this a hidden / invisible dir
+            # but allow internal dots (e.g., "v1.0" datasets).
+            return token.lstrip(".")
+        return safe_dataset_id(self.dataset_id) if self.dataset_id else "_"
+
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "DatasetRecord":
         return cls(
