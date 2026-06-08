@@ -79,6 +79,109 @@ def _render_prepared_contract(state: ResearchSessionState) -> list[str]:
     return lines
 
 
+def _current_execution_skill(state: ResearchSessionState) -> str:
+    """Plan-2026-04-30 data-readiness Task 7: the skill of the currently
+    active execution-plan step, or ``""`` if no plan is set."""
+    plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
+    steps = plan.get("steps") or []
+    current = int(plan.get("current_step", 0) or 0)
+    if 0 <= current < len(steps):
+        step = steps[current]
+        if isinstance(step, dict):
+            return str(step.get("skill") or "")
+    return ""
+
+
+def _render_execution_plan(state: ResearchSessionState) -> list[str]:
+    """Plan-2026-04-30 data-readiness Task 7: render data_readiness +
+    execution_plan into the brief.
+
+    Format:
+        <blank>
+        Data readiness: <status>
+          - features_dir: ...
+          - missing: features_dir, wsi_dir
+        Execution plan: <status>
+          - Step 1/2: feature_extraction (CURRENT)
+            input wsi_dir: /data/WSIs
+            ...
+          - note: ...
+        Do not run training yet: ... (when needs_acquisition)
+        Do not run training: ... (when blocked)
+    """
+    readiness = state.data_readiness or (state.grounding or {}).get("data_readiness") or {}
+    plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
+    if not plan and not readiness:
+        return []
+
+    lines: list[str] = [""]
+    if readiness:
+        lines.append(f"Data readiness: {readiness.get('status', '?')}")
+        for key in (
+            "data_dir",
+            "features_dir",
+            "images_dir",
+            "splits_file",
+            "wsi_dir",
+            "labels_file",
+        ):
+            value = readiness.get(key)
+            if value:
+                lines.append(f"  - {key}: {value}")
+        missing = readiness.get("missing") or []
+        if missing:
+            lines.append(f"  - missing: {', '.join(missing)}")
+
+    if plan:
+        status = plan.get("status")
+        lines.append(f"Execution plan: {status or '?'}")
+        steps = list(plan.get("steps") or [])
+        current = int(plan.get("current_step", 0) or 0)
+        for idx, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+            marker = "CURRENT" if idx == current else "pending"
+            lines.append(
+                f"  - Step {idx + 1}/{len(steps)}: {step.get('skill', '?')} ({marker})"
+            )
+            for key, value in (step.get("inputs") or {}).items():
+                lines.append(f"    input {key}: {value}")
+            for key, value in (step.get("outputs") or {}).items():
+                lines.append(f"    output {key}: {value}")
+            for inst in step.get("instructions") or []:
+                lines.append(f"    note: {inst}")
+        for note in plan.get("notes") or []:
+            lines.append(f"  - note: {note}")
+        plan_missing = plan.get("missing") or []
+        if plan_missing:
+            lines.append(f"  - plan missing: {', '.join(plan_missing)}")
+        if (
+            status == "ready"
+            and 0 <= current < len(steps)
+            and isinstance(steps[current], dict)
+            and steps[current].get("skill") == "feature_extraction"
+            and any(
+                isinstance(s, dict) and s.get("skill") != "feature_extraction"
+                for s in steps[current + 1:]
+            )
+        ):
+            lines.append(
+                "Do NOT train downstream/MIL in this feature_extraction setup step; "
+                "only extract features to the declared output, then finish the step.",
+            )
+        if status == "needs_acquisition":
+            lines.append(
+                "Do not run training yet: data is missing and acquisition/download "
+                "must run first.",
+            )
+        elif status == "blocked":
+            lines.append(
+                "Do not run training: acquisition is disabled or exhausted; "
+                "supply paths or enable acquisition with a working provider.",
+            )
+    return lines
+
+
 def _select_target_baseline(state: ResearchSessionState, baselines: list[dict]) -> dict | None:
     """Pick a hard target only when the objective matches the baseline dataset."""
     matching = [
@@ -107,16 +210,44 @@ def build_execution_brief(state: ResearchSessionState) -> str:
         f"Iteration budget: {state.max_iterations}",
     ]
 
+    # Plan-2026-04-30 data-readiness Task 7: when an execution plan has a
+    # current step, that step's skill is the source of truth for the load
+    # instruction. For raw-WSI MIL plans the *first* brief must say
+    # ``skill_browser load feature_extraction`` even when ``selected_skill``
+    # is ``mil_classification``.
+    plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
+    execution_suppressed = plan.get("status") == "stopped_after_acquisition"
+    current_skill = "" if execution_suppressed else (_current_execution_skill(state) or skill)
+
     if skill:
         lines.append(f"Selected skill: {skill}")
-        if not state.run_history:
-            # First execution turn — load the skill template to initialize workspace
-            lines.append(f"Load this skill with `skill_browser load {skill}` before writing code.")
-        else:
-            # Later turns — skill already loaded, do NOT reload (it overwrites workspace)
-            lines.append(f"Skill '{skill}' is already loaded. Do NOT call skill_browser load again.")
+        if execution_suppressed:
+            lines.append(
+                "Execution suppressed: acquisition/data preparation is the "
+                "requested terminal boundary. Do NOT load a skill or write "
+                "feature_extraction/training code."
+            )
+        elif current_skill and current_skill != skill:
+            lines.append(f"Current execution step skill: {current_skill}")
+        if not execution_suppressed:
+            load_skill = current_skill or skill
+            if not state.run_history or (current_skill and current_skill != skill):
+                # First execution turn — load the current-step skill.
+                lines.append(f"Load this skill with `skill_browser load {load_skill}` before writing code.")
+            else:
+                lines.append(f"Skill '{skill}' is already loaded. Do NOT call skill_browser load again.")
     else:
         lines.append("No skill pre-selected (free mode). Check available skills first, or write code from scratch.")
+
+    # 2026-05-10 stop-after refactor: surface the stop boundary so the
+    # agent (and any reviewer reading the brief) knows the plan was
+    # deliberately truncated and downstream training is OUT of scope.
+    stop_after_skill = (state.grounding or {}).get("stop_after_skill", "") or ""
+    if stop_after_skill:
+        lines.append(
+            f"Stop after: {stop_after_skill} — user requested no work past "
+            f"this skill. Do NOT proceed to downstream training."
+        )
 
     if state.objective.dataset_hint:
         lines.append(f"Dataset hint: {state.objective.dataset_hint}")
@@ -141,6 +272,29 @@ def build_execution_brief(state: ResearchSessionState) -> str:
             f"Task profile: {profile.get('task_type', '?')} / {profile.get('asset_level', '?')}"
         )
 
+    external_request = (state.grounding or {}).get("external_test_request") or {}
+    if isinstance(external_request, dict) and external_request.get("requested"):
+        source = external_request.get("source") or "unknown"
+        status = external_request.get("status") or ""
+        confidence = external_request.get("confidence") or ""
+        source_label = "LLM" if source == "llm" else source
+        lines.append(
+            f"External validation requested by {source_label} "
+            f"(source={source}, status={status}, confidence={confidence})."
+        )
+        contract = external_request.get("contract") or {}
+        if isinstance(contract, dict) and contract:
+            lines.append(f"External test contract: {contract}")
+        external_data = external_request.get("external_data") or {}
+        if isinstance(external_data, dict) and external_data.get("dataset_name"):
+            lines.append(f"External dataset: {external_data.get('dataset_name')}")
+        missing = external_request.get("missing") or []
+        if missing:
+            lines.append(f"External validation missing inputs: {missing}")
+            lines.append(
+                "Do NOT use internal train/val/test splits as external validation data."
+            )
+
     sota_status = (state.grounding or {}).get("sota_lookup_status", "")
     if sota_status:
         lines.append(f"SOTA lookup: {sota_status}")
@@ -158,16 +312,50 @@ def build_execution_brief(state: ResearchSessionState) -> str:
         if rag_errors:
             lines.append(f"  RAG note: {'; '.join(rag_errors)}")
 
-    online_status = (state.grounding or {}).get("online_literature_status", "")
-    if online_status:
-        provider = (state.grounding or {}).get("online_literature_provider", "")
-        count = (state.grounding or {}).get("online_literature_count", 0)
-        local_count = (state.grounding or {}).get("local_paper_count", 0)
+    # P1 fix (2026-05-01): the legacy `online_literature_*` keys only
+    # describe what THIS session did on the network — they say
+    # ``not_invoked / count=0`` when the cache served the request, hiding
+    # the fact that 6 papers were actually delivered. The
+    # ``network_status.legs.papers`` leg carries the full picture
+    # (state ∈ {ok, cached, error, disabled, not_invoked}, count, provider,
+    # cache_age_sec). Prefer it when present; fall back to the legacy
+    # keys for older states that pre-date network_status.
+    network_status = (state.grounding or {}).get("network_status") or {}
+    papers_leg = (network_status.get("legs") or {}).get("papers") or {}
+    legacy_status = (state.grounding or {}).get("online_literature_status", "")
+
+    use_leg = bool(papers_leg.get("state"))
+    if use_leg or legacy_status:
+        if use_leg:
+            online_status = papers_leg.get("state", "")
+            provider = papers_leg.get("provider", "")
+            count = int(papers_leg.get("count", 0) or 0)
+            cache_age = papers_leg.get("cache_age_sec")
+        else:
+            online_status = legacy_status
+            provider = (state.grounding or {}).get("online_literature_provider", "")
+            count = int(
+                (state.grounding or {}).get("online_literature_count", 0) or 0
+            )
+            cache_age = None
+        local_count = int(
+            (state.grounding or {}).get("local_paper_count", 0) or 0
+        )
         detail = f"provider={provider}" if provider else "provider=none"
         detail += f", online_count={count}, local_count={local_count}"
+        if (
+            isinstance(cache_age, (int, float))
+            and cache_age >= 0
+            and online_status == "cached"
+        ):
+            detail += f", cache_age={int(cache_age)}s"
         lines.append(f"Online literature: {online_status} ({detail})")
-        if (state.grounding or {}).get("online_literature_error"):
-            lines.append(f"  Online literature error: {state.grounding['online_literature_error']}")
+
+        leg_error = papers_leg.get("error") if use_leg else ""
+        legacy_error = (state.grounding or {}).get("online_literature_error", "")
+        error_msg = leg_error or legacy_error
+        if error_msg:
+            lines.append(f"  Online literature error: {error_msg}")
 
     # Dataset acquisition surface (plan 2026-04-25 T7). When acquisition has
     # actually prepared a dataset, the agent needs to see the manifest path
@@ -229,6 +417,9 @@ def build_execution_brief(state: ResearchSessionState) -> str:
             f"({state.acquisition_notes})"
         )
 
+    # Plan-2026-04-30 data-readiness Task 7: render readiness + plan.
+    lines.extend(_render_execution_plan(state))
+
     if state.objective.constraints:
         lines.append("Constraints:")
         for c in state.objective.constraints:
@@ -272,6 +463,11 @@ def build_execution_brief(state: ResearchSessionState) -> str:
             or "medium"
         ).lower()
         hard_target = source_kind in {"pwc", "local_store"}
+        # FT-T5/T6: openalex+fulltext+llm has structural evidence (tables +
+        # section text), so skip the "abstract-level extraction" caveat
+        # below — but still render as advisory until a curated benchmark
+        # path lands.
+        is_fulltext_source = source_kind == "openalex+fulltext+llm"
         label = "Your SOTA target" if hard_target else "Literature reference target"
         verb = "beat" if hard_target else "roughly match"
         lines.append("")
@@ -287,11 +483,38 @@ def build_execution_brief(state: ResearchSessionState) -> str:
                     "  Note: confidence is low — treat this target as a guide, "
                     "not a hard ceiling; the literature value may be noisy."
                 )
+        elif is_fulltext_source:
+            lines.append(
+                "  Note: value extracted from full-text tables / Results "
+                "sections via LLM. Sanity-check the Evidence quotes below."
+            )
         else:
             lines.append(
                 "  Note: this value comes from abstract-level literature extraction; "
                 "treat it as directional guidance, not a strict stopping rule."
             )
+
+        # FT-T6: render structured evidence_chunks when present so a
+        # reviewer can compare each LLM-extracted number against the
+        # literal quote that produced it.
+        evidence_chunks = target_payload.get("evidence_chunks") or []
+        if evidence_chunks:
+            lines.append("  Evidence:")
+            for chunk in evidence_chunks[:5]:
+                if not isinstance(chunk, dict):
+                    continue
+                value = chunk.get("value")
+                section = chunk.get("section") or ""
+                quote = (chunk.get("quote") or "").strip().replace("\n", " ")
+                if len(quote) > 200:
+                    quote = quote[:197] + "..."
+                value_part = (
+                    f"{float(value):.2f} " if isinstance(value, (int, float)) else ""
+                )
+                section_part = f"({section})" if section else ""
+                lines.append(
+                    f"    - {value_part}{section_part}: \"{quote}\""
+                )
 
     # Evidence snippets from RAG retrieval
     passages = state.grounding.get("passages", [])
@@ -331,6 +554,11 @@ def build_execution_brief(state: ResearchSessionState) -> str:
         "You are in the execution stage. Follow the mandatory workflow: "
         "get_workspace_info, think, edit, validate, quick_check, full run, "
         "get_metrics, then commit or revert."
+    )
+    lines.append(
+        "After the first committed full run, keep the data protocol fixed: "
+        "do not change dataset size, split source, train/val/test caps, or "
+        "test set when comparing improvements."
     )
 
     return "\n".join(lines)

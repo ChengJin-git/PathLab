@@ -15,6 +15,19 @@ from .types import ArtifactRef, EvidenceRecord
 logger = logging.getLogger(__name__)
 
 
+_COPY_ARTIFACT_NAMES = {
+    "metrics.json",
+    "training.log",
+    "best_model.pth",
+    "best_model.pt",
+    "model.pth",
+    "model.pt",
+    "checkpoint.pth",
+    "checkpoint.pt",
+}
+_DEFAULT_COPY_MAX_BYTES = 256 * 1024 * 1024
+
+
 @dataclass
 class EvidenceFinalizeResult:
     """Outcome of a single ``EvidenceCollector.finalize()`` call.
@@ -337,7 +350,22 @@ class EvidenceCollector:
             rel = str(file_path.relative_to(self._workspace))
         except ValueError:
             rel = str(file_path)
-        mode = "copy" if prefer_copy and file_path.name == "metrics.json" and size < 10_000 else "manifest"
+        max_copy_bytes = _DEFAULT_COPY_MAX_BYTES
+        try:
+            max_copy_bytes = int(
+                os.environ.get(
+                    "PATHSCIENTIST_EVIDENCE_COPY_MAX_BYTES",
+                    str(_DEFAULT_COPY_MAX_BYTES),
+                )
+            )
+        except (TypeError, ValueError):
+            max_copy_bytes = _DEFAULT_COPY_MAX_BYTES
+        should_copy = (
+            prefer_copy
+            and file_path.name in _COPY_ARTIFACT_NAMES
+            and size <= max(0, max_copy_bytes)
+        )
+        mode = "copy" if should_copy else "manifest"
         return ArtifactRef(
             name=file_path.name,
             path=rel,

@@ -3,17 +3,24 @@
 Order of resolution:
   1. Cache — return immediately on hit.
   2. PapersWithCodeClient — preferred structured leaderboard, human-curated.
-  3. LiteratureStore — local seed baselines, curated offline fallback.
-  4. OnlineLiteratureClient + BenchmarkExtractor — OpenAlex abstracts + LLM.
-  5. Give up, cache the negative result briefly.
+  3. FulltextFetcher + BenchmarkExtractor.extract_from_chunks — OA HTML
+     full-text + tables-as-markdown + LLM. (FT-T5 of the 2026-05-01 plan.)
+     This sits ABOVE the abstract-only path because tables and Results
+     sections are far more reliable for pathology benchmarks than the
+     OpenAlex inverted-index abstract.
+  4. LiteratureStore — local seed baselines, curated offline fallback.
+  5. OnlineLiteratureClient + BenchmarkExtractor — OpenAlex abstracts + LLM
+     (legacy path; some papers do put numbers in the abstract).
+  6. Give up, cache the negative result briefly.
 
-When ``offline=True`` we skip PwC and OpenAlex+LLM (both require network) and
-fall back to cache + local_store only. local_store is always tried because it
-is offline-safe.
+When ``offline=True`` we skip every network leg (PwC / fulltext / OpenAlex)
+and fall back to cache + local_store only. local_store is always tried
+because it is offline-safe.
 
-The highest metric value across sources wins. Every resolution path returns
-a SotaTarget with provenance (source, paper_id, evidence) so downstream
-consumers can cite it without paraphrasing.
+The highest metric value within a leg wins; the first non-None leg
+returns. Every resolution path returns a SotaTarget with provenance
+(source, paper_id, evidence, evidence_chunks) so downstream consumers
+can cite it without paraphrasing.
 """
 from __future__ import annotations
 
@@ -68,6 +75,7 @@ class SotaLookup:
         offline: bool = False,
         refresh: bool = False,
         policy=None,  # NetworkPolicy | None — avoid import-time circular
+        fulltext_fetcher=None,  # FT-T5: optional fulltext+LLM fallback step
     ):
         # Plan-2026-04-29 literature-acquisition Phase 1 / Task 5:
         # ``policy`` is the new contract; ``offline`` and ``refresh`` are
@@ -85,6 +93,7 @@ class SotaLookup:
         self._pwc = pwc_client
         self._online = online_client
         self._extractor = llm_extractor
+        self._fulltext_fetcher = fulltext_fetcher
         self._policy = policy
         self.last_status = "not_started"
         self.last_network_status = NetworkLegStatus(leg="sota", state="not_invoked")
@@ -185,7 +194,25 @@ class SotaLookup:
             if pwc_err:
                 terminal_error = pwc_err
 
-        # 2. local store — curated offline fallback (always available).
+        # 2. Fulltext + LLM (FT-T5) — network-gated; only attempts when a
+        # FulltextFetcher is wired AND online_client is available to
+        # surface candidate papers. Sits ABOVE local_store because OA
+        # fulltext is more authoritative than seed baselines for the
+        # long-tail pathology benchmarks PwC doesn't track.
+        if allow_sota_network:
+            ft, ft_err = self._from_fulltext_llm(dataset, task_type, metric)
+            if ft is not None:
+                self.last_status = "fulltext_llm_hit"
+                self.last_network_status = NetworkLegStatus(
+                    leg="sota", state="ok",
+                    provider="openalex+fulltext+llm", count=1,
+                )
+                self._cache.put(dataset, task_type, metric, ft)
+                return ft
+            if ft_err and not terminal_error:
+                terminal_error = ft_err
+
+        # 3. local store — curated offline fallback (always available).
         local = self._from_local_store(dataset, task_type, metric)
         if local is not None:
             self.last_status = "local_store_hit"
@@ -249,6 +276,36 @@ class SotaLookup:
     def _from_local_store(
         self, dataset: str, task_type: str, metric: str,
     ) -> SotaTarget | None:
+        get_benchmarks = getattr(self._store, "get_benchmarks", None)
+        if callable(get_benchmarks):
+            try:
+                rows = get_benchmarks(
+                    dataset=dataset,
+                    task_type=task_type,
+                    metric_name=metric,
+                    verified_only=True,
+                )
+            except Exception as e:
+                logger.warning("local benchmark store lookup failed: %s", e)
+                return None
+            if not rows:
+                return None
+            best = max(rows, key=lambda b: b.metric_value)
+            evidence = getattr(best, "evidence", {}) or {}
+            return SotaTarget(
+                dataset=dataset, task_type=task_type, metric_name=metric,
+                metric_value=float(best.metric_value),
+                paper_id=best.paper_id or "",
+                paper_title=getattr(best, "paper_title", "") or "",
+                paper_url="",
+                source="local_benchmark_store",
+                confidence=getattr(best, "confidence", "") or "medium",
+                retrieved_at=_now_iso(),
+                raw_evidence=str(
+                    evidence.get("quote", "") or evidence.get("context", "") or ""
+                ),
+            )
+
         try:
             baselines = self._store.get_baselines(
                 dataset=dataset, task_type=task_type,
@@ -310,6 +367,109 @@ class SotaLookup:
             confidence=best.confidence or "high",
             retrieved_at=_now_iso(),
             raw_evidence=best.evidence,
+        ), None
+
+    def _from_fulltext_llm(
+        self, dataset: str, task_type: str, metric: str,
+    ) -> tuple[SotaTarget | None, str | None]:
+        """FT-T5: search OpenAlex for candidate papers, fetch HTML
+        full-text for each that exposes an OA URL, feed all chunks to
+        ``BenchmarkExtractor.extract_from_chunks``.
+
+        Returns ``(target, error_status)``: clean miss is ``(None, None)``;
+        a network/extractor exception sets ``error_status`` so the
+        outer ``lookup`` can record it on ``last_network_status``.
+
+        Sits ABOVE local_store because OA full-text + tables is the
+        most authoritative source for pathology benchmarks PwC doesn't
+        track. Falls through (returns None) when any prerequisite is
+        missing — fetcher None, online None, extractor None — so existing
+        callers that don't wire fulltext continue to work.
+        """
+        if (
+            self._fulltext_fetcher is None
+            or self._extractor is None
+            or self._online is None
+        ):
+            return None, None
+        if not hasattr(self._extractor, "extract_from_chunks"):
+            return None, None
+
+        query = f"{dataset} {metric} {task_type}"
+        try:
+            papers = self._online.search(
+                query=query, top_k=5, task_type=task_type,
+            )
+        except Exception as e:
+            logger.warning("OpenAlex search (fulltext path) failed: %s", e)
+            return None, "openalex_error"
+        if not papers:
+            return None, None
+
+        all_chunks: list = []
+        for paper in papers:
+            url = (paper.url or "").strip()
+            if not url:
+                continue
+            canonical = (
+                getattr(paper, "canonical_id", "") or paper.paper_id
+            )
+            try:
+                doc = self._fulltext_fetcher.fetch(canonical, url)
+            except Exception as e:
+                logger.warning(
+                    "FulltextFetcher.fetch failed for %s: %s",
+                    canonical, e,
+                )
+                continue
+            if doc.success and doc.chunks:
+                all_chunks.extend(doc.chunks)
+
+        if not all_chunks:
+            return None, None
+
+        try:
+            benchmarks = self._extractor.extract_from_chunks(
+                all_chunks, dataset=dataset, metric=metric,
+                task_type=task_type,
+            )
+        except Exception as e:
+            logger.warning(
+                "BenchmarkExtractor.extract_from_chunks failed: %s", e,
+            )
+            return None, "llm_extractor_error"
+        benchmarks = [b for b in benchmarks if b.metric_value > 0]
+        if not benchmarks:
+            return None, None
+
+        best = max(benchmarks, key=lambda b: b.metric_value)
+        title = ""
+        url = ""
+        for p in papers:
+            canonical = getattr(p, "canonical_id", "") or p.paper_id
+            if canonical == best.paper_id or p.paper_id == best.paper_id:
+                title = p.title
+                url = p.url
+                break
+
+        evidence_chunks = [
+            {
+                "paper_id": b.paper_id,
+                "section": getattr(b, "source_section", "") or "",
+                "quote": b.evidence,
+                "value": b.metric_value,
+            }
+            for b in benchmarks
+        ]
+        return SotaTarget(
+            dataset=dataset, task_type=task_type,
+            metric_name=metric, metric_value=best.metric_value,
+            paper_id=best.paper_id, paper_title=title, paper_url=url,
+            source="openalex+fulltext+llm",
+            confidence=best.confidence or "medium",
+            retrieved_at=_now_iso(),
+            raw_evidence=best.evidence,
+            evidence_chunks=evidence_chunks,
         ), None
 
     def _from_openalex_llm(

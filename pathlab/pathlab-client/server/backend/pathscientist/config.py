@@ -2,8 +2,13 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
+
+
+DEFAULT_LITERATURE_ONLINE_PROVIDERS = "openalex,europepmc,semantic_scholar,pubmed"
 
 
 def _default_project_env_path() -> Path:
@@ -64,6 +69,30 @@ def env_truthy(name: str) -> bool:
     return os.environ.get(name, "").lower() in ("1", "true", "yes")
 
 
+def parse_json_object(value: str) -> dict[str, str]:
+    """Parse an env JSON object into a string-keyed dict, failing soft."""
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(k): str(v) for k, v in parsed.items() if v is not None}
+
+
+def parse_provider_list(value: str, *, fallback: str = "openalex") -> list[str]:
+    """Parse comma/space separated provider names with stable de-dup."""
+    raw = value or fallback
+    providers: list[str] = []
+    for item in raw.replace(";", ",").replace(" ", ",").split(","):
+        provider = item.strip().lower().replace("-", "_")
+        if provider and provider not in providers:
+            providers.append(provider)
+    return providers or [fallback]
+
+
 def resolve_llm_model(explicit: str = "", default: str = "") -> str:
     """Resolve the model from explicit config, app env, then generic env."""
     return _first_non_empty(
@@ -118,8 +147,26 @@ class PathScientistConfig:
     # Experiment
     primary_metric: str = "auc"
     max_iterations: int = 5
-    quick_check_timeout: int = 120
-    execution_timeout: int = 600
+    quick_check_timeout: int = 3600
+    execution_timeout: int = 3600
+    feature_extraction_timeout: int = 86400
+    feature_extraction_quick_timeout: int = 3600
+
+    # 2026-05-10 P0-2 fix: orchestrator-chosen stable path for
+    # feature_extraction outputs. Set by the runner from
+    # ``execution_plan.steps[feature_extraction].inputs.data_output_dir``
+    # before the agent fires. RunExperimentTool reads this when the
+    # script looks like feature_extraction so features land at a
+    # workspace-stable path (``.dataset/generated_features``) instead
+    # of the per-run ``output/runs/<run_id>/`` directory that gets
+    # purged when the session ends. Empty for non-feature_extraction
+    # plans (training stays per-run).
+    planned_data_output_dir: str = ""
+    planned_feature_wsi_dir: str = ""
+    planned_feature_extractor: str = ""
+    planned_mil_model: str = ""
+    external_test_enabled: bool = False
+    external_test_contract: dict[str, Any] = field(default_factory=dict)
 
     # LLM
     llm_model: str = ""
@@ -153,6 +200,9 @@ class PathScientistConfig:
     # Online literature search
     literature_online_enabled: bool = False
     literature_online_provider: str = "openalex"
+    literature_online_providers: list[str] = field(
+        default_factory=lambda: parse_provider_list(DEFAULT_LITERATURE_ONLINE_PROVIDERS)
+    )
     literature_online_max_results: int = 5
     literature_online_timeout: int = 15
     refresh_sota: bool = False
@@ -163,13 +213,24 @@ class PathScientistConfig:
 
     # Dataset acquisition
     auto_acquire_data: bool = False
-    download_policy: str = "public_only"  # "public_only" | "manual_only" | "disabled"
+    download_policy: str = "public_only"  # "public_only" | "manual_only" | "public_or_manual" | "all" | "disabled"
     max_download_size_gb: float = 20.0
     allow_large_downloads: bool = False
     dataset_cache_dir: str = ""
 
     # Logging
     log_dir: str = ""
+
+    def __post_init__(self) -> None:
+        default_providers = parse_provider_list(DEFAULT_LITERATURE_ONLINE_PROVIDERS)
+        if self.literature_online_provider and self.literature_online_providers == ["openalex"]:
+            self.literature_online_providers = parse_provider_list(self.literature_online_provider)
+        elif (
+            self.literature_online_provider
+            and self.literature_online_provider != "openalex"
+            and self.literature_online_providers == default_providers
+        ):
+            self.literature_online_providers = parse_provider_list(self.literature_online_provider)
 
     @classmethod
     def from_env(cls) -> PathScientistConfig:
@@ -181,7 +242,20 @@ class PathScientistConfig:
             gpu_ids=os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(","),
             primary_metric=os.environ.get("PATHSCIENTIST_METRIC", "auc"),
             max_iterations=int(os.environ.get("PATHSCIENTIST_MAX_ITER", "5")),
-            execution_timeout=int(os.environ.get("PATHSCIENTIST_TIMEOUT", "600")),
+            quick_check_timeout=int(
+                os.environ.get("PATHSCIENTIST_QUICK_CHECK_TIMEOUT", "3600")
+            ),
+            execution_timeout=int(os.environ.get("PATHSCIENTIST_TIMEOUT", "3600")),
+            feature_extraction_timeout=int(
+                os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTION_TIMEOUT", "86400")
+            ),
+            feature_extraction_quick_timeout=int(
+                os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTION_QUICK_TIMEOUT", "3600")
+            ),
+            external_test_enabled=env_truthy("PATHSCIENTIST_EXTERNAL_TEST"),
+            external_test_contract=parse_json_object(
+                os.environ.get("PATHSCIENTIST_EXTERNAL_TEST_CONTRACT", "")
+            ),
             llm_model=resolve_llm_model(default=""),
             llm_api_key=resolve_llm_api_key(),
             llm_base_url=resolve_llm_base_url(),
@@ -198,6 +272,11 @@ class PathScientistConfig:
             stop_before_execution=env_truthy("PATHSCIENTIST_STOP_BEFORE_EXECUTION"),
             literature_online_enabled=env_truthy("PATHSCIENTIST_LITERATURE_ONLINE"),
             literature_online_provider=os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "openalex"),
+            literature_online_providers=parse_provider_list(
+                os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDERS", "")
+                or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "")
+                or DEFAULT_LITERATURE_ONLINE_PROVIDERS
+            ),
             literature_online_max_results=int(os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_MAX_RESULTS", "5")),
             literature_online_timeout=int(os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_TIMEOUT", "15")),
             refresh_sota=env_truthy("PATHSCIENTIST_REFRESH_SOTA"),

@@ -5,11 +5,31 @@ from .store import EvidenceStore
 from .types import EvidenceRecord
 
 
+def _is_non_metric_setup_record(record: EvidenceRecord) -> bool:
+    from ..orchestrator.metrics_utils import is_non_metric_setup_run
+
+    return is_non_metric_setup_run(
+        record.metrics,
+        record.primary_metric_name or "auc",
+        exit_code=record.exit_code,
+        error_type=record.error_type,
+    )
+
+
 def query_best_run(store: EvidenceStore, session_id: str = "") -> EvidenceRecord | None:
     """Get the best committed run by primary metric, optionally filtered by session."""
     committed = store.list_runs(committed=True)
     if session_id:
         committed = [r for r in committed if r.get("session_id") == session_id]
+    filtered = []
+    for row in committed:
+        try:
+            value = float(row.get("primary_metric_value", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            value = 0.0
+        if value > 0.0:
+            filtered.append(row)
+    committed = filtered
     if not committed:
         return None
     best = max(committed, key=lambda r: r.get("primary_metric_value", 0.0))
@@ -25,6 +45,8 @@ def query_comparison_table(store: EvidenceStore, session_id: str = "") -> list[d
     for run_summary in runs:
         try:
             record = store.load(run_summary["run_id"])
+            if _is_non_metric_setup_record(record):
+                continue
             table.append({
                 "run_id": record.run_id,
                 "iteration": record.iteration,

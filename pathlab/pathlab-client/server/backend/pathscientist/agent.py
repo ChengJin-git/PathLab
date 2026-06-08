@@ -16,8 +16,15 @@ from .config import PathScientistConfig
 from .context import build_environment_context
 from .knowledge import build_domain_skills
 from .llm_client import build_chat_llm
+from .runtime.file_editor_guard import RestrictedFileEditorExecutor
 from .runtime.session import PathScientistSession
-from .runtime.session_registry import SessionDeps, get_session, register_session
+from .runtime.session_registry import (
+    SessionDeps,
+    get_session,
+    lookup_session_by_workspace,
+    register_session,
+    register_workspace,
+)
 from .runtime.workspace import Workspace
 from .tools.metrics import GetMetricsTool, MetricsTracker
 from .tools.ratchet import RatchetCommitTool, RatchetRevertTool
@@ -64,10 +71,89 @@ def preload_all_extractor_guidance() -> str:
         return ""
 
 
+def _restricted_file_editor_factory(conv_state):
+    """Plan-2026-05-17 file-editor-guard: factory that wraps the SDK's
+    FileEditorExecutor with PathScientist's path policy.
+
+    Resolves the SessionDeps from ``conv_state.workspace.working_dir``
+    via the workspace reverse index, then computes write/view/deny
+    allowlists from ``config`` and replaces the executor on each
+    FileEditorTool instance.
+
+    Falls back to the SDK's default executor when the workspace isn't
+    registered (test paths, foreign callers, etc.) so we don't break
+    third-party use of FileEditorTool.
+    """
+    tools = list(FileEditorTool.create(conv_state))
+    try:
+        workspace_root = Path(conv_state.workspace.working_dir).resolve()
+    except Exception:
+        return tools
+    deps = lookup_session_by_workspace(workspace_root)
+    if deps is None or deps.config is None:
+        return tools
+
+    cfg = deps.config
+    write_allow: list[Path] = [workspace_root]
+    try:
+        if cfg.output_dir:
+            write_allow.append(Path(cfg.output_dir).resolve())
+    except Exception:
+        pass
+    # data_mounts is ``{host_path: container_path}`` — FileEditorTool runs
+    # on the host filesystem (NOT inside the apptainer container), so we
+    # whitelist host_path (the key), not container_path (the value, which
+    # only exists inside the sandbox).
+    for host_path in (getattr(cfg, "data_mounts", None) or {}).keys():
+        try:
+            write_allow.append(Path(host_path).resolve())
+        except Exception:
+            continue
+
+    view_allow: list[Path] = list(write_allow)
+    for candidate in (
+        getattr(cfg, "dataset_cache_dir", "") or "",
+        str(Path.home() / ".cache" / "huggingface"),
+        str(Path.home() / ".cache" / "torch"),
+        "/data",
+    ):
+        if not candidate:
+            continue
+        try:
+            view_allow.append(Path(candidate).resolve())
+        except Exception:
+            continue
+
+    deny: list[Path] = []
+    for candidate in (
+        workspace_root / ".git",
+        workspace_root / "common",
+        Path.home() / ".ssh",
+        Path.home() / ".config",
+        Path(__file__).resolve().parent,                 # pathscientist source
+        Path(__file__).resolve().parent.parent / ".venv",
+    ):
+        deny.append(candidate)
+
+    executor = RestrictedFileEditorExecutor(
+        workspace_root=str(workspace_root),
+        write_allow=write_allow,
+        view_allow=view_allow,
+        deny=deny,
+    )
+    # ``set_executor`` returns a NEW immutable Tool (pydantic model_copy),
+    # so we have to rebuild the list rather than mutate in place.
+    return [tool.set_executor(executor) for tool in tools]
+
+
 def _ensure_tools_registered():
     global _tools_registered
     if _tools_registered:
         return
+    # Override the SDK's default FileEditorTool with our path-restricted
+    # variant. Re-registering by the same name replaces the resolver so
+    # ``Tool(name=FileEditorTool.name)`` downstream picks up the wrapper.
+    register_tool(FileEditorTool.name, _restricted_file_editor_factory)
     register_tool("RunExperimentTool", RunExperimentTool)
     register_tool("ValidateScriptTool", ValidateScriptTool)
     register_tool("RatchetCommitTool", RatchetCommitTool)
@@ -126,6 +212,10 @@ def create_agent(
             workspace=workspace, tracker=tracker, config=config,
             iteration_state=iteration_state,
         ))
+        # Plan-2026-05-17 file-editor-guard: index by workspace_dir so the
+        # SDK's tool factory (which only sees conv_state.workspace.working_dir)
+        # can find these deps and apply the file_editor path whitelist.
+        register_workspace(workspace_path, session_id)
 
     # Register tool classes once (not per-session lambdas)
     _ensure_tools_registered()

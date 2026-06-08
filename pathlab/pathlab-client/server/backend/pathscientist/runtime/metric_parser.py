@@ -7,8 +7,6 @@ import re
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from openhands.sdk.llm import Message, TextContent
-
 from ..llm_client import build_chat_llm, extract_text, has_chat_llm_config, invoke_chat_llm
 from ..orchestrator.metrics_utils import resolve_primary_metric
 from ..structured_output import extract_json
@@ -163,6 +161,7 @@ def _default_llm_metric_parser(text: str, primary_metric: str, config=None) -> d
         "Log excerpt:\n"
         f"{text[-6000:]}"
     )
+    from openhands.sdk.llm import Message, TextContent
     response = invoke_chat_llm(
         llm,
         messages=[Message(role="user", content=[TextContent(text=prompt)])],
@@ -240,6 +239,7 @@ def build_llm_text_caller(config=None) -> Callable[[str], str] | None:
         return None
 
     def _caller(prompt: str) -> str:
+        from openhands.sdk.llm import Message, TextContent
         llm = build_chat_llm(
             config,
             component="benchmark extraction",

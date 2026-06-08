@@ -16,6 +16,7 @@ Usage:
 Environment variables (used as defaults):
     PATHSCIENTIST_BASE_DIR
     PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER
+    PATHSCIENTIST_LITERATURE_ONLINE_PROVIDERS
     PATHSCIENTIST_LITERATURE_ONLINE_TIMEOUT
     PATHSCIENTIST_RAG_EMBEDDING_MODEL
     PATHSCIENTIST_RAG_EMBEDDING_BASE_URL
@@ -29,6 +30,7 @@ import os
 import sys
 from pathlib import Path
 
+from .config import DEFAULT_LITERATURE_ONLINE_PROVIDERS, parse_provider_list
 from .literature.online_clients import create_online_client
 from .literature.types import PaperRecord
 
@@ -41,7 +43,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("query", help="Search query (e.g. 'TransMIL attention MIL pathology')")
     parser.add_argument("--top-k", type=int, default=5, help="Number of results (default: 5)")
-    parser.add_argument("--provider", default=os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "openalex"))
+    parser.add_argument("--provider", default="", help="Single provider override")
+    parser.add_argument(
+        "--providers",
+        default=os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDERS", ""),
+        help="Comma-separated providers, e.g. openalex,europepmc,semantic_scholar,pubmed",
+    )
     parser.add_argument("--timeout", type=int, default=int(os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_TIMEOUT", "15")))
     parser.add_argument("--venue", default="", help="Filter by venue/journal (e.g. 'Nature', 'CVPR', 'Medical Image Analysis')")
     parser.add_argument("--year", default="", help="Filter by year or range (e.g. '2024', '2022-2025')")
@@ -58,6 +65,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def search_papers(
     query: str,
     provider: str = "openalex",
+    providers: list[str] | str | None = None,
     top_k: int = 5,
     timeout: int = 15,
     venue: str = "",
@@ -65,15 +73,47 @@ def search_papers(
     year_max: int | None = None,
     min_citations: int = 0,
 ) -> list[PaperRecord]:
-    """Search for papers using an online provider with optional filters."""
-    client = create_online_client(provider=provider, timeout=timeout)
-    return client.search(
-        query, top_k=top_k,
-        venue=venue or None,
-        year_min=year_min,
-        year_max=year_max,
-        min_citations=min_citations or None,
-    )
+    """Search for papers using one or more online providers."""
+    provider_names = _provider_names(provider=provider, providers=providers)
+    papers: list[PaperRecord] = []
+    seen: set[str] = set()
+    for provider_name in provider_names:
+        client = create_online_client(provider=provider_name, timeout=timeout)
+        fetched = client.search(
+            query, top_k=top_k,
+            venue=venue or None,
+            year_min=year_min,
+            year_max=year_max,
+            min_citations=min_citations or None,
+        )
+        for paper in fetched:
+            keys = _paper_keys(paper)
+            if keys.isdisjoint(seen):
+                papers.append(paper)
+                seen.update(keys)
+                if len(papers) >= top_k:
+                    return papers
+    return papers
+
+
+def _provider_names(provider: str, providers: list[str] | str | None) -> list[str]:
+    if providers:
+        if isinstance(providers, str):
+            return parse_provider_list(providers)
+        return parse_provider_list(",".join(providers))
+    return parse_provider_list(provider)
+
+
+def _paper_keys(paper: PaperRecord) -> set[str]:
+    keys = {paper.paper_id}
+    if paper.url:
+        keys.add(paper.url.rstrip("/").lower())
+    for alias in getattr(paper, "aliases", []) or []:
+        if alias:
+            keys.add(str(alias).strip().lower())
+    if paper.title and paper.year:
+        keys.add(f"{paper.title.strip().lower()}:{paper.year}")
+    return {key for key in keys if key}
 
 
 def save_papers(papers: list[PaperRecord], base_dir: str) -> int:
@@ -182,10 +222,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.min_citations:
         filter_desc.append(f"citations>={args.min_citations}")
     filter_str = f" [{', '.join(filter_desc)}]" if filter_desc else ""
-    logger.info(f"Searching {args.provider} for: {args.query}{filter_str}")
+    provider_names = parse_provider_list(
+        args.providers
+        or args.provider
+        or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "")
+        or DEFAULT_LITERATURE_ONLINE_PROVIDERS
+    )
+    logger.info(f"Searching {','.join(provider_names)} for: {args.query}{filter_str}")
 
     papers = search_papers(
-        args.query, provider=args.provider, top_k=args.top_k, timeout=args.timeout,
+        args.query, provider=args.provider, providers=provider_names, top_k=args.top_k, timeout=args.timeout,
         venue=args.venue, year_min=year_min, year_max=year_max, min_citations=args.min_citations,
     )
 

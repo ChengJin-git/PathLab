@@ -161,7 +161,24 @@ class ResearchDirector:
             return state
 
         if state.stage == STAGE_REVIEW:
-            if state.stop_reason or state.iteration_index >= state.max_iterations:
+            review_decision = (
+                getattr(state, "review_decision", "")
+                or (getattr(state, "latest_review", {}) or {}).get("decision", "")
+            )
+            if review_decision == "enter_synthesis":
+                state.advance(STAGE_SYNTHESIS)
+                logger.info("Director: review -> synthesis (review decision)")
+                return state
+            if review_decision == "continue_execution":
+                state.advance(STAGE_EXECUTION)
+                logger.info("Director: review -> execution (review decision)")
+                return state
+
+            pending_external_test = _current_execution_skill(state) == "external_test"
+            if state.stop_reason or (
+                state.iteration_index >= state.max_iterations
+                and not pending_external_test
+            ):
                 # Preserve any explicit stop_reason already on the state
                 # (e.g. "user_cancelled", "stall_limit", "approval_rejected");
                 # only fall back to "budget_exhausted" when nothing is set and
@@ -184,3 +201,14 @@ class ResearchDirector:
             return state
 
         return state
+
+
+def _current_execution_skill(state: ResearchSessionState) -> str:
+    plan = state.execution_plan or (state.grounding or {}).get("execution_plan") or {}
+    steps = plan.get("steps") or []
+    current = int(plan.get("current_step", 0) or 0)
+    if 0 <= current < len(steps):
+        step = steps[current]
+        if isinstance(step, dict):
+            return str(step.get("skill") or "")
+    return ""

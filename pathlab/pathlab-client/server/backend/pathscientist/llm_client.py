@@ -2,7 +2,9 @@
 
 The default path preserves the existing PathScientist behavior. The explicit
 ``codex-relay`` profile reads the user's Codex relay config/auth files and
-forces OpenAI Responses API dispatch for auxiliary LLM calls.
+uses Chat Completions for auxiliary LLM calls. The relay's streaming Responses
+path can return ``output=[]`` even when output tokens were generated, which
+breaks structured JSON parsing in grounding.
 """
 from __future__ import annotations
 
@@ -60,6 +62,29 @@ def _read_json(path: Path) -> dict[str, Any]:
         raise RuntimeError(f"codex-relay profile requested but {path} is not valid JSON") from e
 
 
+def _normalize_codex_relay_wire_api(wire_api: str) -> str:
+    """Map Codex relay wire settings to the safe PathScientist call path.
+
+    Codex itself uses the relay's Responses endpoint, but PathScientist's
+    auxiliary calls need text back synchronously for JSON parsing. The relay's
+    streaming Responses path can complete with an empty ``response.output``;
+    Chat Completions does not have that failure mode on the same relay/model.
+    """
+    wire = (wire_api or "responses").strip().lower()
+    if wire in {
+        "responses",
+        "response",
+        "completion",
+        "chat",
+        "chat_completion",
+        "chat-completions",
+    }:
+        return "completion"
+    raise RuntimeError(
+        f"codex-relay profile supports responses/completion wire APIs, got {wire_api!r}"
+    )
+
+
 def _resolve_project_local_codex_relay_config(
     config: PathScientistConfig,
 ) -> LLMRuntimeConfig | None:
@@ -69,15 +94,11 @@ def _resolve_project_local_codex_relay_config(
     if not (model and api_key and base_url):
         return None
 
-    wire_api = (
+    wire_api = _normalize_codex_relay_wire_api(
         getattr(config, "llm_wire_api", "")
         or os.environ.get("PATHSCIENTIST_LLM_WIRE_API", "")
         or "responses"
-    ).strip().lower()
-    if wire_api != "responses":
-        raise RuntimeError(
-            f"codex-relay profile expects wire_api='responses', got {wire_api!r}"
-        )
+    )
 
     # Same /v1 auto-append as the toml branch — see Fix G note in
     # `_resolve_codex_relay_config`. Applies even when the user explicitly
@@ -92,7 +113,7 @@ def _resolve_project_local_codex_relay_config(
         api_key=api_key,
         base_url=base_url,
         profile="codex-relay",
-        wire_api="responses",
+        wire_api=wire_api,
     )
 
 
@@ -138,11 +159,11 @@ def _resolve_codex_relay_config(config: PathScientistConfig) -> LLMRuntimeConfig
         raise RuntimeError(
             f"codex-relay profile requested but provider '{provider_name}' has no base_url"
         )
-    wire_api = str(provider.get("wire_api") or "responses").strip().lower()
-    if wire_api != "responses":
-        raise RuntimeError(
-            f"codex-relay profile expects wire_api='responses', got {wire_api!r}"
-        )
+    wire_api = _normalize_codex_relay_wire_api(
+        getattr(config, "llm_wire_api", "")
+        or os.environ.get("PATHSCIENTIST_LLM_WIRE_API", "")
+        or str(provider.get("wire_api") or "responses")
+    )
 
     auth = _read_json(auth_path)
     api_key = str(auth.get("OPENAI_API_KEY") or "").strip()
@@ -182,7 +203,7 @@ def _resolve_codex_relay_config(config: PathScientistConfig) -> LLMRuntimeConfig
         api_key=api_key,
         base_url=base_url,
         profile="codex-relay",
-        wire_api="responses",
+        wire_api=wire_api,
     )
 
 
@@ -359,6 +380,12 @@ def invoke_chat_llm(
 ):
     """Call an OpenHands LLM through the correct wire API."""
     resolved_wire = (wire_api or getattr(llm, "_pathscientist_wire_api", "") or "").lower()
+    profile = (getattr(llm, "_pathscientist_llm_profile", "") or "").lower()
+    if profile == "codex-relay" and resolved_wire == "responses":
+        # Historical configs advertise "responses" because that is what Codex
+        # uses, but PathScientist's structured auxiliary calls must use Chat
+        # Completions to avoid empty Responses output on the relay.
+        resolved_wire = "completion"
     use_responses = resolved_wire == "responses"
     if not use_responses:
         try:
@@ -367,13 +394,20 @@ def invoke_chat_llm(
             use_responses = False
 
     if use_responses:
-        return llm.responses(
+        response = llm.responses(
             messages=messages,
             tools=list(tools or []),
             include=None,
             store=False,
             **kwargs,
         )
+        if _should_retry_empty_responses_with_completion(response):
+            return llm.completion(
+                messages=messages,
+                tools=list(tools or []),
+                **kwargs,
+            )
+        return response
     return llm.completion(
         messages=messages,
         tools=list(tools or []),
@@ -381,10 +415,100 @@ def invoke_chat_llm(
     )
 
 
-def extract_text(response) -> str:
-    """Extract first text content from an OpenHands LLMResponse-like object."""
-    content = getattr(getattr(response, "message", None), "content", None) or []
-    if not content:
+def _field(obj: Any, name: str, default: Any = None) -> Any:
+    """Read a field from dict-like or object-like response shapes."""
+    if isinstance(obj, dict):
+        return obj.get(name, default)
+    return getattr(obj, name, default)
+
+
+def _extract_content_text(content: Any) -> str:
+    """Extract text from common OpenHands/LiteLLM/OpenAI content shapes."""
+    if content is None:
         return ""
-    first = content[0]
-    return str(getattr(first, "text", "") or "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, dict):
+        for key in ("text", "output_text", "content"):
+            value = content.get(key)
+            if isinstance(value, str):
+                return value
+        return ""
+    if isinstance(content, (list, tuple)):
+        parts = [_extract_content_text(part).strip() for part in content]
+        return "\n".join(part for part in parts if part)
+
+    for key in ("text", "output_text", "content"):
+        value = getattr(content, key, None)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (list, tuple)):
+            nested = _extract_content_text(value)
+            if nested:
+                return nested
+    return ""
+
+
+def _extract_text_from_raw_response(raw_response: Any) -> str:
+    """Fallback extraction for cases where OpenHands normalization drops text."""
+    if raw_response is None:
+        return ""
+
+    direct = _extract_content_text(_field(raw_response, "output_text", None))
+    if direct:
+        return direct
+
+    choices = _field(raw_response, "choices", None) or []
+    if choices:
+        first_choice = choices[0]
+        message = _field(first_choice, "message", None)
+        text = _extract_content_text(_field(message, "content", None))
+        if text:
+            return text
+
+    output = _field(raw_response, "output", None) or []
+    output_parts: list[str] = []
+    for item in output:
+        if _field(item, "type", "") != "message":
+            continue
+        text = _extract_content_text(_field(item, "content", None)).strip()
+        if text:
+            output_parts.append(text)
+    return "\n".join(output_parts)
+
+
+def extract_text(response) -> str:
+    """Extract assistant text from OpenHands/LiteLLM response variants."""
+    text = _extract_content_text(_field(_field(response, "message", None), "content", None))
+    if text:
+        return text
+
+    text = _extract_content_text(_field(response, "content", None))
+    if text:
+        return text
+
+    return _extract_text_from_raw_response(_field(response, "raw_response", None))
+
+
+def _should_retry_empty_responses_with_completion(response) -> bool:
+    """Detect the Responses-API empty-output failure and retry via chat.
+
+    The relay failure mode is specific: the call reports generated output
+    tokens, but the normalized response has no assistant text, no choices, and
+    an empty ``output`` list. Retrying via Chat Completions recovers the text
+    without changing the prompt.
+    """
+    if extract_text(response).strip():
+        return False
+    raw_response = _field(response, "raw_response", None)
+    if raw_response is None:
+        return False
+    output = _field(raw_response, "output", None)
+    choices = _field(raw_response, "choices", None)
+    usage = _field(raw_response, "usage", {}) or {}
+    output_tokens = _field(usage, "output_tokens", 0) or 0
+    try:
+        output_token_count = int(output_tokens)
+    except (TypeError, ValueError):
+        output_token_count = 0
+    return output_token_count > 0 and not output and not choices

@@ -1,6 +1,7 @@
 """Research session contracts and stage state for the PathScientist orchestrator."""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from uuid import UUID
 
@@ -84,6 +85,8 @@ class ResearchSessionState:
     conversation_id: UUID
     objective: ResearchObjective
     stage: str = STAGE_INTAKE
+    stage_started_at: float = field(default_factory=lambda: time.time())
+    stage_history: list[dict] = field(default_factory=list)
     grounding: dict = field(default_factory=dict)
     iteration_index: int = 0
     max_iterations: int = 3
@@ -99,6 +102,10 @@ class ResearchSessionState:
     consecutive_non_finalized_turns: int = 0
     stop_reason: str = ""  # "" | "stall_limit" | "approval_rejected" | "user_cancelled"
     final_summary: str = ""
+    ui_run_summary: dict = field(default_factory=dict)
+    latest_review: dict = field(default_factory=dict)
+    review_history: list[dict] = field(default_factory=list)
+    review_decision: str = ""
     report_json_path: str = ""
     report_markdown_path: str = ""
     paper_draft_path: str = ""
@@ -128,6 +135,14 @@ class ResearchSessionState:
     dataset_manifest_path: str = ""
     acquisition_status: str = "none"  # "none" | "prepared" | "skipped" | "skipped_policy" | "failed"
     acquisition_notes: str = ""
+    # Plan-2026-04-30 data-readiness Task 6. ``data_readiness`` is the
+    # serialized DataReadinessResult; ``execution_plan`` is the serialized
+    # ExecutionPlan. Both default empty so persisted sessions from prior
+    # runs load cleanly.
+    data_readiness: dict = field(default_factory=dict)
+    execution_plan: dict = field(default_factory=dict)
+    external_test: dict = field(default_factory=dict)
+    external_test_history: list[dict] = field(default_factory=list)
 
     @classmethod
     def create(
@@ -155,7 +170,28 @@ class ResearchSessionState:
                 f"Invalid stage transition: {self.stage} -> {next_stage}. "
                 f"Allowed: {allowed}"
             )
+        now = time.time()
+        started_at = float(self.stage_started_at or now)
+        duration_sec = max(0.0, now - started_at)
+        if (
+            not self.stage_history
+            or self.stage_history[-1].get("stage") != self.stage
+            or self.stage_history[-1].get("ended_at") is not None
+        ):
+            self.stage_history.append({
+                "stage": self.stage,
+                "started_at": started_at,
+            })
+        self.stage_history[-1].update({
+            "ended_at": now,
+            "duration_sec": duration_sec,
+        })
         self.stage = next_stage
+        self.stage_started_at = now
+        self.stage_history.append({
+            "stage": next_stage,
+            "started_at": now,
+        })
 
     def record_run(self, record: RunRecord) -> None:
         """Record a completed experiment run. Updates best if committed and higher."""

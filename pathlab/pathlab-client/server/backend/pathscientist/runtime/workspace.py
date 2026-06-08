@@ -135,8 +135,12 @@ class Workspace:
         env_vars: dict[str, str] | None = None,
         timeout: float = 600.0,
         data_mounts: dict[str, str] | None = None,
+        script_type: str = "python",
+        session_id: str = "",
+        run_id: str = "",
+        tool_name: str = "run_experiment",
     ) -> CommandResult:
-        """Run a Python script in the workspace.
+        """Run a Python or bash script in the workspace.
 
         Uses the sandbox passed at construction if present, otherwise runs
         via direct subprocess through the SDK workspace.
@@ -155,9 +159,13 @@ class Workspace:
                 env_vars=env_vars,
                 timeout=timeout,
                 data_mounts=data_mounts,
+                script_type=script_type,
+                session_id=session_id,
+                run_id=run_id,
+                tool_name=tool_name,
             )
             return CommandResult(
-                command=f"[apptainer] python {script_path}",
+                command=f"[apptainer] {script_type} {script_path}",
                 exit_code=result.exit_code,
                 stdout=result.stdout,
                 stderr=result.stderr,
@@ -167,7 +175,8 @@ class Workspace:
         env_prefix = ""
         if env_vars:
             env_prefix = " ".join(f"{k}={v}" for k, v in env_vars.items()) + " "
-        cmd = f"{env_prefix}python {script_path}"
+        runner = "bash" if script_type == "bash" else "python"
+        cmd = f"{env_prefix}{runner} {script_path}"
         return self._ws.execute_command(cmd, timeout=timeout)
 
     # --- File operations ---

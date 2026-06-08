@@ -47,17 +47,39 @@ class IterationState:
     def __post_init__(self):
         self.remaining_budget = self.max_iterations
 
-    def compute_file_hash(self, workspace_dir: Path, script_path: str = "train.py") -> str:
-        """Compute hash of the current script file."""
-        path = workspace_dir / script_path
-        if not path.exists():
-            return ""
-        content = path.read_text(encoding="utf-8")
-        return hashlib.md5(content.encode()).hexdigest()[:12]
+    def compute_file_hash(
+        self,
+        workspace_dir: Path,
+        script_path: str = "train.py",
+        script_inputs: list[str] | None = None,
+    ) -> str:
+        """Compute a stable hash for a script and optional dependency files."""
+        paths = list(dict.fromkeys([script_path, *(script_inputs or [])]))
+        digest = hashlib.md5()
+        any_file = False
+        for rel in sorted(paths):
+            path = workspace_dir / rel
+            if not path.exists() or not path.is_file():
+                return ""
+            digest.update(rel.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+            any_file = True
+        return digest.hexdigest()[:12] if any_file else ""
 
-    def update_file_hash(self, workspace_dir: Path, script_path: str = "train.py") -> str:
+    def update_file_hash(
+        self,
+        workspace_dir: Path,
+        script_path: str = "train.py",
+        script_inputs: list[str] | None = None,
+    ) -> str:
         """Update and return the current file hash."""
-        self.current_file_hash = self.compute_file_hash(workspace_dir, script_path)
+        self.current_file_hash = self.compute_file_hash(
+            workspace_dir,
+            script_path=script_path,
+            script_inputs=script_inputs,
+        )
         return self.current_file_hash
 
     def mark_validated(self, file_hash: str) -> None:

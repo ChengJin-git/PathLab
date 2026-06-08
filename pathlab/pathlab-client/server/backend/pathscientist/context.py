@@ -105,14 +105,12 @@ def detect_data_paths(data_mounts: dict[str, str] | None = None) -> str:
 
 
 def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
-    """List pathology foundation models with a usable local checkpoint.
+    """List feature extractors with a usable local checkpoint.
 
-    Truth source is ``common/extractors/checkpoints/<Name>/``, NOT
-    HF_HOME. That directory holds the symlinks (or real files) that
-    ``checkpoint_manager.get_ckpt_path`` actually returns — which is what
-    ``get_extractor(key)`` loads under the hood. HF_HOME is sometimes a
-    superset (Hub download cache for other tools) but is not the path the
-    registry uses.
+    Truth source is the same resolver used by
+    ``checkpoint_manager.get_ckpt_path``: first the PathLab checkpoint root
+    (``PATHLAB_CKPT_DIR`` or bundled ``common/extractors/checkpoints``), then
+    local Hugging Face snapshots under ``HF_HOME``/``HUGGINGFACE_HUB_CACHE``.
 
     Pass ``ckpts_root`` to point at a different checkpoints directory
     (used by tests to fake the inventory). When ``None`` (default) the
@@ -127,10 +125,6 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
     on whether a real checkpoint is actually on disk where the registry
     expects it.
     """
-    # (dir_name, display_name, registry_key) for every pathology extractor
-    # the project knows about. dir_name matches checkpoint_manager's
-    # __supported_extractors CamelCase keys; registry_key is the
-    # lowercase/mixed-case key used in _EXTRACTOR_LAZY_REGISTRY.
     extractors = [
         ("UNI2",         "UNI2",         "uni2"),
         ("UNI",          "UNI",          "uni"),
@@ -147,14 +141,15 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
         ("PathoCLIP",    "PathoCLIP",    "patho_clip"),
         ("OpenMidnight", "OpenMidnight", "openmidnight"),
         ("PLIP",         "PLIP",         "plip"),
+        ("SmartCCS",     "SmartCCS",     "SmartCCS"),
+        ("SmartCyto",    "SmartCyto",    "SmartCyto"),
+        ("CytoFM",       "CytoFM",       "CytoFM"),
     ]
 
-    if ckpts_root is None:
-        ckpts_root = Path(__file__).parent / "domain" / "templates" / "common" / "extractors" / "checkpoints"
     usable: list[tuple[str, str, str]] = []     # (display, key, size)
     missing: list[tuple[str, str]] = []         # (display, key) — dir present but no ckpt
 
-    if ckpts_root.is_dir():
+    if ckpts_root is not None and ckpts_root.is_dir():
         for dir_name, display, key in extractors:
             d = ckpts_root / dir_name
             if not d.is_dir():
@@ -172,6 +167,60 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
                 missing.append((display, key))
                 continue
             usable.append((display, key, _format_size(size)))
+    elif ckpts_root is None:
+        try:
+            from .domain.templates.common.extractors.checkpoint_manager import get_ckpt_path
+        except ImportError:
+            from domain.templates.common.extractors.checkpoint_manager import get_ckpt_path
+
+        manager_names = {
+            "UNI2": "UNI2",
+            "UNI": "UNI",
+            "CONCH": "CONCH",
+            "CONCH15": "CONCH15",
+            "Virchow2": "Virchow2",
+            "Virchow": "Virchow",
+            "H-Optimus-1": "H-Optimus-1",
+            "H-Optimus-0": "H-Optimus-0",
+            "Phikon2": "Phikon2",
+            "Phikon": "Phikon",
+            "mSTAR": "mSTAR",
+            "GPFM": "GPFM",
+            "PathoCLIP": "PathoCLIP",
+            "OpenMidnight": "OpenMidnight",
+            "PLIP": "PLIP",
+            "SmartCCS": "SmartCCS",
+            "SmartCyto": "SmartCyto",
+            "CytoFM": "CytoFM",
+        }
+        old_offline = os.environ.get("HF_HUB_OFFLINE")
+        old_transformers_offline = os.environ.get("TRANSFORMERS_OFFLINE")
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        try:
+            for dir_name, display, key in extractors:
+                try:
+                    resolved = Path(get_ckpt_path(manager_names[dir_name], ""))
+                    ckpt = _find_extractor_checkpoint(resolved) if resolved.is_dir() else resolved
+                    size = ckpt.stat().st_size
+                    if size < 1_000_000:
+                        missing.append((display, key))
+                        continue
+                    usable.append((display, key, _format_size(size)))
+                except Exception:
+                    missing.append((display, key))
+        finally:
+            if old_offline is None:
+                os.environ.pop("HF_HUB_OFFLINE", None)
+            else:
+                os.environ["HF_HUB_OFFLINE"] = old_offline
+            if old_transformers_offline is None:
+                os.environ.pop("TRANSFORMERS_OFFLINE", None)
+            else:
+                os.environ["TRANSFORMERS_OFFLINE"] = old_transformers_offline
+
+    if ckpts_root is None:
+        ckpts_root = Path(__file__).parent / "domain" / "templates" / "common" / "extractors" / "checkpoints"
 
     if not usable:
         return (
@@ -183,7 +232,7 @@ def detect_hf_model_cache(ckpts_root: "Path | None" = None) -> str:
         )
 
     lines = [
-        "Pre-installed pathology foundation models (loadable OFFLINE via registry):",
+        "Pre-installed feature extractors (loadable OFFLINE via registry):",
     ]
     width = max(len(d) for d, _, _ in usable)
     for display, key, size in usable:
@@ -298,7 +347,7 @@ def build_environment_context(
     # Data
     sections.append(detect_data_paths(data_mounts))
 
-    # Pre-cached HuggingFace models (pathology FMs)
+    # Pre-cached/local feature extractor weights.
     sections.append(detect_hf_model_cache())
 
     # Common libs

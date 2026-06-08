@@ -16,9 +16,11 @@ warnings.filterwarnings("ignore", message="Cost calculation failed:.*")
 
 from .agent import create_agent, create_conversation
 from .config import (
+    DEFAULT_LITERATURE_ONLINE_PROVIDERS,
     PathScientistConfig,
     env_truthy,
     load_project_env,
+    parse_provider_list,
     resolve_llm_api_key,
     resolve_llm_base_url,
     resolve_llm_model,
@@ -46,7 +48,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--output", default="", help="Output directory")
     parser.add_argument("--metric", default="auc", help="Primary metric name")
     parser.add_argument("--max-iter", type=int, default=5, help="Max iterations")
-    parser.add_argument("--timeout", type=int, default=600, help="Execution timeout (seconds)")
+    parser.add_argument("--timeout", type=int, default=None, help="Execution timeout (seconds)")
     parser.add_argument("--gpu", default="0", help="GPU IDs (comma-separated)")
     parser.add_argument("--model", default="", help="LLM model name")
     parser.add_argument("--api-key", default="", help="LLM API key")
@@ -55,17 +57,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--codex-config", default="", help="Path to Codex config.toml for --llm-profile codex-relay")
     parser.add_argument("--codex-auth", default="", help="Path to Codex auth.json for --llm-profile codex-relay")
     parser.add_argument("--data-mount", action="append", default=[], help="Data mount host:container")
+    parser.add_argument("--sandbox", choices=["local", "apptainer", "auto"], default=None)
+    parser.add_argument("--sandbox-image", default="")
     parser.add_argument("--manual-approval", action="store_true", help="Pause after grounding for manual approval")
     parser.add_argument("--stop-before-execution", action="store_true", help="Run intake/grounding/acquisition and stop before the code agent executes")
     parser.add_argument("--literature-online", action="store_true", help="Enable online literature search")
-    parser.add_argument("--literature-online-provider", default="openalex", help="Online search provider")
+    parser.add_argument("--literature-online-provider", default="", help="Single online search provider override")
+    parser.add_argument("--literature-online-providers", default="", help="Comma-separated online search providers")
     parser.add_argument("--literature-online-max-results", type=int, default=5, help="Max online results")
     parser.add_argument("--refresh-sota", action="store_true", help="Bypass cached SOTA lookup results for this session")
     parser.add_argument("--rag", action="store_true", help="Enable literature RAG retrieval")
     parser.add_argument("--rag-corpus-dir", default="", help="Local directory of papers for RAG ingestion")
     parser.add_argument("--rag-top-k", type=int, default=3, help="Number of passages to retrieve")
     parser.add_argument("--auto-acquire-data", action="store_true", help="Enable dataset acquisition before execution")
-    parser.add_argument("--download-policy", choices=["public_only", "manual_only", "disabled"], default=None)
+    parser.add_argument("--download-policy", choices=["public_only", "manual_only", "public_or_manual", "all", "disabled"], default=None)
     parser.add_argument("--max-download-size-gb", type=float, default=None)
     parser.add_argument("--allow-large-downloads", action="store_true")
     parser.add_argument("--dataset-cache-dir", default="")
@@ -88,7 +93,20 @@ def _build_config(args: argparse.Namespace) -> PathScientistConfig:
         gpu_ids=args.gpu.split(","),
         primary_metric=args.metric,
         max_iterations=args.max_iter,
-        execution_timeout=args.timeout,
+        quick_check_timeout=int(
+            os.environ.get("PATHSCIENTIST_QUICK_CHECK_TIMEOUT", "3600")
+        ),
+        execution_timeout=(
+            args.timeout
+            if args.timeout is not None
+            else int(os.environ.get("PATHSCIENTIST_TIMEOUT", "3600"))
+        ),
+        feature_extraction_timeout=int(
+            os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTION_TIMEOUT", "86400")
+        ),
+        feature_extraction_quick_timeout=int(
+            os.environ.get("PATHSCIENTIST_FEATURE_EXTRACTION_QUICK_TIMEOUT", "3600")
+        ),
         llm_model=resolve_llm_model(args.model, default=""),
         llm_api_key=resolve_llm_api_key(args.api_key),
         llm_base_url=resolve_llm_base_url(args.base_url),
@@ -97,10 +115,19 @@ def _build_config(args: argparse.Namespace) -> PathScientistConfig:
         codex_config_path=args.codex_config or os.environ.get("PATHSCIENTIST_CODEX_CONFIG", ""),
         codex_auth_path=args.codex_auth or os.environ.get("PATHSCIENTIST_CODEX_AUTH", ""),
         skill_name=args.skill,
+        sandbox_mode=args.sandbox or os.environ.get("PATHSCIENTIST_SANDBOX", "auto"),
+        sandbox_image=args.sandbox_image or os.environ.get("PATHSCIENTIST_SANDBOX_IMAGE", ""),
         manual_approval=args.manual_approval or env_truthy("PATHSCIENTIST_MANUAL_APPROVAL"),
         stop_before_execution=args.stop_before_execution or env_truthy("PATHSCIENTIST_STOP_BEFORE_EXECUTION"),
         literature_online_enabled=args.literature_online or env_truthy("PATHSCIENTIST_LITERATURE_ONLINE"),
-        literature_online_provider=args.literature_online_provider,
+        literature_online_provider=args.literature_online_provider or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "openalex"),
+        literature_online_providers=parse_provider_list(
+            args.literature_online_providers
+            or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDERS", "")
+            or args.literature_online_provider
+            or os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_PROVIDER", "")
+            or DEFAULT_LITERATURE_ONLINE_PROVIDERS,
+        ),
         literature_online_max_results=args.literature_online_max_results,
         literature_online_timeout=int(os.environ.get("PATHSCIENTIST_LITERATURE_ONLINE_TIMEOUT", "15")),
         refresh_sota=args.refresh_sota or env_truthy("PATHSCIENTIST_REFRESH_SOTA"),

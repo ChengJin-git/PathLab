@@ -145,8 +145,10 @@ def build_synthesis_context(
         # run_history with all entries sharing one run_id across distinct
         # iterations — keying solely by run_id would collapse 17 rows into
         # one, producing a report that falsely claims "only a single run was
-        # committed". Defense-in-depth: the synthesis layer must preserve
-        # run_history 1:1 regardless of upstream corruption.
+        # committed". When there is exactly one state row for a run_id, merge
+        # evidence into that row even if a non-metric setup step shifted the
+        # evidence iteration number; otherwise reports duplicate the same
+        # training run.
         comparison_rows: dict[tuple[int, str], dict] = {
             (row.get("iteration", 0), row.get("run_id", "")): row
             for row in context["comparison_table"]
@@ -155,7 +157,15 @@ def build_synthesis_context(
             run_id = row.get("run_id", "")
             if not run_id:
                 continue
-            key = (row.get("iteration", 0), run_id)
+            matching_keys = [
+                key for key in comparison_rows
+                if key[1] == run_id
+            ]
+            key = (
+                matching_keys[0]
+                if len(matching_keys) == 1
+                else (row.get("iteration", 0), run_id)
+            )
             comparison_rows[key] = {
                 **comparison_rows.get(key, {}),
                 **row,

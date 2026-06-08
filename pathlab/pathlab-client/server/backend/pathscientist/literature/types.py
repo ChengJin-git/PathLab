@@ -33,6 +33,73 @@ class BaselineEntry:
 
 
 @dataclass
+class BenchmarkRecord:
+    """Structured benchmark row with task/protocol/evidence provenance.
+
+    ``PaperRecord.baselines`` is kept as the legacy paper-local format.
+    BenchmarkRecord is the normalized layer used when a numeric baseline may
+    influence task planning or SOTA selection.
+    """
+    benchmark_id: str
+    paper_id: str
+    method: str
+    dataset: str
+    metric_name: str
+    metric_value: float
+    canonical_paper_id: str = ""
+    paper_title: str = ""
+    organ: str = ""
+    task_type: str = ""
+    prediction_target: str = ""
+    metric_direction: str = "higher_is_better"
+    protocol: dict[str, Any] = field(default_factory=dict)
+    evidence: dict[str, Any] = field(default_factory=dict)
+    confidence: str = "low"
+    verification_status: str = "unverified"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "benchmark_id": self.benchmark_id,
+            "paper_id": self.paper_id,
+            "canonical_paper_id": self.canonical_paper_id,
+            "paper_title": self.paper_title,
+            "method": self.method,
+            "dataset": self.dataset,
+            "organ": self.organ,
+            "task_type": self.task_type,
+            "prediction_target": self.prediction_target,
+            "metric_name": self.metric_name,
+            "metric_value": self.metric_value,
+            "metric_direction": self.metric_direction,
+            "protocol": self.protocol,
+            "evidence": self.evidence,
+            "confidence": self.confidence,
+            "verification_status": self.verification_status,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> BenchmarkRecord:
+        return cls(
+            benchmark_id=data["benchmark_id"],
+            paper_id=data["paper_id"],
+            canonical_paper_id=data.get("canonical_paper_id", ""),
+            paper_title=data.get("paper_title", ""),
+            method=data["method"],
+            dataset=data["dataset"],
+            organ=data.get("organ", ""),
+            task_type=data.get("task_type", ""),
+            prediction_target=data.get("prediction_target", ""),
+            metric_name=data["metric_name"],
+            metric_value=float(data.get("metric_value", 0.0) or 0.0),
+            metric_direction=data.get("metric_direction", "higher_is_better"),
+            protocol=dict(data.get("protocol", {}) or {}),
+            evidence=dict(data.get("evidence", {}) or {}),
+            confidence=data.get("confidence", "low"),
+            verification_status=data.get("verification_status", "unverified"),
+        )
+
+
+@dataclass
 class PaperRecord:
     """Structured representation of a scientific paper.
 
@@ -252,6 +319,11 @@ class ExtractedBenchmark:
     """One (method, dataset, metric, value) row extracted from a paper.
 
     Intermediate representation consumed by SotaLookup to build a SotaTarget.
+
+    ``source_section`` is populated by ``extract_from_chunks`` (FT-T4) so
+    downstream brief rendering can show *where* in the paper the number
+    came from (e.g. ``"table_2"``, ``"section_results"``). The legacy
+    abstract path leaves it empty.
     """
     paper_id: str
     method: str
@@ -260,11 +332,20 @@ class ExtractedBenchmark:
     metric_value: float
     evidence: str
     confidence: str
+    source_section: str = ""
 
 
 @dataclass
 class SotaTarget:
-    """Published state-of-the-art for a (dataset, task_type, metric) triple."""
+    """Published state-of-the-art for a (dataset, task_type, metric) triple.
+
+    ``evidence_chunks`` (FT-T5) carries the structured per-row provenance
+    that ``BenchmarkExtractor.extract_from_chunks`` emitted: each chunk is
+    ``{paper_id, section, quote, value}`` (``value`` optional). The brief
+    renders these so a reviewer can spot LLM hallucination by comparing
+    the headline number with the literal quote that produced it. Older
+    persisted SotaTargets (no chunks) round-trip safely with an empty list.
+    """
     dataset: str
     task_type: str
     metric_name: str
@@ -276,6 +357,7 @@ class SotaTarget:
     confidence: str
     retrieved_at: str
     raw_evidence: str = ""
+    evidence_chunks: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -285,6 +367,7 @@ class SotaTarget:
             "paper_url": self.paper_url, "source": self.source,
             "confidence": self.confidence, "retrieved_at": self.retrieved_at,
             "raw_evidence": self.raw_evidence,
+            "evidence_chunks": list(self.evidence_chunks),
         }
 
     @classmethod
@@ -301,4 +384,7 @@ class SotaTarget:
             confidence=d.get("confidence", ""),
             retrieved_at=d.get("retrieved_at", ""),
             raw_evidence=d.get("raw_evidence", ""),
+            evidence_chunks=[
+                e for e in (d.get("evidence_chunks") or []) if isinstance(e, dict)
+            ],
         )
