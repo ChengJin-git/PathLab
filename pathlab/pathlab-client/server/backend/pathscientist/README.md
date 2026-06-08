@@ -143,9 +143,36 @@ Notes:
 - `../../requirements.txt` is `pathlab/pathlab-client/server/requirements.txt`.
 - It includes heavy ML packages, OpenHands SDK, LanceDB/RAG dependencies, and
   model/tooling dependencies used by PathLab backend code.
-- If your machine cannot install GPU Torch, use the PyTorch index appropriate
-  for your CUDA/CPU environment before installing the full requirements.
+- `server/requirements-pdf-marker.txt` is optional. Do not install it into the
+  main PathScientist/OpenHands environment unless you intentionally accept its
+  OpenAI/Anthropic/Pillow pins for a dedicated PDF parsing worker.
+- If this venv was created by `uv`, `python -m pip` may be unavailable. Use
+  `uv pip install ...` from this directory, or run `python -m ensurepip --upgrade`
+  before using `python -m pip`.
+- For real feature extraction/training on GPU, install a CUDA-enabled Torch
+  build matching the machine driver before the rest of the requirements. A CPU
+  Torch build is enough for CLI, route, and acquisition tests, but not for H800
+  feature extraction.
+- `pip check` may report CONCH metadata conflicts (`timm`, `tokenizers`,
+  `transformers`). This is a known upstream metadata issue for the optional
+  CONCH extractor in the shared PathScientist environment; keep OpenHands and
+  the default extractor stack on the modern versions and validate CONCH with
+  extractor-specific smoke tests if you plan to use it.
 - Do not commit `.venv/`; it is intentionally ignored.
+
+Quick dependency sanity check:
+
+```bash
+cd pathlab/pathlab-client/server/backend
+OPENHANDS_SUPPRESS_BANNER=1 pathscientist/.venv/bin/python - <<'PY'
+import importlib
+for mod in ["openhands.sdk", "openhands.tools", "fastapi", "torch", "kaggle"]:
+    importlib.import_module(mod)
+    print("OK", mod)
+import torch
+print("cuda", torch.cuda.is_available(), torch.version.cuda, torch.__version__)
+PY
+```
 
 ---
 

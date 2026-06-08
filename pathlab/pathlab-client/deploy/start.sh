@@ -12,11 +12,27 @@ RENDERER_DIR="$PROJECT_DIR/src/renderer"
 LOG_DIR="$PROJECT_DIR/logs"
 FRONTEND_BUILD_LOG="$LOG_DIR/frontend-build.log"
 
-# Auto-detect Python path (conda > venv > system)
-if [ -n "$CONDA_PREFIX" ]; then
+# Auto-detect Python path.
+# Priority: explicit override > PathScientist venv > project venv > conda > system.
+# The PathScientist venv is preferred because it carries OpenHands/agent deps.
+PATHSCIENTIST_PYTHON="$SERVER_DIR/backend/pathscientist/.venv/bin/python"
+PROJECT_VENV_PYTHON="$PROJECT_DIR/venv/bin/python3"
+
+if [ -n "${PATHLAB_PYTHON:-}" ]; then
+    if [ -x "$PATHLAB_PYTHON" ]; then
+        PYTHON="$PATHLAB_PYTHON"
+    elif command -v "$PATHLAB_PYTHON" &> /dev/null; then
+        PYTHON="$(command -v "$PATHLAB_PYTHON")"
+    else
+        echo "Error: PATHLAB_PYTHON is set but not executable/found: $PATHLAB_PYTHON"
+        exit 1
+    fi
+elif [ -x "$PATHSCIENTIST_PYTHON" ]; then
+    PYTHON="$PATHSCIENTIST_PYTHON"
+elif [ -x "$PROJECT_VENV_PYTHON" ]; then
+    PYTHON="$PROJECT_VENV_PYTHON"
+elif [ -n "${CONDA_PREFIX:-}" ] && [ -x "$CONDA_PREFIX/bin/python3" ]; then
     PYTHON="$CONDA_PREFIX/bin/python3"
-elif [ -f "$PROJECT_DIR/venv/bin/python3" ]; then
-    PYTHON="$PROJECT_DIR/venv/bin/python3"
 elif command -v python3 &> /dev/null; then
     PYTHON="$(which python3)"
 else

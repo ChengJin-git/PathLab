@@ -145,6 +145,18 @@ CUDA_VISIBLE_DEVICES=0,1,3
 
 ### `start.sh` 当前行为
 
+`./deploy/start.sh` 当前会先解析 Python 解释器，优先级为：
+
+1. `PATHLAB_PYTHON` 显式指定的可执行文件或命令
+2. `server/backend/pathscientist/.venv/bin/python`
+3. `pathlab-client/venv/bin/python3`
+4. 当前 `CONDA_PREFIX/bin/python3`
+5. 系统 `python3`
+
+这个顺序刻意把 PathScientist venv 放在 Conda 前面，避免普通 Conda
+环境缺少 OpenHands/FastAPI/PathScientist 依赖时误启动失败。需要强制使用
+其他环境时，设置 `PATHLAB_PYTHON=/path/to/python ./deploy/start.sh`。
+
 `./deploy/start.sh` 当前会依次执行：
 
 1. 清理占用 `6100 / 6101 / 6102` 的旧进程
@@ -172,6 +184,7 @@ CUDA_VISIBLE_DEVICES=0,1,3
 
 当前实现里：
 
+- `backend` / `gateway` / `preprocessing` / `ai` 使用与 `start.sh` 相同的 Python 选择优先级，支持 `PATHLAB_PYTHON` 覆盖
 - `frontend` 会先构建到临时目录，补拷 `public/assets` / `public/images`，再原子替换 `dist/`
 - `frontend` 在 `node_modules/` 缺失或 `vite` 可执行文件不完整时，会先执行一次 `npm install --silent`
 - `backend` 会按 `AI → Preprocessing → Gateway` 顺序滚动重启
