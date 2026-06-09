@@ -36,6 +36,19 @@ tencent_captcha_secret_key: str
 Create `backend/common/geo_ip.py`:
 
 ```python
+def get_client_ip(request) -> str:
+    """
+    Extract client IP from request headers.
+    
+    Priority:
+    1. CF-Connecting-IP (if behind Cloudflare CDN)
+    2. X-Forwarded-For (rightmost non-private IP, only if behind known proxy)
+    3. X-Real-IP
+    4. request.client.host (direct connection)
+    
+    For private IPs (10.x, 172.16-31.x, 192.168.x, 127.x), default to Turnstile.
+    """
+
 def is_mainland_china_ip(ip: str) -> bool:
     """
     Check if an IP address is from Mainland China.
@@ -49,6 +62,7 @@ Implementation approach:
 - Cache results in memory with TTL (e.g., 1 hour) to avoid rate limits
 - For private IPs (desktop/Electron mode), default to Turnstile
 - If service is down or rate limited, fallback to Turnstile
+- **Circuit breaker**: After 5 consecutive failures, skip IP detection for 10 minutes and default to Turnstile
 
 #### 3. Public Settings API Update
 
@@ -56,16 +70,21 @@ Update `/settings/public` to return captcha provider info:
 
 ```python
 class PublicSettingsResponse(BaseModel):
+    # Keep old fields for backward compatibility during transition
+    turnstile_enabled: bool
+    turnstile_site_key: str
+    # New fields
     captcha_provider: Literal["turnstile", "tencent"] | None
     captcha_site_key: str  # Turnstile site key or Tencent app ID
 ```
 
 The backend determines the provider by:
 1. Checking if Tencent Captcha is enabled in settings
-2. Getting client IP from request headers (`X-Forwarded-For`, `X-Real-IP`, or `request.client.host`)
+2. Getting client IP via `get_client_ip(request)` with secure header parsing
 3. Calling `is_mainland_china_ip(client_ip)`
 4. If China IP and Tencent enabled → return `tencent` provider
 5. Otherwise → return `turnstile` provider (if enabled)
+6. If IP detection fails → fallback to Turnstile (never disable captcha if enabled in settings)
 
 #### 4. Captcha Verification Abstraction
 
@@ -105,6 +124,12 @@ In `secure_login` and `request_access` endpoints:
 2. If provider is `turnstile` → verify `turnstile_token`
 3. If provider is `tencent` → verify `tencent_captcha_token` + `tencent_captcha_randstr`
 4. Return appropriate error if wrong provider or missing token
+
+**Validation rules:**
+- If provider is `turnstile` and `turnstile_token` is missing → `TURNSTILE_TOKEN_REQUIRED`
+- If provider is `tencent` and `tencent_captcha_token` or `tencent_captcha_randstr` is missing → `TENCENT_CAPTCHA_REQUIRED`
+- If client sends Turnstile token but backend expects Tencent → `CAPTCHA_PROVIDER_MISMATCH`
+- If client sends Tencent token but backend expects Turnstile → `CAPTCHA_PROVIDER_MISMATCH`
 
 ### Frontend Changes
 
@@ -210,9 +235,10 @@ Login proceeds normally
 
 ### Frontend
 
-- Settings API failure → disable captcha (allow login without captcha, or show error)
+- Settings API failure → fallback to Turnstile (never disable captcha if enabled in settings)
 - Tencent script load failure → show error message, allow retry
 - Captcha expiration → clear token, re-render widget
+- Wrong provider response → log error, show generic captcha error to user
 
 ## Testing Strategy
 
@@ -275,6 +301,30 @@ Login proceeds normally
 - `src/renderer/src/components/TencentCaptcha.tsx` - NEW
 - `src/renderer/src/pages/LoginPage.tsx` - Conditional captcha rendering
 - `src/renderer/src/components/RegisterRequestModal.tsx` - Conditional captcha rendering
+- `src/renderer/src/pages/SettingsPage.tsx` - Add Tencent captcha config fields to admin UI
+- `src/renderer/src/locales/en-US.json`, `zh-CN.json`, `zh-HK.json` - Add new translation keys:
+  - `auth.tencentCaptchaRequired`
+  - `auth.captchaProviderMismatch`
+  - `auth.tencentCaptchaVerificationFailed`
+  - `settings.tencentCaptchaEnabled`
+  - `settings.tencentCaptchaAppId`
+  - `settings.tencentCaptchaSecretKey`
+
+## Decisions
+
+1. **Captcha flags**: Keep `turnstile_enabled` and add `tencent_captcha_enabled`. No separate `captcha_enabled` flag. Each provider can be independently enabled/disabled.
+2. **Electron mode**: For private IPs (10.x, 172.16-31.x, 192.168.x, 127.x), always default to Turnstile since there's no geo-location concern in desktop mode.
+3. **Caching**: Use in-memory cache with TTL (1 hour) for IP→country results. If Gateway runs multiple workers, each worker has its own cache. This is acceptable since the cache is just an optimization.
+4. **Tencent endpoint**: Use `captcha.intl.tencentcloudapi.com` (international version) for all users. The user's location doesn't affect which Tencent endpoint to use.
+
+## Monitoring
+
+Track these metrics in logs:
+- `captcha_provider_selected` - Which provider was selected for each request
+- `ip_detection_failure` - When IP geolocation service fails
+- `tencent_api_latency` - Tencent captcha verification response time
+- `tencent_api_error` - Tencent API errors with error codes
+- `fallback_to_turnstile` - When falling back to Turnstile due to errors
 
 ## Open Questions
 
