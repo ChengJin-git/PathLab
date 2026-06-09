@@ -536,8 +536,8 @@ class AddCollaboratorRequest(BaseModel):
 
 
 class PublicSettingsResponse(BaseModel):
-    turnstile_enabled: bool
-    turnstile_site_key: str
+    captcha_provider: Optional[str] = None
+    captcha_site_key: str = ""
 
 
 class GlobalSettingsResponse(BaseModel):
@@ -558,6 +558,9 @@ class GlobalSettingsResponse(BaseModel):
     turnstile_enabled: bool
     turnstile_site_key: str
     turnstile_secret_key: str
+    tencent_captcha_enabled: bool
+    tencent_captcha_app_id: str
+    tencent_captcha_secret_key: str
     resend_enabled: bool
     resend_api_key: str
     admin_notify_email: str
@@ -582,6 +585,9 @@ class GlobalSettingsUpdateRequest(BaseModel):
     turnstile_enabled: Optional[bool] = None
     turnstile_site_key: Optional[str] = None
     turnstile_secret_key: Optional[str] = None
+    tencent_captcha_enabled: Optional[bool] = None
+    tencent_captcha_app_id: Optional[str] = None
+    tencent_captcha_secret_key: Optional[str] = None
     resend_enabled: Optional[bool] = None
     resend_api_key: Optional[str] = None
     admin_notify_email: Optional[str] = None
@@ -669,6 +675,12 @@ class AccessRequest(BaseModel):
     turnstile_token: Optional[str] = Field(
         default=None, description="Cloudflare Turnstile token"
     )
+    tencent_captcha_token: Optional[str] = Field(
+        default=None, description="Tencent Captcha ticket"
+    )
+    tencent_captcha_randstr: Optional[str] = Field(
+        default=None, description="Tencent Captcha randstr"
+    )
 
 
 class SecureLoginRequest(BaseModel):
@@ -676,6 +688,8 @@ class SecureLoginRequest(BaseModel):
     hashed_password: str
     timestamp: int
     turnstile_token: Optional[str] = None
+    tencent_captcha_token: Optional[str] = None
+    tencent_captcha_randstr: Optional[str] = None
 
 
 class PaginatedUserListResponse(BaseModel):

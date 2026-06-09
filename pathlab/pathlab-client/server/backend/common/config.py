@@ -216,6 +216,19 @@ class Config:
             "turnstile_secret_key", ""
         )
 
+        tencent_captcha_enabled_env = os.getenv("TENCENT_CAPTCHA_ENABLED")
+        tencent_captcha_enabled = (
+            str_to_bool(tencent_captcha_enabled_env)
+            if tencent_captcha_enabled_env is not None
+            else data.get("tencent_captcha_enabled", False)
+        )
+        tencent_captcha_app_id = os.getenv("TENCENT_CAPTCHA_APP_ID") or data.get(
+            "tencent_captcha_app_id", ""
+        )
+        tencent_captcha_secret_key = os.getenv("TENCENT_CAPTCHA_SECRET_KEY") or data.get(
+            "tencent_captcha_secret_key", ""
+        )
+
         return {
             "openrouter_api_key": data.get("openrouter_api_key", ""),
             "openrouter_base_url": data.get(
@@ -240,6 +253,9 @@ class Config:
             "turnstile_enabled": turnstile_enabled,
             "turnstile_site_key": turnstile_site_key,
             "turnstile_secret_key": turnstile_secret_key,
+            "tencent_captcha_enabled": tencent_captcha_enabled,
+            "tencent_captcha_app_id": tencent_captcha_app_id,
+            "tencent_captcha_secret_key": tencent_captcha_secret_key,
             "resend_enabled": data.get("resend_enabled", False),
             "resend_api_key": data.get("resend_api_key", ""),
             "admin_notify_email": data.get("admin_notify_email", ""),
@@ -276,6 +292,9 @@ class Config:
             "turnstile_enabled",
             "turnstile_site_key",
             "turnstile_secret_key",
+            "tencent_captcha_enabled",
+            "tencent_captcha_app_id",
+            "tencent_captcha_secret_key",
             "resend_enabled",
             "resend_api_key",
             "admin_notify_email",
