@@ -175,7 +175,7 @@ async def send_templated_email(
 
         _resend.api_key = settings["resend_api_key"]
         from_addr = (
-            "PathLab Agent <notify@pathub.org>"
+            "PathLab Agent <notify@pathhub.org>"
             if for_admin
             else "PathLab Admin <noreply@pathhub.org>"
         )
