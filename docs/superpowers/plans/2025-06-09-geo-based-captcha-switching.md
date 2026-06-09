@@ -575,10 +575,6 @@ git commit -m "feat: add Tencent captcha verification and unified captcha check"
 
 ```typescript
 export interface PublicSettings {
-  // Backward compatibility
-  turnstile_enabled: boolean
-  turnstile_site_key: string
-  // New fields
   captcha_provider: 'turnstile' | 'tencent' | null
   captcha_site_key: string
 }
