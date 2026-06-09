@@ -49,6 +49,7 @@
     "pleaseEnterUsernameAndPassword": "請輸入使用者名稱和密碼",
     "copyright": "© 2026",
     "protectedByTurnstile": "受 Cloudflare Turnstile 保護",
+    "protectedByTencent": "受騰訊雲驗證碼保護",
     "captchaRequired": "請完成驗證碼驗證",
     "captchaExpired": "驗證碼已過期，請重試",
     "captchaError": "驗證碼驗證失敗，請重試",

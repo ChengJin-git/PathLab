@@ -292,7 +292,7 @@ function LoginPageInner({ backendUnavailable = false, captchaProvider, captchaSi
             </div>
 
             <p className="text-center text-xs text-slate-400 mt-6">
-              © 2026 <a href="https://smartx.ust.hk/" target="_blank" rel="noopener noreferrer">SmartXLab</a>{captchaProvider === 'turnstile' ? ` · ${t('common.protectedByTurnstile')}` : ''}
+              © 2026 <a href="https://smartx.ust.hk/" target="_blank" rel="noopener noreferrer">SmartXLab</a>{captchaProvider === 'turnstile' ? ` · ${t('common.protectedByTurnstile')}` : captchaProvider === 'tencent' ? ` · ${t('common.protectedByTencent')}` : ''}
             </p>
           </form>
         </div>

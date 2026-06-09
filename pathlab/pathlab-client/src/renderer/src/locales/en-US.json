@@ -49,6 +49,7 @@
     "pleaseEnterUsernameAndPassword": "Please enter username and password",
     "copyright": "© 2026",
     "protectedByTurnstile": "protected by Cloudflare Turnstile",
+    "protectedByTencent": "protected by Tencent Captcha",
     "captchaRequired": "Please complete the captcha verification",
     "captchaExpired": "Captcha expired. Please try again.",
     "captchaError": "Captcha verification failed. Please try again.",
