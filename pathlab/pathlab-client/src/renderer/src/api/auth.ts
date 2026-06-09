@@ -86,6 +86,8 @@ export interface AccessRequest {
   registration_email: string
   nickname?: string
   turnstile_token?: string
+  tencent_captcha_token?: string
+  tencent_captcha_randstr?: string
 }
 
 export interface CurrentUserUpdateRequest {
@@ -123,18 +125,14 @@ export interface AdminUserUpdateRequest extends CurrentUserUpdateRequest {
 export async function loginWithCredentials(
   username: string,
   password: string,
-  turnstileToken?: string
+  turnstileToken?: string,
+  tencentCaptchaTicket?: string,
+  tencentCaptchaRandstr?: string
 ): Promise<LoginResponse> {
-  // Step 1: Compute SHA256(password)
   const passwordHash = await sha256(password)
-
-  // Step 2: Get current timestamp in milliseconds
   const timestamp = Date.now()
-
-  // Step 3: Compute SHA256(passwordHash + timestamp + APP_SALT)
   const hashedCredential = await sha256(passwordHash + timestamp + APP_SALT)
 
-  // Step 4: Send secure login request
   const response = await apiFetch<LoginResponse>(
     `${API_BASE}/auth/secure-login`,
     {
@@ -144,7 +142,9 @@ export async function loginWithCredentials(
         username,
         hashed_password: hashedCredential,
         timestamp,
-        turnstile_token: turnstileToken
+        turnstile_token: turnstileToken,
+        tencent_captcha_token: tencentCaptchaTicket,
+        tencent_captcha_randstr: tencentCaptchaRandstr
       })
     },
     'Login failed'
