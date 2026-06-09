@@ -35,7 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional
 from pydantic import Field
 
-from backend.database import get_db
+from backend.database import async_session, get_db
 from backend.auth import (
     fastapi_users,
     auth_backend,
@@ -149,20 +149,38 @@ async def _send_application_received_email(user: "User") -> None:
 
 
 async def _send_admin_application_email(user: "User") -> None:
-    from backend.common.config import Config
+    recipients: list[str] = []
+    try:
+        async with async_session() as db:
+            result = await db.execute(
+                select(User).where(User.role == "admin")
+            )
+            for admin_user in result.scalars().all():
+                if admin_user.role != "admin" or not admin_user.is_active:
+                    continue
+                email = (admin_user.registration_email or admin_user.email or "").strip().lower()
+                if email and email not in recipients:
+                    recipients.append(email)
+    except Exception as exc:
+        logger.warning(f"[admin_registration_email] could not resolve admins: {exc}")
 
-    settings = Config.get_global_settings()
-    admin_notify_email = settings.get("admin_notify_email", "")
-    await send_templated_email(
-        template_key="admin_new_user_registration_notice",
-        to_email=admin_notify_email,
-        context={
-            "display_name": user.nickname or user.username,
-            "username": user.username,
-            "registration_email": user.registration_email or "-",
-        },
-        for_admin=True,
-    )
+    if not recipients:
+        settings = Config.get_global_settings()
+        fallback_email = (settings.get("admin_notify_email", "") or "").strip().lower()
+        if fallback_email:
+            recipients.append(fallback_email)
+
+    for admin_email in recipients:
+        await send_templated_email(
+            template_key="admin_new_user_registration_notice",
+            to_email=admin_email,
+            context={
+                "display_name": user.nickname or user.username,
+                "username": user.username,
+                "registration_email": user.registration_email or "-",
+            },
+            for_admin=True,
+        )
 
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:

@@ -17,6 +17,17 @@ class _ScalarResult:
         return self._value
 
 
+class _ScalarsResult:
+    def __init__(self, values):
+        self._values = values
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._values
+
+
 class _FakeSession:
     def __init__(self, existing_user=None):
         self.existing_user = existing_user
@@ -46,6 +57,20 @@ class _FakeSession:
         return None
 
 
+class _FakeAdminLookupSession:
+    def __init__(self, admins):
+        self.admins = admins
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_exc_info):
+        return None
+
+    async def execute(self, _statement):
+        return _ScalarsResult(self.admins)
+
+
 def _admin_user():
     user = MagicMock()
     user.id = uuid.uuid4()
@@ -66,6 +91,21 @@ def _make_user(username="existing"):
         is_superuser=False,
         is_verified=True,
         role="guest",
+    )
+
+
+def _make_admin_user(username, *, registration_email=None, email=None, is_active=True):
+    return User(
+        id=uuid.uuid4(),
+        username=username,
+        email=email,
+        hashed_password="hashed",
+        password_sha256="0" * 64,
+        is_active=is_active,
+        is_superuser=False,
+        is_verified=True,
+        role="admin",
+        registration_email=registration_email,
     )
 
 
@@ -163,6 +203,38 @@ async def test_request_access_rejects_non_educational_email():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "REGISTRATION_EMAIL_NOT_EDUCATIONAL"
+
+
+@pytest.mark.asyncio
+async def test_admin_application_email_sends_to_active_admin_user_emails():
+    applicant = _make_user("self_service_user")
+    applicant.nickname = "Self Service"
+    applicant.registration_email = "student@example.edu"
+    admins = [
+        _make_admin_user("primary_admin", registration_email="Primary@Example.edu"),
+        _make_admin_user("contact_admin", email="Contact@Example.edu"),
+        _make_admin_user("inactive_admin", registration_email="inactive@example.edu", is_active=False),
+        _make_admin_user("no_email_admin"),
+    ]
+    send_templated_email = AsyncMock()
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(
+            auth_routes,
+            "async_session",
+            lambda: _FakeAdminLookupSession(admins),
+            raising=False,
+        )
+        mp.setattr(auth_routes, "send_templated_email", send_templated_email)
+        await auth_routes._send_admin_application_email(applicant)
+
+    assert send_templated_email.await_count == 2
+    recipients = [call.kwargs["to_email"] for call in send_templated_email.await_args_list]
+    assert recipients == ["primary@example.edu", "contact@example.edu"]
+    for call in send_templated_email.await_args_list:
+        assert call.kwargs["template_key"] == "admin_new_user_registration_notice"
+        assert call.kwargs["for_admin"] is True
+        assert call.kwargs["context"]["username"] == "self_service_user"
 
 
 @pytest.mark.asyncio
