@@ -155,22 +155,35 @@ async def _send_admin_application_email(user: "User") -> None:
             result = await db.execute(
                 select(User).where(User.role == "admin")
             )
-            for admin_user in result.scalars().all():
+            admin_users = result.scalars().all()
+            logger.info(f"[admin_registration_email] found {len(admin_users)} admin users")
+            for admin_user in admin_users:
+                logger.info(f"[admin_registration_email] checking admin: {admin_user.username}, role={admin_user.role}, active={admin_user.is_active}, reg_email={admin_user.registration_email}, email={admin_user.email}")
                 if admin_user.role != "admin" or not admin_user.is_active:
+                    logger.info(f"[admin_registration_email] skipping admin {admin_user.username}: role={admin_user.role}, active={admin_user.is_active}")
                     continue
                 email = (admin_user.registration_email or admin_user.email or "").strip().lower()
+                logger.info(f"[admin_registration_email] admin {admin_user.username} resolved email: {email}")
                 if email and email not in recipients:
                     recipients.append(email)
+                    logger.info(f"[admin_registration_email] added recipient: {email}")
     except Exception as exc:
         logger.warning(f"[admin_registration_email] could not resolve admins: {exc}")
+        logger.exception("[admin_registration_email] full exception:")
 
+    logger.info(f"[admin_registration_email] total recipients after DB query: {len(recipients)}")
+    
     if not recipients:
         settings = Config.get_global_settings()
         fallback_email = (settings.get("admin_notify_email", "") or "").strip().lower()
+        logger.info(f"[admin_registration_email] fallback email: {fallback_email}")
         if fallback_email:
             recipients.append(fallback_email)
 
+    logger.info(f"[admin_registration_email] final recipients: {recipients}")
+    
     for admin_email in recipients:
+        logger.info(f"[admin_registration_email] sending to: {admin_email}")
         await send_templated_email(
             template_key="admin_new_user_registration_notice",
             to_email=admin_email,
