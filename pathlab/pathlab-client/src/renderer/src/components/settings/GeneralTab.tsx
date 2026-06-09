@@ -79,6 +79,13 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
   const [resendEnabled, setResendEnabled] = useState(false)
   const [resendApiKey, setResendApiKey] = useState('')
 
+  const [turnstileEnabled, setTurnstileEnabled] = useState(false)
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
+  const [turnstileSecretKey, setTurnstileSecretKey] = useState('')
+  const [tencentCaptchaEnabled, setTencentCaptchaEnabled] = useState(false)
+  const [tencentCaptchaAppId, setTencentCaptchaAppId] = useState('')
+  const [tencentCaptchaSecretKey, setTencentCaptchaSecretKey] = useState('')
+
   const [localAsrEnabled, setLocalAsrEnabled] = useState(false)
   const [localAsrBaseUrl, setLocalAsrBaseUrl] = useState('ws://127.0.0.1:8001/api-ws/v1/realtime')
   const [localAsrModel, setLocalAsrModel] = useState('')
@@ -139,6 +146,12 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
       setLocalVllmModel(s.local_vllm_model); setLocalVllmApiKey(s.local_vllm_api_key)
       setResendEnabled(s.resend_enabled || false)
       setResendApiKey(s.resend_api_key || '')
+      setTurnstileEnabled(s.turnstile_enabled || false)
+      setTurnstileSiteKey(s.turnstile_site_key || '')
+      setTurnstileSecretKey(s.turnstile_secret_key || '')
+      setTencentCaptchaEnabled(s.tencent_captcha_enabled || false)
+      setTencentCaptchaAppId(s.tencent_captcha_app_id || '')
+      setTencentCaptchaSecretKey(s.tencent_captcha_secret_key || '')
       setLocalAsrEnabled(s.local_asr_enabled); setLocalAsrBaseUrl(s.local_asr_base_url)
       setLocalAsrModel(s.local_asr_model); setLocalAsrApiKey(s.local_asr_api_key)
       if (s.local_vllm_enabled && s.local_vllm_base_url) {
@@ -172,6 +185,10 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
         local_asr_enabled: localAsrEnabled, local_asr_base_url: localAsrBaseUrl,
         local_asr_model: localAsrModel, local_asr_api_key: localAsrApiKey,
         resend_enabled: resendEnabled, resend_api_key: resendApiKey,
+        turnstile_enabled: turnstileEnabled, turnstile_site_key: turnstileSiteKey,
+        turnstile_secret_key: turnstileSecretKey,
+        tencent_captcha_enabled: tencentCaptchaEnabled, tencent_captcha_app_id: tencentCaptchaAppId,
+        tencent_captcha_secret_key: tencentCaptchaSecretKey,
       })
       localStorage.setItem('openrouter_api_key', apiKey)
       localStorage.setItem('openrouter_base_url', baseUrl)
@@ -419,12 +436,88 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                     </div>
                   )}
                 </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-cyan-100 rounded-md">
+                        <Key className="w-4 h-4 text-cyan-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-slate-900">Cloudflare Turnstile</h3>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Captcha</span>
+                      </div>
+                    </div>
+                    <ToggleSwitch enabled={turnstileEnabled} onChange={() => setTurnstileEnabled(!turnstileEnabled)} />
+                  </div>
+
+                  {turnstileEnabled && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Site Key</Label>
+                        <Input
+                          value={turnstileSiteKey}
+                          onChange={(e) => setTurnstileSiteKey(e.target.value)}
+                          placeholder="1x00000000000000000000AA"
+                          className="h-9 text-sm border-slate-300 focus:border-cyan-500 focus:ring-cyan-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Secret Key</Label>
+                        <Input
+                          type="password"
+                          value={turnstileSecretKey}
+                          onChange={(e) => setTurnstileSecretKey(e.target.value)}
+                          placeholder="0x0000000000000000000000000000000000000000"
+                          className="h-9 text-sm border-slate-300 focus:border-cyan-500 focus:ring-cyan-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-blue-100 rounded-md">
+                        <Key className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-slate-900">Tencent Captcha</h3>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Captcha (CN)</span>
+                      </div>
+                    </div>
+                    <ToggleSwitch enabled={tencentCaptchaEnabled} onChange={() => setTencentCaptchaEnabled(!tencentCaptchaEnabled)} />
+                  </div>
+
+                  {tencentCaptchaEnabled && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">App ID</Label>
+                        <Input
+                          value={tencentCaptchaAppId}
+                          onChange={(e) => setTencentCaptchaAppId(e.target.value)}
+                          placeholder="189949311"
+                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Secret Key</Label>
+                        <Input
+                          type="password"
+                          value={tencentCaptchaSecretKey}
+                          onChange={(e) => setTencentCaptchaSecretKey(e.target.value)}
+                          placeholder="9Tr0okws3T1ZwOIwciEWg8P19"
+                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           </Card>
         </section>
-
-        {/* Removed Separate Web Search Section, now integrated above */}
 
         {/* Local Services Section */}
         <section className="space-y-3">
