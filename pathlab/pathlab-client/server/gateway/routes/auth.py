@@ -48,6 +48,7 @@ from backend.auth import (
 from backend.auth.schemas import UserReadAdmin, AdminUserUpdate, AdminUserCreate
 from backend.auth.users import get_jwt_strategy
 from backend.common.config import Config
+from backend.common.geo_ip import get_client_ip, is_mainland_china_ip
 from gateway.models import (
     AccessRequest,
     SecureLoginRequest,
@@ -208,16 +209,6 @@ async def _send_admin_application_email(user: "User") -> None:
 
 
 async def verify_turnstile(token: str, secret_key: str) -> bool:
-    """
-    Verify Cloudflare Turnstile token with Cloudflare API.
-
-    Args:
-        token: Turnstile token from client
-        secret_key: Turnstile secret key
-
-    Returns:
-        True if verification successful, False otherwise
-    """
     if not token or not secret_key:
         return False
 
@@ -225,17 +216,12 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://challenges.cloudflare.com/turnstile/v0/siteverify",
-                data={
-                    "secret": secret_key,
-                    "response": token,
-                },
+                data={"secret": secret_key, "response": token},
                 timeout=10.0,
             )
 
             if response.status_code != 200:
-                logger.warning(
-                    f"Turnstile verification failed with status {response.status_code}"
-                )
+                logger.warning(f"Turnstile verification failed with status {response.status_code}")
                 return False
 
             result = response.json()
@@ -250,6 +236,112 @@ async def verify_turnstile(token: str, secret_key: str) -> bool:
     except Exception as e:
         logger.error(f"Turnstile verification error: {e}")
         return False
+
+
+async def verify_tencent_captcha(
+    ticket: str, randstr: str, user_ip: str, app_id: str, secret_key: str
+) -> bool:
+    if not ticket or not randstr or not app_id or not secret_key:
+        return False
+
+    try:
+        import json
+        import hmac
+        import hashlib
+        from datetime import datetime, timezone
+
+        service = "captcha"
+        host = "captcha.intl.tencentcloudapi.com"
+        action = "DescribeCaptchaResult"
+        version = "2019-07-22"
+        region = "ap-guangzhou"
+
+        timestamp = int(datetime.now(timezone.utc).timestamp())
+        date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        payload = json.dumps({
+            "CaptchaAppId": int(app_id),
+            "CaptchaType": 9,
+            "NeedGetCaptchaTime": 1,
+            "Randstr": randstr,
+            "UserIp": user_ip,
+            "Ticket": ticket,
+            "AppSecretKey": secret_key,
+        })
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"https://{host}/",
+                headers={
+                    "Content-Type": "application/json",
+                    "X-TC-Action": action,
+                    "X-TC-Version": version,
+                    "X-TC-Timestamp": str(timestamp),
+                    "X-TC-Region": region,
+                },
+                content=payload,
+            )
+
+            if response.status_code != 200:
+                logger.warning(f"Tencent captcha verification failed: HTTP {response.status_code}")
+                return False
+
+            result = response.json()
+            error = result.get("Response", {}).get("Error")
+            if error:
+                logger.warning(f"Tencent captcha error: {error}")
+                return False
+
+            captcha_result = result.get("Response", {}).get("CaptchaCode", 0)
+            return captcha_result == 1
+
+    except Exception as e:
+        logger.error(f"Tencent captcha verification error: {e}")
+        return False
+
+
+async def verify_captcha(
+    request,
+    turnstile_token: Optional[str],
+    tencent_ticket: Optional[str],
+    tencent_randstr: Optional[str],
+) -> tuple[bool, Optional[str]]:
+    settings = Config.get_global_settings()
+    client_ip = get_client_ip(request)
+    is_china = await is_mainland_china_ip(client_ip)
+
+    tencent_enabled = settings.get("tencent_captcha_enabled", False)
+    turnstile_enabled = settings.get("turnstile_enabled", False)
+
+    if is_china and tencent_enabled:
+        expected_provider = "tencent"
+    elif turnstile_enabled:
+        expected_provider = "turnstile"
+    else:
+        return True, None
+
+    if expected_provider == "turnstile":
+        if not turnstile_token:
+            return False, "TURNSTILE_TOKEN_REQUIRED"
+        secret_key = settings.get("turnstile_secret_key", "")
+        valid = await verify_turnstile(turnstile_token, secret_key)
+        if not valid:
+            return False, "TURNSTILE_VERIFICATION_FAILED"
+        return True, None
+
+    if expected_provider == "tencent":
+        if not tencent_ticket or not tencent_randstr:
+            return False, "TENCENT_CAPTCHA_REQUIRED"
+        secret_key = settings.get("tencent_captcha_secret_key", "")
+        app_id = settings.get("tencent_captcha_app_id", "")
+        valid = await verify_tencent_captcha(
+            tencent_ticket, tencent_randstr, client_ip, app_id, secret_key
+        )
+        if not valid:
+            return False, "TENCENT_CAPTCHA_VERIFICATION_FAILED"
+        return True, None
+
+    return True, None
 
 
 # Create main auth router
@@ -365,24 +457,17 @@ async def request_access(
             detail="REGISTRATION_EMAIL_NOT_EDUCATIONAL",
         )
 
-    # Verify Cloudflare Turnstile if enabled
-    _reg_settings = Config.get_global_settings()
-    if _reg_settings.get("turnstile_enabled") and _reg_settings.get(
-        "turnstile_secret_key"
-    ):
-        if not request.turnstile_token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_TOKEN_REQUIRED",
-            )
-        _turnstile_valid = await verify_turnstile(
-            request.turnstile_token, _reg_settings["turnstile_secret_key"]
+    captcha_valid, error_code = await verify_captcha(
+        request,
+        request.turnstile_token,
+        request.tencent_captcha_token,
+        request.tencent_captcha_randstr,
+    )
+    if not captcha_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_code,
         )
-        if not _turnstile_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_VERIFICATION_FAILED",
-            )
 
     # Normalise inputs
     username = request.username.strip()
@@ -452,51 +537,18 @@ async def secure_login(
     request: SecureLoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """
-    Secure login with client-side hashed password.
-
-    Security features:
-    - Password is never transmitted in plaintext
-    - Client sends: SHA256(SHA256(password) + timestamp + APP_SALT)
-    - Timestamp validation prevents replay attacks (5 minute window)
-    - Rainbow table attacks are mitigated by timestamp + salt
-
-    Request body:
-    - username: User's username
-    - hashed_password: SHA256(SHA256(password) + timestamp + APP_SALT)
-    - timestamp: Unix timestamp in milliseconds when hash was created
-
-    Returns:
-    - access_token: JWT token for authentication
-    - token_type: "bearer"
-    """
-    # Verify Cloudflare Turnstile if enabled
-    settings = Config.get_global_settings()
-    turnstile_enabled = settings.get("turnstile_enabled", False)
-    turnstile_secret_key = settings.get("turnstile_secret_key", "")
-
-    if turnstile_enabled and turnstile_secret_key:
-        if not request.turnstile_token:
-            logger.warning(
-                f"Login attempt without Turnstile token for user {request.username}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_TOKEN_REQUIRED",
-            )
-
-        # Verify Turnstile token
-        turnstile_valid = await verify_turnstile(
-            request.turnstile_token, turnstile_secret_key
+    captcha_valid, error_code = await verify_captcha(
+        request,
+        request.turnstile_token,
+        request.tencent_captcha_token,
+        request.tencent_captcha_randstr,
+    )
+    if not captcha_valid:
+        logger.warning(f"Login captcha verification failed for user {request.username}: {error_code}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=error_code,
         )
-        if not turnstile_valid:
-            logger.warning(
-                f"Login attempt with invalid Turnstile token for user {request.username}"
-            )
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="TURNSTILE_VERIFICATION_FAILED",
-            )
 
     # Validate timestamp (prevent replay attacks)
     current_time_ms = int(time.time() * 1000)
