@@ -371,45 +371,6 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                     </div>
                   )}
                 </div>
-
-                <div className="p-5 space-y-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-blue-100 rounded-md">
-                        <Key className="w-4 h-4 text-blue-600" />
-                      </div>
-                      <div className="flex flex-col">
-                        <h3 className="font-semibold text-slate-900">Tencent Captcha</h3>
-                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Captcha (CN)</span>
-                      </div>
-                    </div>
-                    <ToggleSwitch enabled={tencentCaptchaEnabled} onChange={() => setTencentCaptchaEnabled(!tencentCaptchaEnabled)} />
-                  </div>
-
-                  {tencentCaptchaEnabled && (
-                    <div className="space-y-3">
-                      <div className="space-y-2">
-                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">App ID</Label>
-                        <Input
-                          value={tencentCaptchaAppId}
-                          onChange={(e) => setTencentCaptchaAppId(e.target.value)}
-                          placeholder="YOUR_TENCENT_APP_ID"
-                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Secret Key</Label>
-                        <Input
-                          type="password"
-                          value={tencentCaptchaSecretKey}
-                          onChange={(e) => setTencentCaptchaSecretKey(e.target.value)}
-                          placeholder="YOUR_TENCENT_SECRET_KEY"
-                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </div>
-                    </div>
-                  )}
-                </div>
               </div>
 
               {/* Right Column: Other Services (Stacked) */}
@@ -508,6 +469,45 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                             </a>
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-blue-100 rounded-md">
+                        <Key className="w-4 h-4 text-blue-600" />
+                      </div>
+                      <div className="flex flex-col">
+                        <h3 className="font-semibold text-slate-900">Tencent Captcha</h3>
+                        <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wide">Captcha (CN)</span>
+                      </div>
+                    </div>
+                    <ToggleSwitch enabled={tencentCaptchaEnabled} onChange={() => setTencentCaptchaEnabled(!tencentCaptchaEnabled)} />
+                  </div>
+
+                  {tencentCaptchaEnabled && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">App ID</Label>
+                        <Input
+                          value={tencentCaptchaAppId}
+                          onChange={(e) => setTencentCaptchaAppId(e.target.value)}
+                          placeholder="YOUR_TENCENT_APP_ID"
+                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-xs text-slate-700 font-semibold uppercase tracking-wide">Secret Key</Label>
+                        <Input
+                          type="password"
+                          value={tencentCaptchaSecretKey}
+                          onChange={(e) => setTencentCaptchaSecretKey(e.target.value)}
+                          placeholder="YOUR_TENCENT_SECRET_KEY"
+                          className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
+                        />
                       </div>
                     </div>
                   )}
