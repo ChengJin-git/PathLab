@@ -6,16 +6,18 @@ import { Input } from './ui/input'
 import { requestAccess } from '../api/auth'
 import { ApiError } from '../api/client'
 import { ModalShell } from './ui/modal-shell'
+import { TencentCaptcha } from './TencentCaptcha'
 
 interface Props {
   isOpen: boolean
   onClose: () => void
-  turnstileSiteKey?: string
+  captchaProvider?: 'turnstile' | 'tencent' | null
+  captchaSiteKey?: string
 }
 
 type Step = 'form' | 'success'
 
-export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Props) {
+export function RegisterRequestModal({ isOpen, onClose, captchaProvider, captchaSiteKey }: Props) {
   const { t } = useTranslation()
 
   const [step, setStep] = React.useState<Step>('form')
@@ -31,6 +33,9 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
   const turnstileRef = React.useRef<HTMLDivElement>(null)
   const turnstileWidgetId = React.useRef<string | null>(null)
 
+  const [tencentTicket, setTencentTicket] = React.useState<string | undefined>(undefined)
+  const [tencentRandstr, setTencentRandstr] = React.useState<string | undefined>(undefined)
+
   React.useEffect(() => {
     if (isOpen) {
       setStep('form')
@@ -42,6 +47,8 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
       setError(null)
       setIsSubmitting(false)
       setTurnstileToken(undefined)
+      setTencentTicket(undefined)
+      setTencentRandstr(undefined)
     } else {
       if (turnstileWidgetId.current !== null && (window as any).turnstile) {
         try {
@@ -53,14 +60,14 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
   }, [isOpen])
 
   React.useEffect(() => {
-    if (!isOpen || !turnstileSiteKey || !turnstileRef.current) return
+    if (!isOpen || captchaProvider !== 'turnstile' || !captchaSiteKey || !turnstileRef.current) return
     if (turnstileWidgetId.current !== null) return
 
     const render = () => {
       if (!turnstileRef.current || turnstileWidgetId.current !== null) return
       if (!(window as any).turnstile) return
       turnstileWidgetId.current = (window as any).turnstile.render(turnstileRef.current, {
-        sitekey: turnstileSiteKey,
+        sitekey: captchaSiteKey,
         callback: (token: string) => setTurnstileToken(token),
         'expired-callback': () => setTurnstileToken(undefined),
         'error-callback': () => setTurnstileToken(undefined),
@@ -77,7 +84,7 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
         existing.addEventListener('load', render, { once: true })
       }
     }
-  }, [isOpen, turnstileSiteKey])
+  }, [isOpen, captchaProvider, captchaSiteKey])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -96,14 +103,19 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
         registration_email: registrationEmail.trim(),
         nickname: nickname.trim() || undefined,
         turnstile_token: turnstileToken,
+        tencent_captcha_token: tencentTicket,
+        tencent_captcha_randstr: tencentRandstr,
       })
       setStep('success')
     } catch (err) {
-      if (turnstileWidgetId.current !== null && (window as any).turnstile) {
+      if (captchaProvider === 'turnstile' && turnstileWidgetId.current !== null && (window as any).turnstile) {
         try {
           (window as any).turnstile.reset(turnstileWidgetId.current)
           setTurnstileToken(undefined)
         } catch { /* ignore */ }
+      } else if (captchaProvider === 'tencent') {
+        setTencentTicket(undefined)
+        setTencentRandstr(undefined)
       }
       if (err instanceof ApiError) {
         const detail = err.details as string | undefined
@@ -199,11 +211,28 @@ export function RegisterRequestModal({ isOpen, onClose, turnstileSiteKey }: Prop
                 </div>
               )}
 
-              {turnstileSiteKey && (
+              {captchaProvider === 'turnstile' && captchaSiteKey && (
                 <div ref={turnstileRef} className="w-full" />
               )}
+              {captchaProvider === 'tencent' && captchaSiteKey && (
+                <TencentCaptcha
+                  appId={captchaSiteKey}
+                  onVerify={(ticket, randstr) => {
+                    setTencentTicket(ticket)
+                    setTencentRandstr(randstr)
+                  }}
+                  onExpire={() => {
+                    setTencentTicket(undefined)
+                    setTencentRandstr(undefined)
+                  }}
+                  onError={() => {
+                    setTencentTicket(undefined)
+                    setTencentRandstr(undefined)
+                  }}
+                />
+              )}
 
-              <Button type="submit" disabled={isSubmitting || (!!turnstileSiteKey && !turnstileToken)} className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg">
+              <Button type="submit" disabled={isSubmitting || (!!captchaSiteKey && !turnstileToken && !tencentTicket)} className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg">
                 {isSubmitting
                   ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t('registerModal.submitting')}</>
                   : <><UserPlus className="w-4 h-4 mr-2" />{t('registerModal.submit')}</>
