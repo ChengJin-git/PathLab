@@ -458,7 +458,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                         <Input
                           value={turnstileSiteKey}
                           onChange={(e) => setTurnstileSiteKey(e.target.value)}
-                          placeholder="1x00000000000000000000AA"
+                          placeholder="YOUR_TURNSTILE_SITE_KEY"
                           className="h-9 text-sm border-slate-300 focus:border-cyan-500 focus:ring-cyan-500"
                         />
                       </div>
@@ -468,7 +468,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                           type="password"
                           value={turnstileSecretKey}
                           onChange={(e) => setTurnstileSecretKey(e.target.value)}
-                          placeholder="0x0000000000000000000000000000000000000000"
+                          placeholder="YOUR_TURNSTILE_SECRET_KEY"
                           className="h-9 text-sm border-slate-300 focus:border-cyan-500 focus:ring-cyan-500"
                         />
                       </div>
@@ -497,7 +497,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                         <Input
                           value={tencentCaptchaAppId}
                           onChange={(e) => setTencentCaptchaAppId(e.target.value)}
-                          placeholder="189949311"
+                          placeholder="YOUR_TENCENT_APP_ID"
                           className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
                         />
                       </div>
@@ -507,7 +507,7 @@ export function GeneralTab({ showConfirmDialog, closeConfirmDialog }: GeneralTab
                           type="password"
                           value={tencentCaptchaSecretKey}
                           onChange={(e) => setTencentCaptchaSecretKey(e.target.value)}
-                          placeholder="9Tr0okws3T1ZwOIwciEWg8P19"
+                          placeholder="YOUR_TENCENT_SECRET_KEY"
                           className="h-9 text-sm border-slate-300 focus:border-blue-500 focus:ring-blue-500"
                         />
                       </div>
