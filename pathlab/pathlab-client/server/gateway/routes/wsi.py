@@ -622,6 +622,9 @@ async def list_datasets(
     source_organ: Optional[str] = Query(
         None, description="Filter by normalized source organ"
     ),
+    is_public: Optional[bool] = Query(
+        None, description="Filter by dataset visibility"
+    ),
     page: int = Query(
         1, ge=1, description="Page number (1-based). Ignored when page_size=0."
     ),
@@ -674,6 +677,7 @@ async def list_datasets(
         task_type=task_type,
         aggregation_level=aggregation_level,
         source_organ=source_organ,
+        is_public=is_public,
         skip=skip,
         limit=page_size,
     )

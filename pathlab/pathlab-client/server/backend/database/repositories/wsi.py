@@ -793,6 +793,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
     ):
         from ..models import DatasetStats
 
@@ -856,6 +857,9 @@ class WSIRepository(BaseRepository[WSISlide]):
                 )
                 query = query.where(source_expr == normalized_source)
 
+        if is_public is not None:
+            query = query.where(Dataset.is_public.is_(is_public))
+
         return query
 
     @staticmethod
@@ -869,6 +873,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
     ) -> int:
         subq = WSIRepository._build_dataset_summary_query(
             data_type=data_type,
@@ -879,6 +884,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             task_type=task_type,
             aggregation_level=aggregation_level,
             source_organ=source_organ,
+            is_public=is_public,
         ).subquery("ds_count")
         result = await db.execute(select(func.count()).select_from(subq))
         return result.scalar() or 0
@@ -894,6 +900,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
         skip: int = 0,
         limit: int = 0,
     ) -> List[Dict[str, Any]]:
@@ -922,6 +929,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             task_type=task_type,
             aggregation_level=aggregation_level,
             source_organ=source_organ,
+            is_public=is_public,
         ).order_by(Dataset.name)
 
         if skip > 0:
@@ -1076,6 +1084,7 @@ class WSIRepository(BaseRepository[WSISlide]):
         task_type: Optional[str] = None,
         aggregation_level: Optional[str] = None,
         source_organ: Optional[str] = None,
+        is_public: Optional[bool] = None,
         skip: int = 0,
         limit: int = 0,
     ) -> tuple[List[Dict[str, Any]], int]:
@@ -1093,6 +1102,7 @@ class WSIRepository(BaseRepository[WSISlide]):
             task_type=task_type,
             aggregation_level=aggregation_level,
             source_organ=source_organ,
+            is_public=is_public,
         ).subquery("ds")
         total_col = func.count().over().label("_total_count")
         query = select(base_subq, total_col).order_by(base_subq.c.dataset_name)

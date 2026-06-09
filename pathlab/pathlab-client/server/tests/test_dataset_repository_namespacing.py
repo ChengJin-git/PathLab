@@ -1,11 +1,16 @@
 import types
 
 import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
 
 from backend.database.repositories.dataset import (
     DatasetNameConflictError,
     DatasetRepository,
 )
+from backend.database.repositories.wsi import WSIRepository
+from gateway.routes import wsi as wsi_routes
+from helpers import _make_user
 
 
 class _AsyncNullContext:
@@ -154,3 +159,69 @@ async def test_get_or_create_raises_conflict_when_reuse_disabled(monkeypatch):
             user_id="user-a",
             reuse_existing=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_list_datasets_passes_private_visibility_filter(monkeypatch):
+    captured_filters = []
+
+    async def _fake_get_datasets_with_total(_db, **kwargs):
+        captured_filters.append(kwargs.get("is_public"))
+        return [], 0
+
+    monkeypatch.setattr(
+        WSIRepository,
+        "get_datasets_with_total",
+        staticmethod(_fake_get_datasets_with_total),
+    )
+    async def _fake_get_permitted_dataset_ids(*_args):
+        return []
+
+    monkeypatch.setattr(wsi_routes, "get_permitted_dataset_ids", _fake_get_permitted_dataset_ids)
+
+    app = FastAPI()
+    app.dependency_overrides[wsi_routes.current_active_user] = lambda: _make_user("admin")
+    app.dependency_overrides[wsi_routes.get_user_id_filter] = lambda: None
+    app.dependency_overrides[wsi_routes.get_db] = lambda: object()
+    app.include_router(wsi_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/wsi/datasets?is_public=false")
+
+    assert response.status_code == 200
+    assert captured_filters == [False]
+
+
+@pytest.mark.asyncio
+async def test_list_datasets_passes_public_visibility_filter(monkeypatch):
+    captured_filters = []
+
+    async def _fake_get_datasets_with_total(_db, **kwargs):
+        captured_filters.append(kwargs.get("is_public"))
+        return [], 0
+
+    monkeypatch.setattr(
+        WSIRepository,
+        "get_datasets_with_total",
+        staticmethod(_fake_get_datasets_with_total),
+    )
+    async def _fake_get_permitted_dataset_ids(*_args):
+        return []
+
+    monkeypatch.setattr(wsi_routes, "get_permitted_dataset_ids", _fake_get_permitted_dataset_ids)
+
+    app = FastAPI()
+    app.dependency_overrides[wsi_routes.current_active_user] = lambda: _make_user("admin")
+    app.dependency_overrides[wsi_routes.get_user_id_filter] = lambda: None
+    app.dependency_overrides[wsi_routes.get_db] = lambda: object()
+    app.include_router(wsi_routes.router)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as client:
+        response = await client.get("/wsi/datasets?is_public=true")
+
+    assert response.status_code == 200
+    assert captured_filters == [True]
