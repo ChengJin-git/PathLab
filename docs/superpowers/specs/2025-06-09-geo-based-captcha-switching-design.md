@@ -70,10 +70,6 @@ Update `/settings/public` to return captcha provider info:
 
 ```python
 class PublicSettingsResponse(BaseModel):
-    # Keep old fields for backward compatibility during transition
-    turnstile_enabled: bool
-    turnstile_site_key: str
-    # New fields
     captcha_provider: Literal["turnstile", "tencent"] | None
     captcha_site_key: str  # Turnstile site key or Tencent app ID
 ```
@@ -114,9 +110,9 @@ class SecureLoginRequest(BaseModel):
     username: str
     hashed_password: str
     timestamp: int
-    turnstile_token: Optional[str] = None  # Keep for backward compat
-    tencent_captcha_token: Optional[str] = None  # New: Tencent ticket
-    tencent_captcha_randstr: Optional[str] = None  # New: Tencent randstr
+    turnstile_token: Optional[str] = None  # Turnstile token (when provider is turnstile)
+    tencent_captcha_token: Optional[str] = None  # Tencent ticket (when provider is tencent)
+    tencent_captcha_randstr: Optional[str] = None  # Tencent randstr (when provider is tencent)
 ```
 
 In `secure_login` and `request_access` endpoints:
