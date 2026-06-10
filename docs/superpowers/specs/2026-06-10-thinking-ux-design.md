@@ -1,30 +1,30 @@
 # Thinking UX — Streaming Progress During Model Inference
 
 **Date**: 2026-06-10  
-**Status**: Draft — pending user review before implementation  
+**Status**: Approved — ready for implementation  
 **Scope**: Backend SSE layer + Frontend chat state machine  
 
 ---
 
 ## Problem
 
-Users report that the chat interface feels "stuck" during the `thinking` phase. The root causes are:
+Users report that the chat interface feels "stuck" during the `thinking` phase. Two root causes:
 
 1. **Thinking model silence**: Models like Qwen3 (`qwen/qwen3.5-plus-02-15`, the current default) produce `reasoning_content` tokens before any `content` tokens. `_stream_from_openai_compatible` in `chat_llm_client.py` only handles `delta["content"]` (line 113), so the entire reasoning phase produces zero SSE events. The client receives nothing for potentially 5–30 seconds.
 
-2. **Prefill latency**: Long system prompts require the model to process all input tokens before producing the first output token. This compounds the silence for all models.
+2. **Prefill latency**: Long system prompts require all input tokens to be processed before the first output token arrives. This compounds the silence for all model types.
 
-The current UI shows only a static `Loader2` spinner during this entire window, giving users no signal that work is happening.
+The current UI shows only a static `Loader2` spinner during this entire window — no signal that the model is working.
 
-**Constraint**: The model's raw `reasoning_content` must never be forwarded to the client. It can contain references to system prompt structure, internal block names (`[TASK_CONFIG]`, `[WEB_SEARCH]`, etc.), and other implementation details.
+**Hard constraint**: The model's raw `reasoning_content` must never be forwarded to the client. It can contain references to system prompt structure, internal block names (`[TASK_CONFIG]`, `[WEB_SEARCH]`, etc.), and other implementation details that must not be exposed.
 
 ---
 
 ## Goals
 
-1. Eliminate the "dead" feeling during model prefill and reasoning phases.
-2. Give users a live elapsed-time signal while the model thinks.
-3. Show meaningful orchestration progress before the LLM is called.
+1. Eliminate the "dead/stuck" feeling during model prefill and reasoning phases.
+2. Keep the client alive during the silence window (reset the existing 60-second silence abort timer).
+3. No visible elapsed time in the UI — the animation alone conveys liveness.
 4. Zero exposure of system prompt content or model reasoning text.
 5. Graceful degradation: non-thinking models and old frontend versions unaffected.
 
@@ -32,9 +32,21 @@ The current UI shows only a static `Loader2` spinner during this entire window, 
 
 ## Non-Goals
 
-- Streaming actual reasoning content to the user (violates the constraint above).
-- Prompt caching optimization (separate concern, can be added later).
+- Showing `pre_gen_status` phase text to the user — these events are silent liveness signals only.
+- Displaying elapsed seconds in the UI (`thinking_pulse` is backend-only bookkeeping).
+- Prompt caching optimization (separate concern).
+- Streaming any actual reasoning content.
 - Changes to conversation persistence or message structure.
+
+---
+
+## Decisions
+
+| Question | Decision |
+|---|---|
+| Show `pre_gen_status` as visible UI text? | No — silent signal only, no label change |
+| 600ms throttle for thinking pulses? | Keep for now, revisit if needed |
+| Show elapsed timer in frontend? | No — backend emits `elapsed_ms` for potential future use, frontend ignores the value |
 
 ---
 
@@ -42,84 +54,92 @@ The current UI shows only a static `Loader2` spinner during this entire window, 
 
 ### New SSE Event Types
 
-Two new event types are added to the existing SSE stream. Both contain no model-generated text.
+Two new event types added to the existing SSE stream. Neither contains any model-generated text.
 
 ```
 data: {"type": "pre_gen_status", "phase": "context_load"}
 data: {"type": "pre_gen_status", "phase": "llm_start"}
+data: {"type": "thinking_pulse", "elapsed_ms": 600}
 data: {"type": "thinking_pulse", "elapsed_ms": 1200}
-data: {"type": "thinking_pulse", "elapsed_ms": 1800}
 data: {"content": "first output token..."}
 ```
 
 #### `pre_gen_status`
 
-Emitted by the chat route handler in `chat.py` at two points during orchestration:
-- `phase: "context_load"` — immediately after receiving the request, before building system prompt and context
-- `phase: "llm_start"` — immediately before making the LLM API call
+Emitted by the chat route handler at two orchestration checkpoints before the LLM call. Purpose: confirms the SSE stream is alive during the context-build phase. No visible UI change on receipt.
 
-The `phase` values are backend-hardcoded strings. No user input or prompt content appears in this event.
+- `phase: "context_load"` — immediately after request validation, before system prompt assembly
+- `phase: "llm_start"` — after all context is assembled, immediately before the LLM call
+
+Values are backend-hardcoded strings. No user input or prompt content is present.
 
 #### `thinking_pulse`
 
-Emitted by `_stream_from_openai_compatible` in `chat_llm_client.py` when `delta["reasoning_content"]` tokens are received from the model. The content of `reasoning_content` is discarded; only elapsed milliseconds since the first reasoning token is emitted.
+Emitted by `_stream_from_openai_compatible` when `delta["reasoning_content"]` tokens arrive. The reasoning text is discarded; only elapsed milliseconds since the first reasoning token is sent. Purpose: resets the client-side silence abort timer.
 
-Throttled to at most one pulse every 600ms to avoid flooding the client.
+- Throttled: at most one pulse per 600ms using monotonic time comparison
+- First pulse fires immediately when the first `reasoning_content` token arrives
+- Frontend receives but does not display `elapsed_ms`
 
-### Backend Changes
+---
 
-#### `server/gateway/routes/chat_llm_client.py`
+## Backend Changes
 
-In `_stream_from_openai_compatible`, add reasoning_content handling alongside the existing content handling:
+### `server/gateway/routes/chat_llm_client.py`
+
+In `_stream_from_openai_compatible`, add `reasoning_content` handling immediately after the `content` check. Use monotonic-time throttle (not count-based):
 
 ```python
+# Initialize before the streaming loop
 thinking_start: float | None = None
-last_pulse_ms: int = -600  # ensure first pulse fires immediately
+last_pulse_at: float = 0.0
+_THINKING_PULSE_INTERVAL = 0.6  # seconds
 
-# Inside the delta processing block:
+# Inside the delta processing block, after existing content handling:
 reasoning = delta.get("reasoning_content")
 if reasoning is not None:
+    now = time.monotonic()
     if thinking_start is None:
-        thinking_start = time.monotonic()
-    elapsed_ms = int((time.monotonic() - thinking_start) * 1000)
-    if elapsed_ms - last_pulse_ms >= 600:
-        last_pulse_ms = elapsed_ms
+        thinking_start = now
+        last_pulse_at = now - _THINKING_PULSE_INTERVAL  # fire immediately
+    if now - last_pulse_at >= _THINKING_PULSE_INTERVAL:
+        last_pulse_at = now
+        elapsed_ms = int((now - thinking_start) * 1000)
         yield f"data: {json.dumps({'type': 'thinking_pulse', 'elapsed_ms': elapsed_ms})}\n\n"
-    # reasoning text is intentionally not yielded
+    # reasoning text intentionally not yielded
 ```
 
-#### `server/gateway/routes/chat.py`
+Note: `_call_ai_complete` (the non-streaming path used for title generation) does not yield SSE events. No change needed there, but ensure the non-streaming response parser also does not forward `reasoning_content`.
 
-In the main `/chat` handler, yield `pre_gen_status` events at two orchestration checkpoints. The exact injection points are:
+### `server/gateway/routes/chat.py`
 
-1. After request validation, before `_build_system_prompt` / context assembly:
-   ```python
-   yield make_sse_event({"type": "pre_gen_status", "phase": "context_load"})
-   ```
+The chat handler is an async generator that yields SSE lines. Emit `pre_gen_status` at two points within the generator:
 
-2. After context is fully assembled, immediately before the first `_stream_from_openai_compatible` call:
-   ```python
-   yield make_sse_event({"type": "pre_gen_status", "phase": "llm_start"})
-   ```
-
-`make_sse_event` is a thin helper:
+**Point 1** — after request parsing and auth, before context/system-prompt assembly:
 ```python
-def make_sse_event(data: dict) -> str:
-    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+yield f"data: {json.dumps({'type': 'pre_gen_status', 'phase': 'context_load'}, ensure_ascii=False)}\n\n"
 ```
 
-### Frontend Changes
-
-#### `src/renderer/src/api/chat.ts`
-
-Two new optional callbacks on `chatWithAI`:
-
-```typescript
-onThinkingPulse?: (elapsedMs: number) => void,
-onPreGenStatus?: (phase: 'context_load' | 'llm_start') => void,
+**Point 2** — after all context is built, immediately before calling `_stream_from_openai_compatible` (or equivalent):
+```python
+yield f"data: {json.dumps({'type': 'pre_gen_status', 'phase': 'llm_start'}, ensure_ascii=False)}\n\n"
 ```
 
-In `handleSseLine`, alongside the existing event handlers:
+These two yields must be placed inside the outermost generator that is consumed by the SSE response. If there is an intermediate wrapper (`stream_with_persistence` or similar), ensure the yields are in the correct scope so they reach the client.
+
+---
+
+## Frontend Changes
+
+### `src/renderer/src/api/chat.ts`
+
+Add two optional callbacks to `chatWithAI`. Because the function already has 13 positional parameters, append these as a trailing options object rather than more positional args:
+
+**Option A (minimal change)** — add as two more optional positional parameters at positions 14–15. Acceptable given the function is called from a single site (`AIChatPage.tsx`).
+
+**Option B (preferred if time allows)** — convert the last N callbacks into a `ChatEventHandlers` options object. This is a clean-up that pays off long-term but is not required for this feature to ship.
+
+Whichever option is chosen, `handleSseLine` gains two new branches:
 
 ```typescript
 if (parsed.type === 'thinking_pulse' && onThinkingPulse) {
@@ -130,64 +150,49 @@ if (parsed.type === 'pre_gen_status' && onPreGenStatus) {
 }
 ```
 
-#### `src/renderer/src/pages/AIChatPage.tsx`
+### `src/renderer/src/pages/AIChatPage.tsx`
 
-Add state for elapsed thinking time:
+**Do not add `thinkingElapsedMs` state.** The elapsed value is not displayed.
 
-```typescript
-const [thinkingElapsedMs, setThinkingElapsedMs] = useState(0)
-```
-
-Reset on each new generation start (in `executeChatGeneration`, alongside `setGenerationPhase("thinking")`):
+Instead, wire `onThinkingPulse` to reset the existing silence abort timer. In `executeChatGeneration`, pass the callback:
 
 ```typescript
-setThinkingElapsedMs(0)
+// onThinkingPulse: reset silence timer so pulses keep the connection alive
+() => startSilenceTimer(),
+// onPreGenStatus: no-op for now
+(_phase) => {},
 ```
 
-Wire the two new callbacks in the `chatWithAI` call inside `executeChatGeneration`:
+Note: the `startSilenceTimer` closure is already defined inside `executeChatGeneration` (line ~1704). The callback can reference it directly.
+
+**Generation ID guard**: wrap the `onThinkingPulse` callback with a generation ID check to discard stale pulses if a new generation starts before the old one finishes:
 
 ```typescript
-// onThinkingPulse (14th positional arg or named)
-(elapsedMs) => setThinkingElapsedMs(elapsedMs),
-// onPreGenStatus (15th positional arg or named)
-(_phase) => { /* no-op for now; phase info available if needed */ },
+const capturedGenId = ++generationIdRef.current
+// ...
+(elapsedMs) => {
+  if (generationIdRef.current !== capturedGenId) return
+  startSilenceTimer()
+},
 ```
 
-#### `ThinkingIndicator` component
+(The existing code already increments `generationIdRef.current` via `const currentGenerationId = ++generationIdRef.current` at line ~1694 — capture this value.)
 
-New component at `src/renderer/src/components/chat/ThinkingIndicator.tsx`:
+### Animated Thinking Indicator
 
-```tsx
-interface ThinkingIndicatorProps {
-  elapsedMs: number
-}
+Replace the current static `Loader2` spinner shown during `isLoading` with a CSS-animated typing indicator (three bouncing dots). No text label changes. No elapsed time display.
 
-export function ThinkingIndicator({ elapsedMs }: ThinkingIndicatorProps) {
-  const { t } = useTranslation()
-  const elapsedSec = Math.floor(elapsedMs / 1000)
+The visual transition is:
+- **`thinking` phase**: animated dots indicator (conveys "something is happening")
+- **`streaming` phase**: dots disappear, streamed text appears character by character
 
-  return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-      <Loader2 className="h-4 w-4 animate-spin" />
-      <span>
-        {elapsedMs > 0
-          ? t('aiChat.thinkingWithTime', { seconds: elapsedSec })
-          : t('aiChat.thinking')}
-      </span>
-    </div>
-  )
-}
-```
+The dots animation is pure CSS (`@keyframes` bounce with staggered delays on three `<span>` elements). No JS timer, no state updates.
 
-i18n keys added to all three locale files:
-- `aiChat.thinkingWithTime`: `"正在深度思考... 已用 {{seconds}} 秒"` / `"Thinking deeply... {{seconds}}s elapsed"`
-- `aiChat.thinking` already exists (current spinner label)
-
-Replace existing `isLoading` spinner in the message list render with `<ThinkingIndicator elapsedMs={thinkingElapsedMs} />`.
+No new i18n keys required for this change.
 
 ---
 
-## Data Flow Diagram
+## Data Flow (Updated)
 
 ```
 User sends message
@@ -196,30 +201,28 @@ User sends message
 Backend: chat.py handler starts
       │
       ├──► yield pre_gen_status {phase: "context_load"}
-      │    Frontend: spinner visible (no elapsed shown yet)
-      │
-      │    [build system prompt, context, PDF retrieval, etc.]
+      │    Frontend: silence timer resets, animated dots visible
+      │    [build system prompt, retrieve context, PDF retrieval, etc.]
       │
       ├──► yield pre_gen_status {phase: "llm_start"}
-      │    Frontend: spinner still visible
+      │    Frontend: silence timer resets, animated dots still visible
       │
       ▼
-Backend: _stream_from_openai_compatible begins
+Backend: LLM API call begins
       │
-      │    Model prefill (silence from model API)
-      │    [no events during pure prefill]
+      │    [pure prefill — model API silent, no events]
       │
       │    [if thinking model: reasoning_content tokens arrive]
+      ├──► yield thinking_pulse {elapsed_ms: 0}      (first token)
+      │    Frontend: silence timer resets
       ├──► yield thinking_pulse {elapsed_ms: 600}
-      │    Frontend: "正在深度思考... 已用 0 秒"
+      │    Frontend: silence timer resets
       ├──► yield thinking_pulse {elapsed_ms: 1200}
-      │    Frontend: "正在深度思考... 已用 1 秒"
-      ├──► yield thinking_pulse {elapsed_ms: 3600}
-      │    Frontend: "正在深度思考... 已用 3 秒"
+      │    Frontend: silence timer resets
       │
       │    [first content token from model]
       ├──► yield content {"content": "..."}
-      │    Frontend: phase → "streaming", ThinkingIndicator removed
+      │    Frontend: phase → "streaming", dots removed, text appears
       │
       ▼
 Stream complete
@@ -231,41 +234,59 @@ Stream complete
 
 | Scenario | Behavior |
 |---|---|
-| Non-thinking model (no `reasoning_content`) | No `thinking_pulse` events emitted. Frontend shows existing spinner. Zero change. |
-| Old frontend (callbacks not passed) | New SSE events arrive and are silently ignored by `handleSseLine` (falls through without matching). Zero impact. |
-| Model with thinking disabled | Same as non-thinking model above. |
-| `thinkingElapsedMs === 0` on first render | `ThinkingIndicator` shows static "思考中..." label, identical to current behavior. |
+| Non-thinking model (no `reasoning_content`) | No `thinking_pulse` emitted. Frontend shows animated dots (same as before this change), transition to content as usual. |
+| Old frontend (callbacks not passed) | New SSE events arrive, `handleSseLine` falls through without matching — silently ignored. |
+| Model with `reasoning_content` disabled | Same as non-thinking model. |
 
 ---
 
 ## Security Checklist
 
 - [x] `reasoning_content` field value never appears in any SSE response
-- [x] `thinking_pulse` payload contains only `elapsed_ms` (integer, no strings)
-- [x] `pre_gen_status` payload contains only `phase` (backend-hardcoded enum value)
-- [x] No system prompt text, no internal block names, no tool names in any new event
-- [x] New callbacks are optional; no new required surface area
+- [x] `thinking_pulse` contains only `elapsed_ms` (integer — no strings, no content)
+- [x] `pre_gen_status` contains only `phase` (backend-hardcoded enum — no user input, no prompt fragments)
+- [x] No system prompt text, internal block names, or tool names in any new event
+- [x] New callbacks are optional; no new required interface surface
+
+---
+
+## Oracle Review Findings Addressed
+
+| Finding | Resolution |
+|---|---|
+| Throttle should be time-based, first pulse immediate | Fixed: use `last_pulse_at = now - interval` init pattern |
+| `chatWithAI` positional arg explosion | Noted; Option B (options object) preferred if time allows, not blocking |
+| Reset timing: before `chatWithAI` call, not in callback | Addressed: no state to reset (no `thinkingElapsedMs` state) |
+| Generation ID guard for stale callbacks | Added to `onThinkingPulse` wiring |
+| Non-streaming path leakage | Confirmed `_call_ai_complete` returns text only, no SSE emission |
+| `pre_gen_status` injection scope | Caller must ensure yields are in the outermost SSE generator |
+| Tests | See below |
 
 ---
 
 ## Files Changed
 
 **Backend:**
-- `server/gateway/routes/chat_llm_client.py` — add `reasoning_content` handling in `_stream_from_openai_compatible`
-- `server/gateway/routes/chat.py` — emit two `pre_gen_status` events in main handler
+- `server/gateway/routes/chat_llm_client.py` — add `reasoning_content` handling, monotonic-time throttle
+- `server/gateway/routes/chat.py` — emit `pre_gen_status` at two orchestration points
 
 **Frontend:**
-- `src/renderer/src/api/chat.ts` — two new optional callbacks on `chatWithAI`
-- `src/renderer/src/pages/AIChatPage.tsx` — `thinkingElapsedMs` state + wire callbacks
-- `src/renderer/src/components/chat/ThinkingIndicator.tsx` — new component
-- `src/renderer/src/locales/zh-CN.json` — add `aiChat.thinkingWithTime`
-- `src/renderer/src/locales/zh-HK.json` — add `aiChat.thinkingWithTime`
-- `src/renderer/src/locales/en-US.json` — add `aiChat.thinkingWithTime`
+- `src/renderer/src/api/chat.ts` — `onThinkingPulse` and `onPreGenStatus` callbacks
+- `src/renderer/src/pages/AIChatPage.tsx` — wire callbacks, generation ID guard
+- `src/renderer/src/components/chat/ThinkingIndicator.tsx` — new animated dots component (replaces static spinner during `thinking` phase)
+
+**No i18n changes required.**
 
 ---
 
-## Open Questions for User Review
+## Tests to Add
 
-1. Should `pre_gen_status` phases be shown as visible text in the UI (e.g., "正在加载上下文...") or just used to confirm the stream is alive without changing the displayed label?
-2. Is 600ms throttle interval for thinking pulses appropriate, or should it be faster/slower?
-3. Should the elapsed timer be shown in whole seconds or tenths-of-seconds?
+**Backend** (`server/tests/`):
+- Verify `_stream_from_openai_compatible` emits `thinking_pulse` when `reasoning_content` present
+- Verify `reasoning_content` value is never present in emitted SSE lines
+- Verify throttle fires at most once per 600ms
+
+**Frontend** (`test/unit/`):
+- Verify `handleSseLine` calls `onThinkingPulse` for `thinking_pulse` events
+- Verify `ThinkingIndicator` renders animated dots (no elapsed text)
+- Verify stale generation ID guard prevents callback on cancelled generation
