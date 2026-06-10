@@ -3545,10 +3545,15 @@ async def chat_with_ai(
         parsing).  Without this, the assistant message is lost and the UI shows
         a broken state when the user returns.
         """
+        # Liveness signals: keep the SSE stream alive during context assembly
+        # and confirm to the client that the LLM call is about to start. These
+        # events contain no prompt content or model output.
+        yield f"data: {json.dumps({'type': 'pre_gen_status', 'phase': 'context_load'}, ensure_ascii=False)}\n\n"
         full_response = ""
         saved_to_db = False  # Track whether we already persisted via [DONE]
         first_stream_chunk_logged = False
         try:
+            yield f"data: {json.dumps({'type': 'pre_gen_status', 'phase': 'llm_start'}, ensure_ascii=False)}\n\n"
             async for chunk in stream_ai_response(
                 messages,
                 api_key,

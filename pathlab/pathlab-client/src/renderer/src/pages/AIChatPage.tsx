@@ -2029,6 +2029,14 @@ export default function AIChatPage() {
 					);
 				},
 				options?.regenerateMessageId,
+				(_elapsedMs) => {
+					if (generationIdRef.current !== currentGenerationId) return
+					startSilenceTimer()
+				},
+				(_phase) => {
+					if (generationIdRef.current !== currentGenerationId) return
+					startSilenceTimer()
+				},
 			);
 		} catch (error) {
 			if (error instanceof DOMException && error.name === "AbortError") {

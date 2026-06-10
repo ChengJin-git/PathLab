@@ -273,9 +273,7 @@ Stream complete
 **Frontend:**
 - `src/renderer/src/api/chat.ts` — `onThinkingPulse` and `onPreGenStatus` callbacks
 - `src/renderer/src/pages/AIChatPage.tsx` — wire callbacks, generation ID guard
-- `src/renderer/src/components/chat/ThinkingIndicator.tsx` — new animated dots component (replaces static spinner during `thinking` phase)
-
-**No i18n changes required.**
+**No new component or i18n changes required.** The animated bouncing-dots thinking indicator already exists inline in `AIChatPage.tsx`.
 
 ---
 
@@ -288,5 +286,5 @@ Stream complete
 
 **Frontend** (`test/unit/`):
 - Verify `handleSseLine` calls `onThinkingPulse` for `thinking_pulse` events
-- Verify `ThinkingIndicator` renders animated dots (no elapsed text)
+- Verify the existing inline thinking indicator (animated dots) continues to render during `thinking` phase
 - Verify stale generation ID guard prevents callback on cancelled generation
