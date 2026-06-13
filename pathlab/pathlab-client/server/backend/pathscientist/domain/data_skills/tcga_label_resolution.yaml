@@ -1,0 +1,33 @@
+name: tcga_label_resolution
+kind: data_preparation
+description: >
+  Resolve task-specific labels for TCGA/GDC WSI cohorts before feature
+  extraction and MIL training.
+trigger:
+  providers: [gdc, tcia]
+  dataset_id_patterns: ["tcga:*", "TCGA-*"]
+  task_types: [mil_classification]
+inputs:
+  wsi_dir: raw TCGA diagnostic WSI directory
+  task_profile: normalized PathScientist TaskProfile
+  selected_datasets: acquisition selected DatasetRecord list
+outputs:
+  labels_file: .dataset/mil_classification/labels.csv
+  splits_file: .dataset/mil_classification/splits.json
+  label_provenance_file: .dataset/mil_classification/label_provenance.json
+  patient_groups_file: .dataset/mil_classification/patient_groups.json
+supported_label_types:
+  - project_subtype
+  - molecular_mutation
+planned_label_types:
+  - sample_type
+  - clinical_stage
+  - clinical_grade
+  - primary_diagnosis
+constraints:
+  - Do not infer label values with LLM.
+  - LLM may only propose LabelSpec.
+  - Every emitted label must have provenance.
+  - Splits must be grouped by TCGA case_submitter_id.
+  - Diagnostic slide filtering must keep DX slides when DX slides are present.
+  - If label coverage is below threshold, block training.

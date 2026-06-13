@@ -1,0 +1,100 @@
+name: survival_analysis
+coarse_task_type: survival
+description: >
+  WSI survival prediction using Multiple Instance Learning.
+  Predicts discrete-time hazard logits from patch features,
+  optimized with NLL survival loss, evaluated by concordance index.
+  Matches PathLab's WSISurvivalTrainer.
+
+template: survival_template.py
+
+task_types: [survival]
+
+modifiable_zones:
+  - model       # Survival aggregator (attention + hazard head)
+  - loss        # NLLSurvivalLoss, Cox loss, ranking loss
+  - hyperparams # lr, epochs, num_bins, optimizer, scheduler
+
+environment:
+  extra_packages:
+    - lifelines
+
+dataset:
+  format: feature_tensors
+  structure:
+    features: "{wsi_id}.pt"
+    splits: "splits.json"
+  splits_schema:
+    required_keys: [train, val, test, survival_times, event_status]
+    labels_type: "none"               # no class labels, use survival times
+    split_strategy: "stratified"      # stratify by event_status
+    default_ratios: {train: 0.7, val: 0.1, test: 0.2}
+  csv_format:
+    required_columns: [filename, event_time, event_status]
+    optional_columns: [case_id, split, age, gender]
+    example: |
+      filename,split,event_time,event_status,case_id
+      slide_001.svs,train,24.5,1,CASE001
+      slide_002.svs,val,36.0,0,CASE002
+  feature_dim_by_extractor:
+    ResNet50: 2048
+    UNI: 1024
+    UNI2: 1536
+    CONCH: 512
+    Virchow: 1280
+  mock_generator:
+    n_samples: 20
+    n_patches_range: [50, 200]
+    default_feature_dim: 1024
+    event_rate: 0.5                   # 50% events, 50% censored
+    max_time: 60.0                    # months
+
+inputs:
+  features_dir: /data/features
+  splits_file: /data/splits.json
+
+outputs:
+  metrics: /results/metrics.json
+  model: /results/best_model.pth
+
+evaluation:
+  primary_metric: c_index
+  secondary_metrics: []
+
+constraints:
+  - "Model class must have forward(self, H) method"
+  - "H shape: (N_patches, D)"
+  - "Return: (hazards, attention) where hazards is (1, num_bins) and attention is (N,)"
+  - "num_bins is a hyperparameter (default 4), defines discrete time intervals"
+  - "Do NOT modify FIXED zones"
+  - "Survival time binning is done in FIXED code — do not reimplement"
+  - "Loss function receives (hazards, time_bin_index, event_status)"
+  - "Do NOT generate synthetic/mock/demo/dummy features, labels, survival times, events, or metrics when data is missing; fail with a data-readiness error instead."
+
+reference_code:
+  trainer: server/backend/ai/tasks/wsi_survival/trainer.py
+  loss: server/backend/ai/tasks/wsi_survival/losses.py
+
+knowhow_tags: [survival, WSI, MIL, prognosis, c_index, hazard, NLL]
+
+# Plan-2026-04-30 data-readiness Task 9: same upstream contract as MIL
+# classification — feature_extraction is the setup step when only raw
+# WSI + survival labels are available.
+upstream_skill: feature_extraction
+
+readiness_guidance:
+  feature_ready_contract:
+    features_dir: /data/features
+    splits_file: /data/splits.json
+    splits_required_keys: [train, val, test, survival_times, event_status]
+  raw_wsi_contract:
+    wsi_dir: /data/WSIs
+    labels_file: /data/labels.csv
+  policy: >
+    If feature tensors and a survival splits file are already provided, train
+    survival_analysis directly. If only raw WSI and survival labels are
+    provided (slide_id, event_time, event_status), run feature_extraction
+    first via feature_extraction_launcher.sh (script_type=bash,
+    run_kind=feature_extraction); the splits file must include
+    survival_times and event_status keys (this differs from
+    classification's labels-only schema).

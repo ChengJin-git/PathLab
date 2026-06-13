@@ -1,0 +1,255 @@
+@import "tailwindcss";
+
+@theme {
+  --animate-tooltip-in: tooltip-in 0.12s cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-tooltip-out: tooltip-out 0.08s ease-in forwards;
+
+  /* Primary color palette */
+  --color-primary-50: #f5f7ff;
+  --color-primary-100: #ebf0ff;
+  --color-primary-200: #d6e0ff;
+  --color-primary-300: #b3c7ff;
+  --color-primary-400: #8aa3ff;
+  --color-primary-500: #667eea;
+  --color-primary-600: #5568d3;
+  --color-primary-700: #4451b8;
+  --color-primary-800: #343d94;
+  --color-primary-900: #2a3177;
+
+  /* Secondary color palette */
+  --color-secondary-50: #faf5ff;
+  --color-secondary-100: #f3e8ff;
+  --color-secondary-200: #e9d5ff;
+  --color-secondary-300: #d8b4fe;
+  --color-secondary-400: #c084fc;
+  --color-secondary-500: #764ba2;
+  --color-secondary-600: #6b3f92;
+  --color-secondary-700: #5f3482;
+  --color-secondary-800: #532972;
+  --color-secondary-900: #471f62;
+
+  /* Typography */
+  --font-sans: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+html {
+  /* removed scrollbar-gutter to prevent ghost scrollbar tracks */
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+body {
+  background-color: #f9fafb;
+  color: #111827;
+  font-family: "Inter", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Custom scrollbar */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d5db #f3f4f6;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background-color: #f3f4f6;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #d1d5db;
+  border-radius: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #9ca3af;
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Hide scrollbar for IE, Edge and Firefox */
+.scrollbar-hide {
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+/* PathScientist clinical console: show ~3 stage cards, scroll for the rest */
+.pathscientist-steps-scroll {
+  --pathscientist-step-height: 5.75rem;
+  --pathscientist-step-gap: 0.75rem;
+  height: calc(3 * var(--pathscientist-step-height) + 2 * var(--pathscientist-step-gap));
+  max-height: calc(3 * var(--pathscientist-step-height) + 2 * var(--pathscientist-step-gap));
+  flex-shrink: 0;
+}
+
+/* ── Prose table responsive design ── */
+.prose table {
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-size: 0.8125rem;
+}
+
+.prose thead th {
+  background-color: #f8fafc;
+  font-weight: 600;
+  font-size: 0.6875rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: #475569;
+  padding: 0.625rem 0.875rem;
+  white-space: nowrap;
+  border-bottom: 2px solid #e2e8f0;
+  text-align: left;
+}
+
+.prose tbody td {
+  padding: 0.5rem 0.875rem;
+  color: #334155;
+  border-top: 1px solid #f1f5f9;
+  white-space: nowrap;
+}
+
+.prose tbody tr:nth-child(even) {
+  background-color: #f8fafc;
+}
+
+.prose tbody tr:hover {
+  background-color: #f1f5f9;
+}
+
+/* Bold/highlight rows (e.g. final result rows) */
+.prose tbody tr td strong {
+  color: #1e293b;
+}
+
+/* ── Prose list styling ── */
+.prose :where(ol) > li::marker {
+  color: var(--color-primary-500);
+  font-weight: 600;
+}
+
+.prose :where(ul) > li::marker {
+  color: #94a3b8;
+}
+
+/* Paragraphs inside list items: tighter vertical spacing */
+.prose :where(li) > p {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Nested lists: slightly tighter spacing */
+.prose :where(li) :where(ol, ul) {
+  margin-top: 0.375rem;
+  margin-bottom: 0.375rem;
+}
+
+/* ── KaTeX overrides for inline math ── */
+.prose .katex {
+  font-size: 0.98em;
+  color: #0f172a;
+}
+
+.prose .katex-display {
+  margin: 0.9rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.9rem 1rem;
+  border-radius: 0.9rem;
+  border: 1px solid #dbe5f2;
+  background: linear-gradient(180deg, #f8fbff 0%, #f3f7ff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.prose .katex-display > .katex {
+  display: inline-block;
+  min-width: 100%;
+  text-align: center;
+  font-size: 1.02em;
+}
+
+.prose .katex-display::-webkit-scrollbar {
+  height: 6px;
+}
+
+.prose .katex-display::-webkit-scrollbar-thumb {
+  background: #c7d2fe;
+  border-radius: 999px;
+}
+
+.prose p .katex {
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.35rem;
+  background: #f3f4f6;
+}
+
+/* ── highlight.js token theme for chat code blocks ── */
+.prose pre code.hljs {
+  display: block;
+  color: #e2e8f0;
+}
+
+.prose pre code.hljs .hljs-keyword,
+.prose pre code.hljs .hljs-selector-tag,
+.prose pre code.hljs .hljs-literal,
+.prose pre code.hljs .hljs-name,
+.prose pre code.hljs .hljs-strong {
+  color: #7dd3fc;
+}
+
+.prose pre code.hljs .hljs-string,
+.prose pre code.hljs .hljs-title,
+.prose pre code.hljs .hljs-section,
+.prose pre code.hljs .hljs-attribute,
+.prose pre code.hljs .hljs-symbol,
+.prose pre code.hljs .hljs-bullet,
+.prose pre code.hljs .hljs-addition {
+  color: #86efac;
+}
+
+.prose pre code.hljs .hljs-number,
+.prose pre code.hljs .hljs-meta,
+.prose pre code.hljs .hljs-built_in,
+.prose pre code.hljs .hljs-type,
+.prose pre code.hljs .hljs-params,
+.prose pre code.hljs .hljs-variable,
+.prose pre code.hljs .hljs-template-variable {
+  color: #fdba74;
+}
+
+.prose pre code.hljs .hljs-comment,
+.prose pre code.hljs .hljs-quote,
+.prose pre code.hljs .hljs-deletion {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.prose pre code.hljs .hljs-operator,
+.prose pre code.hljs .hljs-punctuation,
+.prose pre code.hljs .hljs-subst,
+.prose pre code.hljs .hljs-formula {
+  color: #f0abfc;
+}
+
+@keyframes tooltip-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes tooltip-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.94); }
+}
+

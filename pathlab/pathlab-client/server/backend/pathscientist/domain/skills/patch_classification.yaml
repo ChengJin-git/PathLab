@@ -1,0 +1,118 @@
+name: patch_classification
+coarse_task_type: classification
+description: >
+  Patch-level classification. Task granularity: each sample is one patch and
+  the prediction target is the patch label, not a slide/bag label. The default
+  representation is frozen pathology foundation model embeddings plus a
+  trainable classifier head. Feature extraction is the patch representation
+  step, not a slide-level MIL feature pipeline and not a separate task
+  objective. Input prefers pre-extracted feature vectors (one .pt per patch);
+  raw patch images may be materialized into cached embeddings before training.
+  Matches PathLab's PatchClassificationTrainer.
+
+template: patch_classification_template.py
+
+task_types: [patch_classification]
+
+modifiable_zones:
+  - model       # Classifier head (Linear, MLP, Attention)
+  - loss        # Loss function
+  - hyperparams # lr, epochs, batch_size, optimizer
+
+environment:
+  extra_packages: []
+
+dataset:
+  format: feature_tensors
+  structure:
+    features: "{patch_id}.pt"          # (D,) vector per patch
+    splits: "splits.json"
+  splits_schema:
+    required_keys: [train, val, test, labels]
+    labels_type: "int"
+    split_strategy: "stratified"
+    default_ratios: {train: 0.7, val: 0.15, test: 0.15}
+  csv_format:
+    required_columns: [filename]
+    optional_columns: [label, split, case_id]
+    example: |
+      filename,split,label
+      patch_001.png,train,Tumor
+      patch_002.png,val,Normal
+  feature_dim_by_extractor:
+    # Pathology foundation models (preferred)
+    UNI: 1024
+    UNI2: 1536
+    CONCH: 512
+    "CONCH 1.5": 512
+    Virchow: 1280
+    Virchow2: 1280
+    Phikon: 1024
+    Phikon2: 1024
+    mSTAR: 1024
+    GPFM: 1024
+    "H-Optimus-0": 1536
+    "H-Optimus-1": 1536
+    OpenMidnight: 1536
+    # Vision-language pretrained
+    PLIP: 512
+    PathoCLIP: 512
+    # Pathology specialized (domain-specific)
+    SmartCCS: 1024
+    SmartCyto: 768
+    CytoFM: 768
+    # ImageNet baselines (ablation only)
+    ResNet50: 2048
+    "ViT-L/16": 1024
+  mock_generator:
+    n_samples: 200
+    n_classes: 2
+    default_feature_dim: 1024
+
+inputs:
+  features_dir: /data/features
+  splits_file: /data/splits.json
+
+outputs:
+  metrics: /results/metrics.json
+  model: /results/best_model.pth
+
+evaluation:
+  primary_metric: accuracy
+  secondary_metrics: [f1, precision, recall, auc]
+
+constraints:
+  - "Classifier class must have forward(self, x) method"
+  - "x shape: (batch_size, D) — batch of feature vectors"
+  - "Return: logits of shape (batch_size, num_classes)"
+  - "Feature extractor is FROZEN — only classifier head is trained"
+  - "Patch-level + feature vectors means one feature vector per patch; do NOT reinterpret this as slide-level MIL or a separate feature-extraction objective."
+  - "Use standard DataLoader batching (batch_size > 1)"
+  - "Default to features from a pathology foundation model (UNI2/CONCH/Virchow2/H-Optimus-1/GPFM/Phikon2). Do NOT default to ImageNet ResNet50/ViT-L/16 features — they are ablation-only baselines"
+  - "Match the classifier input dim to the extractor's feature dim (see dataset.feature_dim_by_extractor)"
+  - "Do NOT modify FIXED zones"
+  - "Do NOT generate synthetic/mock/demo/dummy features, labels, or metrics when data is missing; fail with a data-readiness error instead."
+  - "Use run_experiment to execute training; do NOT call python directly via terminal and then ratchet_commit — evidence would not be collected."
+
+reference_code:
+  trainer: server/backend/ai/tasks/patch_classification/trainer.py
+  classifiers: server/backend/ai/classifiers/
+
+upstream_skill: feature_extraction
+
+recommended_feature_extractors:
+  preferred: [UNI2, CONCH, "CONCH 1.5", Virchow2, "H-Optimus-1", GPFM, mSTAR, Phikon2]
+  acceptable: [UNI, Virchow, Phikon, "H-Optimus-0", OpenMidnight]
+  vision_language: [PLIP, PathoCLIP]            # only for text-aware tasks
+  domain_specific:
+    cervical: [SmartCCS]
+    cytology: [SmartCyto, CytoFM]
+  ablation_baseline: [ResNet50, "ViT-L/16"]      # never select as primary
+  rationale: >
+    Pathology foundation models (Mahmood Lab UNI/CONCH, Paige Virchow,
+    Bioptimus H-Optimus, HKUST GPFM/mSTAR, Owkin Phikon, ...) consistently
+    outperform ImageNet backbones on patch-level histology classification
+    (linear probe, attention probe). ImageNet backbones should only appear
+    as ablation baselines for comparison.
+
+knowhow_tags: [classification, patch, linear_probe, attention_classifier, foundation_model, UNI, CONCH, Virchow, Phikon, H-Optimus, GPFM, mSTAR, frozen_encoder]

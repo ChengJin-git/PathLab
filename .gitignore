@@ -1,0 +1,46 @@
+# Local IDE/agent state
+.DS_Store
+.specstory/
+**/.codex/
+.codex
+**/.codex
+.worktrees/
+
+# Runtime outputs and caches
+__pycache__/
+.pytest_cache/
+**/.vite/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+dist/
+build/
+out/
+*.log
+*.pid
+
+# PathScientist generated artifacts
+pathlab/pathlab-client/data/
+pathlab/pathlab-client/logs/
+pathlab/pathlab-client/out/
+pathlab/pathlab-client/src/renderer/dev-dist/
+pathlab/pathlab-client/server/backend/pathscientist/output/
+pathlab/pathlab-client/server/backend/pathscientist/sota_cache.json
+pathlab/pathlab-client/server/backend/auto_research_old/
+
+# Local env and credentials
+.env
+.env.*
+!.env.example
+kaggle.json
+**/kaggle.json
+*token*.txt
+
+# Large local container images
+*.sif
+
+# Local model/data artifacts
+pathlab/pathlab-client/server/backend/ai/extractors/checkpoints/
+pathlab/pathlab-client/server/backend/pathscientist/domain/templates/common/extractors/checkpoints/
+pathlab/pathlab-client/uploads/
