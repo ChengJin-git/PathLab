@@ -6,7 +6,7 @@ Follows the same patterns as research_job.py for event batching and cursor-based
 import logging
 from typing import Any, Optional
 
-from sqlalchemy import select, update, desc
+from sqlalchemy import delete, select, update, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import AutoResearchSession, AutoResearchExperiment, AutoResearchEvent, utc_now
@@ -61,6 +61,43 @@ class AutoResearchRepository:
         )
         await db.flush()
 
+    @staticmethod
+    async def upsert_session(
+        db: AsyncSession,
+        data: dict[str, Any],
+    ) -> AutoResearchSession:
+        session_id = str(data.get("session_id") or "").strip()
+        if not session_id:
+            raise ValueError("session_id is required")
+
+        existing = await AutoResearchRepository.get_session(db, session_id)
+        if existing is None:
+            session = AutoResearchSession(**data)
+            db.add(session)
+            await db.flush()
+            await db.refresh(session)
+            return session
+
+        for key, value in data.items():
+            if key in {"id", "created_at"}:
+                continue
+            if hasattr(existing, key):
+                setattr(existing, key, value)
+        existing.updated_at = utc_now()
+        await db.flush()
+        await db.refresh(existing)
+        return existing
+
+    @staticmethod
+    async def delete_session(db: AsyncSession, session_id: str) -> bool:
+        result = await db.execute(
+            delete(AutoResearchSession).where(
+                AutoResearchSession.session_id == session_id
+            )
+        )
+        await db.flush()
+        return result.rowcount > 0
+
     # ── Experiments ───────────────────────────────────────────────
 
     @staticmethod
@@ -70,6 +107,41 @@ class AutoResearchRepository:
         await db.flush()
         await db.refresh(exp)
         return exp
+
+    @staticmethod
+    async def upsert_experiment_by_run_id(
+        db: AsyncSession,
+        data: dict[str, Any],
+    ) -> AutoResearchExperiment:
+        session_id = str(data.get("session_id") or "").strip()
+        run_id = str(data.get("training_task_id") or "").strip()
+        if not session_id:
+            raise ValueError("session_id is required")
+        if not run_id:
+            raise ValueError("training_task_id/run_id is required")
+
+        result = await db.execute(
+            select(AutoResearchExperiment).where(
+                AutoResearchExperiment.session_id == session_id,
+                AutoResearchExperiment.training_task_id == run_id,
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing is None:
+            exp = AutoResearchExperiment(**data)
+            db.add(exp)
+            await db.flush()
+            await db.refresh(exp)
+            return exp
+
+        for key, value in data.items():
+            if key in {"id", "created_at"}:
+                continue
+            if hasattr(existing, key):
+                setattr(existing, key, value)
+        await db.flush()
+        await db.refresh(existing)
+        return existing
 
     @staticmethod
     async def get_session_experiments(
@@ -130,6 +202,33 @@ class AutoResearchRepository:
             ))
         await db.flush()
         return start_seq + len(events)
+
+    @staticmethod
+    async def append_event_once(
+        db: AsyncSession,
+        session_id: str,
+        event: dict[str, Any],
+        sequence: int,
+    ) -> bool:
+        result = await db.execute(
+            select(AutoResearchEvent.id)
+            .where(
+                AutoResearchEvent.session_id == session_id,
+                AutoResearchEvent.sequence == sequence,
+            )
+            .limit(1)
+        )
+        if result.scalar_one_or_none() is not None:
+            return False
+
+        db.add(AutoResearchEvent(
+            session_id=session_id,
+            event_type=str(event.get("event_type") or "event")[:50],
+            event_data=event.get("event_data") or {},
+            sequence=sequence,
+        ))
+        await db.flush()
+        return True
 
     @staticmethod
     async def get_events_after(

@@ -14,7 +14,7 @@
 
 ## 当前 ORM 表现状
 
-当前代码里可直接看到 **21 个 ORM 表**：
+当前代码里可直接看到 **24 个 ORM 表**：
 
 ### 业务表（`models.py`）
 
@@ -38,10 +38,13 @@
 18. `dataset_stats`
 19. `dataset_grants`
 20. `permission_audit_logs`
+21. `auto_research_sessions`（PathScientist 自动化实验会话汇总）
+22. `auto_research_experiments`（PathScientist 每次实验 run 的 metrics 和摘要）
+23. `auto_research_events`（PathScientist 运行事件流，用于回放/审计）
 
 ### 认证表（`backend/auth/models.py`）
 
-21. `users`
+24. `users`
 
 `users` 当前除 FastAPI-Users 的基础字段外，还直接扩展了这些与业务强相关的字段：
 
@@ -81,7 +84,7 @@
 
 ## Repository 现状
 
-`repositories/` 当前包含 18 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
+`repositories/` 当前包含 19 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
 
 - `DataGroupRepository`
 - `DatasetRepository`
@@ -101,8 +104,26 @@
 - `OrphanedRecordsRepository`
 - `SegmentationAnnotationRepository`（同时导出 `VersionConflictError`）
 - `AnnotationAuditLogRepository`
+- `AutoResearchRepository`
 
 这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注及协作审计等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。
+
+## PathScientist 自动化实验存储
+
+Web PathScientist 流程会 best-effort 写入现有 `auto_research_*` 表：
+
+- `auto_research_sessions`：按 `session_id` 唯一保存一次自动化实验会话，包含 `user_id`、`research_question`、`status`、`phase`、`best_metric`、`best_experiment`、`comparison_results`、`final_report`。
+- `auto_research_experiments`：按 `(session_id, training_task_id)` 逻辑幂等保存每次 run，其中 `training_task_id` 使用 PathScientist `run_id`，`metrics` 保存 `metrics.json` 的结构化内容，`hyperparams` 保存 compact config/path metadata。
+- `auto_research_events`：按 `(session_id, sequence)` 逻辑幂等保存 Gateway SSE/event payload，供审计和回放使用。
+
+数据库只保存可查询索引、状态、metrics、摘要和路径。大型产物仍保存在文件系统：
+
+- session workspace：`PATHSCIENTIST_BASE_DIR/session_<id>/...`
+- dataset cache：`PATHSCIENTIST_DATASET_CACHE_DIR`
+- feature outputs：`<dataset_root>/patches/*.h5` 和 `<dataset_root>/pt_files/<extractor>/*.pt`
+- model/checkpoint/run artifacts：以路径或 compact summary 进入 JSON 字段，不复制二进制内容进库
+
+历史 Gateway 文件态 session 可以通过 `server/scripts/migrate_pathscientist_file_sessions_to_db.py` 导入数据库。脚本读取 `gateway_sessions.json` 和 `gateway_events/*.jsonl`，并复用 `AutoResearchRepository` 的幂等 upsert 逻辑。
 
 ## 初始化与使用方式
 

@@ -6,6 +6,7 @@ Most route logic has been moved to separate files in routes/ directory.
 """
 
 import asyncio
+import os
 import httpx
 from pathlib import Path
 from contextlib import asynccontextmanager, suppress
@@ -40,6 +41,7 @@ from .routes.chat_training_recommendation import (
     get_bundled_training_knowledge_status,
     prewarm_training_recommendation_sources,
 )
+from . import pathscientist_persistence
 from .routes.chat_pdf_vectorstore import prewarm_embedding_model
 from .routes.asr import startup_prewarm_local_asr
 from .routes import (
@@ -116,6 +118,7 @@ async def lifespan(app: FastAPI):
     chat_context_prewarm_task: asyncio.Task[None] | None = None
 
     Config.ensure_directories()
+    pathscientist_persistence.configure_loop(asyncio.get_running_loop())
 
     logger.info("Initializing database...")
     await init_db()
@@ -267,7 +270,18 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Bundled training recommendation startup prewarm failed: {e}")
 
-    training_rag_prewarm_task = asyncio.create_task(_startup_prewarm_training_rag())
+    skip_training_rag_prewarm = os.getenv(
+        "PATHLAB_SKIP_TRAINING_RAG_PREWARM", ""
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if skip_training_rag_prewarm:
+        logger.info(
+            "Skipping bundled training recommendation startup prewarm "
+            "because PATHLAB_SKIP_TRAINING_RAG_PREWARM is enabled"
+        )
+    else:
+        training_rag_prewarm_task = asyncio.create_task(
+            _startup_prewarm_training_rag()
+        )
     chat_context_prewarm_task = asyncio.create_task(
         _startup_prewarm_chat_context_cache()
     )

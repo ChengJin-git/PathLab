@@ -768,6 +768,20 @@ Useful runtime files for debugging a session:
 Gateway/web session registries and event logs are also under the resolved
 PathScientist base directory.
 
+Web PathScientist sessions also best-effort sync structured metadata into the
+existing PostgreSQL `auto_research_*` tables:
+
+```text
+auto_research_sessions     # session owner, question, stage/status, best metric, summaries
+auto_research_experiments  # per-run run_id, metrics, compact config/path metadata
+auto_research_events       # replay/audit events keyed by session_id + sequence
+```
+
+The database is an index and metadata layer. Large artifacts remain on disk:
+workspace files stay under `PATHSCIENTIST_BASE_DIR`, reusable datasets/features
+stay under `PATHSCIENTIST_DATASET_CACHE_DIR`, and model/run artifacts are stored
+as paths or compact summaries in PostgreSQL rather than copied into JSON fields.
+
 ---
 
 ## 17. Troubleshooting

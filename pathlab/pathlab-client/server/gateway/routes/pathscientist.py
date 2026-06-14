@@ -24,10 +24,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
+
+from backend.auth import User, current_active_user
+from gateway import pathscientist_persistence
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +77,7 @@ class SessionRecord:
     conversation_id: str
     question: str
     model: str
+    user_id: str = ""
     title: str = ""
     title_pending: bool = False
     status: str = "queued"
@@ -107,6 +111,10 @@ class SessionRecord:
             self.updated_at = payload["ts"]
             self._condition.notify_all()
         _append_gateway_session_event(self.session_id, payload)
+        pathscientist_persistence.persist_event(
+            session_id=self.session_id,
+            event=payload,
+        )
 
     def hydrate_events(self, events: list[dict[str, Any]]) -> None:
         """Restore persisted events and advance the sequence counter."""
@@ -208,19 +216,29 @@ class PathScientistSessionManager:
             [Any, str, Callable[[dict[str, Any]], None]], dict[str, Any]
         ] | None = None
 
-    def start(self, req: StartPathScientistSessionRequest) -> SessionRecord:
+    def start(self, req: StartPathScientistSessionRequest, *, user_id: str = "") -> SessionRecord:
         config = _build_config(req)
         record = SessionRecord(
             session_id=uuid.uuid4().hex[:12],
             conversation_id="",
             question=req.question,
             model=config.llm_model or DEFAULT_MODEL,
+            user_id=user_id,
             title="",
             title_pending=True,
         )
         with self._lock:
             self._sessions[record.session_id] = record
         _save_gateway_session_record(record)
+        pathscientist_persistence.persist_session_created(
+            session_id=record.session_id,
+            user_id=record.user_id,
+            question=record.question,
+            max_iterations=req.max_iter,
+            metric=req.metric,
+            model=record.model,
+            workspace_path=str(_resolve_session_workspace(record) or ""),
+        )
         record.add_event({"kind": "session", "status": "queued"})
         _queue_session_title_generation(record, config)
         thread = threading.Thread(target=self._run, args=(record, req, config), daemon=True)
@@ -338,6 +356,7 @@ class PathScientistSessionManager:
             conversation_id=record.conversation_id,
         )
         _delete_gateway_session_events(session_id)
+        pathscientist_persistence.delete_session(session_id)
         return {
             "session_id": session_id,
             "conversation_id": record.conversation_id,
@@ -448,12 +467,14 @@ class PathScientistSessionManager:
                     error=record.error or "Stopped by user from PathLab.",
                 )
                 _save_gateway_session_record(record)
+                _persist_record_state(record, req)
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
                 return
             record.state = state
             record.conversation_id = str(state.get("conversation_id") or "")
             record.set_status("completed", stage=str(state.get("stage") or "completed"))
             _save_gateway_session_record(record)
+            _persist_record_state(record, req)
             record.add_event({"kind": "state", "state": state})
         except SessionStopRequested as exc:
             record.state = {
@@ -464,6 +485,7 @@ class PathScientistSessionManager:
             }
             record.set_status("interrupted", stage="interrupted", error=str(exc))
             _save_gateway_session_record(record)
+            _persist_record_state(record, req)
             record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
         except Exception as exc:
             if record.cancel_requested:
@@ -475,10 +497,17 @@ class PathScientistSessionManager:
                 }
                 record.set_status("interrupted", stage="interrupted", error="Stopped by user from PathLab.")
                 _save_gateway_session_record(record)
+                _persist_record_state(record, req)
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
                 return
             record.set_status("failed", stage="failed", error=str(exc))
             _save_gateway_session_record(record)
+            record.state = {
+                **_record_state(record),
+                "stage": "failed",
+                "error": str(exc),
+            }
+            _persist_record_state(record, req)
             record.add_event({"kind": "error", "message": str(exc)})
         finally:
             stop_download_progress_poller()
@@ -2309,9 +2338,12 @@ def list_skills():
 
 
 @router.post("/sessions")
-def create_session(req: StartPathScientistSessionRequest):
+def create_session(
+    req: StartPathScientistSessionRequest,
+    user: User = Depends(current_active_user),
+):
     try:
-        record = _SESSION_MANAGER.start(req)
+        record = _SESSION_MANAGER.start(req, user_id=str(user.id))
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return record.summary()
@@ -2452,6 +2484,24 @@ def _is_safe_run_id(run_id: str) -> bool:
 
 def _record_state(record: SessionRecord) -> dict[str, Any]:
     return record.state if isinstance(record.state, dict) else {}
+
+
+def _persist_record_state(
+    record: SessionRecord,
+    req: StartPathScientistSessionRequest | None = None,
+) -> None:
+    pathscientist_persistence.persist_session_state(
+        session_id=record.session_id,
+        user_id=record.user_id,
+        question=record.question,
+        status=record.status,
+        stage=record.stage,
+        state=_record_state(record),
+        max_iterations=req.max_iter if req is not None else None,
+        metric=req.metric if req is not None else "",
+        model=record.model,
+        workspace_path=str(_resolve_session_workspace(record) or ""),
+    )
 
 
 def _record_state_sse_payload(record: SessionRecord) -> dict[str, Any]:
