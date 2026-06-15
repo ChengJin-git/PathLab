@@ -24,14 +24,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+<<<<<<< HEAD
 from fastapi import APIRouter, Depends, HTTPException
+=======
+from fastapi import APIRouter, HTTPException
+>>>>>>> auto-frontend/main
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
+<<<<<<< HEAD
 from backend.auth import User, current_active_user
 from gateway import pathscientist_persistence
 
+=======
+>>>>>>> auto-frontend/main
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gpt-5.5"
@@ -77,7 +84,10 @@ class SessionRecord:
     conversation_id: str
     question: str
     model: str
+<<<<<<< HEAD
     user_id: str = ""
+=======
+>>>>>>> auto-frontend/main
     title: str = ""
     title_pending: bool = False
     status: str = "queued"
@@ -111,10 +121,13 @@ class SessionRecord:
             self.updated_at = payload["ts"]
             self._condition.notify_all()
         _append_gateway_session_event(self.session_id, payload)
+<<<<<<< HEAD
         pathscientist_persistence.persist_event(
             session_id=self.session_id,
             event=payload,
         )
+=======
+>>>>>>> auto-frontend/main
 
     def hydrate_events(self, events: list[dict[str, Any]]) -> None:
         """Restore persisted events and advance the sequence counter."""
@@ -216,20 +229,28 @@ class PathScientistSessionManager:
             [Any, str, Callable[[dict[str, Any]], None]], dict[str, Any]
         ] | None = None
 
+<<<<<<< HEAD
     def start(self, req: StartPathScientistSessionRequest, *, user_id: str = "") -> SessionRecord:
+=======
+    def start(self, req: StartPathScientistSessionRequest) -> SessionRecord:
+>>>>>>> auto-frontend/main
         config = _build_config(req)
         record = SessionRecord(
             session_id=uuid.uuid4().hex[:12],
             conversation_id="",
             question=req.question,
             model=config.llm_model or DEFAULT_MODEL,
+<<<<<<< HEAD
             user_id=user_id,
+=======
+>>>>>>> auto-frontend/main
             title="",
             title_pending=True,
         )
         with self._lock:
             self._sessions[record.session_id] = record
         _save_gateway_session_record(record)
+<<<<<<< HEAD
         pathscientist_persistence.persist_session_created(
             session_id=record.session_id,
             user_id=record.user_id,
@@ -239,6 +260,8 @@ class PathScientistSessionManager:
             model=record.model,
             workspace_path=str(_resolve_session_workspace(record) or ""),
         )
+=======
+>>>>>>> auto-frontend/main
         record.add_event({"kind": "session", "status": "queued"})
         _queue_session_title_generation(record, config)
         thread = threading.Thread(target=self._run, args=(record, req, config), daemon=True)
@@ -356,7 +379,10 @@ class PathScientistSessionManager:
             conversation_id=record.conversation_id,
         )
         _delete_gateway_session_events(session_id)
+<<<<<<< HEAD
         pathscientist_persistence.delete_session(session_id)
+=======
+>>>>>>> auto-frontend/main
         return {
             "session_id": session_id,
             "conversation_id": record.conversation_id,
@@ -467,14 +493,20 @@ class PathScientistSessionManager:
                     error=record.error or "Stopped by user from PathLab.",
                 )
                 _save_gateway_session_record(record)
+<<<<<<< HEAD
                 _persist_record_state(record, req)
+=======
+>>>>>>> auto-frontend/main
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
                 return
             record.state = state
             record.conversation_id = str(state.get("conversation_id") or "")
             record.set_status("completed", stage=str(state.get("stage") or "completed"))
             _save_gateway_session_record(record)
+<<<<<<< HEAD
             _persist_record_state(record, req)
+=======
+>>>>>>> auto-frontend/main
             record.add_event({"kind": "state", "state": state})
         except SessionStopRequested as exc:
             record.state = {
@@ -485,7 +517,10 @@ class PathScientistSessionManager:
             }
             record.set_status("interrupted", stage="interrupted", error=str(exc))
             _save_gateway_session_record(record)
+<<<<<<< HEAD
             _persist_record_state(record, req)
+=======
+>>>>>>> auto-frontend/main
             record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
         except Exception as exc:
             if record.cancel_requested:
@@ -497,17 +532,23 @@ class PathScientistSessionManager:
                 }
                 record.set_status("interrupted", stage="interrupted", error="Stopped by user from PathLab.")
                 _save_gateway_session_record(record)
+<<<<<<< HEAD
                 _persist_record_state(record, req)
+=======
+>>>>>>> auto-frontend/main
                 record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
                 return
             record.set_status("failed", stage="failed", error=str(exc))
             _save_gateway_session_record(record)
+<<<<<<< HEAD
             record.state = {
                 **_record_state(record),
                 "stage": "failed",
                 "error": str(exc),
             }
             _persist_record_state(record, req)
+=======
+>>>>>>> auto-frontend/main
             record.add_event({"kind": "error", "message": str(exc)})
         finally:
             stop_download_progress_poller()
@@ -2338,12 +2379,18 @@ def list_skills():
 
 
 @router.post("/sessions")
+<<<<<<< HEAD
 def create_session(
     req: StartPathScientistSessionRequest,
     user: User = Depends(current_active_user),
 ):
     try:
         record = _SESSION_MANAGER.start(req, user_id=str(user.id))
+=======
+def create_session(req: StartPathScientistSessionRequest):
+    try:
+        record = _SESSION_MANAGER.start(req)
+>>>>>>> auto-frontend/main
     except Exception as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return record.summary()
@@ -2390,6 +2437,33 @@ def get_session(session_id: str):
     }
 
 
+<<<<<<< HEAD
+=======
+@router.get("/sessions/{session_id}/download")
+def download_session_artifacts(session_id: str):
+    record = _SESSION_MANAGER.get(session_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="PathScientist session not found")
+
+    workspace = _resolve_session_workspace(record)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="PathScientist workspace not found")
+
+    try:
+        zip_path = _build_session_artifact_zip(record, workspace)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    filename = f"pathscientist-{session_id}.zip"
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(lambda path=zip_path: Path(path).unlink(missing_ok=True)),
+    )
+
+
+>>>>>>> auto-frontend/main
 @router.get("/sessions/{session_id}/runs/{run_id}/download")
 def download_run_artifacts(session_id: str, run_id: str):
     record = _SESSION_MANAGER.get(session_id)
@@ -2486,6 +2560,7 @@ def _record_state(record: SessionRecord) -> dict[str, Any]:
     return record.state if isinstance(record.state, dict) else {}
 
 
+<<<<<<< HEAD
 def _persist_record_state(
     record: SessionRecord,
     req: StartPathScientistSessionRequest | None = None,
@@ -2504,6 +2579,8 @@ def _persist_record_state(
     )
 
 
+=======
+>>>>>>> auto-frontend/main
 def _record_state_sse_payload(record: SessionRecord) -> dict[str, Any]:
     state = _record_state(record)
     if not state:
@@ -2818,6 +2895,42 @@ def _resolve_artifact_source(
     return candidate if candidate.is_file() else None
 
 
+<<<<<<< HEAD
+=======
+def _build_session_artifact_zip(record: SessionRecord, workspace: Path) -> str:
+    """Create a zip containing session metadata, events, and workspace files."""
+    workspace = workspace.resolve(strict=False)
+    base_dir = _resolve_pathscientist_base_dir().resolve(strict=False)
+    if workspace != base_dir and not workspace.is_relative_to(base_dir):
+        raise FileNotFoundError("Workspace is outside PathScientist base dir")
+
+    tmp = tempfile.NamedTemporaryFile(
+        prefix=f"pathscientist-{record.session_id}-",
+        suffix=".zip",
+        delete=False,
+    )
+    tmp.close()
+    existing: set[str] = set()
+    with zipfile.ZipFile(tmp.name, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        _zip_writestr_json(
+            archive,
+            "session.json",
+            {
+                **record.summary(),
+                "state": _record_state(record),
+                "events": record.events,
+            },
+        )
+        if workspace.is_dir():
+            for path in sorted(workspace.rglob("*")):
+                if not path.is_file() or not _path_under(path, workspace):
+                    continue
+                rel = path.relative_to(workspace).as_posix()
+                _add_file_to_zip(archive, existing, path, f"workspace/{rel}")
+    return tmp.name
+
+
+>>>>>>> auto-frontend/main
 def _build_run_artifact_zip(record: SessionRecord, workspace: Path, run_id: str) -> str:
     """Create a zip containing one iteration's results and model artifacts."""
     state = _record_state(record)

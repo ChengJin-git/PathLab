@@ -1,5 +1,9 @@
 import { API_BASE } from '../config'
+<<<<<<< HEAD
 import { apiFetch } from './client'
+=======
+import { apiFetch, downloadApiFile } from './client'
+>>>>>>> auto-frontend/main
 import type {
   DeletePathScientistSessionResponse,
   PathScientistSessionDetail,
@@ -82,3 +86,47 @@ export function getPathScientistEventsUrl(sessionId: string): string {
 export function getPathScientistRunDownloadUrl(sessionId: string, runId: string): string {
   return `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/download`
 }
+<<<<<<< HEAD
+=======
+
+export function getPathScientistSessionDownloadUrl(sessionId: string): string {
+  return `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/download`
+}
+
+export function downloadPathScientistSession(sessionId: string): Promise<{ filename: string }> {
+  return downloadApiFile(
+    getPathScientistSessionDownloadUrl(sessionId),
+    `pathscientist-${sessionId}.zip`,
+    undefined,
+    'Download PathScientist session',
+    true,
+  )
+}
+
+export function getPathScientistSessionShareUrl(sessionId: string): string {
+  const path = `/pathscientist/sessions/${encodeURIComponent(sessionId)}`
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return `${window.location.origin}${path}`
+  }
+  return path
+}
+
+export async function sharePathScientistSession(sessionId: string): Promise<'clipboard' | 'share'> {
+  const url = getPathScientistSessionShareUrl(sessionId)
+  if (typeof navigator !== 'undefined' && navigator.share) {
+    try {
+      await navigator.share({ url, title: 'PathScientist session' })
+      return 'share'
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        throw error
+      }
+    }
+  }
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(url)
+    return 'clipboard'
+  }
+  throw new Error('Sharing is not supported in this browser')
+}
+>>>>>>> auto-frontend/main

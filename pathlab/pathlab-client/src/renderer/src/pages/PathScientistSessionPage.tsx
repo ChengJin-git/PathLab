@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+<<<<<<< HEAD
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Beaker, Circle, FileJson, HardDrive, Layers, Loader2, Radio, Square, Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
@@ -8,6 +9,17 @@ import { deletePathScientistSession, getPathScientistSession, stopPathScientistS
 import type { PathScientistEvent, PathScientistSessionDetail, PathScientistSessionSummary } from '../types/pathscientist'
 import { formatFileSize } from '../lib/utils/utils'
 import { formatPathScientistElapsed } from '../lib/pathscientistTime'
+=======
+import { useNavigate, useParams } from 'react-router-dom'
+import { useAuth } from '../contexts/AuthContext'
+import PathScientistClinicalSessionView from '../components/pathscientist/views/PathScientistClinicalSessionView'
+import PathScientistDeveloperSessionView from '../components/pathscientist/views/PathScientistDeveloperSessionView'
+import { useSessionStream } from '../components/pathscientist/useSessionStream'
+import { deletePathScientistSession, getPathScientistSession, stopPathScientistSession } from '../api/pathscientist'
+import type { PathScientistEvent, PathScientistSessionDetail, PathScientistSessionSummary } from '../types/pathscientist'
+import { formatPathScientistElapsed } from '../lib/pathscientistTime'
+import { isLiveClinicalStatus } from '../lib/pathscientistClinicalSteps'
+>>>>>>> auto-frontend/main
 
 function eventKey(event: PathScientistEvent) {
   if (typeof event.seq === 'number') return `seq:${event.seq}`
@@ -29,6 +41,7 @@ function mergeEvents(initialEvents: PathScientistEvent[] = [], liveEvents: PathS
   return merged
 }
 
+<<<<<<< HEAD
 function statusClass(status?: string) {
   switch (displayStatus(status)) {
     case 'completed':
@@ -44,11 +57,14 @@ function statusClass(status?: string) {
   }
 }
 
+=======
+>>>>>>> auto-frontend/main
 function displayStatus(status?: string) {
   if (status === 'finished') return 'completed'
   return status || 'unknown'
 }
 
+<<<<<<< HEAD
 function isLiveSessionStatus(status?: string) {
   return status === 'queued' || status === 'running'
 }
@@ -57,6 +73,8 @@ function formatWorkspaceSize(bytes?: number | null) {
   return typeof bytes === 'number' ? formatFileSize(bytes) : '—'
 }
 
+=======
+>>>>>>> auto-frontend/main
 function useRunningClock(enabled: boolean) {
   const [nowMs, setNowMs] = useState(() => Date.now())
   useEffect(() => {
@@ -79,12 +97,21 @@ function titleEventValue(event: PathScientistEvent | undefined): string {
 export default function PathScientistSessionPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+<<<<<<< HEAD
+=======
+  const { isAdmin, isPathologist } = useAuth()
+  const useClinicalView = isPathologist && !isAdmin
+>>>>>>> auto-frontend/main
   const [session, setSession] = useState<PathScientistSessionDetail | null>(null)
   const [error, setError] = useState('')
   const [isStopping, setIsStopping] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+<<<<<<< HEAD
   const stream = useSessionStream(id, isLiveSessionStatus(session?.status))
+=======
+  const stream = useSessionStream(id, isLiveClinicalStatus(session?.status))
+>>>>>>> auto-frontend/main
 
   useEffect(() => {
     if (!id) return
@@ -128,11 +155,18 @@ export default function PathScientistSessionPage() {
   const latestTitle = titleEventValue(latestTitleEvent) || session?.title || ''
   const titlePending = Boolean((latestTitleEvent ? latestTitleEvent.title_pending : session?.title_pending) && !latestTitle)
   const displayTitle = latestTitle || (titlePending ? 'Generating title...' : 'Untitled PathScientist session')
+<<<<<<< HEAD
   const canStop = Boolean(id && isLiveSessionStatus(latestStatus))
   const canDelete = Boolean(id && session && !isLiveSessionStatus(latestStatus))
   const nowMs = useRunningClock(isLiveSessionStatus(latestStatus))
   const runningElapsed = isLiveSessionStatus(latestStatus) ? formatPathScientistElapsed(session?.created_at, nowMs) : ''
   const consoleSession = session ? { ...session, status: latestStatus, stage: latestStage } : null
+=======
+  const canStop = Boolean(id && isLiveClinicalStatus(latestStatus))
+  const canDelete = Boolean(id && session && !isLiveClinicalStatus(latestStatus))
+  const nowMs = useRunningClock(isLiveClinicalStatus(latestStatus))
+  const runningElapsed = isLiveClinicalStatus(latestStatus) ? formatPathScientistElapsed(session?.created_at, nowMs) : ''
+>>>>>>> auto-frontend/main
 
   const handleStop = async () => {
     if (!id || isStopping) return
@@ -165,7 +199,11 @@ export default function PathScientistSessionPage() {
     setError('')
     try {
       await deletePathScientistSession(id)
+<<<<<<< HEAD
       navigate('/pathscientist')
+=======
+      navigate('/pathscientist/new')
+>>>>>>> auto-frontend/main
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete session')
     } finally {
@@ -177,6 +215,7 @@ export default function PathScientistSessionPage() {
     return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">Missing session id.</div>
   }
 
+<<<<<<< HEAD
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -281,5 +320,36 @@ export default function PathScientistSessionPage() {
         />
       )}
     </div>
+=======
+  const sharedProps = {
+    sessionId: id,
+    session,
+    events,
+    streamStatus: stream.status,
+    streamError: stream.errorMessage,
+    displayTitle,
+    titlePending,
+    latestStatus,
+    runningElapsed,
+    error,
+    isLoading,
+    isStopping,
+    isDeleting,
+    canStop,
+    canDelete,
+    onStop: () => void handleStop(),
+    onDelete: () => void handleDelete(),
+  }
+
+  if (useClinicalView) {
+    return <PathScientistClinicalSessionView {...sharedProps} />
+  }
+
+  return (
+    <PathScientistDeveloperSessionView
+      {...sharedProps}
+      latestStage={latestStage}
+    />
+>>>>>>> auto-frontend/main
   )
 }

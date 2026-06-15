@@ -9,6 +9,11 @@ import {
   deletePathScientistSession,
   getPathScientistEventsUrl,
   getPathScientistSession,
+<<<<<<< HEAD
+=======
+  getPathScientistSessionDownloadUrl,
+  getPathScientistSessionShareUrl,
+>>>>>>> auto-frontend/main
   listPathScientistSessions,
   listPathScientistSkills,
   startPathScientistSession,
@@ -79,4 +84,14 @@ describe('pathscientist api', () => {
     expect(url).toBe('http://localhost:6100/pathscientist/sessions/abc')
     expect(opts?.method).toBe('DELETE')
   })
+<<<<<<< HEAD
+=======
+
+  it('builds session download and share URLs', () => {
+    expect(getPathScientistSessionDownloadUrl('abc')).toBe(
+      'http://localhost:6100/pathscientist/sessions/abc/download',
+    )
+    expect(getPathScientistSessionShareUrl('abc')).toContain('/pathscientist/sessions/abc')
+  })
+>>>>>>> auto-frontend/main
 })

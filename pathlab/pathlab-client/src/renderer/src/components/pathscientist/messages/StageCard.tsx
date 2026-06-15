@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 import { BookOpen, CheckCircle2, ChevronDown, CircleDot, Clock3, Database, ExternalLink, Loader2, XCircle } from 'lucide-react'
+=======
+import { BookOpen, CheckCircle2, ChevronDown, Circle, Clock3, Database, ExternalLink, Loader2, XCircle } from 'lucide-react'
+>>>>>>> auto-frontend/main
 import { cn } from '../../../lib/utils'
 import type {
   PathScientistAcquisitionView,
@@ -17,8 +21,17 @@ interface StageCardProps {
 function iconFor(stage: PathScientistStageView) {
   if (stage.status === 'complete') return <CheckCircle2 className="h-4 w-4 text-emerald-600" />
   if (stage.status === 'error') return <XCircle className="h-4 w-4 text-red-600" />
+<<<<<<< HEAD
   if (stage.status === 'current') return <Clock3 className="h-4 w-4 text-blue-600" />
   return <CircleDot className="h-4 w-4 text-gray-400" />
+=======
+  if (stage.status === 'current') return <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+  return <Circle className="h-4 w-4 text-gray-400" />
+}
+
+function stageDurationText(stage: PathScientistStageView): string | null {
+  return stage.durationLabel && stage.durationLabel !== '--' ? stage.durationLabel : null
+>>>>>>> auto-frontend/main
 }
 
 function taskProfileLabel(grounding: PathScientistGroundingView): string {
@@ -371,6 +384,7 @@ function AcquisitionDetails({ acquisition }: { acquisition: PathScientistAcquisi
 export default function StageCard({ stage, grounding, acquisition, className }: StageCardProps) {
   const showGroundingDetails = stage.id === 'grounding' && grounding !== null && grounding !== undefined
   const showAcquisitionDetails = stage.id === 'acquisition' && acquisition !== null && acquisition !== undefined
+<<<<<<< HEAD
   return (
     <div className={cn('rounded-2xl border border-gray-200 bg-white p-4 shadow-sm', className)}>
       <div className="flex items-start justify-between gap-3">
@@ -384,6 +398,50 @@ export default function StageCard({ stage, grounding, acquisition, className }: 
           </div>
         </div>
         <span className="rounded-full bg-gray-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-gray-500 ring-1 ring-gray-100">
+=======
+  const duration = stageDurationText(stage)
+  const isPending = stage.status === 'pending'
+  return (
+    <div
+      className={cn(
+        'rounded-2xl border border-gray-200 bg-white p-4 shadow-sm',
+        isPending && 'border-gray-100 bg-gray-50/60',
+        className,
+      )}
+      data-testid={`pathscientist-stage-card-${stage.id}`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <span className={cn(
+            'mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl ring-1',
+            stage.status === 'complete' ? 'bg-emerald-50 ring-emerald-100' : 'bg-gray-50 ring-gray-100',
+          )}
+          >
+            {iconFor(stage)}
+          </span>
+          <div className="min-w-0">
+            <p className={cn('text-sm font-extrabold', isPending ? 'text-gray-500' : 'text-gray-950')}>{stage.label}</p>
+            <p className="mt-1 truncate text-xs leading-5 text-gray-500">{stage.summary || `${stage.eventCount} events`}</p>
+            {duration && (
+              <p
+                className="mt-1.5 inline-flex items-center gap-1 text-xs font-bold text-gray-500"
+                data-testid={`pathscientist-stage-duration-${stage.id}`}
+              >
+                <Clock3 className="h-3 w-3" />
+                <span>{duration}</span>
+              </p>
+            )}
+          </div>
+        </div>
+        <span className={cn(
+          'rounded-full px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider ring-1',
+          stage.status === 'complete' && 'bg-emerald-50 text-emerald-700 ring-emerald-100',
+          stage.status === 'current' && 'bg-gray-100 text-gray-500 ring-gray-200',
+          stage.status === 'error' && 'bg-red-50 text-red-700 ring-red-100',
+          isPending && 'bg-gray-100 text-gray-400 ring-gray-200',
+        )}
+        >
+>>>>>>> auto-frontend/main
           {stage.status}
         </span>
       </div>

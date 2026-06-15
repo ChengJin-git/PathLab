@@ -14,7 +14,11 @@
 
 ## 当前 ORM 表现状
 
+<<<<<<< HEAD
 当前代码里可直接看到 **24 个 ORM 表**：
+=======
+当前代码里可直接看到 **21 个 ORM 表**：
+>>>>>>> auto-frontend/main
 
 ### 业务表（`models.py`）
 
@@ -38,6 +42,7 @@
 18. `dataset_stats`
 19. `dataset_grants`
 20. `permission_audit_logs`
+<<<<<<< HEAD
 21. `auto_research_sessions`（PathScientist 自动化实验会话汇总）
 22. `auto_research_experiments`（PathScientist 每次实验 run 的 metrics 和摘要）
 23. `auto_research_events`（PathScientist 运行事件流，用于回放/审计）
@@ -45,6 +50,12 @@
 ### 认证表（`backend/auth/models.py`）
 
 24. `users`
+=======
+
+### 认证表（`backend/auth/models.py`）
+
+21. `users`
+>>>>>>> auto-frontend/main
 
 `users` 当前除 FastAPI-Users 的基础字段外，还直接扩展了这些与业务强相关的字段：
 
@@ -84,7 +95,11 @@
 
 ## Repository 现状
 
+<<<<<<< HEAD
 `repositories/` 当前包含 19 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
+=======
+`repositories/` 当前包含 18 个业务仓储模块，并由 `repositories/__init__.py` 统一导出：
+>>>>>>> auto-frontend/main
 
 - `DataGroupRepository`
 - `DatasetRepository`
@@ -104,6 +119,7 @@
 - `OrphanedRecordsRepository`
 - `SegmentationAnnotationRepository`（同时导出 `VersionConflictError`）
 - `AnnotationAuditLogRepository`
+<<<<<<< HEAD
 - `AutoResearchRepository`
 
 这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注及协作审计等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。
@@ -125,6 +141,11 @@ Web PathScientist 流程会 best-effort 写入现有 `auto_research_*` 表：
 
 历史 Gateway 文件态 session 可以通过 `server/scripts/migrate_pathscientist_file_sessions_to_db.py` 导入数据库。脚本读取 `gateway_sessions.json` 和 `gateway_events/*.jsonl`，并复用 `AutoResearchRepository` 的幂等 upsert 逻辑。
 
+=======
+
+这意味着当前仓储层已经覆盖数据集、WSI、AI 任务、聊天、反馈、导出、训练、权限、存储任务、孤立记录、标注及协作审计等核心实体。`analysis_runs` 表当前通过直接 ORM 查询访问，暂无独立 Repository 封装。
+
+>>>>>>> auto-frontend/main
 ## 初始化与使用方式
 
 - Gateway 启动时会调用数据库初始化逻辑

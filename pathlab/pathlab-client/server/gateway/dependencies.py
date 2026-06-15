@@ -30,10 +30,18 @@ class PaginationParams(BaseModel):
 ROOT = Path(__file__).resolve().parents[2]  # pathlab/
 sys.path.insert(0, str(ROOT))
 
+<<<<<<< HEAD
 # Load .env file
 env_path = ROOT / ".env"
 if env_path.exists():
     load_dotenv(env_path)
+=======
+# Load .env file (canonical location: pathlab-client/server/.env)
+for env_path in (ROOT / "server" / ".env", ROOT / ".env"):
+    if env_path.exists():
+        load_dotenv(env_path)
+        break
+>>>>>>> auto-frontend/main
 
 # Initialize logger
 logger = get_logger("Gateway")

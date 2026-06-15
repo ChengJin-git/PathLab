@@ -1275,6 +1275,74 @@
       "randomSplitUnavailable": "随机分割不可用"
     }
   },
+<<<<<<< HEAD
+=======
+  "pathScientist": {
+    "backToChat": "返回对话",
+    "newSession": "新建会话",
+    "sessions": "会话列表",
+    "loadingSessions": "正在加载会话...",
+    "loadSessionsFailed": "加载会话失败",
+    "noSessions": "暂无会话",
+    "generatingTitle": "正在生成标题...",
+    "untitledSession": "未命名会话",
+    "live": "运行中",
+    "clinical": {
+      "researchQuestion": "研究问题",
+      "overviewTitle": "实验概览",
+      "taskType": "任务类型",
+      "foundationModel": "基础模型",
+      "duration": "已用时长",
+      "bestMetric": "最佳指标",
+      "currentIteration": "当前轮次",
+      "runStatus": "运行状态",
+      "progressTitle": "实验进展",
+      "roundSummaryTitle": "本轮摘要",
+      "agentWork": "Agent 工作",
+      "result": "结果",
+      "waitingForUpdates": "实验正在进行，请稍候更新…",
+      "noSummaryYet": "暂无摘要信息。",
+      "completedTitle": "实验已完成",
+      "endedTitle": "实验已结束",
+      "bestMetricResult": "最佳结果：{{metric}}",
+      "deleteSession": "删除会话",
+      "newExperiment": "新建实验",
+      "technicalDetails": "查看技术详情",
+      "stopRun": "停止实验",
+      "loading": "正在加载会话…",
+      "iterationProgress": "第 {{current}} / {{max}} 轮",
+      "iterationCurrent": "第 {{current}} 轮",
+      "steps": {
+        "understand": "理解任务",
+        "prepare": "准备数据",
+        "run": "模型训练",
+        "result": "结果汇总"
+      },
+      "status": {
+        "queued": "排队中",
+        "running": "进行中",
+        "completed": "已完成",
+        "failed": "失败",
+        "interrupted": "已停止",
+        "loading": "加载中",
+        "unknown": "未知"
+      }
+    },
+    "sessionActions": {
+      "share": "分享",
+      "download": "下载",
+      "delete": "删除",
+      "shareCopied": "会话链接已复制",
+      "shareSuccess": "会话已分享",
+      "shareFailed": "分享失败",
+      "downloadSuccess": "实验数据已开始下载",
+      "downloadFailed": "下载失败",
+      "deleteConfirm": "确定删除此会话及其工作区数据吗？共享数据集不会被删除。",
+      "deleteSuccess": "会话已删除",
+      "deleteFailed": "删除失败"
+    }
+  },
+>>>>>>> auto-frontend/main
   "taskList": {
     "title": "实验记录",
     "description": "协调、运行和监控 AI 分析任务",
@@ -1417,6 +1485,10 @@
       "tools": "工具",
       "dataRepository": "数据仓库",
       "analysisLab": "实验记录",
+<<<<<<< HEAD
+=======
+      "autoExperiment": "自动实验",
+>>>>>>> auto-frontend/main
       "insightsReports": "更多工具",
       "registerData": "注册数据"
     },

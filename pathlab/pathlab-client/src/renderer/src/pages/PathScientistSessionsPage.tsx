@@ -2,6 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Beaker, Clock, HardDrive, Loader2, Plus, RefreshCw, Square, Trash2 } from 'lucide-react'
 import { Button } from '../components/ui/button'
+<<<<<<< HEAD
+=======
+import PathScientistBackButton from '../components/pathscientist/PathScientistBackButton'
+>>>>>>> auto-frontend/main
 import { deletePathScientistSession, listPathScientistSessions, stopPathScientistSession } from '../api/pathscientist'
 import type { PathScientistSessionSummary } from '../types/pathscientist'
 import { formatFileSize } from '../lib/utils/utils'
@@ -176,7 +180,12 @@ export default function PathScientistSessionsPage() {
   const nowMs = useRunningClock(visibleSessions.some((session) => isLiveSessionStatus(session.status)))
 
   return (
+<<<<<<< HEAD
     <div className="space-y-6">
+=======
+    <div className="mx-auto w-full max-w-7xl space-y-6">
+      <PathScientistBackButton />
+>>>>>>> auto-frontend/main
       <section className="relative overflow-hidden rounded-3xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8">
         <div className="pointer-events-none absolute right-0 top-0 h-56 w-56 translate-x-1/3 -translate-y-1/3 rounded-full bg-blue-100 blur-3xl" />
         <div className="pointer-events-none absolute bottom-0 left-10 h-40 w-40 translate-y-1/2 rounded-full bg-cyan-100 blur-3xl" />

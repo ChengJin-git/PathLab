@@ -1275,6 +1275,74 @@
       "randomSplitUnavailable": "Random split is not available"
     }
   },
+<<<<<<< HEAD
+=======
+  "pathScientist": {
+    "backToChat": "Back to Chat",
+    "newSession": "New Session",
+    "sessions": "Sessions",
+    "loadingSessions": "Loading sessions...",
+    "loadSessionsFailed": "Failed to load sessions",
+    "noSessions": "No sessions yet",
+    "generatingTitle": "Generating title...",
+    "untitledSession": "Untitled session",
+    "live": "Live",
+    "clinical": {
+      "researchQuestion": "Research question",
+      "overviewTitle": "Run overview",
+      "taskType": "Task type",
+      "foundationModel": "Foundation model",
+      "duration": "Duration",
+      "bestMetric": "Best metric",
+      "currentIteration": "Current iteration",
+      "runStatus": "Status",
+      "progressTitle": "Progress",
+      "roundSummaryTitle": "Round summary",
+      "agentWork": "Agent work",
+      "result": "Result",
+      "waitingForUpdates": "The experiment is running. Updates will appear shortly.",
+      "noSummaryYet": "No summary available yet.",
+      "completedTitle": "Experiment completed",
+      "endedTitle": "Experiment ended",
+      "bestMetricResult": "Best result: {{metric}}",
+      "deleteSession": "Delete session",
+      "newExperiment": "New experiment",
+      "technicalDetails": "Technical details",
+      "stopRun": "Stop run",
+      "loading": "Loading session...",
+      "iterationProgress": "Iter {{current}} / {{max}}",
+      "iterationCurrent": "Iter {{current}}",
+      "steps": {
+        "understand": "Understand task",
+        "prepare": "Prepare data",
+        "run": "Train model",
+        "result": "Summarize results"
+      },
+      "status": {
+        "queued": "Queued",
+        "running": "Running",
+        "completed": "Completed",
+        "failed": "Failed",
+        "interrupted": "Stopped",
+        "loading": "Loading",
+        "unknown": "Unknown"
+      }
+    },
+    "sessionActions": {
+      "share": "Share",
+      "download": "Download",
+      "delete": "Delete",
+      "shareCopied": "Session link copied",
+      "shareSuccess": "Session shared",
+      "shareFailed": "Failed to share session",
+      "downloadSuccess": "Session download started",
+      "downloadFailed": "Failed to download session",
+      "deleteConfirm": "Delete this session and its workspace data? Shared datasets will not be removed.",
+      "deleteSuccess": "Session deleted",
+      "deleteFailed": "Failed to delete session"
+    }
+  },
+>>>>>>> auto-frontend/main
   "taskList": {
     "title": "Experiment Records",
     "description": "Coordinate, run, and monitor AI analysis tasks",
@@ -1417,6 +1485,10 @@
       "tools": "Tools",
       "dataRepository": "Data Repository",
       "analysisLab": "Experiment Records",
+<<<<<<< HEAD
+=======
+      "autoExperiment": "Auto Experiment",
+>>>>>>> auto-frontend/main
       "insightsReports": "More Tools",
       "registerData": "Register Data"
     },

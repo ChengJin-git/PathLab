@@ -1275,6 +1275,74 @@
       "randomSplitUnavailable": "隨機分割不可用"
     }
   },
+<<<<<<< HEAD
+=======
+  "pathScientist": {
+    "backToChat": "返回對話",
+    "newSession": "新建會話",
+    "sessions": "會話列表",
+    "loadingSessions": "正在載入會話...",
+    "loadSessionsFailed": "載入會話失敗",
+    "noSessions": "暫無會話",
+    "generatingTitle": "正在生成標題...",
+    "untitledSession": "未命名會話",
+    "live": "運行中",
+    "clinical": {
+      "researchQuestion": "研究問題",
+      "overviewTitle": "實驗概覽",
+      "taskType": "任務類型",
+      "foundationModel": "基礎模型",
+      "duration": "已用時長",
+      "bestMetric": "最佳指標",
+      "currentIteration": "當前輪次",
+      "runStatus": "運行狀態",
+      "progressTitle": "實驗進展",
+      "roundSummaryTitle": "本輪摘要",
+      "agentWork": "Agent 工作",
+      "result": "結果",
+      "waitingForUpdates": "實驗正在進行，請稍候更新…",
+      "noSummaryYet": "暫無摘要資訊。",
+      "completedTitle": "實驗已完成",
+      "endedTitle": "實驗已結束",
+      "bestMetricResult": "最佳結果：{{metric}}",
+      "deleteSession": "刪除會話",
+      "newExperiment": "新建實驗",
+      "technicalDetails": "查看技術詳情",
+      "stopRun": "停止實驗",
+      "loading": "正在載入會話…",
+      "iterationProgress": "第 {{current}} / {{max}} 輪",
+      "iterationCurrent": "第 {{current}} 輪",
+      "steps": {
+        "understand": "理解任務",
+        "prepare": "準備數據",
+        "run": "模型訓練",
+        "result": "結果匯總"
+      },
+      "status": {
+        "queued": "排隊中",
+        "running": "進行中",
+        "completed": "已完成",
+        "failed": "失敗",
+        "interrupted": "已停止",
+        "loading": "載入中",
+        "unknown": "未知"
+      }
+    },
+    "sessionActions": {
+      "share": "分享",
+      "download": "下載",
+      "delete": "刪除",
+      "shareCopied": "會話連結已複製",
+      "shareSuccess": "會話已分享",
+      "shareFailed": "分享失敗",
+      "downloadSuccess": "實驗數據已開始下載",
+      "downloadFailed": "下載失敗",
+      "deleteConfirm": "確定刪除此會話及其工作區數據嗎？共享數據集不會被刪除。",
+      "deleteSuccess": "會話已刪除",
+      "deleteFailed": "刪除失敗"
+    }
+  },
+>>>>>>> auto-frontend/main
   "taskList": {
     "title": "實驗記錄",
     "description": "協調、運行和監控 AI 分析任務",
@@ -1417,6 +1485,10 @@
       "tools": "工具",
       "dataRepository": "資料倉庫",
       "analysisLab": "實驗記錄",
+<<<<<<< HEAD
+=======
+      "autoExperiment": "自動實驗",
+>>>>>>> auto-frontend/main
       "insightsReports": "更多工具",
       "registerData": "註冊資料"
     },

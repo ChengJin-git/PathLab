@@ -1,9 +1,18 @@
 import { Activity, BarChart3, Clock3, Cpu, Layers3, Trophy, Wrench } from 'lucide-react'
 import type { ReactNode } from 'react'
+<<<<<<< HEAD
+=======
+import { cn } from '../../lib/utils'
+>>>>>>> auto-frontend/main
 import type { PathScientistRunSummaryView } from '../../lib/pathscientistEventSelectors'
 
 interface RunSummaryCardProps {
   summary: PathScientistRunSummaryView
+<<<<<<< HEAD
+=======
+  compactHeader?: boolean
+  className?: string
+>>>>>>> auto-frontend/main
 }
 
 function formatMetric(summary: PathScientistRunSummaryView) {
@@ -41,27 +50,51 @@ function isRedundantStageBadge(status: string, stage: string) {
   return normalizedStage === 'completed' && ['completed', 'finished'].includes(normalizedStatus)
 }
 
+<<<<<<< HEAD
 export default function RunSummaryCard({ summary }: RunSummaryCardProps) {
+=======
+export default function RunSummaryCard({ summary, compactHeader = false, className }: RunSummaryCardProps) {
+>>>>>>> auto-frontend/main
   const metadata = summary.sessionMetadata
   const showStageBadge = !isRedundantStageBadge(summary.status, summary.stage)
 
   return (
     <section
+<<<<<<< HEAD
       className="rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-blue-50/60 p-4 shadow-sm sm:p-5"
+=======
+      className={cn(
+        'rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-blue-50/60 p-4 shadow-sm sm:p-5',
+        className,
+      )}
+>>>>>>> auto-frontend/main
       data-testid="pathscientist-summary-card"
     >
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <p className="text-xs font-bold uppercase tracking-wider text-slate-400">Run summary</p>
+<<<<<<< HEAD
           <h2 className="mt-1 truncate text-xl font-black tracking-tight text-slate-950">{summary.title}</h2>
           <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-500">{summary.narrative.brief}</p>
+=======
+          {!compactHeader && (
+            <>
+              <h2 className="mt-1 truncate text-xl font-black tracking-tight text-slate-950">{summary.title}</h2>
+              <p className="mt-1 line-clamp-2 text-sm leading-6 text-slate-500">{summary.narrative.brief}</p>
+            </>
+          )}
+>>>>>>> auto-frontend/main
         </div>
         <div className="flex flex-wrap gap-2">
           <span className="rounded-full bg-slate-950 px-3 py-1 text-xs font-bold text-white">{summary.status}</span>
           {showStageBadge && (
             <span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-600 ring-1 ring-slate-200">{summary.stage}</span>
           )}
+<<<<<<< HEAD
           {summary.narrative.source === 'llm' && (
+=======
+          {!compactHeader && summary.narrative.source === 'llm' && (
+>>>>>>> auto-frontend/main
             <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200">
               LLM summary
             </span>

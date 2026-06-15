@@ -4,6 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PathScientistSessionPage from '@renderer/pages/PathScientistSessionPage'
 import { deletePathScientistSession, getPathScientistEventsUrl, getPathScientistSession, stopPathScientistSession } from '@renderer/api/pathscientist'
 import type { PathScientistEvent, PathScientistSessionDetail } from '@renderer/types/pathscientist'
+<<<<<<< HEAD
+=======
+import { useAuth } from '@renderer/contexts/AuthContext'
+
+vi.mock('@renderer/contexts/AuthContext', () => ({
+  useAuth: vi.fn(),
+}))
+>>>>>>> auto-frontend/main
 
 vi.mock('@renderer/api/pathscientist', () => ({
   deletePathScientistSession: vi.fn(),
@@ -57,12 +65,32 @@ const session: PathScientistSessionDetail = {
   events,
 }
 
+<<<<<<< HEAD
 function renderPage() {
+=======
+function mockAuth(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
+  vi.mocked(useAuth).mockReturnValue({
+    isAdmin: role === 'admin',
+    isPathologist: role === 'pathologist',
+    isLoggedIn: true,
+    isLoading: false,
+    user: { role } as any,
+    canUseGpu: role !== 'guest',
+  } as any)
+}
+
+function renderPage(role: 'admin' | 'pathologist' | 'guest' = 'admin') {
+  mockAuth(role)
+>>>>>>> auto-frontend/main
   return render(
     <MemoryRouter initialEntries={["/pathscientist/sessions/s1"]}>
       <Routes>
         <Route path="/pathscientist/sessions/:id" element={<PathScientistSessionPage />} />
+<<<<<<< HEAD
         <Route path="/pathscientist" element={<div>sessions</div>} />
+=======
+        <Route path="/pathscientist/new" element={<div>new session</div>} />
+>>>>>>> auto-frontend/main
       </Routes>
     </MemoryRouter>,
   )
@@ -190,7 +218,22 @@ describe('PathScientistSessionPage', () => {
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('workspace'))
     expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('kept'))
     await waitFor(() => expect(deletePathScientistSession).toHaveBeenCalledWith('s1'))
+<<<<<<< HEAD
     expect(await screen.findByText('sessions')).toBeInTheDocument()
+=======
+    expect(await screen.findByText('new session')).toBeInTheDocument()
+  })
+
+  it('shows the simplified clinical view for pathologist users', async () => {
+    renderPage('pathologist')
+
+    expect(await screen.findByTestId('pathscientist-clinical-session')).toBeInTheDocument()
+    expect(screen.getByTestId('pathscientist-clinical-overview')).toBeInTheDocument()
+    expect(screen.getByTestId('pathscientist-clinical-progress')).toBeInTheDocument()
+    expect(screen.getByText('pathScientist.clinical.technicalDetails')).toBeInTheDocument()
+    expect(screen.queryByText('Execution console')).not.toBeInTheDocument()
+    expect(screen.queryByText('Workspace')).not.toBeInTheDocument()
+>>>>>>> auto-frontend/main
   })
 
   it('keeps a completed session completed when older stream events still say running', async () => {

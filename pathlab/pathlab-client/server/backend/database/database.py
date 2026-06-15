@@ -13,7 +13,10 @@ Key features:
 import os
 import logging
 from typing import AsyncGenerator
+<<<<<<< HEAD
 from sqlalchemy.exc import DBAPIError, InterfaceError, SQLAlchemyError
+=======
+>>>>>>> auto-frontend/main
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 from sqlalchemy import text
@@ -73,6 +76,7 @@ from contextlib import asynccontextmanager
 import anyio
 
 
+<<<<<<< HEAD
 async def _invalidate_session_connection(session: AsyncSession) -> None:
     """Drop a broken DBAPI connection so the pool opens a fresh one next time."""
     try:
@@ -104,6 +108,8 @@ async def _close_safely(session: AsyncSession, *, context: str) -> None:
         logger.exception("Database session close failed (%s)", context)
 
 
+=======
+>>>>>>> auto-frontend/main
 @asynccontextmanager
 async def safe_session() -> AsyncGenerator[AsyncSession, None]:
     """
@@ -129,12 +135,22 @@ async def safe_session() -> AsyncGenerator[AsyncSession, None]:
     except Exception:
         # Rollback on any exception (including CancelledError)
         # Use anyio cancel scope shield to protect against uvicorn/starlette cancellation
+<<<<<<< HEAD
         await _rollback_safely(session, context="safe_session exception")
+=======
+        with anyio.CancelScope(shield=True):
+            await session.rollback()
+>>>>>>> auto-frontend/main
         raise
     finally:
         # Shield the close operation to ensure connection is returned to pool
         # even if the coroutine is cancelled by anyio cancel scope
+<<<<<<< HEAD
         await _close_safely(session, context="safe_session")
+=======
+        with anyio.CancelScope(shield=True):
+            await session.close()
+>>>>>>> auto-frontend/main
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -150,6 +166,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     async with async_session() as session:
         try:
             yield session
+<<<<<<< HEAD
             with anyio.CancelScope(shield=True):
                 await session.commit()
         except (InterfaceError, DBAPIError) as exc:
@@ -162,6 +179,11 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             raise
         except Exception:
             await _rollback_safely(session, context="get_db exception")
+=======
+            await session.commit()
+        except Exception:
+            await session.rollback()
+>>>>>>> auto-frontend/main
             raise
         finally:
             # Shield the close operation to ensure connection is returned to pool
@@ -169,7 +191,12 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
             # Use anyio.CancelScope(shield=True) because uvicorn/starlette uses anyio's
             # cancel scope for cancellation. asyncio.shield() does NOT protect against
             # anyio cancel scope cancellation. See SQLAlchemy issue #8145.
+<<<<<<< HEAD
             await _close_safely(session, context="get_db")
+=======
+            with anyio.CancelScope(shield=True):
+                await session.close()
+>>>>>>> auto-frontend/main
 
 
 async def init_db():
