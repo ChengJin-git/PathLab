@@ -36,6 +36,23 @@ export function RegisterRequestModal({ isOpen, onClose, captchaProvider, captcha
   const [tencentTicket, setTencentTicket] = React.useState<string | undefined>(undefined)
   const [tencentRandstr, setTencentRandstr] = React.useState<string | undefined>(undefined)
 
+  const captchaRequired = Boolean(captchaProvider && captchaSiteKey)
+  const captchaComplete = !captchaRequired || (
+    captchaProvider === 'turnstile'
+      ? Boolean(turnstileToken)
+      : Boolean(tencentTicket && tencentRandstr)
+  )
+
+  const handleTencentVerify = React.useCallback((ticket: string, randstr: string) => {
+    setTencentTicket(ticket)
+    setTencentRandstr(randstr)
+  }, [])
+
+  const resetTencentCaptcha = React.useCallback(() => {
+    setTencentTicket(undefined)
+    setTencentRandstr(undefined)
+  }, [])
+
   React.useEffect(() => {
     if (isOpen) {
       setStep('form')
@@ -217,22 +234,13 @@ export function RegisterRequestModal({ isOpen, onClose, captchaProvider, captcha
               {captchaProvider === 'tencent' && captchaSiteKey && (
                 <TencentCaptcha
                   appId={captchaSiteKey}
-                  onVerify={(ticket, randstr) => {
-                    setTencentTicket(ticket)
-                    setTencentRandstr(randstr)
-                  }}
-                  onExpire={() => {
-                    setTencentTicket(undefined)
-                    setTencentRandstr(undefined)
-                  }}
-                  onError={() => {
-                    setTencentTicket(undefined)
-                    setTencentRandstr(undefined)
-                  }}
+                  onVerify={handleTencentVerify}
+                  onExpire={resetTencentCaptcha}
+                  onError={resetTencentCaptcha}
                 />
               )}
 
-              <Button type="submit" disabled={isSubmitting || (!!captchaSiteKey && !turnstileToken && !tencentTicket)} className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg">
+              <Button type="submit" disabled={isSubmitting || !captchaComplete} className="w-full h-10 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg">
                 {isSubmitting
                   ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />{t('registerModal.submitting')}</>
                   : <><UserPlus className="w-4 h-4 mr-2" />{t('registerModal.submit')}</>
