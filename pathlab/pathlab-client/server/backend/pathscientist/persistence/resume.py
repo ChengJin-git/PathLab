@@ -19,15 +19,12 @@ from ..config import PathScientistConfig
 from ..persistence.layout import get_persistence_root
 from ..persistence.state_bridge import update_agent_state
 from ..runtime.iteration_state import IterationState
-from ..runtime.session import PathScientistSession
+from ..runtime.session import DEFAULT_BASE_DIR, PathScientistSession
 from ..runtime.session_registry import SessionDeps, register_session
 from ..runtime.workspace import Workspace
 from ..tools.metrics import MetricsTracker
 
 logger = logging.getLogger(__name__)
-DEFAULT_BASE_DIR = "/project/vcompath/storage/ywangrm/tmp/pathscientist"
-
-
 def _read_agent_state_from_disk(conversation_dir: Path) -> dict:
     """Read agent_state from base_state.json without creating a full conversation."""
     base_state_path = conversation_dir / "base_state.json"

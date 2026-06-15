@@ -45,6 +45,7 @@ from .literature.ingest import (
     ingest_document,
 )
 from .literature.sparse_index import SparseChunkIndex
+from .runtime.session import DEFAULT_BASE_DIR
 
 logger = logging.getLogger("pathscientist.rag_ingest")
 
@@ -62,7 +63,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Directory of local papers (.txt/.md/.pdf). Required unless --status is set.",
     )
     parser.add_argument(
-        "--base-dir", default=os.environ.get("PATHSCIENTIST_BASE_DIR", "/project/vcompath/storage/ywangrm/tmp/pathscientist"),
+        "--base-dir", default=os.environ.get("PATHSCIENTIST_BASE_DIR", DEFAULT_BASE_DIR),
         help="PathScientist base directory (literature/ will be created inside).",
     )
     parser.add_argument(

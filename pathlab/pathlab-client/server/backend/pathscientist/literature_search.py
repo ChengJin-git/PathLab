@@ -33,6 +33,7 @@ from pathlib import Path
 from .config import DEFAULT_LITERATURE_ONLINE_PROVIDERS, parse_provider_list
 from .literature.online_clients import create_online_client
 from .literature.types import PaperRecord
+from .runtime.session import DEFAULT_BASE_DIR
 
 logger = logging.getLogger("pathscientist.literature_search")
 
@@ -55,7 +56,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-citations", type=int, default=0, help="Minimum citation count (e.g. 10)")
     parser.add_argument("--save", action="store_true", help="Save found papers to local LiteratureStore")
     parser.add_argument("--ingest-to-rag", action="store_true", help="Also generate RAG chunks + rebuild indexes (implies --save)")
-    parser.add_argument("--base-dir", default=os.environ.get("PATHSCIENTIST_BASE_DIR", "/project/vcompath/storage/ywangrm/tmp/pathscientist"))
+    parser.add_argument("--base-dir", default=os.environ.get("PATHSCIENTIST_BASE_DIR", DEFAULT_BASE_DIR))
     parser.add_argument("--embedding-model", default=os.environ.get("PATHSCIENTIST_RAG_EMBEDDING_MODEL", "Qwen/Qwen3-Embedding-8B"))
     parser.add_argument("--embedding-base-url", default=os.environ.get("PATHSCIENTIST_RAG_EMBEDDING_BASE_URL", "http://dgx-24.cm.cluster:9001/v1"))
     parser.add_argument("--embedding-api-key", default=os.environ.get("PATHSCIENTIST_RAG_EMBEDDING_API_KEY", "sk-pathlab"))

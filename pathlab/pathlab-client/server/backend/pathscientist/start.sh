@@ -19,7 +19,7 @@
 #   PATHSCIENTIST_LLM_BASE_URL    模型地址
 #   PATHSCIENTIST_LLM_WIRE_API    wire API (codex-relay 默认 responses)
 #   PATHSCIENTIST_SANDBOX         sandbox 模式: auto|apptainer|local
-#   PATHSCIENTIST_BASE_DIR        workspace 根目录 (默认 /project/vcompath/storage/ywangrm/tmp/pathscientist)
+#   PATHSCIENTIST_BASE_DIR        workspace 根目录 (默认 pathlab-client/uploads/pathscientist)
 #   PATHSCIENTIST_DATASET_CACHE_DIR 统一数据根目录；本地先查这里，下载也落这里
 #                                  (默认 /project/llmponco/wangyihui/original_data/pathlab_test_data)
 #   PATHSCIENTIST_GENERATE_PAPER_DRAFT 是否在 synthesis 阶段生成 paper_draft.md
@@ -70,6 +70,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 BACKEND_DIR="$(dirname "$SCRIPT_DIR")"
+PATHLAB_CLIENT_DIR="$(dirname "$(dirname "$BACKEND_DIR")")"
 
 load_project_env() {
     local env_file="$1"
@@ -133,7 +134,7 @@ PATHSCIENTIST_LLM_PROFILE_DEFAULT="${PATHSCIENTIST_LLM_PROFILE:-codex-relay}"
 export PATHSCIENTIST_LLM_MODEL="${PATHSCIENTIST_LLM_MODEL:-gpt-5.5}"
 export PATHSCIENTIST_LLM_WIRE_API="${PATHSCIENTIST_LLM_WIRE_API:-responses}"
 export PATHSCIENTIST_SANDBOX="${PATHSCIENTIST_SANDBOX:-auto}"
-export PATHSCIENTIST_BASE_DIR="${PATHSCIENTIST_BASE_DIR:-/project/vcompath/storage/ywangrm/tmp/pathscientist}"
+export PATHSCIENTIST_BASE_DIR="${PATHSCIENTIST_BASE_DIR:-$PATHLAB_CLIENT_DIR/uploads/pathscientist}"
 export PATHSCIENTIST_DATASET_CACHE_DIR="${PATHSCIENTIST_DATASET_CACHE_DIR:-/project/llmponco/wangyihui/original_data/pathlab_test_data}"
 export PATHSCIENTIST_GENERATE_PAPER_DRAFT="${PATHSCIENTIST_GENERATE_PAPER_DRAFT:-0}"
 export PATHSCIENTIST_FEATURE_EXTRACTOR_MODE="${PATHSCIENTIST_FEATURE_EXTRACTOR_MODE:-auto}"

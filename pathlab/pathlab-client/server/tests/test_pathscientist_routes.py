@@ -739,6 +739,41 @@ def test_list_and_detail_include_created_session():
     assert "events" in detail
 
 
+def test_default_pathscientist_base_dir_is_local_writable(monkeypatch):
+    monkeypatch.delenv("PATHSCIENTIST_BASE_DIR", raising=False)
+    route_module = load_route_module()
+    from backend.pathscientist.runtime.session import _resolve_base_dir
+
+    base_dir = _resolve_base_dir()
+
+    assert str(base_dir).endswith("pathlab-client/uploads/pathscientist")
+    assert not str(base_dir).startswith("/project/")
+    assert route_module._resolve_pathscientist_base_dir() == base_dir.resolve()
+
+
+def test_list_sessions_uses_default_base_dir_without_env(monkeypatch, tmp_path):
+    monkeypatch.delenv("PATHSCIENTIST_BASE_DIR", raising=False)
+    route_module = load_route_module()
+    from backend.pathscientist.runtime import session as runtime_session
+
+    default_base_dir = tmp_path / "pathscientist-default"
+    monkeypatch.setattr(runtime_session, "DEFAULT_BASE_DIR", str(default_base_dir))
+    manager = route_module.PathScientistSessionManager()
+    route_module._SESSION_MANAGER = manager
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.get("/pathscientist/sessions")
+
+    assert response.status_code == 200
+    assert response.json()["items"] == []
+    assert route_module._resolve_pathscientist_base_dir() == default_base_dir.resolve()
+    assert (default_base_dir / route_module.GATEWAY_SESSION_REGISTRY).exists() is False
+
+
 def test_events_stream_replays_session_events():
     client = TestClient(make_app())
     created = client.post(

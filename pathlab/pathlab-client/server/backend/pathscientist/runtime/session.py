@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 from ..persistence.layout import get_persistence_root
 
 
-DEFAULT_BASE_DIR = "/project/vcompath/storage/ywangrm/tmp/pathscientist"
+DEFAULT_BASE_DIR = str(Path(__file__).resolve().parents[4] / "uploads" / "pathscientist")
 
 
 def _resolve_base_dir(

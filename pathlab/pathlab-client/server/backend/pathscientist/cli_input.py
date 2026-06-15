@@ -7,6 +7,8 @@ import os
 import re
 from pathlib import Path
 
+from .runtime.session import DEFAULT_BASE_DIR
+
 
 FILE_REF_RE = re.compile(r"@([A-Za-z0-9_./-]+)")
 ANSI_ESCAPE_RE = re.compile(r"(\x1b\[[0-9;]*m)")
@@ -24,7 +26,7 @@ def build_cli_history_path(base_dir: str | Path | None = None) -> Path:
     root = Path(
         base_dir or os.environ.get(
             "PATHSCIENTIST_BASE_DIR",
-            "/project/vcompath/storage/ywangrm/tmp/pathscientist",
+            DEFAULT_BASE_DIR,
         )
     ).expanduser().resolve()
     history_dir = root / "cli"

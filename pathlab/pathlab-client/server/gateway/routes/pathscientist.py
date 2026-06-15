@@ -1182,10 +1182,11 @@ def _resolve_pathscientist_base_dir() -> Path:
 
         return Path(_resolve_base_dir()).expanduser().resolve()
     except Exception:
+        default_base_dir = Path(__file__).resolve().parents[3] / "uploads" / "pathscientist"
         return Path(
             os.environ.get(
                 "PATHSCIENTIST_BASE_DIR",
-                "/project/vcompath/storage/ywangrm/tmp/pathscientist",
+                str(default_base_dir),
             )
         ).expanduser().resolve()
 

@@ -39,6 +39,7 @@ from ..orchestrator.types import (
 )
 from ..orchestrator.ui_summary import build_ui_run_summary
 from ..runtime.integrity import check_session_integrity
+from ..runtime.session import DEFAULT_BASE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -1680,7 +1681,7 @@ def _build_literature_store():
 
     lit_base = os.environ.get(
         "PATHSCIENTIST_BASE_DIR",
-        "/project/vcompath/storage/ywangrm/tmp/pathscientist",
+        DEFAULT_BASE_DIR,
     )
     lit_dir = Path(lit_base) / "literature"
     store = LiteratureStore(lit_dir)
@@ -1701,7 +1702,7 @@ def _build_hybrid_retriever(config, literature_store):
 
     lit_base = os.environ.get(
         "PATHSCIENTIST_BASE_DIR",
-        "/project/vcompath/storage/ywangrm/tmp/pathscientist",
+        DEFAULT_BASE_DIR,
     )
     lit_dir = Path(lit_base) / "literature"
     corpus_dir = config.literature_corpus_dir

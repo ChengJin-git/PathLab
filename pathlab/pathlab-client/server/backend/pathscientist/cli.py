@@ -34,6 +34,7 @@ from .config import (
     resolve_llm_base_url,
     resolve_llm_model,
 )
+from .runtime.session import DEFAULT_BASE_DIR
 
 logging.basicConfig(level=logging.WARNING, format="%(message)s")
 
@@ -181,7 +182,7 @@ def main(argv: list[str] | None = None):
     state = InteractiveCLIState(mode=args.mode)
     history_base_dir = config.conversation_persistence_dir or os.environ.get(
         "PATHSCIENTIST_BASE_DIR",
-        "/project/vcompath/storage/ywangrm/tmp/pathscientist",
+        DEFAULT_BASE_DIR,
     )
 
     model_name = resolve_llm_model(config.llm_model, default="") or "(not set)"
@@ -422,7 +423,7 @@ def _handle_search(config: PathScientistConfig, query: str):
                 papers,
                 os.environ.get(
                     "PATHSCIENTIST_BASE_DIR",
-                    "/project/vcompath/storage/ywangrm/tmp/pathscientist",
+                    DEFAULT_BASE_DIR,
                 ),
             )
             print(f"{GREEN}Saved {saved} paper(s) to local store.{RESET}")
@@ -525,7 +526,7 @@ def _handle_list_sessions(config: PathScientistConfig):
         from .persistence.layout import get_persistence_root
         root = get_persistence_root(
             config.conversation_persistence_dir or
-            os.environ.get("PATHSCIENTIST_BASE_DIR", "/project/vcompath/storage/ywangrm/tmp/pathscientist")
+            os.environ.get("PATHSCIENTIST_BASE_DIR", DEFAULT_BASE_DIR)
         )
         conversations = list_conversations(root)
         if not conversations:
