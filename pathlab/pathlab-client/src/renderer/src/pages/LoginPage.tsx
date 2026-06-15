@@ -41,6 +41,23 @@ function LoginPageInner({ backendUnavailable = false, captchaProvider, captchaSi
   const [tencentTicket, setTencentTicket] = React.useState<string | undefined>(undefined)
   const [tencentRandstr, setTencentRandstr] = React.useState<string | undefined>(undefined)
 
+  const captchaRequired = Boolean(captchaProvider && captchaSiteKey)
+  const captchaComplete = !captchaRequired || (
+    captchaProvider === 'turnstile'
+      ? Boolean(turnstileToken)
+      : Boolean(tencentTicket && tencentRandstr)
+  )
+
+  const handleTencentVerify = React.useCallback((ticket: string, randstr: string) => {
+    setTencentTicket(ticket)
+    setTencentRandstr(randstr)
+  }, [])
+
+  const resetTencentCaptcha = React.useCallback(() => {
+    setTencentTicket(undefined)
+    setTencentRandstr(undefined)
+  }, [])
+
   // If already logged in, redirect to dashboard
   React.useEffect(() => {
     if (isLoggedIn) {
@@ -225,24 +242,15 @@ function LoginPageInner({ backendUnavailable = false, captchaProvider, captchaSi
             {captchaProvider === 'tencent' && captchaSiteKey && (
               <TencentCaptcha
                 appId={captchaSiteKey}
-                onVerify={(ticket, randstr) => {
-                  setTencentTicket(ticket)
-                  setTencentRandstr(randstr)
-                }}
-                onExpire={() => {
-                  setTencentTicket(undefined)
-                  setTencentRandstr(undefined)
-                }}
-                onError={() => {
-                  setTencentTicket(undefined)
-                  setTencentRandstr(undefined)
-                }}
+                onVerify={handleTencentVerify}
+                onExpire={resetTencentCaptcha}
+                onError={resetTencentCaptcha}
               />
             )}
 
             <Button
               type="submit"
-              disabled={isLoading || (!!captchaSiteKey && !turnstileToken && !tencentTicket)}
+              disabled={isLoading || !captchaComplete}
               className="w-full h-11 bg-slate-900 hover:bg-slate-800 text-white font-medium rounded-lg shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
             >
               {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
