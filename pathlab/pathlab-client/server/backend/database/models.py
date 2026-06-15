@@ -1316,6 +1316,12 @@ class AutoResearchSession(Base):
     phase = Column(String(50), nullable=False, default="literature")
     status = Column(String(20), nullable=False, default="running")
     thread_id = Column(String(255), unique=True, nullable=False)
+    conversation_id = Column(String(255), nullable=True, index=True)
+    persistence_dir = Column(Text, nullable=True)
+    workspace_path = Column(Text, nullable=True)
+    resume_available = Column(Boolean, nullable=False, default=False)
+    event_source_version = Column(String(50), nullable=False, default="gateway-v1")
+    recovery_metadata = Column(JSON, nullable=True)
     experiment_plan = Column(JSON, nullable=True)
     best_metric = Column(Float, nullable=True)
     best_metric_name = Column(String(50), default="auc")
@@ -1344,6 +1350,12 @@ class AutoResearchSession(Base):
             "research_question": self.research_question,
             "phase": self.phase,
             "status": self.status,
+            "conversation_id": self.conversation_id,
+            "persistence_dir": self.persistence_dir,
+            "workspace_path": self.workspace_path,
+            "resume_available": self.resume_available,
+            "event_source_version": self.event_source_version,
+            "recovery_metadata": self.recovery_metadata,
             "best_metric": self.best_metric,
             "best_metric_name": self.best_metric_name,
             "current_iteration": self.current_iteration,
@@ -1404,6 +1416,7 @@ class AutoResearchEvent(Base):
     session = relationship("AutoResearchSession", back_populates="events")
 
     __table_args__ = (
+        UniqueConstraint("session_id", "sequence", name="uq_auto_research_events_session_seq"),
         Index("idx_ar_events_session_seq", "session_id", "sequence"),
     )
 

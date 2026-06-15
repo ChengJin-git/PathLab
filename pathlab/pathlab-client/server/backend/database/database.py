@@ -398,6 +398,65 @@ async def init_db():
         )
         logger.info("chat conversation branch column and chat_messages variant columns ensured")
 
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS conversation_id VARCHAR(255)"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS persistence_dir TEXT"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS workspace_path TEXT"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS resume_available BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS event_source_version VARCHAR(50) NOT NULL DEFAULT 'gateway-v1'"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE auto_research_sessions "
+                "ADD COLUMN IF NOT EXISTS recovery_metadata JSONB"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS idx_auto_research_sessions_conversation_id "
+                "ON auto_research_sessions (conversation_id)"
+            )
+        )
+        await conn.execute(
+            text(
+                "DELETE FROM auto_research_events newer "
+                "USING auto_research_events older "
+                "WHERE newer.session_id = older.session_id "
+                "AND newer.sequence = older.sequence "
+                "AND newer.id > older.id"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_auto_research_events_session_seq "
+                "ON auto_research_events (session_id, sequence)"
+            )
+        )
+        logger.info("auto_research PathScientist recovery columns and event index ensured")
+
     await _create_default_admin()
 
 

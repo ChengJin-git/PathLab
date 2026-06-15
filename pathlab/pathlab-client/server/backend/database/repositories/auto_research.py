@@ -7,6 +7,7 @@ import logging
 from typing import Any, Optional
 
 from sqlalchemy import delete, select, update, desc
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..models import AutoResearchSession, AutoResearchExperiment, AutoResearchEvent, utc_now
@@ -37,14 +38,14 @@ class AutoResearchRepository:
     @staticmethod
     async def get_user_sessions(
         db: AsyncSession,
-        user_id: str,
+        user_id: str | None,
         limit: int = 50,
     ) -> list[AutoResearchSession]:
+        statement = select(AutoResearchSession)
+        if user_id:
+            statement = statement.where(AutoResearchSession.user_id == user_id)
         result = await db.execute(
-            select(AutoResearchSession)
-            .where(AutoResearchSession.user_id == user_id)
-            .order_by(desc(AutoResearchSession.created_at))
-            .limit(limit)
+            statement.order_by(desc(AutoResearchSession.created_at)).limit(limit)
         )
         return list(result.scalars().all())
 
@@ -221,14 +222,38 @@ class AutoResearchRepository:
         if result.scalar_one_or_none() is not None:
             return False
 
-        db.add(AutoResearchEvent(
+        event_row = AutoResearchEvent(
             session_id=session_id,
             event_type=str(event.get("event_type") or "event")[:50],
             event_data=event.get("event_data") or {},
             sequence=sequence,
-        ))
-        await db.flush()
+        )
+        if not hasattr(db, "begin_nested"):
+            db.add(event_row)
+            await db.flush()
+            return True
+
+        try:
+            async with db.begin_nested():
+                db.add(event_row)
+                await db.flush()
+        except IntegrityError:
+            return False
         return True
+
+    @staticmethod
+    async def get_session_events(
+        db: AsyncSession,
+        session_id: str,
+        limit: int = 5000,
+    ) -> list[AutoResearchEvent]:
+        result = await db.execute(
+            select(AutoResearchEvent)
+            .where(AutoResearchEvent.session_id == session_id)
+            .order_by(AutoResearchEvent.sequence)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
 
     @staticmethod
     async def get_events_after(

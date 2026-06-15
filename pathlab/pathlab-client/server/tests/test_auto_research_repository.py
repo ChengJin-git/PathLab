@@ -117,9 +117,48 @@ def test_session_payload_keeps_large_artifacts_as_paths_and_metrics_as_json():
     assert payload["session_id"] == "s1"
     assert payload["best_metric"] == 0.93
     assert payload["best_experiment"]["run_id"] == "run_a"
+    assert payload["workspace_path"] == "/tmp/session_s1"
+    assert payload["event_source_version"] == "gateway-v1"
+    assert payload["resume_available"] is False
     assert payload["comparison_results"]["run_history"][0]["model_path"].endswith(
         "best_model.pth"
     )
+
+
+def test_session_payload_records_recovery_metadata_and_review_content(tmp_path):
+    conversation_dir = tmp_path / "convabc"
+    conversation_dir.mkdir()
+    (conversation_dir / "base_state.json").write_text("{}", encoding="utf-8")
+    state = {
+        "stage": "interrupted",
+        "conversation_id": "convabc",
+        "persistence_dir": str(conversation_dir),
+        "workspace_dir": str(tmp_path / "workspace"),
+        "review_history": [{"decision": "continue_execution"}],
+        "external_test_history": [{"run_id": "external_1", "auc": 0.82}],
+        "integrity_report": {"status": "passed"},
+    }
+
+    payload = pathscientist_persistence._session_payload(
+        session_id="s1",
+        user_id="u1",
+        question="resume me",
+        status="interrupted",
+        stage="interrupted",
+        state=state,
+        max_iterations=3,
+        metric="auc",
+        model="gpt-5.5",
+        workspace_path="",
+    )
+
+    assert payload["conversation_id"] == "convabc"
+    assert payload["persistence_dir"] == str(conversation_dir)
+    assert payload["workspace_path"].endswith("workspace")
+    assert payload["resume_available"] is True
+    assert payload["recovery_metadata"]["integrity_report"] == {"status": "passed"}
+    assert payload["comparison_results"]["review_history"][0]["decision"] == "continue_execution"
+    assert payload["comparison_results"]["external_test_history"][0]["run_id"] == "external_1"
 
 
 def test_experiment_payload_uses_run_id_as_training_task_id():

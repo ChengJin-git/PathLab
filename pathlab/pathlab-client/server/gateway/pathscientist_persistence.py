@@ -118,6 +118,17 @@ async def import_session_bundle(
     if not session_id:
         return
     state = session.get("state") if isinstance(session.get("state"), dict) else {}
+    state = dict(state)
+    for key in (
+        "conversation_id",
+        "persistence_dir",
+        "conversation_dir",
+        "workspace_path",
+        "workspace_dir",
+        "resume_available",
+    ):
+        if session.get(key) not in (None, "", [], {}):
+            state.setdefault(key, session.get(key))
     user_id = str(session.get("user_id") or default_user_id or "").strip()
     if not user_id:
         raise ValueError(f"user_id is required to import session {session_id}")
@@ -190,6 +201,15 @@ async def _persist_session_created(
                 "phase": "queued",
                 "status": "queued",
                 "thread_id": session_id,
+                "conversation_id": None,
+                "persistence_dir": None,
+                "workspace_path": workspace_path or None,
+                "resume_available": False,
+                "event_source_version": "gateway-v1",
+                "recovery_metadata": _json_safe({
+                    "workspace_path": workspace_path,
+                    "artifact_policy": "database stores metadata and paths; large artifacts stay on disk",
+                }),
                 "experiment_plan": _json_safe({
                     "model": model,
                     "workspace_path": workspace_path,
@@ -278,6 +298,15 @@ def _session_payload(
 ) -> dict[str, Any]:
     run_history = _run_history(state)
     metric_name = metric or _metric_name(state) or "auc"
+    conversation_id = _conversation_id(state)
+    persistence_dir = _persistence_dir(state, conversation_id)
+    workspace_path = workspace_path or _workspace_path(state)
+    recovery_metadata = _recovery_metadata(
+        state,
+        conversation_id=conversation_id,
+        persistence_dir=persistence_dir,
+        workspace_path=workspace_path,
+    )
     best_run_id = str(state.get("best_run_id") or "")
     best_experiment = _best_experiment(run_history, best_run_id)
     best_metric = _float_or_none(state.get("best_metric_value"))
@@ -294,12 +323,26 @@ def _session_payload(
         "phase": (stage or str(state.get("stage") or status or "running"))[:50],
         "status": (status or "running")[:20],
         "thread_id": session_id,
+        "conversation_id": conversation_id or None,
+        "persistence_dir": persistence_dir or None,
+        "workspace_path": workspace_path or None,
+        "resume_available": _resume_available(
+            conversation_id=conversation_id,
+            persistence_dir=persistence_dir,
+        ),
+        "event_source_version": "gateway-v1",
+        "recovery_metadata": _json_safe(recovery_metadata),
         "experiment_plan": _experiment_plan(state, model, workspace_path),
         "best_metric": best_metric,
         "best_metric_name": metric_name[:50],
         "best_experiment": _json_safe(best_experiment),
         "comparison_results": _json_safe({
             "run_history": [_compact_run(entry) for entry in run_history],
+            "external_test_history": _compact_history_list(
+                state.get("external_test_history")
+            ),
+            "review_history": _compact_history_list(state.get("review_history")),
+            "integrity_report": state.get("integrity_report"),
             "artifact_policy": "large artifacts remain in PATHSCIENTIST_BASE_DIR or dataset cache",
         }),
         "final_report": _truncate_text(_final_report(state)),
@@ -394,6 +437,106 @@ def _experiment_plan(
         if key in state:
             plan[key] = state.get(key)
     return _json_safe(plan)
+
+
+def _conversation_id(state: dict[str, Any]) -> str:
+    for key in ("conversation_id",):
+        value = state.get(key)
+        if value:
+            return str(value).strip()
+    summary = state.get("persisted_summary")
+    if isinstance(summary, dict):
+        value = summary.get("conversation_id")
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _workspace_path(state: dict[str, Any]) -> str:
+    for key in ("workspace_path", "workspace_dir", "workspace_root"):
+        value = state.get(key)
+        if value:
+            return str(value)
+    summary = state.get("persisted_summary")
+    if isinstance(summary, dict):
+        for key in ("workspace_path", "workspace_dir", "workspace_root"):
+            value = summary.get(key)
+            if value:
+                return str(value)
+        research = summary.get("research_session")
+        if isinstance(research, dict):
+            value = research.get("workspace_dir") or research.get("workspace_root")
+            if value:
+                return str(value)
+    return ""
+
+
+def _persistence_dir(state: dict[str, Any], conversation_id: str) -> str:
+    for key in ("persistence_dir", "conversation_dir"):
+        value = state.get(key)
+        if value:
+            return str(value)
+    summary = state.get("persisted_summary")
+    if isinstance(summary, dict):
+        for key in ("persistence_dir", "conversation_dir"):
+            value = summary.get(key)
+            if value:
+                return str(value)
+    if not conversation_id:
+        return ""
+    try:
+        from backend.pathscientist.persistence.layout import get_persistence_root
+        from backend.pathscientist.runtime.session import _resolve_base_dir
+
+        root = Path(get_persistence_root(_resolve_base_dir()))
+        for candidate in (
+            root / conversation_id,
+            root / conversation_id.replace("-", ""),
+        ):
+            if candidate.exists():
+                return str(candidate)
+        return str(root / conversation_id.replace("-", ""))
+    except Exception:
+        return ""
+
+
+def _resume_available(*, conversation_id: str, persistence_dir: str) -> bool:
+    if not conversation_id or not persistence_dir:
+        return False
+    return (Path(persistence_dir).expanduser() / "base_state.json").is_file()
+
+
+def _compact_history_list(value: Any, *, limit: int = 20) -> list[Any]:
+    if not isinstance(value, list):
+        return []
+    return [_json_safe(item) for item in value[:limit]]
+
+
+def _recovery_metadata(
+    state: dict[str, Any],
+    *,
+    conversation_id: str,
+    persistence_dir: str,
+    workspace_path: str,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "conversation_id": conversation_id,
+        "persistence_dir": persistence_dir,
+        "workspace_path": workspace_path,
+        "artifact_policy": "database stores metadata and paths; OpenHands state and artifacts stay on disk",
+    }
+    for key in (
+        "session_id",
+        "external_test",
+        "external_test_history",
+        "latest_review",
+        "review_history",
+        "review_decision",
+        "integrity_report",
+    ):
+        if key in state:
+            metadata[key] = state.get(key)
+    return metadata
 
 
 def _run_history(state: dict[str, Any]) -> list[dict[str, Any]]:

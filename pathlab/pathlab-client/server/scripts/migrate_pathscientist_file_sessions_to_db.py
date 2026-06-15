@@ -65,6 +65,16 @@ async def main() -> int:
             / pathscientist_routes._safe_session_filename(session_id)
         )
         events = _load_events(event_path)
+        conversation_id = str(session.get("conversation_id") or "").strip()
+        conversation_dir = _conversation_dir(base_dir, conversation_id)
+        if conversation_dir is not None:
+            session.setdefault("persistence_dir", str(conversation_dir))
+            session.setdefault("resume_available", (conversation_dir / "base_state.json").is_file())
+            _merge_conversation_summary(session, conversation_dir)
+        if not events and conversation_dir is not None:
+            state = session.get("state") if isinstance(session.get("state"), dict) else {}
+            summary = state.get("persisted_summary") if isinstance(state.get("persisted_summary"), dict) else {}
+            events = _load_openhands_events(pathscientist_routes, conversation_dir, summary)
         try:
             await pathscientist_persistence.import_session_bundle(
                 session=session,
@@ -116,6 +126,61 @@ def _load_events(path: Path) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
             events.append(payload)
     return events
+
+
+def _conversation_dir(base_dir: Path, conversation_id: str) -> Path | None:
+    if not conversation_id:
+        return None
+    try:
+        from backend.pathscientist.persistence.layout import get_persistence_root
+
+        root = Path(get_persistence_root(base_dir))
+    except Exception:
+        root = base_dir / "conversations"
+    for candidate in (root / conversation_id, root / conversation_id.replace("-", "")):
+        if candidate.is_dir():
+            return candidate
+    return None
+
+
+def _merge_conversation_summary(session: dict[str, Any], conversation_dir: Path) -> None:
+    try:
+        from backend.pathscientist.persistence.history import load_conversation_summary
+
+        summary = load_conversation_summary(conversation_dir)
+    except Exception:
+        summary = {}
+    if not isinstance(summary, dict):
+        summary = {}
+    state = session.get("state") if isinstance(session.get("state"), dict) else {}
+    persisted_summary = state.get("persisted_summary") if isinstance(state.get("persisted_summary"), dict) else {}
+    state["persisted_summary"] = {
+        **persisted_summary,
+        **summary,
+        "persistence_dir": str(conversation_dir),
+        "resume_available": (conversation_dir / "base_state.json").is_file(),
+    }
+    if not session.get("question"):
+        session["question"] = summary.get("research_question") or ""
+    session["state"] = state
+
+
+def _load_openhands_events(
+    route_module,
+    conversation_dir: Path,
+    summary: dict[str, Any],
+) -> list[dict[str, Any]]:
+    try:
+        stage_events = route_module._build_persisted_stage_events(
+            summary or {"execution_status": "completed"},
+            start_seq=1,
+        )
+        return stage_events + route_module._load_persisted_conversation_events(
+            conversation_dir,
+            start_seq=len(stage_events) + 1,
+        )
+    except Exception:
+        return []
 
 
 if __name__ == "__main__":
