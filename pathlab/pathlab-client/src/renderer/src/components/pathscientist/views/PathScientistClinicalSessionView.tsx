@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePathScientistTranslation } from '../../../lib/usePathScientistTranslation'
-import { ChevronDown, Circle, Loader2, Square, Trash2 } from 'lucide-react'
+import { ChevronDown, Circle, Loader2, Play, Square, Trash2 } from 'lucide-react'
 import { Button } from '../../ui/button'
 import PathScientistExecutionConsole from '../PathScientistExecutionConsole'
 import SimpleProgressSteps from './SimpleProgressSteps'
@@ -27,10 +27,13 @@ interface PathScientistClinicalSessionViewProps {
   error: string
   isLoading: boolean
   isStopping: boolean
+  isResuming: boolean
   isDeleting: boolean
   canStop: boolean
+  canResume: boolean
   canDelete: boolean
   onStop: () => void
+  onResume: () => void
   onDelete: () => void
 }
 
@@ -70,10 +73,13 @@ export default function PathScientistClinicalSessionView({
   error,
   isLoading,
   isStopping,
+  isResuming,
   isDeleting,
   canStop,
+  canResume,
   canDelete,
   onStop,
+  onResume,
   onDelete,
 }: PathScientistClinicalSessionViewProps) {
   const { t } = usePathScientistTranslation()
@@ -222,6 +228,19 @@ export default function PathScientistClinicalSessionView({
                 </p>
               )}
               <div className="mt-4 flex flex-wrap gap-2">
+                {canResume && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="gap-2 border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"
+                    onClick={onResume}
+                    disabled={isResuming}
+                  >
+                    {isResuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    Resume session
+                  </Button>
+                )}
                 {canDelete && (
                   <Button
                     type="button"

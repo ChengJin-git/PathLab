@@ -26,13 +26,15 @@ def load_route_module():
     module.pathscientist_persistence.persist_event = lambda **kwargs: None
     module.pathscientist_persistence.persist_session_state = lambda **kwargs: None
     module.pathscientist_persistence.delete_session = lambda session_id: None
+    module._DB_HISTORY_ENABLED = False
     return module
 
 
 def install_fake_user(app: FastAPI, route_module, user_id: str = "user-test"):
-    app.dependency_overrides[route_module.current_active_user] = (
-        lambda: SimpleNamespace(id=user_id)
-    )
+    fake_user = lambda: SimpleNamespace(id=user_id)
+    app.dependency_overrides[route_module.current_active_user] = fake_user
+    app.dependency_overrides[route_module.get_user_from_header_or_param] = fake_user
+    app.dependency_overrides[route_module.get_user_from_token_param] = fake_user
 
 
 def disable_persistence(route_module):
@@ -2083,3 +2085,209 @@ def test_hydrated_legacy_detail_adds_stage_summary_events(tmp_path, monkeypatch)
     assert "best auc" not in grounding["summary"]
     assert hydrated.events[-1]["kind"] == "tool_call"
     assert [event["seq"] for event in hydrated.events] == list(range(1, len(hydrated.events) + 1))
+
+
+def test_list_sessions_merges_db_history_with_live_records(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    db_record = route_module.SessionRecord(
+        session_id="db1",
+        conversation_id="conv-db",
+        question="db history",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+    )
+    live_record = route_module.SessionRecord(
+        session_id="live1",
+        conversation_id="",
+        question="live",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="running",
+        stage="execution",
+    )
+    manager = route_module.PathScientistSessionManager()
+    manager._sessions[live_record.session_id] = live_record
+    route_module._SESSION_MANAGER = manager
+    route_module._scan_persisted_conversations = lambda *, curated_only=False: []
+
+    async def fake_db_list(*, user, include_persisted, limit=100):
+        return [db_record]
+
+    monkeypatch.setattr(route_module, "_load_db_session_list", fake_db_list)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    data = client.get("/pathscientist/sessions").json()
+
+    ids = {item["session_id"] for item in data["items"]}
+    assert {"db1", "live1"} <= ids
+
+
+def test_get_session_falls_back_to_db_record(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    route_module._SESSION_MANAGER = route_module.PathScientistSessionManager()
+    record = route_module.SessionRecord(
+        session_id="db-detail",
+        conversation_id="conv-detail",
+        question="from db",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+        state={"resume_available": True},
+    )
+    record.hydrate_events([{"seq": 1, "kind": "message", "text": "hello"}])
+
+    async def fake_db_record(session_id, **_kwargs):
+        assert session_id == "db-detail"
+        return record
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_db_record)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    data = client.get("/pathscientist/sessions/db-detail").json()
+
+    assert data["question"] == "from db"
+    assert data["resume_available"] is True
+    assert data["events"][0]["text"] == "hello"
+
+
+def test_events_stream_replays_db_events_when_jsonl_missing(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    route_module._SESSION_MANAGER = route_module.PathScientistSessionManager()
+    record = route_module.SessionRecord(
+        session_id="db-events",
+        conversation_id="",
+        question="events",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="completed",
+        stage="completed",
+    )
+    db_events = [{"seq": 1, "kind": "message", "text": "replayed from db"}]
+
+    async def fake_db_record(session_id, **_kwargs):
+        assert session_id == "db-events"
+        return record
+
+    async def fake_db_events(session_id, **_kwargs):
+        assert session_id == "db-events"
+        return db_events
+
+    monkeypatch.setattr(route_module, "_load_db_record", fake_db_record)
+    monkeypatch.setattr(route_module, "_load_db_events", fake_db_events)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    with client.stream("GET", "/pathscientist/sessions/db-events/events") as response:
+        assert response.status_code == 200
+        body = next(response.iter_text())
+
+    assert "replayed from db" in body
+
+
+def test_get_session_denies_other_users_db_record(monkeypatch):
+    route_module = load_route_module()
+    route_module._DB_HISTORY_ENABLED = True
+    route_module._SESSION_MANAGER = route_module.PathScientistSessionManager()
+
+    async def forbidden_db_record(session_id, **_kwargs):
+        raise route_module.HTTPException(status_code=403, detail="PathScientist session access denied")
+
+    monkeypatch.setattr(route_module, "_load_db_record", forbidden_db_record)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module, user_id="user-a")
+    client = TestClient(app)
+
+    response = client.get("/pathscientist/sessions/private-session")
+
+    assert response.status_code == 403
+
+
+def test_resume_session_rejects_missing_checkpoint():
+    route_module = load_route_module()
+    manager = route_module.PathScientistSessionManager()
+    record = route_module.SessionRecord(
+        session_id="resume-missing",
+        conversation_id="87654321-1234-4abc-9def-123456789abc",
+        question="resume",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="interrupted",
+        stage="interrupted",
+    )
+    manager._sessions[record.session_id] = record
+    route_module._SESSION_MANAGER = manager
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.post("/pathscientist/sessions/resume-missing/resume")
+
+    assert response.status_code == 409
+    assert "checkpoint is missing" in response.json()["detail"]
+
+
+def test_resume_session_starts_thread_when_checkpoint_exists(tmp_path, monkeypatch):
+    route_module = load_route_module()
+    conversation_dir = tmp_path / "conv"
+    conversation_dir.mkdir()
+    (conversation_dir / "base_state.json").write_text("{}", encoding="utf-8")
+    record = route_module.SessionRecord(
+        session_id="resume-ok",
+        conversation_id="12345678-1234-4abc-9def-123456789abc",
+        question="resume",
+        model="gpt-5.5",
+        user_id="user-test",
+        status="interrupted",
+        stage="interrupted",
+        state={"persistence_dir": str(conversation_dir), "resume_available": True},
+    )
+    manager = route_module.PathScientistSessionManager()
+    manager._sessions[record.session_id] = record
+    route_module._SESSION_MANAGER = manager
+    route_module._build_config = lambda req: SimpleNamespace(llm_model="gpt-5.5", primary_metric=req.metric)
+    route_module._persist_record_state = lambda record, req=None: None
+    started: list[str] = []
+
+    def fake_resume_run(record, req, config):
+        started.append(record.session_id)
+
+    monkeypatch.setattr(manager, "_resume_run", fake_resume_run)
+
+    app = FastAPI()
+    app.include_router(route_module.router)
+    install_fake_user(app, route_module)
+    client = TestClient(app)
+
+    response = client.post("/pathscientist/sessions/resume-ok/resume")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "running"
+    assert data["stage"] == "resuming"
+    assert data["resume_available"] is True
+    for _ in range(20):
+        if started == ["resume-ok"]:
+            break
+        time.sleep(0.02)
+    assert started == ["resume-ok"]

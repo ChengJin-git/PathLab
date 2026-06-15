@@ -35,6 +35,9 @@ export interface PathScientistSessionSummary {
   updated_at?: number
   workspace_path?: string
   workspace_size_bytes?: number | null
+  persistence_dir?: string
+  resume_available?: boolean
+  event_source_version?: string
   error?: string
 }
 

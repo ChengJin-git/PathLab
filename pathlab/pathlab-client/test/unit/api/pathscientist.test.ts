@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ok } from '../../helpers/apiHelpers'
-import { setAuthToken } from '@renderer/api/client'
+import { clearAuthToken, setAuthToken } from '@renderer/api/client'
 
 vi.mock('@renderer/config', () => ({
   API_BASE: 'http://localhost:6100',
@@ -22,6 +22,7 @@ const mockFetch = vi.mocked(fetch)
 
 beforeEach(() => {
   mockFetch.mockReset()
+  clearAuthToken()
 })
 
 describe('pathscientist api', () => {
@@ -48,24 +49,34 @@ describe('pathscientist api', () => {
   })
 
   it('lists and fetches sessions', async () => {
+    setAuthToken('session-token')
     mockFetch.mockResolvedValueOnce(ok({ items: [{ session_id: 'abc' }] }))
 
     await listPathScientistSessions()
 
-    expect(mockFetch.mock.calls[0][0]).toBe('http://localhost:6100/pathscientist/sessions')
+    const [listUrl, listOpts] = mockFetch.mock.calls[0]
+    expect(listUrl).toBe('http://localhost:6100/pathscientist/sessions')
+    expect(new Headers(listOpts?.headers).get('Authorization')).toBe('Bearer session-token')
 
     mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', events: [] }))
 
     await getPathScientistSession('abc')
 
-    expect(mockFetch.mock.calls[1][0]).toBe('http://localhost:6100/pathscientist/sessions/abc')
+    const [detailUrl, detailOpts] = mockFetch.mock.calls[1]
+    expect(detailUrl).toBe('http://localhost:6100/pathscientist/sessions/abc')
+    expect(new Headers(detailOpts?.headers).get('Authorization')).toBe('Bearer session-token')
   })
 
   it('builds an EventSource URL', () => {
-    expect(getPathScientistEventsUrl('abc')).toBe('http://localhost:6100/pathscientist/sessions/abc/events')
+    setAuthToken('stream-token')
+
+    expect(getPathScientistEventsUrl('abc')).toBe(
+      'http://localhost:6100/pathscientist/sessions/abc/events?token=stream-token',
+    )
   })
 
   it('stops a running session', async () => {
+    setAuthToken('session-token')
     mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', status: 'interrupted' }))
 
     await stopPathScientistSession('abc')
@@ -73,9 +84,11 @@ describe('pathscientist api', () => {
     const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toBe('http://localhost:6100/pathscientist/sessions/abc/stop')
     expect(opts?.method).toBe('POST')
+    expect(new Headers(opts?.headers).get('Authorization')).toBe('Bearer session-token')
   })
 
   it('deletes a session', async () => {
+    setAuthToken('session-token')
     mockFetch.mockResolvedValueOnce(ok({ session_id: 'abc', deleted: true }))
 
     await deletePathScientistSession('abc')
@@ -83,11 +96,14 @@ describe('pathscientist api', () => {
     const [url, opts] = mockFetch.mock.calls[0]
     expect(url).toBe('http://localhost:6100/pathscientist/sessions/abc')
     expect(opts?.method).toBe('DELETE')
+    expect(new Headers(opts?.headers).get('Authorization')).toBe('Bearer session-token')
   })
 
   it('builds session download and share URLs', () => {
+    setAuthToken('download-token')
+
     expect(getPathScientistSessionDownloadUrl('abc')).toBe(
-      'http://localhost:6100/pathscientist/sessions/abc/download',
+      'http://localhost:6100/pathscientist/sessions/abc/download?token=download-token',
     )
     expect(getPathScientistSessionShareUrl('abc')).toContain('/pathscientist/sessions/abc')
   })

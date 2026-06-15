@@ -1,5 +1,5 @@
 import { API_BASE } from '../config'
-import { apiFetch, downloadApiFile } from './client'
+import { apiFetch, downloadApiFile, withAuthTokenQuery } from './client'
 import type {
   DeletePathScientistSessionResponse,
   PathScientistSessionDetail,
@@ -42,8 +42,7 @@ export function listPathScientistSessions(): Promise<PathScientistSessionListRes
   return apiFetch(
     `${pathScientistBase()}/sessions`,
     undefined,
-    'List PathScientist sessions',
-    true
+    'List PathScientist sessions'
   )
 }
 
@@ -51,8 +50,7 @@ export function getPathScientistSession(sessionId: string): Promise<PathScientis
   return apiFetch(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}`,
     undefined,
-    'Get PathScientist session',
-    true
+    'Get PathScientist session'
   )
 }
 
@@ -60,8 +58,15 @@ export function stopPathScientistSession(sessionId: string): Promise<PathScienti
   return apiFetch(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/stop`,
     { method: 'POST' },
-    'Stop PathScientist session',
-    true
+    'Stop PathScientist session'
+  )
+}
+
+export function resumePathScientistSession(sessionId: string): Promise<PathScientistSessionSummary> {
+  return apiFetch(
+    `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/resume`,
+    { method: 'POST' },
+    'Resume PathScientist session'
   )
 }
 
@@ -69,30 +74,30 @@ export function deletePathScientistSession(sessionId: string): Promise<DeletePat
   return apiFetch(
     `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}`,
     { method: 'DELETE' },
-    'Delete PathScientist session',
-    true
+    'Delete PathScientist session'
   )
 }
 
 export function getPathScientistEventsUrl(sessionId: string): string {
-  return `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/events`
+  return withAuthTokenQuery(`${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/events`)
 }
 
 export function getPathScientistRunDownloadUrl(sessionId: string, runId: string): string {
-  return `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/download`
+  return withAuthTokenQuery(
+    `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/runs/${encodeURIComponent(runId)}/download`
+  )
 }
 
 export function getPathScientistSessionDownloadUrl(sessionId: string): string {
-  return `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/download`
+  return withAuthTokenQuery(`${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/download`)
 }
 
 export function downloadPathScientistSession(sessionId: string): Promise<{ filename: string }> {
   return downloadApiFile(
-    getPathScientistSessionDownloadUrl(sessionId),
+    `${pathScientistBase()}/sessions/${encodeURIComponent(sessionId)}/download`,
     `pathscientist-${sessionId}.zip`,
     undefined,
     'Download PathScientist session',
-    true,
   )
 }
 

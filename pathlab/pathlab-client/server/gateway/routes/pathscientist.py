@@ -29,7 +29,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from starlette.background import BackgroundTask
 
-from backend.auth import User, current_active_user
+from backend.auth import (
+    User,
+    current_active_user,
+    get_user_from_header_or_param,
+    get_user_from_token_param,
+)
+from backend.database.database import safe_session
+from backend.database.repositories.auto_research import AutoResearchRepository
 from gateway import pathscientist_persistence
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,7 @@ GATEWAY_DELETE_AUDIT_LOG = "gateway_delete_audit.jsonl"
 LEGACY_RUNNING_STALE_SECONDS = int(os.environ.get("PATHSCIENTIST_LEGACY_RUNNING_STALE_SEC", "600"))
 DEFAULT_DATASET_CACHE_DIR = "/project/llmponco/wangyihui/original_data/pathlab_test_data"
 DOWNLOAD_PROGRESS_POLL_SECONDS = float(os.environ.get("PATHSCIENTIST_DOWNLOAD_PROGRESS_POLL_SEC", "1"))
+_DB_HISTORY_ENABLED = os.environ.get("PATHSCIENTIST_DB_HISTORY", "1").strip().lower() not in {"0", "false", "no"}
 
 router = APIRouter(prefix="/pathscientist", tags=["pathscientist"])
 _REGISTRY_LOCK = threading.Lock()
@@ -171,6 +179,10 @@ class SessionRecord:
         }
         if isinstance(self.state, dict):
             for key in (
+                "persistence_dir",
+                "workspace_path",
+                "resume_available",
+                "event_source_version",
                 "stop_reason",
                 "interrupted_reason",
                 "user_stop_requested",
@@ -196,6 +208,10 @@ class SessionStopRequested(RuntimeError):
 
 class SessionDeleteRejected(RuntimeError):
     """Raised when the UI tries to delete a live session."""
+
+
+class SessionResumeRejected(RuntimeError):
+    """Raised when a historical session cannot be resumed safely."""
 
 
 class PathScientistSessionManager:
@@ -241,6 +257,48 @@ class PathScientistSessionManager:
         record.add_event({"kind": "session", "status": "queued"})
         _queue_session_title_generation(record, config)
         thread = threading.Thread(target=self._run, args=(record, req, config), daemon=True)
+        thread.start()
+        return record
+
+    def resume(self, record: SessionRecord, req: StartPathScientistSessionRequest) -> SessionRecord:
+        if record.status in {"queued", "running"}:
+            raise SessionResumeRejected("This PathScientist session is already running.")
+        if not record.conversation_id:
+            raise SessionResumeRejected("This session does not have a persisted conversation id.")
+        if _conversation_uuid(record.conversation_id) is None:
+            raise SessionResumeRejected("This session has an invalid persisted conversation id.")
+        if not _conversation_base_state_exists(record.conversation_id, _record_state(record)):
+            raise SessionResumeRejected("This session can be viewed, but its resume checkpoint is missing.")
+        config = _build_config(req)
+
+        assert record._condition is not None
+        with record._condition:
+            record.cancel_requested = False
+            record.status = "running"
+            record.stage = "resuming"
+            record.error = ""
+            record.state = {
+                **_record_state(record),
+                "stage": "resuming",
+                "resume_available": True,
+            }
+            record.updated_at = time.time()
+            record._condition.notify_all()
+        with self._lock:
+            self._sessions[record.session_id] = record
+        _save_gateway_session_record(record)
+        _persist_record_state(record, req)
+        record.add_event({
+            "kind": "session",
+            "status": "running",
+            "stage": "resuming",
+            "summary": "Resuming persisted PathScientist conversation.",
+        })
+        thread = threading.Thread(
+            target=self._resume_run,
+            args=(record, req, config),
+            daemon=True,
+        )
         thread.start()
         return record
 
@@ -416,6 +474,14 @@ class PathScientistSessionManager:
                 return _hydrate_persisted_record_detail(legacy)
         return None
 
+    def register_hydrated(self, record: SessionRecord) -> SessionRecord:
+        with self._lock:
+            existing = self._sessions.get(record.session_id)
+            if existing is not None:
+                return existing
+            self._sessions[record.session_id] = record
+            return record
+
     def _maybe_hydrate_registry(self) -> None:
         """Populate stub SessionRecords from the Gateway-owned registry.
 
@@ -553,6 +619,85 @@ class PathScientistSessionManager:
             progress_callback=emit_research_progress,
         )
         return _enrich_state_with_download_progress(dump_research_session_state(state))
+
+    def _resume_run(
+        self,
+        record: SessionRecord,
+        req: StartPathScientistSessionRequest,
+        config: Any,
+    ) -> None:
+        stop_download_progress_poller = _start_download_progress_poller(record)
+        try:
+            state = self._invoke_resume_runner(config, req, record)
+            record.state = state
+            record.conversation_id = str(state.get("conversation_id") or record.conversation_id or "")
+            record.set_status("completed", stage=str(state.get("stage") or "completed"))
+            _save_gateway_session_record(record)
+            _persist_record_state(record, req)
+            record.add_event({"kind": "state", "state": record.state, "status": record.status})
+        except SessionStopRequested as exc:
+            record.state = {
+                **_record_state(record),
+                "stage": "interrupted",
+                "stop_reason": "user_cancelled",
+                "interrupted_reason": str(exc),
+            }
+            record.set_status("interrupted", stage="interrupted", error=str(exc))
+            _save_gateway_session_record(record)
+            _persist_record_state(record, req)
+            record.add_event({"kind": "state", "state": record.state, "status": "interrupted"})
+        except Exception as exc:
+            record.set_status("failed", stage="failed", error=str(exc))
+            record.state = {
+                **_record_state(record),
+                "stage": "failed",
+                "error": str(exc),
+            }
+            _save_gateway_session_record(record)
+            _persist_record_state(record, req)
+            record.add_event({"kind": "error", "message": str(exc)})
+        finally:
+            stop_download_progress_poller()
+
+    def _invoke_resume_runner(
+        self,
+        config: Any,
+        req: StartPathScientistSessionRequest,
+        record: SessionRecord,
+    ) -> dict[str, Any]:
+        try:
+            from backend.pathscientist.orchestrator.runner import continue_research_session
+            from backend.pathscientist.orchestrator.state_bridge import (
+                dump_research_session_state,
+                load_research_session_state,
+            )
+            from backend.pathscientist.persistence.resume import resume_conversation
+        except Exception as exc:
+            raise RuntimeError(f"PathScientist resume runtime unavailable: {exc}") from exc
+
+        conversation_id = _conversation_uuid(record.conversation_id)
+        if conversation_id is None:
+            raise RuntimeError("PathScientist conversation id is invalid")
+        conversation, session = resume_conversation(config, conversation_id)
+        state = load_research_session_state(conversation)
+        state, _session, _conversation = continue_research_session(
+            config,
+            state,
+            session,
+            conversation,
+            auto_approve=not req.manual_approval,
+        )
+        payload = dump_research_session_state(state)
+        if isinstance(payload, dict):
+            payload = {
+                **payload,
+                "conversation_id": str(conversation_id),
+                "resume_available": _conversation_base_state_exists(
+                    str(conversation_id),
+                    payload,
+                ),
+            }
+        return _enrich_state_with_download_progress(payload)
 
 
 def _build_streaming_visualizer(
@@ -818,6 +963,7 @@ def _apply_live_state_event_to_record(record: SessionRecord, event: dict[str, An
             should_persist = True
     if should_persist:
         _save_gateway_session_record(record)
+        _persist_record_state(record)
 
 
 def _resolve_workspace_from_state(state: dict[str, Any]) -> Path | None:
@@ -1306,6 +1452,7 @@ def _load_gateway_session_records() -> list[SessionRecord]:
             conversation_id=str(item.get("conversation_id") or ""),
             question=str(item.get("question") or "(PathScientist session)")[:280],
             model=str(item.get("model") or ""),
+            user_id=str(item.get("user_id") or ""),
             title=str(item.get("title") or ""),
             title_pending=bool(item.get("title_pending")),
             status=status,
@@ -1739,6 +1886,269 @@ def _load_persisted_conversation_events(
     return events
 
 
+def _db_datetime_to_epoch(value: Any, *, fallback: float | None = None) -> float:
+    if isinstance(value, datetime):
+        return value.timestamp()
+    return _timestamp_to_epoch(value, fallback=fallback or time.time())
+
+
+def _event_row_to_gateway_event(row: Any) -> dict[str, Any]:
+    data = row.event_data if isinstance(getattr(row, "event_data", None), dict) else {}
+    event = dict(data)
+    event.setdefault("kind", getattr(row, "event_type", None) or "event")
+    event.setdefault("seq", getattr(row, "sequence", None))
+    event.setdefault(
+        "ts",
+        _db_datetime_to_epoch(getattr(row, "created_at", None), fallback=time.time()),
+    )
+    return _normalize_gateway_event(event)
+
+
+def _db_session_to_record(session: Any, events: list[dict[str, Any]] | None = None) -> SessionRecord:
+    plan = session.experiment_plan if isinstance(getattr(session, "experiment_plan", None), dict) else {}
+    comparison = (
+        session.comparison_results
+        if isinstance(getattr(session, "comparison_results", None), dict)
+        else {}
+    )
+    recovery = (
+        session.recovery_metadata
+        if isinstance(getattr(session, "recovery_metadata", None), dict)
+        else {}
+    )
+    state: dict[str, Any] = {
+        "stage": getattr(session, "phase", None) or getattr(session, "status", None),
+        "objective": {
+            "question": getattr(session, "research_question", "") or "",
+            "success_metric": getattr(session, "best_metric_name", None) or "auc",
+        },
+        "best_metric_value": getattr(session, "best_metric", None),
+        "best_experiment": getattr(session, "best_experiment", None),
+        "comparison_results": comparison,
+        "run_history": comparison.get("run_history") if isinstance(comparison.get("run_history"), list) else [],
+        "final_report": getattr(session, "final_report", None),
+        "current_iteration": getattr(session, "current_iteration", None),
+        "iteration_index": getattr(session, "current_iteration", None),
+        "max_iterations": getattr(session, "max_iterations", None),
+        "conversation_id": getattr(session, "conversation_id", None),
+        "persistence_dir": getattr(session, "persistence_dir", None),
+        "workspace_path": getattr(session, "workspace_path", None),
+        "resume_available": bool(getattr(session, "resume_available", False)),
+        "event_source_version": getattr(session, "event_source_version", None) or "gateway-v1",
+        "recovery_metadata": recovery,
+        "experiment_plan": plan,
+        "persisted_summary": {
+            "conversation_id": getattr(session, "conversation_id", None),
+            "research_question": getattr(session, "research_question", "") or "",
+            "execution_status": getattr(session, "status", None),
+            "started_at": getattr(session, "created_at", None),
+            "updated_at": getattr(session, "updated_at", None),
+            "tracker_state": {
+                "primary_metric": getattr(session, "best_metric_name", None) or "auc",
+                "best_value": getattr(session, "best_metric", None),
+                "history": comparison.get("run_history") if isinstance(comparison.get("run_history"), list) else [],
+            },
+            "iteration_state": {
+                "iteration_index": getattr(session, "current_iteration", None),
+                "max_iterations": getattr(session, "max_iterations", None),
+            },
+            "research_session": {
+                "objective": {
+                    "question": getattr(session, "research_question", "") or "",
+                    "success_metric": getattr(session, "best_metric_name", None) or "auc",
+                },
+                "stage": getattr(session, "phase", None) or getattr(session, "status", None),
+            },
+        },
+    }
+    for key in (
+        "external_test",
+        "external_test_history",
+        "latest_review",
+        "review_history",
+        "review_decision",
+        "integrity_report",
+    ):
+        if key in recovery:
+            state[key] = recovery[key]
+        elif key in comparison:
+            state[key] = comparison[key]
+    state = {key: value for key, value in state.items() if value not in (None, "", [])}
+    record = SessionRecord(
+        session_id=str(getattr(session, "session_id", "") or ""),
+        conversation_id=str(getattr(session, "conversation_id", "") or ""),
+        question=str(getattr(session, "research_question", "") or "(PathScientist session)")[:280],
+        model=str(plan.get("model") or ""),
+        user_id=str(getattr(session, "user_id", "") or ""),
+        title=_fallback_session_title(str(getattr(session, "research_question", "") or "")),
+        status=str(getattr(session, "status", None) or "completed"),
+        stage=str(getattr(session, "phase", None) or getattr(session, "status", None) or "completed"),
+        created_at=_db_datetime_to_epoch(getattr(session, "created_at", None), fallback=time.time()),
+        updated_at=_db_datetime_to_epoch(getattr(session, "updated_at", None), fallback=time.time()),
+        state=state,
+    )
+    if events:
+        record.hydrate_events(events)
+        for event in events:
+            _apply_live_state_event_to_record(record, event)
+    return record
+
+
+async def _load_db_record(
+    session_id: str,
+    *,
+    user: User | None = None,
+    include_events: bool = True,
+    hydrate_disk: bool = True,
+    register: bool = True,
+) -> SessionRecord | None:
+    if not _DB_HISTORY_ENABLED:
+        return None
+    try:
+        async with safe_session() as db:
+            session = await AutoResearchRepository.get_session(db, session_id)
+            if session is None:
+                return None
+            if not _can_access_db_session(session, user):
+                raise HTTPException(status_code=403, detail="PathScientist session access denied")
+            event_rows = (
+                await AutoResearchRepository.get_session_events(db, session_id)
+                if include_events
+                else []
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.debug("PathScientist DB session load skipped for %s: %s", session_id, exc)
+        return None
+
+    db_events = [_event_row_to_gateway_event(row) for row in event_rows]
+    record = _db_session_to_record(session, db_events)
+    if hydrate_disk and record.conversation_id:
+        record = _hydrate_persisted_record_detail(record)
+        if db_events:
+            record.hydrate_events(db_events)
+    if register:
+        record = _SESSION_MANAGER.register_hydrated(record)
+    return record
+
+
+async def _load_db_events(session_id: str, *, user: User | None = None) -> list[dict[str, Any]]:
+    if not _DB_HISTORY_ENABLED:
+        return []
+    try:
+        async with safe_session() as db:
+            session = await AutoResearchRepository.get_session(db, session_id)
+            if session is None:
+                return []
+            if not _can_access_db_session(session, user):
+                raise HTTPException(status_code=403, detail="PathScientist session access denied")
+            rows = await AutoResearchRepository.get_session_events(db, session_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.debug("PathScientist DB event load skipped for %s: %s", session_id, exc)
+        return []
+    return [_event_row_to_gateway_event(row) for row in rows]
+
+
+async def _load_db_session_list(
+    *,
+    user: User | None,
+    include_persisted: bool,
+    limit: int = 100,
+) -> list[SessionRecord]:
+    if not _DB_HISTORY_ENABLED:
+        return []
+    user_id = None if _user_is_admin(user) else str(getattr(user, "id", "") or "")
+    if user is not None and not user_id and not _user_is_admin(user):
+        return []
+    try:
+        async with safe_session() as db:
+            sessions = await AutoResearchRepository.get_user_sessions(
+                db,
+                user_id,
+                limit=limit,
+            )
+    except Exception as exc:
+        logger.debug("PathScientist DB session list skipped: %s", exc)
+        return []
+    return [
+        _db_session_to_record(session, events=[])
+        for session in sessions
+        if include_persisted or _is_curated_db_session(session)
+    ]
+
+
+def _user_is_admin(user: User | None) -> bool:
+    if user is None:
+        return False
+    is_admin = getattr(user, "is_admin", None)
+    if callable(is_admin):
+        try:
+            return bool(is_admin())
+        except Exception:
+            return False
+    return getattr(user, "role", "") == "admin"
+
+
+def _can_access_db_session(session: Any, user: User | None) -> bool:
+    if user is None or _user_is_admin(user):
+        return True
+    owner = str(getattr(session, "user_id", "") or "")
+    return bool(owner) and owner == str(getattr(user, "id", "") or "")
+
+
+def _can_access_record(record: SessionRecord, user: User | None) -> bool:
+    if user is None or _user_is_admin(user):
+        return True
+    owner = str(getattr(record, "user_id", "") or "").strip()
+    return not owner or owner == str(getattr(user, "id", "") or "")
+
+
+def _is_curated_db_session(session: Any) -> bool:
+    status = str(getattr(session, "status", "") or "")
+    question = str(getattr(session, "research_question", "") or "").strip()
+    return bool(question) and status not in {"error"}
+
+
+def _merge_session_records(*groups: list[SessionRecord]) -> list[SessionRecord]:
+    selected: dict[str, SessionRecord] = {}
+    conversation_seen: dict[str, str] = {}
+    for group in groups:
+        for record in group:
+            if _is_deleted_gateway_session(record):
+                continue
+            existing_key = selected.get(record.session_id)
+            if existing_key is None:
+                conv = _record_conversation_id(record)
+                if conv and conv in conversation_seen:
+                    existing = selected.get(conversation_seen[conv])
+                    if existing is not None and _record_rank(existing) >= _record_rank(record):
+                        continue
+                    selected.pop(conversation_seen[conv], None)
+                selected[record.session_id] = record
+                if conv:
+                    conversation_seen[conv] = record.session_id
+                continue
+            if _record_rank(record) > _record_rank(existing_key):
+                selected[record.session_id] = record
+    return sorted(selected.values(), key=lambda record: record.created_at, reverse=True)
+
+
+def _record_rank(record: SessionRecord) -> int:
+    rank = 0
+    if record.status in {"queued", "running"}:
+        rank += 100
+    if record.events:
+        rank += 10
+    if record.state:
+        rank += 5
+    if record.user_id:
+        rank += 2
+    return rank
+
+
 def _has_persisted_stage_context(summary: dict[str, Any]) -> bool:
     return any(
         summary.get(key)
@@ -2122,6 +2532,77 @@ def _refresh_persisted_record_detail(record: SessionRecord) -> SessionRecord:
     return record
 
 
+def _canonical_conversation_uuid(conversation_id: str) -> str:
+    text = str(conversation_id or "").strip()
+    if not text:
+        return text
+    if "-" in text:
+        return text
+    if len(text) == 32:
+        return f"{text[:8]}-{text[8:12]}-{text[12:16]}-{text[16:20]}-{text[20:]}"
+    return text
+
+
+def _conversation_uuid(conversation_id: str):
+    try:
+        from uuid import UUID
+
+        return UUID(_canonical_conversation_uuid(conversation_id))
+    except Exception:
+        return None
+
+
+def _candidate_conversation_dirs(conversation_id: str, state: dict[str, Any] | None = None) -> list[Path]:
+    state = state if isinstance(state, dict) else {}
+    candidates: list[Path] = []
+    for key in ("persistence_dir", "conversation_dir"):
+        value = state.get(key)
+        if value:
+            candidates.append(Path(str(value)).expanduser())
+    recovery = state.get("recovery_metadata")
+    if isinstance(recovery, dict):
+        for key in ("persistence_dir", "conversation_dir"):
+            value = recovery.get(key)
+            if value:
+                candidates.append(Path(str(value)).expanduser())
+    summary = state.get("persisted_summary")
+    if isinstance(summary, dict):
+        for key in ("persistence_dir", "conversation_dir"):
+            value = summary.get(key)
+            if value:
+                candidates.append(Path(str(value)).expanduser())
+
+    if conversation_id:
+        try:
+            from backend.pathscientist.persistence.layout import get_persistence_root
+            from backend.pathscientist.runtime.session import _resolve_base_dir
+
+            root = Path(get_persistence_root(_resolve_base_dir()))
+            candidates.extend([
+                root / conversation_id,
+                root / conversation_id.replace("-", ""),
+            ])
+        except Exception as exc:
+            logger.debug("PathScientist conversation dir probe skipped: %s", exc)
+
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def _conversation_base_state_exists(
+    conversation_id: str,
+    state: dict[str, Any] | None = None,
+) -> bool:
+    return any((path / "base_state.json").is_file() for path in _candidate_conversation_dirs(conversation_id, state))
+
+
 def _scan_persisted_conversations(*, curated_only: bool = False) -> list[SessionRecord]:
     """Build stub SessionRecords for every persisted conversation on disk.
 
@@ -2350,15 +2831,54 @@ def create_session(
 
 
 @router.post("/sessions/{session_id}/stop")
-def stop_session(session_id: str):
+def stop_session(
+    session_id: str,
+    user: User = Depends(current_active_user),
+):
+    existing = _SESSION_MANAGER.get(session_id)
+    if existing is not None and not _can_access_record(existing, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
     record = _SESSION_MANAGER.stop(session_id)
     if record is None:
         raise HTTPException(status_code=404, detail="PathScientist session not found")
     return record.summary()
 
 
+@router.post("/sessions/{session_id}/resume")
+async def resume_session(
+    session_id: str,
+    req: StartPathScientistSessionRequest | None = None,
+    user: User = Depends(current_active_user),
+):
+    record = _SESSION_MANAGER.get(session_id)
+    if record is not None and not _can_access_record(record, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if record is None:
+        record = await _load_db_record(session_id, user=user)
+    if record is None:
+        raise HTTPException(status_code=404, detail="PathScientist session not found")
+    resume_req = req or StartPathScientistSessionRequest(
+        question=record.question or "Continue PathScientist session",
+    )
+    if not resume_req.question:
+        resume_req.question = record.question or "Continue PathScientist session"
+    try:
+        resumed = _SESSION_MANAGER.resume(record, resume_req)
+    except SessionResumeRejected as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return resumed.summary()
+
+
 @router.delete("/sessions/{session_id}")
-def delete_session(session_id: str):
+def delete_session(
+    session_id: str,
+    user: User = Depends(current_active_user),
+):
+    existing = _SESSION_MANAGER.get(session_id)
+    if existing is not None and not _can_access_record(existing, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
     try:
         result = _SESSION_MANAGER.delete(session_id)
     except SessionDeleteRejected as exc:
@@ -2369,18 +2889,30 @@ def delete_session(session_id: str):
 
 
 @router.get("/sessions")
-def list_sessions(include_persisted: bool = False):
-    return {
-        "items": [
-            record.summary()
-            for record in _SESSION_MANAGER.list(include_persisted=include_persisted)
-        ]
-    }
+async def list_sessions(
+    include_persisted: bool = False,
+    user: User = Depends(current_active_user),
+):
+    records = _merge_session_records(
+        await _load_db_session_list(user=user, include_persisted=include_persisted),
+        [
+            record for record in _SESSION_MANAGER.list(include_persisted=include_persisted)
+            if _can_access_record(record, user)
+        ],
+    )
+    return {"items": [record.summary() for record in records]}
 
 
 @router.get("/sessions/{session_id}")
-def get_session(session_id: str):
+async def get_session(
+    session_id: str,
+    user: User = Depends(current_active_user),
+):
     record = _SESSION_MANAGER.get(session_id)
+    if record is not None and not _can_access_record(record, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if record is None:
+        record = await _load_db_record(session_id, user=user)
     if record is None:
         raise HTTPException(status_code=404, detail="PathScientist session not found")
     return {
@@ -2391,8 +2923,15 @@ def get_session(session_id: str):
 
 
 @router.get("/sessions/{session_id}/download")
-def download_session_artifacts(session_id: str):
+async def download_session_artifacts(
+    session_id: str,
+    user: User = Depends(get_user_from_header_or_param),
+):
     record = _SESSION_MANAGER.get(session_id)
+    if record is not None and not _can_access_record(record, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if record is None:
+        record = await _load_db_record(session_id, user=user)
     if record is None:
         raise HTTPException(status_code=404, detail="PathScientist session not found")
 
@@ -2415,8 +2954,16 @@ def download_session_artifacts(session_id: str):
 
 
 @router.get("/sessions/{session_id}/runs/{run_id}/download")
-def download_run_artifacts(session_id: str, run_id: str):
+async def download_run_artifacts(
+    session_id: str,
+    run_id: str,
+    user: User = Depends(get_user_from_header_or_param),
+):
     record = _SESSION_MANAGER.get(session_id)
+    if record is not None and not _can_access_record(record, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if record is None:
+        record = await _load_db_record(session_id, user=user)
     if record is None:
         raise HTTPException(status_code=404, detail="PathScientist session not found")
     if not _is_safe_run_id(run_id):
@@ -2441,10 +2988,25 @@ def download_run_artifacts(session_id: str, run_id: str):
 
 
 @router.get("/sessions/{session_id}/events")
-def stream_session_events(session_id: str):
+async def stream_session_events(
+    session_id: str,
+    user: User = Depends(get_user_from_token_param),
+):
     record = _SESSION_MANAGER.get(session_id)
+    if record is not None and not _can_access_record(record, user):
+        raise HTTPException(status_code=403, detail="PathScientist session access denied")
+    if record is None:
+        db_record = await _load_db_record(session_id, user=user)
+        if db_record is not None:
+            record = db_record
     if record is None:
         raise HTTPException(status_code=404, detail="PathScientist session not found")
+    if record.status not in {"queued", "running"}:
+        db_events = await _load_db_events(session_id, user=user)
+        if db_events:
+            record.hydrate_events(db_events)
+        elif not record.events and record.conversation_id:
+            record = _hydrate_persisted_record_detail(record)
 
     async def event_generator():
         next_index = 0

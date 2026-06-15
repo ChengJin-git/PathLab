@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PathScientistSessionPage from '@renderer/pages/PathScientistSessionPage'
-import { deletePathScientistSession, getPathScientistEventsUrl, getPathScientistSession, stopPathScientistSession } from '@renderer/api/pathscientist'
+import { deletePathScientistSession, getPathScientistEventsUrl, getPathScientistSession, resumePathScientistSession, stopPathScientistSession } from '@renderer/api/pathscientist'
 import type { PathScientistEvent, PathScientistSessionDetail } from '@renderer/types/pathscientist'
 import { useAuth } from '@renderer/contexts/AuthContext'
 
@@ -14,6 +14,7 @@ vi.mock('@renderer/api/pathscientist', () => ({
   deletePathScientistSession: vi.fn(),
   getPathScientistSession: vi.fn(),
   getPathScientistEventsUrl: vi.fn(),
+  resumePathScientistSession: vi.fn(),
   stopPathScientistSession: vi.fn(),
   getPathScientistRunDownloadUrl: (sessionId: string, runId: string) => (
     `/api/pathscientist/sessions/${sessionId}/runs/${runId}/download`
@@ -105,6 +106,14 @@ describe('PathScientistSessionPage', () => {
       model: session.model,
       status: 'interrupted',
       stage: 'interrupted',
+    })
+    vi.mocked(resumePathScientistSession).mockResolvedValue({
+      session_id: session.session_id,
+      conversation_id: session.conversation_id,
+      question: session.question,
+      model: session.model,
+      status: 'running',
+      stage: 'resuming',
     })
     vi.mocked(deletePathScientistSession).mockResolvedValue({ session_id: 's1', deleted: true, workspace_deleted: true })
   })
@@ -210,6 +219,22 @@ describe('PathScientistSessionPage', () => {
     expect(confirm).not.toHaveBeenCalledWith(expect.stringContaining('kept'))
     await waitFor(() => expect(deletePathScientistSession).toHaveBeenCalledWith('s1'))
     expect(await screen.findByText('new session')).toBeInTheDocument()
+  })
+
+  it('resumes a completed session when a checkpoint is available', async () => {
+    vi.mocked(getPathScientistSession).mockResolvedValue({
+      ...session,
+      status: 'completed',
+      stage: 'completed',
+      resume_available: true,
+    })
+
+    renderPage()
+
+    fireEvent.click(await screen.findByRole('button', { name: /resume session/i }))
+
+    await waitFor(() => expect(resumePathScientistSession).toHaveBeenCalledWith('s1'))
+    await waitFor(() => expect(screen.getAllByText('running').length).toBeGreaterThan(0))
   })
 
   it('shows the simplified clinical view for pathologist users', async () => {

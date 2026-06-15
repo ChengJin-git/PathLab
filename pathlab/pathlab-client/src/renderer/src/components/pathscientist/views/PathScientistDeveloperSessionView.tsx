@@ -1,4 +1,4 @@
-import { Beaker, Circle, FileJson, HardDrive, Layers, Loader2, Radio, Square, Trash2 } from 'lucide-react'
+import { Beaker, Circle, FileJson, HardDrive, Layers, Loader2, Play, Radio, Square, Trash2 } from 'lucide-react'
 import { Button } from '../../ui/button'
 import PathScientistExecutionConsole from '../PathScientistExecutionConsole'
 import type { PathScientistEvent, PathScientistSessionDetail } from '../../../types/pathscientist'
@@ -19,10 +19,13 @@ interface PathScientistDeveloperSessionViewProps {
   error: string
   isLoading: boolean
   isStopping: boolean
+  isResuming: boolean
   isDeleting: boolean
   canStop: boolean
+  canResume: boolean
   canDelete: boolean
   onStop: () => void
+  onResume: () => void
   onDelete: () => void
 }
 
@@ -59,10 +62,13 @@ export default function PathScientistDeveloperSessionView({
   error,
   isLoading,
   isStopping,
+  isResuming,
   isDeleting,
   canStop,
+  canResume,
   canDelete,
   onStop,
+  onResume,
   onDelete,
 }: PathScientistDeveloperSessionViewProps) {
   const consoleSession = session ? { ...session, status: latestStatus, stage: latestStage } : null
@@ -82,6 +88,19 @@ export default function PathScientistDeveloperSessionView({
             >
               {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
               Delete session
+            </Button>
+          )}
+          {canResume && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-2 border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50"
+              onClick={onResume}
+              disabled={isResuming}
+            >
+              {isResuming ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+              Resume session
             </Button>
           )}
           {canStop && (

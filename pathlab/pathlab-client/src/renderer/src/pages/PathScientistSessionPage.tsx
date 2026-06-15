@@ -4,7 +4,7 @@ import { useAuth } from '../contexts/AuthContext'
 import PathScientistClinicalSessionView from '../components/pathscientist/views/PathScientistClinicalSessionView'
 import PathScientistDeveloperSessionView from '../components/pathscientist/views/PathScientistDeveloperSessionView'
 import { useSessionStream } from '../components/pathscientist/useSessionStream'
-import { deletePathScientistSession, getPathScientistSession, stopPathScientistSession } from '../api/pathscientist'
+import { deletePathScientistSession, getPathScientistSession, resumePathScientistSession, stopPathScientistSession } from '../api/pathscientist'
 import type { PathScientistEvent, PathScientistSessionDetail, PathScientistSessionSummary } from '../types/pathscientist'
 import { formatPathScientistElapsed } from '../lib/pathscientistTime'
 import { isLiveClinicalStatus } from '../lib/pathscientistClinicalSteps'
@@ -61,6 +61,7 @@ export default function PathScientistSessionPage() {
   const [session, setSession] = useState<PathScientistSessionDetail | null>(null)
   const [error, setError] = useState('')
   const [isStopping, setIsStopping] = useState(false)
+  const [isResuming, setIsResuming] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const stream = useSessionStream(id, isLiveClinicalStatus(session?.status))
@@ -108,6 +109,7 @@ export default function PathScientistSessionPage() {
   const titlePending = Boolean((latestTitleEvent ? latestTitleEvent.title_pending : session?.title_pending) && !latestTitle)
   const displayTitle = latestTitle || (titlePending ? 'Generating title...' : 'Untitled PathScientist session')
   const canStop = Boolean(id && isLiveClinicalStatus(latestStatus))
+  const canResume = Boolean(id && session?.resume_available && !isLiveClinicalStatus(latestStatus))
   const canDelete = Boolean(id && session && !isLiveClinicalStatus(latestStatus))
   const nowMs = useRunningClock(isLiveClinicalStatus(latestStatus))
   const runningElapsed = isLiveClinicalStatus(latestStatus) ? formatPathScientistElapsed(session?.created_at, nowMs) : ''
@@ -151,6 +153,28 @@ export default function PathScientistSessionPage() {
     }
   }
 
+  const handleResume = async () => {
+    if (!id || isResuming) return
+    setIsResuming(true)
+    setError('')
+    try {
+      const resumed: PathScientistSessionSummary = await resumePathScientistSession(id)
+      const resumeEvent: PathScientistEvent = {
+        kind: 'session',
+        status: resumed.status,
+        stage: resumed.stage || 'resuming',
+        summary: 'Resuming persisted PathScientist conversation.',
+      }
+      setSession((current) => current
+        ? { ...current, ...resumed, events: [...(current.events || []), resumeEvent] }
+        : { ...resumed, events: [resumeEvent] })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to resume session')
+    } finally {
+      setIsResuming(false)
+    }
+  }
+
   if (!id) {
     return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">Missing session id.</div>
   }
@@ -168,10 +192,13 @@ export default function PathScientistSessionPage() {
     error,
     isLoading,
     isStopping,
+    isResuming,
     isDeleting,
     canStop,
+    canResume,
     canDelete,
     onStop: () => void handleStop(),
+    onResume: () => void handleResume(),
     onDelete: () => void handleDelete(),
   }
 
